@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1790734200270,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/vibekit",
   "entries": {
     "Benchmark": [
       {
@@ -3665,10 +3665,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "48d1c682390d6a54c634f3df4594be7c938087f9",
-          "message": "chore(deps): update cplieger/ci digest to 1cc06fd (#659)",
-          "timestamp": "2026-09-24T22:02:23Z",
-          "url": "https://github.com/cplieger/ci/commit/48d1c682390d6a54c634f3df4594be7c938087f9"
+          "id": "ec692c4f6ae5b4abd23348ae3edb81d02f87dd6d",
+          "message": "chore(deps): update kiro-cli to v2.26.0 (#1332)",
+          "timestamp": "2026-09-29T19:30:00Z",
+          "url": "https://github.com/cplieger/vibekit/commit/ec692c4f6ae5b4abd23348ae3edb81d02f87dd6d"
         },
         "date": 1790734199740,
         "tool": "customSmallerIsBetter",
