@@ -9,6 +9,7 @@
     "**/__test-helpers__/**",
     "**/*.test.ts",
     "**/*.fuzz.test.ts",
-    "**/*.property.test.ts"
+    "**/*.property.test.ts",
+    "wire/arbitraries.gen.ts"
   ]
 }
