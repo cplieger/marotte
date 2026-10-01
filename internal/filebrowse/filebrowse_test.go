@@ -1325,7 +1325,7 @@ func TestHandleDownload_ETagSurvivesASameSecondRewrite(t *testing.T) {
 //
 // mime.TypeByExtension(".svg") is "image/svg+xml", and an SVG document rendered
 // at a same-origin URL executes its own script with this origin's privileges —
-// which would mean access to vibekit's cookies and its whole same-origin API
+// which would mean access to marotte's cookies and its whole same-origin API
 // surface. Every `<img src=…>` pointed at this route is safe on its own (an SVG
 // referenced AS AN IMAGE may not fetch, script, or reach the embedding document),
 // but the file browser also renders a real anchor to this URL, and CSP does not
@@ -2184,7 +2184,7 @@ func FuzzResolvePath(f *testing.F) {
 		prefix + "/symlink/../../../etc",
 		strings.Repeat("../", 50) + "etc/passwd",
 		prefix + "/a/b/c/../../../../etc/passwd",
-		"config/home/.kiro/steering/vibekit.md",
+		"config/home/.kiro/steering/marotte.md",
 		"config/chats/deep/nested.json",
 		"config/push-subs.json",
 	}
@@ -2230,7 +2230,7 @@ func FuzzResolvePath(f *testing.F) {
 func FuzzIsSensitive(f *testing.F) {
 	// Seed corpus: known sensitive paths, near-misses, and adversarial shapes.
 	seeds := []string{
-		"/config/home/.kiro/steering/vibekit.md",
+		"/config/home/.kiro/steering/marotte.md",
 		"/config/home/.kiro/steering/environment.md",
 		"/config/home/.kiro/agents/foo.json",
 		"/config/chats/deep/nested.json",
@@ -2245,7 +2245,7 @@ func FuzzIsSensitive(f *testing.F) {
 		"",
 		"/",
 		"/config",
-		"/config/home/.kiro/steering/vibekit.md/extra",
+		"/config/home/.kiro/steering/marotte.md/extra",
 		"/config/push-subs.json/",
 		"/config/push-subs.jsonx",
 		"\x00",

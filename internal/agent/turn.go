@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TurnState is the per-chat turn state machine.
@@ -67,16 +67,16 @@ type Turn struct {
 	// carrier is the persisted message holding this turn's outcome, recorded at close
 	// so a closer that LOST the claim can still reach it. See amendLostReason.
 	carrier turnCarrier
-	Chat    vibekit.ChatID
+	Chat    marotte.ChatID
 	// Interrupt is the first cause claimed for this turn.
-	Interrupt vibekit.InterruptCause
+	Interrupt marotte.InterruptCause
 	// statusDesc is the description the agent declared DURING this turn, which is what
 	// the agent_finished push body says. On the turn rather than the chat, because the
 	// chat's copy outlives its turn on purpose and so cannot answer for one.
 	statusDesc string
 	// result is immutable once done is closed.
-	result  vibekit.TurnResult
-	Epoch   vibekit.TurnEpoch
+	result  marotte.TurnResult
+	Epoch   marotte.TurnEpoch
 	Credits CreditBaseline
 	// NeedSeq is the read loop position a LOCAL settle of this turn must wait for:
 	// where the session/prompt response arrived. Zero means no settle is waiting.
@@ -96,7 +96,7 @@ type Turn struct {
 	// holds is how many completion handles are outstanding, and what bounds
 	// retention: a result a waiter still holds a handle for is never evicted.
 	holds  int
-	Source vibekit.TurnOpenSource
+	Source marotte.TurnOpenSource
 	// acked is whether a wire turn_start has bound to this turn. Provisional for an
 	// acknowledgeable source, since the bracket cannot tell a prompted turn from an
 	// agent-initiated one — see reclassify.
@@ -113,12 +113,12 @@ type chatLifecycle struct {
 	// retained holds the FINALIZED turns whose handles have not all been released,
 	// so a waiter can still read a result after the chat has moved on. Several
 	// handles can be outstanding at once, hence a map.
-	retained map[vibekit.TurnEpoch]*Turn
+	retained map[marotte.TurnEpoch]*Turn
 	// changed is closed and REPLACED on EVERY state change, under mu. A channel
 	// rather than a Cond, which re-acquires the mutex to return, so a parked waiter
 	// would hold the lock the finalize needs.
 	changed   chan struct{}
-	nextEpoch vibekit.TurnEpoch
+	nextEpoch marotte.TurnEpoch
 	// observedSeq is the read loop position the FOLDER has reached. Advanced for
 	// every frame consumed, not only the ones that touch a turn — see observe.
 	observedSeq uint64
@@ -128,7 +128,7 @@ type chatLifecycle struct {
 	// reservedSource is who holds the admission slot, meaningful only while reserved
 	// is true. The reservation is NOT a Turn: it is the bare per-chat admission taken
 	// before any bridge exists, and the record is minted at StartTurn.
-	reservedSource vibekit.TurnOpenSource
+	reservedSource marotte.TurnOpenSource
 	// forwardGone is whether the attached forward goroutine has exited, so a settle
 	// waiting on a position that can no longer advance stops waiting.
 	forwardGone bool
@@ -142,16 +142,16 @@ type chatLifecycle struct {
 // lifecycle.mu and never the reverse, and neither is held across chat.Store.Mutate,
 // which takes a per-chat mutex across its callback.
 type turnRegistry struct {
-	chats map[vibekit.ChatID]*chatLifecycle
+	chats map[marotte.ChatID]*chatLifecycle
 	mu    sync.Mutex
 }
 
 func newTurnRegistry() *turnRegistry {
-	return &turnRegistry{chats: make(map[vibekit.ChatID]*chatLifecycle)}
+	return &turnRegistry{chats: make(map[marotte.ChatID]*chatLifecycle)}
 }
 
 // lifecycleFor returns the chat's lifecycle, creating it on first use.
-func (r *turnRegistry) lifecycleFor(chatID vibekit.ChatID) *chatLifecycle {
+func (r *turnRegistry) lifecycleFor(chatID marotte.ChatID) *chatLifecycle {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	lc, ok := r.chats[chatID]
@@ -166,7 +166,7 @@ func (r *turnRegistry) lifecycleFor(chatID vibekit.ChatID) *chatLifecycle {
 // the chat has none. The read-only twin of lifecycleFor: an entry leaves the map
 // only through forget, so a predicate on an HTTP read path would otherwise leave a
 // lifecycle and its `changed` channel behind for every chat merely opened.
-func (r *turnRegistry) lookup(chatID vibekit.ChatID) (*chatLifecycle, bool) {
+func (r *turnRegistry) lookup(chatID marotte.ChatID) (*chatLifecycle, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	lc, ok := r.chats[chatID]
@@ -176,7 +176,7 @@ func (r *turnRegistry) lookup(chatID vibekit.ChatID) (*chatLifecycle, bool) {
 // forget drops a chat's lifecycle. A turn already open keeps the dropped one, since
 // every operation holding a *Turn goes through that turn's own lc, so an in-flight
 // finalize still publishes where its waiters are parked.
-func (r *turnRegistry) forget(chatID vibekit.ChatID) {
+func (r *turnRegistry) forget(chatID marotte.ChatID) {
 	r.mu.Lock()
 	delete(r.chats, chatID)
 	r.mu.Unlock()
@@ -214,7 +214,7 @@ func (lc *chatLifecycle) awaitNotFinalizing(ctx context.Context) bool {
 
 // openLocked mints the next turn, with its own content buffer. Caller holds mu
 // and has established that the chat is not finalizing.
-func (lc *chatLifecycle) openLocked(chatID vibekit.ChatID, source vibekit.TurnOpenSource, model string, credits CreditBaseline) *Turn {
+func (lc *chatLifecycle) openLocked(chatID marotte.ChatID, source marotte.TurnOpenSource, model string, credits CreditBaseline) *Turn {
 	lc.nextEpoch++
 	t := &Turn{
 		Opened:  time.Now(),
@@ -240,13 +240,13 @@ func (lc *chatLifecycle) openLocked(chatID vibekit.ChatID, source vibekit.TurnOp
 // already open is answered per source: localShell refuses, an acknowledgeable source
 // opens anyway, since the turn it finds is routinely an agent-initiated one holding
 // no prompt slot. A turn the WIRE started goes through openWire.
-func (r *turnRegistry) open(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource, model string, credits CreditBaseline) *Turn {
+func (r *turnRegistry) open(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, model string, credits CreditBaseline) *Turn {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return nil
 	}
 	defer lc.mu.Unlock()
-	if source == vibekit.TurnSourceLocalShell && lc.state == turnOpen && lc.cur != nil {
+	if source == marotte.TurnSourceLocalShell && lc.state == turnOpen && lc.cur != nil {
 		return nil
 	}
 	if source.Acknowledgeable() && lc.pending != nil {
@@ -263,7 +263,7 @@ func (r *turnRegistry) open(ctx context.Context, chatID vibekit.ChatID, source v
 // claimOpen claims the chat's OPEN turn for finalizing, reporting false when the
 // chat has none. First-wins, so two closers racing one turn produce one set of
 // effects.
-func (r *turnRegistry) claimOpen(ctx context.Context, chatID vibekit.ChatID) (*Turn, bool) {
+func (r *turnRegistry) claimOpen(ctx context.Context, chatID marotte.ChatID) (*Turn, bool) {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return nil, false
@@ -279,7 +279,7 @@ func (r *turnRegistry) claimOpen(ctx context.Context, chatID vibekit.ChatID) (*T
 // is not live on this chat. Epoch-scoped, so a closer armed for turn N is harmless
 // once turn N+1 has opened, and it still reaches a pre-open that is no longer the
 // folding turn.
-func (r *turnRegistry) claimEpoch(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (*Turn, bool) {
+func (r *turnRegistry) claimEpoch(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) (*Turn, bool) {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return nil, false
@@ -312,7 +312,7 @@ func (lc *chatLifecycle) claimLocked(t *Turn) *Turn {
 // moves, so a waiter woken by the transition always finds it. It publishes on the
 // turn's OWN lifecycle, since a chat forgotten mid-finalize would be handed a fresh
 // one here and leave every parked waiter in turnFinalizing forever.
-func (r *turnRegistry) finish(t *Turn, result vibekit.TurnResult) {
+func (r *turnRegistry) finish(t *Turn, result marotte.TurnResult) {
 	lc := t.lc
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -328,7 +328,7 @@ func (r *turnRegistry) finish(t *Turn, result vibekit.TurnResult) {
 	}
 	if t.holds > 0 {
 		if lc.retained == nil {
-			lc.retained = make(map[vibekit.TurnEpoch]*Turn)
+			lc.retained = make(map[marotte.TurnEpoch]*Turn)
 		}
 		lc.retained[t.Epoch] = t
 	}
@@ -342,7 +342,7 @@ func (r *turnRegistry) finish(t *Turn, result vibekit.TurnResult) {
 }
 
 // turnLocked finds the record for one epoch, open or retained. Caller holds mu.
-func (lc *chatLifecycle) turnLocked(epoch vibekit.TurnEpoch) *Turn {
+func (lc *chatLifecycle) turnLocked(epoch marotte.TurnEpoch) *Turn {
 	if lc.cur != nil && lc.cur.Epoch == epoch {
 		return lc.cur
 	}
@@ -354,7 +354,7 @@ func (lc *chatLifecycle) turnLocked(epoch vibekit.TurnEpoch) *Turn {
 
 // release gives up one completion handle, dropping a finalized record once its
 // last handle goes. An OPEN turn's record is dropped by finish, not here.
-func (r *turnRegistry) release(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+func (r *turnRegistry) release(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -372,19 +372,19 @@ func (r *turnRegistry) release(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
 // or reports ErrNoSuchTurn for an epoch this chat has no record of. The done channel
 // is taken under the mutex and waited on with it RELEASED, or the waiter blocks the
 // finalize it waits for; close-before-receive publishes finish's write.
-func (r *turnRegistry) await(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (vibekit.TurnResult, error) {
+func (r *turnRegistry) await(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) (marotte.TurnResult, error) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	t := lc.turnLocked(epoch)
 	lc.mu.Unlock()
 	if t == nil {
-		return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
+		return marotte.TurnResult{}, marotte.ErrNoSuchTurn
 	}
 	select {
 	case <-t.done:
 		return t.result, nil
 	case <-ctx.Done():
-		return vibekit.TurnResult{}, ctx.Err()
+		return marotte.TurnResult{}, ctx.Err()
 	}
 }
 
@@ -392,7 +392,7 @@ func (r *turnRegistry) await(ctx context.Context, chatID vibekit.ChatID, epoch v
 // STRUCTURAL clause of the empty-turn gate, since a mis-bound pre-open satisfies
 // every other clause. Read when the caller decides, never stamped on the result —
 // the later turn frequently opens after the awaited one finalized.
-func (r *turnRegistry) openedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool {
+func (r *turnRegistry) openedAfter(chatID marotte.ChatID, epoch marotte.TurnEpoch) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -402,7 +402,7 @@ func (r *turnRegistry) openedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoc
 // openEpoch reports the chat's open turn's epoch, or false when none is open.
 // turnFinalizing answers false, unlike openTurns: this one is asked by a caller
 // about to ACT on the turn, and a claimed turn's effects are already running.
-func (r *turnRegistry) openEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+func (r *turnRegistry) openEpoch(chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -420,7 +420,7 @@ func (r *turnRegistry) openEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool
 // NOT displaceableEngineTurn, which also matches TurnSourceWireTurnStart: closing
 // the chat's OWN agent-initiated turn because some run ended is a different defect,
 // since that turn's bracket is still coming. turnFinalizing answers false.
-func (r *turnRegistry) stepTurnEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+func (r *turnRegistry) stepTurnEpoch(chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
 		return 0, false
@@ -430,7 +430,7 @@ func (r *turnRegistry) stepTurnEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, 
 	if lc.state != turnOpen || lc.cur == nil {
 		return 0, false
 	}
-	if lc.cur.Source != vibekit.TurnSourceWorkflowStep {
+	if lc.cur.Source != marotte.TurnSourceWorkflowStep {
 		return 0, false
 	}
 	return lc.cur.Epoch, true
@@ -440,7 +440,7 @@ func (r *turnRegistry) stepTurnEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, 
 // that is open, or the one finalizing — and false when the chat is idle. Wider than
 // openEpoch on purpose: a turn whose effects are still running is still the turn that
 // spawned a process.
-func (r *turnRegistry) currentEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+func (r *turnRegistry) currentEpoch(chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -455,10 +455,10 @@ func (r *turnRegistry) currentEpoch(chatID vibekit.ChatID) (vibekit.TurnEpoch, b
 //
 // turnFinalizing counts as OPEN, exactly the state this exists for. The read goes
 // through `lookup`: this one is an HTTP read path.
-func (r *turnRegistry) openTurnState(chatID vibekit.ChatID) vibekit.TurnOpenState {
+func (r *turnRegistry) openTurnState(chatID marotte.ChatID) marotte.TurnOpenState {
 	lc, ok := r.lookup(chatID)
 	if !ok {
-		return vibekit.TurnOpenState{}
+		return marotte.TurnOpenState{}
 	}
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -470,14 +470,14 @@ func (r *turnRegistry) openTurnState(chatID vibekit.ChatID) vibekit.TurnOpenStat
 // this predicate and two spellings is how the handshake and the transcript GET disagree.
 // BOTH inputs are always read, which closes the cold-spawn window: during it a step's turn
 // is open while the reservation beside it is the reader's own prompt.
-func (lc *chatLifecycle) turnOpenStateLocked() vibekit.TurnOpenState {
+func (lc *chatLifecycle) turnOpenStateLocked() marotte.TurnOpenState {
 	facts, open := lc.openFactsLocked()
 	reserved := lc.reserved && lc.reservedSource.ClientVisibleTurn()
 	// Prompt-class reservations only, so a workflow step's reservation is excluded like a
 	// step turn — which is why a reserved chat is never disowned here.
-	own := reserved || (open && facts.Source != vibekit.TurnSourceWorkflowStep)
+	own := reserved || (open && facts.Source != marotte.TurnSourceWorkflowStep)
 	inFlight := open || reserved
-	return vibekit.TurnOpenState{Open: inFlight, WorkflowStep: inFlight && !own}
+	return marotte.TurnOpenState{Open: inFlight, WorkflowStep: inFlight && !own}
 }
 
 // openTurnFacts is what a chat's open turn IS, taken in ONE acquisition: two reads
@@ -486,8 +486,8 @@ type openTurnFacts struct {
 	// Buf is snapshotted by the caller AFTER the mutex is released — the buffer
 	// guards itself, and lc.mu is never held across it.
 	Buf    *buffer.Buffer
-	Epoch  vibekit.TurnEpoch
-	Source vibekit.TurnOpenSource
+	Epoch  marotte.TurnEpoch
+	Source marotte.TurnOpenSource
 }
 
 // openFactsLocked reports the chat's open turn, or false when none is. Caller holds
@@ -506,7 +506,7 @@ func (lc *chatLifecycle) openFactsLocked() (openTurnFacts, bool) {
 //
 // Through `lookup`, so a read cannot mint a lifecycle for a chat that has never
 // had a turn.
-func (r *turnRegistry) openTurnFor(chatID vibekit.ChatID) (openTurnFacts, bool) {
+func (r *turnRegistry) openTurnFor(chatID marotte.ChatID) (openTurnFacts, bool) {
 	lc, ok := r.lookup(chatID)
 	if !ok {
 		return openTurnFacts{}, false
@@ -517,12 +517,12 @@ func (r *turnRegistry) openTurnFor(chatID vibekit.ChatID) (openTurnFacts, bool) 
 }
 
 // openTurns returns the open turn of every chat that has one, so a connect replay
-// reads the turn rather than the prompt slot, which is empty for every turn vibekit
+// reads the turn rather than the prompt slot, which is empty for every turn marotte
 // did not prompt.
-func (r *turnRegistry) openTurns() map[vibekit.ChatID]openTurnFacts {
+func (r *turnRegistry) openTurns() map[marotte.ChatID]openTurnFacts {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make(map[vibekit.ChatID]openTurnFacts, len(r.chats))
+	out := make(map[marotte.ChatID]openTurnFacts, len(r.chats))
 	for id, lc := range r.chats {
 		lc.mu.Lock()
 		facts, open := lc.openFactsLocked()
@@ -545,10 +545,10 @@ func (r *turnRegistry) openTurns() map[vibekit.ChatID]openTurnFacts {
 //
 // Lock order is registry.mu -> lifecycle.mu, matching openTurns. The predicate is
 // turnOpenStateLocked's, spelled once.
-func (r *turnRegistry) busyChatIDs() []vibekit.ChatID {
+func (r *turnRegistry) busyChatIDs() []marotte.ChatID {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]vibekit.ChatID, 0, len(r.chats))
+	out := make([]marotte.ChatID, 0, len(r.chats))
 	for id, lc := range r.chats {
 		lc.mu.Lock()
 		st := lc.turnOpenStateLocked()
@@ -563,7 +563,7 @@ func (r *turnRegistry) busyChatIDs() []vibekit.ChatID {
 // interrupt records why the turn named by epoch was interrupted, first cause wins.
 // Epoch-scoped so a cause cannot land on a turn it did not describe; first-wins so a
 // user cancel and the tool-use filter firing in one window do not relabel each other.
-func (r *turnRegistry) interrupt(chatID vibekit.ChatID, epoch vibekit.TurnEpoch, cause vibekit.InterruptCause) bool {
+func (r *turnRegistry) interrupt(chatID marotte.ChatID, epoch marotte.TurnEpoch, cause marotte.InterruptCause) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -578,7 +578,7 @@ func (r *turnRegistry) interrupt(chatID vibekit.ChatID, epoch vibekit.TurnEpoch,
 // interruptCause reads a claimed turn's cause, under the turn's OWN lifecycle:
 // re-resolving one by chat id would read the field under a different mutex than the
 // writer's.
-func (r *turnRegistry) interruptCause(t *Turn) vibekit.InterruptCause {
+func (r *turnRegistry) interruptCause(t *Turn) marotte.InterruptCause {
 	lc := t.lc
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -589,7 +589,7 @@ func (r *turnRegistry) interruptCause(t *Turn) vibekit.InterruptCause {
 // Uses lookup rather than lifecycleFor: a declaration for a chat with no lifecycle
 // must not mint one. An empty description is not a declaration and is dropped, so
 // the discharge's own frame cannot wipe a turn's words.
-func (r *turnRegistry) stageStatusDescription(chatID vibekit.ChatID, desc string) {
+func (r *turnRegistry) stageStatusDescription(chatID marotte.ChatID, desc string) {
 	if desc == "" {
 		return
 	}
@@ -628,7 +628,7 @@ func (r *turnRegistry) recordCarrier(t *Turn, carrier turnCarrier) {
 // this chat has no record of that epoch or that turn wrote none. It reaches a
 // RETAINED record as well as an open one, which is what makes it answerable at all:
 // the winner has already finalized by the time a loser asks.
-func (r *turnRegistry) carrierOf(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (turnCarrier, bool) {
+func (r *turnRegistry) carrierOf(chatID marotte.ChatID, epoch marotte.TurnEpoch) (turnCarrier, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -643,7 +643,7 @@ func (r *turnRegistry) carrierOf(chatID vibekit.ChatID, epoch vibekit.TurnEpoch)
 // and reports the total plus whether this was the FIRST summary for it, so several
 // frames for one turn sum and count as one conversation turn. With no turn open the
 // frame stands alone.
-func (r *turnRegistry) stageTurnSummary(chatID vibekit.ChatID, elapsedMs float64) (total float64, first bool) {
+func (r *turnRegistry) stageTurnSummary(chatID marotte.ChatID, elapsedMs float64) (total float64, first bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()

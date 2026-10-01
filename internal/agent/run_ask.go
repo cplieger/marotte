@@ -18,8 +18,8 @@ import (
 	"sync"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // scrubLog strips the CR and LF a wire-sourced value could carry to forge extra
@@ -46,14 +46,14 @@ type runAskKey struct {
 // Add, and every method that hands one back has already DELETED it, so the registry and
 // its caller never hold the same ask at once.
 type runAsk struct {
-	chatID  vibekit.ChatID
-	payload vibekit.RunInputNeededPayload
+	chatID  marotte.ChatID
+	payload marotte.RunInputNeededPayload
 }
 
 // event renders an ask as the frame a client consumes, so the live broadcast and
 // the connect-time replay cannot disagree about its shape.
-func (a *runAsk) event() vibekit.ServerEvent {
-	return vibekit.NewEvent(vibekit.EventRunInputNeeded, a.chatID, a.payload)
+func (a *runAsk) event() marotte.ServerEvent {
+	return marotte.NewEvent(marotte.EventRunInputNeeded, a.chatID, a.payload)
 }
 
 // pendingRunAsks holds the asks nobody has answered.
@@ -224,7 +224,7 @@ func (r *pendingRunAsks) TakeNode(workflowID, nodeID string) []*runAsk {
 // ClearChat drops every ask keyed to a chat that has gone away. A chat's delete also
 // cancels the runs its sessions launched, so an ask keyed here is answerable by nobody
 // and replaying it would show a card for a conversation that no longer exists.
-func (r *pendingRunAsks) ClearChat(chatID vibekit.ChatID) {
+func (r *pendingRunAsks) ClearChat(chatID marotte.ChatID) {
 	if chatID == "" {
 		return
 	}
@@ -248,18 +248,18 @@ func (r *pendingRunAsks) ClearChat(chatID vibekit.ChatID) {
 // other method handing an ask back has already DELETED it, so the registry and its
 // caller never hold the same entry. Sorted by ask id because map iteration is random
 // and both an agent and a test want one answer.
-func (r *pendingRunAsks) SnapshotRun(workflowID string) []vibekit.RunOpenAsk {
+func (r *pendingRunAsks) SnapshotRun(workflowID string) []marotte.RunOpenAsk {
 	if workflowID == "" {
 		return nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out []vibekit.RunOpenAsk
+	var out []marotte.RunOpenAsk
 	for k, a := range r.asks {
 		if k.workflowID != workflowID {
 			continue
 		}
-		out = append(out, vibekit.RunOpenAsk{
+		out = append(out, marotte.RunOpenAsk{
 			AskID:     a.payload.AskID,
 			Question:  a.payload.Question,
 			NodeID:    a.payload.NodeID,
@@ -267,7 +267,7 @@ func (r *pendingRunAsks) SnapshotRun(workflowID string) []vibekit.RunOpenAsk {
 			AskedAt:   a.payload.AskedAt,
 		})
 	}
-	slices.SortFunc(out, func(x, y vibekit.RunOpenAsk) int {
+	slices.SortFunc(out, func(x, y marotte.RunOpenAsk) int {
 		return strings.Compare(x.AskID, y.AskID)
 	})
 	return out
@@ -277,10 +277,10 @@ func (r *pendingRunAsks) SnapshotRun(workflowID string) []vibekit.RunOpenAsk {
 // replayed however old: a parked run has no deadline, so an ask a client saw an hour ago
 // is still all that stands between that run and its next step. The filter matches the SSE
 // subscriber's topic, and a `run:<id>` key is deliberately not a chat.
-func (r *pendingRunAsks) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
+func (r *pendingRunAsks) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]vibekit.ServerEvent, 0, len(r.asks))
+	out := make([]marotte.ServerEvent, 0, len(r.asks))
 	for _, a := range r.asks {
 		if chatFilter != "" && a.chatID != "" && a.chatID != chatFilter {
 			continue
@@ -298,7 +298,7 @@ func (r *pendingRunAsks) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
 // from the replay rather than waiting for a frame that will never re-fire. chatID is the
 // ask's QUEUE KEY and comes from the door, never from the payload — whose `sessionId`
 // names a KAS session, which the client indexes nothing by.
-func (rs *Runs) handleSessionNotify(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rs *Runs) handleSessionNotify(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := rs.translate.SessionNotifyAsk(msg)
 	if !ok {
 		return
@@ -322,7 +322,7 @@ func (rs *Runs) handleSessionNotify(ctx context.Context, chatID vibekit.ChatID, 
 // answering did settle it (SettledByUser); a node completing did not, so that is
 // SettledByMoot — the question stopped being answerable rather than being decided.
 func (rs *Runs) settleAskForNode(
-	ctx context.Context, workflowID, nodeID string, by vibekit.SettledBy,
+	ctx context.Context, workflowID, nodeID string, by marotte.SettledBy,
 ) {
 	for _, a := range rs.asks.TakeNode(workflowID, nodeID) {
 		slog.Info("a parked step moved on, so its question is retired",
@@ -340,7 +340,7 @@ func (rs *Runs) settleAsksForRun(ctx context.Context, workflowID string) {
 		slog.Info("a run ended still holding a question, so the card is retired",
 			"workflow_id", scrubLog(workflowID), "node_id", scrubLog(a.payload.NodeID),
 			"ask_id", scrubLog(a.payload.AskID))
-		rs.announceSettled(ctx, a, vibekit.SettledByMoot)
+		rs.announceSettled(ctx, a, marotte.SettledByMoot)
 	}
 }
 
@@ -360,9 +360,9 @@ func (rs *Runs) restoreAsk(ctx context.Context, a *runAsk) {
 // announceSettled publishes one ask's settlement on the surface it was keyed to — the
 // ASK's own chat id rather than the run's, because a client filtering its stream to one
 // chat has to receive the retirement of the card it was shown.
-func (rs *Runs) announceSettled(ctx context.Context, a *runAsk, by vibekit.SettledBy) {
-	rs.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunInputSettled, a.chatID,
-		vibekit.RunInputSettledPayload{
+func (rs *Runs) announceSettled(ctx context.Context, a *runAsk, by marotte.SettledBy) {
+	rs.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunInputSettled, a.chatID,
+		marotte.RunInputSettledPayload{
 			WorkflowID: a.payload.WorkflowID,
 			AskID:      a.payload.AskID,
 			SettledBy:  by,
@@ -410,7 +410,7 @@ type askInspect struct {
 	State *struct {
 		PauseDetail *askPauseDetail   `json:"pauseDetail"`
 		Root        *askNode          `json:"root"`
-		Status      vibekit.RunStatus `json:"status"`
+		Status      marotte.RunStatus `json:"status"`
 		PauseReason string            `json:"pauseReason"`
 	} `json:"state"`
 }
@@ -430,7 +430,7 @@ type askPauseDetail struct {
 type askNode struct {
 	NodeID           string                `json:"nodeId"`
 	Type             string                `json:"type"`
-	Status           vibekit.RunNodeStatus `json:"status"`
+	Status           marotte.RunNodeStatus `json:"status"`
 	SessionID        string                `json:"sessionId"`
 	AgentName        string                `json:"agentName"`
 	CompletionSignal string                `json:"completionSignal"`
@@ -450,7 +450,7 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 	if json.Unmarshal(raw, &res) != nil || res.State == nil {
 		return
 	}
-	if res.State.Status != vibekit.RunStatusPaused {
+	if res.State.Status != marotte.RunStatusPaused {
 		return
 	}
 	// The signal arm leads: it reaches a park inside a parallel branch, whose reason the
@@ -474,7 +474,7 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 	}
 	a := &runAsk{
 		chatID: rs.askChatID(ctx, workflowID),
-		payload: vibekit.RunInputNeededPayload{
+		payload: marotte.RunInputNeededPayload{
 			WorkflowID:    workflowID,
 			AskID:         keyenc.Join("reconciled", keyenc.Join(path...)),
 			NodeID:        leaf.NodeID,
@@ -498,7 +498,7 @@ func (rs *Runs) reconcileNeedInput(ctx context.Context, workflowID string, raw j
 // live bridge still hosts the run, `run:<workflowId>` when none does. The chat is preferred
 // because keying there reaches both docks while `run:` reaches one — the composer's matcher
 // is the chat id alone. The fallback is also already the right key for a parentless run.
-func (rs *Runs) askChatID(ctx context.Context, workflowID string) vibekit.ChatID {
+func (rs *Runs) askChatID(ctx context.Context, workflowID string) marotte.ChatID {
 	if chatID, sb := rs.hostBridgeChat(ctx, workflowID); sb != nil && chatID != "" {
 		return chatID
 	}
@@ -515,7 +515,7 @@ func needInputParked(n *askNode, trail []string) (leaf *askNode, path []string) 
 		return nil, nil
 	}
 	here := append(append([]string{}, trail...), n.NodeID)
-	if n.Status == vibekit.RunNodeStatusPaused && n.CompletionSignal == needInputSignal {
+	if n.Status == marotte.RunNodeStatusPaused && n.CompletionSignal == needInputSignal {
 		return n, here
 	}
 	for i := range n.Children {
@@ -535,7 +535,7 @@ func pausedLeaf(n *askNode, trail []string) (leaf *askNode, path []string) {
 	}
 	here := append(append([]string{}, trail...), n.NodeID)
 	if len(n.Children) == 0 {
-		if n.Status == vibekit.RunNodeStatusPaused {
+		if n.Status == marotte.RunNodeStatusPaused {
 			return n, here
 		}
 		return nil, nil

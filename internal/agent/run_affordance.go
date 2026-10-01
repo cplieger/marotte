@@ -14,7 +14,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The run-control verb names. Named because this table, the route handlers and
@@ -32,18 +32,18 @@ const (
 // is on both live statuses and neither terminal one. An UNKNOWN status is absent
 // rather than mapped to an empty list, so a future KAS status degrades to a
 // read-only view instead of a wrong control.
-var runStatusVerbs = map[vibekit.RunStatus][]string{
-	vibekit.RunStatusRunning: {verbPause, verbCancel},
-	vibekit.RunStatusPaused:  {verbResume, verbCancel},
+var runStatusVerbs = map[marotte.RunStatus][]string{
+	marotte.RunStatusRunning: {verbPause, verbCancel},
+	marotte.RunStatusPaused:  {verbResume, verbCancel},
 	// A completed run is a record: nothing to retry, nothing to stop.
-	vibekit.RunStatusCompleted: {},
+	marotte.RunStatusCompleted: {},
 	// Retry resets the failed and aborted nodes plus their ancestors, so completed
 	// work survives — unlike relaunching, which starts at step one.
-	vibekit.RunStatusFailed:  {verbRetry},
-	vibekit.RunStatusAborted: {verbRetry},
+	marotte.RunStatusFailed:  {verbRetry},
+	marotte.RunStatusAborted: {verbRetry},
 	// A cancel writes its target status verbatim, so `cancelled` is reachable from
 	// another client of the workspace and is a record like `completed`.
-	vibekit.RunStatusCancelled: {},
+	marotte.RunStatusCancelled: {},
 }
 
 // hostedOnlyVerbs need the process that holds the run's registry entry and cannot
@@ -63,7 +63,7 @@ type runAffordance struct {
 	// Part of the answer rather than a second lookup: it is what the refusal
 	// sentences are ABOUT, and resolving it twice would pay for the run inventory
 	// twice.
-	ParentChat vibekit.ChatID
+	ParentChat marotte.ChatID
 	// Recipe is the run's recipe name off KAS's inventory, "" when unknown. Retry
 	// needs it for the lease it re-arms, and it sits one field from the parent
 	// session on the same read. Not part of the wire answer.
@@ -90,7 +90,7 @@ type runFacts struct {
 	// status is the run's own status, as `inspect` reports it.
 	status string
 	// parentChat is the chat whose agent launched the run, "" when parentless.
-	parentChat vibekit.ChatID
+	parentChat marotte.ChatID
 	// parentName is that chat's display name, for the refusal sentence. Empty for
 	// an unnamed chat, which the sentence then omits rather than quoting nothing.
 	parentName string
@@ -104,7 +104,7 @@ type runFacts struct {
 // affordanceOf answers what may be done to one run. Pure, so the table is
 // testable over (status × parent × hosted) without a bridge or an RPC.
 func affordanceOf(f runFacts) runAffordance {
-	byStatus, known := runStatusVerbs[vibekit.RunStatus(f.status)]
+	byStatus, known := runStatusVerbs[marotte.RunStatus(f.status)]
 	if !known {
 		// The parent chat still travels: the page's step-transcript note needs it
 		// whatever the status is.
@@ -132,7 +132,7 @@ func affordanceOf(f runFacts) runAffordance {
 // process holds the run. It names the launching chat when there is one, because
 // that is the reader's remedy: opening that chat respawns its bridge. A parentless
 // run has no such door, so its sentence says which verb still works.
-func notHostedRefusal(verb string, parentChat vibekit.ChatID, parentName string) string {
+func notHostedRefusal(verb string, parentChat marotte.ChatID, parentName string) string {
 	if parentChat != "" {
 		return "This run is driven by an agent in " + chatLabel(parentChat, parentName) +
 			", and that conversation is not open here, so it cannot be " + pastTense(verb) +
@@ -144,7 +144,7 @@ func notHostedRefusal(verb string, parentChat vibekit.ChatID, parentName string)
 
 // chatLabel names a chat for a sentence a person reads: its name when it has one,
 // its id otherwise, because quoting an empty name names nothing.
-func chatLabel(chatID vibekit.ChatID, name string) string {
+func chatLabel(chatID marotte.ChatID, name string) string {
 	if name == "" {
 		return "chat " + strconv.Quote(string(chatID))
 	}
@@ -195,15 +195,15 @@ func (rs *Runs) affordance(ctx context.Context, workflowID, status string) runAf
 // closed chat is exactly when the reader needs to be told which one to open.
 func (rs *Runs) chatForSession(
 	ctx context.Context, sessionID string,
-) (chatID vibekit.ChatID, name string) {
+) (chatID marotte.ChatID, name string) {
 	if sessionID == "" {
 		return "", ""
 	}
-	// Indexed: vibekit.ChatHeader is 304 bytes, which gocritic's rangeValCopy flags.
+	// Indexed: marotte.ChatHeader is 304 bytes, which gocritic's rangeValCopy flags.
 	headers := rs.chats.List(ctx)
 	for i := range headers {
 		if slices.Contains(headers[i].SessionChain(), sessionID) {
-			return vibekit.ChatID(headers[i].ID), headers[i].Name
+			return marotte.ChatID(headers[i].ID), headers[i].Name
 		}
 	}
 	return "", ""

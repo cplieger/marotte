@@ -3,7 +3,7 @@
 //
 // The tab segment was already deep-linkable (`/settings/permissions`), so this
 // is the last mile — scroll the control into view and flash a ring around it.
-// There is deliberately NO registry, no generator and no search box: vibekit has
+// There is deliberately NO registry, no generator and no search box: marotte has
 // four settings panels, so the ids the panels already carry ARE the index, and a
 // caller naming one that no longer exists degrades to doing nothing rather than
 // to a stale table nobody reads.

@@ -203,7 +203,7 @@ var (
 
 // activeKASVersion is the kiro-cli version this repo runs, read from the pin the
 // image build and Renovate both use. Deliberately not "whatever is newest in the
-// local cache": the census is only meaningful against the version vibekit ships.
+// local cache": the census is only meaningful against the version marotte ships.
 func activeKASVersion(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(entrypointPath)
@@ -223,7 +223,7 @@ point this test at its new home rather than guessing from the local cache.`, ent
 // installed locally and failing when the pin has moved out from under the
 // fixture. The two outcomes are deliberately different: an absent bundle is a
 // machine without the runtime (CI, a fresh clone), while a moved pin is a real
-// change to what vibekit talks to.
+// change to what marotte talks to.
 //
 // A Renovate bump arrives BEFORE the version is deployed anywhere, so the pin
 // failure normally has to be answered against a bundle that is not on the volume
@@ -239,7 +239,7 @@ point this test at its new home rather than guessing from the local cache.`, ent
 //	HOME=<scratch> go test ./internal/kascap/ -run 'TestCapabilityCensus|TestAbsentTrueMatchesTheBundle' -update
 //
 // The `env -u` is the load-bearing part and the reason for this paragraph.
-// Inside vibekit and web-terminal-kiro the agent's OWN environment exports
+// Inside marotte and web-terminal-kiro the agent's OWN environment exports
 // KIRO_KAS_SERVER_PATH and KIRO_KAS_NODE_PATH, a spawned kiro-cli honours them
 // over its own embedded bundle, and every redirect this glob relies on (HOME,
 // XDG_DATA_HOME, even the uid) is then irrelevant. Measured on the 2.19.1 →
@@ -595,7 +595,7 @@ func readSettingKeys(t *testing.T, src string) []string {
 //
 // Deliberately door-BLIND. The read side of this census is a set of regexes over
 // the whole bundle and cannot tell which call a key was read from, so filtering
-// the declared side by door would report a key vibekit sends on the session door
+// the declared side by door would report a key marotte sends on the session door
 // as one it never considered — a permanent false finding in a fixture whose
 // entries are supposed to be decisions somebody still owes. Which door a key
 // belongs on is the goldens' question, and a key on the wrong one is
@@ -624,7 +624,7 @@ func declaredKeys() (capabilities, settings map[string]bool) {
 // read that we have never considered". Measured against 2.18.0 the answer is not
 // zero, which is why the fixture is committed rather than asserted empty.
 //
-// The fixture is NOT a to-do list. Most entries are capabilities vibekit has no
+// The fixture is NOT a to-do list. Most entries are capabilities marotte has no
 // handler for and should not claim. An entry leaves the file by gaining a table
 // row in either direction: send:true with an implementation, or send:false with
 // a because saying why not.
@@ -682,7 +682,7 @@ func censusHeader(version string) string {
 	return `# Client-side keys the kiro-cli agent server reads that internal/kascap does
 # NOT account for: neither sent nor deliberately withheld.
 #
-# This is not a to-do list. Most entries are capabilities vibekit has no handler
+# This is not a to-do list. Most entries are capabilities marotte has no handler
 # for and should not claim. An entry leaves this file by gaining a table row in
 # either direction: send:true with an implementation, or send:false with a
 # because saying why not.

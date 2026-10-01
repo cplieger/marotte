@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -21,7 +21,7 @@ type tabReader interface {
 	// List returns the set in order plus the version it reflects, captured in ONE
 	// critical section. That pairing is the contract, not an implementation
 	// detail — see handleTabs.
-	List() ([]vibekit.TabSubject, uint64)
+	List() ([]marotte.TabSubject, uint64)
 }
 
 // handleTabs serves the open-tab set.
@@ -46,7 +46,7 @@ type tabReader interface {
 // The version is the client's only watermark, and only an EVENT may advance it.
 // This response supplies the baseline a client starts from (or re-lists to after
 // a detected gap); the three rules that consume it are on
-// vibekit.TabsChangedPayload.Version.
+// marotte.TabsChangedPayload.Version.
 func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -57,7 +57,7 @@ func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {
 		// collection rather than 404: a client that cannot read the arrangement
 		// must still boot, and version 0 is the honest answer for a collection
 		// nothing has ever written.
-		webhttp.WriteJSON(w, vibekit.TabList{Tabs: []vibekit.TabSubject{}})
+		webhttp.WriteJSON(w, marotte.TabList{Tabs: []marotte.TabSubject{}})
 		return
 	}
 	open, version := s.tabs.List()
@@ -65,13 +65,13 @@ func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {
 		// An empty set travels as [] rather than null: the field is not optional,
 		// and a client decoding null where it expects an array is a runtime error
 		// on the boot path.
-		open = []vibekit.TabSubject{}
+		open = []marotte.TabSubject{}
 	}
-	out := vibekit.TabList{Tabs: open, Version: version}
+	out := marotte.TabList{Tabs: open, Version: version}
 	if s.agent != nil {
 		// The digest spelling of the same version: the store's collection version
 		// IS the `tabs` subject's, so no second counter is minted for it.
-		out.Subject = &vibekit.SubjectStamp{
+		out.Subject = &marotte.SubjectStamp{
 			Kind:    string(subject.KindTabs),
 			Version: strconv.FormatUint(version, 10),
 			Epoch:   s.agent.Epoch(),

@@ -7,7 +7,7 @@ package translate
 // then goes idle WITHOUT ever answering the session/prompt. Nothing else on the
 // wire says the turn is over: no stopReason, no end_turn, no error frame.
 //
-// For vibekit that is worse than a slow turn. Bridge.Call carries no client-side
+// For marotte that is worse than a slow turn. Bridge.Call carries no client-side
 // deadline by design, so the prompt slot stays held until the bridge dies —
 // until the tab is closed. Every later Send on that chat answers 409 busy, and
 // the two adjacent safety nets do not reach it: command.CancelGrace arms only
@@ -26,7 +26,7 @@ import "strings"
 // interruptSentinel is the whole text of the chunk kiro-cli sends instead of
 // ending the turn.
 //
-// It lives here, beside the matcher, rather than in internal/vibekit: this is a
+// It lives here, beside the matcher, rather than in internal/marotte: this is a
 // foreign system's literal contract, the same class of thing as internal/kascap's
 // table and internal/policyfile's format, and those stay with their contract test
 // rather than moving to the wire-vocabulary package (see #go-rulebook C17).
@@ -35,7 +35,7 @@ const interruptSentinel = "Tool uses were interrupted, waiting for the next user
 // interruptReason is what the transcript's divider says about the stop. The
 // sentinel itself is already shown to the user as ordinary assistant text, so
 // this adds the ATTRIBUTION the sentence leaves out: which layer stopped the
-// turn, and therefore that neither the model nor vibekit failed.
+// turn, and therefore that neither the model nor marotte failed.
 const interruptReason = "Stopped by kiro-cli's tool-use security filter"
 
 // isInterruptSentinel reports whether one assistant text delta IS the sentinel.
@@ -58,7 +58,7 @@ const interruptReason = "Stopped by kiro-cli's tool-use security filter"
 // not model output being tokenised.
 //
 // The second member of kiro-cli's TUI list, "Response was interrupted by the
-// user", is deliberately NOT matched. It echoes a gesture vibekit already handles
+// user", is deliberately NOT matched. It echoes a gesture marotte already handles
 // end to end (CmdCancel clears pending permissions, kills the turn's terminals,
 // sends session/cancel and arms the 10s grace for exactly the case where KAS
 // never answers), so treating model text as a second trigger could only end a

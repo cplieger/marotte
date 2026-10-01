@@ -15,10 +15,10 @@ import (
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/jsoncap/v2"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// keyMessages is vibekit.Chat's JSON name for the transcript array, the one key
+// keyMessages is marotte.Chat's JSON name for the transcript array, the one key
 // the header scan must recognise rather than capture.
 const keyMessages = "messages"
 
@@ -56,12 +56,12 @@ func readCappedFile(path, label string, fileCap chatFileCap) ([]byte, error) {
 
 // readChatFile reads a chat JSON file at path, enforcing fileCap and the
 // TOCTOU grow-during-read guard.
-func readChatFile(path, label string, fileCap chatFileCap) (*vibekit.Chat, error) {
+func readChatFile(path, label string, fileCap chatFileCap) (*marotte.Chat, error) {
 	data, err := readCappedFile(path, label, fileCap)
 	if err != nil {
 		return nil, err
 	}
-	var c vibekit.Chat
+	var c marotte.Chat
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -72,14 +72,14 @@ func readChatFile(path, label string, fileCap chatFileCap) (*vibekit.Chat, error
 // header field flows through with no mapping step; the two facts the messages array carries
 // are derived by the walk instead.
 type chatHeaderOnDisk struct {
-	vibekit.ChatHeader
+	marotte.ChatHeader
 }
 
 // readChatHeader STREAMS a chat file and returns only its header fields, because
 // readHeadersParallel runs this at 8 workers per chat. Two independent gates: maxHeaderScanBytes
 // bounds the scan even when fileCap is unlimited, and fileCap refuses what the full read would
 // refuse anyway, so the sidebar and the transcript agree about which chats exist.
-func readChatHeader(path, label string, fileCap chatFileCap) (*vibekit.ChatHeader, error) {
+func readChatHeader(path, label string, fileCap chatFileCap) (*marotte.ChatHeader, error) {
 	f, info, err := openChatFile(path, label)
 	if err != nil {
 		return nil, err
@@ -102,11 +102,11 @@ func readChatHeader(path, label string, fileCap chatFileCap) (*vibekit.ChatHeade
 // without a file. Every member except `messages` is captured RAW and handed to encoding/json in
 // one object, which keeps chatHeaderOnDisk's field mapping automatic; `messages` is walked at the
 // token level for the message count and the newest turn outcome.
-func decodeChatHeader(r io.Reader) (*vibekit.ChatHeader, error) {
+func decodeChatHeader(r io.Reader) (*marotte.ChatHeader, error) {
 	head := make(map[string]json.RawMessage)
 	var (
 		count int
-		last  vibekit.TurnOutcome
+		last  marotte.TurnOutcome
 	)
 	dec := jsoncap.NewDecoder(r, 0)
 	err := dec.Object(func(key string) error {
@@ -142,13 +142,13 @@ func decodeChatHeader(r io.Reader) (*vibekit.ChatHeader, error) {
 // outcomeProbe is the ONE field the messages walk reads off a message; encoding/json
 // discards every other key without allocating.
 type outcomeProbe struct {
-	TurnOutcome vibekit.TurnOutcome `json:"turn_outcome"`
+	TurnOutcome marotte.TurnOutcome `json:"turn_outcome"`
 }
 
 // scanMessagesArray answers both header facts for a caller that already holds the raw messages
 // array, over the same walk the streaming header path uses. Returns (0, "") for nil, empty or
 // invalid input, and stays usable on a decode failure.
-func scanMessagesArray(raw json.RawMessage) (count int, last vibekit.TurnOutcome) {
+func scanMessagesArray(raw json.RawMessage) (count int, last marotte.TurnOutcome) {
 	if len(raw) == 0 {
 		return 0, ""
 	}
@@ -160,19 +160,19 @@ func scanMessagesArray(raw json.RawMessage) (count int, last vibekit.TurnOutcome
 // messages array carries: how many top-level elements it holds, and the NEWEST turn outcome any
 // of them stamped. A JSON null counts 0; any other non-array value is an error, which agrees
 // with readChatFile — a `messages` member that is not an array fails Unmarshal into
-// vibekit.Chat, so tolerating it here listed a chat in the sidebar that could not be opened.
+// marotte.Chat, so tolerating it here listed a chat in the sidebar that could not be opened.
 //
 // Decode rather than jsoncap's Skip, because the outcome is a field of the element: Decode
 // advances past a complete value, so a non-object element is a TYPE error the walk absorbs with
 // the stream left on the next element and the count intact. A syntax error stops the walk.
-func scanStreamedMessages(dec *jsoncap.Decoder) (int, vibekit.TurnOutcome, error) {
+func scanStreamedMessages(dec *jsoncap.Decoder) (int, marotte.TurnOutcome, error) {
 	ok, err := dec.Open('[')
 	if err != nil || !ok {
 		return 0, "", err
 	}
 	var (
 		count int
-		last  vibekit.TurnOutcome
+		last  marotte.TurnOutcome
 	)
 	for dec.More() {
 		var probe outcomeProbe

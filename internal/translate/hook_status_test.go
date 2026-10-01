@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // hookUpdateFrame builds the `update` object of a hook_update session_info_update with
@@ -28,12 +28,12 @@ func hookUpdateFrame(t *testing.T, name, status string) map[string]any {
 
 // hookCardCase drives one hook_update through the translator and returns the events it
 // broadcast and the calls it buffered.
-func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAttribution) (*[]vibekit.ServerEvent, []vibekit.ToolCall) {
+func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAttribution) (*[]marotte.ServerEvent, []marotte.ToolCall) {
 	t.Helper()
 	base, events := newEventCaptureDeps()
 	deps := &hookStatusDeps{baseDeps: base, enabled: enabled}
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	tr.HandleSessionInfoUpdate(t.Context(), chatID, mustJSON(t, frame), attr)
 	return events, base.bufStore.GetOrInit(chatID).ToolCalls
 }
@@ -54,14 +54,14 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 		if got.ID != "hook-op-1" {
 			t.Errorf("ID = %q, want %q", got.ID, "hook-op-1")
 		}
-		if got.Kind != vibekit.ToolKindHook {
-			t.Errorf("Kind = %q, want %q", got.Kind, vibekit.ToolKindHook)
+		if got.Kind != marotte.ToolKindHook {
+			t.Errorf("Kind = %q, want %q", got.Kind, marotte.ToolKindHook)
 		}
 		if got.Title != "Hook fired: probe-save" {
 			t.Errorf("Title = %q, want %q", got.Title, "Hook fired: probe-save")
 		}
-		if got.Status != vibekit.ToolCompleted {
-			t.Errorf("Status = %q, want %q", got.Status, vibekit.ToolCompleted)
+		if got.Status != marotte.ToolCompleted {
+			t.Errorf("Status = %q, want %q", got.Status, marotte.ToolCompleted)
 		}
 		if got.Output != "" || got.Input != nil {
 			t.Errorf("Output = %q, Input = %s; want no outcome text on the card", got.Output, got.Input)
@@ -80,8 +80,8 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 				if len(calls) != 1 {
 					t.Fatalf("buffered tool calls = %d, want 1", len(calls))
 				}
-				if calls[0].Status != vibekit.ToolFailed {
-					t.Errorf("hookToolStatus(%q) = %q, want %q", status, calls[0].Status, vibekit.ToolFailed)
+				if calls[0].Status != marotte.ToolFailed {
+					t.Errorf("hookToolStatus(%q) = %q, want %q", status, calls[0].Status, marotte.ToolFailed)
 				}
 			})
 		}

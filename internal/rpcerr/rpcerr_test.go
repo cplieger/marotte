@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // rpcErr builds the error shape a KAS failure arrives as.
 func rpcErr(message, data string) error {
-	e := &vibekit.RPCError{Code: -32603, Message: message}
+	e := &marotte.RPCError{Code: -32603, Message: message}
 	if data != "" {
 		e.Data = json.RawMessage(data)
 	}
@@ -107,7 +107,7 @@ func TestText(t *testing.T) {
 // safe to put in a log line, an SSE payload and a banner. Both are reachable from
 // the wire: the cap covers Details' raw-JSON fallback, which is unbounded on a
 // Zod failure over a large params object, and the control-character stripping
-// covers a provider message vibekit did not author.
+// covers a provider message marotte did not author.
 func TestTextBoundsAndSanitizes(t *testing.T) {
 	t.Parallel()
 

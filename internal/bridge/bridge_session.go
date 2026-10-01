@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"maps"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/kascap"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/kascap"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 type sessionMode struct {
@@ -41,14 +41,14 @@ type sessionConfigOption struct {
 // sessionConfigChoice is one selectable value in a config-option select. For the
 // model option the rate multiplier, the effort capability and the model's default
 // tier all ride _meta.kiro (moved off ModelInfo on v3), through the shared
-// vibekit.ModelChoiceMeta — this decoder read the multiplier alone, which is the
+// marotte.ModelChoiceMeta — this decoder read the multiplier alone, which is the
 // same one-field-short divergence that cost the picker its credit readout on the
 // live-update path.
 type sessionConfigChoice struct {
 	Value       string                  `json:"value"`
 	Name        string                  `json:"name"`
 	Description string                  `json:"description"`
-	Meta        vibekit.ModelChoiceMeta `json:"_meta"`
+	Meta        marotte.ModelChoiceMeta `json:"_meta"`
 }
 
 // sessionCreated is the session/new and session/load result.
@@ -104,12 +104,12 @@ func (b *Bridge) withSessionMeta(params map[string]any) map[string]any {
 // Choosing the model HERE rather than afterwards is what fixes a silent loss: `auto`
 // has no effort tiers, so KAS drops any level sent while a session sits on it. Keyed
 // into the SAME _meta.kiro map, because a second _meta block would replace the first.
-func (b *Bridge) withSessionChoices(params map[string]any, opts *vibekit.StartOpts) map[string]any {
+func (b *Bridge) withSessionChoices(params map[string]any, opts *marotte.StartOpts) map[string]any {
 	choices := make(map[string]any, 2)
-	if opts.Model != "" && opts.Model != vibekit.ModelAuto {
+	if opts.Model != "" && opts.Model != marotte.ModelAuto {
 		choices[metaKeyModelID] = opts.Model
 	}
-	if opts.Effort != "" && vibekit.EffortLevel(opts.Effort).Valid() {
+	if opts.Effort != "" && marotte.EffortLevel(opts.Effort).Valid() {
 		choices[metaKeyEffortLevel] = opts.Effort
 	}
 	if len(choices) == 0 {
@@ -129,7 +129,7 @@ func (b *Bridge) withSessionChoices(params map[string]any, opts *vibekit.StartOp
 	return params
 }
 
-func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error {
+func (b *Bridge) newSession(ctx context.Context, opts *marotte.StartOpts) error {
 	resp, err := b.Call(ctx, methodSessionNew, b.withSessionChoices(b.withSessionMeta(map[string]any{
 		"cwd": b.workDir, "mcpServers": []any{},
 	}), opts))
@@ -144,7 +144,7 @@ func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error 
 		return fmt.Errorf("session/new returned invalid session id: %q", result.SessionID)
 	}
 	b.mu.Lock()
-	b.sessionID = vibekit.SessionID(result.SessionID)
+	b.sessionID = marotte.SessionID(result.SessionID)
 	b.applySessionResultLocked(&result, "")
 	sid := string(b.sessionID)
 	current := b.currentMode
@@ -166,7 +166,7 @@ func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error 
 // exits before answering initialize, killing the bridge. Best-effort — a failure
 // leaves the session on KAS's default rather than refusing to open the chat.
 func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
-	if model == "" || model == vibekit.ModelAuto {
+	if model == "" || model == marotte.ModelAuto {
 		return
 	}
 	b.mu.Lock()
@@ -200,10 +200,10 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 	if !supervised {
 		return
 	}
-	if _, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
-		vibekit.KeySessionID: sessionID,
-		keyConfigID:          vibekit.ConfigOptionAutopilot,
-		keyConfigValue:       vibekit.ConfigValueAutopilotOff,
+	if _, err := b.Call(ctx, marotte.MethodSetConfigOption, map[string]any{
+		marotte.KeySessionID: sessionID,
+		keyConfigID:          marotte.ConfigOptionAutopilot,
+		keyConfigValue:       marotte.ConfigValueAutopilotOff,
 	}); err != nil {
 		// The log line is the diagnostic and stays. What changes is that the OUTCOME is
 		// now readable, so the coordinator can report the divergence to the client the
@@ -233,7 +233,7 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 		return
 	}
 	if _, err := b.Call(ctx, methodSetMode, map[string]any{
-		vibekit.KeySessionID: sessionID,
+		marotte.KeySessionID: sessionID,
 		"modeId":             wantMode,
 	}); err != nil {
 		slog.Warn("apply initial session mode", "mode", wantMode, "session_id", sessionID, "error", err)
@@ -244,11 +244,11 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 	b.mu.Unlock()
 }
 
-func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error {
+func (b *Bridge) loadSession(ctx context.Context, opts *marotte.StartOpts) error {
 	// CallAt rather than Call: KAS answers a load by REPLAYING the session as
 	// notifications that precede the result, so the caller needs the result's position.
 	resp, seq, err := b.CallAt(ctx, methodSessionLoad, b.withSessionMeta(map[string]any{
-		vibekit.KeySessionID: opts.SessionID, "cwd": b.workDir, "mcpServers": []any{},
+		marotte.KeySessionID: opts.SessionID, "cwd": b.workDir, "mcpServers": []any{},
 	}))
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)
@@ -265,7 +265,7 @@ func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error
 	b.applyInitialEffort(ctx, sid, opts.Effort)
 	// And the supervised gate, which a resume alone would not need: KAS persists
 	// `autopilot` per session and its own fork copies none of it, so a supervised chat's
-	// tangent would otherwise run in autopilot while vibekit's record says supervised.
+	// tangent would otherwise run in autopilot while marotte's record says supervised.
 	// Idempotent elsewhere: a no-op when the chat is not supervised.
 	b.applySupervised(ctx, sid, opts.Supervised)
 	return nil
@@ -274,10 +274,10 @@ func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error
 // adoptLoadedSession copies a session/load result onto the bridge, falling back to
 // the requested model when the result is absent or unparseable. Split out of
 // loadSession so the lock is released before the post-load config-option calls.
-func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *vibekit.RPCResponse) {
+func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *marotte.RPCResponse) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.sessionID = vibekit.SessionID(acpSessionID)
+	b.sessionID = marotte.SessionID(acpSessionID)
 	if resp.Result != nil {
 		var result sessionCreated
 		parseErr := json.Unmarshal(resp.Result, &result)
@@ -289,7 +289,7 @@ func (b *Bridge) adoptLoadedSession(acpSessionID, fallbackModel string, resp *vi
 			"error", parseErr, "result_len", len(resp.Result))
 	}
 	if b.modelID == "" {
-		b.modelID = vibekit.ModelID(fallbackModel)
+		b.modelID = marotte.ModelID(fallbackModel)
 	}
 }
 
@@ -306,9 +306,9 @@ func (b *Bridge) applySessionResultLocked(r *sessionCreated, fallbackModel strin
 			slog.Warn("session reported an empty mode list; keeping the previous catalog",
 				"current_mode", r.Modes.CurrentModeID)
 		} else {
-			modes := make([]vibekit.SessionMode, 0, len(r.Modes.AvailableModes))
+			modes := make([]marotte.SessionMode, 0, len(r.Modes.AvailableModes))
 			for _, m := range r.Modes.AvailableModes {
-				modes = append(modes, vibekit.SessionMode{
+				modes = append(modes, marotte.SessionMode{
 					ID: m.ID, Name: m.Name, Description: m.Description, Source: m.Meta.Kiro.Source,
 				})
 			}
@@ -320,7 +320,7 @@ func (b *Bridge) applySessionResultLocked(r *sessionCreated, fallbackModel strin
 	b.reportWorkflowsDisagreement(r.Meta.WorkflowsEnabled)
 	b.applyModelConfigOptionLocked(r.ConfigOptions)
 	if b.modelID == "" {
-		b.modelID = vibekit.ModelID(fallbackModel)
+		b.modelID = marotte.ModelID(fallbackModel)
 	}
 }
 
@@ -355,7 +355,7 @@ func (b *Bridge) reportWorkflowsDisagreement(resolved *bool) {
 	if *resolved == declared {
 		return
 	}
-	slog.Warn("session resolved the workflows setting against what vibekit declared; "+
+	slog.Warn("session resolved the workflows setting against what marotte declared; "+
 		"the agent's workflow tools are not what this spawn asked for",
 		"declared", declared, "resolved", *resolved)
 }
@@ -382,7 +382,7 @@ func declaredSessionWorkflows(s kascap.Spawn) bool {
 func (b *Bridge) applyEffortConfigOptionLocked(opts []sessionConfigOption) {
 	for i := range opts {
 		opt := &opts[i]
-		if opt.ID != vibekit.ConfigOptionEffort {
+		if opt.ID != marotte.ConfigOptionEffort {
 			continue
 		}
 		var current string
@@ -403,13 +403,13 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 	b.applyEffortConfigOptionLocked(opts)
 	for i := range opts {
 		opt := &opts[i]
-		if opt.ID != vibekit.ConfigOptionModel {
+		if opt.ID != marotte.ConfigOptionModel {
 			continue
 		}
 		var current string
 		_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
 		if current != "" {
-			b.modelID = vibekit.ModelID(current)
+			b.modelID = marotte.ModelID(current)
 		}
 		// Same asymmetry the modes branch spells out: a `model` option carrying NO
 		// choices reports the catalog as unknown, not empty. `currentValue` above is
@@ -419,12 +419,12 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 				"current_model", b.modelID)
 			return
 		}
-		catalog := make([]vibekit.SessionModel, 0, len(opt.Options))
+		catalog := make([]marotte.SessionModel, 0, len(opt.Options))
 		for _, c := range opt.Options {
 			if c.Value == "" {
 				continue
 			}
-			catalog = append(catalog, vibekit.SessionModel{
+			catalog = append(catalog, marotte.SessionModel{
 				ID: c.Value, Name: c.Name, Description: c.Description,
 				RateMultiplier:     c.Meta.Kiro.RateMultiplier,
 				HasEffort:          c.Meta.Kiro.HasEffort,

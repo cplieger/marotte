@@ -4,7 +4,7 @@
 // KAS owns the entire MCP OAuth flow but keeps only an in-process memory
 // copy of the results — no KAS-side file — and asks the client to hold
 // them, gated on `_meta.kiro.secretStorage` in initialize. That declaration
-// is CONDITIONAL on a store existing (vibekit.StartOpts.SecretStorage):
+// is CONDITIONAL on a store existing (marotte.StartOpts.SecretStorage):
 // declaring it without one is worse than declining, because KAS rethrows a
 // store failure into the MCP connect path.
 //
@@ -19,8 +19,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/secretstore"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/secretstore"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // secretKeyParams is the shape of a get/delete request: `{key}`.
@@ -48,7 +48,7 @@ type secretGetBody struct {
 //
 // Answered synchronously because every operation is bounded and KAS can issue
 // a store followed immediately by a get on the MCP connection path.
-func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+func (in *inbound) handleKiroSecretRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroSecretGet:
 		in.respondBridge(ctx, chatID, msg, secretGetResult(in.secrets, msg.Params), nil)
@@ -99,11 +99,11 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 	if params != nil {
 		if err := json.Unmarshal(params, &p); err != nil {
 			slog.Warn("v3 secret store: undecodable params", "error", err)
-			return nil, &vibekit.RPCError{Code: -32602, Message: "secret/store: params must be {key, value}"}
+			return nil, &marotte.RPCError{Code: -32602, Message: "secret/store: params must be {key, value}"}
 		}
 	}
 	if p.Key == "" {
-		return nil, &vibekit.RPCError{Code: -32602, Message: "secret/store: key is required"}
+		return nil, &marotte.RPCError{Code: -32602, Message: "secret/store: key is required"}
 	}
 	if store == nil {
 		// Unreachable in normal operation: a runtime with no store does not declare
@@ -111,12 +111,12 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 		// method it was not offered, which is a protocol error and answered as
 		// one rather than reported as a successful write that never happened.
 		slog.Warn("v3 secret store: no store configured, credential not persisted", "key", p.Key)
-		return nil, &vibekit.RPCError{Code: -32603, Message: "secret/store: no credential store configured"}
+		return nil, &marotte.RPCError{Code: -32603, Message: "secret/store: no credential store configured"}
 	}
 	if err := store.Set(ctx, p.Key, p.Value); err != nil {
 		// Key only — the value is a token or a client secret.
 		slog.Error("v3 secret store: persist failed", "key", p.Key, "error", err)
-		return nil, &vibekit.RPCError{Code: -32603, Message: "secret/store: " + err.Error()}
+		return nil, &marotte.RPCError{Code: -32603, Message: "secret/store: " + err.Error()}
 	}
 	slog.Debug("v3 secret store: persisted", "key", p.Key)
 	return map[string]any{}, nil
@@ -128,7 +128,7 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 func secretDeleteResult(ctx context.Context, store *secretstore.Store, params json.RawMessage) (map[string]any, error) {
 	p := decodeSecretKey(params)
 	if p.Key == "" {
-		return nil, &vibekit.RPCError{Code: -32602, Message: "secret/delete: key is required"}
+		return nil, &marotte.RPCError{Code: -32602, Message: "secret/delete: key is required"}
 	}
 	if store == nil {
 		// Nothing was ever stored, so the key is already absent.
@@ -136,7 +136,7 @@ func secretDeleteResult(ctx context.Context, store *secretstore.Store, params js
 	}
 	if err := store.Delete(ctx, p.Key); err != nil {
 		slog.Error("v3 secret delete: persist failed", "key", p.Key, "error", err)
-		return nil, &vibekit.RPCError{Code: -32603, Message: "secret/delete: " + err.Error()}
+		return nil, &marotte.RPCError{Code: -32603, Message: "secret/delete: " + err.Error()}
 	}
 	return map[string]any{}, nil
 }

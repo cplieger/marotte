@@ -43,7 +43,7 @@ import {
 } from "./store.js";
 import { projectTurns, type Turn, type TurnWindowBase } from "./turns.js";
 
-const DB_NAME = "vibekit-boot";
+const DB_NAME = "marotte-boot";
 const STORE_NAME = "snapshot";
 const RECORD_KEY = "current";
 

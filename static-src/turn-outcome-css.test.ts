@@ -232,7 +232,7 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
     // The one stated exception, and it is an exception because the table cannot
     // express it: `unknown` and `cancelled` are both `stopped`, and a pure partition
     // would paint an unreadable end the same yellow a user's own cancel gets. That
-    // overturns a ruling this stylesheet already made — an end vibekit could not read
+    // overturns a ruling this stylesheet already made — an end marotte could not read
     // has no honest hue.
     //
     // FIVE rules, one per surface, which is the cost of keeping it. Uniform for the

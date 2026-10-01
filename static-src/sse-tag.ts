@@ -15,7 +15,7 @@
 // subscription resolves and reconnects only when the tag actually changed.
 
 /** The `localStorage` key under which this browser profile's tag lives. */
-export const PROFILE_TAG_KEY = "vibekit.sse-client";
+export const PROFILE_TAG_KEY = "marotte.sse-client";
 
 /** The header's grammar (webhttp.ValidRequestID); a stored value outside it is
  *  treated as absent, exactly as the server treats the header. */

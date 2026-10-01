@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func BenchmarkStore_AppendMessage(b *testing.B) {
@@ -15,16 +15,16 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 		b.Fatalf("NewStore: %v", err)
 	}
 
-	chatID := vibekit.ChatID("bench-chat")
+	chatID := marotte.ChatID("bench-chat")
 	ctx := b.Context()
 
 	// Create chat with 10 pre-existing messages.
-	_, err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {
+	_, err = s.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "benchmark chat"
 		for i := range 10 {
-			c.Messages = append(c.Messages, vibekit.Message{
+			c.Messages = append(c.Messages, marotte.Message{
 				ID:      fmt.Sprintf("pre-%d", i),
-				Role:    vibekit.RoleAssistant,
+				Role:    marotte.RoleAssistant,
 				Content: strings.Repeat("x", 200),
 			})
 		}
@@ -35,9 +35,9 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 	}
 
 	// Realistic message payload (~500 bytes content).
-	msg := &vibekit.Message{
+	msg := &marotte.Message{
 		ID:      "bench-msg",
-		Role:    vibekit.RoleAssistant,
+		Role:    marotte.RoleAssistant,
 		Content: strings.Repeat("benchmark content ", 28), // ~504 bytes
 	}
 

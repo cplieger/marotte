@@ -46,8 +46,8 @@ COPY . ./
 # cplieger/tool-catalog's daily publisher; both registries' MIT license
 # texts travel INSIDE the JSON) is DATA on a daily upstream cadence —
 # the runtime engine refreshes it at boot and on a schedule
-# (VIBEKIT_TOOL_CATALOG_REFRESH), so this baked copy only serves a
-# container that has never reached the publisher. vibekit's
+# (MAROTTE_TOOL_CATALOG_REFRESH), so this baked copy only serves a
+# container that has never reached the publisher. marotte's
 # bundled-tools.json (this app's own tools) is not compiled in:
 # the engine re-applies it to EVERY loaded catalog (baked, cached,
 # fetched), so it ships beside the binary instead. The verify pass
@@ -297,8 +297,8 @@ RUN /tmp/package/lib/tsc --project static-src/tsconfig.build.json --noEmit && \
 # matching no package in the build with no error and no warning, so a wrong one
 # ships the "dev" fallback from a build that reported success.
 RUN CGO_ENABLED=0 go build \
-    -ldflags="-s -w -X github.com/cplieger/vibekit/internal/version.Build=${BUILD_VERSION}" \
-    -o /app/vibekit .
+    -ldflags="-s -w -X github.com/cplieger/marotte/internal/version.Build=${BUILD_VERSION}" \
+    -o /app/marotte .
 
 # --- Final stage: minimal runtime ---
 FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
@@ -307,7 +307,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Baked-in dependencies — the minimal stable runtime surface that
-# vibekit and kiro-cli rely on. Everything else (Node, Python, Go,
+# marotte and kiro-cli rely on. Everything else (Node, Python, Go,
 # Java, Rust, all LSPs, all forge CLIs) is installed on demand by the
 # in-process tools engine (the cplieger/toolbelt library, wired in
 # internal/composition) into the persistent /config/tools/ volume,
@@ -316,7 +316,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # What's here and why:
 #   - ca-certificates: HTTPS trust for every download
 #   - curl: entrypoint kiro-cli download + manual install commands
-#   - git: vibekit's gitexec, file history, forge integrations
+#   - git: marotte's gitexec, file history, forge integrations
 #          (the checkpoint system does NOT use git — it is a
 #          content-addressed blob/event store)
 #   - openssh-client: git over ssh, gh ssh
@@ -382,11 +382,11 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 #                         $HOME/.kiro: the v3 engine (KAS) ignores KIRO_HOME
 #                         and hardcodes os.homedir()/.kiro, while the Rust
 #                         wrapper (settings CLI) honors KIRO_HOME — pointing
-#                         KIRO_HOME inside HOME is the only way vibekit, the
+#                         KIRO_HOME inside HOME is the only way marotte, the
 #                         wrapper, and KAS agree on one directory. (Verified
 #                         against the KAS 2.12 bundle: zero KIRO_HOME reads;
 #                         home-dir comes from --home-dir or os.homedir().)
-#   /config/*.json      — config.json (vibekit prefs), tools.json (v2
+#   /config/*.json      — config.json (marotte prefs), tools.json (v2
 #                         manifest), tools-state.json (engine state), mcp.json
 #   /config/chats/      — chat history
 #
@@ -403,7 +403,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 # directory earlier. They were also real exposure: they sit ahead of /usr/bin, the
 # entrypoint never creates or repairs them, and a binary planted while such a tree
 # was group/other-writable is executed by root. Removing them removes that path
-# rather than policing it (see vibekit.md invariant 6). Inherited pre-v2 volumes are
+# rather than policing it (see marotte.md invariant 6). Inherited pre-v2 volumes are
 # the one regressing case — a binary in npm/bin with no tools/bin symlink stops
 # resolving; it surfaces immediately as "command not found", and the remedy is to
 # symlink it into tools/bin.
@@ -424,7 +424,7 @@ ENV KIRO_HOME="/config/home/.kiro"
 ENV LANG="C.UTF-8"
 RUN mkdir -p /config/home/.kiro && chmod 777 /config/home /config/home/.kiro
 
-# Where a composer upload lands (vibekit.DefaultUploadDir). Created at BUILD
+# Where a composer upload lands (marotte.DefaultUploadDir). Created at BUILD
 # time, as root, because the runtime uid is the operator's to choose — the public
 # compose example sets `user: "${PUID:-1000}:${PGID:-1000}"`, and a non-root uid
 # cannot create a directory at / (root-owned, 0755), so the server's own
@@ -449,12 +449,12 @@ RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passw
 # Copy compiled web server from builder
 COPY --from=builder /app /app
 
-# Install artifacts under /opt/vibekit/ so they don't clutter / in the
+# Install artifacts under /opt/marotte/ so they don't clutter / in the
 # file browser. The blacklist in internal/filebrowse/paths.go already
 # hides /opt, so users never see these.
-COPY --chmod=755 entrypoint.sh /opt/vibekit/entrypoint.sh
-COPY --from=builder /tmp/tool-catalog.json /opt/vibekit/tool-catalog.json
-COPY bundled-tools.json /opt/vibekit/bundled-tools.json
+COPY --chmod=755 entrypoint.sh /opt/marotte/entrypoint.sh
+COPY --from=builder /tmp/tool-catalog.json /opt/marotte/tool-catalog.json
+COPY bundled-tools.json /opt/marotte/bundled-tools.json
 
 WORKDIR /workspace
 EXPOSE 9847
@@ -471,9 +471,9 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
     CMD ["curl", "-sf", "http://127.0.0.1:9847/api/health"]
 # tini is PID 1 so orphans get reaped.
 #
-# vibekit spawns git, kiro-cli and the agent's own terminals, and each of those can
+# marotte spawns git, kiro-cli and the agent's own terminals, and each of those can
 # leave a grandchild whose parent exits first. An orphan reparents to PID 1, and
-# PID 1 was vibekit — a Go program that waits the children it started and nothing
+# PID 1 was marotte — a Go program that waits the children it started and nothing
 # else, so an orphan's exit status was never collected and the process stayed on the
 # table as a zombie forever. Measured before this: 1,172 zombies of 1,246 processes,
 # 610 of them `git`, all with ppid 1, against a `pids.max` of `max` as the only
@@ -483,4 +483,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
 # the Go runtime's own child bookkeeping, so it belongs in PID 1. `--` separates
 # tini's arguments from the entrypoint's; entrypoint.sh keeps its own `exec`, so the
 # server still runs as tini's direct child and signals still reach it.
-ENTRYPOINT ["/usr/bin/tini", "--", "/opt/vibekit/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/marotte/entrypoint.sh"]

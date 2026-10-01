@@ -7,24 +7,24 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // turnEndedOutcomes returns the outcome of every turn_ended broadcast so far.
-func turnEndedOutcomes(t *testing.T, h *Runtime) []vibekit.TurnOutcome {
+func turnEndedOutcomes(t *testing.T, h *Runtime) []marotte.TurnOutcome {
 	t.Helper()
-	var out []vibekit.TurnOutcome
+	var out []marotte.TurnOutcome
 	for _, e := range bufferedSince(h, 0) {
 		var msg struct {
-			Type    vibekit.EventType `json:"type"`
+			Type    marotte.EventType `json:"type"`
 			Payload struct {
-				Outcome vibekit.TurnOutcome `json:"outcome"`
+				Outcome marotte.TurnOutcome `json:"outcome"`
 			} `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		if msg.Type == vibekit.EventTurnEnded {
+		if msg.Type == marotte.EventTurnEnded {
 			out = append(out, msg.Payload.Outcome)
 		}
 	}
@@ -39,28 +39,28 @@ func TestCloseOnWireEnd_StampsTheOutcomeOnTheAssistantMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "here is half an answer")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "")
 
 	c, ok := cs.Get(t.Context(), "c1")
 	if !ok {
 		t.Fatal("chat record vanished")
 	}
-	var stamped *vibekit.Message
+	var stamped *marotte.Message
 	for i := range c.Messages {
-		if c.Messages[i].Role == vibekit.RoleAssistant {
+		if c.Messages[i].Role == marotte.RoleAssistant {
 			stamped = &c.Messages[i]
 		}
 	}
 	if stamped == nil {
 		t.Fatal("no assistant message was persisted")
 	}
-	if stamped.TurnOutcome != vibekit.TurnOutcomeFailed {
+	if stamped.TurnOutcome != marotte.TurnOutcomeFailed {
 		t.Errorf("persisted outcome = %q, want failed — a reload reads this, not the SSE", stamped.TurnOutcome)
 	}
-	if stamped.TurnStopReasonRaw != vibekit.StopReasonError {
-		t.Errorf("persisted raw stop reason = %q, want %q", stamped.TurnStopReasonRaw, vibekit.StopReasonError)
+	if stamped.TurnStopReasonRaw != marotte.StopReasonError {
+		t.Errorf("persisted raw stop reason = %q, want %q", stamped.TurnStopReasonRaw, marotte.StopReasonError)
 	}
-	if got := turnEndedOutcomes(t, h); len(got) != 1 || got[0] != vibekit.TurnOutcomeFailed {
+	if got := turnEndedOutcomes(t, h); len(got) != 1 || got[0] != marotte.TurnOutcomeFailed {
 		t.Errorf("broadcast outcomes = %v, want exactly [failed]", got)
 	}
 }
@@ -73,15 +73,15 @@ func TestCloseOnWireEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "as much as the budget allowed")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonMaxTokens, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonMaxTokens, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	for i := range c.Messages {
 		m := &c.Messages[i]
-		if m.Role != vibekit.RoleAssistant {
+		if m.Role != marotte.RoleAssistant {
 			continue
 		}
-		if m.TurnOutcome != vibekit.TurnOutcomeCompleted || !m.TurnTruncated {
+		if m.TurnOutcome != marotte.TurnOutcomeCompleted || !m.TurnTruncated {
 			t.Errorf("outcome=%q truncated=%v, want completed + truncated", m.TurnOutcome, m.TurnTruncated)
 		}
 	}
@@ -95,27 +95,27 @@ func TestCloseOnWireEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 // and vanished from the turn index.
 func TestCloseOnWireEnd_AnEmptyFailedTurnPersistsAMarker(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
-	var marker *vibekit.Message
+	var marker *marotte.Message
 	for i := range c.Messages {
-		if c.Messages[i].EventKind == vibekit.EventTurnOutcome {
+		if c.Messages[i].EventKind == marotte.EventTurnOutcome {
 			marker = &c.Messages[i]
 		}
 	}
 	if marker == nil {
 		t.Fatalf("no outcome marker was persisted, so the failure is unreadable after a reload. messages=%d", len(c.Messages))
 	}
-	if marker.Role != vibekit.RoleEvent || marker.TurnOutcome != vibekit.TurnOutcomeFailed {
+	if marker.Role != marotte.RoleEvent || marker.TurnOutcome != marotte.TurnOutcomeFailed {
 		t.Errorf("marker = %+v, want a RoleEvent carrying failed", marker)
 	}
 }
@@ -128,20 +128,20 @@ func TestCloseOnWireEnd_AnEmptyFailedTurnPersistsAMarker(t *testing.T) {
 // Cost, accepted: one invisible EventTurnOutcome row per clean empty prompted turn.
 func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
-	var marker *vibekit.Message
+	var marker *marotte.Message
 	for i := range c.Messages {
-		if c.Messages[i].EventKind == vibekit.EventTurnOutcome {
+		if c.Messages[i].EventKind == marotte.EventTurnOutcome {
 			marker = &c.Messages[i]
 		}
 	}
@@ -149,7 +149,7 @@ func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo(t *test
 		t.Fatalf("an empty COMPLETED prompted turn persisted no carrier, so it is "+
 			"indistinguishable on disk from a turn nothing closed. messages=%d", len(c.Messages))
 	}
-	if marker.Role != vibekit.RoleEvent || marker.TurnOutcome != vibekit.TurnOutcomeCompleted {
+	if marker.Role != marotte.RoleEvent || marker.TurnOutcome != marotte.TurnOutcomeCompleted {
 		t.Errorf("marker = %+v, want a RoleEvent carrying completed", marker)
 	}
 }
@@ -164,24 +164,24 @@ func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo(t *test
 // chat reading `running` with Cancel showing and Send meaning steer, indefinitely.
 func TestCloseOnWireEnd_AnEmptyEngineTurnPersistsNoMarkerButStillAnnounces(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	// A turn vibekit did not prompt: the first frame of the bracket opens a
+	// A turn marotte did not prompt: the first frame of the bracket opens a
 	// wireTurnStart turn, and nothing folds into it.
 	h.stageTurnBuffer(t, "c1")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 0 {
 		t.Errorf("an empty engine-opened turn persisted %d messages, so a headerless card opens "+
 			"for a turn holding nothing: %+v", len(c.Messages), c.Messages)
 	}
-	if got := turnEndedOutcomes(t, h); len(got) != 1 || got[0] != vibekit.TurnOutcomeCompleted {
-		t.Errorf("turn_ended outcomes = %v, want exactly [%s]", got, vibekit.TurnOutcomeCompleted)
+	if got := turnEndedOutcomes(t, h); len(got) != 1 || got[0] != marotte.TurnOutcomeCompleted {
+		t.Errorf("turn_ended outcomes = %v, want exactly [%s]", got, marotte.TurnOutcomeCompleted)
 	}
 }

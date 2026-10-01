@@ -7,7 +7,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/marotte/internal/command"
 )
 
 // The grace is armed against a specific turn generation, so these tests use a
@@ -31,7 +31,7 @@ func newPromptingBridge(t *testing.T) (*sharedBridge, context.Context, uint64) {
 }
 
 // TestArmCancelGrace_UnblocksAnUnackedCancel is the whole point of the budget:
-// KAS never answers the pending prompt, so vibekit cancels its context itself
+// KAS never answers the pending prompt, so marotte cancels its context itself
 // and the blocked Call returns.
 func TestArmCancelGrace_UnblocksAnUnackedCancel(t *testing.T) {
 	// In a bubble the WHEN is assertable, not just the whether. On a real clock

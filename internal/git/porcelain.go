@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 // statusArgs is the one status invocation. `-z` for NUL-delimited records (see

@@ -15,22 +15,22 @@ package translate
 // Two doors rather than one because a poisoned title KAS STORED is re-offered on
 // every resume, so gating one rung alone lets the same string in through the other.
 //
-// Nothing vibekit sends can stop the producer, measured on the pinned bundle: the
+// Nothing marotte sends can stop the producer, measured on the pinned bundle: the
 // LLM titler's kickoff reads a feature-config registry built from two providers,
 // the KAS process environment and upstream's experiment service, so no client
-// capability key reaches it. This door is the only lever vibekit holds.
+// capability key reaches it. This door is the only lever marotte holds.
 
 import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/marotte/internal/sanitize"
 )
 
 // KASDefaultSessionTitle is KAS's placeholder (DEFAULT_SESSION_TITLE), returned by
 // every session/new and re-emitted on the focus channel after a revert empties the
-// transcript. Adopting it swaps vibekit's own placeholder for a worse one AND makes
+// transcript. Adopting it swaps marotte's own placeholder for a worse one AND makes
 // the chat non-default-named, which locks out the real title arriving later.
 const KASDefaultSessionTitle = "New Session"
 

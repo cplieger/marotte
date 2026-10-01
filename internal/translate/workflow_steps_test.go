@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // stepToolFrame builds one workflow-step tool_call frame. nodePath is what makes
@@ -39,7 +39,7 @@ func stepToolFrame(id, workflowID, nodeID string, nodePath []string) map[string]
 func TestStepTurnCap_ReportsOnceAtTheCap(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	path := []string{"wf", "step-a"}
 
 	for i := range StepTurnCap + 5 {
@@ -66,7 +66,7 @@ func TestStepTurnCap_StaysSilentBelowTheCap(t *testing.T) {
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 
 	for i := range StepTurnCap - 1 {
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"),
+		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"),
 			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", []string{"wf", "step-a"})), FrameAttribution{})
 	}
 	if len(deps.stepCapBreaches) != 0 {
@@ -80,7 +80,7 @@ func TestStepTurnCap_StaysSilentBelowTheCap(t *testing.T) {
 func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	half := StepTurnCap / 2
 	for i := range half {
@@ -106,7 +106,7 @@ func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 func TestRunProgress_EveryStepToolCallReportsProgress(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	path := []string{"wf", "step-a"}
 
 	for i := range 3 {
@@ -132,7 +132,7 @@ func TestRunProgress_ADroppedCardStillRefillsTheWindow(t *testing.T) {
 	meta := frame["_meta"].(map[string]any)["kiro"].(map[string]any)
 	meta["toolId"] = "fetch_cloud_config"
 
-	tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, frame), FrameAttribution{})
+	tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, frame), FrameAttribution{})
 
 	if want := []string{"wf_1"}; !slices.Equal(base.runProgress, want) {
 		t.Errorf("progress reported = %v, want %v: a rendering guard must not decide "+
@@ -140,7 +140,7 @@ func TestRunProgress_ADroppedCardStillRefillsTheWindow(t *testing.T) {
 			base.runProgress, want)
 	}
 	// The card itself still goes, because that half IS the guard's job.
-	if n := len(base.bufStore.GetOrInit(vibekit.ChatID("c1")).ToolCalls); n != 0 {
+	if n := len(base.bufStore.GetOrInit(marotte.ChatID("c1")).ToolCalls); n != 0 {
 		t.Errorf("buffered tool calls = %d, want 0: the internal-tool card is still dropped", n)
 	}
 }
@@ -173,7 +173,7 @@ func TestRunProgress_IgnoresANonStepToolCall(t *testing.T) {
 func TestStepTurnCap_IgnoresANonStepToolCall(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	for i := range StepTurnCap + 5 {
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -196,7 +196,7 @@ func TestStepTurnCap_IgnoresANonStepToolCall(t *testing.T) {
 func TestStepTurnCap_CountsPerRunNotPerNodePath(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	// One shared path. Two DIFFERENT runs — an agent-launched run reaches KAS
 	// directly, so the single-run-per-recipe rule does not keep these apart.
 	path := []string{"wf", "step-a"}
@@ -232,7 +232,7 @@ func TestStepTurnCap_CountsPerRunNotPerNodePath(t *testing.T) {
 func TestStepTurnCap_HalfTheCapEachDoesNotTripEitherRun(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	path := []string{"wf", "step-a"}
 
 	for i := range StepTurnCap / 2 {
@@ -315,7 +315,7 @@ func TestStepRef_AttributesAnAskToItsRun(t *testing.T) {
 			tr.RecordStepSession("sess_step", "wf_1", "build")
 
 			id := int64(7)
-			tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 				ID: &id,
 				Params: mustJSON(t, map[string]any{
 					"sessionId": tc.sessionID,

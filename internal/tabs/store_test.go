@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestOpen_IsIdempotentOnKindAndRef is the flag the client's open resolution
@@ -49,7 +49,7 @@ func TestOpen_IsIdempotentOnKindAndRef(t *testing.T) {
 func TestOpen_IsIdempotentPerKind(t *testing.T) {
 	s, _ := newTestStore(t)
 	chat := mustOpen(t, s, chatSpec("/workspace/a.ts"))
-	editor := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindEditor, Ref: "/workspace/a.ts"})
+	editor := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/workspace/a.ts"})
 	if chat.ID == editor.ID {
 		t.Fatalf("a chat and an editor with the same ref share id %q; the key is (kind, ref)", chat.ID)
 	}
@@ -65,16 +65,16 @@ func TestOpen_IsIdempotentPerKind(t *testing.T) {
 func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 	cases := []struct {
 		desc string
-		spec vibekit.OpenTab
+		spec marotte.OpenTab
 		want error
 	}{
-		{desc: "a kind nobody declared", spec: vibekit.OpenTab{Kind: "sidebar", Ref: "x"}, want: ErrBadKind},
-		{desc: "the empty kind", spec: vibekit.OpenTab{Ref: "x"}, want: ErrBadKind},
-		{desc: "plan, deleted from the client on 2026-08-25", spec: vibekit.OpenTab{Kind: "plan"}, want: ErrBadKind},
-		{desc: "a chat with no ref", spec: vibekit.OpenTab{Kind: vibekit.TabKindChat}, want: ErrBadRef},
-		{desc: "an editor with no ref", spec: vibekit.OpenTab{Kind: vibekit.TabKindEditor}, want: ErrBadRef},
-		{desc: "a singleton carrying a ref", spec: vibekit.OpenTab{Kind: vibekit.TabKindSettings, Ref: "general"}, want: ErrBadRef},
-		{desc: "a ref one byte over the bound", spec: vibekit.OpenTab{Kind: vibekit.TabKindEditor, Ref: strings.Repeat("p", MaxRefBytes+1)}, want: ErrBadRef},
+		{desc: "a kind nobody declared", spec: marotte.OpenTab{Kind: "sidebar", Ref: "x"}, want: ErrBadKind},
+		{desc: "the empty kind", spec: marotte.OpenTab{Ref: "x"}, want: ErrBadKind},
+		{desc: "plan, deleted from the client on 2026-08-25", spec: marotte.OpenTab{Kind: "plan"}, want: ErrBadKind},
+		{desc: "a chat with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindChat}, want: ErrBadRef},
+		{desc: "an editor with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindEditor}, want: ErrBadRef},
+		{desc: "a singleton carrying a ref", spec: marotte.OpenTab{Kind: marotte.TabKindSettings, Ref: "general"}, want: ErrBadRef},
+		{desc: "a ref one byte over the bound", spec: marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: strings.Repeat("p", MaxRefBytes+1)}, want: ErrBadRef},
 	}
 	for _, tc := range cases {
 		t.Run(strings.ReplaceAll(tc.desc, " ", "-"), func(t *testing.T) {
@@ -83,7 +83,7 @@ func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Errorf("Open(%+v) error = %v, want %v", tc.spec, err, tc.want)
 			}
-			if created || version != 0 || sub != (vibekit.TabSubject{}) {
+			if created || version != 0 || sub != (marotte.TabSubject{}) {
 				t.Errorf("Open(%+v) = (%+v, created %v, v%d) on a refusal, want the zero subject, created false and version 0",
 					tc.spec, sub, created, version)
 			}
@@ -131,9 +131,9 @@ func TestOpen_PlacesAChildAfterItsParentsExistingChildren(t *testing.T) {
 	s, _ := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-parent"))
 	other := mustOpen(t, s, chatSpec("c-other"))
-	kid1 := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf-1", Parent: parent.ID, Owns: true})
-	kid2 := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf-2", Parent: parent.ID, Owns: true})
-	grandkid := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindEditor, Ref: "/w/a.ts", Parent: kid1.ID})
+	kid1 := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-1", Parent: parent.ID, Owns: true})
+	kid2 := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-2", Parent: parent.ID, Owns: true})
+	grandkid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.ts", Parent: kid1.ID})
 
 	tabs, _ := s.List()
 	want := []string{parent.ID, kid1.ID, grandkid.ID, kid2.ID, other.ID}
@@ -154,7 +154,7 @@ func TestOpen_PlacesAChildAfterItsParentsExistingChildren(t *testing.T) {
 func TestOpen_PromotesATabWhoseParentIsNotOpen(t *testing.T) {
 	s, dir := newTestStore(t)
 	top := mustOpen(t, s, chatSpec("c-top"))
-	orphan := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf-9", Parent: "a-tab-that-closed"})
+	orphan := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-9", Parent: "a-tab-that-closed"})
 
 	if orphan.Parent != "" {
 		t.Errorf("Open with an absent parent returned Parent %q, want it cleared", orphan.Parent)
@@ -177,8 +177,8 @@ func TestOpen_PromotesATabWhoseParentIsNotOpen(t *testing.T) {
 func TestClose_RemovesTheSubtreeInOneMutation(t *testing.T) {
 	s, dir := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-parent"))
-	kid := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf-1", Parent: parent.ID})
-	grandkid := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindEditor, Ref: "/w/a.ts", Parent: kid.ID})
+	kid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-1", Parent: parent.ID})
+	grandkid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.ts", Parent: kid.ID})
 	survivor := mustOpen(t, s, chatSpec("c-survivor"))
 	_, before := s.List()
 
@@ -211,7 +211,7 @@ func TestClose_RemovesTheSubtreeInOneMutation(t *testing.T) {
 func TestClose_ScattersDoNotEscape(t *testing.T) {
 	s, _ := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-parent"))
-	kid := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf-1", Parent: parent.ID})
+	kid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-1", Parent: parent.ID})
 	other := mustOpen(t, s, chatSpec("c-other"))
 	if _, err := s.Reorder(t.Context(), []string{kid.ID, other.ID, parent.ID}); err != nil {
 		t.Fatalf("Setup: Reorder: %v", err)
@@ -433,13 +433,13 @@ func TestList_ReturnsACopy(t *testing.T) {
 func TestPrune_DropsWhatNoLongerResolvesAndPromotesTheOrphans(t *testing.T) {
 	s, dir := newTestStore(t)
 	gone := mustOpen(t, s, chatSpec("c-gone"))
-	kid := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf-1", Parent: gone.ID})
-	grandkid := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindEditor, Ref: "/w/a.ts", Parent: kid.ID})
+	kid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-1", Parent: gone.ID})
+	grandkid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.ts", Parent: kid.ID})
 	stays := mustOpen(t, s, chatSpec("c-stays"))
 	_, before := s.List()
 
-	dropped, version, err := s.Prune(t.Context(), func(sub vibekit.TabSubject) bool {
-		return sub.Kind != vibekit.TabKindChat || sub.Ref != "c-gone"
+	dropped, version, err := s.Prune(t.Context(), func(sub marotte.TabSubject) bool {
+		return sub.Kind != marotte.TabKindChat || sub.Ref != "c-gone"
 	})
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
@@ -455,7 +455,7 @@ func TestPrune_DropsWhatNoLongerResolvesAndPromotesTheOrphans(t *testing.T) {
 	if got := idsOf(tabs); !slices.Equal(got, []string{kid.ID, grandkid.ID, stays.ID}) {
 		t.Errorf("List() after Prune = %v, want the promoted child, its own child, and the survivor", got)
 	}
-	byID := map[string]vibekit.TabSubject{}
+	byID := map[string]marotte.TabSubject{}
 	for _, tab := range tabs {
 		byID[tab.ID] = tab
 	}
@@ -476,10 +476,10 @@ func TestPrune_DropsWhatNoLongerResolvesAndPromotesTheOrphans(t *testing.T) {
 func TestPrune_ChangesNothingWhenEverythingResolves(t *testing.T) {
 	s, _ := newTestStore(t)
 	mustOpen(t, s, chatSpec("c-a"))
-	mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindDocs})
+	mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindDocs})
 	before, beforeVersion := s.List()
 
-	dropped, version, err := s.Prune(t.Context(), func(vibekit.TabSubject) bool { return true })
+	dropped, version, err := s.Prune(t.Context(), func(marotte.TabSubject) bool { return true })
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -499,7 +499,7 @@ func TestPrune_ChangesNothingWhenEverythingResolves(t *testing.T) {
 func TestPrune_ANilPredicateResolvesEverything(t *testing.T) {
 	s, _ := newTestStore(t)
 	parent := mustOpen(t, s, chatSpec("c-a"))
-	kid := mustOpen(t, s, vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf-1", Parent: parent.ID})
+	kid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-1", Parent: parent.ID})
 	before, beforeVersion := s.List()
 
 	dropped, version, err := s.Prune(t.Context(), nil)
@@ -523,10 +523,10 @@ func TestPrune_ANilPredicateResolvesEverything(t *testing.T) {
 // unrepresentable through the API — but a person with an editor can write one, and
 // a recursive walk would exhaust the stack on it.
 func TestClosure_TerminatesOnACycle(t *testing.T) {
-	tabs := []vibekit.TabSubject{
-		{ID: "a", Kind: vibekit.TabKindChat, Ref: "c-a", Parent: "b"},
-		{ID: "b", Kind: vibekit.TabKindChat, Ref: "c-b", Parent: "a"},
-		{ID: "c", Kind: vibekit.TabKindChat, Ref: "c-c"},
+	tabs := []marotte.TabSubject{
+		{ID: "a", Kind: marotte.TabKindChat, Ref: "c-a", Parent: "b"},
+		{ID: "b", Kind: marotte.TabKindChat, Ref: "c-b", Parent: "a"},
+		{ID: "c", Kind: marotte.TabKindChat, Ref: "c-c"},
 	}
 	got := closure(tabs, "a")
 	if len(got) != 2 {
@@ -542,7 +542,7 @@ func TestClosure_TerminatesOnACycle(t *testing.T) {
 
 // labels renders ids as the names a failure message can be read with, because a
 // list of two hex ids says nothing about which tab was in the wrong place.
-func labels(tabs []vibekit.TabSubject, names map[string]string) []string {
+func labels(tabs []marotte.TabSubject, names map[string]string) []string {
 	out := make([]string, 0, len(tabs))
 	for _, t := range tabs {
 		if name, ok := names[t.ID]; ok {

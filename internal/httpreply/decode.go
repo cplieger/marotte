@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -24,7 +24,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	// Cap + decode + reject-trailing is webhttp.DecodeJSONInto (shared with the
-	// fleet); vibekit keeps its Content-Type gate, the 413/400 split, and its
+	// fleet); marotte keeps its Content-Type gate, the 413/400 split, and its
 	// bare {"error":…} envelope on top — DecodeJSONInto writes nothing itself.
 	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {
 		if refuseTooLarge(w, r, err) {

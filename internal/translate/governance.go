@@ -6,7 +6,7 @@ package translate
 // every session/new and session/load (newSession / hydrateSessionForLoad in the
 // acp-server bundle), and re-pushes it during a prompt when
 // governance.refreshIfChanged() detects a change. It is an A→C notification
-// (outbound.extNotification) vibekit just receives — there is no request/reply.
+// (outbound.extNotification) marotte just receives — there is no request/reply.
 //
 // Wire shape (verified against the KAS 2.12 acp-server bundle + a live probe):
 //
@@ -31,7 +31,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // v3GovernanceState is the _kiro/governance/state notification payload.
@@ -56,12 +56,12 @@ type v3GovernanceFeatures struct {
 // payload converts the wire shape into the domain SSE/REST payload, stamping
 // Known=true (this only runs on a real notification). SessionID is intentionally
 // dropped — governance is account-global, not session-scoped.
-func (w v3GovernanceState) payload() vibekit.GovernanceStatePayload {
-	return vibekit.GovernanceStatePayload{
+func (w v3GovernanceState) payload() marotte.GovernanceStatePayload {
+	return marotte.GovernanceStatePayload{
 		Known:          true,
 		IsEnterprise:   w.IsEnterprise,
 		DisabledReason: w.DisabledReason,
-		Features: vibekit.GovernanceFeatures{
+		Features: marotte.GovernanceFeatures{
 			MCPEnabled:           w.Features.MCPEnabled,
 			WebToolsEnabled:      w.Features.WebToolsEnabled,
 			UsageAnalytics:       w.Features.UsageAnalytics,
@@ -77,13 +77,13 @@ func (w v3GovernanceState) payload() vibekit.GovernanceStatePayload {
 // the domain payload. Exported so the runtime can reuse it for the copy the utility
 // bridge receives (whose notifications don't flow through this dispatcher) —
 // keeping one wire→domain conversion. Returns false on empty/invalid params.
-func DecodeGovernanceState(raw json.RawMessage) (vibekit.GovernanceStatePayload, bool) {
+func DecodeGovernanceState(raw json.RawMessage) (marotte.GovernanceStatePayload, bool) {
 	if len(raw) == 0 {
-		return vibekit.GovernanceStatePayload{}, false
+		return marotte.GovernanceStatePayload{}, false
 	}
 	var w v3GovernanceState
 	if err := json.Unmarshal(raw, &w); err != nil {
-		return vibekit.GovernanceStatePayload{}, false
+		return marotte.GovernanceStatePayload{}, false
 	}
 	return w.payload(), true
 }
@@ -95,7 +95,7 @@ func DecodeGovernanceState(raw json.RawMessage) (vibekit.GovernanceStatePayload,
 // subagent-session copy is skipped (KAS may re-emit per session; the parent
 // copy carries the identical account-global flags) — the same dedup guard
 // safety.go / code_references.go use.
-func (t *Translator) HandleGovernanceState(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandleGovernanceState(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3GovernanceState](msg, "governance/state")
 	if !ok {
 		return
@@ -105,5 +105,5 @@ func (t *Translator) HandleGovernanceState(ctx context.Context, chatID vibekit.C
 	}
 	payload := p.payload()
 	t.governance.SetGovernance(payload)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventGovernanceState, "", payload))
 }

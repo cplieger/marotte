@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // errCompactRefused is the one failure a caller can surface. KAS returns a
@@ -21,7 +21,7 @@ var errCompactRefused = errors.New("can't compact right now — finish or cancel
 // CmdCompact compacts the chat's context through KAS's native verb. Requires
 // a live resident session, since compaction operates on the session's own
 // message log.
-func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCo
 		return nil, StatusError(http.StatusConflict, errNoBridge)
 	}
 
-	resp, err := bridge.Call(ctx, vibekit.MethodSessionCompact, SessionParams(bridge))
+	resp, err := bridge.Call(ctx, marotte.MethodSessionCompact, SessionParams(bridge))
 	if err != nil {
 		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)
@@ -53,7 +53,7 @@ func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCo
 	// not an error and must not be synthesized from `success`. The narrow
 	// `BridgeAccess` parameter is what enforces that: no store, no broadcaster,
 	// so none of it is expressible here. Keep it narrow. Outcomes and the two
-	// withholding paths: `vibekit-acp.md` "Upstream 2.21.1".
+	// withholding paths: `marotte-acp.md` "Upstream 2.21.1".
 	slog.Info("compact accepted", "chat", cmd.ChatID)
 	return responseWith(nil), nil
 }

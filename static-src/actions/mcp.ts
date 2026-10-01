@@ -190,7 +190,7 @@ interface ImportResult {
   outcome: "created" | "unchanged";
 }
 
-/** Per-entry outcomes plus notes on keys vibekit recognises but cannot
+/** Per-entry outcomes plus notes on keys marotte recognises but cannot
  *  store. */
 export interface ImportServersResult {
   results: ImportResult[];
@@ -233,7 +233,7 @@ export function summariseImport(res: ImportServersResult | null): string {
   if (onlyNote !== undefined) {
     parts.push(onlyNote);
   } else if (notes.length > 1) {
-    parts.push(`${notes.length} keys vibekit does not store were ignored`);
+    parts.push(`${notes.length} keys marotte does not store were ignored`);
   }
   return parts.join(". ") + ".";
 }
@@ -373,7 +373,7 @@ export const getResourceContent = apiAction<{ server: string; uri: string }, MCP
 //
 // Rescue a sign-in whose redirect landed on the wrong machine. KAS binds its
 // OAuth redirect listener on the CONTAINER's localhost, so a browser reaching
-// vibekit from a phone or another laptop is sent to its own localhost, where
+// marotte from a phone or another laptop is sent to its own localhost, where
 // nothing is listening. The user pastes that dead address here and the server
 // replays it inward. Server contract and its validation:
 // `internal/hub/mcp_oauth_relay.go`.

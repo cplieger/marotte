@@ -14,10 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/kascap"
-	"github.com/cplieger/vibekit/internal/modeltext"
-	"github.com/cplieger/vibekit/internal/version"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/kascap"
+	"github.com/cplieger/marotte/internal/modeltext"
+	"github.com/cplieger/marotte/internal/version"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // scannerLineCap is the per-frame content cap for the bridge's stdout: a full
@@ -37,20 +37,20 @@ const stderrLineCap = 64 * 1024
 // errBridgeExited aliases the exported sentinel Call returns when a waiter is
 // unblocked by readLoop's post-exit drain. It must stay an ALIAS: two distinct values
 // with the same text would make errors.Is fail and the retry loop spin on a corpse.
-var errBridgeExited = vibekit.ErrBridgeExited
+var errBridgeExited = marotte.ErrBridgeExited
 
 // errBridgeNotStarted aliases the exported sentinel every write returns when the
 // bridge has no stdin handle. An ALIAS for errBridgeExited's reason: two values
 // with one text defeat errors.Is at the call sites that classify them.
-var errBridgeNotStarted = vibekit.ErrBridgeNotStarted
+var errBridgeNotStarted = marotte.ErrBridgeNotStarted
 
 // ACP RPC method names, re-exported for package-local use. The canonical definitions
-// live in vibekit/methods.go so the protocol vocabulary is discoverable in one place.
+// live in marotte/methods.go so the protocol vocabulary is discoverable in one place.
 const (
-	methodInitialize  = vibekit.MethodInitialize
-	methodSessionNew  = vibekit.MethodSessionNew
-	methodSessionLoad = vibekit.MethodSessionLoad
-	methodSetMode     = vibekit.MethodSetMode
+	methodInitialize  = marotte.MethodInitialize
+	methodSessionNew  = marotte.MethodSessionNew
+	methodSessionLoad = marotte.MethodSessionLoad
+	methodSetMode     = marotte.MethodSetMode
 )
 
 // metaKeyKiro is the vendor namespace inside an ACP `_meta` object. Every extension
@@ -58,7 +58,7 @@ const (
 // level up or down is IGNORED rather than rejected.
 const metaKeyKiro = "kiro"
 
-// The two per-session composer choices vibekit sends inside _meta.kiro on session/new.
+// The two per-session composer choices marotte sends inside _meta.kiro on session/new.
 // KAS reads them as `kiroMeta.modelId` and `kiroMeta.effortLevel`.
 const (
 	metaKeyModelID     = "modelId"
@@ -105,23 +105,23 @@ type Bridge struct {
 	// the interface directly would give a *io.WriteCloser nobody reading the call
 	// site could love.
 	stdin   atomic.Pointer[stdinPipe]
-	modes   atomic.Pointer[[]vibekit.SessionMode]
+	modes   atomic.Pointer[[]marotte.SessionMode]
 	stdout  *frameReader
 	pending map[int64]chan pendingReply
-	notifCh chan vibekit.Notification
+	notifCh chan marotte.Notification
 	done    chan struct{}
 	// catalog is the UNFILTERED advertised set. Models derives the picker's list
 	// from it and ApplyServedModels derives the entitlement ids, so a deprecated
 	// model the account still holds cannot be filtered out of the check.
-	catalog   atomic.Pointer[[]vibekit.SessionModel]
+	catalog   atomic.Pointer[[]marotte.SessionModel]
 	agentKiro atomic.Pointer[AgentKiroCapabilities]
 	cmd       *exec.Cmd
 	// envAllow re-permits names the credential screen would drop (bridge_env.go).
 	envAllow     map[string]struct{}
 	cliPath      string
-	modelID      vibekit.ModelID
+	modelID      marotte.ModelID
 	workDir      string
-	sessionID    vibekit.SessionID
+	sessionID    marotte.SessionID
 	currentMode  string
 	sessionTitle string
 	// effortLevel is the tier the session last REPORTED, off the `effortLevel` option's
@@ -200,7 +200,7 @@ func New(cliPath, workDir string, opts ...Option) *Bridge {
 		cliPath: cliPath,
 		workDir: workDir,
 		pending: make(map[int64]chan pendingReply),
-		notifCh: make(chan vibekit.Notification, 256),
+		notifCh: make(chan marotte.Notification, 256),
 		done:    make(chan struct{}),
 	}
 	for _, o := range opts {
@@ -210,7 +210,7 @@ func New(cliPath, workDir string, opts ...Option) *Bridge {
 }
 
 // SessionID returns the bridge's ACP session id. Safe from any goroutine.
-func (b *Bridge) SessionID() vibekit.SessionID {
+func (b *Bridge) SessionID() marotte.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionID
@@ -227,7 +227,7 @@ func (b *Bridge) SessionLoadSeq() uint64 {
 }
 
 // ModelID returns the currently-selected model id. Safe from any goroutine.
-func (b *Bridge) ModelID() vibekit.ModelID {
+func (b *Bridge) ModelID() marotte.ModelID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.modelID
@@ -290,7 +290,7 @@ func (b *Bridge) AgentKiroCapabilities() AgentKiroCapabilities {
 
 // Modes returns the available session modes as declared on session/new or
 // session/load. The returned slice is frozen; callers MUST NOT mutate it.
-func (b *Bridge) Modes() []vibekit.SessionMode {
+func (b *Bridge) Modes() []marotte.SessionMode {
 	if p := b.modes.Load(); p != nil {
 		return *p
 	}
@@ -299,7 +299,7 @@ func (b *Bridge) Modes() []vibekit.SessionMode {
 
 // Catalog returns the unfiltered catalog reported by the session result.
 // Frozen; callers MUST NOT mutate it.
-func (b *Bridge) Catalog() []vibekit.SessionModel {
+func (b *Bridge) Catalog() []marotte.SessionModel {
 	if p := b.catalog.Load(); p != nil {
 		return *p
 	}
@@ -308,12 +308,12 @@ func (b *Bridge) Catalog() []vibekit.SessionModel {
 
 // Models returns the catalog with [Deprecated] / [Legacy] entries filtered out
 // (modeltext.Hidden), derived from Catalog so the two cannot disagree.
-func (b *Bridge) Models() []vibekit.SessionModel {
+func (b *Bridge) Models() []marotte.SessionModel {
 	catalog := b.Catalog()
 	if catalog == nil {
 		return nil
 	}
-	models := make([]vibekit.SessionModel, 0, len(catalog))
+	models := make([]marotte.SessionModel, 0, len(catalog))
 	for _, model := range catalog {
 		if !modeltext.Hidden(model.Description) {
 			models = append(models, model)
@@ -323,7 +323,7 @@ func (b *Bridge) Models() []vibekit.SessionModel {
 }
 
 // NotifCh returns incoming ACP notifications, each carrying the read loop's sequence.
-func (b *Bridge) NotifCh() <-chan vibekit.Notification { return b.notifCh }
+func (b *Bridge) NotifCh() <-chan marotte.Notification { return b.notifCh }
 
 // SetModel performs an in-session model swap via session/set_config_option (configId
 // "model") — the v3 replacement for the removed session/set_model. On failure the
@@ -332,16 +332,16 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	b.mu.Lock()
 	sessionID := b.sessionID
 	b.mu.Unlock()
-	_, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
-		vibekit.KeySessionID: sessionID,
-		keyConfigID:          vibekit.ConfigOptionModel,
+	_, err := b.Call(ctx, marotte.MethodSetConfigOption, map[string]any{
+		marotte.KeySessionID: sessionID,
+		keyConfigID:          marotte.ConfigOptionModel,
 		keyConfigValue:       modelID,
 	})
 	if err != nil {
 		return err
 	}
 	b.mu.Lock()
-	b.modelID = vibekit.ModelID(modelID)
+	b.modelID = marotte.ModelID(modelID)
 	// A swap can reset the session's effort level and the bridge cannot see that it did:
 	// KAS reconciles against the NEW model's tier list (measured on 2.19.1 — a swap to
 	// `auto`, which offers none, destroys it). Clearing makes the next call assert.
@@ -356,7 +356,7 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 // CLEARS the cache. An invalid level is dropped rather than sent, and the cache is
 // written from the REPLY: KAS silently ignores a level the current model lacks.
 func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
-	if level == "" || !vibekit.EffortLevel(level).Valid() {
+	if level == "" || !marotte.EffortLevel(level).Valid() {
 		return nil
 	}
 	b.mu.Lock()
@@ -366,9 +366,9 @@ func (b *Bridge) EnsureEffort(ctx context.Context, level string) error {
 	if level == current {
 		return nil
 	}
-	resp, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
-		vibekit.KeySessionID: sessionID,
-		keyConfigID:          vibekit.ConfigOptionEffort,
+	resp, err := b.Call(ctx, marotte.MethodSetConfigOption, map[string]any{
+		marotte.KeySessionID: sessionID,
+		keyConfigID:          marotte.ConfigOptionEffort,
 		keyConfigValue:       level,
 	})
 	if err != nil {
@@ -468,7 +468,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 				"writeTextFile": true,
 				// fs._meta.kiro.{stat,readDirectory,delete} claim KAS's own fs verbs, and
 				// declaring them CONFINES rather than grants: the else-branch is KAS's own
-				// NodeFileSystem with no vibekit path check. readFile / writeFile are
+				// NodeFileSystem with no marotte path check. readFile / writeFile are
 				// deliberately ABSENT — claiming them moves writes off the guarded rung.
 				"_meta": map[string]any{metaKeyKiro: map[string]any{
 					"stat":          true,
@@ -476,8 +476,8 @@ func (b *Bridge) initialize(ctx context.Context) error {
 					"delete":        true,
 				}},
 			},
-			// terminal:true routes every agent shell command through vibekit's own
-			// terminal/* handlers, so vibekit owns the pid, argv and output ring. THE
+			// terminal:true routes every agent shell command through marotte's own
+			// terminal/* handlers, so marotte owns the pid, argv and output ring. THE
 			// TRAP: registering any client tool whose id is in KAS's CORE_IO_TOOL_IDS
 			// flips `hasClientIOTools` and silently unbounds the agent's ExecuteBash.
 			"terminal":    true,
@@ -485,7 +485,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
 		},
 		"clientInfo": map[string]any{
-			"name": "vibekit", "title": "Vibekit for Kiro", "version": version.Build,
+			"name": "marotte", "title": "Marotte for Kiro", "version": version.Build,
 		},
 	})
 	if err != nil {

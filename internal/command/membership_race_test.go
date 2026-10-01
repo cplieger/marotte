@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestMembership_ConcurrentCreateAndDeleteOfOneChat asserts the pair the two
@@ -40,14 +40,14 @@ func TestMembership_ConcurrentCreateAndDeleteOfOneChat(t *testing.T) {
 		// The delete needs an id, so the chat is created first and the RACE is a
 		// second create of the same op against the delete of what it produced.
 		first := createChat(t, mem, "op-race")
-		chatID := vibekit.ChatID(first.Chat.ID)
+		chatID := marotte.ChatID(first.Chat.ID)
 
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
 			_, _ = mem.CreateChatAndOpen(t.Context(), ChatCreate{
-				OpID: "op-race", Init: func(c *vibekit.Chat) { c.Name = "racer" },
+				OpID: "op-race", Init: func(c *marotte.Chat) { c.Name = "racer" },
 			})
 		}()
 		go func() {
@@ -84,7 +84,7 @@ func TestMembership_TwoOpensRaceForTheFinalSlot(t *testing.T) {
 		for j, ref := range []string{"c-alpha", "c-beta"} {
 			wg.Go(func() {
 				_, errs[j] = mem.OpenTab(t.Context(),
-					vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: ref}, "op-race")
+					marotte.OpenTab{Kind: marotte.TabKindChat, Ref: ref}, "op-race")
 			})
 		}
 		wg.Wait()
@@ -122,7 +122,7 @@ func TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
 		mem, flaky, _ := newFlakyMembership(t, store)
 		opened := createChat(t, mem, "op-a")
-		chatID := vibekit.ChatID(opened.Chat.ID)
+		chatID := marotte.ChatID(opened.Chat.ID)
 		flaky.failCloseOnce()
 
 		var wg sync.WaitGroup
@@ -134,7 +134,7 @@ func TestMembership_ADeleteWhoseTabCloseFailsRetriesUnderRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, _ = mem.OpenTab(t.Context(),
-				vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: string(chatID)}, "op-open")
+				marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(chatID)}, "op-open")
 		}()
 		wg.Wait()
 
@@ -173,11 +173,11 @@ func newRacedMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.Store
 type hookedChats struct {
 	*testsupport.InMemoryChatStore
 	hook func()
-	on   vibekit.ChatID
+	on   marotte.ChatID
 	once sync.Once
 }
 
-func (h *hookedChats) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+func (h *hookedChats) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	c, ok := h.InMemoryChatStore.Get(ctx, id)
 	if id == h.on {
 		h.once.Do(h.hook)
@@ -208,7 +208,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 		Chats: chats, Tabs: st, Bus: &tabBus{}, Teardown: &recordingTeardown{},
 	})
 	first := createChat(t, mem, "op-race")
-	chatID := vibekit.ChatID(first.Chat.ID)
+	chatID := marotte.ChatID(first.Chat.ID)
 
 	deleted := make(chan struct{})
 	chats.on = chatID
@@ -227,7 +227,7 @@ func TestMembership_ADeleteCannotInterleaveWithACreate(t *testing.T) {
 	// A repeat of the same op, so it resolves to the chat above and reaches the
 	// hook with the record present.
 	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
-		OpID: "op-race", Init: func(c *vibekit.Chat) { c.Name = "racer" },
+		OpID: "op-race", Init: func(c *marotte.Chat) { c.Name = "racer" },
 	})
 	if err != nil {
 		t.Fatalf("the replayed create = %v, want it to succeed", err)

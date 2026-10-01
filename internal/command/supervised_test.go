@@ -12,18 +12,18 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func supervisedReq(t *testing.T, chatID vibekit.ChatID, enabled bool) *vibekit.ClientCommand {
+func supervisedReq(t *testing.T, chatID marotte.ChatID, enabled bool) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.SetSupervisedModeCommand{Enabled: enabled})
+	payload, err := json.Marshal(marotte.SetSupervisedModeCommand{Enabled: enabled})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetSupervisedMode,
+	return &marotte.ClientCommand{
+		Type:    marotte.CmdSetSupervisedMode,
 		ChatID:  chatID,
 		Payload: payload,
 	}
@@ -37,8 +37,8 @@ func TestCmdSetSupervisedMode_SendsAutopilotAsAString(t *testing.T) {
 	}{
 		// Supervised on means autopilot off: the option names the behaviour
 		// being turned off, not the switch the user flipped.
-		{name: "enabling supervised turns autopilot off", enabled: true, wantValue: vibekit.ConfigValueAutopilotOff},
-		{name: "disabling supervised turns autopilot on", enabled: false, wantValue: vibekit.ConfigValueAutopilotOn},
+		{name: "enabling supervised turns autopilot off", enabled: true, wantValue: marotte.ConfigValueAutopilotOff},
+		{name: "disabling supervised turns autopilot on", enabled: false, wantValue: marotte.ConfigValueAutopilotOn},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,11 +55,11 @@ func TestCmdSetSupervisedMode_SendsAutopilotAsAString(t *testing.T) {
 			if b.callCount != 1 {
 				t.Fatalf("bridge calls = %d, want 1", b.callCount)
 			}
-			if b.gotMethod != vibekit.MethodSetConfigOption {
-				t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSetConfigOption)
+			if b.gotMethod != marotte.MethodSetConfigOption {
+				t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSetConfigOption)
 			}
-			if b.gotParams["configId"] != vibekit.ConfigOptionAutopilot {
-				t.Errorf("configId = %v, want %q", b.gotParams["configId"], vibekit.ConfigOptionAutopilot)
+			if b.gotParams["configId"] != marotte.ConfigOptionAutopilot {
+				t.Errorf("configId = %v, want %q", b.gotParams["configId"], marotte.ConfigOptionAutopilot)
 			}
 			got, ok := b.gotParams["value"].(string)
 			if !ok {

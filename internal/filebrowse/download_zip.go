@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 )
 
 const (

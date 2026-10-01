@@ -92,7 +92,7 @@ function answerWith(status: number, body: string | null, contentType = "applicat
 /** A response body exactly as `serveChatMessages` writes one:
  *  `map[string]any{"chat": c.Header(), "messages": …, "has_more": …}`.
  *
- *  The chat object carries every field `vibekit.ChatHeader` marshals WITHOUT
+ *  The chat object carries every field `marotte.ChatHeader` marshals WITHOUT
  *  `omitempty` — `name`, `id`, `usage`, `created_at`, `updated_at`,
  *  `message_count`, and `usage`'s own six — because the generated `decodeChatHeader`
  *  requires exactly those and this file is the only place that runs it. That

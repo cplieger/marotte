@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // liveTurnPage is the response as the CLIENT decodes it. Spelled by hand rather than
@@ -29,7 +29,7 @@ import (
 // an assertion against itself.
 type liveTurnPage struct {
 	LiveTurn *struct {
-		Message   vibekit.Message `json:"message"`
+		Message   marotte.Message `json:"message"`
 		ChunkSeq  int64           `json:"chunk_seq"`
 		BlockBase int             `json:"block_base"`
 		Truncated bool            `json:"truncated"`
@@ -45,15 +45,15 @@ const liveTurnFixtureBase = 117
 // liveTurnFixture is one in-flight turn of textBytes, in BOTH carriers the way the
 // buffer's own snapshot produces it: the flat field the export path reads and the block
 // the renderer draws from.
-func liveTurnFixture(textBytes int) vibekit.LiveTurn {
+func liveTurnFixture(textBytes int) marotte.LiveTurn {
 	text := strings.Repeat("y", textBytes)
-	return vibekit.LiveTurn{
-		Message: vibekit.Message{
+	return marotte.LiveTurn{
+		Message: marotte.Message{
 			ID:      "m-live",
-			Role:    vibekit.RoleAssistant,
+			Role:    marotte.RoleAssistant,
 			Ts:      200,
 			Content: text,
-			Blocks:  []vibekit.Block{{Type: vibekit.BlockText, Text: text}},
+			Blocks:  []marotte.Block{{Type: marotte.BlockText, Text: text}},
 		},
 		ChunkSeq:  7,
 		BlockBase: liveTurnFixtureBase,
@@ -64,18 +64,18 @@ func liveTurnFixture(textBytes int) vibekit.LiveTurn {
 // seedTranscript writes n persisted turns, each a prompt and the reply it opened, so the
 // window has a turn boundary to be cut short AT: the page's turn floor admits past every
 // ceiling until the window opens on a prompt, so a single-turn chat is never cut.
-func seedTranscript(t *testing.T, s *Store, id vibekit.ChatID, n, bytesEach int) {
+func seedTranscript(t *testing.T, s *Store, id marotte.ChatID, n, bytesEach int) {
 	t.Helper()
-	var msgs []vibekit.Message
+	var msgs []marotte.Message
 	for i := range n {
 		msgs = append(msgs,
-			vibekit.Message{
-				ID: "u" + strconv.Itoa(i), Role: vibekit.RoleUser,
+			marotte.Message{
+				ID: "u" + strconv.Itoa(i), Role: marotte.RoleUser,
 				Content: "do the thing", Ts: 1,
 			},
 			fatMessage("a"+strconv.Itoa(i), bytesEach))
 	}
-	if _, err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = string(id)
 		c.Messages = msgs
 		return true
@@ -85,7 +85,7 @@ func seedTranscript(t *testing.T, s *Store, id vibekit.ChatID, n, bytesEach int)
 }
 
 // getLiveTurnPage drives the real route and decodes the page.
-func getLiveTurnPage(t *testing.T, s *Store, id vibekit.ChatID, query string) liveTurnPage {
+func getLiveTurnPage(t *testing.T, s *Store, id marotte.ChatID, query string) liveTurnPage {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+query, nil)
 	rec := httptest.NewRecorder()
@@ -100,10 +100,10 @@ func getLiveTurnPage(t *testing.T, s *Store, id vibekit.ChatID, query string) li
 	return page
 }
 
-func storeWithLiveTurn(t *testing.T, live vibekit.LiveTurn) *Store {
+func storeWithLiveTurn(t *testing.T, live marotte.LiveTurn) *Store {
 	t.Helper()
 	s, err := NewStore(t.TempDir(),
-		WithLiveTurn(func(vibekit.ChatID) (vibekit.LiveTurn, bool) { return live, true }),
+		WithLiveTurn(func(marotte.ChatID) (marotte.LiveTurn, bool) { return live, true }),
 	)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)

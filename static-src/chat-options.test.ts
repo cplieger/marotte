@@ -385,7 +385,7 @@ describe("set a goal", () => {
     const sent = setGoal(card, "make the test suite pass");
     expect(sent).toBe("/goal make the test suite pass");
     expect(submitPrompt).toHaveBeenCalledWith("c-active", "/goal make the test suite pass");
-    // No suffix, so KAS's own default applies rather than a number vibekit
+    // No suffix, so KAS's own default applies rather than a number marotte
     // restates. 5 here is the parser's value, read back out of the parser.
     expect(parseGoalCommand(sent as string)).toEqual({
       description: "make the test suite pass",
@@ -406,7 +406,7 @@ describe("set a goal", () => {
     });
   });
 
-  // Clamped by vibekit rather than left to KAS: the same arithmetic
+  // Clamped by marotte rather than left to KAS: the same arithmetic
   // (`Math.min(Math.max(n, 1), 200)`), applied before the string is built, so the
   // suffix is always a value the parser keeps. `-3` never reaches the regex as a
   // cap in any case — `\d+` cannot match a sign — so passing it through would
@@ -428,7 +428,7 @@ describe("set a goal", () => {
 
   // A cap that is not a whole number is DROPPED, not forwarded. `--max soon`
   // fails the `\d+` match, so KAS would read "ship it --max soon" as the whole
-  // objective — the goal statement silently gains two words of vibekit's UI.
+  // objective — the goal statement silently gains two words of marotte's UI.
   it.each([
     ["a word", "soon"],
     ["a fraction", "5.5"],

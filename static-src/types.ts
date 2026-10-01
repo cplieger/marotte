@@ -236,7 +236,7 @@ export interface PendingSteer {
    *  one this device sent. */
   id: string;
   text: string;
-  /** Whose words these are, resolved SERVER-side (`vibekit.SteerOrigin`).
+  /** Whose words these are, resolved SERVER-side (`marotte.SteerOrigin`).
    *
    *  Required rather than optional: the fallback a reader would reach for is "the
    *  user's", which is the wrong answer for the case this names. The one local

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 

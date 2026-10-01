@@ -1,4 +1,4 @@
-// Package sanitize defuses text vibekit did not write before it is persisted,
+// Package sanitize defuses text marotte did not write before it is persisted,
 // echoed to a client, or written to a log.
 //
 // The upstream is an agent's stdout and the tool output it relays, which is to
@@ -8,7 +8,7 @@
 // Unicode codepoints — TAG characters, zero-width joiners, bidi overrides —
 // that carry prompt injections a human reviewer cannot see.
 //
-// It exists because this is BEHAVIOUR, and it used to sit in internal/vibekit
+// It exists because this is BEHAVIOUR, and it used to sit in internal/marotte
 // beside the wire and domain TYPES. Eight packages call it (auth, chat,
 // command, server, translate, agent, steering, procout) with no wire shape in
 // sight, so it never belonged in the one package the code generator walks for

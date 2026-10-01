@@ -7,7 +7,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const chatFileSuffix = ".json"
@@ -29,30 +29,30 @@ type RetentionHeader struct {
 // StoreAccess is what retention needs from the chat store.
 type StoreAccess interface {
 	// Lock returns the per-chat mutex.
-	Lock(chatID vibekit.ChatID) *sync.Mutex
+	Lock(chatID marotte.ChatID) *sync.Mutex
 	// Remove deletes the chat and records its tombstone, returning the `chats`
 	// version the removal minted. The caller must hold Lock for chatID across
 	// this call.
-	Remove(chatID vibekit.ChatID) (string, error)
+	Remove(chatID marotte.ChatID) (string, error)
 	// Dir returns the store's base directory.
 	Dir() string
 	// LoadRetentionHeader reads a chat's retention projection without
 	// materializing its messages.
-	LoadRetentionHeader(chatID vibekit.ChatID) (RetentionHeader, error)
+	LoadRetentionHeader(chatID marotte.ChatID) (RetentionHeader, error)
 }
 
 // Service implements the archive lifecycle operations.
 type Service struct {
 	store   StoreAccess
-	onPurge func(chatID vibekit.ChatID, sessionChain []string)
+	onPurge func(chatID marotte.ChatID, sessionChain []string)
 	// broadcast carries the chat_deleted frame a purge produces to every client;
 	// nil drops it.
-	broadcast func(ctx context.Context, evt vibekit.ServerEvent)
+	broadcast func(ctx context.Context, evt marotte.ServerEvent)
 	// isLive reports a running bridge; such a chat is never purged, however old.
-	isLive func(chatID vibekit.ChatID) bool
+	isLive func(chatID marotte.ChatID) bool
 	// hasOpenTab reports an open TAB, a different fact from isLive: a reader can
 	// have a chat open with no bridge running.
-	hasOpenTab func(chatID vibekit.ChatID) bool
+	hasOpenTab func(chatID marotte.ChatID) bool
 }
 
 // New creates an archive Service backed by the given StoreAccess.
@@ -70,7 +70,7 @@ type Option func(*Service)
 // WithLiveChats registers the predicate reporting active use. A live chat is
 // exempt from purging regardless of age; retention is about abandoned work.
 // Injected because this package cannot see the runtime that owns bridges.
-func WithLiveChats(fn func(chatID vibekit.ChatID) bool) Option {
+func WithLiveChats(fn func(chatID marotte.ChatID) bool) Option {
 	return func(s *Service) { s.isLive = fn }
 }
 
@@ -79,7 +79,7 @@ func WithLiveChats(fn func(chatID vibekit.ChatID) bool) Option {
 // misses: reading a chat stamps nothing the age test can see. Retention is
 // therefore OPT-OUT for a chat left open forever, which is accepted. Injected
 // because this package cannot see the tab store.
-func WithOpenTabs(fn func(chatID vibekit.ChatID) bool) Option {
+func WithOpenTabs(fn func(chatID marotte.ChatID) bool) Option {
 	return func(s *Service) { s.hasOpenTab = fn }
 }
 
@@ -87,7 +87,7 @@ func WithOpenTabs(fn func(chatID vibekit.ChatID) bool) Option {
 // through. A purge is a delete like any other, so a client holding the row must
 // learn of it the same way: through chat_deleted, stamped with the `chats`
 // version Remove minted.
-func WithBroadcaster(fn func(ctx context.Context, evt vibekit.ServerEvent)) Option {
+func WithBroadcaster(fn func(ctx context.Context, evt marotte.ServerEvent)) Option {
 	return func(s *Service) { s.broadcast = fn }
 }
 
@@ -95,6 +95,6 @@ func WithBroadcaster(fn func(ctx context.Context, evt vibekit.ServerEvent)) Opti
 // KAS session it ran on, read before the file was removed. The purge reaps its OWN
 // session directories through this rather than leaning on the orphan sweep, whose
 // keep-list is derived by reading every chat file.
-func WithOnPurge(fn func(chatID vibekit.ChatID, sessionChain []string)) Option {
+func WithOnPurge(fn func(chatID marotte.ChatID, sessionChain []string)) Option {
 	return func(s *Service) { s.onPurge = fn }
 }

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestShellFence verifies the fence is sized one backtick longer than the
@@ -112,7 +112,7 @@ type heldAdmissionDeps struct {
 	tried int
 }
 
-func (d *heldAdmissionDeps) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource) bool {
+func (d *heldAdmissionDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
 	d.tried++
 	return false
 }
@@ -126,8 +126,8 @@ func (d *heldAdmissionDeps) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSourc
 // slot, which a spawn-blocked chat does not hold.
 func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T) {
 	deps := &heldAdmissionDeps{benchDeps: newBenchDeps()}
-	cmd := &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}
-	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
+	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
+	p := &marotte.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
 	start := time.Now()
 	_, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p)
@@ -155,23 +155,23 @@ func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T
 // its "was the user message persisted" gate.
 type shellStoreDeps struct {
 	*benchDeps
-	appended  []vibekit.Message
+	appended  []marotte.Message
 	mutations int
 }
 
-func (d *shellStoreDeps) Mutate(_ context.Context, _ vibekit.ChatID, mutate func(*vibekit.Chat, bool) bool) (string, error) {
-	if !mutate(&vibekit.Chat{}, false) {
+func (d *shellStoreDeps) Mutate(_ context.Context, _ marotte.ChatID, mutate func(*marotte.Chat, bool) bool) (string, error) {
+	if !mutate(&marotte.Chat{}, false) {
 		return "", nil
 	}
 	d.mutations++
 	return strconv.Itoa(d.mutations), nil
 }
 
-func (d *shellStoreDeps) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) {
-	return &vibekit.Chat{}, true
+func (d *shellStoreDeps) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) {
+	return &marotte.Chat{}, true
 }
 
-func (d *shellStoreDeps) AppendMessage(_ context.Context, _ vibekit.ChatID, m *vibekit.Message) error {
+func (d *shellStoreDeps) AppendMessage(_ context.Context, _ marotte.ChatID, m *marotte.Message) error {
 	d.appended = append(d.appended, *m)
 	return nil
 }
@@ -193,7 +193,7 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 		t.Skipf("sh not available: %v", err)
 	}
 	deps := &shellStoreDeps{benchDeps: newBenchDeps()}
-	cmd := &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}
+	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
 	// 1,100,000 bytes, past the 1 MiB cap, in 1100 printf calls (measured at
 	// 4 ms). The unit is 1000 rather than 1024 deliberately: 1 MiB is an exact
 	// multiple of both 1024 and io.Copy's 32 KiB buffer, so an aligned producer
@@ -201,7 +201,7 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 	// that has to report the full length rather than the kept length — is never
 	// reached. Red-checked: at 1024 the kept-bytes mutant passes this test, at
 	// 1000 it fails it.
-	p := &vibekit.PromptCommand{
+	p := &marotte.PromptCommand{
 		Text:      `!i=0; while [ $i -lt 1100 ]; do printf "%01000d" 0; i=$((i+1)); done`,
 		MessageID: "m-1",
 	}
@@ -252,7 +252,7 @@ func TestAppendShellUserMessage_DerivesTheChatNameFromTheCommand(t *testing.T) {
 				seedEmptyChat(t, store, "c1")
 			}
 			deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
-			msg := &vibekit.Message{ID: "m-1", Role: vibekit.RoleUser, Content: tc.text}
+			msg := &marotte.Message{ID: "m-1", Role: marotte.RoleUser, Content: tc.text}
 
 			persisted, err := appendShellUserMessage(t.Context(), deps, deps, "c1", msg, tc.text)
 			if err != nil {
@@ -284,8 +284,8 @@ func TestHandleShellInterception_SuccessLogsTheOutcomeHonestly(t *testing.T) {
 	}
 	logs := captureLogs(t)
 	deps := &shellStoreDeps{benchDeps: newBenchDeps()}
-	cmd := &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}
-	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
+	cmd := &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}
+	p := &marotte.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
 	if _, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p); err != nil {
 		t.Fatalf("HandleShellInterception = %v, want it to succeed", err)

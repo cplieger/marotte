@@ -1,16 +1,16 @@
 package agent
 
 import (
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chatHoldsLiveRun reports whether any of `leases` belongs to a run launched by
 // `chatID` — the server's half of "is everything this chat started actually over?",
 // asked before an off-screen notification claims a turn's work is finished.
 //
-// PRESENCE over vibekit's own leases, so it costs no KAS round trip and is cheap
-// enough to consult on the turn-finalize path. One lease exists per run vibekit put
+// PRESENCE over marotte's own leases, so it costs no KAS round trip and is cheap
+// enough to consult on the turn-finalize path. One lease exists per run marotte put
 // on the wire, which is the whole population that can produce the defect: a
 // TUI-launched run has no lease, and an agent-launched one has one (that is how
 // handleLiveRuns reports it).
@@ -26,12 +26,12 @@ import (
 //
 // Takes the slice rather than the store, so it is a pure function testable without
 // one.
-func chatHoldsLiveRun(leases []runlease.Lease, chatID vibekit.ChatID) bool {
+func chatHoldsLiveRun(leases []runlease.Lease, chatID marotte.ChatID) bool {
 	if chatID == "" {
 		return false
 	}
 	for i := range leases {
-		if leases[i].ChatID != "" && vibekit.ChatID(leases[i].ChatID) == chatID {
+		if leases[i].ChatID != "" && marotte.ChatID(leases[i].ChatID) == chatID {
 			return true
 		}
 	}

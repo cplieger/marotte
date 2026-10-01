@@ -15,7 +15,7 @@
 // scrolled), outside-click + Escape dismissal, aria-expanded on the anchor,
 // and focus return to the chip. rovingFocus supplies the WAI-ARIA menu
 // keyboard contract over the branch rows. This module keeps only what is
-// vibekit's: the panel content, the branches load, and the checkout actions.
+// marotte's: the panel content, the branches load, and the checkout actions.
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";

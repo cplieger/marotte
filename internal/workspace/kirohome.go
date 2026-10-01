@@ -21,7 +21,7 @@ var kiroHomeResolver func() string
 // SetKiroHomeResolver sets the function that resolves the kiro home
 // directory. Must be called once at startup from the config layer
 // before any call to KiroHome(). This keeps the env-var read explicit
-// at the composition root rather than buried in the vibekit package.
+// at the composition root rather than buried in the marotte package.
 func SetKiroHomeResolver(fn func() string) {
 	kiroHomeResolver = fn
 }
@@ -39,7 +39,7 @@ func SetKiroHomeResolver(fn func() string) {
 // 2.12 bundle: zero KIRO_HOME references; the only override is a
 // --home-dir argv the Rust wrapper never passes) — while the Rust
 // wrapper (`kiro-cli settings`, v2 paths) honors KIRO_HOME. Pointing
-// KIRO_HOME inside HOME is what makes vibekit, the wrapper, and KAS
+// KIRO_HOME inside HOME is what makes marotte, the wrapper, and KAS
 // agree on one directory. Code that reads or writes kiro-cli state
 // must go through this helper.
 func KiroHome() string {

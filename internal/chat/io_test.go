@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/marotte/internal/ids"
 )
 
 // TestReadCappedFilePathGuard pins the path guard readCappedFile runs before it opens

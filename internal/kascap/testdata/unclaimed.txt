@@ -1,7 +1,7 @@
 # Client-side keys the kiro-cli agent server reads that internal/kascap does
 # NOT account for: neither sent nor deliberately withheld.
 #
-# This is not a to-do list. Most entries are capabilities vibekit has no handler
+# This is not a to-do list. Most entries are capabilities marotte has no handler
 # for and should not claim. An entry leaves this file by gaining a table row in
 # either direction: send:true with an implementation, or send:false with a
 # because saying why not.

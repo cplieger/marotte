@@ -4,7 +4,7 @@
 // against the shipped stylesheet: the app looks correct here and wrong on a phone.
 // The instrument is the assembled bundle with the iPhone values SUBSTITUTED (top 47,
 // bottom 34), which is the only way to measure this class at all
-// (`vibekit-ui.md`: "Chromium reports every `env(safe-area-inset-*)` as 0 … the
+// (`marotte-ui.md`: "Chromium reports every `env(safe-area-inset-*)` as 0 … the
 // final look needs a real device"). Each case is paired with the UNSUBSTITUTED
 // sheet as its control, so a rule that stopped reading the inset entirely fails
 // rather than passing for the wrong reason.

@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The coordinator's own refusals.
@@ -42,12 +42,12 @@ var (
 // needs the expanded order, which no mutation returns; Subtree is what a Close
 // of an id will remove, asked before that close commits.
 type TabSet interface {
-	Open(ctx context.Context, spec vibekit.OpenTab) (subject vibekit.TabSubject, created bool, version uint64, err error)
-	Close(ctx context.Context, id string) ([]vibekit.TabSubject, uint64, error)
+	Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error)
+	Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error)
 	Reorder(ctx context.Context, ids []string) (uint64, error)
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
-	List() ([]vibekit.TabSubject, uint64)
-	Subtree(id string) []vibekit.TabSubject
+	List() ([]marotte.TabSubject, uint64)
+	Subtree(id string) []marotte.TabSubject
 }
 
 // RunOwner is the run surface as the coordinator uses it: which chat's agent
@@ -57,17 +57,17 @@ type TabSet interface {
 // wire, or one whose lease was released when it ended — so a finished run's
 // parent is unknown here and History supplies it instead.
 type RunOwner interface {
-	RunChat(workflowID string) (chatID vibekit.ChatID, ok bool)
+	RunChat(workflowID string) (chatID marotte.ChatID, ok bool)
 }
 
 // chatCloser is the tab-close teardown for a chat tab: cancel the turn, cancel
 // the chat's runs, tear the bridge down, keep the record. Bound in
 // RegisterDefaults.
-type chatCloser func(ctx context.Context, chatID vibekit.ChatID)
+type chatCloser func(ctx context.Context, chatID marotte.ChatID)
 
 // chatDeleter is the delete grade of the same teardown, for a chat the close
 // escalation has already erased; the captured session chain travels in.
-type chatDeleter func(ctx context.Context, chatID vibekit.ChatID, sessionChain []string)
+type chatDeleter func(ctx context.Context, chatID marotte.ChatID, sessionChain []string)
 
 // retentionRead answers whether a closed chat's record is kept. A nil read means
 // retention on — the fail-toward-keeping direction.
@@ -77,7 +77,7 @@ type retentionRead func(ctx context.Context) bool
 // lock while the record was still readable: nothing after the record delete may
 // re-read it.
 type doomedChat struct {
-	chatID vibekit.ChatID
+	chatID marotte.ChatID
 	chain  []string
 }
 
@@ -169,30 +169,30 @@ func (m *Membership) supervisedDefaultValue(ctx context.Context) bool {
 type ChatCreate struct {
 	// Init fills the new record's fields, called inside chat.Store.Mutate under
 	// that chat's record lock; it must not reach either store.
-	Init func(c *vibekit.Chat)
+	Init func(c *marotte.Chat)
 	// OpID correlates every attempt of one create gesture, so a repeat resolves
 	// to the chat the first attempt made instead of minting a second one.
 	OpID string
 	// ChatID is the id the envelope supplied, or empty to mint one. A supplied id
 	// bypasses the ledger: Mutate's exists branch is already idempotent for it.
-	ChatID vibekit.ChatID
+	ChatID marotte.ChatID
 	// RequireChat is a fresh create's precondition, checked under the operation lock
 	// so a delete cannot land between the check and the mint.
-	RequireChat vibekit.ChatID
+	RequireChat marotte.ChatID
 	// ParentChat names the chat whose tab the new tab hangs under, empty for a
 	// top-level tab. A chat id rather than a tab id, so it resolves inside the
 	// operation lock; outside it, a parent tab closing would leave Parent naming
 	// nothing.
-	ParentChat vibekit.ChatID
+	ParentChat marotte.ChatID
 }
 
 // ChatOpened is what a create answers with.
 type ChatOpened struct {
 	// Chat is read back from the store, since a replay resolves to a chat this
 	// request did not write.
-	Chat *vibekit.Chat
+	Chat *marotte.Chat
 	// Subject is the tab. Zero-valued only when no tab store is wired.
-	Subject vibekit.TabSubject
+	Subject marotte.TabSubject
 	Version uint64
 	// Replay reports that this op_id had already created its chat.
 	Replay bool
@@ -200,7 +200,7 @@ type ChatOpened struct {
 
 // TabOpened is what an open answers with.
 type TabOpened struct {
-	Subject vibekit.TabSubject
+	Subject marotte.TabSubject
 	Version uint64
 	// Created is false for an already-open (Kind, Ref), which mutates nothing and
 	// emits no event, so a caller waiting on that event would wait forever.
@@ -238,17 +238,17 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 
 	// Reserve before anything mints. peek rather than resolve: a repeat whose tab
 	// is already open needs no slot, and refusing it would strand the chat.
-	if err := m.reserveSlot(vibekit.TabKindChat, string(prior)); err != nil {
+	if err := m.reserveSlot(marotte.TabKindChat, string(prior)); err != nil {
 		return ChatOpened{}, err
 	}
 
 	chatID := prior
 	if chatID == "" {
-		chatID, _ = m.ops.resolve(req.OpID, vibekit.NewChatID)
+		chatID, _ = m.ops.resolve(req.OpID, marotte.NewChatID)
 	}
 
 	// The record leads.
-	_, err := m.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := m.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if exists {
 			return false
 		}
@@ -273,8 +273,8 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 	if m.tabs == nil {
 		return ChatOpened{Chat: c, Replay: replay}, nil
 	}
-	opened, err := m.openTab(ctx, vibekit.OpenTab{
-		Kind:   vibekit.TabKindChat,
+	opened, err := m.openTab(ctx, marotte.OpenTab{
+		Kind:   marotte.TabKindChat,
 		Ref:    string(chatID),
 		Parent: m.tabForChat(req.ParentChat),
 		Owns:   true,
@@ -289,21 +289,21 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 // one. Exists for fork_chat: a fork's record cannot be built until KAS answers
 // session/fork, and that round trip must not happen under the operation lock
 // (a bridge Call has no client-side timeout).
-func (m *Membership) ResolvedChat(opID string) (vibekit.ChatID, bool) {
+func (m *Membership) ResolvedChat(opID string) (marotte.ChatID, bool) {
 	return m.ops.peek(opID)
 }
 
 // OpenTab opens a tab for something that already exists; it never mints a chat.
 // For a chat tab it gates on the record existing — the other half of the delete
 // ordering — with the check and the open in one critical section.
-func (m *Membership) OpenTab(ctx context.Context, spec vibekit.OpenTab, opID string) (TabOpened, error) {
+func (m *Membership) OpenTab(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
 	if m.tabs == nil {
 		return TabOpened{}, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if spec.Kind == vibekit.TabKindChat {
-		if _, ok := m.chats.Get(ctx, vibekit.ChatID(spec.Ref)); !ok {
+	if spec.Kind == marotte.TabKindChat {
+		if _, ok := m.chats.Get(ctx, marotte.ChatID(spec.Ref)); !ok {
 			return TabOpened{}, StatusError(http.StatusNotFound, errOpenChatUnknown)
 		}
 	}
@@ -318,8 +318,8 @@ func (m *Membership) OpenTab(ctx context.Context, spec vibekit.OpenTab, opID str
 // immutable after open, so this is the only chance to get it right.
 //
 // Caller holds mu.
-func (m *Membership) fillRunParent(spec vibekit.OpenTab) string {
-	if spec.Kind != vibekit.TabKindRun || spec.Parent != "" || m.runs == nil {
+func (m *Membership) fillRunParent(spec marotte.OpenTab) string {
+	if spec.Kind != marotte.TabKindRun || spec.Parent != "" || m.runs == nil {
 		return spec.Parent
 	}
 	chatID, ok := m.runs.RunChat(spec.Ref)
@@ -339,7 +339,7 @@ func (m *Membership) fillRunParent(spec vibekit.OpenTab) string {
 // each chat's {id, session chain} while its record is still readable; then
 // tabs.Close, the COMMIT POINT; then chats.Delete each doomed record. Past the
 // commit there is no rollback, only roll-forward on a detached context.
-func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vibekit.TabSubject, version uint64, err error) {
+func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []marotte.TabSubject, version uint64, err error) {
 	if m.tabs == nil {
 		return nil, 0, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
 	}
@@ -358,7 +358,7 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 	// the request context governed the operation only up to this point.
 	rollCtx, done := context.WithTimeout(context.WithoutCancel(ctx), closeTeardownBudget)
 	defer done()
-	m.emit(rollCtx, &vibekit.TabsChangedPayload{
+	m.emit(rollCtx, &marotte.TabsChangedPayload{
 		RemovedIDs: subjectIDs(closed),
 		Order:      m.order(),
 		Version:    version,
@@ -372,14 +372,14 @@ func (m *Membership) CloseTab(ctx context.Context, id, opID string) (closed []vi
 	// block every other tab mutation. Exactly one grade per chat — delete grade for a
 	// record that went with this close (driven from the captured chain), close grade for
 	// every other chat tab, including a doomed chat whose delete failed.
-	dispatched := make(map[vibekit.ChatID]bool, len(deleted))
+	dispatched := make(map[marotte.ChatID]bool, len(deleted))
 	chatTabClosed := false
 	for _, t := range closed {
-		if t.Kind != vibekit.TabKindChat {
+		if t.Kind != marotte.TabKindChat {
 			continue
 		}
 		chatTabClosed = true
-		chatID := vibekit.ChatID(t.Ref)
+		chatID := marotte.ChatID(t.Ref)
 		if chain, isDoomed := deleted[chatID]; isDoomed {
 			if !dispatched[chatID] {
 				dispatched[chatID] = true
@@ -420,7 +420,7 @@ func (m *Membership) doomedChats(ctx context.Context, id string) []doomedChat {
 	}
 	doomed := make([]doomedChat, 0, len(refs))
 	for _, ref := range refs {
-		chatID := vibekit.ChatID(ref)
+		chatID := marotte.ChatID(ref)
 		c, ok := m.chats.Get(ctx, chatID)
 		if !ok {
 			continue
@@ -432,7 +432,7 @@ func (m *Membership) doomedChats(ctx context.Context, id string) []doomedChat {
 
 // tablessChatRefs returns the chat refs the close of this subtree leaves
 // with no open tab. Caller holds mu.
-func (m *Membership) tablessChatRefs(subtree []vibekit.TabSubject) []string {
+func (m *Membership) tablessChatRefs(subtree []marotte.TabSubject) []string {
 	if len(subtree) == 0 {
 		return nil
 	}
@@ -443,14 +443,14 @@ func (m *Membership) tablessChatRefs(subtree []vibekit.TabSubject) []string {
 	open, _ := m.tabs.List()
 	remaining := make(map[string]bool)
 	for _, t := range open {
-		if t.Kind == vibekit.TabKindChat && !inSubtree[t.ID] {
+		if t.Kind == marotte.TabKindChat && !inSubtree[t.ID] {
 			remaining[t.Ref] = true
 		}
 	}
 	var refs []string
 	seen := make(map[string]bool)
 	for _, t := range subtree {
-		if t.Kind != vibekit.TabKindChat || seen[t.Ref] || remaining[t.Ref] {
+		if t.Kind != marotte.TabKindChat || seen[t.Ref] || remaining[t.Ref] {
 			continue
 		}
 		seen[t.Ref] = true
@@ -465,11 +465,11 @@ func (m *Membership) tablessChatRefs(subtree []vibekit.TabSubject) []string {
 // of the result, demoting that chat to the close-grade teardown.
 //
 // Caller holds mu; ctx is the detached roll-forward context.
-func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []doomedChat) map[vibekit.ChatID][]string {
+func (m *Membership) deleteDoomedRecords(ctx context.Context, doomed []doomedChat) map[marotte.ChatID][]string {
 	if len(doomed) == 0 {
 		return nil
 	}
-	deleted := make(map[vibekit.ChatID][]string, len(doomed))
+	deleted := make(map[marotte.ChatID][]string, len(doomed))
 	for _, d := range doomed {
 		if err := m.chats.Delete(ctx, d.chatID); err != nil {
 			slog.Error("close: retention-off record delete failed after the tab close committed; the record survives with close-grade teardown",
@@ -502,7 +502,7 @@ func (m *Membership) ReorderTabs(ctx context.Context, ids []string, opID string)
 	// An order identical to the one already held commits nothing and must
 	// emit nothing.
 	if version != before {
-		m.emit(ctx, &vibekit.TabsChangedPayload{Order: m.order(), Version: version, OpID: opID})
+		m.emit(ctx, &marotte.TabsChangedPayload{Order: m.order(), Version: version, OpID: opID})
 	}
 	return version, nil
 }
@@ -528,7 +528,7 @@ func (m *Membership) SetPinned(ctx context.Context, id string, pinned bool, opID
 	}
 	if version != before {
 		if changed, ok := m.subject(id); ok {
-			m.emit(ctx, &vibekit.TabsChangedPayload{Changed: &changed, Version: version, OpID: opID})
+			m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Version: version, OpID: opID})
 		}
 	}
 	return version, nil
@@ -539,7 +539,7 @@ func (m *Membership) SetPinned(ctx context.Context, id string, pinned bool, opID
 // any open that landed before it has its tab in the set closeTabsFor then walks. The
 // teardown runs before the lock, because the run cancel must precede the bridge going
 // down and it reaches the bridge.
-func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID vibekit.ChatID, opID string) error {
+func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID marotte.ChatID, opID string) error {
 	m.teardown.DeleteChatState(ctx, chatID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -558,7 +558,7 @@ func (m *Membership) DeleteChatAndCloseTabs(ctx context.Context, chatID vibekit.
 // precede the bridge going down and it reaches the bridge. Closing tabs is normally a no-op
 // — HasOpenTab already skips a chat with an open tab, so reaching it with tabs to close
 // means one was opened between the predicate and the remove.
-func (m *Membership) RetentionClose(ctx context.Context, chatID vibekit.ChatID, sessionChain []string) {
+func (m *Membership) RetentionClose(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
 	m.teardown.DeleteChatStateByChain(ctx, chatID, sessionChain)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -593,7 +593,7 @@ func (m *Membership) wakeRetention() {
 // predicate. This makes retention opt-out for a chat left open forever, which is
 // accepted: closing a tab under someone to satisfy a timer is worse. Takes no
 // operation lock: it is a read, and the lock orders writes against their events.
-func (m *Membership) HasOpenTab(chatID vibekit.ChatID) bool {
+func (m *Membership) HasOpenTab(chatID marotte.ChatID) bool {
 	if m.tabs == nil {
 		return false
 	}
@@ -602,13 +602,13 @@ func (m *Membership) HasOpenTab(chatID vibekit.ChatID) bool {
 }
 
 // openTab opens and, when something was committed, emits. Caller holds mu.
-func (m *Membership) openTab(ctx context.Context, spec vibekit.OpenTab, opID string) (TabOpened, error) {
+func (m *Membership) openTab(ctx context.Context, spec marotte.OpenTab, opID string) (TabOpened, error) {
 	subject, created, version, err := m.tabs.Open(ctx, spec)
 	if err != nil {
 		return TabOpened{}, tabStatus(err)
 	}
 	if created {
-		m.emit(ctx, &vibekit.TabsChangedPayload{
+		m.emit(ctx, &marotte.TabsChangedPayload{
 			Changed: &subject,
 			Order:   m.order(),
 			Version: version,
@@ -625,7 +625,7 @@ func (m *Membership) openTab(ctx context.Context, spec vibekit.OpenTab, opID str
 // being read as a duplicate.
 //
 // Caller holds mu.
-func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, opID string) {
+func (m *Membership) closeTabsFor(ctx context.Context, chatID marotte.ChatID, opID string) {
 	if m.tabs == nil {
 		return
 	}
@@ -640,7 +640,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, op
 		if err != nil {
 			slog.Error("tab close still failing after its chat was removed; announcing the removal anyway",
 				"chat_id", chatID, "tab", doomed.ID, keyError, err)
-			m.emit(ctx, &vibekit.TabsChangedPayload{
+			m.emit(ctx, &marotte.TabsChangedPayload{
 				RemovedIDs: []string{doomed.ID},
 				Version:    m.version() + 1,
 				OpID:       opID,
@@ -650,7 +650,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, op
 		if len(closed) == 0 {
 			continue // already gone; another close won the race
 		}
-		m.emit(ctx, &vibekit.TabsChangedPayload{
+		m.emit(ctx, &marotte.TabsChangedPayload{
 			RemovedIDs: subjectIDs(closed),
 			Order:      m.order(),
 			Version:    version,
@@ -664,7 +664,7 @@ func (m *Membership) closeTabsFor(ctx context.Context, chatID vibekit.ChatID, op
 // which lets a retry finish its own tab write at the limit.
 //
 // Caller holds mu.
-func (m *Membership) reserveSlot(kind vibekit.TabKind, ref string) error {
+func (m *Membership) reserveSlot(kind marotte.TabKind, ref string) error {
 	if m.tabs == nil {
 		return nil
 	}
@@ -683,7 +683,7 @@ func (m *Membership) reserveSlot(kind vibekit.TabKind, ref string) error {
 // priorChat returns the chat this create already resolves to, without
 // minting: the envelope's id when supplied, else whatever the ledger
 // already holds for the op.
-func (m *Membership) priorChat(req ChatCreate) (id vibekit.ChatID, replay bool) {
+func (m *Membership) priorChat(req ChatCreate) (id marotte.ChatID, replay bool) {
 	if req.ChatID != "" {
 		return req.ChatID, false
 	}
@@ -692,7 +692,7 @@ func (m *Membership) priorChat(req ChatCreate) (id vibekit.ChatID, replay bool) 
 
 // tabForChat returns the id of the tab showing chatID, or "" when none is
 // open. Caller holds mu.
-func (m *Membership) tabForChat(chatID vibekit.ChatID) string {
+func (m *Membership) tabForChat(chatID marotte.ChatID) string {
 	if chatID == "" {
 		return ""
 	}
@@ -719,21 +719,21 @@ func (m *Membership) version() uint64 {
 
 // subject reads one tab back after a mutation that returned only a
 // version. Caller holds mu.
-func (m *Membership) subject(id string) (vibekit.TabSubject, bool) {
+func (m *Membership) subject(id string) (marotte.TabSubject, bool) {
 	open, _ := m.tabs.List()
 	if i := indexOfTab(open, id); i >= 0 {
 		return open[i], true
 	}
-	return vibekit.TabSubject{}, false
+	return marotte.TabSubject{}, false
 }
 
 // emit broadcasts one aggregate frame. Workspace-global: the arrangement
 // is not per chat.
-func (m *Membership) emit(ctx context.Context, p *vibekit.TabsChangedPayload) {
+func (m *Membership) emit(ctx context.Context, p *marotte.TabsChangedPayload) {
 	if m.bus == nil {
 		return
 	}
-	m.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTabsChanged, "", *p))
+	m.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventTabsChanged, "", *p))
 }
 
 // tabStatus maps the tab store's sentinels onto HTTP statuses.
@@ -752,10 +752,10 @@ func tabStatus(err error) error {
 }
 
 // tabsForChat returns every tab showing chatID.
-func tabsForChat(open []vibekit.TabSubject, chatID vibekit.ChatID) []vibekit.TabSubject {
-	var out []vibekit.TabSubject
+func tabsForChat(open []marotte.TabSubject, chatID marotte.ChatID) []marotte.TabSubject {
+	var out []marotte.TabSubject
 	for _, t := range open {
-		if t.Kind == vibekit.TabKindChat && t.Ref == string(chatID) {
+		if t.Kind == marotte.TabKindChat && t.Ref == string(chatID) {
 			out = append(out, t)
 		}
 	}
@@ -764,7 +764,7 @@ func tabsForChat(open []vibekit.TabSubject, chatID vibekit.ChatID) []vibekit.Tab
 
 // subjectIDs projects subjects onto their ids, which is what both removed_ids
 // and order carry.
-func subjectIDs(subjects []vibekit.TabSubject) []string {
+func subjectIDs(subjects []marotte.TabSubject) []string {
 	out := make([]string, 0, len(subjects))
 	for _, t := range subjects {
 		out = append(out, t.ID)
@@ -773,6 +773,6 @@ func subjectIDs(subjects []vibekit.TabSubject) []string {
 }
 
 // indexOfTab returns the position of the tab with this id, or -1.
-func indexOfTab(open []vibekit.TabSubject, id string) int {
-	return slices.IndexFunc(open, func(t vibekit.TabSubject) bool { return t.ID == id })
+func indexOfTab(open []marotte.TabSubject, id string) int {
+	return slices.IndexFunc(open, func(t marotte.TabSubject) bool { return t.ID == id })
 }

@@ -207,9 +207,9 @@ let lastStatus: ConnectionStatus = "connecting";
  *  just lost contact with — while the value is a fact about the container it
  *  reached, so it belongs exactly where the line says it reached one. */
 function paintConnectionLine(): void {
-  const build = versionsSignal().value.vibekit;
+  const build = versionsSignal().value.marotte;
   $.stWs.textContent =
-    lastStatus === "connected" && build !== "" ? `connected to vibekit ${build}` : lastStatus;
+    lastStatus === "connected" && build !== "" ? `connected to marotte ${build}` : lastStatus;
 }
 
 /** Repaint both card lines when the version pair lands.

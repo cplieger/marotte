@@ -2,8 +2,8 @@
 // just its head.
 //
 // Every consumer must pair Kill with SysProcAttr{Setpgid: true} on the command it
-// spawns. Without that the child inherits vibekit's OWN process group, and Kill's
-// leader guard is all that stands between a teardown and vibekit signalling
+// spawns. Without that the child inherits marotte's OWN process group, and Kill's
+// leader guard is all that stands between a teardown and marotte signalling
 // itself.
 package procgroup
 
@@ -23,7 +23,7 @@ import (
 // The head alone leaks the tree: an agent-chosen command need never read stdin,
 // and kiro-cli 2.18.0 leaves its node child reparented to init even with stdin
 // closed. The pgid == pid guard is load-bearing — without Setpgid the child
-// inherits vibekit's own group, so Kill(-pgid, sig) would signal vibekit itself.
+// inherits marotte's own group, so Kill(-pgid, sig) would signal marotte itself.
 func Kill(p *os.Process, sig syscall.Signal) error {
 	pgid, err := syscall.Getpgid(p.Pid)
 	if err == nil && Owns(p.Pid, pgid) {
@@ -57,7 +57,7 @@ const waitGonePoll = 20 * time.Millisecond
 // already been sent.
 //
 // A ZOMBIE counts as gone, which is why this reads /proc rather than polling
-// kill(-pgid, 0): an unreaped member is still signallable, and vibekit is PID 1,
+// kill(-pgid, 0): an unreaped member is still signallable, and marotte is PID 1,
 // so that probe would burn the budget on every teardown that WORKED.
 func WaitGone(pgid int, budget time.Duration) bool {
 	deadline := time.Now().Add(budget)
@@ -127,7 +127,7 @@ func statPgrpState(pid int) (pgrp int, state byte, ok bool) {
 
 // Owns reports whether pid leads pgid, i.e. whether Setpgid took and the group
 // holds only this command's tree. Pure and exported so the guard that keeps
-// Kill(-pgid, …) off vibekit's own group can be tested without signalling a
+// Kill(-pgid, …) off marotte's own group can be tested without signalling a
 // non-leader, which would hit the test binary.
 func Owns(pid, pgid int) bool { return pgid == pid }
 

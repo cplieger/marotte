@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // --- Unexported Store methods ---
@@ -21,7 +21,7 @@ import (
 // are never removed from the map: removing an entry races with any
 // caller that already fetched the *sync.Mutex pointer, letting two
 // goroutines hold distinct mutexes for the same id.
-func (s *Store) lock(chatID vibekit.ChatID) *sync.Mutex {
+func (s *Store) lock(chatID marotte.ChatID) *sync.Mutex {
 	v, _ := s.locks.LoadOrStore(chatID, &sync.Mutex{})
 	//nolint:errcheck // LoadOrStore guarantees v is the stored *sync.Mutex.
 	return v.(*sync.Mutex)
@@ -30,7 +30,7 @@ func (s *Store) lock(chatID vibekit.ChatID) *sync.Mutex {
 // --- archive.StoreAccess interface methods ---
 
 // Lock returns the per-chat mutex for the archive package.
-func (s *Store) Lock(chatID vibekit.ChatID) *sync.Mutex { return s.lock(chatID) }
+func (s *Store) Lock(chatID marotte.ChatID) *sync.Mutex { return s.lock(chatID) }
 
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
@@ -42,7 +42,7 @@ func (s *Store) Dir() string { return s.dir }
 // The returned version is the `chats` version the removal minted, bumped under
 // the caller's lock after the tombstone so the chat_deleted frame that follows
 // can carry it; "" when nothing was removed.
-func (s *Store) Remove(chatID vibekit.ChatID) (string, error) {
+func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
 	path, err := s.pathFor(chatID)
 	if err != nil {
 		return "", err
@@ -63,7 +63,7 @@ func (s *Store) Remove(chatID vibekit.ChatID) (string, error) {
 
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.
-func (s *Store) markDeleted(chatID vibekit.ChatID) {
+func (s *Store) markDeleted(chatID marotte.ChatID) {
 	now := time.Now()
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
@@ -77,7 +77,7 @@ func (s *Store) markDeleted(chatID vibekit.ChatID) {
 }
 
 // isTombstoned reports whether chatID was deleted within tombstoneTTL.
-func (s *Store) isTombstoned(chatID vibekit.ChatID) bool {
+func (s *Store) isTombstoned(chatID marotte.ChatID) bool {
 	s.tombMu.Lock()
 	defer s.tombMu.Unlock()
 	t, ok := s.tombstone[chatID]
@@ -95,7 +95,7 @@ func (s *Store) isTombstoned(chatID vibekit.ChatID) bool {
 // and it was not deleted within tombstoneTTL. It takes NO per-chat mutex — a
 // stat and the tombstone set's own lock — so the digest resolver can ask it
 // without parking behind a Mutate's file rewrite.
-func (s *Store) Exists(chatID vibekit.ChatID) bool {
+func (s *Store) Exists(chatID marotte.ChatID) bool {
 	path, err := s.pathFor(chatID)
 	if err != nil || s.isTombstoned(chatID) {
 		return false
@@ -104,7 +104,7 @@ func (s *Store) Exists(chatID vibekit.ChatID) bool {
 	return err == nil
 }
 
-func (s *Store) pathFor(chatID vibekit.ChatID) (string, error) {
+func (s *Store) pathFor(chatID marotte.ChatID) (string, error) {
 	if !chatIDPattern(chatID) {
 		return "", errInvalidChatID(chatID)
 	}
@@ -113,7 +113,7 @@ func (s *Store) pathFor(chatID vibekit.ChatID) (string, error) {
 
 // load reads a chat file into memory. Returns nil, os.ErrNotExist if the
 // file does not exist.
-func (s *Store) load(chatID vibekit.ChatID) (*vibekit.Chat, error) {
+func (s *Store) load(chatID marotte.ChatID) (*marotte.Chat, error) {
 	path, err := s.pathFor(chatID)
 	if err != nil {
 		return nil, err
@@ -124,7 +124,7 @@ func (s *Store) load(chatID vibekit.ChatID) (*vibekit.Chat, error) {
 // save stamps the chat's last-activity time and writes it to chatID's
 // file. Every mutation except a draft autosave goes through here, since
 // every other mutation IS activity.
-func (s *Store) save(chatID vibekit.ChatID, chat *vibekit.Chat) error {
+func (s *Store) save(chatID marotte.ChatID, chat *marotte.Chat) error {
 	chat.UpdatedAt = time.Now().UnixMilli()
 	return s.writeChat(chatID, chat)
 }
@@ -137,7 +137,7 @@ func (s *Store) save(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 // THE DESTINATION IS THE ARGUMENT, and the object's own id is verified against
 // it: a chat whose stored id is not its filename would otherwise overwrite the
 // file that id names, under the requested id's lock.
-func (s *Store) writeChat(chatID vibekit.ChatID, chat *vibekit.Chat) error {
+func (s *Store) writeChat(chatID marotte.ChatID, chat *marotte.Chat) error {
 	path, err := s.pathFor(chatID)
 	if err != nil {
 		return err
@@ -182,7 +182,7 @@ const writeHeadroomFraction = 10
 // the last tenth of the cap warns while there is still room to act.
 //
 // Both are no-ops under an unlimited cap, where neither can happen.
-func (s *Store) logWriteOutcome(chatID vibekit.ChatID, size int64, err error) {
+func (s *Store) logWriteOutcome(chatID marotte.ChatID, size int64, err error) {
 	if s.fileCap.unlimited() {
 		return
 	}

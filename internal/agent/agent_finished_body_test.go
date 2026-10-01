@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestAgentFinishedBodyFrom(t *testing.T) {
@@ -50,17 +50,17 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
 	// Broadcast the way translate/focus.go's chat_status path does it: MID-turn, on a
 	// session_info_update, through the production write. Only that path stages the
 	// description on the open TURN, which is what the push body reads.
-	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
+	h.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
 		Status:      "in_progress",
 		Description: "Wiring the PR status poller",
 	}))
-	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
+	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	select {
@@ -86,15 +86,15 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
 	cases := []struct {
 		name string
-		stop vibekit.StopReason
+		stop marotte.StopReason
 		want string // "" means no push at all
 	}{
-		{name: "clean", stop: vibekit.StopReasonEndTurn, want: "Wiring the PR status poller"},
-		{name: "failed", stop: vibekit.StopReasonError, want: "The agent reported an error and the turn stopped."},
-		{name: "refused", stop: vibekit.StopReasonRefusal, want: "The model declined to continue."},
+		{name: "clean", stop: marotte.StopReasonEndTurn, want: "Wiring the PR status poller"},
+		{name: "failed", stop: marotte.StopReasonError, want: "The agent reported an error and the turn stopped."},
+		{name: "refused", stop: marotte.StopReasonRefusal, want: "The model declined to continue."},
 		// STOPPED: the reader asked for the cancel, and an unreadable end claims nothing.
-		{name: "cancelled", stop: vibekit.StopReasonCancelled, want: ""},
-		{name: "unknown", stop: vibekit.StopReasonUnknown, want: ""},
+		{name: "cancelled", stop: marotte.StopReasonCancelled, want: ""},
+		{name: "unknown", stop: marotte.StopReasonUnknown, want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,15 +104,15 @@ func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
 			cs.Bus = h
 			h.mcpRegistry.SignalReady()
 			ctx := t.Context()
-			_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-			epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+			_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+			epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
 			// Present for every case, so an arm leaking it fails visibly rather than absently.
 			// Broadcast mid-turn, where the real frame lands: see the sibling test above.
-			h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
+			h.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
 				Status: "in_progress", Description: "Wiring the PR status poller",
 			}))
 			h.SettleTurnOnResponse(ctx, "c1", epoch, 0,
-				&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": string(tc.stop)})})
+				&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": string(tc.stop)})})
 
 			if tc.want == "" {
 				select {
@@ -150,13 +150,13 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 		cs.Bus = h
 		h.mcpRegistry.SignalReady()
-		_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 		return h, fp
 	}
-	endTurn := func(t *testing.T, h *Runtime, epoch vibekit.TurnEpoch) {
+	endTurn := func(t *testing.T, h *Runtime, epoch marotte.TurnEpoch) {
 		t.Helper()
 		h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0,
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 	}
 	awaitBody := func(t *testing.T, fp *recordingPush) string {
 		t.Helper()
@@ -171,9 +171,9 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 
 	t.Run("the declaring turn gets its own words", func(t *testing.T) {
 		h, fp := newFixture(t)
-		epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
-		h.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
-			Status:      vibekit.ChatStatusWaitingOnUser,
+		epoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
+		h.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
+			Status:      marotte.ChatStatusWaitingOnUser,
 			Description: "waiting on the user to disposition both proposals",
 		}))
 		endTurn(t, h, epoch)
@@ -185,20 +185,20 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 
 	t.Run("the next turn does not inherit it", func(t *testing.T) {
 		h, fp := newFixture(t)
-		nEpoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
-		h.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1", vibekit.ChatStatusPayload{
-			Status:      vibekit.ChatStatusWaitingOnUser,
+		nEpoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
+		h.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
+			Status:      marotte.ChatStatusWaitingOnUser,
 			Description: "waiting on the user to disposition both proposals",
 		}))
 		endTurn(t, h, nEpoch)
 		_ = awaitBody(t, fp)
 		// The claim is RETAINED past turn end; that is the feature. So the cache still
 		// holds a description turn N+1 never declared.
-		if got := h.bus.chatStatus.Get("c1"); got.Status != vibekit.ChatStatusWaitingOnUser {
+		if got := h.bus.chatStatus.Get("c1"); got.Status != marotte.ChatStatusWaitingOnUser {
 			t.Fatalf("the fixture lost the retention: status is %q", got.Status)
 		}
 
-		nextEpoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourceWireTurnStart)
+		nextEpoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourceWireTurnStart)
 		if nextEpoch == 0 {
 			t.Fatal("the fixture could not open a wire-started turn")
 		}
@@ -219,10 +219,10 @@ func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
-	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
+	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	select {

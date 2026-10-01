@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // One inert render path for agent-produced SVG, and it replaces every diagram
-// renderer vibekit might otherwise have grown.
+// renderer marotte might otherwise have grown.
 //
 // # Why `<img>` and nothing else
 //

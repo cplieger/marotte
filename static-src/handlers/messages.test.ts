@@ -395,7 +395,7 @@ describe("tool_call_update", () => {
     fireSSE("tool_call_update", "chat-1", {
       message_id: "m1",
       tool_call_id: "tc1",
-      diffs_appended: [{ path: "vibekit/app.ts", new_text: "x" }],
+      diffs_appended: [{ path: "marotte/app.ts", new_text: "x" }],
     });
     fireSSE("tool_call_update", "chat-1", {
       message_id: "m1",
@@ -404,7 +404,7 @@ describe("tool_call_update", () => {
     });
     // Both sources, because neither is complete on its own: `locations` is what a
     // read or a command reports and `diffs[].path` is what a write carries.
-    expect(mockMarkGitDirty).toHaveBeenLastCalledWith(["subflux/main.go", "vibekit/app.ts"]);
+    expect(mockMarkGitDirty).toHaveBeenLastCalledWith(["subflux/main.go", "marotte/app.ts"]);
   });
 
   // A call that names nothing must ask for the WHOLE tree. An empty scope would be

@@ -75,7 +75,7 @@ const SNAPSHOT_MAX_TOOL_INPUT = 256;
  *  whole-record replace, so a streaming turn would otherwise write per frame. */
 const SNAPSHOT_DEBOUNCE_MS = 1_000;
 
-const DB_NAME = "vibekit-boot";
+const DB_NAME = "marotte-boot";
 const DB_VERSION = 1;
 const STORE_NAME = "snapshot";
 const RECORD_KEY = "current";

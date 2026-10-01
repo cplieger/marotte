@@ -38,7 +38,7 @@ func extractedStatusValues(t *testing.T, name string, re *regexp.Regexp, src str
 
 func declaredStatusValues(t *testing.T, typeName string) []string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "../vibekit/domain_run.go", nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "../marotte/domain_run.go", nil, 0)
 	if err != nil {
 		t.Fatalf("parse run-status declaration: %v", err)
 	}
@@ -71,7 +71,7 @@ func declaredStatusValues(t *testing.T, typeName string) []string {
 
 func fixtureStatusValues(t *testing.T) (runs, nodes []string) {
 	t.Helper()
-	raw, err := os.ReadFile("../vibekit/testdata/run_statuses.json")
+	raw, err := os.ReadFile("../marotte/testdata/run_statuses.json")
 	if err != nil {
 		t.Fatalf("read run-status fixture: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestRunStatusEnumExtractor(t *testing.T) {
 	}
 }
 
-// declaredExtras are the statuses vibekit declares that KAS's own enum does not,
+// declaredExtras are the statuses marotte declares that KAS's own enum does not,
 // each with the reason it is admitted. The allowlist is what keeps this a DRIFT
 // test rather than a rubber stamp: a bundle member renamed, reordered or removed
 // still fails, and an undeclared extra fails too.

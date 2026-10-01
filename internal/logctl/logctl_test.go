@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // snapshotLevel returns the currently-active slog level on the package's

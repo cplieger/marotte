@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// The build versions: vibekit's own, and the kiro-cli it is running.
+// The build versions: marotte's own, and the kiro-cli it is running.
 //
 // ONE owner of GET /api/version, because three surfaces name these now: the
 // sidebar status card's connection line and its agent-runtime line, and Settings
@@ -7,7 +7,7 @@
 // way to reach the pair without a second request for the same two strings.
 //
 // Fetched ONCE per page load. Both values are properties of the running
-// container — vibekit's is baked at build (`internal/version.Build`) and
+// container — marotte's is baked at build (`internal/version.Build`) and
 // kiro-cli's comes from a `--version` subprocess the server spawns per request —
 // so neither can change without a restart, and a restart is a fresh page.
 //
@@ -25,18 +25,18 @@ import { apiGet } from "./api-client.js";
  *  fields are optional: `kiro_cli` is omitted when the `--version` probe fails
  *  or times out, which is a normal state while the install is still running. */
 interface VersionPayload {
-  vibekit?: string;
+  marotte?: string;
   kiro_cli?: string;
 }
 
 /** A version pair. `""` means "not known", never "absent" — a reader renders
  *  what it has and says nothing about what it does not. */
 export interface Versions {
-  readonly vibekit: string;
+  readonly marotte: string;
   readonly kiroCli: string;
 }
 
-const EMPTY: Versions = { vibekit: "", kiroCli: "" };
+const EMPTY: Versions = { marotte: "", kiroCli: "" };
 
 /** Strip the program name kiro-cli prints alongside its version.
  *
@@ -88,7 +88,7 @@ export async function loadVersions(): Promise<void> {
     return;
   }
   versions.value = {
-    vibekit: (v.vibekit ?? "").trim(),
+    marotte: (v.marotte ?? "").trim(),
     kiroCli: bareKiroVersion(v.kiro_cli ?? ""),
   };
 }

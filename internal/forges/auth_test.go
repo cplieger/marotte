@@ -218,7 +218,7 @@ func TestErrSentinelsAliasCliexec(t *testing.T) {
 
 // The login to delete is the one whose URL names the host being disconnected.
 // A login added by hand can carry any name, so a name match is a FALLBACK for
-// the vibekit-style login whose name IS its host — never a reason to delete
+// the marotte-style login whose name IS its host — never a reason to delete
 // somebody else's login, which is what disconnecting the wrong row would do.
 func TestCLILogout_Tea_DeletesTheLoginForTheHostAndNoOther(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

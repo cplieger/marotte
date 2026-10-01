@@ -69,7 +69,7 @@ func TestCheckDirWritable(t *testing.T) {
 // TestCheckDirWritable_ProbeNameIsSweepable pins the app-to-library agreement the
 // adoption bought: whatever name the writability probe creates, this repo's own
 // stale-temp sweep recognises it. The probe that used to run here invented
-// ".vibekit-probe-*", which sweepStaleTemps walks straight past, so a directory
+// ".marotte-probe-*", which sweepStaleTemps walks straight past, so a directory
 // that refused the unlink left a file nothing would ever reclaim. Asserting
 // through the exported generator and predicate keeps the agreement checked rather
 // than documented.
@@ -78,7 +78,7 @@ func TestCheckDirWritable_ProbeNameIsSweepable(t *testing.T) {
 	if !atomicfile.IsPackageTemp(name) {
 		t.Fatalf("atomicfile.TempName() = %q, which IsPackageTemp rejects", name)
 	}
-	if atomicfile.IsPackageTemp(".vibekit-probe-123") {
+	if atomicfile.IsPackageTemp(".marotte-probe-123") {
 		t.Error("the retired app-invented probe name reads as sweepable; the sweep never reclaimed it")
 	}
 }

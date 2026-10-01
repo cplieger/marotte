@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // storeDeps is benchDeps with a real chat store, so a handler that mutates the
@@ -22,27 +22,27 @@ type storeDeps struct {
 // through a ChatStore() getter: Roles holds the interface directly now, so a
 // double that only overrode the getter left benchDeps' no-op methods winning and
 // silently stored nothing.
-func (d *storeDeps) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+func (d *storeDeps) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	return d.store.Get(ctx, id)
 }
 
-func (d *storeDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
+func (d *storeDeps) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
 	return d.store.Mutate(ctx, id, fn)
 }
 
-func (d *storeDeps) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+func (d *storeDeps) AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
 	return d.store.AppendMessage(ctx, chatID, msg)
 }
 
-func (d *storeDeps) SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
+func (d *storeDeps) SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error) {
 	return d.store.SetDraft(ctx, id, text)
 }
 
-func (d *storeDeps) SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
+func (d *storeDeps) SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error) {
 	return d.store.SetAttachments(ctx, id, paths)
 }
 
-func (d *storeDeps) Delete(ctx context.Context, id vibekit.ChatID) error {
+func (d *storeDeps) Delete(ctx context.Context, id marotte.ChatID) error {
 	return d.store.Delete(ctx, id)
 }
 
@@ -52,14 +52,14 @@ func newTestHost(t *testing.T, store ChatStore) hostDouble {
 }
 
 // resumeReq builds a resume_session command envelope.
-func resumeReq(t *testing.T, chatID vibekit.ChatID, sessionID, name string) *vibekit.ClientCommand {
+func resumeReq(t *testing.T, chatID marotte.ChatID, sessionID, name string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.ResumeSessionCommand{SessionID: sessionID, Name: name})
+	payload, err := json.Marshal(marotte.ResumeSessionCommand{SessionID: sessionID, Name: name})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{
-		Type:    vibekit.CmdResumeSession,
+	return &marotte.ClientCommand{
+		Type:    marotte.CmdResumeSession,
 		ChatID:  chatID,
 		Payload: payload,
 	}
@@ -67,7 +67,7 @@ func resumeReq(t *testing.T, chatID vibekit.ChatID, sessionID, name string) *vib
 
 // TestCmdResumeSession_BindsTheSession is the point of the command: the chat is
 // created ALREADY bound to the KAS session, so the next bridge takes the
-// session/load path and the replay projection supplies the transcript. vibekit
+// session/load path and the replay projection supplies the transcript. marotte
 // copies no messages.
 func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
@@ -108,7 +108,7 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if _, err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Existing"
 		c.RecordSession("sess_original")
 		return true
@@ -175,8 +175,8 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 // given; one byte more is refused. The cap is on the RECORD's name field, so
 // the boundary decides whether a chat is created at all.
 func TestCmdResumeSession_NameLengthCap(t *testing.T) {
-	atCap := strings.Repeat("n", vibekit.MaxChatNameBytes)
-	overCap := strings.Repeat("n", vibekit.MaxChatNameBytes+1)
+	atCap := strings.Repeat("n", marotte.MaxChatNameBytes)
+	overCap := strings.Repeat("n", marotte.MaxChatNameBytes+1)
 
 	t.Run("a name at the cap is accepted", func(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()

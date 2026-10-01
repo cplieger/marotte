@@ -17,10 +17,10 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // replay owns the session/load transcript projection: the in-flight rebuild
@@ -32,17 +32,17 @@ type replay struct {
 	// lifetime supplies the context the swap runs under.
 	lifetime *lifetime
 	// projections are the rebuilds in flight, keyed by chat.
-	projections map[vibekit.ChatID]*loadProjection
+	projections map[marotte.ChatID]*loadProjection
 	// settling holds a projection whose swap is IN FLIGHT: it has left projections, so
 	// no new frame lands in it, but its barrier stays reachable here until Mutate
 	// returns, which is what makes the barrier span the store write.
-	settling map[vibekit.ChatID]*loadProjection
+	settling map[marotte.ChatID]*loadProjection
 	// onProjection receives a settled transcript, called WITHOUT projMu held: the swap
 	// writes the chat store, and holding the lock across that would let a store
 	// mutation and a replay frame deadlock against each other.
-	onProjection func(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string)
+	onProjection func(chatID marotte.ChatID, msgs []marotte.Message, watermark string)
 	// broadcast publishes the replacement announcement.
-	broadcast func(context.Context, vibekit.ServerEvent)
+	broadcast func(context.Context, marotte.ServerEvent)
 	// workDir is the workspace root a projected diff path is made relative to. A VALUE
 	// rather than a read through lifetime, because the barrier tests build a bare replay
 	// carrying no lifetime and still open a projection. An empty one yields absolute
@@ -87,11 +87,11 @@ var closedBarrier = func() chan struct{} {
 // OpenReplayProjection starts a projection for a chat about to session/load. A
 // projection already open for that chat is discarded: the only way to reach this twice
 // is a re-load (model-switch fallback), whose replay supersedes.
-func (rp *replay) OpenReplayProjection(chatID vibekit.ChatID) {
+func (rp *replay) OpenReplayProjection(chatID marotte.ChatID) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
 	if rp.projections == nil {
-		rp.projections = make(map[vibekit.ChatID]*loadProjection)
+		rp.projections = make(map[marotte.ChatID]*loadProjection)
 	}
 	if prev, dup := rp.projections[chatID]; dup {
 		slog.Debug("replay projection: superseding an open one", "chat_id", chatID)
@@ -108,7 +108,7 @@ func (rp *replay) OpenReplayProjection(chatID vibekit.ChatID) {
 // ReplaySettled returns a channel closed once the chat's in-flight replay has been
 // adopted into the record — or discarded, or superseded. No projection open answers
 // already-closed, so a caller never blocks on a resume that is not happening.
-func (rp *replay) ReplaySettled(chatID vibekit.ChatID) <-chan struct{} {
+func (rp *replay) ReplaySettled(chatID marotte.ChatID) <-chan struct{} {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
 	if lp := rp.projections[chatID]; lp != nil {
@@ -125,14 +125,14 @@ func (rp *replay) ReplaySettled(chatID vibekit.ChatID) <-chan struct{} {
 //
 // The attempt is the point: a replay Forward has already drained is complete HERE and
 // no later frame is coming to notice it.
-func (rp *replay) MarkReplayLoadedAt(chatID vibekit.ChatID, at drainPoint) {
+func (rp *replay) MarkReplayLoadedAt(chatID marotte.ChatID, at drainPoint) {
 	lp := rp.claimSettled(chatID, at.gen, false, func(d *replayDrain) { d.markLoadedAt(at) })
 	rp.adopt(chatID, lp, settleOnLoad)
 }
 
 // DiscardReplayProjection drops a chat's projection unsettled, when the load failed,
 // so a half-built transcript cannot be adopted later.
-func (rp *replay) DiscardReplayProjection(chatID vibekit.ChatID) {
+func (rp *replay) DiscardReplayProjection(chatID marotte.ChatID) {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
 	if lp, open := rp.projections[chatID]; open {
@@ -146,7 +146,7 @@ func (rp *replay) DiscardReplayProjection(chatID vibekit.ChatID) {
 // ingestReplayFrame folds one replay-tagged frame into the chat's open projection.
 // Reports whether a projection consumed it, so the caller can drop a replay that
 // arrived with no load in flight.
-func (rp *replay) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdateKind, raw json.RawMessage) bool {
+func (rp *replay) ingestReplayFrame(chatID marotte.ChatID, kind marotte.ACPUpdateKind, raw json.RawMessage) bool {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
 	lp := rp.projections[chatID]
@@ -164,7 +164,7 @@ func (rp *replay) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdat
 // bridge-exit seal, which bypasses the position because no frame can advance it again.
 //
 // No-op when no projection is open, so callers may call it per frame.
-func (rp *replay) SettleReplayProjection(chatID vibekit.ChatID, at drainPoint, force bool) {
+func (rp *replay) SettleReplayProjection(chatID marotte.ChatID, at drainPoint, force bool) {
 	lp := rp.claimSettled(chatID, at.gen, force, func(d *replayDrain) { d.noteConsumed(at) })
 	trigger := settleOnFrame
 	if force {
@@ -178,7 +178,7 @@ func (rp *replay) SettleReplayProjection(chatID vibekit.ChatID, at drainPoint, f
 // caller and nil to every other. The claim is what makes the settle run once: three
 // triggers reach it, on two goroutines. The move rather than a delete is what keeps the
 // barrier reachable across the swap.
-func (rp *replay) claimSettled(chatID vibekit.ChatID, gen uint64, force bool, note func(*replayDrain)) *loadProjection {
+func (rp *replay) claimSettled(chatID marotte.ChatID, gen uint64, force bool, note func(*replayDrain)) *loadProjection {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
 	lp := rp.projections[chatID]
@@ -191,7 +191,7 @@ func (rp *replay) claimSettled(chatID vibekit.ChatID, gen uint64, force bool, no
 	}
 	delete(rp.projections, chatID)
 	if rp.settling == nil {
-		rp.settling = make(map[vibekit.ChatID]*loadProjection)
+		rp.settling = make(map[marotte.ChatID]*loadProjection)
 	}
 	rp.settling[chatID] = lp
 	return lp
@@ -199,7 +199,7 @@ func (rp *replay) claimSettled(chatID vibekit.ChatID, gen uint64, force bool, no
 
 // adopt swaps a claimed projection into the record and releases its barrier ON RETURN.
 // Nil is the ordinary answer — a settle attempt that claimed nothing.
-func (rp *replay) adopt(chatID vibekit.ChatID, lp *loadProjection, trigger string) {
+func (rp *replay) adopt(chatID marotte.ChatID, lp *loadProjection, trigger string) {
 	if lp == nil {
 		return
 	}
@@ -243,11 +243,11 @@ func (rp *replay) adopt(chatID vibekit.ChatID, lp *loadProjection, trigger strin
 // the transcript and records the stamp only on commit, so the digest names this chat again
 // if the refetch fails. Emitted only when the message set changed: a watermark-only move
 // replaces no transcript.
-func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string) {
+func (rp *replay) swapProjectedTranscript(chatID marotte.ChatID, msgs []marotte.Message, watermark string) {
 	var before, after int
 	var changed bool
 	var stats mergeStats
-	version, err := rp.chats.Mutate(durable.Context(rp.lifetime.shutdownCtx), chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := rp.chats.Mutate(durable.Context(rp.lifetime.shutdownCtx), chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -283,8 +283,8 @@ func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.
 	// precedes this frame: the count first, the fetch instruction second, stamped with the
 	// version that mutation minted so the refetch commits at exactly that version.
 	if changed {
-		frame := vibekit.NewEvent(vibekit.EventSubjectChanged, chatID, vibekit.SubjectChangedPayload{})
-		frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+		frame := marotte.NewEvent(marotte.EventSubjectChanged, chatID, marotte.SubjectChangedPayload{})
+		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 		rp.broadcast(durable.Context(rp.lifetime.shutdownCtx), frame)
 	}
 }
@@ -292,8 +292,8 @@ func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.
 // sameMessageIDs answers whether the merge left the rows and their order alone, which is
 // the STRUCTURAL half of `changed`; a count cannot answer it, since a merge can return as
 // many rows as it was given and none of the same ones.
-func sameMessageIDs(existing, merged []vibekit.Message) bool {
-	return slices.EqualFunc(existing, merged, func(a, b vibekit.Message) bool {
+func sameMessageIDs(existing, merged []marotte.Message) bool {
+	return slices.EqualFunc(existing, merged, func(a, b marotte.Message) bool {
 		return a.ID == b.ID
 	})
 }
@@ -310,8 +310,8 @@ type mergeStats struct{ Paired, Added, Dropped, Replaced int }
 // mergeProjection decides the transcript to persist after a replay: each record row is
 // PAIRED with its replayed twin on AgentSideID and the two are unioned, and a record row
 // the replay does not cover is preserved by preserveExisting — KAS's log is not fsynced, so
-// a turn vibekit durably holds can legitimately be absent from a replay.
-func mergeProjection(existing, projected []vibekit.Message) (merged []vibekit.Message, changed bool, stats mergeStats) {
+// a turn marotte durably holds can legitimately be absent from a replay.
+func mergeProjection(existing, projected []marotte.Message) (merged []marotte.Message, changed bool, stats mergeStats) {
 	if len(projected) == 0 {
 		return existing, false, mergeStats{}
 	}
@@ -323,7 +323,7 @@ func mergeProjection(existing, projected []vibekit.Message) (merged []vibekit.Me
 	// Stable, so at the same instant a projected row stays ADJACENT-ahead of a preserved
 	// one. It says nothing about which copy is more complete: that is only true of a PAIRED
 	// row, whose two accounts the union has already merged.
-	slices.SortStableFunc(out, func(a, b vibekit.Message) int {
+	slices.SortStableFunc(out, func(a, b marotte.Message) int {
 		return cmp.Compare(a.Ts, b.Ts)
 	})
 	return out, changed || !sameMessageIDs(existing, out), stats
@@ -337,12 +337,12 @@ type replayFacts struct {
 	compaction bool
 }
 
-func summarizeReplay(projected []vibekit.Message) replayFacts {
+func summarizeReplay(projected []marotte.Message) replayFacts {
 	facts := replayFacts{ids: make(map[string]struct{}, len(projected))}
 	for i := range projected {
 		facts.ids[projected[i].ID] = struct{}{}
 		facts.newest = max(facts.newest, projected[i].Ts)
-		if projected[i].EventKind == vibekit.EventCompacted {
+		if projected[i].EventKind == marotte.EventCompacted {
 			facts.compaction = true
 		}
 	}
@@ -361,7 +361,7 @@ type recordIndex struct {
 	byID         map[string]int
 }
 
-func indexRecord(existing []vibekit.Message) recordIndex {
+func indexRecord(existing []marotte.Message) recordIndex {
 	idx := recordIndex{
 		firstByKey:   make(map[string]int, len(existing)),
 		keyToIndices: make(map[string][]int, len(existing)),
@@ -383,8 +383,8 @@ func indexRecord(existing []vibekit.Message) recordIndex {
 
 // pairRows walks the projected rows, unioning each with its record twin and counting the
 // rest. consumed marks every record row a pairing covers.
-func pairRows(existing, projected []vibekit.Message, idx recordIndex, stats *mergeStats) (out []vibekit.Message, consumed map[int]bool, changed bool) {
-	out = make([]vibekit.Message, 0, len(projected)+len(existing))
+func pairRows(existing, projected []marotte.Message, idx recordIndex, stats *mergeStats) (out []marotte.Message, consumed map[int]bool, changed bool) {
+	out = make([]marotte.Message, 0, len(projected)+len(existing))
 	out = append(out, projected...)
 	claimed := make(map[string]bool, len(projected))
 	consumed = make(map[int]bool, len(existing))
@@ -419,8 +419,8 @@ func pairRows(existing, projected []vibekit.Message, idx recordIndex, stats *mer
 }
 
 // appendPreserved decides each unpaired record row: kept, or counted as dropped.
-// Indexed, not ranged by value: vibekit.Message is 216 bytes (gocritic rangeValCopy).
-func appendPreserved(out, existing []vibekit.Message, consumed map[int]bool, facts replayFacts, stats *mergeStats) []vibekit.Message {
+// Indexed, not ranged by value: marotte.Message is 216 bytes (gocritic rangeValCopy).
+func appendPreserved(out, existing []marotte.Message, consumed map[int]bool, facts replayFacts, stats *mergeStats) []marotte.Message {
 	for i := range existing {
 		// A CONSUMED row goes regardless of preserveExisting: pairing is positive evidence
 		// the replay covers it, strictly stronger than the Ts heuristic — and a paired live
@@ -448,7 +448,7 @@ func appendPreserved(out, existing []vibekit.Message, consumed map[int]bool, fac
 // here, where building from the projected row would make a new stamped field vanish on
 // every paired row. Exactly the fields the AGENT states are overwritten, each only when the
 // projection states one (an empty projected value is an absent statement, not a denial).
-func union(rec, proj *vibekit.Message) vibekit.Message {
+func union(rec, proj *marotte.Message) marotte.Message {
 	out := *rec
 	out.ID = proj.ID
 	out.Role = proj.Role
@@ -474,7 +474,7 @@ func union(rec, proj *vibekit.Message) vibekit.Message {
 	// A USER row keeps the RECORD's content: BuildPromptBlocks augments the sent form with a
 	// path reference per attachment it could not inline, so the replay's text can hold
 	// machine-appended references the reader never typed.
-	if out.Role != vibekit.RoleUser && proj.Content != "" {
+	if out.Role != marotte.RoleUser && proj.Content != "" {
 		out.Content = proj.Content
 	}
 	if proj.Reasoning != "" {
@@ -496,7 +496,7 @@ func union(rec, proj *vibekit.Message) vibekit.Message {
 // carrying a "cancelled…" sentence — which both turn projections render as a green outcome
 // beside a failure line. An empty projected outcome keeps all four: the process may have
 // died with a local conclusion KAS logged no turn_end for.
-func unionConclusion(out, rec, proj *vibekit.Message) {
+func unionConclusion(out, rec, proj *marotte.Message) {
 	if proj.TurnOutcome == "" {
 		return
 	}
@@ -508,7 +508,7 @@ func unionConclusion(out, rec, proj *vibekit.Message) {
 	// clean outcome can never carry a failure sentence; unknown counts as non-clean,
 	// because an unrecognised stop reason is not evidence the turn was fine.
 	out.TurnFailureReason = proj.TurnFailureReason
-	if out.TurnFailureReason == "" && out.TurnOutcome != vibekit.TurnOutcomeCompleted {
+	if out.TurnFailureReason == "" && out.TurnOutcome != marotte.TurnOutcomeCompleted {
 		out.TurnFailureReason = rec.TurnFailureReason
 	}
 }
@@ -521,7 +521,7 @@ func unionConclusion(out, rec, proj *vibekit.Message) {
 //
 // claimedCall is the sub-pairing's own claim: two creates for one toolCallId yield two
 // projected calls with equal IDs, and without it both would copy one record call's stamps.
-func unionToolCalls(rec, proj []vibekit.ToolCall) []vibekit.ToolCall {
+func unionToolCalls(rec, proj []marotte.ToolCall) []marotte.ToolCall {
 	byID := make(map[string]int, len(rec))
 	for i := range rec {
 		if _, seen := byID[rec[i].ID]; !seen {
@@ -529,7 +529,7 @@ func unionToolCalls(rec, proj []vibekit.ToolCall) []vibekit.ToolCall {
 		}
 	}
 	claimedCall := make(map[string]bool, len(proj))
-	var calls []vibekit.ToolCall
+	var calls []marotte.ToolCall
 	for j := range proj {
 		i, ok := byID[proj[j].ID]
 		if !ok || claimedCall[proj[j].ID] {
@@ -546,7 +546,7 @@ func unionToolCalls(rec, proj []vibekit.ToolCall) []vibekit.ToolCall {
 // record's as the base for union's own reason. The OUTCOME UNIT and Input are deliberately
 // absent from the overwrite set — each is one statement with one owner per row, decided by
 // which side has an outcome and by whether the store already cut the record's copy.
-func unionToolCall(rec, proj *vibekit.ToolCall) vibekit.ToolCall {
+func unionToolCall(rec, proj *marotte.ToolCall) marotte.ToolCall {
 	out := *rec
 	out.ID = proj.ID
 	out.Title = cmp.Or(proj.Title, rec.Title)
@@ -657,15 +657,15 @@ func sameRawJSON(a, b json.RawMessage) bool {
 // value as complete AND makes the Input gate read false next load, so the merge re-widens an
 // input the store re-cuts, a write per load. Nil rather than a zero-valued pointer when
 // nothing survives: DeepEqual distinguishes them and omitempty hands back nil.
-func keptCuts(t *vibekit.ToolTruncation, keptDiffs bool) *vibekit.ToolTruncation {
+func keptCuts(t *marotte.ToolTruncation, keptDiffs bool) *marotte.ToolTruncation {
 	if t == nil {
 		return nil
 	}
-	out := vibekit.ToolTruncation{InputBytes: t.InputBytes}
+	out := marotte.ToolTruncation{InputBytes: t.InputBytes}
 	if keptDiffs {
 		out.DiffBytes, out.DiffCount = t.DiffBytes, t.DiffCount
 	}
-	if out == (vibekit.ToolTruncation{}) {
+	if out == (marotte.ToolTruncation{}) {
 		return nil
 	}
 	return &out
@@ -677,17 +677,17 @@ func keptCuts(t *vibekit.ToolTruncation, keptDiffs bool) *vibekit.ToolTruncation
 // event preserve. The duplication has two halves: load N against N+1 is closed by the
 // projection's derived id, which makes the record's copy a duplicate here, and the LIVE
 // event against its projected twin only by this exclusion.
-func preserveExisting(m *vibekit.Message, newest int64, projectedCompaction bool) bool {
+func preserveExisting(m *marotte.Message, newest int64, projectedCompaction bool) bool {
 	if m.Ts > newest || isPlanRow(m) {
 		return true
 	}
-	if m.Role != vibekit.RoleEvent {
+	if m.Role != marotte.RoleEvent {
 		return false
 	}
 	// The narrow exclusion: only a compaction, and only when the replay produced one of
 	// its own. A compaction NEWER than the replay already survived above, which is the
 	// case the un-fsynced KAS log makes real.
-	if projectedCompaction && m.EventKind == vibekit.EventCompacted {
+	if projectedCompaction && m.EventKind == marotte.EventCompacted {
 		return false
 	}
 	return true
@@ -696,8 +696,8 @@ func preserveExisting(m *vibekit.Message, newest int64, projectedCompaction bool
 // isPlanRow reports whether m is a turn's plan row: an assistant message whose ONLY
 // payload is Plan. Every other assistant field must be empty, or a real reply carrying a
 // plan would survive a replay that already re-projected it and render twice.
-func isPlanRow(m *vibekit.Message) bool {
-	return m.Role == vibekit.RoleAssistant &&
+func isPlanRow(m *marotte.Message) bool {
+	return m.Role == marotte.RoleAssistant &&
 		len(m.Plan) > 0 &&
 		m.Content == "" &&
 		m.Reasoning == "" &&

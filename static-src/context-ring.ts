@@ -1,6 +1,6 @@
 // How the 16px context indicator is DRAWN, DOM-free. Two halves in ONE unit:
 // the wedge marks where KAS summarizes and the ramp warms toward it, both as a
-// percentage of the window. Both contracts live in `vibekit-ui.md`, including
+// percentage of the window. Both contracts live in `marotte-ui.md`, including
 // why the ramp is not keyed on absolute tokens.
 
 /** The percentage at which KAS 2.21.1 summarizes the conversation. Reached only

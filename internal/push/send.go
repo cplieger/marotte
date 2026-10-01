@@ -22,20 +22,20 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"golang.org/x/sync/errgroup"
 )
 
 // pushPayload is the typed wire shape for Web Push notification payloads.
 //
-// vibekit.PushSubject is EMBEDDED so fitToCap's size check (which marshals this
+// marotte.PushSubject is EMBEDDED so fitToCap's size check (which marshals this
 // struct) automatically charges every subject field against the cap; a
 // separate subject copy could under-count the payload by exactly the amount
 // that makes the vendor reject it.
 type pushPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
-	vibekit.PushSubject
+	marotte.PushSubject
 }
 
 // Send delivers a push notification to all subscribers, debounced per KIND AND SUBJECT
@@ -45,7 +45,7 @@ type pushPayload struct {
 // preflightSend returns nil to mean DO NOT SEND, against a non-nil EMPTY slice meaning
 // every gate passed but nobody is subscribed. Only the first returns here; the second
 // still fans out to zero endpoints, having already stamped the debounce.
-func (s *Service) Send(ctx context.Context, title, body string, notifyType vibekit.PushKind, subject vibekit.PushSubject) {
+func (s *Service) Send(ctx context.Context, title, body string, notifyType marotte.PushKind, subject marotte.PushSubject) {
 	slog.Debug("push: send", "kind", string(notifyType))
 	// Trim against the *marshaled* size, not the raw title+body length: the JSON envelope
 	// and any escaping count toward pushBodyCap, so a naive check leaves the encoded
@@ -75,12 +75,12 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType vibek
 // A subscription with no presence row is sent, so a tag mismatch costs one
 // notification too many, never one too few.
 func (s *Service) absent(
-	subs []vibekit.PushSubscription, kind vibekit.PushKind, subject vibekit.PushSubject, payload []byte,
-) []vibekit.PushSubscription {
+	subs []marotte.PushSubscription, kind marotte.PushKind, subject marotte.PushSubject, payload []byte,
+) []marotte.PushSubscription {
 	if s.presence == nil {
 		return subs
 	}
-	out := make([]vibekit.PushSubscription, 0, len(subs))
+	out := make([]marotte.PushSubscription, 0, len(subs))
 	for _, sub := range subs {
 		tag := TagOf(sub.Endpoint)
 		if s.presence.Gone(tag) {
@@ -99,7 +99,7 @@ func (s *Service) absent(
 // fanOut delivers payload to every subscription, pushFanOutLimit at a time, and
 // prunes the ones the service said are gone.
 func (s *Service) fanOut(
-	ctx context.Context, subs []vibekit.PushSubscription, payload []byte, kind vibekit.PushKind,
+	ctx context.Context, subs []marotte.PushSubscription, payload []byte, kind marotte.PushKind,
 ) {
 	var (
 		mu      sync.Mutex
@@ -124,7 +124,7 @@ func (s *Service) fanOut(
 
 // Suppressed reports how many subscriptions the send filter skipped for kind
 // since the service started. The test-only probe reads it.
-func (s *Service) Suppressed(kind vibekit.PushKind) uint64 {
+func (s *Service) Suppressed(kind marotte.PushKind) uint64 {
 	if counter, ok := s.suppressed[kind]; ok {
 		return counter.Load()
 	}
@@ -247,9 +247,9 @@ func classify(code int) disposition {
 // capability URL.
 func (s *Service) deliver(
 	ctx context.Context,
-	sub vibekit.PushSubscription,
+	sub marotte.PushSubscription,
 	payload []byte,
-	kind vibekit.PushKind,
+	kind marotte.PushKind,
 ) disposition {
 	tag := TagOf(sub.Endpoint)
 	deadline := time.Now().Add(pushRetryBudget)
@@ -348,7 +348,7 @@ func (s *Service) waitRetry(
 }
 
 // permanentHint names what a permanent failure means, because the status alone
-// does not say whose bug it is and these are all vibekit's. An authorization
+// does not say whose bug it is and these are all marotte's. An authorization
 // refusal is NOT here: it has its own disposition, because whose key is wrong
 // decides whether the subscription may be deleted.
 func permanentHint(code int) string {
@@ -389,7 +389,7 @@ func parseRetryAfter(h string) time.Duration {
 // POST to — or nil if the send should be dropped. Holding mu across
 // the decision + stamp closes the TOCTOU between "should send" and
 // "record last-push". See Send's doc comment for the nil-vs-empty contract.
-func (s *Service) preflightSend(notifyType vibekit.PushKind, subject vibekit.PushSubject) []vibekit.PushSubscription {
+func (s *Service) preflightSend(notifyType marotte.PushKind, subject marotte.PushSubject) []marotte.PushSubscription {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.healthy {
@@ -413,7 +413,7 @@ func (s *Service) preflightSend(notifyType vibekit.PushKind, subject vibekit.Pus
 	}
 	s.pruneDebounceLocked()
 	s.lastPush[key] = time.Now()
-	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
+	subs := make([]marotte.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -447,7 +447,7 @@ func (s *Service) pruneStale(stale []string) {
 	s.saveSubs(s.lifetime)
 }
 
-// RFC 8030 section 5.3 urgencies. Only these two are used: nothing vibekit
+// RFC 8030 section 5.3 urgencies. Only these two are used: nothing marotte
 // sends is an advertisement or a topic update, which are what the other two
 // rungs describe.
 const (
@@ -461,8 +461,8 @@ const (
 // the spec's "time-sensitive alert" row; everything else is a "chat or calendar
 // message". normal is also the spec's default, and is sent anyway so every
 // request states its own urgency.
-func urgencyFor(kind vibekit.PushKind) string {
-	if kind == vibekit.PushKindPermission {
+func urgencyFor(kind marotte.PushKind) string {
+	if kind == marotte.PushKindPermission {
 		return urgencyHigh
 	}
 	return urgencyNormal
@@ -494,17 +494,17 @@ const (
 // An unrecognised kind takes the longest window: Send's preflight refuses every
 // invalid kind, so reaching the default means the wire grew a kind this build
 // does not know, and delivering that late is a smaller harm than dropping it.
-func ttlFor(kind vibekit.PushKind) string {
+func ttlFor(kind marotte.PushKind) string {
 	return ttlSeconds(ttlDuration(kind))
 }
 
 // ttlDuration is the window ttlFor renders, as a duration: how long a
 // notification of this kind is still worth showing.
-func ttlDuration(kind vibekit.PushKind) time.Duration {
+func ttlDuration(kind marotte.PushKind) time.Duration {
 	switch kind {
-	case vibekit.PushKindPermission:
+	case marotte.PushKindPermission:
 		return ttlPermission
-	case vibekit.PushKindAgentFinished:
+	case marotte.PushKindAgentFinished:
 		return ttlAgentFinished
 	default:
 		return ttlPRStatus
@@ -522,9 +522,9 @@ func ttlSeconds(d time.Duration) string {
 // service, the Retry-After delay it asked for (0 when absent).
 func (s *Service) push(
 	ctx context.Context,
-	sub vibekit.PushSubscription,
+	sub marotte.PushSubscription,
 	payload []byte,
-	kind vibekit.PushKind,
+	kind marotte.PushKind,
 ) (int, time.Duration, error) {
 	// Bound the payload before any allocation, which is what makes encryptPayload's
 	// len(payload)+1 provably bounded. The spec caps a record at 4096 bytes;
@@ -579,7 +579,7 @@ func (s *Service) push(
 // salt(16) || rs(4) || idlen(1) || ephemeralPublicKey || ciphertext.
 // The caller (push) bounds len(payload) to pushBodyCap before calling,
 // so the len(payload)+1 allocation below is provably small.
-func encryptPayload(sub vibekit.PushSubscription, payload []byte) ([]byte, error) {
+func encryptPayload(sub marotte.PushSubscription, payload []byte) ([]byte, error) {
 	clientPubBytes, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil {
 		return nil, fmt.Errorf("decode p256dh: %w", err)
@@ -656,7 +656,7 @@ const pushTruncMarker = "..."
 // Trimming goes through runesafe's Capped pair, so the byte cap never splits a rune and
 // the marker is charged inside the cap (the body keeps CR/LF, being legitimately
 // multi-line). The loop terminates because each pass strictly shrinks one field.
-func fitToCap(title, body string, subject vibekit.PushSubject) (fitTitle, fitBody string, truncated bool) {
+func fitToCap(title, body string, subject marotte.PushSubject) (fitTitle, fitBody string, truncated bool) {
 	if marshaledLen(title, body, subject) <= pushBodyCap {
 		return title, body, false
 	}
@@ -678,7 +678,7 @@ func fitToCap(title, body string, subject vibekit.PushSubject) (fitTitle, fitBod
 
 // marshaledLen is the byte length of the JSON-encoded notification payload.
 // Marshaling three strings cannot fail, so the error is intentionally dropped.
-func marshaledLen(title, body string, subject vibekit.PushSubject) int {
+func marshaledLen(title, body string, subject marotte.PushSubject) int {
 	p, _ := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject})
 	return len(p)
 }

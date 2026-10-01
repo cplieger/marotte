@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/schedule"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // leased grants a manual lease so a bounds test has something to arm: a run with no
@@ -311,7 +311,7 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 }
 
 // TestStepTurnCap_ReportsACancelItCouldNotIssue: the breach is reported, and the
-// claim is handed BACK so the user's Cancel still works on a run vibekit failed
+// claim is handed BACK so the user's Cancel still works on a run marotte failed
 // to stop.
 func TestStepTurnCap_ReportsACancelItCouldNotIssue(t *testing.T) {
 	logs := captureLogs(t)
@@ -363,7 +363,7 @@ func TestArmRunDeadline_IsIdempotent(t *testing.T) {
 }
 
 // TestArmRunDeadline_RefusesARunWithNoLease: a TUI-launched run has no lease, no
-// bridge here and no cancel path vibekit owns, so arming a timer would schedule a
+// bridge here and no cancel path marotte owns, so arming a timer would schedule a
 // cancel against a run this process cannot certify.
 func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
 	h := &Runs{}
@@ -746,7 +746,7 @@ type refillingBus struct {
 	refills int
 }
 
-func (b *refillingBus) Broadcast(ctx context.Context, _ vibekit.ServerEvent) {
+func (b *refillingBus) Broadcast(ctx context.Context, _ marotte.ServerEvent) {
 	b.refills++
 	b.rs.refillDeadline(ctx, b.id)
 }
@@ -901,7 +901,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 func TestRunStartLaunch_ClassifiesByTheCarrier(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
-		chatID     vibekit.ChatID
+		chatID     marotte.ChatID
 		want       runlease.Origin
 		wantChatID string
 	}{
@@ -1057,7 +1057,7 @@ func TestStepTurnCapExceeded_CancelsOncePerRun(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
 
-	// Unarmed: a run vibekit is not bounding is not one it may cancel, and a
+	// Unarmed: a run marotte is not bounding is not one it may cancel, and a
 	// breach reported for it records nothing.
 	h.StepTurnCapExceeded("wf_unarmed", "node-1", 200)
 	if got := h.endReason("wf_unarmed"); got != "" {
@@ -1092,12 +1092,12 @@ func TestStepTurnCapExceeded_DoesNotConsumeTheDeadlineItLoses(t *testing.T) {
 // noopRunTranslator satisfies the one translate role observeStart reaches.
 type noopRunTranslator struct{}
 
-func (noopRunTranslator) HandleRunStart(context.Context, vibekit.ChatID, *vibekit.RPCResponse)    {}
-func (noopRunTranslator) HandleRunComplete(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {}
+func (noopRunTranslator) HandleRunStart(context.Context, marotte.ChatID, *marotte.RPCResponse)    {}
+func (noopRunTranslator) HandleRunComplete(context.Context, marotte.ChatID, *marotte.RPCResponse) {}
 func (noopRunTranslator) RecordRunSteps(json.RawMessage)                                          {}
 func (noopRunTranslator) ForgetRunSteps(string)                                                   {}
-func (noopRunTranslator) SessionNotifyAsk(*vibekit.RPCResponse) (vibekit.RunInputNeededPayload, bool) {
-	return vibekit.RunInputNeededPayload{}, false
+func (noopRunTranslator) SessionNotifyAsk(*marotte.RPCResponse) (marotte.RunInputNeededPayload, bool) {
+	return marotte.RunInputNeededPayload{}, false
 }
 
 // recordingRunTranslator is noopRunTranslator plus a log of which runs had their
@@ -1171,12 +1171,12 @@ func TestObserveComplete_ClearsAStepsPendingDecisionOnlyWhenTheRunEnds(t *testin
 			h, _, _ := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
 			const runID = "wf_1"
-			const launching vibekit.ChatID = "c-parent"
+			const launching marotte.ChatID = "c-parent"
 			// A step's question, filed the way translate files one: keyed to the
 			// LAUNCHING chat (that is where the answer will arrive from) with the run
 			// stamped on the payload by the step-session registry.
-			h.bus.pendingPerms.Add(7, vibekit.NewEvent(vibekit.EventUserInputNeeded, launching,
-				vibekit.UserInputNeededPayload{RequestID: 7, RunID: runID, NodeID: "review"}))
+			h.bus.pendingPerms.Add(7, marotte.NewEvent(marotte.EventUserInputNeeded, launching,
+				marotte.UserInputNeededPayload{RequestID: 7, RunID: runID, NodeID: "review"}))
 
 			h.runs.observeComplete(t.Context(), launching, runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": runID, "status": tc.status,
@@ -1199,7 +1199,7 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 	for name, tc := range map[string]struct {
 		params     string
 		wantID     string
-		wantStatus vibekit.RunStatus
+		wantStatus marotte.RunStatus
 	}{
 		"a run_start frame":        {`{"workflowId":"wf_1","workflowName":"x"}`, "wf_1", ""},
 		"a terminal frame":         {`{"workflowId":"wf_1","status":"completed"}`, "wf_1", "completed"},
@@ -1210,7 +1210,7 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			msg := &vibekit.RPCResponse{Params: json.RawMessage(tc.params)}
+			msg := &marotte.RPCResponse{Params: json.RawMessage(tc.params)}
 			got := decodeLifecycleFrame(msg)
 			if got.WorkflowID != tc.wantID {
 				t.Errorf("WorkflowID = %q, want %q", got.WorkflowID, tc.wantID)
@@ -1225,7 +1225,7 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 	if got := workflowIDOfFrame(nil); got != "" {
 		t.Errorf("workflowIDOfFrame(nil) = %q, want empty", got)
 	}
-	if got := workflowIDOfFrame(&vibekit.RPCResponse{}); got != "" {
+	if got := workflowIDOfFrame(&marotte.RPCResponse{}); got != "" {
 		t.Errorf("workflowIDOfFrame(empty) = %q, want empty", got)
 	}
 }
@@ -1291,7 +1291,7 @@ func TestObserveComplete_ClosesTheStepDrivenTurnOnlyOnATerminalStatus(t *testing
 		t.Run(tc.status, func(t *testing.T) {
 			h, cs, _ := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })
-			const launching vibekit.ChatID = "c-parent"
+			const launching marotte.ChatID = "c-parent"
 			stagedStepTurn(t, h, cs, launching, "the step's reply")
 
 			h.runs.observeComplete(t.Context(), launching, runNotif(methodWFRunComplete, map[string]any{
@@ -1313,7 +1313,7 @@ func TestObserveComplete_ClosesTheStepDrivenTurnOnlyOnATerminalStatus(t *testing
 // frame under that id; what is pinned is that the terminal frame does not reach the lifecycle
 // at all, whatever happens to be keyed there.
 func TestObserveComplete_LeavesAParentlessRunsChatIDAlone(t *testing.T) {
-	for _, chatID := range []vibekit.ChatID{"", "run:wf_1"} {
+	for _, chatID := range []marotte.ChatID{"", "run:wf_1"} {
 		t.Run(string(chatID), func(t *testing.T) {
 			h, cs, _ := newTestHub()
 			t.Cleanup(func() { shutdownHub(t, h) })

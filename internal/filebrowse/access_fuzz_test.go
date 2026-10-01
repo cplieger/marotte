@@ -18,7 +18,7 @@ func FuzzEnforce(f *testing.F) {
 	f.Add("/workspace")
 	f.Add("/etc/passwd")
 	f.Add("/config/chats/a.json")
-	f.Add("/config/kiro/steering/vibekit.md")
+	f.Add("/config/kiro/steering/marotte.md")
 	f.Add("/config")
 	f.Add("/configextra/x") // prefix of a mount name, NOT inside it
 	f.Add("/../etc/shadow")

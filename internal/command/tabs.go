@@ -15,9 +15,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // keyVersion is the response field carrying the collection version a
@@ -35,8 +35,8 @@ var errTooManyOrderIDs = errors.New("order names more ids than the store can hol
 // The response's `created` flag is load-bearing: an already-open (kind,
 // ref) mutates nothing and emits no event, so a client waiting on that
 // event would hang — it resolves on this response instead.
-func CmdOpenTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.OpenTabCommand
+func CmdOpenTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.OpenTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -45,10 +45,10 @@ func CmdOpenTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand
 	}
 	// A chat ref is validated as a chat id here rather than in the store,
 	// which treats a ref as opaque text on purpose.
-	if p.Kind == vibekit.TabKindChat && !ids.ValidChatID(p.Ref) {
+	if p.Kind == marotte.TabKindChat && !ids.ValidChatID(p.Ref) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	opened, err := mem.OpenTab(ctx, vibekit.OpenTab{
+	opened, err := mem.OpenTab(ctx, marotte.OpenTab{
 		Kind:   p.Kind,
 		Ref:    p.Ref,
 		Parent: p.Parent,
@@ -73,8 +73,8 @@ func CmdOpenTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand
 //
 // `closed` is a list because a parent and its children go as one
 // mutation; empty rather than an error for an id that is not open.
-func CmdCloseTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.CloseTabCommand
+func CmdCloseTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.CloseTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -97,8 +97,8 @@ func CmdCloseTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientComman
 // precondition, and requiring a version would discard a valid drag
 // whenever an unrelated pin bumped the version first. A set mismatch is a
 // 409 — re-list, never re-send.
-func CmdReorderTabs(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.ReorderTabsCommand
+func CmdReorderTabs(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.ReorderTabsCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -124,8 +124,8 @@ func CmdReorderTabs(ctx context.Context, mem *Membership, cmd *vibekit.ClientCom
 //
 // The pinned-ahead-of-unpinned partition is a client rendering rule, not
 // applied here.
-func CmdPinTab(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.PinTabCommand
+func CmdPinTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.PinTabCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}

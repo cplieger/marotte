@@ -15,7 +15,7 @@ import (
 // isValidGitRef reports whether s is safe to pass as a git ref to a
 // subprocess. It IMPLEMENTS git-check-ref-format(1)'s refname rules over the
 // bare name, plus the leading-dash guard git's own branch path adds, plus one
-// screen that is vibekit's and not git's.
+// screen that is marotte's and not git's.
 //
 // The rule set, and each rule's authority:
 //
@@ -29,9 +29,9 @@ import (
 // reject a leading '-'. That is flag smuggling rather than a ref rule, and it
 // matters because several call sites forward the value as a bare argv token.
 //
-// From vibekit, beyond git: reject any rune runesafe.IsUnsafeSingleLine
+// From marotte, beyond git: reject any rune runesafe.IsUnsafeSingleLine
 // refuses. git ACCEPTS C1 controls, bidi controls and U+2028/U+2029 in a
-// refname (measured, git 2.47.3); vibekit must not, because a branch name is
+// refname (measured, git 2.47.3); marotte must not, because a branch name is
 // rendered in the git panel and travels into slog attributes, which is the
 // surface internal/logsafe exists for. Using the app's own predicate rather
 // than a fresh local set keeps that one policy in one edit, and it subsumes

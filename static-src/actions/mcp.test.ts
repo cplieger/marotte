@@ -171,9 +171,9 @@ describe("summariseImport", () => {
       label: "one note is quoted verbatim, because it names the key",
       input: {
         results: [{ name: "a", outcome: "created" }],
-        notes: [`server "a": ignoring "timeout": vibekit has no timeout field`],
+        notes: [`server "a": ignoring "timeout": marotte has no timeout field`],
       },
-      want: `Connected 1 integration. server "a": ignoring "timeout": vibekit has no timeout field.`,
+      want: `Connected 1 integration. server "a": ignoring "timeout": marotte has no timeout field.`,
     },
     {
       label: "several notes are counted",
@@ -181,7 +181,7 @@ describe("summariseImport", () => {
         results: [{ name: "a", outcome: "created" }],
         notes: ["one", "two", "three"],
       },
-      want: "Connected 1 integration. 3 keys vibekit does not store were ignored.",
+      want: "Connected 1 integration. 3 keys marotte does not store were ignored.",
     },
     { label: "nothing", input: { results: [] }, want: "Nothing to connect." },
     { label: "null result", input: null, want: "Nothing to connect." },

@@ -39,7 +39,7 @@ import { newMessageID } from "./transport.js";
  *  kiro-cli's own TUI joins queued steer messages with a blank line into one slot,
  *  and `submit.ts`'s `withAttachmentPaths` already joins a message and its trailing
  *  lines the same way. No prefix, no header, no "resent:" marker — the text is the
- *  reader's own words and vibekit does not put words in their mouth. */
+ *  reader's own words and marotte does not put words in their mouth. */
 const JOIN = "\n\n";
 
 /** How many boundaries one armed text may be offered at. Two: the send, plus one

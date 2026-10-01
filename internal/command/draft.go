@@ -15,22 +15,22 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // CmdSetDraft records the chat's unsent composer text. An empty Text is a
 // legitimate value (how a sent or abandoned message clears). The reply
 // carries the byte length rather than the text.
-func CmdSetDraft(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSetDraft(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	var p vibekit.SetDraftCommand
+	var p marotte.SetDraftCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if len(p.Text) > vibekit.MaxDraftBytes {
+	if len(p.Text) > marotte.MaxDraftBytes {
 		return nil, StatusError(http.StatusRequestEntityTooLarge, errDraftTooLong)
 	}
 	// No UTF-8 check here: encoding/json already replaced any invalid byte
@@ -53,14 +53,14 @@ func CmdSetDraft(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *vib
 // same value already stored. The frame carries the `chat` stamp from
 // state.Version, which the store filled under the chat's lock, because the
 // composer is part of the chat projection the digest certifies.
-func broadcastComposer(ctx context.Context, bus Broadcaster, chatID vibekit.ChatID, state *vibekit.ComposerState) {
+func broadcastComposer(ctx context.Context, bus Broadcaster, chatID marotte.ChatID, state *marotte.ComposerState) {
 	if state == nil {
 		return
 	}
-	frame := vibekit.NewEvent(vibekit.EventDraftChanged, chatID, vibekit.DraftChangedPayload{
+	frame := marotte.NewEvent(marotte.EventDraftChanged, chatID, marotte.DraftChangedPayload{
 		Text:        state.Text,
 		Attachments: state.Attachments,
 	})
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), state.Version)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), state.Version)
 	bus.Broadcast(ctx, frame)
 }

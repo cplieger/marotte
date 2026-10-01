@@ -47,7 +47,7 @@ afterEach(() => {
 /** A declaration's rendered value, read off a real element rather than restated.
  *  This is what makes "the fill colour RESOLVES" a measurement: a token with no
  *  declaration behind it is valid CSS text that computes to nothing, which is the
- *  phantom-token class `vibekit-ui.md` bans. */
+ *  phantom-token class `marotte-ui.md` bans. */
 function resolved(prop: "background-color" | "border-radius", expr: string): string {
   const probe = document.createElement("div");
   probe.style.setProperty(prop === "background-color" ? "background" : "border-radius", expr);

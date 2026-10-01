@@ -1,5 +1,5 @@
 // Boot wiring for @cplieger/actions: connects the library's injection
-// points to vibekit's toast, api-client, and transport layers.
+// points to marotte's toast, api-client, and transport layers.
 // Import this module once at app startup (app.ts) before any action dispatch.
 // ---------------------------------------------------------------------------
 

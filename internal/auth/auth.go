@@ -16,9 +16,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/procout"
+	"github.com/cplieger/marotte/internal/sanitize"
 )
 
 // Config holds per-instance timeouts, supplied through WithConfig.

@@ -10,16 +10,16 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chatHandler is the notification handler type; a global handler gets an empty chatID.
-type chatHandler = func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
+type chatHandler = func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 
 // ignoreAttribution adapts a handler that needs no attribution to sessionUpdateHandler.
-func ignoreAttribution(fn func(context.Context, vibekit.ChatID, json.RawMessage)) sessionUpdateHandler {
-	return func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, _ translate.FrameAttribution) {
+func ignoreAttribution(fn func(context.Context, marotte.ChatID, json.RawMessage)) sessionUpdateHandler {
+	return func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, _ translate.FrameAttribution) {
 		fn(ctx, chatID, raw)
 	}
 }
@@ -28,12 +28,12 @@ func ignoreAttribution(fn func(context.Context, vibekit.ChatID, json.RawMessage)
 // Eagerly rather than on first use: several bridge goroutines read them concurrently.
 func (rt *Runtime) initDispatch() {
 	rt.chatHandlers = map[string]chatHandler{
-		vibekit.MethodSessionUpdate: rt.handleSessionUpdate,
+		marotte.MethodSessionUpdate: rt.handleSessionUpdate,
 		// Refused on a short budget for a SCHEDULED run rather than parking it forever.
-		vibekit.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.translator.HandlePermissionRequest),
-		vibekit.MethodElicitationCreate: rt.translator.HandleElicitationCreate,
+		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.translator.HandlePermissionRequest),
+		marotte.MethodElicitationCreate: rt.translator.HandleElicitationCreate,
 		// Gated on the _meta.kiro.userInput initialize capability (bridge.go).
-		vibekit.MethodKiroUserInput: rt.translator.HandleUserInput,
+		marotte.MethodKiroUserInput: rt.translator.HandleUserInput,
 		// v3 (KAS) _kiro/* notifications.
 		methodV3RateLimit:            rt.translator.HandleRateLimit,
 		methodV3CustomAgentNotFound:  rt.translator.HandleAgentNotFound,
@@ -56,14 +56,14 @@ func (rt *Runtime) initDispatch() {
 		// run bridge's door too — see (*Runtime).dispatch.
 		methodKiroSessionNotify: rt.runs.handleSessionNotify,
 	}
-	for method, kind := range map[string]vibekit.RunProgressKind{
-		methodWFNodeStart:     vibekit.RunProgressNodeStart,
-		methodWFNodeComplete:  vibekit.RunProgressNodeComplete,
-		methodWFNodePaused:    vibekit.RunProgressNodePaused,
-		methodWFPaused:        vibekit.RunProgressPaused,
-		methodWFLoopIteration: vibekit.RunProgressLoopIteration,
-		methodWFWatchPoll:     vibekit.RunProgressWatchPoll,
-		methodWFStepsQueued:   vibekit.RunProgressStepsQueued,
+	for method, kind := range map[string]marotte.RunProgressKind{
+		methodWFNodeStart:     marotte.RunProgressNodeStart,
+		methodWFNodeComplete:  marotte.RunProgressNodeComplete,
+		methodWFNodePaused:    marotte.RunProgressNodePaused,
+		methodWFPaused:        marotte.RunProgressPaused,
+		methodWFLoopIteration: marotte.RunProgressLoopIteration,
+		methodWFWatchPoll:     marotte.RunProgressWatchPoll,
+		methodWFStepsQueued:   marotte.RunProgressStepsQueued,
 	} {
 		rt.chatHandlers[method] = rt.translator.RunProgressHandler(kind)
 	}
@@ -85,29 +85,29 @@ func (rt *Runtime) initDispatch() {
 		methodV3Powers:             {},
 	}
 	// Eager: several bridge goroutines call sessionUpdateHandlers() concurrently.
-	rt.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
-		vibekit.ACPUpdateAgentChunk: ignoreAttribution(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+	rt.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
+		marotte.ACPUpdateAgentChunk: ignoreAttribution(func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
 			rt.translator.HandleAssistantChunk(ctx, chatID, raw, false)
 		}),
-		vibekit.ACPUpdateThoughtChunk: ignoreAttribution(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+		marotte.ACPUpdateThoughtChunk: ignoreAttribution(func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
 			rt.translator.HandleAssistantChunk(ctx, chatID, raw, true)
 		}),
-		vibekit.ACPUpdateToolCall:   rt.translator.HandleToolCall,
-		vibekit.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
-		vibekit.ACPUpdatePlan:       ignoreAttribution(rt.translator.HandlePlan),
-		vibekit.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
+		marotte.ACPUpdateToolCall:   rt.translator.HandleToolCall,
+		marotte.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
+		marotte.ACPUpdatePlan:       ignoreAttribution(rt.translator.HandlePlan),
+		marotte.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
 		// The metadata channels.
-		vibekit.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
-		vibekit.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),
-		// The only frame telling vibekit that KAS moved the effort level itself.
-		vibekit.ACPUpdateConfigOption: rt.coord.healEffort(ignoreAttribution(rt.translator.HandleConfigOptionUpdate)),
+		marotte.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
+		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),
+		// The only frame telling marotte that KAS moved the effort level itself.
+		marotte.ACPUpdateConfigOption: rt.coord.healEffort(ignoreAttribution(rt.translator.HandleConfigOptionUpdate)),
 	}
 }
 
 // translateACPEvent is the sole entry point from bridge_lifecycle's forward goroutine.
 // Every branch must return promptly; long-running work belongs in a goroutine inside the
 // handler.
-func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) translateACPEvent(chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	ctx, cancel := rt.lifecycle.derivedContext()
 	defer cancel()
 
@@ -139,8 +139,8 @@ func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResp
 		slog.Warn("chat bridge: refusing an unexpected peer request",
 			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
 		if err := rt.BridgeRespond(ctx, chatID, *msg.ID, nil,
-			&vibekit.RPCError{
-				Code:    vibekit.RPCCodeMethodNotFound,
+			&marotte.RPCError{
+				Code:    marotte.RPCCodeMethodNotFound,
 				Message: "unsupported on the chat session: " + msg.Method,
 			}); err != nil {
 			slog.Error("chat bridge: refusal could not be delivered; the turn may be wedged",
@@ -157,7 +157,7 @@ func (rt *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResp
 
 // routeInboundRequest dispatches an A→C REQUEST (a frame carrying an id) to the handler
 // family that owns it, reporting whether one claimed it. Every arm owes a wire response.
-func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
 	if rt.inbound.handleFSRequest(ctx, chatID, msg) {
 		return true
 	}
@@ -179,9 +179,9 @@ func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatI
 	// Explicit whitelist for the three request-shaped chat-handler members: claiming the
 	// frame here makes double dispatch unreachable, since the caller returns on true.
 	switch msg.Method {
-	case vibekit.MethodRequestPermission,
-		vibekit.MethodElicitationCreate,
-		vibekit.MethodKiroUserInput:
+	case marotte.MethodRequestPermission,
+		marotte.MethodElicitationCreate,
+		marotte.MethodKiroUserInput:
 		if fn, ok := rt.chatHandlers[msg.Method]; ok {
 			fn(ctx, chatID, msg)
 			return true
@@ -194,7 +194,7 @@ func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID vibekit.ChatI
 
 // handleSessionUpdate decodes the `update` envelope and fans out to the sub-handler for
 // each sessionUpdate subtype, passing the frame's attribution through.
-func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var env struct {
 		Params translate.ACPSessionUpdateEnvelope `json:"params"`
 	}
@@ -224,7 +224,7 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatI
 	}
 
 	// Sub-kinds without a handler fall through silently, user_message_chunk deliberately
-	// among them: vibekit persists user messages itself, so KAS's echo would double-render.
+	// among them: marotte persists user messages itself, so KAS's echo would double-render.
 	fn, ok := rt.sessionUpdateHandlers()[base.Kind]
 	if !ok {
 		return
@@ -233,9 +233,9 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatI
 }
 
 // sessionUpdateHandler is the common signature for session-update sub-handlers.
-type sessionUpdateHandler = func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr translate.FrameAttribution)
+type sessionUpdateHandler = func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution)
 
 // sessionUpdateHandlers returns the kind → handler map initDispatch built.
-func (rt *Runtime) sessionUpdateHandlers() map[vibekit.ACPUpdateKind]sessionUpdateHandler {
+func (rt *Runtime) sessionUpdateHandlers() map[marotte.ACPUpdateKind]sessionUpdateHandler {
 	return rt.sessUpdateHandlers
 }

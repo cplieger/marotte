@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/marotte/internal/buffer"
 )
 
 const ack = "[STEERING steer-abc123: adjusted the approach]"

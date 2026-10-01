@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // countingBridge counts the answers that reach the wire. Respond is the only
@@ -39,31 +39,31 @@ type takeDeps struct {
 	takes  []int64
 	// takeChats is the chat each claim named, so a handler that drops it is
 	// visible: an id-only claim can retire another chat's card.
-	takeChats []vibekit.ChatID
+	takeChats []marotte.ChatID
 	takeOK    bool
 }
 
-func (d *takeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
+func (d *takeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 
-func (d *takeDeps) TakePendingPerm(chatID vibekit.ChatID, requestID int64, _ vibekit.SettledBy) bool {
+func (d *takeDeps) TakePendingPerm(chatID marotte.ChatID, requestID int64, _ marotte.SettledBy) bool {
 	d.takes = append(d.takes, requestID)
 	d.takeChats = append(d.takeChats, chatID)
 	return d.takeOK
 }
 
-func (d *takeDeps) TakePendingPermissionOption(chatID vibekit.ChatID, requestID int64, _ string, _ vibekit.SettledBy) (bool, bool) {
+func (d *takeDeps) TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, _ string, _ marotte.SettledBy) (bool, bool) {
 	d.takes = append(d.takes, requestID)
 	d.takeChats = append(d.takeChats, chatID)
 	return d.takeOK, d.takeOK
 }
 
-func decisionCommand(t *testing.T, typ vibekit.CommandType, payload any) *vibekit.ClientCommand {
+func decisionCommand(t *testing.T, typ marotte.CommandType, payload any) *marotte.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: typ, ChatID: "c1", Payload: raw}
+	return &marotte.ClientCommand{Type: typ, ChatID: "c1", Payload: raw}
 }
 
 const decisionRequestID = int64(7)
@@ -75,12 +75,12 @@ func decisionCases(t *testing.T) []struct {
 	run  func(hostDouble) (any, error)
 } {
 	t.Helper()
-	perm := decisionCommand(t, vibekit.CmdPermissionResponse,
-		vibekit.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"})
-	elicit := decisionCommand(t, vibekit.CmdElicitationResponse,
-		vibekit.ElicitationResponseCommand{RequestID: decisionRequestID, Action: vibekit.ElicitationActionDecline})
-	input := decisionCommand(t, vibekit.CmdUserInputResponse,
-		vibekit.UserInputResponseCommand{RequestID: decisionRequestID, Action: vibekit.UserInputActionDismissed})
+	perm := decisionCommand(t, marotte.CmdPermissionResponse,
+		marotte.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"})
+	elicit := decisionCommand(t, marotte.CmdElicitationResponse,
+		marotte.ElicitationResponseCommand{RequestID: decisionRequestID, Action: marotte.ElicitationActionDecline})
+	input := decisionCommand(t, marotte.CmdUserInputResponse,
+		marotte.UserInputResponseCommand{RequestID: decisionRequestID, Action: marotte.UserInputActionDismissed})
 	return []struct {
 		name string
 		run  func(hostDouble) (any, error)
@@ -145,7 +145,7 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			// dropped the chat would retire whichever chat's card happened to be
 			// stored under that id — resolving one chat's dialog from another's
 			// answer and leaving the real request with no answer path at all.
-			if !slices.Equal(deps.takeChats, []vibekit.ChatID{"c1"}) {
+			if !slices.Equal(deps.takeChats, []marotte.ChatID{"c1"}) {
 				t.Errorf("claimed chats = %v, want [c1]", deps.takeChats)
 			}
 		})
@@ -174,15 +174,15 @@ func TestCmdElicitationResponse_ContentTravelsOnlyOnAccept(t *testing.T) {
 		action      string
 		wantContent string
 	}{
-		{name: "accept forwards the filled form", action: vibekit.ElicitationActionAccept, wantContent: filled},
-		{name: "decline forwards no content", action: vibekit.ElicitationActionDecline, wantContent: ""},
-		{name: "cancel forwards no content", action: vibekit.ElicitationActionCancel, wantContent: ""},
+		{name: "accept forwards the filled form", action: marotte.ElicitationActionAccept, wantContent: filled},
+		{name: "decline forwards no content", action: marotte.ElicitationActionDecline, wantContent: ""},
+		{name: "cancel forwards no content", action: marotte.ElicitationActionCancel, wantContent: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bridge := &resultBridge{}
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
-			cmd := decisionCommand(t, vibekit.CmdElicitationResponse, vibekit.ElicitationResponseCommand{
+			cmd := decisionCommand(t, marotte.CmdElicitationResponse, marotte.ElicitationResponseCommand{
 				RequestID: decisionRequestID,
 				Action:    tc.action,
 				Content:   json.RawMessage(filled),
@@ -195,9 +195,9 @@ func TestCmdElicitationResponse_ContentTravelsOnlyOnAccept(t *testing.T) {
 			if len(bridge.results) != 1 {
 				t.Fatalf("got %d answers, want 1", len(bridge.results))
 			}
-			result, ok := bridge.results[0].(vibekit.ElicitationResult)
+			result, ok := bridge.results[0].(marotte.ElicitationResult)
 			if !ok {
-				t.Fatalf("answer = %T, want vibekit.ElicitationResult", bridge.results[0])
+				t.Fatalf("answer = %T, want marotte.ElicitationResult", bridge.results[0])
 			}
 			if result.Action != tc.action {
 				t.Errorf("action = %q, want %q", result.Action, tc.action)
@@ -218,14 +218,14 @@ func TestCmdUserInputResponse_AnswerTravelsOnlyWhenAnswered(t *testing.T) {
 		action     string
 		wantAnswer string
 	}{
-		{name: "answered forwards the text", action: vibekit.UserInputActionAnswered, wantAnswer: typed},
-		{name: "dismissed forwards no text", action: vibekit.UserInputActionDismissed, wantAnswer: ""},
+		{name: "answered forwards the text", action: marotte.UserInputActionAnswered, wantAnswer: typed},
+		{name: "dismissed forwards no text", action: marotte.UserInputActionDismissed, wantAnswer: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bridge := &resultBridge{}
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
-			cmd := decisionCommand(t, vibekit.CmdUserInputResponse, vibekit.UserInputResponseCommand{
+			cmd := decisionCommand(t, marotte.CmdUserInputResponse, marotte.UserInputResponseCommand{
 				RequestID: decisionRequestID,
 				Action:    tc.action,
 				Answer:    typed,
@@ -238,9 +238,9 @@ func TestCmdUserInputResponse_AnswerTravelsOnlyWhenAnswered(t *testing.T) {
 			if len(bridge.results) != 1 {
 				t.Fatalf("got %d answers, want 1", len(bridge.results))
 			}
-			result, ok := bridge.results[0].(vibekit.UserInputResult)
+			result, ok := bridge.results[0].(marotte.UserInputResult)
 			if !ok {
-				t.Fatalf("answer = %T, want vibekit.UserInputResult", bridge.results[0])
+				t.Fatalf("answer = %T, want marotte.UserInputResult", bridge.results[0])
 			}
 			if result.Action != tc.action {
 				t.Errorf("action = %q, want %q", result.Action, tc.action)

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A turn is never opened on a context that is already dead, whatever the chat's state.
@@ -20,11 +20,11 @@ import (
 func TestStartTurn_RefusesAnAlreadyDeadContext(t *testing.T) {
 	cases := []struct {
 		name   string
-		source vibekit.TurnOpenSource
+		source marotte.TurnOpenSource
 	}{
-		{name: "prompt", source: vibekit.TurnSourcePrompt},
-		{name: "empty_retry", source: vibekit.TurnSourceEmptyRetry},
-		{name: "local_shell", source: vibekit.TurnSourceLocalShell},
+		{name: "prompt", source: marotte.TurnSourcePrompt},
+		{name: "empty_retry", source: marotte.TurnSourceEmptyRetry},
+		{name: "local_shell", source: marotte.TurnSourceLocalShell},
 	}
 	for _, tc := range cases {
 		source := tc.source
@@ -57,7 +57,7 @@ func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 	entered, gate := gateSpawn(h)
 	defer close(gate)
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
@@ -77,7 +77,7 @@ func TestPromptTurn_ShutdownBeforeTheTurnOpensStartsNoTurn(t *testing.T) {
 		t.Errorf("a turn (epoch %d) is still open after shutdown", epoch)
 	}
 	types := extractTypes(t, bufferedSince(h, 0))
-	if missing := missingEvents(types, string(vibekit.EventError)); missing != nil {
+	if missing := missingEvents(types, string(marotte.EventError)); missing != nil {
 		t.Errorf("events = %v, want the prompt's terminal error frame", types)
 	}
 }

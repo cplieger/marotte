@@ -19,10 +19,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // escalationHost is everything a close-escalation case reads back: the
@@ -35,7 +35,7 @@ type escalationHost struct {
 	bus         *tabBus
 	store       ChatStore
 	teardown    *recordingTeardown
-	recordSeen  map[vibekit.ChatID]bool
+	recordSeen  map[marotte.ChatID]bool
 	teardownCtx []error
 }
 
@@ -58,7 +58,7 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 		bus:        bus,
 		store:      store,
 		teardown:   &recordingTeardown{},
-		recordSeen: make(map[vibekit.ChatID]bool),
+		recordSeen: make(map[marotte.ChatID]bool),
 	}
 	if realStore, ok := tabSet.(*tabs.Store); ok {
 		h.st = realStore
@@ -68,10 +68,10 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 		Tabs:     tabSet,
 		Bus:      bus,
 		Teardown: h.teardown,
-		CloseChat: func(ctx context.Context, chatID vibekit.ChatID) {
+		CloseChat: func(ctx context.Context, chatID marotte.ChatID) {
 			h.teardown.CloseChatState(ctx, chatID)
 		},
-		DeleteChat: func(ctx context.Context, chatID vibekit.ChatID, chain []string) {
+		DeleteChat: func(ctx context.Context, chatID marotte.ChatID, chain []string) {
 			_, exists := store.Get(ctx, chatID)
 			h.recordSeen[chatID] = exists
 			h.teardownCtx = append(h.teardownCtx, ctx.Err())
@@ -85,9 +85,9 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 // seedSessionedRecord seeds a chat whose record carries a session CHAIN — a
 // retired session plus the live one — which is what the escalation must capture
 // before the record goes.
-func seedSessionedRecord(t *testing.T, store ChatStore, id vibekit.ChatID, chain ...string) {
+func seedSessionedRecord(t *testing.T, store ChatStore, id marotte.ChatID, chain ...string) {
 	t.Helper()
-	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = string(id)
 		for _, sess := range chain {
 			c.RecordSession(sess)
@@ -102,10 +102,10 @@ func retentionOff(context.Context) bool { return false }
 func retentionOn(context.Context) bool  { return true }
 
 // eventTypes projects the bus's whole timeline, both stores' events included.
-func eventTypes(bus *tabBus) []vibekit.EventType {
+func eventTypes(bus *tabBus) []marotte.EventType {
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
-	out := make([]vibekit.EventType, 0, len(bus.events))
+	out := make([]marotte.EventType, 0, len(bus.events))
 	for _, evt := range bus.events {
 		out = append(out, evt.Type)
 	}
@@ -125,12 +125,12 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 	seedSessionedRecord(t, store, "c-root", "sess-root-old", "sess-root-live")
 	seedSessionedRecord(t, store, "c-tangent", "sess-tangent")
 
-	root, err := h.mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-root"}, "op-r")
+	root, err := h.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-root"}, "op-r")
 	if err != nil {
 		t.Fatalf("open root: %v", err)
 	}
 	if _, err = h.mem.OpenTab(t.Context(),
-		vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-tangent", Parent: root.Subject.ID}, "op-t"); err != nil {
+		marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-tangent", Parent: root.Subject.ID}, "op-t"); err != nil {
 		t.Fatalf("open tangent: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 	}
 
 	// Both records went, children included — History (the chat list) agrees.
-	for _, id := range []vibekit.ChatID{"c-root", "c-tangent"} {
+	for _, id := range []marotte.ChatID{"c-root", "c-tangent"} {
 		if _, ok := store.Get(t.Context(), id); ok {
 			t.Errorf("chat %q still has a record after a retention-off last-tab close", id)
 		}
@@ -152,7 +152,7 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 	// The teardown got the DELETE grade with the chain captured BEFORE the
 	// delete — nothing can re-read it off the record now — and ran after the
 	// record was gone. The close grade ran for nobody.
-	wantChains := map[vibekit.ChatID][]string{
+	wantChains := map[marotte.ChatID][]string{
 		"c-root":    {"sess-root-old", "sess-root-live"},
 		"c-tangent": {"sess-tangent"},
 	}
@@ -181,10 +181,10 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 	h.bus.mu.Lock()
 	removalAt, deletedAt := -1, -1
 	for i, evt := range h.bus.events {
-		if p, ok := evt.Payload.(vibekit.TabsChangedPayload); ok && len(p.RemovedIDs) > 0 && removalAt < 0 {
+		if p, ok := evt.Payload.(marotte.TabsChangedPayload); ok && len(p.RemovedIDs) > 0 && removalAt < 0 {
 			removalAt = i
 		}
-		if evt.Type == vibekit.EventChatDeleted && deletedAt < 0 {
+		if evt.Type == marotte.EventChatDeleted && deletedAt < 0 {
 			deletedAt = i
 		}
 	}
@@ -194,7 +194,7 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 	}
 	deletes := 0
 	for _, typ := range eventTypes(h.bus) {
-		if typ == vibekit.EventChatDeleted {
+		if typ == marotte.EventChatDeleted {
 			deletes++
 		}
 	}
@@ -208,16 +208,16 @@ func TestCloseTab_RetentionOffDeletesTheChatsTheCloseLeftTabless(t *testing.T) {
 // (kind, ref) uniqueness, so the remaining-refs arm of the doomed set — pure
 // coordinator arithmetic — gets a stub whose answers the case declares.
 type fixedTabs struct {
-	open    []vibekit.TabSubject
-	subtree []vibekit.TabSubject
-	closed  []vibekit.TabSubject
+	open    []marotte.TabSubject
+	subtree []marotte.TabSubject
+	closed  []marotte.TabSubject
 }
 
-func (f *fixedTabs) Open(context.Context, vibekit.OpenTab) (vibekit.TabSubject, bool, uint64, error) {
-	return vibekit.TabSubject{}, false, 0, errors.New("not staged")
+func (f *fixedTabs) Open(context.Context, marotte.OpenTab) (marotte.TabSubject, bool, uint64, error) {
+	return marotte.TabSubject{}, false, 0, errors.New("not staged")
 }
 
-func (f *fixedTabs) Close(context.Context, string) ([]vibekit.TabSubject, uint64, error) {
+func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, uint64, error) {
 	return f.closed, 3, nil
 }
 
@@ -225,9 +225,9 @@ func (f *fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 
 
 func (f *fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }
 
-func (f *fixedTabs) List() ([]vibekit.TabSubject, uint64) { return f.open, 2 }
+func (f *fixedTabs) List() ([]marotte.TabSubject, uint64) { return f.open, 2 }
 
-func (f *fixedTabs) Subtree(string) []vibekit.TabSubject { return f.subtree }
+func (f *fixedTabs) Subtree(string) []marotte.TabSubject { return f.subtree }
 
 // TestCloseTab_LeavesAChatWithARemainingTabAlone pins the remaining-refs half
 // of the doomed set: a chat is doomed only when the close takes its LAST tab.
@@ -235,13 +235,13 @@ func (f *fixedTabs) Subtree(string) []vibekit.TabSubject { return f.subtree }
 // uniqueness), so the arithmetic is pinned over a declared set: closing one of
 // a chat's two tabs must delete nothing and run the ordinary close grade.
 func TestCloseTab_LeavesAChatWithARemainingTabAlone(t *testing.T) {
-	one := vibekit.TabSubject{ID: "tb_one", Kind: vibekit.TabKindChat, Ref: "c-x"}
-	two := vibekit.TabSubject{ID: "tb_two", Kind: vibekit.TabKindChat, Ref: "c-x"}
+	one := marotte.TabSubject{ID: "tb_one", Kind: marotte.TabKindChat, Ref: "c-x"}
+	two := marotte.TabSubject{ID: "tb_two", Kind: marotte.TabKindChat, Ref: "c-x"}
 	store := testsupport.NewInMemoryChatStore()
 	h := newEscalationHostOver(store, &fixedTabs{
-		open:    []vibekit.TabSubject{one, two},
-		subtree: []vibekit.TabSubject{one},
-		closed:  []vibekit.TabSubject{one},
+		open:    []marotte.TabSubject{one, two},
+		subtree: []marotte.TabSubject{one},
+		closed:  []marotte.TabSubject{one},
 	}, retentionOff)
 	store.Bus = h.bus
 	seedSessionedRecord(t, store, "c-x", "sess-x")
@@ -259,7 +259,7 @@ func TestCloseTab_LeavesAChatWithARemainingTabAlone(t *testing.T) {
 	if len(h.teardown.deletedByChain) != 0 {
 		t.Errorf("delete-grade teardown ran for %v; the chat still has a tab", h.teardown.deletedByChain)
 	}
-	if !slices.Contains(h.teardown.closed, vibekit.ChatID("c-x")) {
+	if !slices.Contains(h.teardown.closed, marotte.ChatID("c-x")) {
 		t.Errorf("close-grade teardown ran for %v, want c-x", h.teardown.closed)
 	}
 }
@@ -272,12 +272,12 @@ func TestCloseTab_SubtreeWithoutTheChatsTabDeletesNothing(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	h := newEscalationHost(t, store, retentionOff)
 	seedSessionedRecord(t, store, "c-a", "sess-a")
-	parent, err := h.mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-a"}, "op-a")
+	parent, err := h.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-a"}, "op-a")
 	if err != nil {
 		t.Fatalf("open chat: %v", err)
 	}
 	child, err := h.mem.OpenTab(t.Context(),
-		vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf_1", Parent: parent.Subject.ID}, "op-run")
+		marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1", Parent: parent.Subject.ID}, "op-run")
 	if err != nil {
 		t.Fatalf("open run child: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestCloseTab_RetentionDecidesWhetherTheRecordSurvives(t *testing.T) {
 			h := newEscalationHost(t, store, tc.retention(t))
 			store.Bus = h.bus
 			seedSessionedRecord(t, store, "c-keep", "sess-keep")
-			opened, err := h.mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-keep"}, "op-o")
+			opened, err := h.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-keep"}, "op-o")
 			if err != nil {
 				t.Fatalf("open: %v", err)
 			}
@@ -342,10 +342,10 @@ func TestCloseTab_RetentionDecidesWhetherTheRecordSurvives(t *testing.T) {
 			if len(h.teardown.deletedByChain) != 0 {
 				t.Errorf("delete-grade teardown ran for %v under a keeping predicate", h.teardown.deletedByChain)
 			}
-			if !slices.Contains(h.teardown.closed, vibekit.ChatID("c-keep")) {
+			if !slices.Contains(h.teardown.closed, marotte.ChatID("c-keep")) {
 				t.Errorf("close-grade teardown ran for %v, want c-keep", h.teardown.closed)
 			}
-			if got := slices.Index(eventTypes(h.bus), vibekit.EventChatDeleted); got >= 0 {
+			if got := slices.Index(eventTypes(h.bus), marotte.EventChatDeleted); got >= 0 {
 				t.Error("a chat_deleted frame went out for a record that must survive")
 			}
 		})
@@ -360,7 +360,7 @@ type failingDeleteStore struct {
 
 var errDeleteRefused = errors.New("simulated chat file removal failure")
 
-func (s *failingDeleteStore) Delete(context.Context, vibekit.ChatID) error {
+func (s *failingDeleteStore) Delete(context.Context, marotte.ChatID) error {
 	return errDeleteRefused
 }
 
@@ -372,7 +372,7 @@ func TestCloseTab_RecordDeleteFailureStillAnswersSuccess(t *testing.T) {
 	store := &failingDeleteStore{InMemoryChatStore: testsupport.NewInMemoryChatStore()}
 	h := newEscalationHost(t, store, retentionOff)
 	seedSessionedRecord(t, store.InMemoryChatStore, "c-stuck", "sess-stuck")
-	opened, err := h.mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-stuck"}, "op-o")
+	opened, err := h.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-stuck"}, "op-o")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestCloseTab_RecordDeleteFailureStillAnswersSuccess(t *testing.T) {
 	if len(h.teardown.deletedByChain) != 0 {
 		t.Errorf("delete-grade teardown ran for %v; a surviving record keeps its sessions (close grade)", h.teardown.deletedByChain)
 	}
-	if !slices.Contains(h.teardown.closed, vibekit.ChatID("c-stuck")) {
+	if !slices.Contains(h.teardown.closed, marotte.ChatID("c-stuck")) {
 		t.Errorf("close-grade teardown ran for %v, want c-stuck", h.teardown.closed)
 	}
 }
@@ -406,7 +406,7 @@ type ctxCheckingStore struct {
 	*testsupport.InMemoryChatStore
 }
 
-func (s *ctxCheckingStore) Delete(ctx context.Context, id vibekit.ChatID) error {
+func (s *ctxCheckingStore) Delete(ctx context.Context, id marotte.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -421,7 +421,7 @@ type cancelOnCommitTabs struct {
 	cancel context.CancelFunc
 }
 
-func (c *cancelOnCommitTabs) Close(ctx context.Context, id string) ([]vibekit.TabSubject, uint64, error) {
+func (c *cancelOnCommitTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error) {
 	closed, v, err := c.Store.Close(ctx, id)
 	c.cancel()
 	return closed, v, err
@@ -440,7 +440,7 @@ func TestCloseTab_ClientAbandonedRequestStillRollsForward(t *testing.T) {
 	store := &ctxCheckingStore{InMemoryChatStore: testsupport.NewInMemoryChatStore()}
 	h := newEscalationHostOver(store, &cancelOnCommitTabs{Store: st, cancel: cancel}, retentionOff)
 	seedSessionedRecord(t, store.InMemoryChatStore, "c-gone", "sess-gone")
-	opened, err := h.mem.OpenTab(reqCtx, vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-gone"}, "op-o")
+	opened, err := h.mem.OpenTab(reqCtx, marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-gone"}, "op-o")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 	h := newEscalationHost(t, store, retentionOff)
 	store.Bus = h.bus
 	seedRecord(t, store, "c-ghost")
-	opened, err := h.mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-ghost"}, "op-o")
+	opened, err := h.mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-ghost"}, "op-o")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -488,7 +488,7 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 	}
 	deletesBefore := 0
 	for _, typ := range eventTypes(h.bus) {
-		if typ == vibekit.EventChatDeleted {
+		if typ == marotte.EventChatDeleted {
 			deletesBefore++
 		}
 	}
@@ -503,12 +503,12 @@ func TestCloseTab_RecordlessChatSkipped(t *testing.T) {
 	if len(h.teardown.deletedByChain) != 0 {
 		t.Errorf("delete-grade teardown ran for %v; a recordless chat is skipped", h.teardown.deletedByChain)
 	}
-	if !slices.Contains(h.teardown.closed, vibekit.ChatID("c-ghost")) {
+	if !slices.Contains(h.teardown.closed, marotte.ChatID("c-ghost")) {
 		t.Errorf("close-grade teardown ran for %v, want c-ghost", h.teardown.closed)
 	}
 	deletesAfter := 0
 	for _, typ := range eventTypes(h.bus) {
-		if typ == vibekit.EventChatDeleted {
+		if typ == marotte.EventChatDeleted {
 			deletesAfter++
 		}
 	}

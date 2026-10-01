@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // outcomeChatCases are the transcript shapes ChatHeader.LastTurnOutcome has to
@@ -19,8 +19,8 @@ import (
 // carry no outcome of their own.
 var outcomeChatCases = []struct {
 	name string
-	msgs []vibekit.Message
-	want vibekit.TurnOutcome
+	msgs []marotte.Message
+	want marotte.TurnOutcome
 }{
 	{
 		name: "no messages at all",
@@ -29,57 +29,57 @@ var outcomeChatCases = []struct {
 	},
 	{
 		name: "a legacy record whose rows predate the field",
-		msgs: []vibekit.Message{
-			{ID: "m1", Role: vibekit.RoleUser, Content: "hi"},
-			{ID: "m2", Role: vibekit.RoleAssistant, Content: "hello"},
+		msgs: []marotte.Message{
+			{ID: "m1", Role: marotte.RoleUser, Content: "hi"},
+			{ID: "m2", Role: marotte.RoleAssistant, Content: "hello"},
 		},
 		want: "",
 	},
 	{
 		name: "the ordinary successful turn",
-		msgs: []vibekit.Message{
-			{ID: "m1", Role: vibekit.RoleUser, Content: "hi"},
-			{ID: "m2", Role: vibekit.RoleAssistant, TurnOutcome: vibekit.TurnOutcomeCompleted},
+		msgs: []marotte.Message{
+			{ID: "m1", Role: marotte.RoleUser, Content: "hi"},
+			{ID: "m2", Role: marotte.RoleAssistant, TurnOutcome: marotte.TurnOutcomeCompleted},
 		},
-		want: vibekit.TurnOutcomeCompleted,
+		want: marotte.TurnOutcomeCompleted,
 	},
 	{
 		name: "the newest outcome wins over an older one",
-		msgs: []vibekit.Message{
-			{ID: "m1", Role: vibekit.RoleAssistant, TurnOutcome: vibekit.TurnOutcomeCompleted},
-			{ID: "m2", Role: vibekit.RoleAssistant, TurnOutcome: vibekit.TurnOutcomeFailed},
+		msgs: []marotte.Message{
+			{ID: "m1", Role: marotte.RoleAssistant, TurnOutcome: marotte.TurnOutcomeCompleted},
+			{ID: "m2", Role: marotte.RoleAssistant, TurnOutcome: marotte.TurnOutcomeFailed},
 		},
-		want: vibekit.TurnOutcomeFailed,
+		want: marotte.TurnOutcomeFailed,
 	},
 	{
 		name: "an outcome on an event row is found",
-		msgs: []vibekit.Message{
-			{ID: "m1", Role: vibekit.RoleUser, Content: "hi"},
+		msgs: []marotte.Message{
+			{ID: "m1", Role: marotte.RoleUser, Content: "hi"},
 			{
 				ID:          "m2",
-				Role:        vibekit.RoleEvent,
-				EventKind:   vibekit.EventTurnOutcome,
-				TurnOutcome: vibekit.TurnOutcomeRefused,
+				Role:        marotte.RoleEvent,
+				EventKind:   marotte.EventTurnOutcome,
+				TurnOutcome: marotte.TurnOutcomeRefused,
 			},
 		},
-		want: vibekit.TurnOutcomeRefused,
+		want: marotte.TurnOutcomeRefused,
 	},
 	{
 		name: "rows after the carrier do not hide it",
-		msgs: []vibekit.Message{
-			{ID: "m1", Role: vibekit.RoleAssistant, TurnOutcome: vibekit.TurnOutcomeCompleted},
-			{ID: "m2", Role: vibekit.RoleAssistant, Plan: []vibekit.PlanEntry{{Content: "step"}}},
-			{ID: "m3", Role: vibekit.RoleEvent, EventKind: vibekit.EventCompacted},
-			{ID: "m4", Role: vibekit.RoleUser, Content: "next"},
+		msgs: []marotte.Message{
+			{ID: "m1", Role: marotte.RoleAssistant, TurnOutcome: marotte.TurnOutcomeCompleted},
+			{ID: "m2", Role: marotte.RoleAssistant, Plan: []marotte.PlanEntry{{Content: "step"}}},
+			{ID: "m3", Role: marotte.RoleEvent, EventKind: marotte.EventCompacted},
+			{ID: "m4", Role: marotte.RoleUser, Content: "next"},
 		},
-		want: vibekit.TurnOutcomeCompleted,
+		want: marotte.TurnOutcomeCompleted,
 	},
 	{
 		name: "a cancelled turn reports cancelled, not nothing",
-		msgs: []vibekit.Message{
-			{ID: "m1", Role: vibekit.RoleAssistant, TurnOutcome: vibekit.TurnOutcomeCancelled},
+		msgs: []marotte.Message{
+			{ID: "m1", Role: marotte.RoleAssistant, TurnOutcome: marotte.TurnOutcomeCancelled},
 		},
-		want: vibekit.TurnOutcomeCancelled,
+		want: marotte.TurnOutcomeCancelled,
 	},
 }
 
@@ -93,7 +93,7 @@ func TestReadChatHeader_LastTurnOutcomeAgreesWithChatHeader(t *testing.T) {
 
 	for _, tc := range outcomeChatCases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &vibekit.Chat{ID: "c1", Name: "Agreement", Messages: tc.msgs}
+			c := &marotte.Chat{ID: "c1", Name: "Agreement", Messages: tc.msgs}
 
 			data, err := json.Marshal(c)
 			if err != nil {
@@ -171,18 +171,18 @@ func TestHandleList_CarriesLastTurnOutcomeOnTheWire(t *testing.T) {
 	// finished turn, a broken one, and a record with no outcome at all.
 	seed := []struct {
 		id      string
-		outcome vibekit.TurnOutcome
+		outcome marotte.TurnOutcome
 	}{
-		{"c-done", vibekit.TurnOutcomeCompleted},
-		{"c-failed", vibekit.TurnOutcomeFailed},
+		{"c-done", marotte.TurnOutcomeCompleted},
+		{"c-failed", marotte.TurnOutcomeFailed},
 		{"c-legacy", ""},
 	}
 	for _, sc := range seed {
-		msg := vibekit.Message{ID: "m1", Role: vibekit.RoleAssistant, Content: "x"}
+		msg := marotte.Message{ID: "m1", Role: marotte.RoleAssistant, Content: "x"}
 		msg.TurnOutcome = sc.outcome
-		if _, err := s.Mutate(t.Context(), vibekit.ChatID(sc.id), func(c *vibekit.Chat, _ bool) bool {
+		if _, err := s.Mutate(t.Context(), marotte.ChatID(sc.id), func(c *marotte.Chat, _ bool) bool {
 			c.Name = sc.id
-			c.Messages = []vibekit.Message{msg}
+			c.Messages = []marotte.Message{msg}
 			return true
 		}); err != nil {
 			t.Fatalf("seed %s: %v", sc.id, err)
@@ -246,7 +246,7 @@ func TestScanMessagesArray_StopsAtTheFirstSyntaxError(t *testing.T) {
 	if count != 1 {
 		t.Errorf("count = %d, want 1 (the one element that read cleanly)", count)
 	}
-	if last != vibekit.TurnOutcomeCompleted {
-		t.Errorf("outcome = %q, want %q", last, vibekit.TurnOutcomeCompleted)
+	if last != marotte.TurnOutcomeCompleted {
+		t.Errorf("outcome = %q, want %q", last, marotte.TurnOutcomeCompleted)
 	}
 }

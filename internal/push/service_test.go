@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestNew_GeneratesKeys(t *testing.T) {
@@ -50,7 +50,7 @@ func TestSubscribeUnsubscribe(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
-	sub := vibekit.PushSubscription{Endpoint: "https://push.example.com/1"}
+	sub := marotte.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub.Keys.P256dh = "dGVzdA"
 	sub.Keys.Auth = "YXV0aA"
 
@@ -70,11 +70,11 @@ func TestSubscribe_OverwritesDuplicate(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
-	sub1 := vibekit.PushSubscription{Endpoint: "https://push.example.com/1"}
+	sub1 := marotte.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub1.Keys.Auth = "old"
 	s.Subscribe(sub1)
 
-	sub2 := vibekit.PushSubscription{Endpoint: "https://push.example.com/1"}
+	sub2 := marotte.PushSubscription{Endpoint: "https://push.example.com/1"}
 	sub2.Keys.Auth = "new"
 	s.Subscribe(sub2)
 
@@ -120,7 +120,7 @@ func TestSubscribe_HostLogging(t *testing.T) {
 
 			// Install capture AFTER New so its "push: ready" line is excluded.
 			capLog := capture.Default(t)
-			s.Subscribe(vibekit.PushSubscription{Endpoint: tt.endpoint})
+			s.Subscribe(marotte.PushSubscription{Endpoint: tt.endpoint})
 
 			got, ok := capLog.AttrValue("push: subscribed", "host")
 			if !ok {
@@ -141,23 +141,23 @@ func TestSetPreferences(t *testing.T) {
 
 	// Defaults: both true.
 	s.mu.Lock()
-	if !s.prefs[vibekit.PushKindAgentFinished] || !s.prefs[vibekit.PushKindPermission] {
+	if !s.prefs[marotte.PushKindAgentFinished] || !s.prefs[marotte.PushKindPermission] {
 		t.Error("default preferences should be true")
 	}
-	if s.prefs[vibekit.PushKindPRStatus] {
+	if s.prefs[marotte.PushKindPRStatus] {
 		t.Error("pr_status defaults on; it is the one keyed kind whose default is OFF, so a fresh install sends no pull-request pushes")
 	}
 	s.mu.Unlock()
 
-	s.SetPreferences(map[vibekit.PushKind]bool{
-		vibekit.PushKindAgentFinished: false,
-		vibekit.PushKindPermission:    true,
+	s.SetPreferences(map[marotte.PushKind]bool{
+		marotte.PushKindAgentFinished: false,
+		marotte.PushKindPermission:    true,
 	})
 	s.mu.Lock()
-	if s.prefs[vibekit.PushKindAgentFinished] {
+	if s.prefs[marotte.PushKindAgentFinished] {
 		t.Error("agentFinished should be false")
 	}
-	if !s.prefs[vibekit.PushKindPermission] {
+	if !s.prefs[marotte.PushKindPermission] {
 		t.Error("permissionNeeded should be true")
 	}
 	s.mu.Unlock()
@@ -194,7 +194,7 @@ func TestLoadPreferences(t *testing.T) {
 			s := New(t.Context(), dir, "mailto:test@example.com")
 
 			s.mu.Lock()
-			af, pn := s.prefs[vibekit.PushKindAgentFinished], s.prefs[vibekit.PushKindPermission]
+			af, pn := s.prefs[marotte.PushKindAgentFinished], s.prefs[marotte.PushKindPermission]
 			s.mu.Unlock()
 			if af != tt.wantAF || pn != tt.wantPN {
 				t.Errorf("agentFinished=%v permissionNeeded=%v, want %v %v",

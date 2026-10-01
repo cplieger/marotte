@@ -114,7 +114,7 @@ beforeEach(() => {
 
 describe("rendersMarkdown", () => {
   it("covers the two markdown extensions, case-insensitively", () => {
-    expect(rendersMarkdown(".kiro/steering/vibekit.md")).toBe(true);
+    expect(rendersMarkdown(".kiro/steering/marotte.md")).toBe(true);
     expect(rendersMarkdown("README.MD")).toBe(true);
     expect(rendersMarkdown("notes.markdown")).toBe(true);
   });
@@ -194,7 +194,7 @@ describe("the front-matter block", () => {
   const doc = [
     "---",
     "inclusion: fileMatch",
-    'fileMatchPattern: "vibekit/static-src/**"',
+    'fileMatchPattern: "marotte/static-src/**"',
     "description: >",
     "  What this document is",
     "  for, folded.",
@@ -216,7 +216,7 @@ describe("the front-matter block", () => {
     renderMarkdownDoc(host, doc);
     expect(rows(host)).toEqual([
       ["inclusion", "fileMatch"],
-      ["fileMatchPattern", "vibekit/static-src/**"],
+      ["fileMatchPattern", "marotte/static-src/**"],
       ["description", "What this document is for, folded."],
       ["tools", "read, write"],
     ]);

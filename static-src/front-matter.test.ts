@@ -98,9 +98,9 @@ describe("splitFrontMatter fence detection", () => {
 
 describe("splitFrontMatter field parsing", () => {
   it("reads flat scalars and strips one pair of quotes", () => {
-    const doc = '---\nname: kiro\ninclusion: fileMatch\nfileMatchPattern: "vibekit/**"\n---\n';
+    const doc = '---\nname: kiro\ninclusion: fileMatch\nfileMatchPattern: "marotte/**"\n---\n';
     expect(keys(doc)).toEqual(["name", "inclusion", "fileMatchPattern"]);
-    expect(valueOf(doc, "fileMatchPattern")).toBe("vibekit/**");
+    expect(valueOf(doc, "fileMatchPattern")).toBe("marotte/**");
     expect(valueOf(doc, "name")).toBe("kiro");
   });
 

@@ -4,7 +4,7 @@ package mcp
 //
 // Every MCP server's README hands out a JSON block in the Claude-Desktop /
 // KAS family shape — a MAP of servers under one wrapper key. This file
-// translates that block into vibekit's own records.
+// translates that block into marotte's own records.
 //
 // The translation is the INVERSE of kasfile.go's renderKASServers,
 // deliberately: reading the renderer backwards is the cheapest
@@ -15,7 +15,7 @@ package mcp
 // encoding/json ignores a key with no matching field, so a typo like
 // "comand" produced a server that did nothing. Blanket
 // DisallowUnknownFields is the wrong tool: a real publisher block
-// legitimately carries keys vibekit has no field for. So keys are
+// legitimately carries keys marotte has no field for. So keys are
 // classified in three: consumed, known-but-unmodelled (accepted,
 // reported as a note), and unknown (400 naming the key with a nearest
 // match).
@@ -51,7 +51,7 @@ var pasteServerKeys = []string{
 	"env", "headers", "name", "oauth", "prewarm", "type", "url",
 }
 
-// pasteServerIgnored are the per-server keys vibekit recognises and has nowhere
+// pasteServerIgnored are the per-server keys marotte recognises and has nowhere
 // to put. Each is accepted with a note naming why, so a block carrying one
 // installs instead of erroring, and the user is not left wondering whether it
 // was a typo. The reasons are the user's, not the schema's: "no field for it"
@@ -59,12 +59,12 @@ var pasteServerKeys = []string{
 var pasteServerIgnored = map[string]string{
 	"$schema":      "a schema pointer, not configuration",
 	"alwaysAllow":  `another client's spelling of "autoApprove" — rename it to carry it over`,
-	"cwd":          "vibekit has no working-directory field",
+	"cwd":          "marotte has no working-directory field",
 	"description":  "not stored; the name is the label",
 	"icon":         "not stored",
-	"oauthScopes":  "vibekit has no OAuth scope field",
-	"timeout":      "vibekit has no timeout field; the agent sets its own",
-	"waitForReady": "vibekit has no wait-for-ready field",
+	"oauthScopes":  "marotte has no OAuth scope field",
+	"timeout":      "marotte has no timeout field; the agent sets its own",
+	"waitForReady": "marotte has no wait-for-ready field",
 }
 
 // pasteOAuthKeys are the keys of a server's nested `oauth` object — the whole
@@ -78,17 +78,17 @@ var pasteServerIgnored = map[string]string{
 var pasteOAuthKeys = []string{"clientId", "clientSecret"}
 
 // pasteOAuthIgnored is the nested oauth object's ignored set: a key KAS's
-// schema carries that vibekit recognises and cannot honour. Accepted
+// schema carries that marotte recognises and cannot honour. Accepted
 // with a note, like pasteServerIgnored, rather than refused.
 //
-// clientMetadataUrl is kiro-cli 2.19.2's addition. vibekit cannot pin the
+// clientMetadataUrl is kiro-cli 2.19.2's addition. marotte cannot pin the
 // loopback redirect port KAS binds, so the authorization server would
-// reject the request whatever document was published, and vibekit has
+// reject the request whatever document was published, and marotte has
 // no field to store the URL in — so it installs and the note says why
 // the field is dropped, rather than the paste failing on an
 // unrecognized key.
 var pasteOAuthIgnored = map[string]string{
-	"clientMetadataUrl": "vibekit cannot pin the loopback redirect port KAS binds, so the authorization server would reject the request",
+	"clientMetadataUrl": "marotte cannot pin the loopback redirect port KAS binds, so the authorization server would reject the request",
 }
 
 // pasteTopKeys are the top-level keys of a pasted block. Only the wrapper is
@@ -118,7 +118,7 @@ type pasteOAuth struct {
 }
 
 // pasteServer is the publisher-shaped server object. `env` and `headers` are
-// absent on purpose: they are JSON records, and vibekit stores ordered
+// absent on purpose: they are JSON records, and marotte stores ordered
 // KeyPairs, so they are decoded from the raw bytes to keep the README's order
 // (a Go map would discard it, and the order is what the user reads in the form).
 type pasteServer struct {
@@ -210,7 +210,7 @@ func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest
 	return req, nil
 }
 
-// translateServer maps one publisher server object onto a vibekit record.
+// translateServer maps one publisher server object onto a marotte record.
 // Validate is NOT called here: the store calls it on every record it takes, and
 // running it twice would report the same problem in two voices.
 func translateServer(rawName string, obj map[string]json.RawMessage, raw json.RawMessage, req *importRequest) (*Server, error) {
@@ -242,7 +242,7 @@ func translateServer(rawName string, obj map[string]json.RawMessage, raw json.Ra
 		Args:          spec.Args,
 		DisabledTools: spec.DisabledTools,
 		AutoApprove:   spec.AutoApprove,
-		// A publisher block spells the flag the other way round, and vibekit's
+		// A publisher block spells the flag the other way round, and marotte's
 		// own default is on: a server nobody switched off is one the user just
 		// asked for.
 		Enabled: spec.Disabled == nil || !*spec.Disabled,
@@ -492,7 +492,7 @@ func decodeOrderedPairs(field string, raw json.RawMessage) ([]KeyPair, error) {
 	return out, nil
 }
 
-// scalarString renders a decoded JSON scalar as the string vibekit stores. The
+// scalarString renders a decoded JSON scalar as the string marotte stores. The
 // bool reports whether the value was a scalar at all.
 func scalarString(v any) (string, bool) {
 	switch t := v.(type) {

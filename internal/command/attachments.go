@@ -11,21 +11,21 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // CmdSetAttachments records the paths staged beside the chat's draft. An
 // empty Paths is a legitimate value (how a sent or emptied pill row clears);
 // the whole list arrives every time, so nothing needs reconciling.
-func CmdSetAttachments(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSetAttachments(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	var p vibekit.SetAttachmentsCommand
+	var p marotte.SetAttachmentsCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if len(p.Paths) > vibekit.MaxAttachments {
+	if len(p.Paths) > marotte.MaxAttachments {
 		return nil, StatusError(http.StatusRequestEntityTooLarge, errTooManyAttachments)
 	}
 	for _, path := range p.Paths {
@@ -33,7 +33,7 @@ func CmdSetAttachments(ctx context.Context, chats ChatStore, bus Broadcaster, cm
 		// client believes it replaced wholesale would leave the two sides
 		// disagreeing with nothing saying so. No UTF-8 check: encoding/json
 		// already replaced any invalid byte sequence in the decoded string.
-		if path == "" || len(path) > vibekit.MaxAttachmentPathBytes {
+		if path == "" || len(path) > marotte.MaxAttachmentPathBytes {
 			return nil, StatusError(http.StatusBadRequest, errBadAttachmentPath)
 		}
 	}

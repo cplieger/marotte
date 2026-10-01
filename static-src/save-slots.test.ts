@@ -39,7 +39,7 @@ const EXPECTED_KEYS = [
   "knowledge_enabled",
   "tool_search_enabled",
   "memory_enabled",
-  // Experimental features: three kiro-cli keys plus vibekit's own debug_logs
+  // Experimental features: three kiro-cli keys plus marotte's own debug_logs
   "hooks.showStatus",
   "telemetry.enabled",
   "chat.disableInheritingDefaultResources",
@@ -92,7 +92,7 @@ describe("per-setting save slots (static/index.html)", () => {
     }
   });
 
-  it("names a settings field for every vibekit-owned key", () => {
+  it("names a settings field for every marotte-owned key", () => {
     const dotted = (k: string): boolean => k.includes(".");
     for (const key of EXPECTED_KEYS) {
       if (dotted(key) || key === "steering") {

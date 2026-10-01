@@ -309,7 +309,7 @@ async function settled(check: () => boolean, what: string): Promise<void> {
 }
 
 describe("a PR notification's destination", () => {
-  const identity = "github:github.com:cplieger/vibekit#42";
+  const identity = "github:github.com:cplieger/marotte#42";
 
   function click(): void {
     routePushMessage({
@@ -317,7 +317,7 @@ describe("a PR notification's destination", () => {
       reason: "clicked",
       chatId: "",
       subject: `pr:${identity}`,
-      title: "Vibekit",
+      title: "Marotte",
       body: "",
     });
   }

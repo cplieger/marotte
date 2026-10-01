@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -48,7 +48,7 @@ func TestConfigFromEnv_Overrides(t *testing.T) {
 	t.Setenv("KIRO_CLI_VERSION", "9.9.9")
 	t.Setenv("KIRO_CLI_SHA256", "abc")
 	t.Setenv("KIRO_CLI_SHA256_ARM64", "def")
-	t.Setenv("VIBEKIT_AUTH_LOGIN_URL_TIMEOUT", "10s")
+	t.Setenv("MAROTTE_AUTH_LOGIN_URL_TIMEOUT", "10s")
 
 	cfg := ConfigFromEnv()
 
@@ -106,7 +106,7 @@ func TestParseAllowedHosts(t *testing.T) {
 	})
 
 	t.Run("valid list gates exactly, with the loopback carve-out", func(t *testing.T) {
-		policy := parseAllowedHosts("localhost, Vibekit.Example.COM.")
+		policy := parseAllowedHosts("localhost, Marotte.Example.COM.")
 		if !policy.Active() || policy.Size() != 2 {
 			t.Fatalf("policy active=%v size=%d, want active with 2 entries", policy.Active(), policy.Size())
 		}
@@ -114,7 +114,7 @@ func TestParseAllowedHosts(t *testing.T) {
 			host, peer string
 			want       bool
 		}{
-			{"VIBEKIT.example.com:8080", "192.168.1.50:44444", true}, // case + port canonicalize
+			{"MAROTTE.example.com:8080", "192.168.1.50:44444", true}, // case + port canonicalize
 			{"attacker.evil:8080", "192.168.1.50:44444", false},
 			{"127.0.0.1:8080", "127.0.0.1:54321", true},     // healthcheck shape rides the carve-out
 			{"127.0.0.1:8080", "192.168.1.50:44444", false}, // forged loopback Host from remote peer
@@ -126,7 +126,7 @@ func TestParseAllowedHosts(t *testing.T) {
 	})
 
 	t.Run("malformed entry dropped, valid subset kept", func(t *testing.T) {
-		policy := parseAllowedHosts("http://vibekit.example.com, localhost")
+		policy := parseAllowedHosts("http://marotte.example.com, localhost")
 		if got := policy.Size(); got != 1 {
 			t.Fatalf("policy size = %d, want 1 (the URL-shaped entry dropped, the valid one kept)", got)
 		}
@@ -140,7 +140,7 @@ func TestParseAllowedHosts(t *testing.T) {
 		if !policy.Active() || policy.Size() != 0 {
 			t.Fatalf("policy active=%v size=%d, want an active empty policy (fail closed, never fall open)", policy.Active(), policy.Size())
 		}
-		if allows(t, policy, "vibekit.example.com:8080", "192.168.1.50:44444") {
+		if allows(t, policy, "marotte.example.com:8080", "192.168.1.50:44444") {
 			t.Error("non-loopback request admitted by an active empty policy; all-invalid configuration must deny-all")
 		}
 	})
@@ -306,12 +306,12 @@ func TestTrustedProxies_ClientIPResolution(t *testing.T) {
 // TestOverlayFiles pins the asymmetry between the two ways a catalog-overlay
 // path can fail to resolve.
 //
-// The default is the image's own path, absent whenever vibekit runs outside the
+// The default is the image's own path, absent whenever marotte runs outside the
 // container, so warning about it would put a line in every `go run` and teach a
 // reader that this warning means nothing. An EXPLICIT path that does not resolve
 // is the opposite: nobody typed it by accident, so running overlay-less without
 // saying so leaves the operator looking at an unpatched tool catalog with nothing
-// TestBundledToolsFiles pins the resolution of vibekit's bundled-tools file,
+// TestBundledToolsFiles pins the resolution of marotte's bundled-tools file,
 // and the ONE property here that changed on purpose is that a missing default
 // now warns.
 //
@@ -350,7 +350,7 @@ func TestBundledToolsFiles(t *testing.T) {
 		if got := bundledToolsFiles(path); got != nil {
 			t.Errorf("bundledToolsFiles(%q) = %v, want nil", path, got)
 		}
-		if !strings.Contains(logs.String(), "VIBEKIT_BUNDLED_TOOLS") {
+		if !strings.Contains(logs.String(), "MAROTTE_BUNDLED_TOOLS") {
 			t.Errorf("logs = %q, want a warning naming the variable the operator set", logs.String())
 		}
 		if !strings.Contains(logs.String(), `"explicit":true`) {
@@ -400,11 +400,11 @@ func TestBrowseRoots(t *testing.T) {
 		logs := captureDefaultLogger(t)
 
 		got := browseRoots("/work", "/config", "/srv/a:/srv/b:/srv/c")
-		want := []string{"/work", "/config", vibekit.DefaultUploadDir, "/srv/a", "/srv/b", "/srv/c"}
+		want := []string{"/work", "/config", marotte.DefaultUploadDir, "/srv/a", "/srv/b", "/srv/c"}
 		if !slices.Equal(got, want) {
 			t.Errorf("browseRoots() = %v, want %v", got, want)
 		}
-		if strings.Contains(logs.String(), "VIBEKIT_BROWSE_ROOTS") {
+		if strings.Contains(logs.String(), "MAROTTE_BROWSE_ROOTS") {
 			t.Errorf("logs = %q, must stay silent for a list with nothing malformed in it", logs.String())
 		}
 	})
@@ -413,11 +413,11 @@ func TestBrowseRoots(t *testing.T) {
 		logs := captureDefaultLogger(t)
 
 		got := browseRoots("/work", "/config", "relative/path:/srv/ok")
-		want := []string{"/work", "/config", vibekit.DefaultUploadDir, "/srv/ok"}
+		want := []string{"/work", "/config", marotte.DefaultUploadDir, "/srv/ok"}
 		if !slices.Equal(got, want) {
 			t.Errorf("browseRoots() = %v, want %v", got, want)
 		}
-		if !strings.Contains(logs.String(), "VIBEKIT_BROWSE_ROOTS") {
+		if !strings.Contains(logs.String(), "MAROTTE_BROWSE_ROOTS") {
 			t.Errorf("logs = %q, want a warning naming the dropped entry", logs.String())
 		}
 	})
@@ -452,7 +452,7 @@ func TestParseTrustedProxies_ReportsOnlyRealRejections(t *testing.T) {
 	})
 }
 
-// TestParseTrustedInstallUIDs pins the one report vibekit emits about a list
+// TestParseTrustedInstallUIDs pins the one report marotte emits about a list
 // whose entries are assertions of privilege.
 //
 // Each uid claims an identity is already as privileged as this process, so an
@@ -501,7 +501,7 @@ func TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk(t *testing.T) {
 
 	t.Run("a usable list is parsed silently", func(t *testing.T) {
 		logs := captureDefaultLogger(t)
-		policy := parseAllowedHosts("localhost, vibekit.example.com")
+		policy := parseAllowedHosts("localhost, marotte.example.com")
 		if !policy.Active() || policy.Size() != 2 {
 			t.Fatalf("policy active = %v, size = %d, want active with 2 entries", policy.Active(), policy.Size())
 		}
@@ -512,7 +512,7 @@ func TestParseAllowedHosts_WarnsOnlyWhenBrowserAccessIsAtRisk(t *testing.T) {
 
 	t.Run("a dropped entry is named while the valid subset still serves", func(t *testing.T) {
 		logs := captureDefaultLogger(t)
-		policy := parseAllowedHosts("http://vibekit.example.com, localhost")
+		policy := parseAllowedHosts("http://marotte.example.com, localhost")
 		if !policy.Active() || policy.Size() != 1 {
 			t.Fatalf("policy active = %v, size = %d, want active with 1 entry", policy.Active(), policy.Size())
 		}

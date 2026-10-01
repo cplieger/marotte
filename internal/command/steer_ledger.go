@@ -3,7 +3,7 @@ package command
 // The steer ledger: which mid-turn steers are the USER's own words.
 //
 // Nothing on the wire separates them from a workflow's report (see
-// vibekit.SteerOrigin), so CmdSteer records the id KAS returned for every steer
+// marotte.SteerOrigin), so CmdSteer records the id KAS returned for every steer
 // this server sent. In-memory, TTL'd and bounded like createLedger next door,
 // because a steer's whole lifetime is one turn.
 
@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // steerTTL is how long a recorded steer id answers "the user's".
@@ -32,9 +32,9 @@ const maxSteerOps = 512
 
 // steerKey addresses one steer. A STRUCT key rather than a joined string: a
 // steer id is KAS's, so composing one would put a separator inside a value
-// vibekit does not own the shape of.
+// marotte does not own the shape of.
 type steerKey struct {
-	chat vibekit.ChatID
+	chat marotte.ChatID
 	id   string
 }
 
@@ -60,10 +60,10 @@ func NewSteerLedger() *SteerLedger {
 
 // RecordUserSteer records that this server sent steerID for chatID.
 //
-// Called with the id KAS RETURNED, never the one vibekit derived: the reply's
+// Called with the id KAS RETURNED, never the one marotte derived: the reply's
 // `messageId` is what every later frame is keyed by, so recording anything else
 // would file the steer under a name no frame carries.
-func (l *SteerLedger) RecordUserSteer(chatID vibekit.ChatID, steerID string) {
+func (l *SteerLedger) RecordUserSteer(chatID marotte.ChatID, steerID string) {
 	if l == nil || steerID == "" {
 		return
 	}
@@ -80,16 +80,16 @@ func (l *SteerLedger) RecordUserSteer(chatID vibekit.ChatID, steerID string) {
 // Deliberately NOT a lookup that can fail: absence is a real answer here, and
 // returning "unknown" would push a decision the client has no vocabulary for
 // onto every consumer.
-func (l *SteerLedger) SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin {
+func (l *SteerLedger) SteerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin {
 	if l == nil || steerID == "" {
-		return vibekit.SteerOriginAgent
+		return marotte.SteerOriginAgent
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if expires, ok := l.sent[steerKey{chat: chatID, id: steerID}]; ok && l.now().Before(expires) {
-		return vibekit.SteerOriginUser
+		return marotte.SteerOriginUser
 	}
-	return vibekit.SteerOriginAgent
+	return marotte.SteerOriginAgent
 }
 
 // ForgetUserSteer drops ONE recorded steer, for a send that turned out not to
@@ -101,7 +101,7 @@ func (l *SteerLedger) SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit
 // a stale entry mislabels nothing and the TTL reclaims it. What it protects is the
 // bounded map, whose sweep evicts the entry closest to expiry once it is full, so
 // slots spent on sends that never happened cost real records.
-func (l *SteerLedger) ForgetUserSteer(chatID vibekit.ChatID, steerID string) {
+func (l *SteerLedger) ForgetUserSteer(chatID marotte.ChatID, steerID string) {
 	if l == nil || steerID == "" {
 		return
 	}
@@ -115,7 +115,7 @@ func (l *SteerLedger) ForgetUserSteer(chatID vibekit.ChatID, steerID string) {
 // A linear scan over a map the bound above keeps in the low hundreds, because
 // the alternative — a second index by chat — is a second thing to keep in step
 // with the first for a sweep that runs once per chat close.
-func (l *SteerLedger) ForgetChat(chatID vibekit.ChatID) {
+func (l *SteerLedger) ForgetChat(chatID marotte.ChatID) {
 	if l == nil {
 		return
 	}

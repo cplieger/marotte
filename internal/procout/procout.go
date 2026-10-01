@@ -1,6 +1,6 @@
 // Package procout captures a spawned process's stdout or stderr under a byte
 // cap, so a runaway or hostile subprocess cannot exhaust the container's memory
-// through a pipe vibekit is draining.
+// through a pipe marotte is draining.
 //
 // It is its own package because both consumers need it and neither should own
 // it: internal/auth shells out to kiro-cli for the identity endpoints and

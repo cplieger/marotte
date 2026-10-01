@@ -68,7 +68,7 @@ beforeEach(() => {
 describe("the browser's composed row path is a key statusForPath can match", () => {
   beforeEach(() => {
     setWorkspaceRoot("/workspace");
-    _setReposForTest([repo("vibekit", [{ path: "static-src/files.ts", status: "M" }])]);
+    _setReposForTest([repo("marotte", [{ path: "static-src/files.ts", status: "M" }])]);
   });
 
   it("starts a fresh listing on the filesystem root, in the space it composes into", () => {
@@ -80,24 +80,24 @@ describe("the browser's composed row path is a key statusForPath can match", () 
 
   it("returns to that same root on reset", () => {
     const state = new FileBrowserState();
-    state.navigate("/workspace/vibekit");
+    state.navigate("/workspace/marotte");
     state.reset();
     expect(state.currentPath).toBe("/");
   });
 
   it("composes the container-absolute path, walking mount then repo then dir", () => {
-    expect(walk("workspace", "vibekit", "static-src", "files.ts")).toBe(
-      "/workspace/vibekit/static-src/files.ts",
+    expect(walk("workspace", "marotte", "static-src", "files.ts")).toBe(
+      "/workspace/marotte/static-src/files.ts",
     );
   });
 
   it("finds the file's letter under the path the browser composed", () => {
-    expect(statusForPath(walk("workspace", "vibekit", "static-src", "files.ts"))).toBe("M");
+    expect(statusForPath(walk("workspace", "marotte", "static-src", "files.ts"))).toBe("M");
   });
 
   it("finds a directory's rollup under the path the browser composed", () => {
-    expect(statusUnder(walk("workspace", "vibekit", "static-src"))).toBe("M");
-    expect(statusUnder(walk("workspace", "vibekit"))).toBe("M");
+    expect(statusUnder(walk("workspace", "marotte", "static-src"))).toBe("M");
+    expect(statusUnder(walk("workspace", "marotte"))).toBe("M");
   });
 
   it("hands openChange's absPath a path it passes through untouched", () => {
@@ -105,13 +105,13 @@ describe("the browser's composed row path is a key statusForPath can match", () 
     // carry the agent's workspace-RELATIVE path. A browser path that is already
     // absolute is returned unchanged; one that is not gets the root joined onto
     // it a second time, which is the /workspace/workspace/... defect.
-    const row = walk("workspace", "vibekit", "static-src", "files.ts");
+    const row = walk("workspace", "marotte", "static-src", "files.ts");
     expect(absPath(row)).toBe(row);
   });
 
   it("reaches the parent listing's own path by the same spelling", () => {
-    const dir = walk("workspace", "vibekit", "static-src");
-    expect(parentPath(dir)).toBe("/workspace/vibekit");
+    const dir = walk("workspace", "marotte", "static-src");
+    expect(parentPath(dir)).toBe("/workspace/marotte");
     expect(parentPath("/workspace")).toBe("/");
     expect(parentPath("/")).toBe("/");
   });
@@ -130,13 +130,13 @@ describe("the /files route and the browser agree on the root", () => {
 
   it("builds /files back from that path, with no empty segment", () => {
     expect(buildPath({ kind: "files", path: new FileBrowserState().currentPath })).toBe("/files");
-    expect(buildPath({ kind: "files", path: walk("workspace", "vibekit") })).toBe(
-      "/files/workspace/vibekit",
+    expect(buildPath({ kind: "files", path: walk("workspace", "marotte") })).toBe(
+      "/files/workspace/marotte",
     );
   });
 
   it("round-trips a directory below the root", () => {
-    const dir = walk("workspace", "vibekit");
+    const dir = walk("workspace", "marotte");
     const url = buildPath({ kind: "files", path: dir });
     expect((parseRoute(url, "") as { path: string }).path).toBe(dir);
   });
@@ -166,7 +166,7 @@ describe("a mount that is not the workspace", () => {
   // be mangled into a workspace-relative form on the way to a lookup.
   beforeEach(() => {
     setWorkspaceRoot("/workspace");
-    _setReposForTest([repo("vibekit", [{ path: "static-src/files.ts", status: "M" }])]);
+    _setReposForTest([repo("marotte", [{ path: "static-src/files.ts", status: "M" }])]);
   });
 
   it("composes the mount's own absolute path", () => {
@@ -187,11 +187,11 @@ describe("normalizeDirPath is the one door into the space", () => {
     ["", "/"],
     ["/", "/"],
     [".", "/"],
-    ["workspace/vibekit", "/workspace/vibekit"],
-    ["/workspace/vibekit", "/workspace/vibekit"],
+    ["workspace/marotte", "/workspace/marotte"],
+    ["/workspace/marotte", "/workspace/marotte"],
     ["//workspace//", "/workspace"],
-    ["  /workspace/vibekit  ", "/workspace/vibekit"],
-    ["workspace/vibekit/", "/workspace/vibekit"],
+    ["  /workspace/marotte  ", "/workspace/marotte"],
+    ["workspace/marotte/", "/workspace/marotte"],
     // An INTERIOR run collapses too: a pasted /files/workspace//x reaches a tab ref
     // and a tab label, so surviving here mints a second tab for an open folder.
     ["/workspace//x", "/workspace/x"],
@@ -205,8 +205,8 @@ describe("normalizeDirPath is the one door into the space", () => {
   }
 
   it("keeps a normalised path a joinable base", () => {
-    expect(joinPath(normalizeDirPath("workspace/vibekit"), "static-src")).toBe(
-      "/workspace/vibekit/static-src",
+    expect(joinPath(normalizeDirPath("workspace/marotte"), "static-src")).toBe(
+      "/workspace/marotte/static-src",
     );
     expect(joinPath(normalizeDirPath(""), "workspace")).toBe("/workspace");
   });

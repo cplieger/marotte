@@ -1,6 +1,6 @@
 package translate
 
-// A runtime census of the `_meta.kiro` fields KAS sends and vibekit drops.
+// A runtime census of the `_meta.kiro` fields KAS sends and marotte drops.
 //
 // KAS owns this payload's shape and nothing documents it. Every field
 // below is decoded into a Go struct, so a field KAS starts sending is
@@ -263,7 +263,7 @@ func declines(declined []string, name string) bool {
 	return false
 }
 
-// censusMeteringUnit reports a metering unit label vibekit does not sum.
+// censusMeteringUnit reports a metering unit label marotte does not sum.
 //
 // The one place a value is reported rather than a name, because here the
 // label is the discovery: the field name `unit` is known, so no

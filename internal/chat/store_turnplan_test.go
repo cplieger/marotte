@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestUpsertTurnPlan_SteerDoesNotBoundTheTurn pins the half of the steer rule that
@@ -15,16 +15,16 @@ import (
 func TestUpsertTurnPlan_SteerDoesNotBoundTheTurn(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "plan turn"
 		return true
 	}); err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
-	seed := []vibekit.Message{
-		{ID: "u1", Role: vibekit.RoleUser, Content: "go"},
-		{ID: "p1", Role: vibekit.RoleAssistant, Plan: []vibekit.PlanEntry{{Content: "first", Status: vibekit.PlanPending}}},
-		{ID: "s1", Role: vibekit.RoleUser, UserKind: vibekit.UserKindSteer, Content: "use tabs"},
+	seed := []marotte.Message{
+		{ID: "u1", Role: marotte.RoleUser, Content: "go"},
+		{ID: "p1", Role: marotte.RoleAssistant, Plan: []marotte.PlanEntry{{Content: "first", Status: marotte.PlanPending}}},
+		{ID: "s1", Role: marotte.RoleUser, UserKind: marotte.UserKindSteer, Content: "use tabs"},
 	}
 	for i := range seed {
 		if err := s.AppendMessage(ctx, "c1", &seed[i]); err != nil {
@@ -32,10 +32,10 @@ func TestUpsertTurnPlan_SteerDoesNotBoundTheTurn(t *testing.T) {
 		}
 	}
 
-	next := &vibekit.Message{
+	next := &marotte.Message{
 		ID:   "p2",
-		Role: vibekit.RoleAssistant,
-		Plan: []vibekit.PlanEntry{{Content: "second", Status: vibekit.PlanCompleted}},
+		Role: marotte.RoleAssistant,
+		Plan: []marotte.PlanEntry{{Content: "second", Status: marotte.PlanCompleted}},
 	}
 	if err := s.UpsertTurnPlan(ctx, "c1", next); err != nil {
 		t.Fatalf("UpsertTurnPlan: %v", err)
@@ -65,16 +65,16 @@ func TestUpsertTurnPlan_SteerDoesNotBoundTheTurn(t *testing.T) {
 func TestUpsertTurnPlan_PromptStillBoundsTheTurn(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "plan turn"
 		return true
 	}); err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
-	seed := []vibekit.Message{
-		{ID: "u1", Role: vibekit.RoleUser, Content: "go"},
-		{ID: "p1", Role: vibekit.RoleAssistant, Plan: []vibekit.PlanEntry{{Content: "first", Status: vibekit.PlanPending}}},
-		{ID: "u2", Role: vibekit.RoleUser, Content: "again"},
+	seed := []marotte.Message{
+		{ID: "u1", Role: marotte.RoleUser, Content: "go"},
+		{ID: "p1", Role: marotte.RoleAssistant, Plan: []marotte.PlanEntry{{Content: "first", Status: marotte.PlanPending}}},
+		{ID: "u2", Role: marotte.RoleUser, Content: "again"},
 	}
 	for i := range seed {
 		if err := s.AppendMessage(ctx, "c1", &seed[i]); err != nil {
@@ -82,10 +82,10 @@ func TestUpsertTurnPlan_PromptStillBoundsTheTurn(t *testing.T) {
 		}
 	}
 
-	next := &vibekit.Message{
+	next := &marotte.Message{
 		ID:   "p2",
-		Role: vibekit.RoleAssistant,
-		Plan: []vibekit.PlanEntry{{Content: "second", Status: vibekit.PlanPending}},
+		Role: marotte.RoleAssistant,
+		Plan: []marotte.PlanEntry{{Content: "second", Status: marotte.PlanPending}},
 	}
 	if err := s.UpsertTurnPlan(ctx, "c1", next); err != nil {
 		t.Fatalf("UpsertTurnPlan: %v", err)

@@ -15,7 +15,7 @@
 // have to learn a second vocabulary for the identical tool inside a run.
 //
 // What it is NOT: a message store. There are no message ids here, no turns, no
-// persistence and no reconcile. A step's content belongs to a turn vibekit never
+// persistence and no reconcile. A step's content belongs to a turn marotte never
 // prompted and therefore never finalizes, so it cannot survive a reload — the
 // captured output on the step's row is the durable half, and this is the live
 // half. `reset()` is called when the tab points at another run, which is the whole

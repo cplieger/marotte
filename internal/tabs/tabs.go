@@ -71,8 +71,8 @@ import (
 	"syscall"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/filemode"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // FileName is the store's file, beside the chats directory in the config dir.
@@ -112,7 +112,7 @@ const MaxOpenTabs = 48
 const MaxBytes = 512 * 1024
 
 // MaxRefBytes caps one subject's Ref. A ref is a chat id or an absolute path, and
-// the reasoning is vibekit.MaxAttachmentPathBytes's: PATH_MAX is 4096 on Linux
+// the reasoning is marotte.MaxAttachmentPathBytes's: PATH_MAX is 4096 on Linux
 // while every path this app can produce comes from its own file browser under the
 // workspace root.
 const MaxRefBytes = 512
@@ -131,7 +131,7 @@ var (
 	ErrOrderMismatch = errors.New("tab order does not name every open tab exactly once")
 	// ErrTooMany means MaxOpenTabs tabs are already open.
 	ErrTooMany = errors.New("too many open tabs")
-	// ErrBadKind means the kind is not one of vibekit's eight.
+	// ErrBadKind means the kind is not one of marotte's eight.
 	ErrBadKind = errors.New("unknown tab kind")
 	// ErrBadRef means the ref does not fit its kind: missing where the kind
 	// needs one, present on a singleton, or over MaxRefBytes.
@@ -148,7 +148,7 @@ var (
 // already to warn and start empty. A second version number would only give two
 // things called "version" in one file.
 type file struct {
-	Tabs    []vibekit.TabSubject `json:"tabs"`
+	Tabs    []marotte.TabSubject `json:"tabs"`
 	Version uint64               `json:"version"`
 }
 
@@ -188,7 +188,7 @@ type file struct {
 type Store struct {
 	// path is immutable after construction, so it is read without a lock.
 	path    string
-	tabs    []vibekit.TabSubject // guarded by stateMu
+	tabs    []marotte.TabSubject // guarded by stateMu
 	version uint64               // guarded by stateMu
 	stateMu sync.Mutex           // guards tabs and version; held briefly, NEVER across I/O
 	writeMu sync.Mutex           // serialises mutate-and-persist; the I/O lock
@@ -200,7 +200,7 @@ type Store struct {
 // is to WARN AND CONTINUE. That is the opposite of internal/schedule's choice and
 // deliberately so: a schedule is work the user asked to happen and losing it
 // silently is a real loss, while an arrangement is re-derivable by opening the
-// tabs again (vibekit invariant 6), and refusing to boot would take the whole app
+// tabs again (marotte invariant 6), and refusing to boot would take the whole app
 // down over cosmetic state with no way in to repair it.
 //
 // THE MODE VERDICT COMES FIRST, before anything reads the bytes, and that
@@ -266,7 +266,7 @@ func readBounded(path string) ([]byte, error) {
 // than a TabSubject with two fields set, because a half-populated record used as a
 // key reads like a tab and is not one.
 type subjectKey struct {
-	kind vibekit.TabKind
+	kind marotte.TabKind
 	ref  string
 }
 
@@ -279,11 +279,11 @@ type subjectKey struct {
 // the store's own invariants rest on. Referential integrity (a chat that no
 // longer exists, a parent that is gone) is Prune's, because only the caller knows
 // what still resolves.
-func sanitize(in []vibekit.TabSubject) []vibekit.TabSubject {
+func sanitize(in []marotte.TabSubject) []marotte.TabSubject {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]vibekit.TabSubject, 0, min(len(in), MaxTabs))
+	out := make([]marotte.TabSubject, 0, min(len(in), MaxTabs))
 	ids := make(map[string]struct{}, min(len(in), MaxTabs))
 	subjects := make(map[subjectKey]struct{}, min(len(in), MaxTabs))
 	for _, t := range in {
@@ -345,7 +345,7 @@ func (s *Store) persist(ctx context.Context, st *state) error {
 }
 
 // newID mints a tab id: the hex of 16 bytes, the same shape as
-// vibekit.NewChatID's body.
+// marotte.NewChatID's body.
 //
 // crypto/rand rather than math/rand/v2, per the rulebook's rule for anything
 // that must be unguessable, throwaway included: this id is an ADDRESS a client
@@ -367,7 +367,7 @@ func newID() string {
 // rule cannot differ between the wire and the file.
 //
 // Returns ErrBadKind or ErrBadRef.
-func checkSubject(kind vibekit.TabKind, ref string) error {
+func checkSubject(kind marotte.TabKind, ref string) error {
 	if !kind.Valid() {
 		return fmt.Errorf("%w: %q", ErrBadKind, kind)
 	}

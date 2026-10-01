@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chatStoreUnion is the union of what the real consumers declare, spelled out
@@ -28,10 +28,10 @@ import (
 // so both fakes carried a method no test could reach.
 type chatStoreUnion interface {
 	ChatStoreContract
-	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
-	SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error)
+	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
+	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
 	// Exists is the digest resolver's lock-free `chat` gone predicate (agent/deps.go).
-	Exists(id vibekit.ChatID) bool
+	Exists(id marotte.ChatID) bool
 }
 
 // RecordingChatStore is an in-memory chat store that keeps chats in a
@@ -43,9 +43,9 @@ type RecordingChatStore struct {
 	// more: internal/chat and internal/forges each declare their own 1-method
 	// copy, and this is the union of the two.
 	Bus interface {
-		Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+		Broadcast(ctx context.Context, evt marotte.ServerEvent)
 	}
-	Chats    map[vibekit.ChatID]*vibekit.Chat
+	Chats    map[marotte.ChatID]*marotte.Chat
 	versions chatVersions
 	// Gets counts Get calls, for a test whose subject is how OFTEN the store is
 	// read rather than what it answers. The real store's Get is a per-chat mutex,
@@ -58,11 +58,11 @@ type RecordingChatStore struct {
 
 // NewRecordingChatStore returns a ready-to-use RecordingChatStore.
 func NewRecordingChatStore() *RecordingChatStore {
-	return &RecordingChatStore{Chats: make(map[vibekit.ChatID]*vibekit.Chat)}
+	return &RecordingChatStore{Chats: make(map[marotte.ChatID]*marotte.Chat)}
 }
 
 // Exists reports whether the fake holds id.
-func (s *RecordingChatStore) Exists(id vibekit.ChatID) bool {
+func (s *RecordingChatStore) Exists(id marotte.ChatID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, ok := s.Chats[id]
@@ -70,7 +70,7 @@ func (s *RecordingChatStore) Exists(id vibekit.ChatID) bool {
 }
 
 // Get returns a copy of the stored chat for id, or (nil, false) if not found.
-func (s *RecordingChatStore) Get(_ context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+func (s *RecordingChatStore) Get(_ context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	s.Gets.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -82,10 +82,10 @@ func (s *RecordingChatStore) Get(_ context.Context, id vibekit.ChatID) (*vibekit
 }
 
 // List returns headers for all stored chats.
-func (s *RecordingChatStore) List(_ context.Context) []vibekit.ChatHeader {
+func (s *RecordingChatStore) List(_ context.Context) []marotte.ChatHeader {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	hs := make([]vibekit.ChatHeader, 0, len(s.Chats))
+	hs := make([]marotte.ChatHeader, 0, len(s.Chats))
 	for _, c := range s.Chats {
 		hs = append(hs, c.Header())
 	}
@@ -95,20 +95,20 @@ func (s *RecordingChatStore) List(_ context.Context) []vibekit.ChatHeader {
 // ChatVersion is the `chat` version the last write to id minted, "" before any
 // write. A test that needs to know which version a frame SHOULD carry reads it
 // here rather than re-deriving the fake's counter.
-func (s *RecordingChatStore) ChatVersion(id vibekit.ChatID) string {
+func (s *RecordingChatStore) ChatVersion(id marotte.ChatID) string {
 	return s.versions.current(id)
 }
 
 // Mutate applies the mutate function to the chat with the given id, creating it if needed.
-func (s *RecordingChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate func(*vibekit.Chat, bool) bool) (string, error) {
+func (s *RecordingChatStore) Mutate(_ context.Context, id marotte.ChatID, mutate func(*marotte.Chat, bool) bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	orig, exists := s.Chats[id]
-	var c vibekit.Chat
+	var c marotte.Chat
 	if exists {
 		c = *orig
 	} else {
-		c = vibekit.Chat{ID: string(id), CreatedAt: time.Now().UnixMilli()}
+		c = marotte.Chat{ID: string(id), CreatedAt: time.Now().UnixMilli()}
 	}
 	if !mutate(&c, exists) {
 		return "", nil
@@ -117,11 +117,11 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate
 	s.Chats[id] = &c
 	version := s.versions.bump(id)
 	if s.Bus != nil {
-		evt := vibekit.EventChatUpdated
+		evt := marotte.EventChatUpdated
 		if !exists {
-			evt = vibekit.EventChatCreated
+			evt = marotte.EventChatCreated
 		}
-		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: evt, ChatID: id, Payload: c.Header()})
+		s.Bus.Broadcast(context.Background(), marotte.ServerEvent{Type: evt, ChatID: id, Payload: c.Header()})
 	}
 	return version, nil
 }
@@ -136,7 +136,7 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate
 // It reports the state that landed, nil-for-nothing, because the draft_changed
 // broadcast keys on exactly that: a fake that always reported a write would make
 // a test unable to see the no-op cases the real method has.
-func (s *RecordingChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
+func (s *RecordingChatStore) SetDraft(_ context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.Chats[id]
@@ -151,7 +151,7 @@ func (s *RecordingChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text
 
 // SetAttachments stores the chat's staged attachment paths under the same
 // contract SetDraft holds: no UpdatedAt, no broadcast, no-op on an absent chat.
-func (s *RecordingChatStore) SetAttachments(_ context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
+func (s *RecordingChatStore) SetAttachments(_ context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.Chats[id]
@@ -172,20 +172,20 @@ func (s *RecordingChatStore) SetAttachments(_ context.Context, id vibekit.ChatID
 }
 
 // Delete removes the chat with the given id and broadcasts a chat_deleted event.
-func (s *RecordingChatStore) Delete(_ context.Context, id vibekit.ChatID) error {
+func (s *RecordingChatStore) Delete(_ context.Context, id marotte.ChatID) error {
 	s.mu.Lock()
 	delete(s.Chats, id)
 	s.mu.Unlock()
 	if s.Bus != nil {
-		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
+		s.Bus.Broadcast(context.Background(), marotte.ServerEvent{Type: marotte.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
 	return nil
 }
 
 // AppendMessage appends a message to the stored chat and broadcasts message_appended.
-func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
 	var appended bool
-	version, err := s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := s.Mutate(context.Background(), chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -196,7 +196,7 @@ func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID vibekit.Cha
 	if err != nil || !appended || s.Bus == nil {
 		return err
 	}
-	s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
+	s.Bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
 	return nil
 }
 
@@ -204,14 +204,14 @@ func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID vibekit.Cha
 // carries none. Mirrors (*chat.Store).UpsertTurnPlan, including the turn
 // boundary being the first user message walking back from the tail — see the
 // contract suite for why the fake implements the rule rather than appending.
-func (s *RecordingChatStore) UpsertTurnPlan(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+func (s *RecordingChatStore) UpsertTurnPlan(_ context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
 	return upsertTurnPlan(s.Mutate, s.Bus, chatID, msg)
 }
 
 // UpdateMessage applies mutate to the message identified by msgID within the stored chat.
-func (s *RecordingChatStore) UpdateMessage(_ context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error {
-	var updated *vibekit.Message
-	version, err := s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+func (s *RecordingChatStore) UpdateMessage(_ context.Context, chatID marotte.ChatID, msgID string, mutate func(*marotte.Message)) error {
+	var updated *marotte.Message
+	version, err := s.Mutate(context.Background(), chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -227,7 +227,7 @@ func (s *RecordingChatStore) UpdateMessage(_ context.Context, chatID vibekit.Cha
 	if err != nil || updated == nil || s.Bus == nil {
 		return err
 	}
-	s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
+	s.Bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
 	return nil
 }
 

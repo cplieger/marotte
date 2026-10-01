@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // row builds a session/list row in the measured wire shape.
@@ -41,7 +41,7 @@ func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 	t.Helper()
 	store := testsupport.NewInMemoryChatStore()
 	for chatID, sessions := range owners {
-		if _, err := store.Mutate(t.Context(), vibekit.ChatID(chatID), func(c *vibekit.Chat, _ bool) bool {
+		if _, err := store.Mutate(t.Context(), marotte.ChatID(chatID), func(c *marotte.Chat, _ bool) bool {
 			c.Name = chatID
 			for _, sid := range sessions {
 				c.RecordSession(sid)
@@ -117,7 +117,7 @@ func TestToResumable_NewestFirst(t *testing.T) {
 func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if _, err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Owned"
 		c.RecordSession("sess_retired")
 		c.RecordSession("sess_current")
@@ -130,10 +130,10 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	got := toResumable(h.claimedSessions(ctx), []kasSessionRow{
 		row("sess_current", "current", "2026-08-02T12:00:00.000Z", false),
 		row("sess_retired", "retired", "2026-08-02T11:00:00.000Z", false),
-		row("sess_orphan", "never seen by vibekit", "2026-08-02T10:00:00.000Z", false),
+		row("sess_orphan", "never seen by marotte", "2026-08-02T10:00:00.000Z", false),
 	})
 
-	byID := map[string]vibekit.ResumableSession{}
+	byID := map[string]marotte.ResumableSession{}
 	for i := range got {
 		byID[got[i].SessionID] = got[i]
 	}
@@ -304,7 +304,7 @@ func TestParseKASTime(t *testing.T) {
 func TestWorkflowRunAttribution(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if _, err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Launcher"
 		c.RecordSession("sess_launched_from") // retired below
 		c.RecordSession("sess_now")
@@ -406,38 +406,38 @@ func TestToWorkflowRuns_ListsEveryRunAndAttributesTheChatLaunchedOnes(t *testing
 func TestHandleSessionList_SaysWhichListFailed(t *testing.T) {
 	cases := map[string]struct {
 		arm          func(*fakeBridge)
-		wantSessions vibekit.ReadState
-		wantRuns     vibekit.ReadState
+		wantSessions marotte.ReadState
+		wantRuns     marotte.ReadState
 	}{
 		"both reads land": {
 			arm: func(br *fakeBridge) {
 				br.callResults = map[string]json.RawMessage{
-					vibekit.MethodSessionList: json.RawMessage(`{"sessions":[]}`),
+					marotte.MethodSessionList: json.RawMessage(`{"sessions":[]}`),
 					methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
 				}
 			},
-			wantSessions: vibekit.ReadReady,
-			wantRuns:     vibekit.ReadReady,
+			wantSessions: marotte.ReadReady,
+			wantRuns:     marotte.ReadReady,
 		},
 		"the session read fails": {
 			arm: func(br *fakeBridge) {
 				br.callResults = map[string]json.RawMessage{
 					methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 				}
-				br.callErrs = map[string]error{vibekit.MethodSessionList: errors.New("kas gone")}
+				br.callErrs = map[string]error{marotte.MethodSessionList: errors.New("kas gone")}
 			},
-			wantSessions: vibekit.ReadUnavailable,
-			wantRuns:     vibekit.ReadReady,
+			wantSessions: marotte.ReadUnavailable,
+			wantRuns:     marotte.ReadReady,
 		},
 		"the run read fails": {
 			arm: func(br *fakeBridge) {
 				br.callResults = map[string]json.RawMessage{
-					vibekit.MethodSessionList: json.RawMessage(`{"sessions":[]}`),
+					marotte.MethodSessionList: json.RawMessage(`{"sessions":[]}`),
 				}
 				br.callErrs = map[string]error{methodKiroWorkflowList: errors.New("kas gone")}
 			},
-			wantSessions: vibekit.ReadReady,
-			wantRuns:     vibekit.ReadUnavailable,
+			wantSessions: marotte.ReadReady,
+			wantRuns:     marotte.ReadUnavailable,
 		},
 	}
 	for name, tc := range cases {
@@ -453,7 +453,7 @@ func TestHandleSessionList_SaysWhichListFailed(t *testing.T) {
 				t.Fatalf("status = %d, want 200: a picker is an affordance, so a failed read "+
 					"must not break the view", rec.Code)
 			}
-			var got vibekit.SessionListResponse
+			var got marotte.SessionListResponse
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
 			}

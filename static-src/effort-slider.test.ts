@@ -490,7 +490,7 @@ describe("the knob's size", () => {
   });
 
   it("leaves a foreign tier name to the caption, which WRAPS rather than widening the card", () => {
-    // A tier label is KAS's text, so its length is not vibekit's to bound. The row of
+    // A tier label is KAS's text, so its length is not marotte's to bound. The row of
     // five buttons this replaced spent that budget on the RAIL's width, which is what
     // made the card grow; the caption spends it on its own lines. Both halves matter:
     // the card must not grow sideways, and the name must not be clipped — the card

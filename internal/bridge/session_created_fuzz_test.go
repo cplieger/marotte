@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/marotte/internal/ids"
 )
 
 // FuzzSessionCreatedUnmarshal targets the session/new result parsing.

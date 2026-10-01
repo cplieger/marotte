@@ -5,7 +5,7 @@ package agent
 //
 // "Run now" is DELETED, not relocated: it was `_kiro/hooks/triggerHook`,
 // whose runCommand path made KAS call back `_kiro/hooks/executeHook` and
-// made vibekit run `sh -c` on a command a file specifies — this app's most
+// made marotte run `sh -c` on a command a file specifies — this app's most
 // security-sensitive path. The deletion is clean because Run-now was its
 // ONLY caller; hook autofire does not use it.
 //
@@ -18,7 +18,7 @@ package agent
 // v2 mode KAS loads the hook files and runs runCommand hooks internally in
 // its own process runner — verified live (chat autofire produces zero
 // executeHook callbacks) and mechanically (no chat-bridge dispatcher has a
-// case for that method). vibekit's create_hook command still writes hook
+// case for that method). marotte's create_hook command still writes hook
 // files directly; this surface manages them.
 
 import (
@@ -34,8 +34,8 @@ import (
 	"time"
 
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -109,11 +109,11 @@ type hookInfo struct {
 	// trigger-and-matcher pairing, or empty when nothing is —
 	// `missing_tool_matcher` for a PreToolUse/PostToolUse hook with no
 	// matcher, `ineffective` for a matcher on a trigger with nothing to
-	// match on. Computed server-side (vibekit.ClassifyHookMatcher) so the
+	// match on. Computed server-side (marotte.ClassifyHookMatcher) so the
 	// trigger-to-subject table lives once.
 	//
 	// `ineffective` overlaps create_hook's own refusal of that pairing
-	// deliberately: the refusal covers what vibekit writes, this field
+	// deliberately: the refusal covers what marotte writes, this field
 	// covers what it READS — a hand-written or copied-in hook file.
 	MatcherWarning string `json:"matcher_warning,omitempty"`
 	FilePath       string `json:"file_path,omitempty"`
@@ -209,7 +209,7 @@ func (st *Settings) toHookInfo(k *kasHook) hookInfo {
 		ActionType:     k.Action.Type,
 		Scope:          scope,
 		Matcher:        k.Meta.Matcher,
-		MatcherWarning: string(vibekit.ClassifyHookMatcher(k.Meta.Trigger, k.Meta.Matcher)),
+		MatcherWarning: string(marotte.ClassifyHookMatcher(k.Meta.Trigger, k.Meta.Matcher)),
 		FilePath:       path,
 		DisabledReason: k.Meta.DisabledReason,
 		Enabled:        k.Meta.Enabled,
@@ -295,7 +295,7 @@ func (st *Settings) handleHookSetEnabled(w http.ResponseWriter, r *http.Request)
 // half is what keeps a hand-edited hook FILE reaching the UI, since the
 // docs scan's own memoization would otherwise serve a stale trigger.
 func (st *Settings) broadcastHooksChanged() {
-	st.broadcast(context.Background(), vibekit.NewEvent(vibekit.EventHooksChanged, "", vibekit.HooksChangedPayload{}))
+	st.broadcast(context.Background(), marotte.NewEvent(marotte.EventHooksChanged, "", marotte.HooksChangedPayload{}))
 }
 
 // hookIDFromPath decodes the base64url {id} path segment into a KAS hook id,

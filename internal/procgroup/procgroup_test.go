@@ -12,11 +12,11 @@ import (
 	"time"
 )
 
-// TestOwns pins the guard that keeps the group-kill form off vibekit's own
+// TestOwns pins the guard that keeps the group-kill form off marotte's own
 // process group.
 //
-// Without Setpgid a child inherits vibekit's group, so `Kill(-pgid, sig)` would
-// signal vibekit itself. This comparison is the only thing preventing that, and
+// Without Setpgid a child inherits marotte's group, so `Kill(-pgid, sig)` would
+// signal marotte itself. This comparison is the only thing preventing that, and
 // it cannot be pinned by actually signalling a non-leader (the signal would land
 // on the test binary), which is why the decision is a pure function.
 func TestOwns(t *testing.T) {
@@ -27,8 +27,8 @@ func TestOwns(t *testing.T) {
 		want bool
 	}{
 		{name: "own leader: Setpgid took, group is the command's tree", pid: 4242, pgid: 4242, want: true},
-		{name: "inherited group: Setpgid absent, group is vibekit's", pid: 4242, pgid: 17, want: false},
-		{name: "inherited group where vibekit is the leader", pid: 4242, pgid: 1, want: false},
+		{name: "inherited group: Setpgid absent, group is marotte's", pid: 4242, pgid: 17, want: false},
+		{name: "inherited group where marotte is the leader", pid: 4242, pgid: 1, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

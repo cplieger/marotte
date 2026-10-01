@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestHandlersDoNotRaceBufferSnapshot pins the reason every write this package
@@ -31,7 +31,7 @@ func TestHandlersDoNotRaceBufferSnapshot(t *testing.T) {
 
 	deps := newBaseDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	buf := deps.bufStore.GetOrInit(chatID)
 	ctx := t.Context()
 

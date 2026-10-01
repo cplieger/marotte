@@ -824,9 +824,9 @@ describe("the active row keeps the same dot color", () => {
 // ---------------------------------------------------------------------------
 // 4b. The ink vocabulary, shared with web-terminal-kiro.
 //
-// The two apps sit in the same window (vibekit hosts a web-terminal panel), so a
+// The two apps sit in the same window (marotte hosts a web-terminal panel), so a
 // state that means one thing must not carry two colours between them. It did
-// twice over. First `working` was vibekit's violet accent while the terminal's was
+// twice over. First `working` was marotte's violet accent while the terminal's was
 // blue. Then the fix aligned these tokens to @cplieger/web-terminal-ui's LIBRARY
 // DEFAULTS — which web-terminal-kiro overrides on every member — so the two apps
 // agreed with the package and still disagreed with each other. The values are now
@@ -837,7 +837,7 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
   const tabs = loadCSS("12-tabs.css");
 
   it("gives each state the token carrying the source system's ink", () => {
-    // Tokens, not values: the source has one theme and vibekit has two, so the
+    // Tokens, not values: the source has one theme and marotte has two, so the
     // token is where the per-theme sizing lives. See the --c-dot-* block in
     // 01-tokens.css for each value's provenance.
     const inks: [string, string][] = [
@@ -990,7 +990,7 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
 
   it("takes the same inks as the dot, through the same custom property", () => {
     // Tokens, not values, for the dot's reason: the source has one theme and
-    // vibekit has two, so the token is where the per-theme sizing lives.
+    // marotte has two, so the token is where the per-theme sizing lives.
     const inks: [string, string][] = [
       ["working", "--c-dot-working"],
       ["waiting", "--c-dot-input"],

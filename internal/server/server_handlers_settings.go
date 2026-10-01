@@ -14,11 +14,11 @@ import (
 	"strings"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logctl"
-	"github.com/cplieger/vibekit/internal/push"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logctl"
+	"github.com/cplieger/marotte/internal/push"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -270,7 +270,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhttp.Ok(w)
-	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
+	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(merged)
 	syncDebugLogs(merged)
 }
@@ -281,7 +281,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 // It DERIVES the kind set from push.Kinds() rather than naming the kinds here.
 // This used to be a hand-written map with both kinds spelled out and a single
 // `if` reading one key, which made it a THIRD copy of the kind set beside
-// vibekit.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
+// marotte.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
 // to config.json and then never reached the running service until the next SSE
 // reconnect happened to call ReloadPreferences.
 //
@@ -302,7 +302,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 // internal/settings/defaults.go.
 func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 	kinds := push.Kinds()
-	prefs := make(map[vibekit.PushKind]bool, len(kinds))
+	prefs := make(map[marotte.PushKind]bool, len(kinds))
 	persisted := lazySettings{path: filepath.Join(s.configDir, settings.Filename)}
 	for _, k := range kinds {
 		prefs[k.Kind] = k.DefaultOn

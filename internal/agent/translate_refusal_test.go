@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestTranslateACPEvent_RefusesUnknownRequests is the red check for the wedge
 // class, and it is the test whose absence let the defect ship.
 //
 // KAS calls its ext-methods with `await connection.extMethod(...)` and no
-// timeout; the only rejection is the connection closing. vibekit's Bridge.Call
+// timeout; the only rejection is the connection closing. marotte's Bridge.Call
 // has no client-side deadline either, deliberately, because a turn can
 // legitimately run for hours. Those two facts compose into a failure that is
 // worse than an error: an unanswered A→C request means the session/prompt Call
@@ -30,18 +30,18 @@ import (
 // _kiro/workspace/currently_open_files is the reachable case rather than a
 // hypothetical: KAS registers that resolver with NO capability gate and reaches
 // it from processPromptWithContext on any `#[[...]]` reference in a
-// workspace-authored agent prompt, and vibekit deliberately does not implement
+// workspace-authored agent prompt, and marotte deliberately does not implement
 // the pull direction.
 func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 	cases := map[string]string{
-		// The live case: an ungated KAS resolver vibekit chose not to implement.
+		// The live case: an ungated KAS resolver marotte chose not to implement.
 		"ungated workspace pull": "_kiro/workspace/currently_open_files",
 		// A _kiro/* method with no handler and no noop entry.
 		"unknown kiro extension": "_kiro/some/future/verb",
 		// A terminal verb the prefix router accepts but the switch does not
 		// implement; it must not fall off the end of the switch.
 		"unimplemented terminal verb": "terminal/resize",
-		// A core ACP method vibekit does not implement.
+		// A core ACP method marotte does not implement.
 		"unknown core method": "session/somethingNew",
 		// A method on the NOOP table, arriving with an id. The table is keyed by
 		// method only and is consulted BEFORE the refusal, so without the id test
@@ -57,7 +57,7 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			id := int64(4242)
 
-			h.translateACPEvent("c1", &vibekit.RPCResponse{
+			h.translateACPEvent("c1", &marotte.RPCResponse{
 				Method: method,
 				ID:     &id,
 			})
@@ -77,19 +77,19 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 			}
 			if got.err == nil {
 				t.Fatalf("responded to %s with a success result (%v), want an error: "+
-					"vibekit does not implement it and must say so", method, got.result)
+					"marotte does not implement it and must say so", method, got.result)
 			}
 			// The CODE matters, not just that it errored. -32601 is what JSON-RPC
 			// 2.0 assigns to method-not-found; -32603 would label a deliberate
 			// refusal an internal fault and make these logs blame the wrong side.
-			var rpcErr *vibekit.RPCError
+			var rpcErr *marotte.RPCError
 			if !errors.As(got.err, &rpcErr) {
-				t.Fatalf("refusal for %s is not an *vibekit.RPCError (%T); the code is not on the wire",
+				t.Fatalf("refusal for %s is not an *marotte.RPCError (%T); the code is not on the wire",
 					method, got.err)
 			}
-			if rpcErr.Code != vibekit.RPCCodeMethodNotFound {
+			if rpcErr.Code != marotte.RPCCodeMethodNotFound {
 				t.Errorf("refusal for %s used code %d, want %d (method not found)",
-					method, rpcErr.Code, vibekit.RPCCodeMethodNotFound)
+					method, rpcErr.Code, marotte.RPCCodeMethodNotFound)
 			}
 			if !strings.Contains(rpcErr.Message, method) {
 				t.Errorf("refusal message %q does not name the method; a log line would not say what was refused",
@@ -116,7 +116,7 @@ func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 
-			h.translateACPEvent("c1", &vibekit.RPCResponse{
+			h.translateACPEvent("c1", &marotte.RPCResponse{
 				Method: method,
 				ID:     nil,
 			})
@@ -153,7 +153,7 @@ func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
 //
 // The refusal exists because an unanswered A→C request wedges the turn forever —
 // so a refusal that could not be WRITTEN leaves exactly that wedge, with the one
-// difference that vibekit knows about it. The line is the only diagnosis available
+// difference that marotte knows about it. The line is the only diagnosis available
 // for a chat stuck on a spinner, which also means a guard flipped here prints it
 // after every successful refusal and makes the log useless for finding the real one.
 func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
@@ -167,7 +167,7 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 		br.respMu.Unlock()
 		id := int64(4242)
 
-		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
+		h.translateACPEvent("c1", &marotte.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
 
 		select {
 		case <-br.done:
@@ -185,7 +185,7 @@ func TestTranslateACPEvent_ReportsARefusalItCouldNotDeliver(t *testing.T) {
 		h, br := hubForFSTest(t, t.TempDir())
 		id := int64(4242)
 
-		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
+		h.translateACPEvent("c1", &marotte.RPCResponse{Method: "_kiro/some/future/verb", ID: &id})
 
 		select {
 		case <-br.done:
@@ -216,7 +216,7 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 	t.Run("a notification still reaches its handler", func(t *testing.T) {
 		h, _ := hubForFSTest(t, t.TempDir())
 
-		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: method, Params: params})
+		h.translateACPEvent("c1", &marotte.RPCResponse{Method: method, Params: params})
 
 		if snap := h.mcpRegistry.Snapshot(); len(snap) != 1 {
 			t.Fatalf("registry snapshot = %+v, want the one server the notification carried: "+
@@ -228,7 +228,7 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 		h, br := hubForFSTest(t, t.TempDir())
 		id := int64(31337)
 
-		h.translateACPEvent("c1", &vibekit.RPCResponse{Method: method, ID: &id, Params: params})
+		h.translateACPEvent("c1", &marotte.RPCResponse{Method: method, ID: &id, Params: params})
 
 		select {
 		case <-br.done:
@@ -240,12 +240,12 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 		got := br.response
 		br.respMu.Unlock()
 
-		var rpcErr *vibekit.RPCError
+		var rpcErr *marotte.RPCError
 		if !errors.As(got.err, &rpcErr) {
-			t.Fatalf("refusal is not an *vibekit.RPCError (%T, result %v)", got.err, got.result)
+			t.Fatalf("refusal is not an *marotte.RPCError (%T, result %v)", got.err, got.result)
 		}
-		if rpcErr.Code != vibekit.RPCCodeMethodNotFound {
-			t.Errorf("refusal code = %d, want %d", rpcErr.Code, vibekit.RPCCodeMethodNotFound)
+		if rpcErr.Code != marotte.RPCCodeMethodNotFound {
+			t.Errorf("refusal code = %d, want %d", rpcErr.Code, marotte.RPCCodeMethodNotFound)
 		}
 		// The handler must not have run: a frame that was both handled AND refused
 		// is the double-dispatch hazard, one id with two answers.
@@ -272,8 +272,8 @@ func TestTranslateACPEvent_AskMethodsDispatchOnce(t *testing.T) {
 	before := h.bus.fanout.Position().Head
 	id := int64(31338)
 
-	h.translateACPEvent("c1", &vibekit.RPCResponse{
-		Method: vibekit.MethodRequestPermission,
+	h.translateACPEvent("c1", &marotte.RPCResponse{
+		Method: marotte.MethodRequestPermission,
 		ID:     &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_1",
@@ -284,11 +284,11 @@ func TestTranslateACPEvent_AskMethodsDispatchOnce(t *testing.T) {
 
 	asks := 0
 	for _, e := range bufferedSince(h, before) {
-		var msg vibekit.ServerEvent
+		var msg marotte.ServerEvent
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		if msg.Type == vibekit.EventPermissionNeeded {
+		if msg.Type == marotte.EventPermissionNeeded {
 			asks++
 		}
 	}

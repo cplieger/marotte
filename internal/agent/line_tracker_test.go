@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestLineTrackerRecord(t *testing.T) {
@@ -42,7 +42,7 @@ func TestLineTrackerRecord(t *testing.T) {
 
 func TestLineTrackerRecordFromDiffs(t *testing.T) {
 	lt := buffer.NewLineTracker()
-	diffs := []vibekit.ToolDiff{
+	diffs := []marotte.ToolDiff{
 		{Path: "a.go", NewText: "line1\nline2\nline3\n"},
 		{Path: "b.go", NewText: "single"},
 		{Path: "", NewText: "skip"}, // empty path skipped
@@ -79,7 +79,7 @@ func TestLineTrackerRecordFromDiffs_WholeFileDiff(t *testing.T) {
 	}
 
 	lt := buffer.NewLineTracker()
-	lt.RecordFromDiffs("c1", []vibekit.ToolDiff{{Path: "big.go", OldText: old, NewText: edited}}, 1, "edit")
+	lt.RecordFromDiffs("c1", []marotte.ToolDiff{{Path: "big.go", OldText: old, NewText: edited}}, 1, "edit")
 
 	got := lt.Get("c1", "big.go")
 	if len(got) != 1 {
@@ -146,9 +146,9 @@ func BenchmarkLineTrackerRecordFromDiffs(b *testing.B) {
 	for _, n := range []int{1, 10, 50} {
 		b.Run(fmt.Sprintf("diffs_%d", n), func(b *testing.B) {
 			lt := buffer.NewLineTracker()
-			diffs := make([]vibekit.ToolDiff, n)
+			diffs := make([]marotte.ToolDiff, n)
 			for i := range n {
-				diffs[i] = vibekit.ToolDiff{
+				diffs[i] = marotte.ToolDiff{
 					Path:    fmt.Sprintf("file%d.go", i),
 					NewText: "line1\nline2\nline3\n",
 				}

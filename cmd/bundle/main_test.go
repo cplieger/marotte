@@ -312,7 +312,7 @@ func TestWritePrecacheManifest_NoChunksDirectory(t *testing.T) {
 func TestCleanOutputs_SweepsThePrecacheManifest(t *testing.T) {
 	dir := stageOut(t, map[string]string{
 		precacheName:    `{"stamp":"stale","assets":[]}`,
-		"manifest.json": `{"name":"vibekit"}`,
+		"manifest.json": `{"name":"marotte"}`,
 	})
 	if err := cleanOutputs(); err != nil {
 		t.Fatalf("cleanOutputs() = %v", err)

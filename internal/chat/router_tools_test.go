@@ -11,14 +11,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // storeWith returns a store holding one chat with these messages.
-func storeWith(t *testing.T, msgs []vibekit.Message) *Store {
+func storeWith(t *testing.T, msgs []marotte.Message) *Store {
 	t.Helper()
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = msgs
 		return true
@@ -27,7 +27,7 @@ func storeWith(t *testing.T, msgs []vibekit.Message) *Store {
 }
 
 // windowedCall serves the newest transcript page and returns its one tool call.
-func windowedCall(t *testing.T, msgs []vibekit.Message) vibekit.ToolCall {
+func windowedCall(t *testing.T, msgs []marotte.Message) marotte.ToolCall {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1", nil)
 	rec := httptest.NewRecorder()
@@ -36,7 +36,7 @@ func windowedCall(t *testing.T, msgs []vibekit.Message) vibekit.ToolCall {
 		t.Fatalf("Setup: transcript code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	var got struct {
-		Messages []vibekit.Message `json:"messages"`
+		Messages []marotte.Message `json:"messages"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("Setup: unmarshal: %v", err)
@@ -48,12 +48,12 @@ func windowedCall(t *testing.T, msgs []vibekit.Message) vibekit.ToolCall {
 }
 
 // callMessage wraps one tool call in an assistant message.
-func callMessage(tc vibekit.ToolCall) vibekit.Message {
-	return vibekit.Message{
+func callMessage(tc marotte.ToolCall) marotte.Message {
+	return marotte.Message{
 		ID:        "m1",
-		Role:      vibekit.RoleAssistant,
+		Role:      marotte.RoleAssistant,
 		Ts:        100,
-		ToolCalls: []vibekit.ToolCall{tc},
+		ToolCalls: []marotte.ToolCall{tc},
 	}
 }
 
@@ -61,13 +61,13 @@ func callMessage(tc vibekit.ToolCall) vibekit.Message {
 // touch: the great majority of tool calls are small, and paying a second round
 // trip for one would make the ladder cost more than it saves.
 func TestTranscript_SmallToolCallIsSentWhole(t *testing.T) {
-	in := vibekit.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute,
-		Status: vibekit.ToolCompleted,
+	in := marotte.ToolCall{
+		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
+		Status: marotte.ToolCompleted,
 		Output: "all done\n",
 		Input:  json.RawMessage(`{"command":"ls"}`),
 	}
-	got := windowedCall(t, []vibekit.Message{callMessage(in)})
+	got := windowedCall(t, []marotte.Message{callMessage(in)})
 	if got.HasFull {
 		t.Errorf("has_full = true, want false for a %d-byte output", len(in.Output))
 	}
@@ -99,9 +99,9 @@ func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 		b.WriteString(strings.Repeat("m", 60) + "\n")
 	}
 	full := b.String()
-	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute,
-		Status: vibekit.ToolCompleted, Output: full,
+	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
+		Status: marotte.ToolCompleted, Output: full,
 	})})
 
 	if !got.HasFull {
@@ -134,9 +134,9 @@ func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 // volume holds a 9.1 MB single message and a 3.8 MB single message.
 func TestTranscript_OneEnormousLineIsStillBounded(t *testing.T) {
 	full := strings.Repeat("y", 200_000)
-	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute,
-		Status: vibekit.ToolCompleted, Output: full,
+	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
+		Status: marotte.ToolCompleted, Output: full,
 	})})
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true")
@@ -151,11 +151,11 @@ func TestTranscript_OneEnormousLineIsStillBounded(t *testing.T) {
 // are absolute UTF-16 offsets into the whole output, so a windowed output ships
 // plain and the bulk brings the styled text back with them.
 func TestTranscript_PreviewedOutputCarriesNoSpans(t *testing.T) {
-	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute,
-		Status:      vibekit.ToolCompleted,
+	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
+		Status:      marotte.ToolCompleted,
 		Output:      strings.Repeat("z", 20_000),
-		OutputSpans: []vibekit.TextSpan{{Start: 0, End: 5, Attrs: 1}},
+		OutputSpans: []marotte.TextSpan{{Start: 0, End: 5, Attrs: 1}},
 	})})
 	if len(got.OutputSpans) != 0 {
 		t.Errorf("output_spans = %v, want none on a windowed output", got.OutputSpans)
@@ -170,10 +170,10 @@ func TestTranscript_OversizeDiffIsDroppedWholesale(t *testing.T) {
 	// PREVIEW is the layer that drops one. The store's own drop is
 	// TestStoreBound_OversizeDiffIsDroppedNotTruncated.
 	half := previewBudget.diffBytes
-	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Edit", Kind: vibekit.ToolKindEdit,
-		Status: vibekit.ToolCompleted,
-		Diffs: []vibekit.ToolDiff{
+	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Edit", Kind: marotte.ToolKindEdit,
+		Status: marotte.ToolCompleted,
+		Diffs: []marotte.ToolDiff{
 			{Path: "small.go", OldText: "a", NewText: "b"},
 			{Path: "big.go", OldText: strings.Repeat("o", half), NewText: strings.Repeat("n", half)},
 		},
@@ -201,9 +201,9 @@ func TestTranscript_InputKeepsItsSmallMembers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
-	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Write", Kind: vibekit.ToolKindWrite,
-		Status: vibekit.ToolCompleted, Input: in,
+	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite,
+		Status: marotte.ToolCompleted, Input: in,
 	})})
 	// Over BOTH budgets, so the store dropped `text` first and the preview found
 	// nothing left to cut. Either layer keeps the claim line, which is the point.
@@ -250,9 +250,9 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 			"or this test asserts nothing", len(in), previewBudget.inputTotal)
 	}
 
-	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Write", Kind: vibekit.ToolKindWrite,
-		Status: vibekit.ToolCompleted, Input: in,
+	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite,
+		Status: marotte.ToolCompleted, Input: in,
 	})})
 
 	if !got.HasFull {
@@ -300,9 +300,9 @@ func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
 
-	got := windowedCall(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Write", Kind: vibekit.ToolKindWrite,
-		Status: vibekit.ToolCompleted, Input: in,
+	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite,
+		Status: marotte.ToolCompleted, Input: in,
 	})})
 
 	if !got.HasFull {
@@ -362,11 +362,11 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 	// so the ladder's second rung has something to serve.
 	full := strings.Repeat("q", previewBudget.outputBytes+1_000)
 	in := json.RawMessage(`{"command":"build"}`)
-	s := storeWith(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute,
-		Status: vibekit.ToolCompleted, Output: full, Input: in,
-		OutputSpans: []vibekit.TextSpan{{Start: 0, End: 3, Attrs: 2}},
-		Diffs:       []vibekit.ToolDiff{{Path: "a.go", NewText: "x"}},
+	s := storeWith(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
+		Status: marotte.ToolCompleted, Output: full, Input: in,
+		OutputSpans: []marotte.TextSpan{{Start: 0, End: 3, Attrs: 2}},
+		Diffs:       []marotte.ToolDiff{{Path: "a.go", NewText: "x"}},
 	})})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/tools/tc1", nil)
@@ -375,7 +375,7 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var got vibekit.ToolCallBulk
+	var got marotte.ToolCallBulk
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -399,8 +399,8 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 // TestToolBulk_Rejections pins the boundary: an unknown call and a malformed id
 // answer differently, because one is a miss and the other is a bad request.
 func TestToolBulk_Rejections(t *testing.T) {
-	s := storeWith(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute, Status: vibekit.ToolCompleted,
+	s := storeWith(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
 	})})
 	cases := []struct {
 		name string
@@ -429,8 +429,8 @@ func TestToolBulk_Rejections(t *testing.T) {
 
 // TestToolBulk_RejectsNonGet keeps the sub-resource read-only.
 func TestToolBulk_RejectsNonGet(t *testing.T) {
-	s := storeWith(t, []vibekit.Message{callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute, Status: vibekit.ToolCompleted,
+	s := storeWith(t, []marotte.Message{callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
 	})})
 	req := httptest.NewRequest(http.MethodPost, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
@@ -622,9 +622,9 @@ func unescapeUnicode(t *testing.T, raw json.RawMessage) json.RawMessage {
 // TestPreviewMessage_LeavesASmallMessageAlone pins the copy-on-write: the
 // conversations that were never the problem pay one pass and no allocation.
 func TestPreviewMessage_LeavesASmallMessageAlone(t *testing.T) {
-	m := callMessage(vibekit.ToolCall{
-		ID: "tc1", Title: "Read", Kind: vibekit.ToolKindRead,
-		Status: vibekit.ToolCompleted, Output: "two lines\nhere\n",
+	m := callMessage(marotte.ToolCall{
+		ID: "tc1", Title: "Read", Kind: marotte.ToolKindRead,
+		Status: marotte.ToolCompleted, Output: "two lines\nhere\n",
 	})
 	got := previewMessage(&m)
 	if &got.ToolCalls[0] != &m.ToolCalls[0] {

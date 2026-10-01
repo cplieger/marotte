@@ -7,7 +7,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The client's turn ledger reads turn_model off every row, so a carrier without one
@@ -21,7 +21,7 @@ func TestCloseOnWireEnd_ASplitTurnsCarrierNamesItsModel(t *testing.T) {
 		t.Fatal("the fixture could not seal a segment")
 	}
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 
 	marker := outcomeMarker(t, cs, "c1")
 	if marker == nil {
@@ -46,9 +46,9 @@ func TestCloseOnWireEnd_ACancelledSplitTurnsEventNamesItsModel(t *testing.T) {
 		t.Fatal("the fixture could not seal a segment")
 	}
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonCancelled, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonCancelled, "")
 
-	evt := eventMessageOf(t, cs, "c1", vibekit.EventCancelled)
+	evt := eventMessageOf(t, cs, "c1", marotte.EventCancelled)
 	if evt == nil {
 		t.Fatal("a cancelled split turn persisted no cancel event")
 	}
@@ -65,7 +65,7 @@ func TestAbandonInFlightTurn_AnInterruptedSplitTurnKeepsItsChangedFiles(t *testi
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything before the interruption")
 	h.liveTurnBuffer("c1").SetModel("m-latched")
-	diffs := []vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
+	diffs := []marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
 	h.liveTurnBuffer("c1").TrackFileChanges(diffs, false)
 	if !h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Fatal("the fixture could not seal a segment")
@@ -75,9 +75,9 @@ func TestAbandonInFlightTurn_AnInterruptedSplitTurnKeepsItsChangedFiles(t *testi
 		t.Fatal("the seal closed the turn; there is nothing left to interrupt")
 	}
 
-	h.coord.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, "the pipe died")
 
-	divider := eventMessageOf(t, cs, "c1", vibekit.EventInterrupted)
+	divider := eventMessageOf(t, cs, "c1", marotte.EventInterrupted)
 	if divider == nil {
 		t.Fatal("an interrupted split turn persisted no divider, so nothing carries its outcome")
 	}
@@ -106,26 +106,26 @@ func TestStartTurn_ADisplacedTurnIsPersistedAheadOfThePromptThatEndedIt(t *testi
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	// An engine-opened turn mid-reply: a workflow step's frames on the launching chat.
-	if _, err := cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.StartTurn(ctx, "c1", vibekit.TurnSourceWireTurnStart)
+	h.coord.StartTurn(ctx, "c1", marotte.TurnSourceWireTurnStart)
 	buf := h.stageTurnBuffer(t, "c1")
 	buf.Started = true
 	buf.MessageID = "m-step"
 	buf.Content.WriteString("the step's reply")
 
 	// The prompt's own user row lands first, exactly as CmdPrompt writes it.
-	if err := cs.AppendMessage(ctx, "c1", &vibekit.Message{
-		ID: "u-2", Role: vibekit.RoleUser, Ts: 1, Content: "a new question",
+	if err := cs.AppendMessage(ctx, "c1", &marotte.Message{
+		ID: "u-2", Role: marotte.RoleUser, Ts: 1, Content: "a new question",
 	}); err != nil {
 		t.Fatalf("append the prompt's user row: %v", err)
 	}
 
-	h.coord.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
 
 	c, ok := cs.Get(ctx, "c1")
 	if !ok {

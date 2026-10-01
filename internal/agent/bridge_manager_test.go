@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // newTestBridgeManager builds a bridgeManager whose factory returns a
@@ -74,7 +74,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 	// Pre-populate with some bridges so "exists" path is exercised.
 	for i := range 100 {
-		sb, existed := bm.orInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i)))
+		sb, existed := bm.orInsert(marotte.ChatID(fmt.Sprintf("chat-%d", i)))
 		if !existed {
 			sb.state = bridgeIdle
 		}
@@ -84,7 +84,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {
-				bm.orInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i%100)))
+				bm.orInsert(marotte.ChatID(fmt.Sprintf("chat-%d", i%100)))
 				i++
 			}
 		})
@@ -103,7 +103,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 				id := fmt.Sprintf("new-%d", counter)
 				mu.Unlock()
 
-				sb, existed := bm2.orInsert(vibekit.ChatID(id))
+				sb, existed := bm2.orInsert(marotte.ChatID(id))
 				if !existed {
 					sb.state = bridgeIdle
 				}
@@ -114,7 +114,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 func TestRetireBridges_ClosesIdleChatBridges(t *testing.T) {
 	h, cs, br := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 	}, cs)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -203,7 +203,7 @@ func TestOpenBridge_ChecksIdentityBeforeReuse(t *testing.T) {
 	h, cs, _ := newTestHub()
 	checks := 0
 	h.SetIdentityCheck(func(context.Context) { checks++ })
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)

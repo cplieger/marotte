@@ -1,4 +1,4 @@
-// Package secretstore persists the opaque credential blobs KAS asks vibekit
+// Package secretstore persists the opaque credential blobs KAS asks marotte
 // to hold on its behalf via the v3 `_kiro/secret/*` requests.
 //
 // # Why this exists
@@ -10,7 +10,7 @@
 // KAS-side file. So "do MCP credentials survive a bridge restart?" is answered
 // entirely by whoever implements these three handlers.
 //
-// Without them (vibekit before 2026-08, which did not declare the capability)
+// Without them (marotte before 2026-08, which did not declare the capability)
 // every bridge spawn re-ran discovery and a fresh `POST /register` — measured:
 // 0 secret calls and one DCR per process. Replaying a stored blob in a new
 // process dropped that to zero DCRs, with KAS reusing the client_id it was
@@ -18,7 +18,7 @@
 //
 // It does NOT make redirect-based MCP OAuth work end to end. KAS binds its own
 // loopback redirect listener and advertises a container-local
-// `http://localhost:<ephemeral>/oauth/callback`, while vibekit's browser is
+// `http://localhost:<ephemeral>/oauth/callback`, while marotte's browser is
 // remote. This stops the re-registration, nothing more.
 //
 // # Storage model
@@ -41,7 +41,7 @@
 // Keys and values are OPAQUE. KAS derives keys as
 // `kiro.mcp.<sha256(lowercased-trimmed-url + "|" + sorted "k:v" headers)>.<kind>`
 // with kind ∈ {client, tokens, verifier}, and values are JSON blobs it
-// serialized itself (a DCR result, a token set, a PKCE verifier). vibekit
+// serialized itself (a DCR result, a token set, a PKCE verifier). marotte
 // parses neither. Deriving the key here, or validating the blob shape, would
 // couple this file to a contract KAS is free to change and buy nothing — the
 // store's whole job is to hand back the exact bytes it was given.
@@ -74,7 +74,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/filemode"
+	"github.com/cplieger/marotte/internal/filemode"
 )
 
 // Bounds. The measured blobs are 90–211 bytes, so both limits are far above
@@ -169,7 +169,7 @@ func (s *Store) load() error {
 		// into a file we know we cannot protect. Failing here does not brick boot
 		// — agent treats a secretstore that will not open as best-effort, logs one
 		// ERROR and runs with h.secrets nil, which degrades MCP OAuth to the
-		// per-spawn DCR it did before this package existed. That is vibekit
+		// per-spawn DCR it did before this package existed. That is marotte
 		// invariant 6's shape: remove the exposure, do not abort startup over
 		// persistent-volume state.
 		//

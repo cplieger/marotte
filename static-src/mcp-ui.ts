@@ -462,7 +462,7 @@ const ORIGIN_META: Readonly<Record<Exclude<Origin, "user">, { label: string; tit
   unknown: {
     label: "not managed here",
     title:
-      "The agent reported this server, but it is not in this page's configuration. It comes from a config vibekit does not manage, so it cannot be edited or removed here.",
+      "The agent reported this server, but it is not in this page's configuration. It comes from a config marotte does not manage, so it cannot be edited or removed here.",
   },
 };
 
@@ -564,7 +564,7 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
 /** The rescue box for a sign-in whose redirect landed on the wrong machine.
  *
  *  WHY IT EXISTS. KAS binds its OAuth redirect listener on the CONTAINER's
- *  localhost. A browser reaching vibekit from a phone or another laptop is sent
+ *  localhost. A browser reaching marotte from a phone or another laptop is sent
  *  to ITS OWN localhost, where nothing answers, so the sign-in dies on a
  *  connection-refused page and clicking the pill again just repeats it. For a
  *  container reached over the network that is the normal case.

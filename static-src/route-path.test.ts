@@ -49,8 +49,8 @@ describe("parseRoute (table-driven)", () => {
       // segment. `%23` is that `#`.
       name: "/git/prs#pr=<encoded identity>",
       pathname: "/git/prs",
-      hash: "#pr=github%3Agithub.com%3Acplieger%2Fvibekit%2342",
-      expected: { kind: "git", tab: "prs", pr: "github:github.com:cplieger/vibekit#42" },
+      hash: "#pr=github%3Agithub.com%3Acplieger%2Fmarotte%2342",
+      expected: { kind: "git", tab: "prs", pr: "github:github.com:cplieger/marotte#42" },
     },
     {
       name: "/git/prs#pr= (empty value) → no pr",
@@ -523,7 +523,7 @@ describe("parseRoute adversarial inputs (no-throw)", () => {
 // ---------------------------------------------------------------------------
 
 describe("the git #pr= fragment", () => {
-  const identity = "github:github.com:cplieger/vibekit#42";
+  const identity = "github:github.com:cplieger/marotte#42";
 
   it("round-trips through the URL it emits", () => {
     const route: Route = { kind: "git", tab: "prs", pr: identity };

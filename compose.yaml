@@ -1,8 +1,8 @@
-# Example compose for vibekit. See the README for all configuration options and hardening.
+# Example compose for marotte. See the README for all configuration options and hardening.
 services:
-  vibekit:
-    image: ghcr.io/cplieger/vibekit:latest
-    container_name: vibekit
+  marotte:
+    image: ghcr.io/cplieger/marotte:latest
+    container_name: marotte
     restart: unless-stopped
     # Required, not optional: tini reaps orphaned children. An agent's terminal commands fork
     # gits, language servers and build tools whose own parent exits, re-parenting them onto PID 1,
@@ -15,6 +15,6 @@ services:
       - "9847:9847"
 
     volumes:
-      - "/opt/appdata/vibekit/config:/config"
-      - "/opt/appdata/vibekit/workspace:/workspace"
-      - "/opt/appdata/vibekit/uploads:/uploads"
+      - "/opt/appdata/marotte/config:/config"
+      - "/opt/appdata/marotte/workspace:/workspace"
+      - "/opt/appdata/marotte/uploads:/uploads"

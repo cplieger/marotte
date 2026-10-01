@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The invariant that holds WITHOUT the detector too, so the test is not merely a
@@ -29,10 +29,10 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	const fixtureChats, fixtureRuns, readers = 4, 4, 3
 
-	chatIDs := make([]vibekit.ChatID, 0, fixtureChats)
-	knownChat := make(map[vibekit.ChatID]bool, fixtureChats)
+	chatIDs := make([]marotte.ChatID, 0, fixtureChats)
+	knownChat := make(map[marotte.ChatID]bool, fixtureChats)
 	for i := range fixtureChats {
-		id := vibekit.ChatID(fmt.Sprintf("c-conc-%02d", i))
+		id := marotte.ChatID(fmt.Sprintf("c-conc-%02d", i))
 		chatIDs = append(chatIDs, id)
 		knownChat[id] = true
 		rt.bridge.mgr.orInsert(id)
@@ -47,7 +47,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 
 	// One chat holds an OPEN turn for the whole test, so the walk reads a live turn's
 	// facts rather than only the reservation half of the predicate.
-	if rt.coord.StartTurn(t.Context(), chatIDs[0], vibekit.TurnSourcePrompt) == 0 {
+	if rt.coord.StartTurn(t.Context(), chatIDs[0], marotte.TurnSourcePrompt) == 0 {
 		t.Fatal("StartTurn refused the fixture's open turn, so busyChatIDs never reaches " +
 			"openFactsLocked and only the reservation half of the walk is exercised")
 	}
@@ -55,7 +55,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	store := rt.runs.leaseStore()
 	ctx := t.Context()
 	stop := make(chan struct{})
-	badChat := make(chan vibekit.ChatID, 1)
+	badChat := make(chan marotte.ChatID, 1)
 	badRun := make(chan string, 1)
 	var wg sync.WaitGroup
 
@@ -69,7 +69,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 					return
 				default:
 				}
-				if rt.coord.TryReserveTurn(id, vibekit.TurnSourcePrompt) {
+				if rt.coord.TryReserveTurn(id, marotte.TurnSourcePrompt) {
 					rt.coord.ReleaseTurnReservation(id)
 				}
 			}

@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/liveness"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/liveness"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // deferSuppressedSends is the one switch over what the presence filter does with a
@@ -29,13 +29,13 @@ var deferPoll = liveness.Keepalive
 type heldKey struct {
 	tag     string
 	subject string
-	kind    vibekit.PushKind
+	kind    marotte.PushKind
 }
 
 // heldPush is one suppressed delivery waiting for its profile to read gone.
 type heldPush struct {
 	expiresAt time.Time
-	sub       vibekit.PushSubscription
+	sub       marotte.PushSubscription
 	payload   []byte
 }
 
@@ -50,7 +50,7 @@ type deferred struct {
 // holdForLater records a suppressed delivery when the variant is on, and arms the
 // re-judge if none is armed. With the switch off it is a no-op, which is the drop.
 func (s *Service) holdForLater(
-	sub vibekit.PushSubscription, kind vibekit.PushKind, subject vibekit.PushSubject, payload []byte,
+	sub marotte.PushSubscription, kind marotte.PushKind, subject marotte.PushSubject, payload []byte,
 ) {
 	if !deferSuppressedSends || s.presence == nil {
 		return
@@ -74,7 +74,7 @@ func (s *Service) holdForLater(
 // Retract drops every held delivery about subject: the ask was answered on some
 // surface, so a nudge about it has nothing left to say. A no-op with the variant
 // off, since nothing is ever held.
-func (s *Service) Retract(subject vibekit.PushSubject) {
+func (s *Service) Retract(subject marotte.PushSubject) {
 	if !deferSuppressedSends {
 		return
 	}
@@ -124,7 +124,7 @@ func (s *Service) releaseHeld() {
 	for i := range due {
 		d := &due[i]
 		slog.Debug("push: held delivery released, profile gone", "kind", string(d.key.kind), "tag", d.key.tag)
-		s.fanOut(s.lifetime, []vibekit.PushSubscription{d.h.sub}, d.h.payload, d.key.kind)
+		s.fanOut(s.lifetime, []marotte.PushSubscription{d.h.sub}, d.h.payload, d.key.kind)
 	}
 }
 

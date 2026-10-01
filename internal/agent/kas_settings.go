@@ -3,10 +3,10 @@ package agent
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
-// The two vibekit settings whose value has to reach the AGENT, resolved into
+// The two marotte settings whose value has to reach the AGENT, resolved into
 // StartOpts at every spawn.
 //
 // These are not the kiro-cli feature flags in Settings → General: measured

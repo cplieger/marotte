@@ -197,8 +197,8 @@ describe("editor.load_diff", () => {
     setWorkspaceRoot("/workspace");
     answer({ content: "base" }, ok("work"));
     const { loadDiff } = await import("./editor.js");
-    await loadDiff.dispatch({ path: "static-src/a.ts", repo: "vibekit", ref: "HEAD" }).outcome;
-    expect(urls()).toContain("/api/git/show?path=static-src%2Fa.ts&ref=HEAD&repo=vibekit");
+    await loadDiff.dispatch({ path: "static-src/a.ts", repo: "marotte", ref: "HEAD" }).outcome;
+    expect(urls()).toContain("/api/git/show?path=static-src%2Fa.ts&ref=HEAD&repo=marotte");
   });
 
   it("captions both panes for an ordinary change", async () => {

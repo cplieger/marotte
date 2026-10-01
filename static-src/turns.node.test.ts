@@ -969,7 +969,7 @@ describe("turnFailureText", () => {
     // that silences a cancel is keyed on the OUTCOME precisely because keying it on
     // the severity would silence this one too.
     expect(textOf([user("u1", "q"), assistant("a1", { turn_outcome: "unknown" })])).toBe(
-      "The turn ended for a reason vibekit could not read.",
+      "The turn ended for a reason marotte could not read.",
     );
   });
 

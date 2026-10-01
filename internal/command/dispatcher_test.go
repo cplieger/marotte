@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/rpcerr"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestDispatcher_MethodNotAllowed(t *testing.T) {
@@ -109,7 +109,7 @@ func TestDispatcher_BodyTooLarge(t *testing.T) {
 // Red-check: delete (*statusError).Unwrap and the details assertion fails with
 // "Internal error".
 func TestStatusError_UnwrapsToTheCause(t *testing.T) {
-	cause := &vibekit.RPCError{
+	cause := &marotte.RPCError{
 		Code:    -32603,
 		Message: "Internal error",
 		Data:    json.RawMessage(`{"details":"the model refused the tool call"}`),

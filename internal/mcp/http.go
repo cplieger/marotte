@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"path"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -23,7 +23,7 @@ import (
 //	DELETE /api/mcp/{id}     → remove
 //
 // `import` is its own route rather than a second body shape on POST /api/mcp:
-// that endpoint decodes ONE vibekit record and answers with one, while a
+// that endpoint decodes ONE marotte record and answers with one, while a
 // paste decodes a foreign shape and can name several servers.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp", s.handleCollection)
@@ -35,7 +35,7 @@ func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 // (or a single publisher-shaped server object) and create every server in it.
 //
 // 200 {"results":[{"name","outcome"}],"notes":[...]} on success. `notes` carries
-// what the translation had to say about keys vibekit recognises and cannot
+// what the translation had to say about keys marotte recognises and cannot
 // store, and about a name it had to adjust — so an accepted `timeout` does not
 // read as a silently-dropped field.
 func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -16,7 +16,7 @@ import (
 // before/after behaviour is the production one), a plain-path API route
 // (/api/health, the baked probe), a method-pattern mutating route
 // (POST /api/kiro-cli/rescan, the README's repair call), an exact+subtree pair
-// (/api/chats and /api/chats/, the shape every vibekit subtree uses), and a
+// (/api/chats and /api/chats/, the shape every marotte subtree uses), and a
 // wildcard route (DELETE /api/knowledge/{name}) so the decoded-path verdict is
 // exercised against a real path parameter.
 const (
@@ -64,7 +64,7 @@ func do(h http.Handler, method, target string) *httptest.ResponseRecorder {
 }
 
 // TestCanonicalAPIPath is the behaviour contract of the guard: on the API
-// surface a non-canonical spelling is REFUSED (400, vibekit's bare error
+// surface a non-canonical spelling is REFUSED (400, marotte's bare error
 // envelope, handler never reached) where ServeMux would have answered 307 — a
 // status a `curl -f` sender reads as success — while a canonical spelling
 // reaches its handler untouched and the static/SPA mount keeps every redirect
@@ -219,11 +219,11 @@ func TestCanonicalAPIPath(t *testing.T) {
 	}
 }
 
-// TestCanonicalAPIPath_RefusalIsVibekitsEnvelope: the refusal must be the
+// TestCanonicalAPIPath_RefusalIsMarottesEnvelope: the refusal must be the
 // repo's bare {"error": …} shape, and — the load-bearing half — a status a
 // non-following sender reads as failure. `curl -f` keys on >= 400, which is why
 // the whole guard exists rather than leaving the 307 in place.
-func TestCanonicalAPIPath_RefusalIsVibekitsEnvelope(t *testing.T) {
+func TestCanonicalAPIPath_RefusalIsMarottesEnvelope(t *testing.T) {
 	mux, _ := requestPathMux()
 	rec := do(canonicalAPIPath(mux), http.MethodPost, "/"+kiroRescanPath)
 
@@ -234,7 +234,7 @@ func TestCanonicalAPIPath_RefusalIsVibekitsEnvelope(t *testing.T) {
 		t.Errorf("Content-Type = %q, want %s", got, httpreply.MIMETypeJSON)
 	}
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"`+msgNonCanonicalPath+`"}` {
-		t.Errorf("body = %s, want vibekit's bare error envelope", got)
+		t.Errorf("body = %s, want marotte's bare error envelope", got)
 	}
 	// The refusal names the class, never the caller's bytes.
 	if strings.Contains(rec.Body.String(), "rescan") {
@@ -248,7 +248,7 @@ func TestCanonicalAPIPath_RefusalIsVibekitsEnvelope(t *testing.T) {
 // so neither 403 is shadowed by a 400 about spelling, and it runs outside the
 // routes it protects.
 func TestMiddlewareStack_GuardOrder(t *testing.T) {
-	policy, invalid := webhttp.ParseHostList([]string{"vibekit.example.com"},
+	policy, invalid := webhttp.ParseHostList([]string{"marotte.example.com"},
 		webhttp.WithLoopbackExempt(true),
 		webhttp.WithHostAllowlistError("", "host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
@@ -284,14 +284,14 @@ func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	})
 
 	t.Run("CSRF check wins over the path refusal", func(t *testing.T) {
-		rec := post("vibekit.example.com", "http://attacker.evil")
+		rec := post("marotte.example.com", "http://attacker.evil")
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("status = %d, want 403 (the CSRF check must stay outside the path guard)", rec.Code)
 		}
 	})
 
 	t.Run("past both gates the path guard refuses before any route", func(t *testing.T) {
-		rec := post("vibekit.example.com", "http://vibekit.example.com")
+		rec := post("marotte.example.com", "http://marotte.example.com")
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400", rec.Code)
 		}

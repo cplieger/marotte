@@ -7,9 +7,9 @@ package agent
 import (
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -30,7 +30,7 @@ func (rt *Runtime) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "path query param is required")
 		return
 	}
-	ranges := rt.lines.Get(vibekit.ChatID(chatID), path)
+	ranges := rt.lines.Get(marotte.ChatID(chatID), path)
 	if ranges == nil {
 		ranges = []buffer.LineRange{}
 	}

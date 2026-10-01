@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // replayUpdate builds a replay-tagged session/update `update` object.
-func replayUpdate(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string) json.RawMessage {
+func replayUpdate(t *testing.T, kind marotte.ACPUpdateKind, text, sub string) json.RawMessage {
 	t.Helper()
 	kiro := map[string]any{"replay": true}
 	if sub != "" {
@@ -44,12 +44,12 @@ func replayUpdate(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string) js
 // settleRecorder captures what a settle handed to the swap seam.
 type settleRecorder struct {
 	calls     int
-	msgs      []vibekit.Message
+	msgs      []marotte.Message
 	watermark string
 }
 
-func (r *settleRecorder) sink() func(vibekit.ChatID, []vibekit.Message, string) {
-	return func(_ vibekit.ChatID, msgs []vibekit.Message, wm string) {
+func (r *settleRecorder) sink() func(marotte.ChatID, []marotte.Message, string) {
+	return func(_ marotte.ChatID, msgs []marotte.Message, wm string) {
 		r.calls++
 		r.msgs = msgs
 		r.watermark = wm
@@ -57,17 +57,17 @@ func (r *settleRecorder) sink() func(vibekit.ChatID, []vibekit.Message, string) 
 }
 
 // feedOneTurn ingests a complete bracketed turn.
-func feedOneTurn(t *testing.T, rp *replay, chatID vibekit.ChatID) {
+func feedOneTurn(t *testing.T, rp *replay, chatID marotte.ChatID) {
 	t.Helper()
 	for _, f := range []struct {
-		kind vibekit.ACPUpdateKind
+		kind marotte.ACPUpdateKind
 		text string
 		sub  string
 	}{
 		{"user_message_chunk", "ONE", ""},
-		{vibekit.ACPUpdateSessionInfo, "", "turn_start"},
-		{vibekit.ACPUpdateAgentChunk, "reply", ""},
-		{vibekit.ACPUpdateSessionInfo, "", "turn_end"},
+		{marotte.ACPUpdateSessionInfo, "", "turn_start"},
+		{marotte.ACPUpdateAgentChunk, "reply", ""},
+		{marotte.ACPUpdateSessionInfo, "", "turn_end"},
 	} {
 		if !rp.ingestReplayFrame(chatID, f.kind, replayUpdate(t, f.kind, f.text, f.sub)) {
 			t.Fatalf("frame %v/%s was not consumed by a projection", f.kind, f.sub)
@@ -103,7 +103,7 @@ func atExit() drainPoint { return drainPoint{gen: testFwdGen} }
 // buffered (256), so Forward may not have FOLDED them. Settling on the load's
 // return alone would adopt a partial transcript.
 func TestReplayProjection_SettleBarrier(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 
 	t.Run("no settle before the load returns", func(t *testing.T) {
 		rp, rec := replayWithRecorder()
@@ -272,7 +272,7 @@ func TestReplayProjection_SettleBarrier(t *testing.T) {
 // frame consumed, and once at bridge exit) such a transcript sat fully built in the map while
 // AwaitReplayAdopted spent its whole 45s budget and refused the rewind.
 func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 	rp.OpenReplayProjection(chatID)
 	feedOneTurn(t, rp, chatID)
@@ -304,7 +304,7 @@ func TestReplayProjection_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) 
 // failure, and a surviving projection would let that fresh session adopt the
 // dead one's partial transcript.
 func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 	rp.OpenReplayProjection(chatID)
 	feedOneTurn(t, rp, chatID)
@@ -326,8 +326,8 @@ func TestReplayProjection_DiscardOnFailedLoad(t *testing.T) {
 // no load in flight has no transcript to belong to.
 func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
 	rp, _ := replayWithRecorder()
-	if rp.ingestReplayFrame("nobody", vibekit.ACPUpdateAgentChunk,
-		replayUpdate(t, vibekit.ACPUpdateAgentChunk, "stray", "")) {
+	if rp.ingestReplayFrame("nobody", marotte.ACPUpdateAgentChunk,
+		replayUpdate(t, marotte.ACPUpdateAgentChunk, "stray", "")) {
 		t.Error("a replay frame was consumed with no projection open")
 	}
 }
@@ -336,7 +336,7 @@ func TestReplayProjection_FrameWithNoLoadIsRejected(t *testing.T) {
 // chat (the model-switch fallback path) starts clean rather than appending to
 // the first load's half-built transcript.
 func TestReplayProjection_ReloadSupersedes(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	rp, rec := replayWithRecorder()
 
 	rp.OpenReplayProjection(chatID)
@@ -366,14 +366,14 @@ func TestReplayProjection_ReloadSupersedes(t *testing.T) {
 // embedded projectionState.
 func replayWithRecorder() (*replay, *settleRecorder) {
 	rec := &settleRecorder{}
-	rp := &replay{projections: map[vibekit.ChatID]*loadProjection{}}
+	rp := &replay{projections: map[marotte.ChatID]*loadProjection{}}
 	rp.onProjection = rec.sink()
 	return rp, rec
 }
 
 // hasProjection reports whether a projection is open. Test-only, and defined
 // here rather than in production so it adds no exported surface.
-func (rp *replay) hasProjection(chatID vibekit.ChatID) bool {
+func (rp *replay) hasProjection(chatID marotte.ChatID) bool {
 	rp.projMu.Lock()
 	defer rp.projMu.Unlock()
 	_, ok := rp.projections[chatID]
@@ -397,10 +397,10 @@ func barrierClosed(ch <-chan struct{}) bool {
 // the barrier exists to close. The window is one chat-file write, not an
 // instant, so a caller lands in it.
 func TestReplayProjection_BarrierSpansTheSwap(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
-	rp := &replay{projections: map[vibekit.ChatID]*loadProjection{}}
+	const chatID marotte.ChatID = "c1"
+	rp := &replay{projections: map[marotte.ChatID]*loadProjection{}}
 	releasedDuringSwap := false
-	rp.onProjection = func(vibekit.ChatID, []vibekit.Message, string) {
+	rp.onProjection = func(marotte.ChatID, []marotte.Message, string) {
 		releasedDuringSwap = barrierClosed(rp.ReplaySettled(chatID))
 	}
 	rp.OpenReplayProjection(chatID)
@@ -424,8 +424,8 @@ func TestReplayProjection_BarrierSpansTheSwap(t *testing.T) {
 // barrier with it, and a waiter then reads adopted while a live replay is still
 // writing the record.
 func TestReplayProjection_ASwapDoesNotHideASupersedersBarrier(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
-	rp := &replay{projections: map[vibekit.ChatID]*loadProjection{}}
+	const chatID marotte.ChatID = "c1"
+	rp := &replay{projections: map[marotte.ChatID]*loadProjection{}}
 
 	// Park each swap on entry so the test decides the interleaving rather than
 	// racing it. Index 0 is the original load's swap, 1 the superseder's.
@@ -433,7 +433,7 @@ func TestReplayProjection_ASwapDoesNotHideASupersedersBarrier(t *testing.T) {
 	nth := 0
 	entered := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
 	release := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
-	rp.onProjection = func(vibekit.ChatID, []vibekit.Message, string) {
+	rp.onProjection = func(marotte.ChatID, []marotte.Message, string) {
 		mu.Lock()
 		n := nth
 		nth++
@@ -483,13 +483,13 @@ func TestReplayProjection_ASwapDoesNotHideASupersedersBarrier(t *testing.T) {
 // TestMergeProjection covers the rule that lets the replay become the
 // transcript without losing what a replay cannot speak for.
 func TestMergeProjection(t *testing.T) {
-	msg := func(id string, role vibekit.Role, ts int64, content string) vibekit.Message {
-		return vibekit.Message{ID: id, Role: role, Ts: ts, Content: content}
+	msg := func(id string, role marotte.Role, ts int64, content string) marotte.Message {
+		return marotte.Message{ID: id, Role: role, Ts: ts, Content: content}
 	}
-	event := func(id string, ts int64, kind vibekit.EventKind) vibekit.Message {
-		return vibekit.Message{ID: id, Role: vibekit.RoleEvent, EventKind: kind, Ts: ts}
+	event := func(id string, ts int64, kind marotte.EventKind) marotte.Message {
+		return marotte.Message{ID: id, Role: marotte.RoleEvent, EventKind: kind, Ts: ts}
 	}
-	ids := func(ms []vibekit.Message) []string {
+	ids := func(ms []marotte.Message) []string {
 		out := make([]string, 0, len(ms))
 		for _, m := range ms {
 			out = append(out, m.ID)
@@ -498,7 +498,7 @@ func TestMergeProjection(t *testing.T) {
 	}
 
 	t.Run("an empty projection never clobbers the record", func(t *testing.T) {
-		existing := []vibekit.Message{msg("u1", vibekit.RoleUser, 100, "hi")}
+		existing := []marotte.Message{msg("u1", marotte.RoleUser, 100, "hi")}
 		got, _, _ := mergeProjection(existing, nil)
 		if len(got) != 1 || got[0].ID != "u1" {
 			t.Errorf("got %v, want the existing record preserved", ids(got))
@@ -506,37 +506,37 @@ func TestMergeProjection(t *testing.T) {
 	})
 
 	t.Run("assistant turns are superseded, not duplicated", func(t *testing.T) {
-		// The tell: vibekit's assistant id and the wire's never match, so a
+		// The tell: marotte's assistant id and the wire's never match, so a
 		// merge keyed on ids would keep both copies of every turn.
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("m-vibekit-generated", vibekit.RoleAssistant, 200, "hello"),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("m-marotte-generated", marotte.RoleAssistant, 200, "hello"),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		if len(got) != 2 {
 			t.Errorf("got %d messages %v, want 2: the assistant turn was duplicated", len(got), ids(got))
 		}
 		for _, m := range got {
-			if m.ID == "m-vibekit-generated" {
+			if m.ID == "m-marotte-generated" {
 				t.Error("the superseded assistant message survived")
 			}
 		}
 	})
 
 	t.Run("event messages survive, since the wire has none", func(t *testing.T) {
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			event("e1", 150, vibekit.EventModelSwitched),
-			msg("m-old", vibekit.RoleAssistant, 200, "hello"),
-			event("e2", 250, vibekit.EventCancelled),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			event("e1", 150, marotte.EventModelSwitched),
+			msg("m-old", marotte.RoleAssistant, 200, "hello"),
+			event("e2", 250, marotte.EventCancelled),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		want := []string{"u1", "e1", "abc-say", "e2"}
@@ -546,18 +546,18 @@ func TestMergeProjection(t *testing.T) {
 	})
 
 	t.Run("the un-replayed tail survives", func(t *testing.T) {
-		// KAS's log is not fsynced, so a turn vibekit durably holds can be
+		// KAS's log is not fsynced, so a turn marotte durably holds can be
 		// missing from the replay. Dropping it would make the projection worse
 		// than the durability stack it replaces.
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("m-old", vibekit.RoleAssistant, 200, "hello"),
-			msg("u2", vibekit.RoleUser, 300, "and this"),
-			msg("m-tail", vibekit.RoleAssistant, 400, "recovered mid-turn"),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("m-old", marotte.RoleAssistant, 200, "hello"),
+			msg("u2", marotte.RoleUser, 300, "and this"),
+			msg("m-tail", marotte.RoleAssistant, 400, "recovered mid-turn"),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		want := []string{"u1", "abc-say", "u2", "m-tail"}
@@ -567,8 +567,8 @@ func TestMergeProjection(t *testing.T) {
 	})
 
 	t.Run("a projected message wins a timestamp tie", func(t *testing.T) {
-		existing := []vibekit.Message{event("e1", 200, vibekit.EventCancelled)}
-		projected := []vibekit.Message{msg("abc-say", vibekit.RoleAssistant, 200, "hello")}
+		existing := []marotte.Message{event("e1", 200, marotte.EventCancelled)}
+		projected := []marotte.Message{msg("abc-say", marotte.RoleAssistant, 200, "hello")}
 		got, _, _ := mergeProjection(existing, projected)
 		if len(got) != 2 || got[0].ID != "abc-say" {
 			t.Errorf("got %v, want the projected message first at an equal timestamp", ids(got))
@@ -579,20 +579,20 @@ func TestMergeProjection(t *testing.T) {
 	// frame is not on the replay wire, so nothing regenerates one. Before this
 	// case every resumed chat lost its plan cards for good.
 	t.Run("a plan row survives, since the wire has none either", func(t *testing.T) {
-		plan := vibekit.Message{
+		plan := marotte.Message{
 			ID:   "m-plan",
-			Role: vibekit.RoleAssistant,
+			Role: marotte.RoleAssistant,
 			Ts:   150,
-			Plan: []vibekit.PlanEntry{{Content: "step one", Status: "pending"}},
+			Plan: []marotte.PlanEntry{{Content: "step one", Status: "pending"}},
 		}
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
 			plan,
-			msg("m-old", vibekit.RoleAssistant, 200, "hello"),
+			msg("m-old", marotte.RoleAssistant, 200, "hello"),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		want := []string{"u1", "m-plan", "abc-say"}
@@ -611,61 +611,61 @@ func TestMergeProjection(t *testing.T) {
 	// state across, a resume silently turned "the agent never read this" into a
 	// note that claims it landed.
 	t.Run("a steer's delivery state survives the swap", func(t *testing.T) {
-		steer := vibekit.Message{
+		steer := marotte.Message{
 			ID:          "steer-1",
-			Role:        vibekit.RoleUser,
+			Role:        marotte.RoleUser,
 			Ts:          150,
 			Content:     "actually target main",
-			UserKind:    vibekit.UserKindSteer,
-			SteerState:  vibekit.SteerStateDropped,
-			SteerOrigin: vibekit.SteerOriginUser,
+			UserKind:    marotte.UserKindSteer,
+			SteerState:  marotte.SteerStateDropped,
+			SteerOrigin: marotte.SteerOriginUser,
 		}
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
 			steer,
-			msg("m-old", vibekit.RoleAssistant, 200, "hello"),
+			msg("m-old", marotte.RoleAssistant, 200, "hello"),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
 			// What the replay projection produces: the row, no state, no origin.
 			{
 				ID:       "steer-1",
-				Role:     vibekit.RoleUser,
+				Role:     marotte.RoleUser,
 				Ts:       150,
 				Content:  "actually target main",
-				UserKind: vibekit.UserKindSteer,
+				UserKind: marotte.UserKindSteer,
 			},
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		want := []string{"u1", "steer-1", "abc-say"}
 		if !slices.Equal(ids(got), want) {
 			t.Fatalf("got %v, want %v — one row per steer, whichever copy wins", ids(got), want)
 		}
-		if got[1].SteerState != vibekit.SteerStateDropped {
-			t.Errorf("SteerState = %q, want %q", got[1].SteerState, vibekit.SteerStateDropped)
+		if got[1].SteerState != marotte.SteerStateDropped {
+			t.Errorf("SteerState = %q, want %q", got[1].SteerState, marotte.SteerStateDropped)
 		}
-		if got[1].SteerOrigin != vibekit.SteerOriginUser {
-			t.Errorf("SteerOrigin = %q, want %q", got[1].SteerOrigin, vibekit.SteerOriginUser)
+		if got[1].SteerOrigin != marotte.SteerOriginUser {
+			t.Errorf("SteerOrigin = %q, want %q", got[1].SteerOrigin, marotte.SteerOriginUser)
 		}
 	})
 
 	// The other half of the shape rule: a real reply is superseded even when it
 	// happens to carry a plan, or the projection's copy and this one both render.
 	t.Run("an assistant turn carrying a plan is still superseded", func(t *testing.T) {
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
 			{
 				ID:      "m-old",
-				Role:    vibekit.RoleAssistant,
+				Role:    marotte.RoleAssistant,
 				Ts:      200,
 				Content: "hello",
-				Plan:    []vibekit.PlanEntry{{Content: "step one", Status: "pending"}},
+				Plan:    []marotte.PlanEntry{{Content: "step one", Status: "pending"}},
 			},
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		want := []string{"u1", "abc-say"}
@@ -675,26 +675,26 @@ func TestMergeProjection(t *testing.T) {
 	})
 
 	// The LIVE compaction event against its projected twin — the half a derived id
-	// cannot reach, because vibekit minted the live one as a uuid at compaction time.
+	// cannot reach, because marotte minted the live one as a uuid at compaction time.
 	// Measured on the live volume: five pairs of `compacted` rows in one chat with
 	// byte-identical content lengths, so the reader saw the same 12-16 KB summary twice.
 	t.Run("a compaction the replay also produced is not kept twice", func(t *testing.T) {
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("m-old", vibekit.RoleAssistant, 200, "hello"),
-			// vibekit's own uuid, minted when the compaction happened.
-			event("01a07bf0-fa5e-7000-8000-000000000000", 200, vibekit.EventCompacted),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("m-old", marotte.RoleAssistant, 200, "hello"),
+			// marotte's own uuid, minted when the compaction happened.
+			event("01a07bf0-fa5e-7000-8000-000000000000", 200, marotte.EventCompacted),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 			// The projection's derived id for the same boundary.
-			event("abc-say-compacted", 200, vibekit.EventCompacted),
+			event("abc-say-compacted", 200, marotte.EventCompacted),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		var compactions int
 		for i := range got {
-			if got[i].EventKind == vibekit.EventCompacted {
+			if got[i].EventKind == marotte.EventCompacted {
 				compactions++
 			}
 		}
@@ -704,16 +704,16 @@ func TestMergeProjection(t *testing.T) {
 	})
 
 	// The exclusion must stay NARROW: a compaction NEWER than the replay is the
-	// un-fsynced-KAS-log case, and dropping it would lose a boundary vibekit durably
+	// un-fsynced-KAS-log case, and dropping it would lose a boundary marotte durably
 	// holds and nothing regenerates.
 	t.Run("a compaction newer than the replay still survives", func(t *testing.T) {
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			event("e-recent", 900, vibekit.EventCompacted),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			event("e-recent", 900, marotte.EventCompacted),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			event("abc-say-compacted", 200, vibekit.EventCompacted),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			event("abc-say-compacted", 200, marotte.EventCompacted),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		want := []string{"u1", "abc-say-compacted", "e-recent"}
@@ -725,13 +725,13 @@ func TestMergeProjection(t *testing.T) {
 	// And a compaction the replay did NOT produce is preserved like any other event
 	// row, which is what keeps the exclusion conditional rather than a rule about kind.
 	t.Run("a compaction the replay did not produce is preserved", func(t *testing.T) {
-		existing := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			event("e-only-ours", 150, vibekit.EventCompacted),
+		existing := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			event("e-only-ours", 150, marotte.EventCompacted),
 		}
-		projected := []vibekit.Message{
-			msg("u1", vibekit.RoleUser, 100, "hi"),
-			msg("abc-say", vibekit.RoleAssistant, 200, "hello"),
+		projected := []marotte.Message{
+			msg("u1", marotte.RoleUser, 100, "hi"),
+			msg("abc-say", marotte.RoleAssistant, 200, "hello"),
 		}
 		got, _, _ := mergeProjection(existing, projected)
 		want := []string{"u1", "e-only-ours", "abc-say"}
@@ -743,7 +743,7 @@ func TestMergeProjection(t *testing.T) {
 
 // replayNotif wraps a replay-tagged update in the session/update notification a
 // bridge actually delivers, so a test can put the wire's own frames on notifCh.
-func replayNotif(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string) *vibekit.RPCResponse {
+func replayNotif(t *testing.T, kind marotte.ACPUpdateKind, text, sub string) *marotte.RPCResponse {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"sessionId": "old-acp",
@@ -752,14 +752,14 @@ func replayNotif(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string) *vi
 	if err != nil {
 		t.Fatalf("marshal notification: %v", err)
 	}
-	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: raw}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: raw}
 }
 
 // loadedChat seeds a chat carrying an ACP session id, which is what sends its
 // next spawn down the session/load path rather than session/new.
-func loadedChat(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
+func loadedChat(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) {
 	t.Helper()
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("old-acp")
 		return true
@@ -776,7 +776,7 @@ func loadedChat(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
 // all is the tell for a genuinely stuck Forward.
 const awaitPatience = 20 * time.Second
 
-func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, want string) {
+func awaitReplayedTurn(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID, want string) {
 	t.Helper()
 	stop := time.Now().Add(awaitPatience)
 	for {
@@ -818,17 +818,17 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 	cs := newFakeChatStore()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge {
 		b := newFakeBridge()
-		b.notifsOnStart = []*vibekit.RPCResponse{
+		b.notifsOnStart = []*marotte.RPCResponse{
 			replayNotif(t, "user_message_chunk", "ONE", ""),
-			replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_start"),
-			replayNotif(t, vibekit.ACPUpdateAgentChunk, "reply", ""),
-			replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_end"),
+			replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_start"),
+			replayNotif(t, marotte.ACPUpdateAgentChunk, "reply", ""),
+			replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_end"),
 		}
 		return b
 	}, cs)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
 
 	// The replay is delivered inside this call, the way KAS delivers it inside
@@ -865,14 +865,14 @@ func TestSessionLoad_AdoptsTheReplayedTranscript(t *testing.T) {
 // bridge is never stopped so no seal is coming.
 func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 	h, cs, br := newTestHub()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
 
-	frames := []*vibekit.RPCResponse{
+	frames := []*marotte.RPCResponse{
 		replayNotif(t, "user_message_chunk", "ONE", ""),
-		replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_start"),
-		replayNotif(t, vibekit.ACPUpdateAgentChunk, "reply", ""),
-		replayNotif(t, vibekit.ACPUpdateSessionInfo, "", "turn_end"),
+		replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_start"),
+		replayNotif(t, marotte.ACPUpdateAgentChunk, "reply", ""),
+		replayNotif(t, marotte.ACPUpdateSessionInfo, "", "turn_end"),
 	}
 
 	h.replay.OpenReplayProjection(chatID)
@@ -905,7 +905,7 @@ func TestForward_ReportsEachFramesOwnPosition(t *testing.T) {
 // the seal at Forward's exit the chat resumes empty and the rebuild leaks for the process.
 func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 	h, cs, br := newTestHub()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	loadedChat(t, cs, chatID)
 
 	// Folded into the projection without ever being CONSUMED off a channel, which
@@ -919,8 +919,8 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 
 	awaitReplayedTurn(t, cs, chatID, "reply")
 	// And the rebuild is released rather than left open forever.
-	if h.replay.ingestReplayFrame(chatID, vibekit.ACPUpdateAgentChunk,
-		replayUpdate(t, vibekit.ACPUpdateAgentChunk, "late", "")) {
+	if h.replay.ingestReplayFrame(chatID, marotte.ACPUpdateAgentChunk,
+		replayUpdate(t, marotte.ACPUpdateAgentChunk, "late", "")) {
 		t.Error("a projection was still open after the bridge exited, so every later " +
 			"replay frame folds into a transcript nothing will settle")
 	}
@@ -934,8 +934,8 @@ func TestForwardExit_SettlesALoadWhoseTrailingFramesNeverCame(t *testing.T) {
 // loaded.
 func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 	rp, rec := replayWithRecorder()
-	const first vibekit.ChatID = "c1"
-	const second vibekit.ChatID = "c2"
+	const first marotte.ChatID = "c1"
+	const second marotte.ChatID = "c2"
 
 	rp.OpenReplayProjection(first)
 	feedOneTurn(t, rp, first)
@@ -972,7 +972,7 @@ func TestReplayProjection_ConcurrentLoadsAreIndependent(t *testing.T) {
 func TestReplayProjection_SettleReportsFramesAgainstMessages(t *testing.T) {
 	logs := captureLogs(t)
 	rp, _ := replayWithRecorder()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 
 	rp.OpenReplayProjection(chatID)
 	feedOneTurn(t, rp, chatID) // four frames: user, turn_start, reply, turn_end
@@ -996,15 +996,15 @@ func TestReplayProjection_SettleReportsFramesAgainstMessages(t *testing.T) {
 // rebuilds exactly the stored transcript must not rewrite it — every write broadcasts a
 // chat_updated, and a reconnect storm after a restart would push one per chat for no change.
 // But the watermark is independent state: a KAS-side compaction moves it without changing the
-// message count, and dropping that update leaves vibekit compacting from a stale point.
+// message count, and dropping that update leaves marotte compacting from a stale point.
 func TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold(t *testing.T) {
-	seed := func(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, watermark string) []vibekit.Message {
+	seed := func(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID, watermark string) []marotte.Message {
 		t.Helper()
-		msgs := []vibekit.Message{
-			{ID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "hi"},
-			{ID: "abc-say", Role: vibekit.RoleAssistant, Ts: 200, Content: "hello"},
+		msgs := []marotte.Message{
+			{ID: "u1", Role: marotte.RoleUser, Ts: 100, Content: "hi"},
+			{ID: "abc-say", Role: marotte.RoleAssistant, Ts: 200, Content: "hello"},
 		}
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"
 			c.Messages = msgs
 			c.CompactionWatermark = watermark
@@ -1017,7 +1017,7 @@ func TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold(t *te
 
 	t.Run("an identical rebuild is not written back", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		const chatID vibekit.ChatID = "c1"
+		const chatID marotte.ChatID = "c1"
 		msgs := seed(t, cs, chatID, "wm-1")
 		before := bufferedSince(h, 0)
 
@@ -1033,7 +1033,7 @@ func TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold(t *te
 	t.Run("a moved watermark is written even when the messages match", func(t *testing.T) {
 		logs := captureLogs(t)
 		h, cs, _ := newTestHub()
-		const chatID vibekit.ChatID = "c1"
+		const chatID marotte.ChatID = "c1"
 		msgs := seed(t, cs, chatID, "wm-1")
 
 		h.replay.swapProjectedTranscript(chatID, msgs, "wm-2")
@@ -1044,7 +1044,7 @@ func TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold(t *te
 		}
 		if chat.CompactionWatermark != "wm-2" {
 			t.Errorf("watermark = %q, want %q; the replay's compaction point was dropped, so "+
-				"vibekit keeps compacting from a window KAS has already moved past",
+				"marotte keeps compacting from a window KAS has already moved past",
 				chat.CompactionWatermark, "wm-2")
 		}
 		// The swap reports itself, and reports nothing about failing.
@@ -1060,18 +1060,18 @@ func TestSwapProjectedTranscript_WritesOnlyWhatTheRecordDoesNotAlreadyHold(t *te
 
 // swapTestProjection is the two-message transcript the announce tests swap in. Its
 // ids differ from loadedChat's seed (which holds none), so the merge changes the set.
-func swapTestProjection() []vibekit.Message {
-	return []vibekit.Message{
-		{ID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "resume"},
-		{ID: "abc-say", Role: vibekit.RoleAssistant, Ts: 200, Content: "resumed"},
+func swapTestProjection() []marotte.Message {
+	return []marotte.Message{
+		{ID: "u1", Role: marotte.RoleUser, Ts: 100, Content: "resume"},
+		{ID: "abc-say", Role: marotte.RoleAssistant, Ts: 200, Content: "resumed"},
 	}
 }
 
 // eventFor returns the first buffered event of the given type, decoded.
-func eventFor(t *testing.T, events []sse.ReplayEvent, want vibekit.EventType) (vibekit.ServerEvent, bool) {
+func eventFor(t *testing.T, events []sse.ReplayEvent, want marotte.EventType) (marotte.ServerEvent, bool) {
 	t.Helper()
 	for _, e := range events {
-		var msg vibekit.ServerEvent
+		var msg marotte.ServerEvent
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
@@ -1079,7 +1079,7 @@ func eventFor(t *testing.T, events []sse.ReplayEvent, want vibekit.EventType) (v
 			return msg, true
 		}
 	}
-	return vibekit.ServerEvent{}, false
+	return marotte.ServerEvent{}, false
 }
 
 // TestSwapProjectedTranscript_AnnouncesTheReplacement covers the one thing no other
@@ -1093,7 +1093,7 @@ func eventFor(t *testing.T, events []sse.ReplayEvent, want vibekit.EventType) (v
 // before the fetch instruction, or the instruction lands against a count of zero.
 func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
 	h, cs, _ := newTestHub()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	// The tangent's own shape: a name and a session id, no messages.
 	loadedChat(t, cs, chatID)
 	before := bufferedSince(h, 0)
@@ -1105,16 +1105,16 @@ func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
 
 	events := bufferedSince(h, before[len(before)-1].Offset)
 	got := extractTypes(t, events)
-	if !slices.Contains(got, string(vibekit.EventSubjectChanged)) {
+	if !slices.Contains(got, string(marotte.EventSubjectChanged)) {
 		t.Fatalf("the swap broadcast %v and never told the client to refetch; a client whose "+
 			"window is already marked loaded has nothing to refetch on", got)
 	}
-	if hdr, repl := slices.Index(got, string(vibekit.EventChatUpdated)),
-		slices.Index(got, string(vibekit.EventSubjectChanged)); hdr > repl {
+	if hdr, repl := slices.Index(got, string(marotte.EventChatUpdated)),
+		slices.Index(got, string(marotte.EventSubjectChanged)); hdr > repl {
 		t.Errorf("frames arrived %v; the header must precede the fetch instruction, or the client "+
 			"refetches against a message count it has not been told about yet", got)
 	}
-	ev, ok := eventFor(t, events, vibekit.EventSubjectChanged)
+	ev, ok := eventFor(t, events, marotte.EventSubjectChanged)
 	if !ok {
 		t.Fatal("the fetch instruction vanished between two reads of the same buffer")
 	}
@@ -1146,10 +1146,10 @@ func TestSwapProjectedTranscript_AnnouncesTheReplacement(t *testing.T) {
 // without touching the message set, so the record IS rewritten and a header does go
 // out — but nothing was replaced, so there is nothing for a client to refetch.
 func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testing.T) {
-	seed := func(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, watermark string) []vibekit.Message {
+	seed := func(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID, watermark string) []marotte.Message {
 		t.Helper()
 		msgs := swapTestProjection()
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"
 			c.Messages = msgs
 			c.CompactionWatermark = watermark
@@ -1162,7 +1162,7 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 
 	t.Run("an identical rebuild announces nothing", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		const chatID vibekit.ChatID = "c1"
+		const chatID marotte.ChatID = "c1"
 		msgs := seed(t, cs, chatID, "wm-1")
 		before := bufferedSince(h, 0)
 		if len(before) == 0 {
@@ -1172,7 +1172,7 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 		h.replay.swapProjectedTranscript(chatID, msgs, "wm-1")
 
 		got := extractTypes(t, bufferedSince(h, before[len(before)-1].Offset))
-		if slices.Contains(got, string(vibekit.EventSubjectChanged)) {
+		if slices.Contains(got, string(marotte.EventSubjectChanged)) {
 			t.Errorf("a replay that changed nothing told the client to refetch (%v); every resumed "+
 				"tab would refetch its whole transcript for a swap that replaced nothing", got)
 		}
@@ -1180,7 +1180,7 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 
 	t.Run("a moved watermark alone announces nothing", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		const chatID vibekit.ChatID = "c1"
+		const chatID marotte.ChatID = "c1"
 		msgs := seed(t, cs, chatID, "wm-1")
 		before := bufferedSince(h, 0)
 		if len(before) == 0 {
@@ -1190,11 +1190,11 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 		h.replay.swapProjectedTranscript(chatID, msgs, "wm-2")
 
 		got := extractTypes(t, bufferedSince(h, before[len(before)-1].Offset))
-		if !slices.Contains(got, string(vibekit.EventChatUpdated)) {
+		if !slices.Contains(got, string(marotte.EventChatUpdated)) {
 			t.Fatalf("the watermark move wrote no record (%v), so this case is not measuring "+
 				"what it claims to", got)
 		}
-		if slices.Contains(got, string(vibekit.EventSubjectChanged)) {
+		if slices.Contains(got, string(marotte.EventSubjectChanged)) {
 			t.Errorf("a watermark-only move told the client to refetch (%v); the message set is "+
 				"unchanged, so there is nothing for a reader to refetch", got)
 		}
@@ -1210,15 +1210,15 @@ func TestSwapProjectedTranscript_AnnouncesNothingWhenTheSetIsUnchanged(t *testin
 // the replayed window contributes nothing and the projection is the whole result.
 func TestSwapProjectedTranscript_ReplacesASameLengthSet(t *testing.T) {
 	h, cs, _ := newTestHub()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 
 	// Two rows the merge cannot preserve: ordinary roles, no plan shape, both timestamps
 	// inside the projection's window.
-	stale := []vibekit.Message{
-		{ID: "old-u1", Role: vibekit.RoleUser, Ts: 100, Content: "resume"},
-		{ID: "old-say", Role: vibekit.RoleAssistant, Ts: 200, Content: "resumed"},
+	stale := []marotte.Message{
+		{ID: "old-u1", Role: marotte.RoleUser, Ts: 100, Content: "resume"},
+		{ID: "old-say", Role: marotte.RoleAssistant, Ts: 200, Content: "resumed"},
 	}
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = stale
 		c.CompactionWatermark = "wm-1"
@@ -1249,7 +1249,7 @@ func TestSwapProjectedTranscript_ReplacesASameLengthSet(t *testing.T) {
 	}
 
 	got := extractTypes(t, bufferedSince(h, before[len(before)-1].Offset))
-	if !slices.Contains(got, string(vibekit.EventSubjectChanged)) {
+	if !slices.Contains(got, string(marotte.EventSubjectChanged)) {
 		t.Errorf("a swap that replaced every row announced %v; the row count is unchanged, so "+
 			"a reader told only the count refetches nothing", got)
 	}
@@ -1263,11 +1263,11 @@ func TestSwapProjectedTranscript_ReplacesASameLengthSet(t *testing.T) {
 // transcript already merged in memory. It needs the REAL store: the recording
 // fake ignores its context, so the assertion holds against it either way.
 func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	h, cs := hubOnDisk(t, chatID)
-	projected := []vibekit.Message{
-		{ID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "resume"},
-		{ID: "abc-say", Role: vibekit.RoleAssistant, Ts: 200, Content: "the turn KAS still held"},
+	projected := []marotte.Message{
+		{ID: "u1", Role: marotte.RoleUser, Ts: 100, Content: "resume"},
+		{ID: "abc-say", Role: marotte.RoleAssistant, Ts: 200, Content: "the turn KAS still held"},
 	}
 
 	h.lifecycle.shutdownCancel()
@@ -1291,25 +1291,25 @@ func TestSwapProjectedTranscript_WritesOnACancelledLifetime(t *testing.T) {
 // pairs, and what each counter counts. The record row carries stamps only this process
 // measured; the projected row carries what the agent stated.
 func TestMergeProjection_Union(t *testing.T) {
-	// rec is a persisted assistant row: KAS's id in KASMessageID, vibekit's own in ID,
+	// rec is a persisted assistant row: KAS's id in KASMessageID, marotte's own in ID,
 	// plus the three stamps no replay carries.
-	rec := func(id, kasID, content string, ts int64) vibekit.Message {
-		return vibekit.Message{
-			ID: id, KASMessageID: kasID, Role: vibekit.RoleAssistant, Ts: ts,
+	rec := func(id, kasID, content string, ts int64) marotte.Message {
+		return marotte.Message{
+			ID: id, KASMessageID: kasID, Role: marotte.RoleAssistant, Ts: ts,
 			Content: content, TurnModel: "opus-5", TurnElapsedMs: 1683,
-			ChangedFiles: map[string]*vibekit.FileChange{"a.go": {LinesAdded: 3}},
+			ChangedFiles: map[string]*marotte.FileChange{"a.go": {LinesAdded: 3}},
 		}
 	}
-	proj := func(kasID, content string, ts int64) vibekit.Message {
-		return vibekit.Message{
-			ID: kasID, KASMessageID: kasID, Role: vibekit.RoleAssistant, Ts: ts,
-			Content: content, TurnOutcome: vibekit.TurnOutcomeCompleted,
+	proj := func(kasID, content string, ts int64) marotte.Message {
+		return marotte.Message{
+			ID: kasID, KASMessageID: kasID, Role: marotte.RoleAssistant, Ts: ts,
+			Content: content, TurnOutcome: marotte.TurnOutcomeCompleted,
 		}
 	}
 
 	t.Run("a paired row keeps the record's stamps and takes the replay's account", func(t *testing.T) {
-		existing := []vibekit.Message{rec("m-live", "abc-say", "hello", 200)}
-		projected := []vibekit.Message{proj("abc-say", "hello, world", 150)}
+		existing := []marotte.Message{rec("m-live", "abc-say", "hello", 200)}
+		projected := []marotte.Message{proj("abc-say", "hello, world", 150)}
 		got, changed, stats := mergeProjection(existing, projected)
 		if len(got) != 1 {
 			t.Fatalf("merged %d rows, want 1: the turn was duplicated:\n%+v", len(got), got)
@@ -1323,8 +1323,8 @@ func TestMergeProjection_Union(t *testing.T) {
 		if got[0].TurnModel != "opus-5" || got[0].TurnElapsedMs != 1683 || len(got[0].ChangedFiles) != 1 {
 			t.Errorf("the record's stamps did not survive the union: %+v", got[0])
 		}
-		if got[0].TurnOutcome != vibekit.TurnOutcomeCompleted {
-			t.Errorf("TurnOutcome = %q, want the replay's %q", got[0].TurnOutcome, vibekit.TurnOutcomeCompleted)
+		if got[0].TurnOutcome != marotte.TurnOutcomeCompleted {
+			t.Errorf("TurnOutcome = %q, want the replay's %q", got[0].TurnOutcome, marotte.TurnOutcomeCompleted)
 		}
 		if !changed {
 			t.Error("changed = false over a row whose content and id both moved")
@@ -1334,8 +1334,8 @@ func TestMergeProjection_Union(t *testing.T) {
 	t.Run("a paired row newer than the projection is dropped, not preserved", func(t *testing.T) {
 		// Its Ts is time.Now() at turn end and the twin's is the turn's first frame, so a
 		// paired row is ROUTINELY newer. Preserving it would emit the turn twice.
-		existing := []vibekit.Message{rec("m-live", "abc-say", "hello", 9_999)}
-		projected := []vibekit.Message{proj("abc-say", "hello", 150)}
+		existing := []marotte.Message{rec("m-live", "abc-say", "hello", 9_999)}
+		projected := []marotte.Message{proj("abc-say", "hello", 150)}
 		got, _, stats := mergeProjection(existing, projected)
 		if len(got) != 1 || stats.Paired != 1 || stats.Dropped != 0 {
 			t.Errorf("merged %d rows with stats %+v, want one paired row:\n%+v", len(got), stats, got)
@@ -1344,19 +1344,19 @@ func TestMergeProjection_Union(t *testing.T) {
 
 	t.Run("roles must match, so a notify row and its event twin do not pair", func(t *testing.T) {
 		const id = "notify-8dc94493"
-		existing := []vibekit.Message{{
-			ID: id, Role: vibekit.RoleUser, Ts: 150, Content: "the step asked something",
-			UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateRead,
+		existing := []marotte.Message{{
+			ID: id, Role: marotte.RoleUser, Ts: 150, Content: "the step asked something",
+			UserKind: marotte.UserKindSteer, SteerState: marotte.SteerStateRead,
 		}}
-		projected := []vibekit.Message{{
-			ID: id, Role: vibekit.RoleEvent, EventKind: vibekit.EventStepNotice, Ts: 150,
+		projected := []marotte.Message{{
+			ID: id, Role: marotte.RoleEvent, EventKind: marotte.EventStepNotice, Ts: 150,
 			Content: "the step asked something",
 		}}
 		got, changed, stats := mergeProjection(existing, projected)
 		if stats.Paired != 0 || stats.Replaced != 1 {
 			t.Errorf("stats = %+v, want Paired 0 and Replaced 1", stats)
 		}
-		if len(got) != 1 || got[0].Role != vibekit.RoleEvent {
+		if len(got) != 1 || got[0].Role != marotte.RoleEvent {
 			t.Fatalf("merged %d rows, want the projected event row alone:\n%+v", len(got), got)
 		}
 		if got[0].SteerState != "" {
@@ -1371,14 +1371,14 @@ func TestMergeProjection_Union(t *testing.T) {
 		// The crash case: the process died with a local conclusion and KAS logged no
 		// turn_end, so a per-field union would erase the failure.
 		r := rec("m-live", "abc-say", "partial", 200)
-		r.TurnOutcome = vibekit.TurnOutcomeCancelled
+		r.TurnOutcome = marotte.TurnOutcomeCancelled
 		r.TurnStopReasonRaw = "cancelled"
 		r.TurnTruncated = true
 		r.TurnFailureReason = "the reader cancelled"
 		p := proj("abc-say", "partial", 150)
 		p.TurnOutcome = ""
-		got, _, _ := mergeProjection([]vibekit.Message{r}, []vibekit.Message{p})
-		if got[0].TurnOutcome != vibekit.TurnOutcomeCancelled || got[0].TurnStopReasonRaw != "cancelled" ||
+		got, _, _ := mergeProjection([]marotte.Message{r}, []marotte.Message{p})
+		if got[0].TurnOutcome != marotte.TurnOutcomeCancelled || got[0].TurnStopReasonRaw != "cancelled" ||
 			!got[0].TurnTruncated || got[0].TurnFailureReason != "the reader cancelled" {
 			t.Errorf("the conclusion unit did not survive an outcome-less replay: %+v", got[0])
 		}
@@ -1386,11 +1386,11 @@ func TestMergeProjection_Union(t *testing.T) {
 
 	t.Run("a clean replayed outcome takes the reason with it", func(t *testing.T) {
 		r := rec("m-live", "abc-say", "hi", 200)
-		r.TurnOutcome = vibekit.TurnOutcomeCancelled
+		r.TurnOutcome = marotte.TurnOutcomeCancelled
 		r.TurnFailureReason = "the reader cancelled"
-		got, _, _ := mergeProjection([]vibekit.Message{r}, []vibekit.Message{proj("abc-say", "hi", 150)})
-		if got[0].TurnOutcome != vibekit.TurnOutcomeCompleted {
-			t.Errorf("TurnOutcome = %q, want the replay's %q", got[0].TurnOutcome, vibekit.TurnOutcomeCompleted)
+		got, _, _ := mergeProjection([]marotte.Message{r}, []marotte.Message{proj("abc-say", "hi", 150)})
+		if got[0].TurnOutcome != marotte.TurnOutcomeCompleted {
+			t.Errorf("TurnOutcome = %q, want the replay's %q", got[0].TurnOutcome, marotte.TurnOutcomeCompleted)
 		}
 		if got[0].TurnFailureReason != "" {
 			t.Errorf("TurnFailureReason = %q, want empty: a completed turn cannot carry a failure sentence",
@@ -1400,12 +1400,12 @@ func TestMergeProjection_Union(t *testing.T) {
 
 	t.Run("a non-clean replayed outcome keeps the record's reason", func(t *testing.T) {
 		r := rec("m-live", "abc-say", "hi", 200)
-		r.TurnOutcome = vibekit.TurnOutcomeCancelled
+		r.TurnOutcome = marotte.TurnOutcomeCancelled
 		r.TurnFailureReason = "the reader cancelled"
 		p := proj("abc-say", "hi", 150)
-		p.TurnOutcome = vibekit.TurnOutcomeFailed
-		got, _, _ := mergeProjection([]vibekit.Message{r}, []vibekit.Message{p})
-		if got[0].TurnOutcome != vibekit.TurnOutcomeFailed || got[0].TurnFailureReason != "the reader cancelled" {
+		p.TurnOutcome = marotte.TurnOutcomeFailed
+		got, _, _ := mergeProjection([]marotte.Message{r}, []marotte.Message{p})
+		if got[0].TurnOutcome != marotte.TurnOutcomeFailed || got[0].TurnFailureReason != "the reader cancelled" {
 			t.Errorf("outcome %q with reason %q, want error carrying the record's only reason",
 				got[0].TurnOutcome, got[0].TurnFailureReason)
 		}
@@ -1414,12 +1414,12 @@ func TestMergeProjection_Union(t *testing.T) {
 	t.Run("a user row keeps the record's content and an assistant row takes the replay's", func(t *testing.T) {
 		// BuildPromptBlocks appends a path reference per attachment it could not inline, so
 		// the replay's user text can hold machine-added words the reader never typed.
-		existing := []vibekit.Message{
-			{ID: "u1", KASMessageID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "read this"},
+		existing := []marotte.Message{
+			{ID: "u1", KASMessageID: "u1", Role: marotte.RoleUser, Ts: 100, Content: "read this"},
 			rec("m-live", "abc-say", "old", 200),
 		}
-		projected := []vibekit.Message{
-			{ID: "u1", KASMessageID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "read this\n\n[file: /workspace/a.go]"},
+		projected := []marotte.Message{
+			{ID: "u1", KASMessageID: "u1", Role: marotte.RoleUser, Ts: 100, Content: "read this\n\n[file: /workspace/a.go]"},
 			proj("abc-say", "new", 200),
 		}
 		got, _, _ := mergeProjection(existing, projected)
@@ -1432,41 +1432,41 @@ func TestMergeProjection_Union(t *testing.T) {
 	})
 
 	t.Run("the record's steer state outranks a projected inference", func(t *testing.T) {
-		existing := []vibekit.Message{{
-			ID: "steer-1", Role: vibekit.RoleUser, Ts: 150, Content: "target main",
-			UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateRead,
-			SteerOrigin: vibekit.SteerOriginUser,
+		existing := []marotte.Message{{
+			ID: "steer-1", Role: marotte.RoleUser, Ts: 150, Content: "target main",
+			UserKind: marotte.UserKindSteer, SteerState: marotte.SteerStateRead,
+			SteerOrigin: marotte.SteerOriginUser,
 		}}
-		projected := []vibekit.Message{{
-			ID: "steer-1", Role: vibekit.RoleUser, Ts: 150, Content: "target main",
-			UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateDropped,
+		projected := []marotte.Message{{
+			ID: "steer-1", Role: marotte.RoleUser, Ts: 150, Content: "target main",
+			UserKind: marotte.UserKindSteer, SteerState: marotte.SteerStateDropped,
 		}}
 		got, _, stats := mergeProjection(existing, projected)
 		if stats.Paired != 1 {
 			t.Fatalf("stats = %+v, want the steer row paired", stats)
 		}
-		if got[0].SteerState != vibekit.SteerStateRead || got[0].SteerOrigin != vibekit.SteerOriginUser {
+		if got[0].SteerState != marotte.SteerStateRead || got[0].SteerOrigin != marotte.SteerOriginUser {
 			t.Errorf("steer facts = {%q, %q}, want the record's {read, user}: an undelivered correction must not read as landed",
 				got[0].SteerState, got[0].SteerOrigin)
 		}
 	})
 
 	t.Run("a record steer row with no state takes the projected inference", func(t *testing.T) {
-		existing := []vibekit.Message{{
-			ID: "steer-1", Role: vibekit.RoleUser, Ts: 150, Content: "target main",
-			UserKind: vibekit.UserKindSteer,
+		existing := []marotte.Message{{
+			ID: "steer-1", Role: marotte.RoleUser, Ts: 150, Content: "target main",
+			UserKind: marotte.UserKindSteer,
 		}}
-		projected := []vibekit.Message{{
-			ID: "steer-1", Role: vibekit.RoleUser, Ts: 150, Content: "target main",
-			UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateDropped,
+		projected := []marotte.Message{{
+			ID: "steer-1", Role: marotte.RoleUser, Ts: 150, Content: "target main",
+			UserKind: marotte.UserKindSteer, SteerState: marotte.SteerStateDropped,
 		}}
 		got, changed, stats := mergeProjection(existing, projected)
 		if stats.Paired != 1 {
 			t.Fatalf("stats = %+v, want the steer row paired", stats)
 		}
-		if got[0].SteerState != vibekit.SteerStateDropped {
+		if got[0].SteerState != marotte.SteerStateDropped {
 			t.Errorf("SteerState = %q, want %q: an absent state is not a state, and an unstamped row renders as delivered",
-				got[0].SteerState, vibekit.SteerStateDropped)
+				got[0].SteerState, marotte.SteerStateDropped)
 		}
 		if !changed {
 			t.Error("changed = false, want true: the stamp has to reach the store or the reader never sees it")
@@ -1474,8 +1474,8 @@ func TestMergeProjection_Union(t *testing.T) {
 	})
 
 	t.Run("a second projected row under one key takes no stamps", func(t *testing.T) {
-		existing := []vibekit.Message{rec("m-live", "abc-say", "hello", 200)}
-		projected := []vibekit.Message{
+		existing := []marotte.Message{rec("m-live", "abc-say", "hello", 200)}
+		projected := []marotte.Message{
 			proj("abc-say", "first", 150),
 			proj("abc-say", "second", 160),
 		}
@@ -1497,11 +1497,11 @@ func TestMergeProjection_Union(t *testing.T) {
 	t.Run("a paired compaction event is emitted once, byte-equal to the record's", func(t *testing.T) {
 		// It pairs through the ID fallback, so it is CONSUMED and never reaches
 		// preserveExisting — which would have dropped it, the replay having produced one.
-		row := vibekit.Message{
-			ID: "m1-compacted", Role: vibekit.RoleEvent, EventKind: vibekit.EventCompacted,
+		row := marotte.Message{
+			ID: "m1-compacted", Role: marotte.RoleEvent, EventKind: marotte.EventCompacted,
 			Ts: 100, Content: "## Goal",
 		}
-		got, changed, stats := mergeProjection([]vibekit.Message{row}, []vibekit.Message{row})
+		got, changed, stats := mergeProjection([]marotte.Message{row}, []marotte.Message{row})
 		if len(got) != 1 || stats.Paired != 1 || stats.Dropped != 0 {
 			t.Fatalf("merged %d rows with stats %+v, want one paired row:\n%+v", len(got), stats, got)
 		}
@@ -1514,8 +1514,8 @@ func TestMergeProjection_Union(t *testing.T) {
 	})
 
 	t.Run("paired counts 0 for a record that carries no agent-side id", func(t *testing.T) {
-		existing := []vibekit.Message{rec("m-live", "", "hello", 100)}
-		projected := []vibekit.Message{proj("abc-say", "hello", 150)}
+		existing := []marotte.Message{rec("m-live", "", "hello", 100)}
+		projected := []marotte.Message{proj("abc-say", "hello", 150)}
 		_, _, stats := mergeProjection(existing, projected)
 		if stats.Paired != 0 || stats.Added != 1 || stats.Dropped != 1 {
 			t.Errorf("stats = %+v, want Paired 0, Added 1, Dropped 1 for a legacy row", stats)
@@ -1525,8 +1525,8 @@ func TestMergeProjection_Union(t *testing.T) {
 	t.Run("replaced counts a projected row that took an id without pairing", func(t *testing.T) {
 		// Same id, roles differ, so it is a replacement rather than a pairing: the row
 		// count does not grow and the id is still there.
-		existing := []vibekit.Message{{ID: "abc-say", Role: vibekit.RoleUser, Ts: 100, Content: "hi"}}
-		projected := []vibekit.Message{proj("abc-say", "hi", 100)}
+		existing := []marotte.Message{{ID: "abc-say", Role: marotte.RoleUser, Ts: 100, Content: "hi"}}
+		projected := []marotte.Message{proj("abc-say", "hi", 100)}
 		_, changed, stats := mergeProjection(existing, projected)
 		if stats.Replaced != 1 || stats.Paired != 0 || stats.Added != 0 || stats.Dropped != 0 {
 			t.Errorf("stats = %+v, want Replaced 1 and nothing else", stats)
@@ -1541,8 +1541,8 @@ func TestMergeProjection_Union(t *testing.T) {
 		r := rec("abc-say", "abc-say", "hello", 150)
 		p := proj("abc-say", "hello", 150)
 		p.TurnCredits = 0.115
-		got, changed, stats := mergeProjection([]vibekit.Message{r}, []vibekit.Message{p})
-		if stats.Paired != 1 || !sameMessageIDs([]vibekit.Message{r}, got) {
+		got, changed, stats := mergeProjection([]marotte.Message{r}, []marotte.Message{p})
+		if stats.Paired != 1 || !sameMessageIDs([]marotte.Message{r}, got) {
 			t.Fatalf("fixture moved the id sequence, so it does not isolate a field difference: %+v", got)
 		}
 		if !changed {
@@ -1554,26 +1554,26 @@ func TestMergeProjection_Union(t *testing.T) {
 // TestMergeProjection_UnionToolCalls covers the sub-pairing: one statement per call, from
 // the side that measured it.
 func TestMergeProjection_UnionToolCalls(t *testing.T) {
-	recRow := func(calls ...vibekit.ToolCall) vibekit.Message {
-		return vibekit.Message{
-			ID: "m-live", KASMessageID: "abc-say", Role: vibekit.RoleAssistant, Ts: 200,
+	recRow := func(calls ...marotte.ToolCall) marotte.Message {
+		return marotte.Message{
+			ID: "m-live", KASMessageID: "abc-say", Role: marotte.RoleAssistant, Ts: 200,
 			Content: "ran it", ToolCalls: calls,
 		}
 	}
-	projRow := func(calls ...vibekit.ToolCall) vibekit.Message {
-		return vibekit.Message{
-			ID: "abc-say", KASMessageID: "abc-say", Role: vibekit.RoleAssistant, Ts: 150,
+	projRow := func(calls ...marotte.ToolCall) marotte.Message {
+		return marotte.Message{
+			ID: "abc-say", KASMessageID: "abc-say", Role: marotte.RoleAssistant, Ts: 150,
 			Content: "ran it", ToolCalls: calls,
 		}
 	}
 
 	t.Run("a paired call keeps the duration and terminal the record measured", func(t *testing.T) {
-		existing := []vibekit.Message{recRow(vibekit.ToolCall{
-			ID: "t1", Title: "old title", Status: vibekit.ToolCompleted,
+		existing := []marotte.Message{recRow(marotte.ToolCall{
+			ID: "t1", Title: "old title", Status: marotte.ToolCompleted,
 			DurationMs: 4210, TerminalID: "term-9",
 		})}
-		projected := []vibekit.Message{projRow(vibekit.ToolCall{
-			ID: "t1", Title: "Run command", Status: vibekit.ToolCompleted,
+		projected := []marotte.Message{projRow(marotte.ToolCall{
+			ID: "t1", Title: "Run command", Status: marotte.ToolCompleted,
 			WorkflowID: "wf_1",
 		})}
 		got, _, _ := mergeProjection(existing, projected)
@@ -1592,19 +1592,19 @@ func TestMergeProjection_UnionToolCalls(t *testing.T) {
 	t.Run("a tool-free paired row yields a NIL call list", func(t *testing.T) {
 		// Empty-non-nil is a write plus a subject_changed on every load: DeepEqual
 		// distinguishes the two and the store omits tool_calls under omitempty.
-		got, _, _ := mergeProjection([]vibekit.Message{recRow()}, []vibekit.Message{projRow()})
+		got, _, _ := mergeProjection([]marotte.Message{recRow()}, []marotte.Message{projRow()})
 		if got[0].ToolCalls != nil {
 			t.Errorf("ToolCalls = %#v, want nil", got[0].ToolCalls)
 		}
 	})
 
 	t.Run("two projected calls under one id copy the record's stamps once", func(t *testing.T) {
-		existing := []vibekit.Message{recRow(vibekit.ToolCall{
-			ID: "t1", Status: vibekit.ToolCompleted, DurationMs: 4210,
+		existing := []marotte.Message{recRow(marotte.ToolCall{
+			ID: "t1", Status: marotte.ToolCompleted, DurationMs: 4210,
 		})}
-		projected := []vibekit.Message{projRow(
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted},
+		projected := []marotte.Message{projRow(
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted},
 		)}
 		got, _, _ := mergeProjection(existing, projected)
 		stamped := 0
@@ -1622,26 +1622,26 @@ func TestMergeProjection_UnionToolCalls(t *testing.T) {
 	t.Run("a segmented turn pairs each row with its own segment", func(t *testing.T) {
 		// Two record rows under DIFFERENT keys, a compaction between them: SplitSegment
 		// resets the latch, so each segment names its own record.
-		existing := []vibekit.Message{
+		existing := []marotte.Message{
 			{
-				ID: "m-seg1", KASMessageID: "say-1", Role: vibekit.RoleAssistant, Ts: 100,
-				Content: "before", ToolCalls: []vibekit.ToolCall{{ID: "t1", DurationMs: 11}},
+				ID: "m-seg1", KASMessageID: "say-1", Role: marotte.RoleAssistant, Ts: 100,
+				Content: "before", ToolCalls: []marotte.ToolCall{{ID: "t1", DurationMs: 11}},
 			},
-			{ID: "e1", Role: vibekit.RoleEvent, EventKind: vibekit.EventCompacted, Ts: 150},
+			{ID: "e1", Role: marotte.RoleEvent, EventKind: marotte.EventCompacted, Ts: 150},
 			{
-				ID: "m-seg2", KASMessageID: "say-2", Role: vibekit.RoleAssistant, Ts: 200,
-				Content: "after", ToolCalls: []vibekit.ToolCall{{ID: "t2", DurationMs: 22}},
+				ID: "m-seg2", KASMessageID: "say-2", Role: marotte.RoleAssistant, Ts: 200,
+				Content: "after", ToolCalls: []marotte.ToolCall{{ID: "t2", DurationMs: 22}},
 			},
 		}
-		projected := []vibekit.Message{
+		projected := []marotte.Message{
 			{
-				ID: "say-1", KASMessageID: "say-1", Role: vibekit.RoleAssistant, Ts: 100,
-				Content: "before", ToolCalls: []vibekit.ToolCall{{ID: "t1"}},
+				ID: "say-1", KASMessageID: "say-1", Role: marotte.RoleAssistant, Ts: 100,
+				Content: "before", ToolCalls: []marotte.ToolCall{{ID: "t1"}},
 			},
-			{ID: "e1", Role: vibekit.RoleEvent, EventKind: vibekit.EventCompacted, Ts: 150},
+			{ID: "e1", Role: marotte.RoleEvent, EventKind: marotte.EventCompacted, Ts: 150},
 			{
-				ID: "say-2", KASMessageID: "say-2", Role: vibekit.RoleAssistant, Ts: 200,
-				Content: "after", ToolCalls: []vibekit.ToolCall{{ID: "t2"}},
+				ID: "say-2", KASMessageID: "say-2", Role: marotte.RoleAssistant, Ts: 200,
+				Content: "after", ToolCalls: []marotte.ToolCall{{ID: "t2"}},
 			},
 		}
 		got, _, stats := mergeProjection(existing, projected)
@@ -1659,15 +1659,15 @@ func TestMergeProjection_UnionToolCalls(t *testing.T) {
 // whichever side has an outcome. IsOutcome rather than plain terminality is the whole test —
 // `aborted` is minted locally at a close and says NOT KNOWN on either side.
 func TestMergeProjection_OutcomeUnit(t *testing.T) {
-	pair := func(recCall, projCall vibekit.ToolCall) vibekit.ToolCall {
+	pair := func(recCall, projCall marotte.ToolCall) marotte.ToolCall {
 		t.Helper()
-		existing := []vibekit.Message{{
-			ID: "m-live", KASMessageID: "abc-say", Role: vibekit.RoleAssistant, Ts: 200,
-			Content: "ran it", ToolCalls: []vibekit.ToolCall{recCall},
+		existing := []marotte.Message{{
+			ID: "m-live", KASMessageID: "abc-say", Role: marotte.RoleAssistant, Ts: 200,
+			Content: "ran it", ToolCalls: []marotte.ToolCall{recCall},
 		}}
-		projected := []vibekit.Message{{
-			ID: "abc-say", KASMessageID: "abc-say", Role: vibekit.RoleAssistant, Ts: 150,
-			Content: "ran it", ToolCalls: []vibekit.ToolCall{projCall},
+		projected := []marotte.Message{{
+			ID: "abc-say", KASMessageID: "abc-say", Role: marotte.RoleAssistant, Ts: 150,
+			Content: "ran it", ToolCalls: []marotte.ToolCall{projCall},
 		}}
 		got, _, stats := mergeProjection(existing, projected)
 		if stats.Paired != 1 || len(got) != 1 || len(got[0].ToolCalls) != 1 {
@@ -1678,23 +1678,23 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 
 	t.Run("a settled record call refuses a replayed non-terminal one", func(t *testing.T) {
 		got := pair(
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Output: "real output"},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolAborted},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Output: "real output"},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolAborted},
 		)
-		if got.Status != vibekit.ToolCompleted || got.Output != "real output" {
+		if got.Status != marotte.ToolCompleted || got.Output != "real output" {
 			t.Errorf("call = {%q, %q}, want the record's completed outcome and its output",
 				got.Status, got.Output)
 		}
 	})
 
 	t.Run("an aborted record call is UPGRADED by a replayed outcome", func(t *testing.T) {
-		// aborted is vibekit's own word for a call nothing could settle, so refusing the
+		// aborted is marotte's own word for a call nothing could settle, so refusing the
 		// replay's completed would render a tool that ran and succeeded as stopped, forever.
 		got := pair(
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolAborted, TerminalID: "term-9"},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Output: "the real result", DurationMs: 812},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolAborted, TerminalID: "term-9"},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Output: "the real result", DurationMs: 812},
 		)
-		if got.Status != vibekit.ToolCompleted || got.Output != "the real result" {
+		if got.Status != marotte.ToolCompleted || got.Output != "the real result" {
 			t.Errorf("call = {%q, %q}, want the replay's completed outcome and its output",
 				got.Status, got.Output)
 		}
@@ -1710,15 +1710,15 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 	t.Run("neither side has an outcome, so only the status moves", func(t *testing.T) {
 		// A projected aborted call carries no output at all, so handing it the unit would
 		// replace the record's own fragment with nothing.
-		spans := []vibekit.TextSpan{{Start: 0, End: 4}}
+		spans := []marotte.TextSpan{{Start: 0, End: 4}}
 		got := pair(
-			vibekit.ToolCall{
-				ID: "t1", Status: vibekit.ToolInProgress, Output: "frag",
-				OutputSpans: spans, Truncated: &vibekit.ToolTruncation{OutputBytes: 9000},
+			marotte.ToolCall{
+				ID: "t1", Status: marotte.ToolInProgress, Output: "frag",
+				OutputSpans: spans, Truncated: &marotte.ToolTruncation{OutputBytes: 9000},
 			},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolAborted},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolAborted},
 		)
-		if got.Status != vibekit.ToolAborted {
+		if got.Status != marotte.ToolAborted {
 			t.Errorf("Status = %q, want aborted: the projection settled a record spinner", got.Status)
 		}
 		if got.Output != "frag" || len(got.OutputSpans) != 1 {
@@ -1730,10 +1730,10 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 	})
 
 	t.Run("the replay's arm keeps the record's diffs against an empty projected slice", func(t *testing.T) {
-		diffs := []vibekit.ToolDiff{{Path: "a.go"}}
+		diffs := []marotte.ToolDiff{{Path: "a.go"}}
 		got := pair(
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolInProgress, Diffs: diffs},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Output: "done"},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolInProgress, Diffs: diffs},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Output: "done"},
 		)
 		if len(got.Diffs) != 1 || got.Diffs[0].Path != "a.go" {
 			t.Errorf("Diffs = %+v, want the record's: the wire sends none, so an empty projected slice states nothing",
@@ -1743,10 +1743,10 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 
 	t.Run("both sides report an outcome, so the record's unit stands", func(t *testing.T) {
 		got := pair(
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolFailed, Output: "record's"},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Output: "replay's"},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolFailed, Output: "record's"},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Output: "replay's"},
 		)
-		if got.Status != vibekit.ToolFailed || got.Output != "record's" {
+		if got.Status != marotte.ToolFailed || got.Output != "record's" {
 			t.Errorf("call = {%q, %q}, want the record's: a disagreement is the two paths reading ONE tool_result",
 				got.Status, got.Output)
 		}
@@ -1754,12 +1754,12 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 
 	t.Run("a cut input keeps its marker while the replaced output's cut goes", func(t *testing.T) {
 		got := pair(
-			vibekit.ToolCall{
-				ID: "t1", Status: vibekit.ToolInProgress, Output: "frag",
+			marotte.ToolCall{
+				ID: "t1", Status: marotte.ToolInProgress, Output: "frag",
 				Input:     json.RawMessage(`{"cmd":"…"}`),
-				Truncated: &vibekit.ToolTruncation{OutputBytes: 9000, InputBytes: 4096},
+				Truncated: &marotte.ToolTruncation{OutputBytes: 9000, InputBytes: 4096},
 			},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Output: "whole output"},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Output: "whole output"},
 		)
 		if got.Truncated == nil {
 			t.Fatal("Truncated = nil, want the input's cut record kept")
@@ -1776,13 +1776,13 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 
 	t.Run("a replayed diff set drops the record's diff cut record", func(t *testing.T) {
 		got := pair(
-			vibekit.ToolCall{
-				ID: "t1", Status: vibekit.ToolInProgress,
-				Truncated: &vibekit.ToolTruncation{InputBytes: 4096, DiffBytes: 80_000, DiffCount: 12},
+			marotte.ToolCall{
+				ID: "t1", Status: marotte.ToolInProgress,
+				Truncated: &marotte.ToolTruncation{InputBytes: 4096, DiffBytes: 80_000, DiffCount: 12},
 			},
-			vibekit.ToolCall{
-				ID: "t1", Status: vibekit.ToolCompleted,
-				Diffs: []vibekit.ToolDiff{{Path: "a.go"}},
+			marotte.ToolCall{
+				ID: "t1", Status: marotte.ToolCompleted,
+				Diffs: []marotte.ToolDiff{{Path: "a.go"}},
 			},
 		)
 		if len(got.Diffs) != 1 {
@@ -1799,11 +1799,11 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 
 	t.Run("nothing survives the cut record, so it is nil rather than a zero pointer", func(t *testing.T) {
 		got := pair(
-			vibekit.ToolCall{
-				ID: "t1", Status: vibekit.ToolInProgress,
-				Truncated: &vibekit.ToolTruncation{OutputBytes: 9000},
+			marotte.ToolCall{
+				ID: "t1", Status: marotte.ToolInProgress,
+				Truncated: &marotte.ToolTruncation{OutputBytes: 9000},
 			},
-			vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Output: "whole"},
+			marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Output: "whole"},
 		)
 		if got.Truncated != nil {
 			t.Errorf("Truncated = %+v, want nil: DeepEqual distinguishes it from a zero pointer and the store omits it",
@@ -1817,8 +1817,8 @@ func TestMergeProjection_OutcomeUnit(t *testing.T) {
 // sees neither the indentation and HTML escaping the write applies nor the input the write
 // cuts, which is how a green test shipped beside a live defect twice in this chain.
 func TestMergeProjection_InputGates(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
-	roundTrip := func(t *testing.T, call vibekit.ToolCall) []vibekit.Message {
+	const chatID marotte.ChatID = "c1"
+	roundTrip := func(t *testing.T, call marotte.ToolCall) []marotte.Message {
 		t.Helper()
 		cs, err := chat.NewStore(t.TempDir())
 		if err != nil {
@@ -1827,12 +1827,12 @@ func TestMergeProjection_InputGates(t *testing.T) {
 		// The SECOND-load shape: after one load the merged row's ID is already the
 		// projected id and its Ts the projected one, so Input is the only field that can
 		// differ and `changed` isolates it.
-		row := vibekit.Message{
-			ID: "abc-say", KASMessageID: "abc-say", Role: vibekit.RoleAssistant, Ts: 150,
-			Content: "ran it", ToolCalls: []vibekit.ToolCall{call},
+		row := marotte.Message{
+			ID: "abc-say", KASMessageID: "abc-say", Role: marotte.RoleAssistant, Ts: 150,
+			Content: "ran it", ToolCalls: []marotte.ToolCall{call},
 		}
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
-			c.Messages = []vibekit.Message{row}
+		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
+			c.Messages = []marotte.Message{row}
 			return true
 		}); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -1843,10 +1843,10 @@ func TestMergeProjection_InputGates(t *testing.T) {
 		}
 		return c.Messages
 	}
-	projRow := func(call vibekit.ToolCall) []vibekit.Message {
-		return []vibekit.Message{{
-			ID: "abc-say", KASMessageID: "abc-say", Role: vibekit.RoleAssistant, Ts: 150,
-			Content: "ran it", ToolCalls: []vibekit.ToolCall{call},
+	projRow := func(call marotte.ToolCall) []marotte.Message {
+		return []marotte.Message{{
+			ID: "abc-say", KASMessageID: "abc-say", Role: marotte.RoleAssistant, Ts: 150,
+			Content: "ran it", ToolCalls: []marotte.ToolCall{call},
 		}}
 	}
 
@@ -1854,13 +1854,13 @@ func TestMergeProjection_InputGates(t *testing.T) {
 		// The record's copy is indented with `<` as \u003c; the replay's is the compact wire
 		// bytes. A byte comparison of the two is unequal on EVERY load.
 		wire := json.RawMessage(`{"cmd":"grep -n '<a>' x.go","path":"x.go"}`)
-		existing := roundTrip(t, vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Input: wire})
+		existing := roundTrip(t, marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Input: wire})
 		if bytes.Equal(existing[0].ToolCalls[0].Input, wire) {
 			t.Fatal("the store handed back the wire bytes verbatim, so this fixture does not exercise the normalization")
 		}
 		before := existing[0].ToolCalls[0].Input
 		got, changed, stats := mergeProjection(existing,
-			projRow(vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Input: wire}))
+			projRow(marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Input: wire}))
 		if stats.Paired != 1 {
 			t.Fatalf("stats = %+v, want the row paired", stats)
 		}
@@ -1876,12 +1876,12 @@ func TestMergeProjection_InputGates(t *testing.T) {
 		// The store re-cuts on every write, so overwriting writes, gets re-cut, and repeats.
 		// The FIRST merge is entitled to report a change; the loop shows itself on the next.
 		big := json.RawMessage(`{"content":"` + strings.Repeat("x", 9<<10) + `"}`)
-		existing := roundTrip(t, vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Input: big})
+		existing := roundTrip(t, marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Input: big})
 		cut := existing[0].ToolCalls[0]
 		if cut.Truncated == nil || cut.Truncated.InputBytes == 0 {
 			t.Fatalf("the store did not cut this input, so the fixture exercises nothing: %+v", cut.Truncated)
 		}
-		projected := projRow(vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Input: big})
+		projected := projRow(marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Input: big})
 		merged, _, _ := mergeProjection(existing, projected)
 
 		// Feed the first merge's own result back through the store, as the next load's record.
@@ -1889,7 +1889,7 @@ func TestMergeProjection_InputGates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("chat.NewStore: %v", err)
 		}
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 			c.Messages = merged
 			return true
 		}); err != nil {
@@ -1905,7 +1905,7 @@ func TestMergeProjection_InputGates(t *testing.T) {
 		// sameRawJSON answers len(a) == len(b) when either side is empty, which is FALSE for
 		// a non-empty record input — so without statesInput the record's input is DESTROYED.
 		wire := json.RawMessage(`{"cmd":"ls"}`)
-		existing := roundTrip(t, vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Input: wire})
+		existing := roundTrip(t, marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Input: wire})
 		before := existing[0].ToolCalls[0].Input
 		for _, tc := range []struct {
 			name  string
@@ -1916,7 +1916,7 @@ func TestMergeProjection_InputGates(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				got, changed, _ := mergeProjection(existing,
-					projRow(vibekit.ToolCall{ID: "t1", Status: vibekit.ToolCompleted, Input: tc.input}))
+					projRow(marotte.ToolCall{ID: "t1", Status: marotte.ToolCompleted, Input: tc.input}))
 				if !bytes.Equal(got[0].ToolCalls[0].Input, before) {
 					t.Errorf("Input = %s, want the record's %s", got[0].ToolCalls[0].Input, before)
 				}
@@ -1940,14 +1940,14 @@ func TestMergeProjection_InputGates(t *testing.T) {
 // The property is one-write-then-STABLE rather than zero-write: an over-budget input the
 // record never held is written once, cut by the store, and declined from then on.
 func TestMergeProjection_IdempotentThroughTheStore(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
-	persist := func(t *testing.T, msgs []vibekit.Message) []vibekit.Message {
+	const chatID marotte.ChatID = "c1"
+	persist := func(t *testing.T, msgs []marotte.Message) []marotte.Message {
 		t.Helper()
 		cs, err := chat.NewStore(t.TempDir())
 		if err != nil {
 			t.Fatalf("chat.NewStore: %v", err)
 		}
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 			c.Messages = msgs
 			return true
 		}); err != nil {
@@ -1960,35 +1960,35 @@ func TestMergeProjection_IdempotentThroughTheStore(t *testing.T) {
 		return c.Messages
 	}
 
-	projected := []vibekit.Message{
-		{ID: "u1", KASMessageID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "run it"},
+	projected := []marotte.Message{
+		{ID: "u1", KASMessageID: "u1", Role: marotte.RoleUser, Ts: 100, Content: "run it"},
 		{
-			ID: "say-1", KASMessageID: "say-1", Role: vibekit.RoleAssistant, Ts: 110,
-			Content: "ran it", TurnOutcome: vibekit.TurnOutcomeCompleted,
-			ToolCalls: []vibekit.ToolCall{{
-				ID: "t1", Status: vibekit.ToolCompleted, Title: "Run command",
+			ID: "say-1", KASMessageID: "say-1", Role: marotte.RoleAssistant, Ts: 110,
+			Content: "ran it", TurnOutcome: marotte.TurnOutcomeCompleted,
+			ToolCalls: []marotte.ToolCall{{
+				ID: "t1", Status: marotte.ToolCompleted, Title: "Run command",
 				Input: json.RawMessage(`{"cmd":"grep -n '<a>' x.go"}`), Output: "1:a",
 			}},
 		},
 		// The tool-FREE row: 32 of 1,062 persisted assistant rows carry no calls.
 		{
-			ID: "say-2", KASMessageID: "say-2", Role: vibekit.RoleAssistant, Ts: 120,
-			Content: "and answered", TurnOutcome: vibekit.TurnOutcomeCompleted,
+			ID: "say-2", KASMessageID: "say-2", Role: marotte.RoleAssistant, Ts: 120,
+			Content: "and answered", TurnOutcome: marotte.TurnOutcomeCompleted,
 		},
 	}
-	live := []vibekit.Message{
-		{ID: "u1", KASMessageID: "u1", Role: vibekit.RoleUser, Ts: 100, Content: "run it"},
+	live := []marotte.Message{
+		{ID: "u1", KASMessageID: "u1", Role: marotte.RoleUser, Ts: 100, Content: "run it"},
 		{
-			ID: "m-live-1", KASMessageID: "say-1", Role: vibekit.RoleAssistant, Ts: 111,
+			ID: "m-live-1", KASMessageID: "say-1", Role: marotte.RoleAssistant, Ts: 111,
 			Content: "ran it", TurnModel: "opus-5", TurnElapsedMs: 900,
-			ToolCalls: []vibekit.ToolCall{{
-				ID: "t1", Status: vibekit.ToolCompleted, Title: "Run command",
+			ToolCalls: []marotte.ToolCall{{
+				ID: "t1", Status: marotte.ToolCompleted, Title: "Run command",
 				Input: json.RawMessage(`{"cmd":"grep -n '<a>' x.go"}`), Output: "1:a",
 				DurationMs: 42, TerminalID: "term-1",
 			}},
 		},
 		{
-			ID: "m-live-2", KASMessageID: "say-2", Role: vibekit.RoleAssistant, Ts: 121,
+			ID: "m-live-2", KASMessageID: "say-2", Role: marotte.RoleAssistant, Ts: 121,
 			Content: "and answered", TurnModel: "opus-5",
 		},
 	}

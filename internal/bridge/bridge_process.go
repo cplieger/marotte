@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/procgroup"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/procgroup"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Start launches the kiro-cli subprocess and either creates a new ACP
@@ -28,9 +28,9 @@ import (
 // and is required. The handshake is additionally bounded HERE, by
 // handshakeBudget or replayBudget, so a caller that passes a timer-free context
 // (every caller does) still gets a bounded handshake.
-func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
+func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	// The subprocess outlives this call. Start's ctx bounds the handshake
-	// below; opts.Lifetime bounds the process. See vibekit.StartOpts.Lifetime for
+	// below; opts.Lifetime bounds the process. See marotte.StartOpts.Lifetime for
 	// what taking the process lifetime from a turn context measured like, and
 	// for why the field is required rather than defaulted here.
 	if opts.Lifetime == nil {
@@ -219,12 +219,12 @@ func (b *Bridge) Stop() {
 // four config appliers also sit inside this window.
 //
 // Deliberately NOT sized against the MCP-server initialization KiroCrew's own 90s
-// floor was chosen for: vibekit sends `mcpServers: []` and KAS reads the user's
+// floor was chosen for: marotte sends `mcpServers: []` and KAS reads the user's
 // servers from its own config file, so that work is out of band here and is
 // already bounded by the prompt path's own 30s readiness wait.
 //
 // It must also stay well under the client's command timeout, so the SERVER is
-// what answers first and the user gets vibekit's own actionable message rather
+// what answers first and the user gets marotte's own actionable message rather
 // than a bare browser abort.
 var handshakeBudget = 120 * time.Second
 
@@ -297,10 +297,10 @@ func localeEnv() []string {
 }
 
 // buildACPArgs assembles the kiro-cli ACP invocation. The relay owns
-// authentication, so KAS never sends the access-token request to vibekit.
+// authentication, so KAS never sends the access-token request to marotte.
 func buildACPArgs(engine string) []string {
 	if engine == "" {
-		engine = vibekit.AgentEngineV3
+		engine = marotte.AgentEngineV3
 	}
 	return []string{"acp", "--agent-engine", engine, "--auth-method", "cli"}
 }
@@ -316,7 +316,7 @@ func (b *Bridge) startProcess(engine string) error {
 	}
 	// Operator flags land AFTER the derived ones, so a launch flag is an
 	// initial value rather than an override in either direction: kiro-cli takes
-	// the last spelling of a repeated flag, and vibekit's own switch_model /
+	// the last spelling of a repeated flag, and marotte's own switch_model /
 	// set_effort commands still win afterwards via session/set_config_option.
 	// Already filtered (see acp_args.go) — never trust this slice to be safe
 	// because it came through StartOpts.
@@ -327,7 +327,7 @@ func (b *Bridge) startProcess(engine string) error {
 	// this is non-nil by construction and needs no fallback — the
 	// context.Background() one that used to live here was a second
 	// uncancellable substitution behind Start's own. It is never a request or
-	// turn context — see vibekit.StartOpts.Lifetime.
+	// turn context — see marotte.StartOpts.Lifetime.
 	b.cmd = exec.CommandContext(b.lifecycleCtx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	// Own process group, so teardown can reclaim the whole tree. Closing stdin
 	// first is still what gives kiro-cli a chance to exit on its own, but it is
@@ -365,7 +365,7 @@ func (b *Bridge) startProcess(engine string) error {
 	// teardown remain instantaneous; this path only fires if Stop races or
 	// panics during agent shutdown.
 	//
-	// Closing stdin FIRST is what makes the grace period mean anything: vibekit
+	// Closing stdin FIRST is what makes the grace period mean anything: marotte
 	// spawns `kiro-cli acp` on pipes and the head passes its stdio down, so the
 	// tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) shares one session and
 	// closing our write end delivers EOF to the entire chain, letting kiro-cli
@@ -421,7 +421,7 @@ func (b *Bridge) startProcess(engine string) error {
 // source field. Keeps kiro-cli crash traces + rate-limit notices in
 // Loki with proper level tags so alert rules keyed on level="error"
 // and dashboards filtering by source work. Also prevents kiro-cli
-// from forging slog-shaped JSON into vibekit's stderr by ensuring
+// from forging slog-shaped JSON into marotte's stderr by ensuring
 // every line travels through a structured logger.
 //
 // Classification strategy (in priority order):

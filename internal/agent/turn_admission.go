@@ -11,12 +11,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // reserveLocked takes the admission slot iff it is free. Caller holds mu.
-func (lc *chatLifecycle) reserveLocked(source vibekit.TurnOpenSource) bool {
+func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
 	if lc.reserved {
 		return false
 	}
@@ -29,7 +29,7 @@ func (lc *chatLifecycle) reserveLocked(source vibekit.TurnOpenSource) bool {
 // reservation: an engine-opened turn (a wire turn_start, a workflow step's
 // frames) holds no reservation of its own, so it is invisible to a refusal that
 // reads the reservation alone. Caller holds mu.
-func (lc *chatLifecycle) holderSourceLocked() (vibekit.TurnOpenSource, bool) {
+func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
 	if facts, open := lc.openFactsLocked(); open {
 		return facts.Source, true
 	}
@@ -41,7 +41,7 @@ func (lc *chatLifecycle) holderSourceLocked() (vibekit.TurnOpenSource, bool) {
 
 // tryReserve takes chatID's admission slot iff it is free — the shell door's
 // and the recovery retry's form, never a wait.
-func (r *turnRegistry) tryReserve(chatID vibekit.ChatID, source vibekit.TurnOpenSource) bool {
+func (r *turnRegistry) tryReserve(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -50,7 +50,7 @@ func (r *turnRegistry) tryReserve(chatID vibekit.ChatID, source vibekit.TurnOpen
 
 // releaseReservation frees the admission slot and wakes every parked waiter,
 // of which at most one acquires.
-func (r *turnRegistry) releaseReservation(chatID vibekit.ChatID) {
+func (r *turnRegistry) releaseReservation(chatID marotte.ChatID) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -63,7 +63,7 @@ func (r *turnRegistry) releaseReservation(chatID vibekit.ChatID) {
 // and hands back the channel that closes on the chat's next state change — all
 // in ONE acquisition, so a release landing between a failed try and the park
 // cannot strand the waiter on a stale answer.
-func (r *turnRegistry) reserveOrHolder(chatID vibekit.ChatID, source vibekit.TurnOpenSource) (ok bool, holder vibekit.TurnOpenSource, changed <-chan struct{}) {
+func (r *turnRegistry) reserveOrHolder(chatID marotte.ChatID, source marotte.TurnOpenSource) (ok bool, holder marotte.TurnOpenSource, changed <-chan struct{}) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -77,7 +77,7 @@ func (r *turnRegistry) reserveOrHolder(chatID vibekit.ChatID, source vibekit.Tur
 // admissionHolder reports the chat's admission holder's source: the open
 // turn's when one is open, else the reservation's, and false when neither is
 // held.
-func (r *turnRegistry) admissionHolder(chatID vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -87,7 +87,7 @@ func (r *turnRegistry) admissionHolder(chatID vibekit.ChatID) (vibekit.TurnOpenS
 // wakeChat wakes every waiter parked on chatID without moving any state: the
 // bridge-ready wake, so a parked prompt answers on the state the bridge's
 // arrival created rather than on whatever changes next.
-func (r *turnRegistry) wakeChat(chatID vibekit.ChatID) {
+func (r *turnRegistry) wakeChat(chatID marotte.ChatID) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	lc.wakeLocked()
@@ -98,13 +98,13 @@ func (r *turnRegistry) wakeChat(chatID vibekit.ChatID) {
 // Turn. The shell door reserves through this (a `!cmd` during any held slot
 // refuses immediately), and the empty-turn recovery re-reserves through it (a
 // user prompt that won the slot first abandons the retry).
-func (bc *BridgeCoordinator) TryReserveTurn(chatID vibekit.ChatID, source vibekit.TurnOpenSource) bool {
+func (bc *BridgeCoordinator) TryReserveTurn(chatID marotte.ChatID, source marotte.TurnOpenSource) bool {
 	return bc.turns.tryReserve(chatID, source)
 }
 
 // ReleaseTurnReservation frees the admission slot TryReserveTurn or
 // ReserveTurnForPrompt took, waking every waiter.
-func (bc *BridgeCoordinator) ReleaseTurnReservation(chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) ReleaseTurnReservation(chatID marotte.ChatID) {
 	bc.turns.releaseReservation(chatID)
 }
 
@@ -112,7 +112,7 @@ func (bc *BridgeCoordinator) ReleaseTurnReservation(chatID vibekit.ChatID) {
 // turn's source when one is open (an engine-opened turn holds no reservation),
 // else the reservation's. Satisfies command.TurnOutcomeAccess; the steer refusal
 // and the prompt-refusal arm both key on it.
-func (bc *BridgeCoordinator) AdmissionHolderSource(chatID vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+func (bc *BridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return bc.turns.admissionHolder(chatID)
 }
 
@@ -124,11 +124,11 @@ func (bc *BridgeCoordinator) AdmissionHolderSource(chatID vibekit.ChatID) (vibek
 // 409→steer conversion works, so waiting buys nothing); every other holder parks
 // the waiter and answers Starting at the budget. A dead ctx also answers
 // Starting: nothing reads the answer.
-func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID vibekit.ChatID, wait time.Duration) command.AdmissionOutcome {
+func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	for {
-		ok, holder, changed := bc.turns.reserveOrHolder(chatID, vibekit.TurnSourcePrompt)
+		ok, holder, changed := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
 		if ok {
 			return command.AdmissionAcquired
 		}
@@ -148,8 +148,8 @@ func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID vi
 // expiredAdmission is the budget-expiry arm, keyed on the holder's source. One
 // last try first: a release landing exactly at expiry is an acquisition, not a
 // refusal.
-func (bc *BridgeCoordinator) expiredAdmission(chatID vibekit.ChatID) command.AdmissionOutcome {
-	ok, holder, _ := bc.turns.reserveOrHolder(chatID, vibekit.TurnSourcePrompt)
+func (bc *BridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.AdmissionOutcome {
+	ok, holder, _ := bc.turns.reserveOrHolder(chatID, marotte.TurnSourcePrompt)
 	if ok {
 		return command.AdmissionAcquired
 	}
@@ -163,7 +163,7 @@ func (bc *BridgeCoordinator) expiredAdmission(chatID vibekit.ChatID) command.Adm
 // registers the record before Start so concurrent opens coalesce, so mere
 // presence is not liveness — a bridge still starting is exactly the "starting"
 // state the refusal names.
-func (bc *BridgeCoordinator) bridgeLive(chatID vibekit.ChatID) bool {
+func (bc *BridgeCoordinator) bridgeLive(chatID marotte.ChatID) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	return sb != nil && sb.startedPastSpawn()
 }

@@ -7,14 +7,14 @@ package agent
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // attachForward resets the chat's observed position for a newly attached forward
 // goroutine and returns the generation it runs under. A new bridge restarts its
 // sequence at zero, so the previous position bounds nothing and the generation is
 // what lets a straggling forward from the OLD bridge be ignored.
-func (r *turnRegistry) attachForward(chatID vibekit.ChatID) uint64 {
+func (r *turnRegistry) attachForward(chatID marotte.ChatID) uint64 {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -29,7 +29,7 @@ func (r *turnRegistry) attachForward(chatID vibekit.ChatID) uint64 {
 // parked on it. Called for every frame Forward CONSUMES, not for every fold: many
 // paths through the session-update cascade consume a frame without touching a turn,
 // so a fold-bounded position can park a settle forever.
-func (r *turnRegistry) observe(chatID vibekit.ChatID, gen, seq uint64) {
+func (r *turnRegistry) observe(chatID marotte.ChatID, gen, seq uint64) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -42,9 +42,9 @@ func (r *turnRegistry) observe(chatID vibekit.ChatID, gen, seq uint64) {
 
 // sealPosition records that the chat's forward goroutine has exited, so no further
 // frame can advance the position. The waiters DEFER rather than close: the
-// bridge-death closer names the process that went away, and every teardown vibekit
+// bridge-death closer names the process that went away, and every teardown marotte
 // performs itself has its own closer, so nothing is stranded.
-func (r *turnRegistry) sealPosition(chatID vibekit.ChatID, gen uint64) {
+func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -62,7 +62,7 @@ func (r *turnRegistry) sealPosition(chatID vibekit.ChatID, gen uint64) {
 // waits for. It does NOT stop early once the awaited turn has finalized — the wait
 // also orders whether a LATER turn opened, the empty-turn gate's structural clause,
 // and returning early let a re-prompt duplicate execution and spend.
-func (r *turnRegistry) awaitPosition(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, seq uint64) bool {
+func (r *turnRegistry) awaitPosition(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, seq uint64) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	gen := lc.fwdGen

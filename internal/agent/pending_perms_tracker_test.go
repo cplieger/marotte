@@ -5,18 +5,18 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // listIDs reads the ids off a List snapshot, the only way to assert the order the
 // replay writes the cards in.
-func listIDs(t *testing.T, evts []vibekit.ServerEvent) []int64 {
+func listIDs(t *testing.T, evts []marotte.ServerEvent) []int64 {
 	t.Helper()
 	ids := make([]int64, 0, len(evts))
 	for _, evt := range evts {
-		p, ok := evt.Payload.(vibekit.PermissionNeededPayload)
+		p, ok := evt.Payload.(marotte.PermissionNeededPayload)
 		if !ok {
-			t.Fatalf("replayed event carries payload %T, want vibekit.PermissionNeededPayload", evt.Payload)
+			t.Fatalf("replayed event carries payload %T, want marotte.PermissionNeededPayload", evt.Payload)
 		}
 		ids = append(ids, p.RequestID)
 	}
@@ -31,8 +31,8 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, id := range []int64{7, 2, 9, 1, 5} {
-		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-1",
-			vibekit.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+			marotte.PermissionNeededPayload{RequestID: id}))
 	}
 
 	want := []int64{1, 2, 5, 7, 9}
@@ -51,13 +51,13 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	kinds := map[int64]vibekit.EventType{
-		31: vibekit.EventPermissionNeeded,
-		12: vibekit.EventElicitationNeeded,
-		20: vibekit.EventUserInputNeeded,
+	kinds := map[int64]marotte.EventType{
+		31: marotte.EventPermissionNeeded,
+		12: marotte.EventElicitationNeeded,
+		20: marotte.EventUserInputNeeded,
 	}
 	for id, kind := range kinds {
-		tracker.Add(id, vibekit.NewEvent(kind, "chat-1", vibekit.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, marotte.NewEvent(kind, "chat-1", marotte.PermissionNeededPayload{RequestID: id}))
 	}
 
 	got := tracker.List("chat-1")
@@ -84,13 +84,13 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	owners := map[int64]vibekit.ChatID{4: "chat-1", 8: "chat-2", 1: "chat-1", 6: "chat-2", 3: "chat-1"}
+	owners := map[int64]marotte.ChatID{4: "chat-1", 8: "chat-2", 1: "chat-1", 6: "chat-2", 3: "chat-1"}
 	for id, chatID := range owners {
-		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID,
-			vibekit.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+			marotte.PermissionNeededPayload{RequestID: id}))
 	}
 
-	for chatID, want := range map[vibekit.ChatID][]int64{
+	for chatID, want := range map[marotte.ChatID][]int64{
 		"chat-1": {1, 3, 4},
 		"chat-2": {6, 8},
 	} {
@@ -108,10 +108,10 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 func TestPendingPermsTracker_ClearForChat_DropsOnlyThatChat(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	owners := map[int64]vibekit.ChatID{1: "chat-1", 2: "chat-2", 3: "chat-1", 4: "chat-2"}
+	owners := map[int64]marotte.ChatID{1: "chat-1", 2: "chat-2", 3: "chat-1", 4: "chat-2"}
 	for id, chatID := range owners {
-		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID,
-			vibekit.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+			marotte.PermissionNeededPayload{RequestID: id}))
 	}
 
 	tracker.ClearForChat("chat-1")
@@ -135,8 +135,8 @@ func TestPendingPermsTracker_ClearForChat_EmptyChatIDClearsNothing(t *testing.T)
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, id := range []int64{1, 2} {
-		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-1",
-			vibekit.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+			marotte.PermissionNeededPayload{RequestID: id}))
 	}
 
 	tracker.ClearForChat("")
@@ -156,18 +156,18 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	const shared = int64(7)
-	tracker.Add(shared, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-1",
-		vibekit.PermissionNeededPayload{RequestID: shared, Title: "chat-1 asked"}))
-	tracker.Add(shared, vibekit.NewEvent(vibekit.EventUserInputNeeded, "chat-2",
-		vibekit.UserInputNeededPayload{RequestID: shared, Question: "chat-2 asked"}))
+	tracker.Add(shared, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-1",
+		marotte.PermissionNeededPayload{RequestID: shared, Title: "chat-1 asked"}))
+	tracker.Add(shared, marotte.NewEvent(marotte.EventUserInputNeeded, "chat-2",
+		marotte.UserInputNeededPayload{RequestID: shared, Question: "chat-2 asked"}))
 
 	// Each chat's replay carries its OWN card, not the other's.
 	for _, tc := range []struct {
-		chat vibekit.ChatID
-		want vibekit.EventType
+		chat marotte.ChatID
+		want marotte.EventType
 	}{
-		{chat: "chat-1", want: vibekit.EventPermissionNeeded},
-		{chat: "chat-2", want: vibekit.EventUserInputNeeded},
+		{chat: "chat-1", want: marotte.EventPermissionNeeded},
+		{chat: "chat-2", want: marotte.EventUserInputNeeded},
 	} {
 		got := tracker.List(tc.chat)
 		if len(got) != 1 {
@@ -192,8 +192,8 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 			"turn now waits forever for a response nothing can send")
 	}
 	// And a claim naming the wrong chat resolves nothing at all.
-	tracker.Add(shared, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-3",
-		vibekit.PermissionNeededPayload{RequestID: shared}))
+	tracker.Add(shared, marotte.NewEvent(marotte.EventPermissionNeeded, "chat-3",
+		marotte.PermissionNeededPayload{RequestID: shared}))
 	if _, ok := tracker.TakeIfPresent("chat-4", shared); ok {
 		t.Error(`TakeIfPresent("chat-4", 7) succeeded against chat-3's request`)
 	}
@@ -201,14 +201,14 @@ func TestPendingPermsTracker_TwoChatsMayHoldTheSameRequestID(t *testing.T) {
 
 // requestIDOf reads one card's request id whichever kind it is. `listIDs` cannot
 // serve: it fails on a non-permission payload, and this table mixes all three.
-func requestIDOf(t *testing.T, evt vibekit.ServerEvent) int64 {
+func requestIDOf(t *testing.T, evt marotte.ServerEvent) int64 {
 	t.Helper()
 	switch p := evt.Payload.(type) {
-	case vibekit.PermissionNeededPayload:
+	case marotte.PermissionNeededPayload:
 		return p.RequestID
-	case vibekit.ElicitationNeededPayload:
+	case marotte.ElicitationNeededPayload:
 		return p.RequestID
-	case vibekit.UserInputNeededPayload:
+	case marotte.UserInputNeededPayload:
 		return p.RequestID
 	default:
 		t.Fatalf("replayed event carries payload %T, want one of the three *_needed payloads", evt.Payload)
@@ -222,7 +222,7 @@ func requestIDOf(t *testing.T, evt vibekit.ServerEvent) int64 {
 // only the question kind leaves two thirds of the population behind.
 func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 	t.Parallel()
-	const launching vibekit.ChatID = "c-parent"
+	const launching marotte.ChatID = "c-parent"
 	entries := []struct {
 		id      int64
 		name    string
@@ -230,23 +230,23 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 		// survives says the entry must still be replayable after ClearForRun("wf_1").
 		survives bool
 	}{
-		{1, "a step's question", vibekit.UserInputNeededPayload{RequestID: 1, RunID: "wf_1"}, false},
-		{2, "a step's permission", vibekit.PermissionNeededPayload{RequestID: 2, RunID: "wf_1"}, false},
-		{3, "a step's elicitation", vibekit.ElicitationNeededPayload{RequestID: 3, RunID: "wf_1"}, false},
+		{1, "a step's question", marotte.UserInputNeededPayload{RequestID: 1, RunID: "wf_1"}, false},
+		{2, "a step's permission", marotte.PermissionNeededPayload{RequestID: 2, RunID: "wf_1"}, false},
+		{3, "a step's elicitation", marotte.ElicitationNeededPayload{RequestID: 3, RunID: "wf_1"}, false},
 		// A SIBLING run shares the launching chat's entries, so the clear has to
 		// separate them by run rather than by chat.
-		{4, "a sibling run's question", vibekit.UserInputNeededPayload{RequestID: 4, RunID: "wf_2"}, true},
+		{4, "a sibling run's question", marotte.UserInputNeededPayload{RequestID: 4, RunID: "wf_2"}, true},
 		// An ordinary chat ask carries no run and still blocks a live turn.
-		{5, "the chat's own permission", vibekit.PermissionNeededPayload{RequestID: 5}, true},
+		{5, "the chat's own permission", marotte.PermissionNeededPayload{RequestID: 5}, true},
 	}
-	kindOf := map[int64]vibekit.EventType{
-		1: vibekit.EventUserInputNeeded, 2: vibekit.EventPermissionNeeded,
-		3: vibekit.EventElicitationNeeded, 4: vibekit.EventUserInputNeeded,
-		5: vibekit.EventPermissionNeeded,
+	kindOf := map[int64]marotte.EventType{
+		1: marotte.EventUserInputNeeded, 2: marotte.EventPermissionNeeded,
+		3: marotte.EventElicitationNeeded, 4: marotte.EventUserInputNeeded,
+		5: marotte.EventPermissionNeeded,
 	}
 	tracker := newPendingPermsTracker()
 	for _, e := range entries {
-		tracker.Add(e.id, vibekit.NewEvent(kindOf[e.id], launching, e.payload))
+		tracker.Add(e.id, marotte.NewEvent(kindOf[e.id], launching, e.payload))
 	}
 
 	tracker.ClearForRun("wf_1")
@@ -273,8 +273,8 @@ func TestClearForRun_DropsOnlyTheNamedRunsDecisions(t *testing.T) {
 func TestClearForRun_RefusesAnEmptyRunID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	tracker.Add(1, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
-		vibekit.PermissionNeededPayload{RequestID: 1}))
+	tracker.Add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 1}))
 
 	tracker.ClearForRun("")
 

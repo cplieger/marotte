@@ -9,7 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // outcomeFixture mirrors testdata/turn_outcomes.json. See that file's _comment
@@ -53,23 +53,23 @@ type fixtureMessage struct {
 }
 
 // message builds the persisted message this fixture row describes.
-func (f fixtureMessage) message() vibekit.Message {
-	m := vibekit.Message{ID: f.ID, Role: vibekit.Role(f.Role), Content: "ok"}
+func (f fixtureMessage) message() marotte.Message {
+	m := marotte.Message{ID: f.ID, Role: marotte.Role(f.Role), Content: "ok"}
 	if f.Empty {
 		m.Content = ""
 	}
 	if f.Event != "" {
-		m.EventKind = vibekit.EventKind(f.Event)
+		m.EventKind = marotte.EventKind(f.Event)
 		m.Content = ""
 	}
 	if f.Refusal {
-		m.Refusal = &vibekit.RefusalInfo{}
+		m.Refusal = &marotte.RefusalInfo{}
 	}
 	for _, subtask := range f.Blocks {
-		m.Blocks = append(m.Blocks, vibekit.Block{Type: vibekit.BlockText, AgentSubtaskID: subtask})
+		m.Blocks = append(m.Blocks, marotte.Block{Type: marotte.BlockText, AgentSubtaskID: subtask})
 	}
-	m.TurnOutcome = vibekit.TurnOutcome(f.Outcome)
-	m.UserKind = vibekit.UserKind(f.UserKind)
+	m.TurnOutcome = marotte.TurnOutcome(f.Outcome)
+	m.UserKind = marotte.UserKind(f.UserKind)
 	return m
 }
 
@@ -90,17 +90,17 @@ func TestTurnOutcomeContract(t *testing.T) {
 	}
 	for _, tc := range fx.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			body := make([]vibekit.Message, 0, len(tc.Body))
+			body := make([]marotte.Message, 0, len(tc.Body))
 			for _, b := range tc.Body {
-				m := vibekit.Message{Role: vibekit.RoleAssistant}
+				m := marotte.Message{Role: marotte.RoleAssistant}
 				if b.Refusal {
-					m.Refusal = &vibekit.RefusalInfo{}
+					m.Refusal = &marotte.RefusalInfo{}
 				}
 				if b.Event != "" {
-					m.Role = vibekit.RoleEvent
-					m.EventKind = vibekit.EventKind(b.Event)
+					m.Role = marotte.RoleEvent
+					m.EventKind = marotte.EventKind(b.Event)
 				}
-				m.TurnOutcome = vibekit.TurnOutcome(b.Outcome)
+				m.TurnOutcome = marotte.TurnOutcome(b.Outcome)
 				m.TurnTruncated = b.Truncated
 				body = append(body, m)
 			}
@@ -129,7 +129,7 @@ func TestTurnSegmentationContract(t *testing.T) {
 	}
 	for _, tc := range fx.Segmentation {
 		t.Run(tc.Name, func(t *testing.T) {
-			msgs := make([]vibekit.Message, 0, len(tc.Messages))
+			msgs := make([]marotte.Message, 0, len(tc.Messages))
 			for _, fm := range tc.Messages {
 				msgs = append(msgs, fm.message())
 			}
@@ -171,7 +171,7 @@ type windowFixture struct {
 // turnOpeningIndexes reports the index each turn opens at, derived from the
 // production projection rather than from a second boundary scan — a test that
 // re-implemented the rule could agree with itself while both halves were wrong.
-func turnOpeningIndexes(msgs []vibekit.Message) []int {
+func turnOpeningIndexes(msgs []marotte.Message) []int {
 	byID := make(map[string]int, len(msgs))
 	for i := range msgs {
 		byID[msgs[i].ID] = i
@@ -200,7 +200,7 @@ func TestTurnWindowBaseContract(t *testing.T) {
 	}
 	for _, tc := range fx.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			msgs := make([]vibekit.Message, 0, len(tc.Messages))
+			msgs := make([]marotte.Message, 0, len(tc.Messages))
 			for _, fm := range tc.Messages {
 				msgs = append(msgs, fm.message())
 			}
@@ -244,16 +244,16 @@ func TestTurnWindowBaseContract(t *testing.T) {
 	}
 }
 
-func user(id, content string, ts int64) vibekit.Message {
-	return vibekit.Message{ID: id, Role: vibekit.RoleUser, Content: content, Ts: ts}
+func user(id, content string, ts int64) marotte.Message {
+	return marotte.Message{ID: id, Role: marotte.RoleUser, Content: content, Ts: ts}
 }
 
-func assistant(id string, ts int64) vibekit.Message {
-	return vibekit.Message{ID: id, Role: vibekit.RoleAssistant, Content: "ok", Ts: ts}
+func assistant(id string, ts int64) marotte.Message {
+	return marotte.Message{ID: id, Role: marotte.RoleAssistant, Content: "ok", Ts: ts}
 }
 
 func TestProjectTurnSummaries_PromotesTheUserMessageAndNumbersFromOne(t *testing.T) {
-	got := projectTurnSummaries([]vibekit.Message{
+	got := projectTurnSummaries([]marotte.Message{
 		user("u1", "first thing", 100),
 		assistant("a1", 200),
 		user("u2", "second thing", 300),
@@ -283,7 +283,7 @@ func TestProjectTurnSummaries_PromotesTheUserMessageAndNumbersFromOne(t *testing
 // transcript legitimately begins mid-turn. Marking it lets the rail render it as
 // a non-user marker instead of implying the user asked for it.
 func TestProjectTurnSummaries_MarksAHeaderlessTurn(t *testing.T) {
-	got := projectTurnSummaries([]vibekit.Message{
+	got := projectTurnSummaries([]marotte.Message{
 		assistant("a1", 100),
 		user("u1", "then this", 200),
 		assistant("a2", 300),
@@ -307,16 +307,16 @@ func TestProjectTurnSummaries_MarksAHeaderlessTurn(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_MarksOnlyTheLastTurnRunning(t *testing.T) {
-	got := projectTurnSummaries([]vibekit.Message{
+	got := projectTurnSummaries([]marotte.Message{
 		user("u1", "a", 100),
 		assistant("a1", 200),
 		user("u2", "b", 300),
 	}, true)
 
-	if got[0].Outcome != vibekit.TurnOutcomeCompleted {
+	if got[0].Outcome != marotte.TurnOutcomeCompleted {
 		t.Errorf("turn 1 outcome = %q, want completed", got[0].Outcome)
 	}
-	if got[1].Outcome != vibekit.TurnOutcomeRunning {
+	if got[1].Outcome != marotte.TurnOutcomeRunning {
 		t.Errorf("turn 2 outcome = %q, want running", got[1].Outcome)
 	}
 }
@@ -338,7 +338,7 @@ func TestProjectTurnSummaries_EmptyMarshalsAsArray(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_FirstLineCollapsesWhitespace(t *testing.T) {
-	got := projectTurnSummaries([]vibekit.Message{
+	got := projectTurnSummaries([]marotte.Message{
 		user("u1", "  line one\n\n\tline two   ", 100),
 	}, false)
 	if got[0].FirstLine != "line one line two" {
@@ -349,7 +349,7 @@ func TestProjectTurnSummaries_FirstLineCollapsesWhitespace(t *testing.T) {
 func TestProjectTurnSummaries_FirstLineTruncatesOnRuneBoundary(t *testing.T) {
 	// Multi-byte runes: a byte-wise cut would split one and produce mojibake.
 	long := strings.Repeat("\u00e9", 200)
-	got := projectTurnSummaries([]vibekit.Message{user("u1", long, 100)}, false)
+	got := projectTurnSummaries([]marotte.Message{user("u1", long, 100)}, false)
 	line := got[0].FirstLine
 	if !strings.HasSuffix(line, "\u2026") {
 		t.Fatalf("no ellipsis on a truncated line: %q", line)
@@ -364,7 +364,7 @@ func TestProjectTurnSummaries_FirstLineTruncatesOnRuneBoundary(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_FirstLineKeepsAShortRequestWhole(t *testing.T) {
-	got := projectTurnSummaries([]vibekit.Message{user("u1", "short", 100)}, false)
+	got := projectTurnSummaries([]marotte.Message{user("u1", "short", 100)}, false)
 	if got[0].FirstLine != "short" {
 		t.Errorf("first line = %q", got[0].FirstLine)
 	}
@@ -465,7 +465,7 @@ func TestProjectTurnSummaries_FirstLineBoundIncludesCollapsedSpaces(t *testing.T
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := projectTurnSummaries([]vibekit.Message{user("u1", tc.content, 100)}, false)
+			got := projectTurnSummaries([]marotte.Message{user("u1", tc.content, 100)}, false)
 			if len(got) != 1 {
 				t.Fatalf("projectTurnSummaries returned %d summaries, want 1", len(got))
 			}
@@ -481,10 +481,10 @@ func TestProjectTurnSummaries_FirstLineBoundIncludesCollapsedSpaces(t *testing.T
 // on that very message decides the turn's outcome. Reading the outcome off a
 // body that excludes the opener paints an interrupted turn as completed.
 func TestProjectTurnSummaries_AgentOpenedTurnCountsItsOwnMessage(t *testing.T) {
-	got := projectTurnSummaries([]vibekit.Message{{
+	got := projectTurnSummaries([]marotte.Message{{
 		ID:        "e1",
-		Role:      vibekit.RoleEvent,
-		EventKind: vibekit.EventInterrupted,
+		Role:      marotte.RoleEvent,
+		EventKind: marotte.EventInterrupted,
 		Content:   "interrupted by restart",
 		Ts:        100,
 	}}, false)
@@ -495,7 +495,7 @@ func TestProjectTurnSummaries_AgentOpenedTurnCountsItsOwnMessage(t *testing.T) {
 	if !got[0].AgentInitiated {
 		t.Errorf("turn = %+v, want it marked agent-initiated", got[0])
 	}
-	if want := vibekit.TurnOutcomeInterrupted; got[0].Outcome != want {
+	if want := marotte.TurnOutcomeInterrupted; got[0].Outcome != want {
 		t.Errorf("outcome of a turn opened by an interrupted event = %q, want %q", got[0].Outcome, want)
 	}
 }

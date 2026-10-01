@@ -12,26 +12,26 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func draftReq(t *testing.T, chatID vibekit.ChatID, text string) *vibekit.ClientCommand {
+func draftReq(t *testing.T, chatID marotte.ChatID, text string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.SetDraftCommand{Text: text})
+	payload, err := json.Marshal(marotte.SetDraftCommand{Text: text})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetDraft,
+	return &marotte.ClientCommand{
+		Type:    marotte.CmdSetDraft,
 		ChatID:  chatID,
 		Payload: payload,
 	}
 }
 
-func seedEmptyChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
+func seedEmptyChat(t *testing.T, store ChatStore, id marotte.ChatID) {
 	t.Helper()
-	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "a chat"
 		return true
 	}); err != nil {
@@ -50,8 +50,8 @@ func TestCmdSetDraft(t *testing.T) {
 		// Empty is a VALUE, not a missing field: it is how a sent or abandoned
 		// message is cleared, so it must be accepted rather than rejected.
 		{name: "accepts empty as a clear", text: "", wantStatus: http.StatusOK, wantStored: ""},
-		{name: "accepts a draft at exactly the cap", text: strings.Repeat("x", vibekit.MaxDraftBytes), wantStatus: http.StatusOK, wantStored: strings.Repeat("x", vibekit.MaxDraftBytes)},
-		{name: "refuses one byte over the cap", text: strings.Repeat("x", vibekit.MaxDraftBytes+1), wantStatus: http.StatusRequestEntityTooLarge, wantStored: ""},
+		{name: "accepts a draft at exactly the cap", text: strings.Repeat("x", marotte.MaxDraftBytes), wantStatus: http.StatusOK, wantStored: strings.Repeat("x", marotte.MaxDraftBytes)},
+		{name: "refuses one byte over the cap", text: strings.Repeat("x", marotte.MaxDraftBytes+1), wantStatus: http.StatusRequestEntityTooLarge, wantStored: ""},
 		{name: "keeps multibyte text intact", text: "日本語のドラフト", wantStatus: http.StatusOK, wantStored: "日本語のドラフト"},
 	}
 	for _, tc := range tests {
@@ -94,8 +94,8 @@ func TestCmdSetDraft_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 
 	// Raw bytes, not json.Marshal: marshalling would sanitize them before the
 	// handler ever saw them, which is the same coercion under test.
-	_, err := CmdSetDraft(t.Context(), host, host, &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetDraft,
+	_, err := CmdSetDraft(t.Context(), host, host, &marotte.ClientCommand{
+		Type:    marotte.CmdSetDraft,
 		ChatID:  "c1",
 		Payload: append(append([]byte(`{"text":"`), 0xff, 0xfe), []byte(`"}`)...),
 	})
@@ -125,8 +125,8 @@ func TestCmdSetDraft_RejectsAMalformedPayload(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetDraft(t.Context(), host, host, &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetDraft,
+	_, err := CmdSetDraft(t.Context(), host, host, &marotte.ClientCommand{
+		Type:    marotte.CmdSetDraft,
 		ChatID:  "c1",
 		Payload: json.RawMessage(`{"text":42}`),
 	})
@@ -166,7 +166,7 @@ func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 	}
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text:      "the message about to be sent",
 		MessageID: "m-1",
 	})
@@ -199,7 +199,7 @@ func TestAppendUserMessage_AnnouncesTheClearedComposer(t *testing.T) {
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 	bus := &capturingBus{}
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text:      "the message about to be sent",
 		MessageID: "m-1",
 	})
@@ -230,10 +230,10 @@ func TestAppendUserMessage_AnnouncesClearedAttachmentsWithNoDraft(t *testing.T) 
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 	bus := &capturingBus{}
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text:        "have a look",
 		MessageID:   "m-1",
-		Attachments: []vibekit.Attachment{{Path: "docs/spec.pdf", Name: "spec.pdf"}},
+		Attachments: []marotte.Attachment{{Path: "docs/spec.pdf", Name: "spec.pdf"}},
 	})
 	if err != nil {
 		t.Fatalf("appendUserMessage: %v", err)
@@ -253,7 +253,7 @@ func TestAppendUserMessage_SaysNothingWhenTheComposerWasEmpty(t *testing.T) {
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 	bus := &capturingBus{}
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text:      "typed and sent without pausing",
 		MessageID: "m-1",
 	})
@@ -279,11 +279,11 @@ func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	atts := []vibekit.Attachment{
+	atts := []marotte.Attachment{
 		{Path: "out/shot.png", Name: "shot.png"},
 		{Path: "docs/spec.pdf", Name: "spec.pdf"},
 	}
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text:        "have a look at these",
 		MessageID:   "m-1",
 		Attachments: atts,
@@ -300,7 +300,7 @@ func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
 		t.Fatalf("messages = %d, want 1", len(c.Messages))
 	}
 	got := c.Messages[0]
-	if got.Role != vibekit.RoleUser {
+	if got.Role != marotte.RoleUser {
 		t.Errorf("role = %q, want user", got.Role)
 	}
 	if len(got.Attachments) != len(atts) {
@@ -325,7 +325,7 @@ func TestAppendUserMessage_NoAttachmentsPersistsNone(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text:      "just a question",
 		MessageID: "m-1",
 	})

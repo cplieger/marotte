@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A bridge whose frame stream ends while it is still REGISTERED died on its own, and
@@ -43,8 +43,8 @@ func TestForward_DoesNotReapAnUnregisteredBridge(t *testing.T) {
 // answer, so the claim is false and the amber dot has nothing behind it.
 func TestForward_DischargesWaitingOnUserWhenTheAgentDies(t *testing.T) {
 	h, _, br := newTestHub()
-	h.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{
-		Status:      vibekit.ChatStatusWaitingOnUser,
+	h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
+		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "needs a decision",
 	})
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
@@ -61,7 +61,7 @@ func TestForward_DischargesWaitingOnUserWhenTheAgentDies(t *testing.T) {
 // removal. Only the retained waiting_on_user claim is Forward's to discharge.
 func TestForward_LeavesANonWaitingStatusAlone(t *testing.T) {
 	h, _, br := newTestHub()
-	h.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{
+	h.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
 		Status:      "in_progress",
 		Description: "working",
 	})

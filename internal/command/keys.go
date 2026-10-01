@@ -3,22 +3,22 @@ package command
 import (
 	"maps"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // JSON protocol key constants used across command response maps and
 // pending-permission payloads. These are wire-format identifiers
-// documented in vibekit.md / vibekit-acp.md; centralising them keeps
+// documented in marotte.md / marotte-acp.md; centralising them keeps
 // the goconst linter happy and makes renames visible in one place.
 const (
 	keyError = "error"
 	keyName  = httpreply.JSONKeyName
-	keyType  = vibekit.ContentKeyType
+	keyType  = marotte.ContentKeyType
 )
 
-// keySessionID references the canonical vibekit.KeySessionID constant.
-const keySessionID = vibekit.KeySessionID
+// keySessionID references the canonical marotte.KeySessionID constant.
+const keySessionID = marotte.KeySessionID
 
 // ellipsis is the truncation suffix for display strings (session
 // titles, prompt previews, shell command labels). Kept as a constant

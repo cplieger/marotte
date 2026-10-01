@@ -6,7 +6,7 @@
 // affordance. There is deliberately NO pulsing disc and NO animation on any
 // reasoning selector: a pulsing dot is reserved to TABS and workflow-agent
 // surfaces, which report work the reader cannot see, and a live trace is
-// already on screen (user ruling, `vibekit-ui.md` "GPU compositing").
+// already on screen (user ruling, `marotte-ui.md` "GPU compositing").
 // `buildReasoning` still sets the `streaming` class for a live trace (state
 // bookkeeping `seal()` removes); no stylesheet may hang an animation off it.
 // Once sealed the disclosure folds shut and the label becomes "Thinking
@@ -149,7 +149,7 @@ describe("the summary's word count", () => {
     // one long token, so a trace that was a single URL reported its character
     // count as though it were a different language.
     expect(
-      countOf(buildReasoning("https://github.com/cplieger/vibekit/pull/1234", false, false)),
+      countOf(buildReasoning("https://github.com/cplieger/marotte/pull/1234", false, false)),
     ).toBe("1 word");
     expect(countOf(buildReasoning("uncharacteristically", false, false))).toBe("1 word");
     expect(countOf(buildReasoning("weighing the options carefully", false, false))).toBe("4 words");

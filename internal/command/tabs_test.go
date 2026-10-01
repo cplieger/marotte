@@ -15,19 +15,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // tabCmd builds a command envelope for one of the four tab types.
-func tabCmd(t *testing.T, typ vibekit.CommandType, payload any) *vibekit.ClientCommand {
+func tabCmd(t *testing.T, typ marotte.CommandType, payload any) *marotte.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: typ, Payload: raw}
+	return &marotte.ClientCommand{Type: typ, Payload: raw}
 }
 
 // bodyField reads one field out of a command's success body. A Fatalf rather than
@@ -52,8 +52,8 @@ func TestCmdOpenTab_ReturnsTheSubjectAndTheCreatedFlag(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _ := newTabbedMembership(t, store)
 	seedRecord(t, store, "c-open")
-	cmd := tabCmd(t, vibekit.CmdOpenTab, vibekit.OpenTabCommand{
-		Kind: vibekit.TabKindChat, Ref: "c-open", OpID: "op-1",
+	cmd := tabCmd(t, marotte.CmdOpenTab, marotte.OpenTabCommand{
+		Kind: marotte.TabKindChat, Ref: "c-open", OpID: "op-1",
 	})
 
 	first, err := CmdOpenTab(t.Context(), mem, cmd)
@@ -71,11 +71,11 @@ func TestCmdOpenTab_ReturnsTheSubjectAndTheCreatedFlag(t *testing.T) {
 	if got := bodyField(t, second, "created"); got != false {
 		t.Errorf("repeat open reported created = %v, want false: it commits nothing and emits nothing", got)
 	}
-	subject, ok := bodyField(t, first, "subject").(vibekit.TabSubject)
+	subject, ok := bodyField(t, first, "subject").(marotte.TabSubject)
 	if !ok {
-		t.Fatalf("subject is %T, want vibekit.TabSubject", bodyField(t, first, "subject"))
+		t.Fatalf("subject is %T, want marotte.TabSubject", bodyField(t, first, "subject"))
 	}
-	if subject.Kind != vibekit.TabKindChat || subject.Ref != "c-open" {
+	if subject.Kind != marotte.TabKindChat || subject.Ref != "c-open" {
 		t.Errorf("subject = %+v, want the (chat, c-open) tab", subject)
 	}
 }
@@ -86,34 +86,34 @@ func TestCmdOpenTab_ReturnsTheSubjectAndTheCreatedFlag(t *testing.T) {
 func TestCmdOpenTab_PayloadRefusals(t *testing.T) {
 	cases := []struct {
 		desc    string
-		payload vibekit.OpenTabCommand
+		payload marotte.OpenTabCommand
 		want    int
 	}{
 		{
 			desc:    "a kind that is not one of the eight",
-			payload: vibekit.OpenTabCommand{Kind: "plan", Ref: "c-a"},
+			payload: marotte.OpenTabCommand{Kind: "plan", Ref: "c-a"},
 			want:    http.StatusBadRequest,
 		},
 		{
 			desc:    "a chat ref that is not a chat id",
-			payload: vibekit.OpenTabCommand{Kind: vibekit.TabKindChat, Ref: "../etc/passwd"},
+			payload: marotte.OpenTabCommand{Kind: marotte.TabKindChat, Ref: "../etc/passwd"},
 			want:    http.StatusBadRequest,
 		},
 		{
 			desc:    "an op id with a path separator",
-			payload: vibekit.OpenTabCommand{Kind: vibekit.TabKindSettings, OpID: "op/../x"},
+			payload: marotte.OpenTabCommand{Kind: marotte.TabKindSettings, OpID: "op/../x"},
 			want:    http.StatusBadRequest,
 		},
 		{
 			desc:    "a parent id outside the identifier rule",
-			payload: vibekit.OpenTabCommand{Kind: vibekit.TabKindSettings, Parent: "a/b"},
+			payload: marotte.OpenTabCommand{Kind: marotte.TabKindSettings, Parent: "a/b"},
 			want:    http.StatusBadRequest,
 		},
 		{
 			// The store's own refusal, surfaced through the handler's mapping: a
 			// singleton takes no ref.
 			desc:    "a singleton carrying a ref",
-			payload: vibekit.OpenTabCommand{Kind: vibekit.TabKindSettings, Ref: "/workspace/x.go"},
+			payload: marotte.OpenTabCommand{Kind: marotte.TabKindSettings, Ref: "/workspace/x.go"},
 			want:    http.StatusBadRequest,
 		},
 	}
@@ -122,7 +122,7 @@ func TestCmdOpenTab_PayloadRefusals(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			mem, st, bus := newTabbedMembership(t, store)
 
-			_, err := CmdOpenTab(t.Context(), mem, tabCmd(t, vibekit.CmdOpenTab, tc.payload))
+			_, err := CmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab, tc.payload))
 
 			if statusOf(err) != tc.want {
 				t.Errorf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))
@@ -144,8 +144,8 @@ func TestCmdOpenTab_ForAMissingChatIs404(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _ := newTabbedMembership(t, store)
 
-	_, err := CmdOpenTab(t.Context(), mem, tabCmd(t, vibekit.CmdOpenTab,
-		vibekit.OpenTabCommand{Kind: vibekit.TabKindChat, Ref: "c-gone"}))
+	_, err := CmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab,
+		marotte.OpenTabCommand{Kind: marotte.TabKindChat, Ref: "c-gone"}))
 
 	if statusOf(err) != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (%s)", statusOf(err), errText(err))
@@ -161,8 +161,8 @@ func TestCmdCloseTab_ReturnsEveryClosedID(t *testing.T) {
 	parent := createChat(t, mem, "op-parent")
 	child := openChild(t, mem, store, "c-child", parent.Subject.ID)
 
-	body, err := CmdCloseTab(t.Context(), mem, tabCmd(t, vibekit.CmdCloseTab,
-		vibekit.CloseTabCommand{ID: parent.Subject.ID, OpID: "op-close"}))
+	body, err := CmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab,
+		marotte.CloseTabCommand{ID: parent.Subject.ID, OpID: "op-close"}))
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
@@ -175,8 +175,8 @@ func TestCmdCloseTab_ReturnsEveryClosedID(t *testing.T) {
 		t.Errorf("closed = %v, want both the parent %q and its child %q", closed, parent.Subject.ID, child.Subject.ID)
 	}
 
-	again, err := CmdCloseTab(t.Context(), mem, tabCmd(t, vibekit.CmdCloseTab,
-		vibekit.CloseTabCommand{ID: parent.Subject.ID}))
+	again, err := CmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab,
+		marotte.CloseTabCommand{ID: parent.Subject.ID}))
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("closing twice: status = %d, want 200: two devices can close one tab (%s)",
 			statusOf(err), errText(err))
@@ -206,8 +206,8 @@ func TestCmdReorderTabs_EveryRefusalShapeIs409(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			_, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, vibekit.CmdReorderTabs,
-				vibekit.ReorderTabsCommand{Order: tc.order, OpID: "op-drag"}))
+			_, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+				marotte.ReorderTabsCommand{Order: tc.order, OpID: "op-drag"}))
 
 			if statusOf(err) != http.StatusConflict {
 				t.Errorf("status = %d, want 409 (%s)", statusOf(err), errText(err))
@@ -217,8 +217,8 @@ func TestCmdReorderTabs_EveryRefusalShapeIs409(t *testing.T) {
 
 	t.Run("a valid order is accepted and reports its version", func(t *testing.T) {
 		_, before := st.List()
-		body, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, vibekit.CmdReorderTabs,
-			vibekit.ReorderTabsCommand{Order: []string{b.Subject.ID, a.Subject.ID}, OpID: "op-drag"}))
+		body, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+			marotte.ReorderTabsCommand{Order: []string{b.Subject.ID, a.Subject.ID}, OpID: "op-drag"}))
 		if statusOf(err) != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
 		}
@@ -232,8 +232,8 @@ func TestCmdReorderTabs_EveryRefusalShapeIs409(t *testing.T) {
 		for i := range order {
 			order[i] = "x"
 		}
-		_, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, vibekit.CmdReorderTabs,
-			vibekit.ReorderTabsCommand{Order: order}))
+		_, err := CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+			marotte.ReorderTabsCommand{Order: order}))
 
 		if statusOf(err) != http.StatusRequestEntityTooLarge {
 			t.Errorf("status = %d, want 413 (%s)", statusOf(err), errText(err))
@@ -251,17 +251,17 @@ func TestCmdPinTab_RefusesAnAbsentTab(t *testing.T) {
 
 	cases := []struct {
 		desc    string
-		payload vibekit.PinTabCommand
+		payload marotte.PinTabCommand
 		want    int
 	}{
-		{desc: "the open tab", payload: vibekit.PinTabCommand{ID: opened.Subject.ID, Pinned: true}, want: http.StatusOK},
-		{desc: "a tab that is not open", payload: vibekit.PinTabCommand{ID: "ghost", Pinned: true}, want: http.StatusNotFound},
-		{desc: "an empty id", payload: vibekit.PinTabCommand{Pinned: true}, want: http.StatusBadRequest},
-		{desc: "an id outside the identifier rule", payload: vibekit.PinTabCommand{ID: "a/b", Pinned: true}, want: http.StatusBadRequest},
+		{desc: "the open tab", payload: marotte.PinTabCommand{ID: opened.Subject.ID, Pinned: true}, want: http.StatusOK},
+		{desc: "a tab that is not open", payload: marotte.PinTabCommand{ID: "ghost", Pinned: true}, want: http.StatusNotFound},
+		{desc: "an empty id", payload: marotte.PinTabCommand{Pinned: true}, want: http.StatusBadRequest},
+		{desc: "an id outside the identifier rule", payload: marotte.PinTabCommand{ID: "a/b", Pinned: true}, want: http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			_, err := CmdPinTab(t.Context(), mem, tabCmd(t, vibekit.CmdPinTab, tc.payload))
+			_, err := CmdPinTab(t.Context(), mem, tabCmd(t, marotte.CmdPinTab, tc.payload))
 
 			if statusOf(err) != tc.want {
 				t.Errorf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))
@@ -283,18 +283,18 @@ func TestTabCommands_AnUnwiredStoreIs503(t *testing.T) {
 		call func() (any, error)
 	}{
 		{desc: "open", call: func() (any, error) {
-			return CmdOpenTab(t.Context(), mem, tabCmd(t, vibekit.CmdOpenTab,
-				vibekit.OpenTabCommand{Kind: vibekit.TabKindChat, Ref: "c-a"}))
+			return CmdOpenTab(t.Context(), mem, tabCmd(t, marotte.CmdOpenTab,
+				marotte.OpenTabCommand{Kind: marotte.TabKindChat, Ref: "c-a"}))
 		}},
 		{desc: "close", call: func() (any, error) {
-			return CmdCloseTab(t.Context(), mem, tabCmd(t, vibekit.CmdCloseTab, vibekit.CloseTabCommand{ID: "t1"}))
+			return CmdCloseTab(t.Context(), mem, tabCmd(t, marotte.CmdCloseTab, marotte.CloseTabCommand{ID: "t1"}))
 		}},
 		{desc: "reorder", call: func() (any, error) {
-			return CmdReorderTabs(t.Context(), mem, tabCmd(t, vibekit.CmdReorderTabs,
-				vibekit.ReorderTabsCommand{Order: []string{"t1"}}))
+			return CmdReorderTabs(t.Context(), mem, tabCmd(t, marotte.CmdReorderTabs,
+				marotte.ReorderTabsCommand{Order: []string{"t1"}}))
 		}},
 		{desc: "pin", call: func() (any, error) {
-			return CmdPinTab(t.Context(), mem, tabCmd(t, vibekit.CmdPinTab, vibekit.PinTabCommand{ID: "t1"}))
+			return CmdPinTab(t.Context(), mem, tabCmd(t, marotte.CmdPinTab, marotte.PinTabCommand{ID: "t1"}))
 		}},
 	}
 	for _, tc := range cases {
@@ -318,8 +318,8 @@ func TestCmdCreateChat_RetryFinishesTheTabWrite(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, _ := newFlakyMembership(t, store)
 	flaky.openFails(1)
-	req := func() *vibekit.ClientCommand {
-		return createReq(t, "", vibekit.CreateChatCommand{OpID: "op-retry", Name: "Half made"})
+	req := func() *marotte.ClientCommand {
+		return createReq(t, "", marotte.CreateChatCommand{OpID: "op-retry", Name: "Half made"})
 	}
 
 	if _, err := CmdCreateChat(t.Context(), mem, req()); err == nil {
@@ -334,9 +334,9 @@ func TestCmdCreateChat_RetryFinishesTheTabWrite(t *testing.T) {
 	if got := storedChatIDs(t, store); len(got) != 1 || got[0] != id {
 		t.Errorf("store holds %v, want exactly the returned chat %q", got, id)
 	}
-	subject, ok := bodyField(t, body, "subject").(vibekit.TabSubject)
+	subject, ok := bodyField(t, body, "subject").(marotte.TabSubject)
 	if !ok {
-		t.Fatalf("subject is %T, want vibekit.TabSubject", bodyField(t, body, "subject"))
+		t.Fatalf("subject is %T, want marotte.TabSubject", bodyField(t, body, "subject"))
 	}
 	if subject.Ref != string(id) {
 		t.Errorf("the retry's subject refers to %q, want the chat it answered with %q", subject.Ref, id)
@@ -355,7 +355,7 @@ func TestCmdCreateChat_AtTheLimitLeavesNoOrphan(t *testing.T) {
 	fillTabs(t, mem, tabs.MaxOpenTabs)
 	before := storedChatIDs(t, store)
 
-	_, err := CmdCreateChat(t.Context(), mem, createReq(t, "", vibekit.CreateChatCommand{OpID: "op-full"}))
+	_, err := CmdCreateChat(t.Context(), mem, createReq(t, "", marotte.CreateChatCommand{OpID: "op-full"}))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (%s)", statusOf(err), errText(err))

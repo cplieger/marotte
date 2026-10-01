@@ -75,43 +75,43 @@ afterEach(() => {
 
 describe("notifyIfHidden's tag", () => {
   it("is the target's tag, so a chat's banner and the workspace cue take different slots", () => {
-    expect(notify.notifyIfHidden("Vibekit", "ask", chatTarget("c1"))).toBe(true);
-    expect(notify.notifyIfHidden("Vibekit", "done", chatTarget(""))).toBe(true);
-    expect(FakeNotification.instances.map((n) => n.tag)).toEqual(["vibekit:c1", "vibekit"]);
+    expect(notify.notifyIfHidden("Marotte", "ask", chatTarget("c1"))).toBe(true);
+    expect(notify.notifyIfHidden("Marotte", "done", chatTarget(""))).toBe(true);
+    expect(FakeNotification.instances.map((n) => n.tag)).toEqual(["marotte:c1", "marotte"]);
   });
 });
 
 describe("closeNotificationsFor", () => {
   it("closes the page notification carrying the target's tag and no other", async () => {
     notify._setRegistrationForTest(() => Promise.resolve(null));
-    notify.notifyIfHidden("Vibekit", "ask on c1", chatTarget("c1"));
-    notify.notifyIfHidden("Vibekit", "ask on c2", chatTarget("c2"));
+    notify.notifyIfHidden("Marotte", "ask on c1", chatTarget("c1"));
+    notify.notifyIfHidden("Marotte", "ask on c2", chatTarget("c2"));
 
     await notify.closeNotificationsFor(chatTarget("c1"));
 
     expect(FakeNotification.instances.map((n) => [n.tag, n.closed])).toEqual([
-      ["vibekit:c1", true],
-      ["vibekit:c2", false],
+      ["marotte:c1", true],
+      ["marotte:c2", false],
     ]);
   });
 
   it("closes exactly the registration's notifications with that tag", async () => {
-    const { reg, closed, asked } = fakeRegistration(["vibekit:c1", "vibekit:c2", "vibekit"]);
+    const { reg, closed, asked } = fakeRegistration(["marotte:c1", "marotte:c2", "marotte"]);
     notify._setRegistrationForTest(() => Promise.resolve(reg));
 
     await notify.closeNotificationsFor(chatTarget("c1"));
 
-    expect(asked).toEqual(["vibekit:c1"]);
-    expect(closed).toEqual(["vibekit:c1"]);
+    expect(asked).toEqual(["marotte:c1"]);
+    expect(closed).toEqual(["marotte:c1"]);
   });
 
   it("closes a run-keyed banner by the run target", async () => {
-    const { reg, closed } = fakeRegistration(["vibekit:run:wf_1", "vibekit:c1"]);
+    const { reg, closed } = fakeRegistration(["marotte:run:wf_1", "marotte:c1"]);
     notify._setRegistrationForTest(() => Promise.resolve(reg));
 
     await notify.closeNotificationsFor(runTarget("wf_1"));
 
-    expect(closed).toEqual(["vibekit:run:wf_1"]);
+    expect(closed).toEqual(["marotte:run:wf_1"]);
   });
 
   it("is a no-op with nothing shown and no registration", async () => {
@@ -121,7 +121,7 @@ describe("closeNotificationsFor", () => {
 
   it("forgets a page notification the reader closed, so a later retraction does not close it twice", async () => {
     notify._setRegistrationForTest(() => Promise.resolve(null));
-    notify.notifyIfHidden("Vibekit", "ask", chatTarget("c1"));
+    notify.notifyIfHidden("Marotte", "ask", chatTarget("c1"));
     const first = FakeNotification.instances[0];
     first?.close();
     const closeSpy = vi.spyOn(first as FakeNotification, "close");
@@ -138,42 +138,42 @@ describe("closeNotificationsFor", () => {
 describe("closeNotificationsExcept", () => {
   it("closes every chat and run banner the live set does not name, in one registration read", async () => {
     const { reg, closed, asked } = fakeRegistration([
-      "vibekit:c1",
-      "vibekit:c2",
-      "vibekit:run:wf_1",
-      "vibekit:run:wf_2",
+      "marotte:c1",
+      "marotte:c2",
+      "marotte:run:wf_1",
+      "marotte:run:wf_2",
     ]);
     notify._setRegistrationForTest(() => Promise.resolve(reg));
 
-    await notify.closeNotificationsExcept(new Set(["vibekit:c2", "vibekit:run:wf_2"]));
+    await notify.closeNotificationsExcept(new Set(["marotte:c2", "marotte:run:wf_2"]));
 
     expect(asked, "one unfiltered read").toEqual([""]);
-    expect(closed).toEqual(["vibekit:c1", "vibekit:run:wf_1"]);
+    expect(closed).toEqual(["marotte:c1", "marotte:run:wf_1"]);
   });
 
   it("leaves a pull request's banner and the constant-tag cue alone", async () => {
     // Neither has an ask the set could list: a PR's verdict stays until clicked, and
     // the constant tag is the agent-finished cue this page showed for no one chat.
-    const { reg, closed } = fakeRegistration(["vibekit:pr:github:x#1", "vibekit", "vibekit:c1"]);
+    const { reg, closed } = fakeRegistration(["marotte:pr:github:x#1", "marotte", "marotte:c1"]);
     notify._setRegistrationForTest(() => Promise.resolve(reg));
 
     await notify.closeNotificationsExcept(new Set());
 
-    expect(closed).toEqual(["vibekit:c1"]);
+    expect(closed).toEqual(["marotte:c1"]);
   });
 
   it("closes the page's own chat banner the set does not name and keeps the one it does", async () => {
     notify._setRegistrationForTest(() => Promise.resolve(null));
-    notify.notifyIfHidden("Vibekit", "ask on c1", chatTarget("c1"));
-    notify.notifyIfHidden("Vibekit", "ask on c2", chatTarget("c2"));
-    notify.notifyIfHidden("Vibekit", "done", chatTarget(""));
+    notify.notifyIfHidden("Marotte", "ask on c1", chatTarget("c1"));
+    notify.notifyIfHidden("Marotte", "ask on c2", chatTarget("c2"));
+    notify.notifyIfHidden("Marotte", "done", chatTarget(""));
 
-    await notify.closeNotificationsExcept(new Set(["vibekit:c2"]));
+    await notify.closeNotificationsExcept(new Set(["marotte:c2"]));
 
     expect(FakeNotification.instances.map((n) => [n.tag, n.closed])).toEqual([
-      ["vibekit:c1", true],
-      ["vibekit:c2", false],
-      ["vibekit", false],
+      ["marotte:c1", true],
+      ["marotte:c2", false],
+      ["marotte", false],
     ]);
   });
 });
@@ -187,7 +187,7 @@ describe("the default registration", () => {
       serviceWorker: { getRegistration, ready: new Promise(() => undefined) },
     });
     notify._setRegistrationForTest(null);
-    notify.notifyIfHidden("Vibekit", "ask on c1", chatTarget("c1"));
+    notify.notifyIfHidden("Marotte", "ask on c1", chatTarget("c1"));
 
     await expect(notify.closeNotificationsFor(chatTarget("c1"))).resolves.toBeUndefined();
 

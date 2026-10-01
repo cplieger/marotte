@@ -121,7 +121,7 @@ func TestSweepStaleTemps_missing_dirs_are_not_fatal(t *testing.T) {
 // that accepts a write and refuses the unlink leaves the probe file behind;
 // because that file now carries atomicfile's own temp shape, the recursive
 // configDir sweep reclaims it on the next boot instead of leaving it forever, as
-// it did while the probe invented its own ".vibekit-probe-*" name.
+// it did while the probe invented its own ".marotte-probe-*" name.
 //
 // The name comes from the library's exported generator rather than a literal, so
 // this asserts the agreement itself and cannot drift from the shape the probe
@@ -130,7 +130,7 @@ func TestSweepStaleTemps_reclaims_a_leaked_writability_probe(t *testing.T) {
 	t.Parallel()
 	configDir, workDir := t.TempDir(), t.TempDir()
 	leaked := staleTemp(t, configDir, atomicfile.TempName())
-	strayShape := staleTemp(t, configDir, ".vibekit-probe-4242")
+	strayShape := staleTemp(t, configDir, ".marotte-probe-4242")
 
 	sweepStaleTemps(t.Context(), configDir, workDir)
 

@@ -22,7 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"
@@ -944,12 +944,12 @@ func TestCloneDirName(t *testing.T) {
 		url  string
 		want string
 	}{
-		{"https with .git suffix", "https://github.com/cplieger/vibekit.git", "vibekit"},
-		{"https without .git suffix", "https://github.com/cplieger/vibekit", "vibekit"},
+		{"https with .git suffix", "https://github.com/cplieger/marotte.git", "marotte"},
+		{"https without .git suffix", "https://github.com/cplieger/marotte", "marotte"},
 		{"dot-named repo", "https://github.com/cplieger/.kiro.git", ".kiro"},
-		{"trailing slash", "https://github.com/cplieger/vibekit.git/", "vibekit"},
+		{"trailing slash", "https://github.com/cplieger/marotte.git/", "marotte"},
 		{"scp style", "git@github.com:cplieger/.kiro.git", ".kiro"},
-		{"scp style without suffix", "git@github.com:cplieger/vibekit", "vibekit"},
+		{"scp style without suffix", "git@github.com:cplieger/marotte", "marotte"},
 		{"query stripped", "https://example.com/o/r.git?ref=main", "r"},
 		{"host only", "https://github.com", ""},
 		{"root path only", "https://github.com/", ""},
@@ -1035,15 +1035,15 @@ func TestInspectCloneDest(t *testing.T) {
 // before any git subprocess runs.
 func TestClone_ExistingRepoIsReportedByName(t *testing.T) {
 	workDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(workDir, "vibekit", ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(workDir, "marotte", ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	h := NewHandler(workDir)
-	out, err := h.clone(t.Context(), "https://github.com/cplieger/vibekit.git", nil)
+	out, err := h.clone(t.Context(), "https://github.com/cplieger/marotte.git", nil)
 	if err == nil {
 		t.Fatalf("clone into an existing repo: err = nil, want a refusal (out %q)", out)
 	}
-	if !strings.Contains(err.Error(), "vibekit") || !strings.Contains(err.Error(), "re-clone") {
+	if !strings.Contains(err.Error(), "marotte") || !strings.Contains(err.Error(), "re-clone") {
 		t.Errorf("err = %q, want it to name the repo and point at re-clone", err)
 	}
 }
@@ -1336,7 +1336,7 @@ func TestClone_AdoptsAnOccupiedDestination(t *testing.T) {
 }
 
 // TestAdoptDestination_ClonesIntoAnOccupiedDirectory is the regression test
-// for the reported defect. Cloning a repo NAMED .kiro failed because vibekit
+// for the reported defect. Cloning a repo NAMED .kiro failed because marotte
 // had already written <workspace>/.kiro/settings/lsp.json when it activated
 // code intelligence, so plain `git clone` refused the non-empty destination
 // in a few milliseconds and the repo could never be cloned at all.
@@ -1344,7 +1344,7 @@ func TestAdoptDestination_ClonesIntoAnOccupiedDirectory(t *testing.T) {
 	base := t.TempDir()
 	remote := serveFixtureRepo(t, base)
 
-	// The destination exactly as vibekit leaves it: present, non-empty,
+	// The destination exactly as marotte leaves it: present, non-empty,
 	// not a git repository.
 	dest := filepath.Join(base, "work", ".kiro")
 	if err := os.MkdirAll(filepath.Join(dest, "settings"), 0o755); err != nil {
@@ -2118,7 +2118,7 @@ func TestIsValidGitRef(t *testing.T) {
 		{"refs/heads/.hidden", false},
 		{"refs/heads/x.lock", false},
 
-		// vibekit's own screen, beyond git: git accepts every one of these in a
+		// marotte's own screen, beyond git: git accepts every one of these in a
 		// refname, and a git-panel row and a slog attribute must not.
 		{"bidi\u202eoverride", false},
 		{"c1\u0085control", false},
@@ -2409,7 +2409,7 @@ type mockPrompter struct {
 	called bool
 }
 
-func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string, _ vibekit.EffortLevel) (string, error) {
+func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string, _ marotte.EffortLevel) (string, error) {
 	m.called = true
 	return m.result, m.err
 }
@@ -2747,7 +2747,7 @@ func FuzzIsValidGitRef(f *testing.F) {
 // `git checkout -b` itself calls through strbuf_check_branch_ref.
 //
 // Only ONE direction is asserted table-wide — everything isValidGitRef accepts,
-// git must accept. The reverse cannot be: vibekit is deliberately stricter than
+// git must accept. The reverse cannot be: marotte is deliberately stricter than
 // git on hidden Unicode, so a name git accepts may legitimately be refused here.
 // The over-tightening direction is covered by the accept cases in
 // TestIsValidGitRef instead, which is where an "HEAD is reserved" or an
@@ -3519,7 +3519,7 @@ type capturePrompter struct {
 	result string
 }
 
-func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string, _ vibekit.EffortLevel) (string, error) {
+func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string, _ marotte.EffortLevel) (string, error) {
 	c.prompt = prompt
 	return c.result, nil
 }

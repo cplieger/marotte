@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -44,7 +44,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	dir := cmp.Or(r.FormValue("dir"), vibekit.DefaultUploadDir)
+	dir := cmp.Or(r.FormValue("dir"), marotte.DefaultUploadDir)
 	dirLoc, ok := h.resolveOrForbid(w, dir)
 	if !ok {
 		return

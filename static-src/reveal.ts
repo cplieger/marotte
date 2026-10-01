@@ -24,7 +24,7 @@
 // constants included. What deliberately did NOT come across is its per-character
 // opacity plugin: that exists because react-markdown re-parses the whole tail
 // every frame and remounts spans over text already on screen, which a
-// mount-triggered fade would re-fire at exactly the active edge. vibekit's
+// mount-triggered fade would re-fire at exactly the active edge. marotte's
 // parser appends and never re-parses, so that flash cannot happen here, and
 // per-character spans would be permanent DOM for a defence against nothing. The
 // `[data-vk-chunk-enter]` fade already in `13-messages.css` does the same job:

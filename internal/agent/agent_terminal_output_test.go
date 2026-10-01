@@ -9,24 +9,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // termCreateMsgArgs builds a terminal/create request with EXPLICIT control over
 // whether `args` is present, which the shared termCreateMsg cannot express (it
 // omits the key for an empty slice — and the presence of that key is the whole
 // decision under test).
-func termCreateMsgArgs(t *testing.T, id int64, command string, args *[]string) *vibekit.RPCResponse {
+func termCreateMsgArgs(t *testing.T, id int64, command string, args *[]string) *marotte.RPCResponse {
 	t.Helper()
 	params := map[string]any{"command": command}
 	if args != nil {
 		params["args"] = *args
 	}
-	return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
+	return &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
 }
 
 // waitForTermExit drives one terminal/create to completion and returns its ring.
-func waitForTermExit(t *testing.T, h *Runtime, msg *vibekit.RPCResponse) string {
+func waitForTermExit(t *testing.T, h *Runtime, msg *marotte.RPCResponse) string {
 	t.Helper()
 	h.translateACPEvent("c1", msg)
 	term := singleTerm(t, h)
@@ -102,35 +102,35 @@ func TestTermCreate_PresentArgsExecsDirectly(t *testing.T) {
 func TestTermCreate_EveryFailurePathLogsAndAnswers(t *testing.T) {
 	cases := []struct {
 		name   string
-		msg    func(t *testing.T) *vibekit.RPCResponse
+		msg    func(t *testing.T) *marotte.RPCResponse
 		reason string
 	}{{
 		name: "InvalidParams",
-		msg: func(t *testing.T) *vibekit.RPCResponse {
+		msg: func(t *testing.T) *marotte.RPCResponse {
 			t.Helper()
 			id := int64(1)
-			return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: []byte(`{"command":5}`)}
+			return &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: []byte(`{"command":5}`)}
 		},
 		reason: "a malformed frame",
 	}, {
 		name: "EmptyCommand",
-		msg: func(t *testing.T) *vibekit.RPCResponse {
+		msg: func(t *testing.T) *marotte.RPCResponse {
 			t.Helper()
 			return termCreateMsgArgs(t, 1, "", nil)
 		},
 		reason: "no command at all",
 	}, {
 		name: "CwdEscapesWorkspace",
-		msg: func(t *testing.T) *vibekit.RPCResponse {
+		msg: func(t *testing.T) *marotte.RPCResponse {
 			t.Helper()
 			id := int64(1)
-			return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t,
+			return &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t,
 				map[string]any{"command": "true", "cwd": "/etc"})}
 		},
 		reason: "a cwd outside the workspace",
 	}, {
 		name: "ExecFails",
-		msg: func(t *testing.T) *vibekit.RPCResponse {
+		msg: func(t *testing.T) *marotte.RPCResponse {
 			t.Helper()
 			nope := []string{}
 			return termCreateMsgArgs(t, 1, "definitely-not-a-real-binary-xyz", &nope)
@@ -172,18 +172,18 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		evs = captureTerminalEvents(t, h)
-		if hasType(evs, vibekit.EventTerminalExited) {
+		if hasType(evs, marotte.EventTerminalExited) {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	exitedID, ok := firstEventID(evs, vibekit.EventTerminalExited)
+	exitedID, ok := firstEventID(evs, marotte.EventTerminalExited)
 	if !ok {
 		t.Fatal("terminal_exited was never broadcast")
 	}
 	sawOutput := false
 	for _, e := range evs {
-		if e.typ != string(vibekit.EventTerminalOutput) {
+		if e.typ != string(marotte.EventTerminalOutput) {
 			continue
 		}
 		sawOutput = true
@@ -233,27 +233,27 @@ func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) 
 }
 
 // terminalOutputPayloads decodes every broadcast terminal_output, in event-id order.
-func terminalOutputPayloads(t *testing.T, h *Runtime) []vibekit.TerminalOutputPayload {
+func terminalOutputPayloads(t *testing.T, h *Runtime) []marotte.TerminalOutputPayload {
 	t.Helper()
 	type idPayload struct {
-		p  vibekit.TerminalOutputPayload
+		p  marotte.TerminalOutputPayload
 		id uint64
 	}
 	var found []idPayload
 	for _, e := range h.bus.fanout.Snapshot() {
 		var env struct {
 			Type    string                        `json:"type"`
-			Payload vibekit.TerminalOutputPayload `json:"payload"`
+			Payload marotte.TerminalOutputPayload `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
 			t.Fatalf("unmarshal ring event: %v", err)
 		}
-		if env.Type == string(vibekit.EventTerminalOutput) {
+		if env.Type == string(marotte.EventTerminalOutput) {
 			found = append(found, idPayload{p: env.Payload, id: e.Offset})
 		}
 	}
 	slices.SortFunc(found, func(a, b idPayload) int { return cmp.Compare(a.id, b.id) })
-	out := make([]vibekit.TerminalOutputPayload, len(found))
+	out := make([]marotte.TerminalOutputPayload, len(found))
 	for i, f := range found {
 		out[i] = f.p
 	}
@@ -506,27 +506,27 @@ func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) 
 }
 
 // terminalExitedPayloads returns every broadcast terminal_exited, oldest first.
-func terminalExitedPayloads(t *testing.T, h *Runtime) []vibekit.TerminalExitedPayload {
+func terminalExitedPayloads(t *testing.T, h *Runtime) []marotte.TerminalExitedPayload {
 	t.Helper()
 	type idPayload struct {
-		p  vibekit.TerminalExitedPayload
+		p  marotte.TerminalExitedPayload
 		id uint64
 	}
 	var found []idPayload
 	for _, e := range h.bus.fanout.Snapshot() {
 		var env struct {
 			Type    string                        `json:"type"`
-			Payload vibekit.TerminalExitedPayload `json:"payload"`
+			Payload marotte.TerminalExitedPayload `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
 			t.Fatalf("unmarshal ring event: %v", err)
 		}
-		if env.Type == string(vibekit.EventTerminalExited) {
+		if env.Type == string(marotte.EventTerminalExited) {
 			found = append(found, idPayload{p: env.Payload, id: e.Offset})
 		}
 	}
 	slices.SortFunc(found, func(a, b idPayload) int { return cmp.Compare(a.id, b.id) })
-	out := make([]vibekit.TerminalExitedPayload, len(found))
+	out := make([]marotte.TerminalExitedPayload, len(found))
 	for i, f := range found {
 		out[i] = f.p
 	}
@@ -542,7 +542,7 @@ func TestTerminalExited_CleanExitCarriesTheExitCode(t *testing.T) {
 	term := singleTerm(t, h)
 	waitClosed(t, term.done, "terminal")
 
-	var payloads []vibekit.TerminalExitedPayload
+	var payloads []marotte.TerminalExitedPayload
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		payloads = terminalExitedPayloads(t, h)
@@ -573,7 +573,7 @@ func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	id := int64(1)
 	// Twice the app's cap, printing more than the cap so the ring must drop something.
-	msg := &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, map[string]any{
+	msg := &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, map[string]any{
 		"command":         "yes a | head -n 40000",
 		"outputByteLimit": 2 * outputBufferLimit,
 	})}
@@ -666,7 +666,7 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 
 	t.Run("one_terminal_killed", func(t *testing.T) {
 		at := newAgentTerminals(nil, nil, nil,
-			(&epochStub{cur: map[vibekit.ChatID]vibekit.TurnEpoch{"c1": 4}}).read)
+			(&epochStub{cur: map[marotte.ChatID]marotte.TurnEpoch{"c1": 4}}).read)
 		term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
 		term.epoch = 4 // this turn's, so the cancel is its to take
 		at.terms["t1"] = term
@@ -692,7 +692,7 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 	const wantLine = "terminal refusal could not be delivered"
 	id := int64(77)
-	msg := &vibekit.RPCResponse{ID: &id, Method: "terminal/not_a_verb"}
+	msg := &marotte.RPCResponse{ID: &id, Method: "terminal/not_a_verb"}
 
 	t.Run("refusal_refused", func(t *testing.T) {
 		h := hubWithBridge(t, t.TempDir(), &droppingBridge{fakeBridge: newFakeBridge()})
@@ -717,7 +717,7 @@ func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 
 // stageTerminal registers a terminal the way termCreate does: read the chat's current
 // turn through production code (turnEpochOf), then insert.
-func stageTerminal(h *Runtime, id string, chatID vibekit.ChatID) {
+func stageTerminal(h *Runtime, id string, chatID marotte.ChatID) {
 	epoch := h.agentTerms.turnEpochOf(chatID)
 	h.agentTerms.mu.Lock()
 	defer h.agentTerms.mu.Unlock()
@@ -736,15 +736,15 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	ctx := t.Context()
 
-	// A turn vibekit did not prompt: the first frame of the bracket opens it.
+	// A turn marotte did not prompt: the first frame of the bracket opens it.
 	h.stageTurnBuffer(t, "c1")
 	stageTerminal(h, "agent-bg", "c1")
 
 	// It ends on the wire's own bracket — no prompt wrapper anywhere on this path.
-	h.coord.WireTurnEnd(ctx, "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(ctx, "c1", marotte.StopReasonEndTurn, "")
 
 	// The user's next turn, with a command of its own.
-	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
 	if epoch == 0 {
 		t.Fatal("Setup: StartTurn refused, so there is no turn to cancel")
 	}

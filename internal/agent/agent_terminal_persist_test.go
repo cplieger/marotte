@@ -19,8 +19,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // hubWithRealStore builds a runtime backed by an on-disk chat store, seeded with
@@ -37,7 +37,7 @@ func hubWithRealStore(t *testing.T) (*Runtime, string) {
 	}
 	br := newRecordingTermBridge()
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return br }, cs)
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -48,7 +48,7 @@ func hubWithRealStore(t *testing.T) (*Runtime, string) {
 
 // seedTerminal registers a live agent terminal holding raw bytes, the way the
 // output pump would have.
-func seedTerminal(h *Runtime, id string, chatID vibekit.ChatID, raw string) {
+func seedTerminal(h *Runtime, id string, chatID marotte.ChatID, raw string) {
 	term := newAgentTerminal(nil, chatID, 1<<20)
 	term.output.Write([]byte(raw))
 	h.agentTerms.mu.Lock()
@@ -58,9 +58,9 @@ func seedTerminal(h *Runtime, id string, chatID vibekit.ChatID, raw string) {
 }
 
 // sessionUpdate wraps one ACP session/update frame the way the bridge does.
-func sessionUpdate(t *testing.T, raw string) *vibekit.RPCResponse {
+func sessionUpdate(t *testing.T, raw string) *marotte.RPCResponse {
 	t.Helper()
-	return &vibekit.RPCResponse{
+	return &marotte.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": json.RawMessage(raw)}),
 	}
@@ -70,13 +70,13 @@ func sessionUpdate(t *testing.T, raw string) *vibekit.RPCResponse {
 // its last assistant message. Reading the file rather than calling store.Get
 // keeps the assertion honest about what is actually persisted: a Get could in
 // principle be served from memory, a file cannot.
-func storedToolCall(t *testing.T, dir string) vibekit.ToolCall {
+func storedToolCall(t *testing.T, dir string) marotte.ToolCall {
 	t.Helper()
 	blob, err := os.ReadFile(filepath.Join(dir, "c1.json"))
 	if err != nil {
 		t.Fatalf("read chat file (nothing was persisted): %v", err)
 	}
-	var stored vibekit.Chat
+	var stored marotte.Chat
 	if err := json.Unmarshal(blob, &stored); err != nil {
 		t.Fatalf("unmarshal chat file: %v", err)
 	}
@@ -86,7 +86,7 @@ func storedToolCall(t *testing.T, dir string) vibekit.ToolCall {
 		}
 	}
 	t.Fatalf("no persisted message carries a tool call; chat file: %s", blob)
-	return vibekit.ToolCall{}
+	return marotte.ToolCall{}
 }
 
 // runTerminalTurn drives a complete terminal-backed tool call to turn end:
@@ -94,13 +94,13 @@ func storedToolCall(t *testing.T, dir string) vibekit.ToolCall {
 // is what writes the message to disk).
 func runTerminalTurn(t *testing.T, h *Runtime, frames ...string) {
 	t.Helper()
-	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	h.translateACPEvent("c1", sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	for _, f := range frames {
 		h.translateACPEvent("c1", sessionUpdate(t, f))
 	}
-	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &marotte.RPCResponse{})
 }
 
 const completedWithTerminal = `{"sessionUpdate":"tool_call_update","toolCallId":"tc-1",` +
@@ -117,7 +117,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 	h, dir := hubWithRealStore(t)
 	seedTerminal(h, "term-1", "c1", "\x1b[31mred\x1b[0m output\n")
 
-	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	h.translateACPEvent("c1", sessionUpdate(t,
 		`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"bash","kind":"execute","status":"pending"}`))
 	// KAS releases the terminal before it reports the result. That ordering is
@@ -126,7 +126,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 		t.Fatal("release reported the terminal was not present")
 	}
 	h.translateACPEvent("c1", sessionUpdate(t, completedWithTerminal))
-	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{})
+	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &marotte.RPCResponse{})
 
 	tc := storedToolCall(t, dir)
 	if tc.Output != "red output\n" {

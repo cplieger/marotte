@@ -41,7 +41,7 @@ func TestEveryDeclHasABecause(t *testing.T) {
 const withheldReasonFloor = 40
 
 // TestNoSendWithoutReason gates the rows a map literal could never carry: a
-// key vibekit deliberately WITHHOLDS.
+// key marotte deliberately WITHHOLDS.
 //
 // Two properties, and the second is the one that catches drift. A withheld row
 // must explain the omission at more than token length, and it must carry no
@@ -71,7 +71,7 @@ func TestNoSendWithoutReason(t *testing.T) {
 	}
 	if withheld == 0 {
 		t.Error(`no row declares send:false, so this gate is vacuous.
-The table's stated purpose includes recording the keys vibekit deliberately
+The table's stated purpose includes recording the keys marotte deliberately
 withholds; if the last such row was deleted, that information was lost with it.`)
 	}
 }
@@ -343,7 +343,7 @@ func findRow(t *testing.T, r resolver, key string) decl {
 //
 // Any test that asserts on a projection needs this, because an env override
 // makes the payload depend on the ambient environment: a developer or runner
-// carrying VIBEKIT_AGENT_WORKFLOWS=false would fail a golden for a reason that
+// carrying MAROTTE_AGENT_WORKFLOWS=false would fail a golden for a reason that
 // has nothing to do with the table. Driven off the table so a new env row is
 // covered without editing this helper. Callers must not use t.Parallel.
 func neutralizeEnvOverrides(t *testing.T) {

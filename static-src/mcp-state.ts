@@ -265,11 +265,11 @@ export interface ServerDiscovery {
 
 export type RuntimeState = "connected" | "needs_auth" | "idle" | "failed" | "disabled";
 
-/** Where a server came from (`internal/vibekit.Origin`).
+/** Where a server came from (`internal/marotte.Origin`).
  *
  *  `user` is a server this page's config list owns — its row carries every edit
  *  affordance. `power` came from an installed Power, `unknown` from a config
- *  vibekit cannot read; both are read-only, and the difference is only what the
+ *  marotte cannot read; both are read-only, and the difference is only what the
  *  row TELLS the reader. */
 export type Origin = "user" | "power" | "unknown";
 
@@ -393,7 +393,7 @@ export function setPrewarm(id: string, state: "installing" | "done" | "failed"):
 export const servers: Collection<Server> = createCollection<Server>((s) => s.id);
 
 /** Names /api/mcp/status reported that this page's config list does not hold —
- *  a Power's server, or one from a config vibekit cannot read. Sorted.
+ *  a Power's server, or one from a config marotte cannot read. Sorted.
  *
  *  It exists because the configured list is keyed by a persisted server id and
  *  such a server has none: it is not in `mcp.json` at all. Without a second list

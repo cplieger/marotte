@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // retryReply builds `_kiro/workflow/retry`'s own reply shape:
@@ -52,7 +52,7 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 		methodKiroWorkflowLoad:  json.RawMessage(`{}`),
 		methodKiroWorkflowRetry: retryReply(t, "wf_1", "running", nodes...),
 	}
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Findings cleanup"
 		c.RecordSession("sess_owned")
 		return true
@@ -99,7 +99,7 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("POST retry = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 			}
-			var got vibekit.RunRetriedResponse
+			var got marotte.RunRetriedResponse
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatalf("decoding the retry reply: %s", err)
 			}
@@ -176,7 +176,7 @@ func TestRetry_LoadsBeforeItRetriesAReHostedRun(t *testing.T) {
 func TestRetry_AFailedLoadLeavesNothingBehind(t *testing.T) {
 	h, br := seedChatParentedRun(t, false)
 	br.setCallRPCErr(methodKiroWorkflowLoad,
-		&vibekit.RPCError{Code: -32603, Message: "Workflow wf_1 not found on disk"})
+		&marotte.RPCError{Code: -32603, Message: "Workflow wf_1 not found on disk"})
 
 	if _, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err == nil {
 		t.Fatal("Retry = nil after the load failed; nothing was registered, so nothing can run")
@@ -199,7 +199,7 @@ func TestRetry_AFailedLoadLeavesNothingBehind(t *testing.T) {
 func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
 	h, br := seedChatParentedRun(t, true)
 	br.setCallRPCErr(methodKiroWorkflowRetry,
-		&vibekit.RPCError{Code: -32603, Message: "Cannot retry a completed workflow"})
+		&marotte.RPCError{Code: -32603, Message: "Cannot retry a completed workflow"})
 
 	out, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
 	if err == nil {
@@ -216,7 +216,7 @@ func TestRetry_AnInBandRefusalIsAFailure(t *testing.T) {
 // so a reader given it cannot tell a refusal from a fault.
 func TestHandleRetry_ForwardsKASsOwnSentence(t *testing.T) {
 	h, br := seedChatParentedRun(t, true)
-	br.setCallRPCErr(methodKiroWorkflowRetry, &vibekit.RPCError{
+	br.setCallRPCErr(methodKiroWorkflowRetry, &marotte.RPCError{
 		Code:    -32603,
 		Message: "Internal error",
 		Data:    json.RawMessage(`{"details":"Workflow wf_1 is not registered. Load or create it first."}`),

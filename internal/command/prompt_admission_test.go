@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // clientAPITimeout reads the shared fixture pinning @cplieger/fetch's
@@ -112,7 +112,7 @@ func (b *orderedBridge) ReleaseAfterPrompt() {
 	b.rec.add("bridge.release")
 }
 
-func (b *orderedBridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+func (b *orderedBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	b.rec.add("call")
 	return b.recordingBridge.CallAt(ctx, method, params)
 }
@@ -123,9 +123,9 @@ func (b *orderedBridge) CallAt(ctx context.Context, method string, params any) (
 // between the goroutine's releases and the recovery's re-reserve.
 type scriptedAdmission struct {
 	rec    *callRecorder
-	result vibekit.TurnResult
+	result marotte.TurnResult
 	// startEpoch is what StartTurn answers; zero exercises the no-epoch arm.
-	startEpoch              vibekit.TurnEpoch
+	startEpoch              marotte.TurnEpoch
 	afterReservationRelease func()
 	mu                      sync.Mutex
 	reserved                bool
@@ -133,7 +133,7 @@ type scriptedAdmission struct {
 	admitted                int
 }
 
-func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, vibekit.ChatID, time.Duration) AdmissionOutcome {
+func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.admitted++
@@ -150,7 +150,7 @@ func (a *scriptedAdmission) ReserveTurnForPrompt(context.Context, vibekit.ChatID
 	return AdmissionAcquired
 }
 
-func (a *scriptedAdmission) TryReserveTurn(_ vibekit.ChatID, _ vibekit.TurnOpenSource) bool {
+func (a *scriptedAdmission) TryReserveTurn(_ marotte.ChatID, _ marotte.TurnOpenSource) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.rec.add("tryReserve")
@@ -161,7 +161,7 @@ func (a *scriptedAdmission) TryReserveTurn(_ vibekit.ChatID, _ vibekit.TurnOpenS
 	return true
 }
 
-func (a *scriptedAdmission) ReleaseTurnReservation(vibekit.ChatID) {
+func (a *scriptedAdmission) ReleaseTurnReservation(marotte.ChatID) {
 	a.mu.Lock()
 	a.reserved = false
 	a.mu.Unlock()
@@ -171,35 +171,35 @@ func (a *scriptedAdmission) ReleaseTurnReservation(vibekit.ChatID) {
 	}
 }
 
-func (a *scriptedAdmission) AdmissionHolderSource(vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+func (a *scriptedAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-func (a *scriptedAdmission) StartTurn(context.Context, vibekit.ChatID, vibekit.TurnOpenSource) vibekit.TurnEpoch {
+func (a *scriptedAdmission) StartTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource) marotte.TurnEpoch {
 	a.rec.add("startTurn")
 	return a.startEpoch
 }
 
-func (a *scriptedAdmission) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) (vibekit.TurnResult, error) {
+func (a *scriptedAdmission) AwaitTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) (marotte.TurnResult, error) {
 	a.rec.add("await")
 	return a.result, nil
 }
 
-func (a *scriptedAdmission) ReleaseTurn(vibekit.ChatID, vibekit.TurnEpoch) { a.rec.add("releaseTurn") }
+func (a *scriptedAdmission) ReleaseTurn(marotte.ChatID, marotte.TurnEpoch) { a.rec.add("releaseTurn") }
 
-func (a *scriptedAdmission) SettleTurnOnResponse(context.Context, vibekit.ChatID, vibekit.TurnEpoch, uint64, *vibekit.RPCResponse) {
+func (a *scriptedAdmission) SettleTurnOnResponse(context.Context, marotte.ChatID, marotte.TurnEpoch, uint64, *marotte.RPCResponse) {
 	a.rec.add("settle")
 }
 
-func (a *scriptedAdmission) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool {
+func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, marotte.TurnEpoch) bool {
 	a.rec.add("openedAfter")
 	return false
 }
 
-func (a *scriptedAdmission) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
+func (a *scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) {
 }
 
-func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, vibekit.StopReason, string) {
+func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, marotte.TurnEpoch, marotte.StopReason, string) {
 	a.rec.add("abandon")
 }
 
@@ -212,10 +212,10 @@ type admissionHost struct {
 	openErr   error
 	rec       *callRecorder
 	mu        sync.Mutex
-	events    []vibekit.ServerEvent
+	events    []marotte.ServerEvent
 }
 
-func (h *admissionHost) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (h *admissionHost) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	h.rec.add("openBridge")
 	if h.openErr != nil {
 		return nil, h.openErr
@@ -223,21 +223,21 @@ func (h *admissionHost) OpenBridge(context.Context, vibekit.ChatID, string) (Bri
 	return h.bridge, nil
 }
 
-func (h *admissionHost) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (h *admissionHost) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.events = append(h.events, evt)
 }
 
-func (h *admissionHost) errorCodes() []vibekit.ErrorCode {
+func (h *admissionHost) errorCodes() []marotte.ErrorCode {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var out []vibekit.ErrorCode
+	var out []marotte.ErrorCode
 	for _, evt := range h.events {
-		if evt.Type != vibekit.EventError {
+		if evt.Type != marotte.EventError {
 			continue
 		}
-		if p, ok := evt.Payload.(vibekit.ErrorPayload); ok {
+		if p, ok := evt.Payload.(marotte.ErrorPayload); ok {
 			out = append(out, p.Code)
 		}
 	}
@@ -245,7 +245,7 @@ func (h *admissionHost) errorCodes() []vibekit.ErrorCode {
 }
 
 // newAdmissionFixture builds the wired prompt roles plus the join handle.
-func newAdmissionFixture(t *testing.T, result vibekit.TurnResult, epoch vibekit.TurnEpoch) (*admissionHost, *promptRoles, *promptJoin) {
+func newAdmissionFixture(t *testing.T, result marotte.TurnResult, epoch marotte.TurnEpoch) (*admissionHost, *promptRoles, *promptJoin) {
 	t.Helper()
 	rec := &callRecorder{}
 	host := &admissionHost{
@@ -267,7 +267,7 @@ func newAdmissionFixture(t *testing.T, result vibekit.TurnResult, epoch vibekit.
 // OpenBridge is still parked, and the turn's call happens only afterwards.
 func TestCmdPrompt_AcksBeforeOpenBridgeAndTurnCompletion(t *testing.T) {
 	gate := make(chan struct{})
-	host, roles, join := newAdmissionFixture(t, vibekit.TurnResult{}, 1)
+	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, 1)
 	blocked := &gatedBridgeAccess{inner: host, gate: gate}
 	roles.bridges = blocked
 
@@ -299,13 +299,13 @@ type gatedBridgeAccess struct {
 	gate  chan struct{}
 }
 
-func (g *gatedBridgeAccess) Bridge(id vibekit.ChatID) Bridge { return g.inner.Bridge(id) }
-func (g *gatedBridgeAccess) CloseBridge(id vibekit.ChatID)   { g.inner.CloseBridge(id) }
-func (g *gatedBridgeAccess) AwaitReplayAdopted(ctx context.Context, id vibekit.ChatID) error {
+func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge { return g.inner.Bridge(id) }
+func (g *gatedBridgeAccess) CloseBridge(id marotte.ChatID)   { g.inner.CloseBridge(id) }
+func (g *gatedBridgeAccess) AwaitReplayAdopted(ctx context.Context, id marotte.ChatID) error {
 	return g.inner.AwaitReplayAdopted(ctx, id)
 }
 
-func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id vibekit.ChatID, model string) (Bridge, error) {
+func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, error) {
 	select {
 	case <-g.gate:
 	case <-ctx.Done():
@@ -398,7 +398,7 @@ func TestWriteErr_EmitsTheReasonAdditively(t *testing.T) {
 // never an ACP call: the failure is broadcast, and BOTH holds release so the
 // chat is not wedged.
 func TestCmdPrompt_ZeroEpochStartTurnFailsLoudAndReleasesBothSlots(t *testing.T) {
-	host, roles, join := newAdmissionFixture(t, vibekit.TurnResult{}, 0)
+	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, 0)
 
 	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
@@ -409,8 +409,8 @@ func TestCmdPrompt_ZeroEpochStartTurnFailsLoudAndReleasesBothSlots(t *testing.T)
 		t.Error("an ACP call was made for a turn that never opened")
 	}
 	codes := host.errorCodes()
-	if len(codes) != 1 || codes[0] != vibekit.ErrCodePromptFailed {
-		t.Errorf("error codes = %v, want exactly [%s]", codes, vibekit.ErrCodePromptFailed)
+	if len(codes) != 1 || codes[0] != marotte.ErrCodePromptFailed {
+		t.Errorf("error codes = %v, want exactly [%s]", codes, marotte.ErrCodePromptFailed)
 	}
 	if host.rec.indexOf("bridge.release") == -1 {
 		t.Error("the bridge slot was not released")
@@ -447,8 +447,8 @@ func TestCmdPrompt_CallFailureBroadcastsAndReleases(t *testing.T) {
 	join.join()
 
 	codes := host.errorCodes()
-	if len(codes) != 1 || codes[0] != vibekit.ErrCodePromptFailed {
-		t.Errorf("error codes = %v, want exactly [%s]", codes, vibekit.ErrCodePromptFailed)
+	if len(codes) != 1 || codes[0] != marotte.ErrCodePromptFailed {
+		t.Errorf("error codes = %v, want exactly [%s]", codes, marotte.ErrCodePromptFailed)
 	}
 	if host.rec.indexOf("abandon") == -1 {
 		t.Error("the failed turn was never finalized")
@@ -461,8 +461,8 @@ func TestCmdPrompt_CallFailureBroadcastsAndReleases(t *testing.T) {
 }
 
 // firingResult is the captured outcome that arms the empty-turn recovery.
-func firingResult() vibekit.TurnResult {
-	return vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
+func firingResult() marotte.TurnResult {
+	return marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
 }
 
 // The settled path's release order is the design's contract: the result is
@@ -572,7 +572,7 @@ func TestCmdPrompt_IdempotentRetryReplaysTheAck(t *testing.T) {
 	c, _ := store.Get(t.Context(), "c1")
 	users := 0
 	for i := range c.Messages {
-		if c.Messages[i].Role == vibekit.RoleUser {
+		if c.Messages[i].Role == marotte.RoleUser {
 			users++
 		}
 	}

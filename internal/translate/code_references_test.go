@@ -3,21 +3,21 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // codeRefsPayload extracts the CodeReferencesPayload from the single
 // EventCodeReferences broadcast, or fails if there isn't exactly one.
-func codeRefsPayload(t *testing.T, events *[]vibekit.ServerEvent) vibekit.CodeReferencesPayload {
+func codeRefsPayload(t *testing.T, events *[]marotte.ServerEvent) marotte.CodeReferencesPayload {
 	t.Helper()
-	var got []vibekit.CodeReferencesPayload
+	var got []marotte.CodeReferencesPayload
 	for _, e := range *events {
-		if e.Type != vibekit.EventCodeReferences {
+		if e.Type != marotte.EventCodeReferences {
 			continue
 		}
-		p, ok := e.Payload.(vibekit.CodeReferencesPayload)
+		p, ok := e.Payload.(marotte.CodeReferencesPayload)
 		if !ok {
-			t.Fatalf("EventCodeReferences payload type = %T, want vibekit.CodeReferencesPayload", e.Payload)
+			t.Fatalf("EventCodeReferences payload type = %T, want marotte.CodeReferencesPayload", e.Payload)
 		}
 		got = append(got, p)
 	}
@@ -27,10 +27,10 @@ func codeRefsPayload(t *testing.T, events *[]vibekit.ServerEvent) vibekit.CodeRe
 	return got[0]
 }
 
-func countCodeRefEvents(events *[]vibekit.ServerEvent) int {
+func countCodeRefEvents(events *[]marotte.ServerEvent) int {
 	n := 0
 	for _, e := range *events {
-		if e.Type == vibekit.EventCodeReferences {
+		if e.Type == marotte.EventCodeReferences {
 			n++
 		}
 	}
@@ -39,15 +39,15 @@ func countCodeRefEvents(events *[]vibekit.ServerEvent) int {
 
 // startedBuf returns an in-flight assistant buffer for chatID with a
 // message id set (mirrors ensureTurnStarted).
-func startedBuf(deps *baseDeps, chatID vibekit.ChatID, msgID string) {
+func startedBuf(deps *baseDeps, chatID marotte.ChatID, msgID string) {
 	buf := deps.bufStore.GetOrInit(chatID)
 	buf.Started = true
 	buf.MessageID = msgID
 }
 
-func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *vibekit.RPCResponse {
+func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *marotte.RPCResponse {
 	t.Helper()
-	return &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
+	return &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
 		"sessionId":  sessionID,
 		"references": refs,
 	})}
@@ -60,7 +60,7 @@ func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *vibekit.
 func TestHandleCodeReferences_HappyPath(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
@@ -88,7 +88,7 @@ func TestHandleCodeReferences_HappyPath(t *testing.T) {
 func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
@@ -109,7 +109,7 @@ func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 func TestHandleCodeReferences_NoTurnInFlight(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	// No startedBuf: buffer is absent / not started.
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
@@ -133,7 +133,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(rolesOf(deps))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
 		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-sub", []map[string]any{
@@ -147,7 +147,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(rolesOf(deps))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
 		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-parent", []map[string]any{
@@ -165,7 +165,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
 	ref := []map[string]any{{"licenseName": "MIT", "repository": "r", "url": "https://example.com"}}
@@ -176,7 +176,7 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 		t.Fatalf("broadcast count = %d, want 2 (one per notification)", n)
 	}
 	last := (*events)[len(*events)-1]
-	p, ok := last.Payload.(vibekit.CodeReferencesPayload)
+	p, ok := last.Payload.(marotte.CodeReferencesPayload)
 	if !ok {
 		t.Fatalf("last payload type = %T", last.Payload)
 	}
@@ -193,10 +193,10 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 func TestHandleCodeReferences_MalformedParamsNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
-	tr.HandleCodeReferences(t.Context(), chatID, &vibekit.RPCResponse{Params: []byte("{")})
+	tr.HandleCodeReferences(t.Context(), chatID, &marotte.RPCResponse{Params: []byte("{")})
 	if n := countCodeRefEvents(events); n != 0 {
 		t.Errorf("broadcast count = %d, want 0 (malformed params)", n)
 	}

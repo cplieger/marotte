@@ -2,7 +2,7 @@
 // Styled tooltip system — adopted from @cplieger/ui-primitives.
 //
 // The hand-rolled delegated TooltipController was replaced by the library's
-// `initTooltips`, configured to keep vibekit's existing `data-tooltip`
+// `initTooltips`, configured to keep marotte's existing `data-tooltip`
 // attribute. So every existing `data-tooltip="…"` in the HTML/TS keeps working
 // unchanged.
 //
@@ -23,7 +23,7 @@ import { initTooltips as uipInitTooltips } from "@cplieger/ui-primitives/tooltip
 /** Hover time every tooltip waits out, matching a native `title`: Firefox's
  *  `ui.tooltipDelay` default is 500ms and the Windows mouse-hover time is
  *  400ms. ONE value for every hover, cold or warm — a native tooltip has no
- *  concept of a warm group, and the warm path was what made vibekit's tooltips
+ *  concept of a warm group, and the warm path was what made marotte's tooltips
  *  read as instant: the group stayed warm for `cooldown + delayCold` after a
  *  show, so every neighbouring pill and toolbar button popped with no delay
  *  once one had. */

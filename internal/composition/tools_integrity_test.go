@@ -1,6 +1,6 @@
 package composition
 
-// vibekit turns toolbelt's opt-in root-integrity check ON (buildToolsEngine's
+// marotte turns toolbelt's opt-in root-integrity check ON (buildToolsEngine's
 // Config literal) and answers a refusal by running TOOL-LESS rather than by
 // refusing to boot. Both halves need pinning and neither shows up in a type
 // signature.
@@ -39,9 +39,9 @@ import (
 	"time"
 
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/vibekit/internal/agent"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/mcp/prewarm"
+	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/mcp/prewarm"
 )
 
 // unfitRootMsg must match logRootIntegrityRefusal's per-finding message. The
@@ -51,7 +51,7 @@ import (
 const unfitRootMsg = "tools: managed root is not fit to execute from"
 
 // captureDefaultLogger redirects slog's default for one call. Both the degraded
-// arm and toolbelt's own refusal line land here (vibekit sets no Config.Logger,
+// arm and toolbelt's own refusal line land here (marotte sets no Config.Logger,
 // so the library logs to the same default), which is why readers filter by
 // message instead of counting records. slog's default is process-global: no test
 // in this file may run in parallel.
@@ -155,7 +155,7 @@ func mkdirMode(t *testing.T, path string, mode os.FileMode) {
 }
 
 // TestBuildToolsEngineDegradesOnRootIntegrityRefusal pins the fatal-vs-warn
-// decision: an unfit managed root leaves vibekit running WITHOUT the tools
+// decision: an unfit managed root leaves marotte running WITHOUT the tools
 // subsystem, and does not stop the boot.
 //
 // The condition is persistent-volume state this process neither created nor may

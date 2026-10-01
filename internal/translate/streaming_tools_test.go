@@ -8,14 +8,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // lineRec is a recording LineRecorder capturing RecordFromDiffs
 // invocations so the diff gates in HandleToolCall / HandleToolCallUpdate
 // are observable.
 type lineRec struct {
-	lastDiffs []vibekit.ToolDiff
+	lastDiffs []marotte.ToolDiff
 	calls     int
 	// lastTurn is the turn number the tracker was handed. Recorded because it
 	// is the tracker's eviction key and the number the editor's gutter groups
@@ -24,7 +24,7 @@ type lineRec struct {
 	lastTurn int
 }
 
-func (r *lineRec) RecordFromDiffs(_ vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, _ string) {
+func (r *lineRec) RecordFromDiffs(_ marotte.ChatID, diffs []marotte.ToolDiff, turn int, _ string) {
 	r.calls++
 	r.lastDiffs = diffs
 	r.lastTurn = turn
@@ -39,10 +39,10 @@ type lineDeps struct {
 	// primed is the tool call primeToolCall created, kept because it clears the
 	// event stream afterwards: the delta oracle needs the value the deltas fold
 	// ONTO, and the create frame that carried it is gone by then.
-	primed vibekit.ToolCall
+	primed marotte.ToolCall
 }
 
-func (d *lineDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
+func (d *lineDeps) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string) {
 	d.rec.RecordFromDiffs(chatID, diffs, turn, kind)
 }
 
@@ -72,7 +72,7 @@ var (
 
 // newLineCaptureDeps builds an event-capturing baseDeps with a recording
 // LineTracker spliced in.
-func newLineCaptureDeps() (*lineDeps, *lineRec, *[]vibekit.ServerEvent) {
+func newLineCaptureDeps() (*lineDeps, *lineRec, *[]marotte.ServerEvent) {
 	base, events := newEventCaptureDeps()
 	rec := &lineRec{}
 	return &lineDeps{baseDeps: base, rec: rec}, rec, events
@@ -80,11 +80,11 @@ func newLineCaptureDeps() (*lineDeps, *lineRec, *[]vibekit.ServerEvent) {
 
 // primeToolCall registers one in-flight tool call "tc-1" on an event-capturing
 // translator, then clears the captured events so the next update is seen in isolation.
-func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]vibekit.ServerEvent, vibekit.ChatID) {
+func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]marotte.ServerEvent, marotte.ChatID) {
 	t.Helper()
 	deps, rec, events := newLineCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"title":      "readFile",
@@ -101,9 +101,9 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]vibekit.S
 // stashCreatedThenClear records the tool call the create frames built and then
 // empties the stream, so a following update is observed in isolation while the
 // delta oracle still knows the value those deltas fold onto.
-func stashCreatedThenClear(t *testing.T, deps *lineDeps, events *[]vibekit.ServerEvent) {
+func stashCreatedThenClear(t *testing.T, deps *lineDeps, events *[]marotte.ServerEvent) {
 	t.Helper()
-	deps.primed, _ = foldToolCallUpdates(t, vibekit.ToolCall{}, events)
+	deps.primed, _ = foldToolCallUpdates(t, marotte.ToolCall{}, events)
 	*events = nil
 }
 
@@ -112,13 +112,13 @@ func stashCreatedThenClear(t *testing.T, deps *lineDeps, events *[]vibekit.Serve
 // The fold is also the ORACLE for the delta shape — it is toolCallDelta's inverse, and
 // the cross-check against the buffer's own accumulated value is what keeps it from
 // being the emitter's rules agreeing with themselves.
-func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]vibekit.ServerEvent) (vibekit.ToolCall, bool) {
+func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]marotte.ServerEvent) (marotte.ToolCall, bool) {
 	t.Helper()
 	// Seeded from the create primeToolCall consumed. A create frame still in the
 	// stream overrides it, so a test that primes its own call needs no seed.
 	folded, ok := foldToolCallUpdates(t, deps.primed, events)
 	if !ok {
-		return vibekit.ToolCall{}, false
+		return marotte.ToolCall{}, false
 	}
 	held, _, found := deps.bufStore.GetOrInit("c1").ToolCall(folded.ID)
 	if !found {
@@ -133,15 +133,15 @@ func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]vibekit.ServerEv
 
 // foldToolCallUpdates replays the delta stream: the create frame's whole ToolCall
 // plus every later delta for that id, in order.
-func foldToolCallUpdates(t *testing.T, seed vibekit.ToolCall, events *[]vibekit.ServerEvent) (vibekit.ToolCall, bool) {
+func foldToolCallUpdates(t *testing.T, seed marotte.ToolCall, events *[]marotte.ServerEvent) (marotte.ToolCall, bool) {
 	t.Helper()
 	out := seed
 	sawUpdate := false
 	for _, e := range *events {
 		switch p := e.Payload.(type) {
-		case vibekit.ToolCallPayload:
+		case marotte.ToolCallPayload:
 			out = p.ToolCall
-		case vibekit.ToolCallUpdatePayload:
+		case marotte.ToolCallUpdatePayload:
 			sawUpdate = true
 			applyToolCallDelta(&out, p)
 		}
@@ -151,7 +151,7 @@ func foldToolCallUpdates(t *testing.T, seed vibekit.ToolCall, events *[]vibekit.
 
 // applyToolCallDelta is the client's fold, in Go: the inverse of toolCallDelta.
 // An absent field means unchanged.
-func applyToolCallDelta(tc *vibekit.ToolCall, d vibekit.ToolCallUpdatePayload) {
+func applyToolCallDelta(tc *marotte.ToolCall, d marotte.ToolCallUpdatePayload) {
 	tc.ID = d.ToolCallID
 	if d.Title != "" {
 		tc.Title = d.Title
@@ -206,9 +206,9 @@ func applyToolCallDelta(tc *vibekit.ToolCall, d vibekit.ToolCallUpdatePayload) {
 	}
 }
 
-func hasWorkingLabel(events *[]vibekit.ServerEvent) bool {
+func hasWorkingLabel(events *[]marotte.ServerEvent) bool {
 	for _, e := range *events {
-		if e.Type == vibekit.EventWorkingLabel {
+		if e.Type == marotte.EventWorkingLabel {
 			return true
 		}
 	}
@@ -216,9 +216,9 @@ func hasWorkingLabel(events *[]vibekit.ServerEvent) bool {
 }
 
 // hasToolCallEvent reports whether any tool_call event was broadcast.
-func hasToolCallEvent(events *[]vibekit.ServerEvent) bool {
+func hasToolCallEvent(events *[]marotte.ServerEvent) bool {
 	for _, e := range *events {
-		if e.Type == vibekit.EventToolCall {
+		if e.Type == marotte.EventToolCall {
 			return true
 		}
 	}
@@ -245,7 +245,7 @@ func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), FrameAttribution{})
 		if !hasToolCallEvent(events) {
 			t.Error("hook-ask tool call broadcast no tool_call event with hooks.showStatus off; want shown (the ask is ungated)")
@@ -259,7 +259,7 @@ func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: true}
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, hookAsk), FrameAttribution{})
+		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, hookAsk), FrameAttribution{})
 		if !hasToolCallEvent(events) {
 			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
 		}
@@ -269,7 +269,7 @@ func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"title":      "readFile",
 			"kind":       "read",
@@ -288,7 +288,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithDiffRecordsLineChanges", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff",
 			"title":      "writeFile",
 			"kind":       "edit",
@@ -309,7 +309,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 		}
 		// A second diffed call in the same chat advances to 2, which is what
 		// makes the number a turn rather than a constant.
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff-2",
 			"title":      "writeFile",
 			"kind":       "edit",
@@ -325,7 +325,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithoutDiffSkipsLineTracker", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-nodiff",
 			"title":      "readFile",
 			"kind":       "read",
@@ -349,8 +349,8 @@ func TestToolCallUpdate_StatusApplied(t *testing.T) {
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
-	if tc.Status != vibekit.ToolCompleted {
-		t.Errorf("ToolCall.Status = %q, want %q (non-empty status must be applied)", tc.Status, vibekit.ToolCompleted)
+	if tc.Status != marotte.ToolCompleted {
+		t.Errorf("ToolCall.Status = %q, want %q (non-empty status must be applied)", tc.Status, marotte.ToolCompleted)
 	}
 }
 
@@ -465,7 +465,7 @@ func TestToolCallUpdate_IndexBoundaryGuard(t *testing.T) {
 		"status":     "completed",
 	}), FrameAttribution{})
 	for _, e := range *events {
-		if e.Type == vibekit.EventToolCallUpdate {
+		if e.Type == marotte.EventToolCallUpdate {
 			t.Error("idx==len: tool_call_update emitted, want early return (no event)")
 		}
 	}
@@ -644,7 +644,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	t.Run("PendingEditMarksNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-new",
 			"title":      "writeFile",
@@ -666,7 +666,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	t.Run("CompletedEditIsNotNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		chatID := vibekit.ChatID("c2")
+		chatID := marotte.ChatID("c2")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-existing",
 			"title":      "writeFile",
@@ -703,17 +703,17 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	tests := []struct {
 		name       string
 		checkpoint map[string]any
-		want       vibekit.ToolCheckpoint
+		want       marotte.ToolCheckpoint
 	}{
 		{
 			name:       "overwriting an existing file carries all three",
 			checkpoint: map[string]any{"original": origURI, "modified": modURI, "local": local},
-			want:       vibekit.ToolCheckpoint{Original: origURI, Modified: modURI, Local: local},
+			want:       marotte.ToolCheckpoint{Original: origURI, Modified: modURI, Local: local},
 		},
 		{
 			name:       "creating a file has no pre-image",
 			checkpoint: map[string]any{"modified": modURI, "local": local},
-			want:       vibekit.ToolCheckpoint{Modified: modURI, Local: local},
+			want:       marotte.ToolCheckpoint{Modified: modURI, Local: local},
 		},
 	}
 	for _, tt := range tests {
@@ -757,7 +757,7 @@ func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 	if !ok {
 		t.Fatal("no tool_call_update event emitted")
 	}
-	want := vibekit.ToolCheckpoint{Original: "orig-uri", Modified: "mod-uri-2", Local: "local-uri"}
+	want := marotte.ToolCheckpoint{Original: "orig-uri", Modified: "mod-uri-2", Local: "local-uri"}
 	if tc.Checkpoint == nil || *tc.Checkpoint != want {
 		t.Errorf("ToolCall.Checkpoint = %+v, want %+v (a narrower frame must refine, not replace)", tc.Checkpoint, want)
 	}
@@ -804,19 +804,19 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 		name      string
 		update    map[string]any
 		wantTitle string
-		wantKind  vibekit.ToolKind
+		wantKind  marotte.ToolKind
 	}{
 		{
 			name:      "the_update_refines_both",
 			update:    map[string]any{"title": "readFile(config.yaml)", "kind": "edit"},
 			wantTitle: "readFile(config.yaml)",
-			wantKind:  vibekit.ToolKind("edit"),
+			wantKind:  marotte.ToolKind("edit"),
 		},
 		{
 			name:      "the_update_omits_both",
 			update:    map[string]any{},
 			wantTitle: "readFile",
-			wantKind:  vibekit.ToolKind("read"),
+			wantKind:  marotte.ToolKind("read"),
 		},
 	}
 	for _, tc := range tests {
@@ -894,7 +894,7 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 	t.Run("a_held_id_survives_a_later_frame", func(t *testing.T) {
 		deps, _, events := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"title":      "readFile",
@@ -1036,8 +1036,8 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 			}
 			// The mark is a SECOND axis, never a status: `failed` would offer the reader
 			// an "Explain this error" button over a tool that ran correctly.
-			if got.Status != vibekit.ToolCompleted {
-				t.Errorf("ToolCall.Status = %q, want %q (a refusal is still a completion)", got.Status, vibekit.ToolCompleted)
+			if got.Status != marotte.ToolCompleted {
+				t.Errorf("ToolCall.Status = %q, want %q (a refusal is still a completion)", got.Status, marotte.ToolCompleted)
 			}
 		})
 	}
@@ -1369,7 +1369,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 	t.Run("values_held_from_the_create_survive_a_later_frame", func(t *testing.T) {
 		deps, _, events := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"title":      "disclose_context",
@@ -1407,7 +1407,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 }
 
 // TestParseToolUpdateContent_UnmodelledType pins the BEHAVIOUR for a content block
-// vibekit does not decode — nothing rendered — and the two Debug lines that make the
+// marotte does not decode — nothing rendered — and the two Debug lines that make the
 // drop findable, since the symptom is otherwise a claim-only card with an empty details
 // region and no signal anywhere. This is the surface kiro-cli's structuredContent lands
 // on, deliberately not adopted while there is no renderer behind it.
@@ -1455,7 +1455,7 @@ func TestParseToolUpdateContent_UnmodelledType(t *testing.T) {
 
 	t.Run("a known type with an unmatched payload is not called unmodelled", func(t *testing.T) {
 		// An empty-text content block and a diff with no path are NORMAL frames,
-		// not gaps in what vibekit decodes. A bare `default` arm would report both
+		// not gaps in what marotte decodes. A bare `default` arm would report both
 		// as unmodelled types, which is the noise that would make the real line
 		// unfindable — so the guard is on the TYPE, not on whether an arm matched.
 		var logs bytes.Buffer

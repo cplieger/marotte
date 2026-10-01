@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/parallel"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/parallel"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // purgeEntry is a chat file's (id, full path) pair gathered during a scan.
@@ -116,17 +116,17 @@ func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 // stat+remove so a concurrent mutate cannot race the delete.
 func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Time, maxAge time.Duration) (purgeOutcome, time.Time) {
 	// A live bridge means active work; retention is about abandoned work.
-	if s.isLive != nil && s.isLive(vibekit.ChatID(entry.name)) {
+	if s.isLive != nil && s.isLive(marotte.ChatID(entry.name)) {
 		return purgeKept, time.Time{}
 	}
 	// An open tab with no bridge is the reader the age test cannot see, because
 	// reading stamps nothing. Checked BEFORE the record lock to keep the lock order
 	// acyclic: the coordinator's operation lock precedes a chat record lock
 	// everywhere else.
-	if s.hasOpenTab != nil && s.hasOpenTab(vibekit.ChatID(entry.name)) {
+	if s.hasOpenTab != nil && s.hasOpenTab(marotte.ChatID(entry.name)) {
 		return purgeKept, time.Time{}
 	}
-	m := s.store.Lock(vibekit.ChatID(entry.name))
+	m := s.store.Lock(marotte.ChatID(entry.name))
 	m.Lock()
 	info, err := os.Stat(entry.path)
 	if err != nil {
@@ -151,7 +151,7 @@ func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Ti
 		m.Unlock()
 		return purgeKept, refTime.Add(maxAge)
 	}
-	chatsVersion, err := s.store.Remove(vibekit.ChatID(entry.name))
+	chatsVersion, err := s.store.Remove(marotte.ChatID(entry.name))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		m.Unlock()
 		slog.Warn("chat purge: remove", "chat_id", entry.name, "error", err)
@@ -159,13 +159,13 @@ func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Ti
 	}
 	m.Unlock()
 	if s.broadcast != nil {
-		chatID := vibekit.ChatID(entry.name)
-		frame := vibekit.NewEvent(vibekit.EventChatDeleted, chatID, vibekit.ChatDeletedPayload{ID: entry.name})
-		frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
+		chatID := marotte.ChatID(entry.name)
+		frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: entry.name})
+		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
 		s.broadcast(ctx, frame)
 	}
 	if s.onPurge != nil {
-		s.onPurge(vibekit.ChatID(entry.name), chain)
+		s.onPurge(marotte.ChatID(entry.name), chain)
 	}
 	return purgePurged, time.Time{}
 }
@@ -178,7 +178,7 @@ func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Ti
 // moves for reasons that are not activity, so aging from it resets its own clock.
 // An unreadable chat reports no draft.
 func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string, drafting bool) {
-	h, err := s.store.LoadRetentionHeader(vibekit.ChatID(entry.name))
+	h, err := s.store.LoadRetentionHeader(marotte.ChatID(entry.name))
 	if err != nil {
 		return mtime, nil, false
 	}

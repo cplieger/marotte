@@ -9,7 +9,7 @@
  *  scopes it to ONE TAB across reloads, so a crash loop in one tab says nothing about
  *  the next. That also puts it outside `clearDeviceKeys()`, whose contract is the
  *  localStorage sweep, and a sign-out reload must not reset a crash count. */
-const KEY = "vibekit.reload-guard";
+const KEY = "marotte.reload-guard";
 
 /** The longest QUIET between two boots that still reads as one loop.
  *

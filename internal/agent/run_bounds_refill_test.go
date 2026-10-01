@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // stagedStretch gives a run a lease, a deadline, and an OPEN executing stretch beginning
@@ -98,7 +98,7 @@ func TestRefillDeadline_RefusesAPausedRun(t *testing.T) {
 
 // TestRefillDeadline_RefusesARunWithNoLease is the arm's own refusal, for the same
 // population: a TUI-launched run has no lease, no bridge here and no cancel path
-// vibekit owns, so a frame from one must not install a timer against it.
+// marotte owns, so a frame from one must not install a timer against it.
 func TestRefillDeadline_RefusesARunWithNoLease(t *testing.T) {
 	h := &Runs{}
 	h.refillDeadline(t.Context(), "wf_tui")
@@ -579,7 +579,7 @@ func TestHealProgress_ACompletedNodeRefillsTheIdleWindow(t *testing.T) {
 	}
 
 	var forwarded bool
-	progress := h.runs.healProgress(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
+	progress := h.runs.healProgress(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 		forwarded = true
 	})
 	progress(t.Context(), "c1", pausedFrame(t, id, ""))
@@ -597,7 +597,7 @@ func TestHealProgress_ACompletedNodeRefillsTheIdleWindow(t *testing.T) {
 // TestRunMadeProgress_IsTheDoorTranslateUses pins the exported surface the translator
 // calls, because everything above it drives the unexported refill. It is called once per
 // tool-call frame, so the no-op cases are the common ones and the reason for the `bounded`
-// pre-check: a run vibekit is not bounding must cost a map read, not a store transaction.
+// pre-check: a run marotte is not bounding must cost a map read, not a store transaction.
 func TestRunMadeProgress_IsTheDoorTranslateUses(t *testing.T) {
 	h, _, _ := newTestHub()
 	const id = "wf_1"

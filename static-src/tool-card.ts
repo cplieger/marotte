@@ -484,7 +484,7 @@ function outcomeWord(state: OutcomeState): string {
 // per-server badges get consistent colours across renders without a
 // lookup table. Simple FNV-ish fold — collisions are visual (two
 // different server names could share a hue) but acceptable at the
-// badge size and count a single vibekit user would configure.
+// badge size and count a single marotte user would configure.
 export function mcpHue(server: string): number {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < server.length; i++) {
@@ -751,7 +751,7 @@ function wireToggle(el: HTMLElement, buildBody: () => void, initialOpen: boolean
   // and the animated height 0↔auto with aria-hidden + inert on the collapsed
   // region (which the old class flip never set — collapsed details stayed in
   // the accessibility tree). Only the scroll-freeze on a user collapse stays
-  // vibekit's, via onToggle.
+  // marotte's, via onToggle.
   //
   // The chevron is NOT swapped here any more. Direction is CSS's, keyed off the
   // `aria-expanded` this controller already writes (`.disclosure-chevron` in

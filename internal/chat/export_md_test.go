@@ -5,42 +5,42 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
-	c := &vibekit.Chat{
+	c := &marotte.Chat{
 		ID:            "abc123",
 		Name:          "My Chat",
 		Model:         "claude-x",
 		CurrentModeID: "vibe",
 		CreatedAt:     1_700_000_000_000,
 		UpdatedAt:     1_700_000_100_000,
-		Messages: []vibekit.Message{
-			{ID: "m1", Role: vibekit.RoleUser, Content: "hello there", Ts: 1_700_000_000_000},
+		Messages: []marotte.Message{
+			{ID: "m1", Role: marotte.RoleUser, Content: "hello there", Ts: 1_700_000_000_000},
 			{
 				ID:        "m2",
-				Role:      vibekit.RoleAssistant,
+				Role:      marotte.RoleAssistant,
 				Content:   "hi back",
 				Reasoning: "let me think about this",
-				Plan: []vibekit.PlanEntry{
-					{Content: "step one", Status: vibekit.PlanCompleted},
-					{Content: "step two", Status: vibekit.PlanInProgress},
-					{Content: "step three", Status: vibekit.PlanPending},
+				Plan: []marotte.PlanEntry{
+					{Content: "step one", Status: marotte.PlanCompleted},
+					{Content: "step two", Status: marotte.PlanInProgress},
+					{Content: "step three", Status: marotte.PlanPending},
 				},
-				ToolCalls: []vibekit.ToolCall{{
+				ToolCalls: []marotte.ToolCall{{
 					ID:         "t1",
 					Title:      "read file",
-					Kind:       vibekit.ToolKindRead,
-					Status:     vibekit.ToolCompleted,
+					Kind:       marotte.ToolKindRead,
+					Status:     marotte.ToolCompleted,
 					Output:     "file contents here",
 					Input:      json.RawMessage(`{"path":"a.go"}`),
-					Locations:  []vibekit.ToolLocation{{Path: "a.go", Line: 3}},
+					Locations:  []marotte.ToolLocation{{Path: "a.go", Line: 3}},
 					DurationMs: 1234,
 				}},
 				Ts: 1_700_000_050_000,
 			},
-			{ID: "m3", Role: vibekit.RoleEvent, EventKind: vibekit.EventInterrupted, Content: "interrupted by restart", Ts: 1_700_000_060_000},
+			{ID: "m3", Role: marotte.RoleEvent, EventKind: marotte.EventInterrupted, Content: "interrupted by restart", Ts: 1_700_000_060_000},
 		},
 	}
 
@@ -81,7 +81,7 @@ func TestRenderChatMarkdown_FullTranscript(t *testing.T) {
 }
 
 func TestRenderChatMarkdown_EmptyMessages(t *testing.T) {
-	md := renderChatMarkdown(&vibekit.Chat{ID: "c1", Name: "Empty"})
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "Empty"})
 	if !strings.Contains(md, "# Empty") {
 		t.Errorf("missing title: %q", md)
 	}
@@ -92,10 +92,10 @@ func TestRenderChatMarkdown_EmptyMessages(t *testing.T) {
 
 func TestRenderChatMarkdown_FallbackTitleAndOneLineName(t *testing.T) {
 	// Empty name → fallback title; CR/LF in a name must not break the heading.
-	if md := renderChatMarkdown(&vibekit.Chat{ID: "c1"}); !strings.Contains(md, "# Untitled chat") {
+	if md := renderChatMarkdown(&marotte.Chat{ID: "c1"}); !strings.Contains(md, "# Untitled chat") {
 		t.Errorf("missing fallback title: %q", md)
 	}
-	md := renderChatMarkdown(&vibekit.Chat{ID: "c1", Name: "line1\nline2"})
+	md := renderChatMarkdown(&marotte.Chat{ID: "c1", Name: "line1\nline2"})
 	if !strings.Contains(md, "# line1 line2") {
 		t.Errorf("newline in name not collapsed: %q", md)
 	}
@@ -104,12 +104,12 @@ func TestRenderChatMarkdown_FallbackTitleAndOneLineName(t *testing.T) {
 func TestRenderChatMarkdown_SanitisesToolOutput(t *testing.T) {
 	// A hidden bidi-control codepoint in tool output must be scrubbed by the
 	// sanitize.Output pass the renderer applies.
-	c := &vibekit.Chat{
+	c := &marotte.Chat{
 		ID: "c1", Name: "S",
-		Messages: []vibekit.Message{{
-			ID: "m1", Role: vibekit.RoleAssistant,
-			ToolCalls: []vibekit.ToolCall{{
-				ID: "t1", Title: "run", Status: vibekit.ToolCompleted,
+		Messages: []marotte.Message{{
+			ID: "m1", Role: marotte.RoleAssistant,
+			ToolCalls: []marotte.ToolCall{{
+				ID: "t1", Title: "run", Status: marotte.ToolCompleted,
 				Output: "safe\u202etext", // U+202E RIGHT-TO-LEFT OVERRIDE
 			}},
 		}},
@@ -155,18 +155,18 @@ func TestMdTimestamp_ZeroIsEmpty(t *testing.T) {
 // zero duration or a line-less location produces sections and coordinates that
 // were never in the transcript, which is worse than saying nothing.
 func TestRenderChatMarkdown_OmitsWhatTheMessageDoesNotCarry(t *testing.T) {
-	c := &vibekit.Chat{
+	c := &marotte.Chat{
 		ID:   "c1",
 		Name: "Sparse",
-		Messages: []vibekit.Message{{
+		Messages: []marotte.Message{{
 			ID:      "m1",
-			Role:    vibekit.RoleAssistant,
+			Role:    marotte.RoleAssistant,
 			Content: "done",
-			ToolCalls: []vibekit.ToolCall{{
+			ToolCalls: []marotte.ToolCall{{
 				ID:        "t1",
 				Title:     "grep",
-				Status:    vibekit.ToolCompleted,
-				Locations: []vibekit.ToolLocation{{Path: "whole/file.go"}},
+				Status:    marotte.ToolCompleted,
+				Locations: []marotte.ToolLocation{{Path: "whole/file.go"}},
 			}},
 		}},
 	}
@@ -192,24 +192,24 @@ func TestRenderChatMarkdown_OmitsWhatTheMessageDoesNotCarry(t *testing.T) {
 // it is the fact they most want back. Rendered as `## User` the export said
 // neither: a correction the agent never saw read exactly like the prompt above it.
 func TestRenderChatMarkdown_DistinguishesASteerAndItsDeliveryState(t *testing.T) {
-	c := &vibekit.Chat{
+	c := &marotte.Chat{
 		ID:   "c1",
 		Name: "Steered",
-		Messages: []vibekit.Message{
-			{ID: "u1", Role: vibekit.RoleUser, Content: "go"},
+		Messages: []marotte.Message{
+			{ID: "u1", Role: marotte.RoleUser, Content: "go"},
 			{
-				ID: "steer-1", Role: vibekit.RoleUser, Content: "use tabs",
-				UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateRead,
+				ID: "steer-1", Role: marotte.RoleUser, Content: "use tabs",
+				UserKind: marotte.UserKindSteer, SteerState: marotte.SteerStateRead,
 			},
 			{
-				ID: "steer-2", Role: vibekit.RoleUser, Content: "actually target main",
-				UserKind: vibekit.UserKindSteer, SteerState: vibekit.SteerStateDropped,
+				ID: "steer-2", Role: marotte.RoleUser, Content: "actually target main",
+				UserKind: marotte.UserKindSteer, SteerState: marotte.SteerStateDropped,
 			},
 			// The whole legacy population, plus every row the replay projection
 			// writes: the state is not known, so the heading claims neither.
 			{
-				ID: "steer-3", Role: vibekit.RoleUser, Content: "and rename it",
-				UserKind: vibekit.UserKindSteer,
+				ID: "steer-3", Role: marotte.RoleUser, Content: "and rename it",
+				UserKind: marotte.UserKindSteer,
 			},
 		},
 	}

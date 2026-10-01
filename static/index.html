@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <!-- `black-translucent` puts the page under the status bar, where iPadOS draws a
-       Liquid Glass blur over it; `vibekit-ui.md` "The installed status bar". -->
+       Liquid Glass blur over it; `marotte-ui.md` "The installed status bar". -->
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Vibekit">
+  <meta name="apple-mobile-web-app-title" content="Marotte">
   <!-- sRGB copies of `--c-bg-primary` per theme; 01-tokens.css owns the value. -->
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafd">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a14">
@@ -16,11 +16,11 @@
   <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152.png">
   <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167.png">
   <link rel="manifest" href="/manifest.json">
-  <title>Vibekit for Kiro</title>
+  <title>Marotte for Kiro</title>
   <!-- Anti-FOUC theme init: applies <html data-theme> before stylesheets parse.
        Verbatim output of @cplieger/ui-primitives themeInitSnippetFromJSON(
-       "vibekit.ui-state", "theme") — reads the theme field of the
-       vibekit.ui-state localStorage blob, JSON-parses it, and applies the
+       "marotte.ui-state", "theme") — reads the theme field of the
+       marotte.ui-state localStorage blob, JSON-parses it, and applies the
        resolved theme (OS fallback when the field is absent or "system"). Kept
        byte-identical to the library by theme-init-snippet.test.ts and hashed
        into the CSP by internal/server/security.go (the data-theme-init marker).
@@ -28,11 +28,11 @@
        themeInitSnippetFromJSON); verified locally via node_modules overlay until
        released. -->
   <!-- prettier-ignore -->
-  <script data-theme-init>(function(){try{var raw=localStorage.getItem("vibekit.ui-state");var o=raw?JSON.parse(raw):null;var c=o&&typeof o==="object"?o["theme"]:null;if(c!=="light"&&c!=="dark"&&c!=="system"){c="system";}var r=c==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):c;document.documentElement.setAttribute("data-theme",r);}catch(e){document.documentElement.setAttribute("data-theme",window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");}})();</script>
+  <script data-theme-init>(function(){try{var raw=localStorage.getItem("marotte.ui-state");var o=raw?JSON.parse(raw):null;var c=o&&typeof o==="object"?o["theme"]:null;if(c!=="light"&&c!=="dark"&&c!=="system"){c="system";}var r=c==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):c;document.documentElement.setAttribute("data-theme",r);}catch(e){document.documentElement.setAttribute("data-theme",window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");}})();</script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- Vibekit logo sprite: defined once, referenced via <use> by the sidebar and
+  <!-- Marotte logo sprite: defined once, referenced via <use> by the sidebar and
        the login modal. Artwork mirrors favicon.svg. -->
   <svg width="0" height="0" aria-hidden="true">
     <defs>
@@ -52,7 +52,7 @@
       <div class="sidebar-header">
         <div class="logo">
           <svg class="logo-icon" width="24" height="24" aria-hidden="true"><use href="#vk-logo"/></svg>
-          <p class="logo-name">Vibekit <span class="logo-subtitle">for Kiro</span></p>
+          <p class="logo-name">Marotte <span class="logo-subtitle">for Kiro</span></p>
         </div>
         <div class="sidebar-header-actions">
           <button type="button" id="theme-btn" class="icon-btn" data-tooltip="Toggle theme" aria-label="Toggle theme">
@@ -197,7 +197,7 @@
              than wrapping it onto a second row or showing a three-character stub.
              The id is that module's handle; the styling is by class. -->
         <div id="titlebar-heading" class="titlebar-heading">
-          <h1 id="titlebar-title" class="titlebar-title">Vibekit</h1>
+          <h1 id="titlebar-title" class="titlebar-title">Marotte</h1>
           <span class="titlebar-sep" aria-hidden="true"></span>
           <span id="titlebar-subtitle" class="titlebar-subtitle"></span>
         </div>
@@ -464,10 +464,10 @@
           <div class="settings-panel" data-settings-panel="general">
             <div class="page-section" id="general-about-section">
               <h2 class="section-title">About</h2>
-              <p class="section-hint">The pair of versions this session is running. kiro-cli is pinned per Vibekit release, so both move together when a new image is built.</p>
+              <p class="section-hint">The pair of versions this session is running. kiro-cli is pinned per Marotte release, so both move together when a new image is built.</p>
               <dl class="about-grid">
-                <dt>Vibekit</dt>
-                <dd id="about-vibekit">—</dd>
+                <dt>Marotte</dt>
+                <dd id="about-marotte">—</dd>
                 <dt>kiro-cli</dt>
                 <dd id="about-kirocli">—</dd>
               </dl>
@@ -552,7 +552,7 @@
                 <h2 class="section-title">Chat retention</h2>
                 <span class="settings-save-status hidden" data-save-status="chat_retention_days" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. Otherwise <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. vibekit manages this itself; kiro-cli's own cleanup is off.</p>
+              <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. Otherwise <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. marotte manages this itself; kiro-cli's own cleanup is off.</p>
               <div class="section-option">
                 <label for="chat-retention-forever" class="section-option-label">Keep forever</label>
                 <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
@@ -620,7 +620,7 @@
                     <span class="section-option-label">Show hook status in chat</span>
                     <span class="settings-save-status hidden" data-save-status="hooks.showStatus" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When on, each kiro-cli hook execution appears in the chat transcript as a <code>Hook fired</code> card. vibekit cannot see a hook's outcome, so the card names the hook and nothing more. Off hides those cards; hooks still run and enforce their rules, and a hook that needs your approval always asks regardless of this setting.</p>
+                  <p class="section-hint">When on, each kiro-cli hook execution appears in the chat transcript as a <code>Hook fired</code> card. marotte cannot see a hook's outcome, so the card names the hook and nothing more. Off hides those cards; hooks still run and enforce their rules, and a hook that needs your approval always asks regardless of this setting.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -633,7 +633,7 @@
                     <span class="section-option-label">kiro-cli telemetry</span>
                     <span class="settings-save-status hidden" data-save-status="telemetry.enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Anonymous usage telemetry sent by kiro-cli (not vibekit). Helps the Kiro team improve the CLI. Off disables all telemetry collection. This does not affect vibekit's own operation.</p>
+                  <p class="section-hint">Anonymous usage telemetry sent by kiro-cli (not marotte). Helps the Kiro team improve the CLI. Off disables all telemetry collection. This does not affect marotte's own operation.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -659,7 +659,7 @@
                     <span class="section-option-label">Debug logs</span>
                     <span class="settings-save-status hidden" data-save-status="debug_logs" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Raise vibekit's server-side log level to DEBUG. Surfaces extension-notification drops, fs handler details, and other verbose diagnostics. Read the logs with <code>docker logs vibekit</code>. Default off.</p>
+                  <p class="section-hint">Raise marotte's server-side log level to DEBUG. Surfaces extension-notification drops, fs handler details, and other verbose diagnostics. Read the logs with <code>docker logs marotte</code>. Default off.</p>
                 </div>
               </div>
             </div>
@@ -711,7 +711,7 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. Supervised mode and agent ignore files are separate layers under it; the review gate is kiro-cli's own, and vibekit only sets a value for it. Defaults here apply to new conversations, and the chat-actions menu next to the prompt changes the conversation you are in.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. Supervised mode and agent ignore files are separate layers under it; the review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-actions menu next to the prompt changes the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
@@ -799,7 +799,7 @@
                 <h2 class="section-title">Scheduled runs</h2>
                 <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
               </div>
-              <p class="section-hint">A scheduled workflow runs with nobody watching, so a tool request it raises has nobody to answer it. By default vibekit <strong>refuses</strong> such a request after 3 minutes and says so on the workflow's row — the run stops rather than parking forever and blocking every later run of that schedule. Turn this on to approve those requests instead. It is a separate decision from the Active policy above on purpose: approving something while you watch is not the same as approving it unattended at 3am. Approvals granted this way are one-shot and never persisted as a rule.</p>
+              <p class="section-hint">A scheduled workflow runs with nobody watching, so a tool request it raises has nobody to answer it. By default marotte <strong>refuses</strong> such a request after 3 minutes and says so on the workflow's row — the run stops rather than parking forever and blocking every later run of that schedule. Turn this on to approve those requests instead. It is a separate decision from the Active policy above on purpose: approving something while you watch is not the same as approving it unattended at 3am. Approvals granted this way are one-shot and never persisted as a rule.</p>
               <label class="perm-mode">
                 <input type="checkbox" id="scheduled-auto-approve-checkbox">
                 <span>Approve tool requests in scheduled runs instead of refusing them</span>
@@ -822,7 +822,7 @@
                   <button id="agent-ignore-add" class="btn rf-submit" type="button">Add</button>
                 </div>
                 <p id="agent-ignore-empty-hint" class="section-hint hidden">
-                  No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated vibekit-only list).
+                  No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated marotte-only list).
                 </p>
               </div>
             </div>
@@ -1212,7 +1212,7 @@
   <div id="login-modal" class="hidden" data-modal>
     <div class="modal-logo">
       <svg width="36" height="36" aria-hidden="true"><use href="#vk-logo"/></svg>
-      <span>Vibekit <span class="logo-subtitle">for Kiro</span></span>
+      <span>Marotte <span class="logo-subtitle">for Kiro</span></span>
     </div>
     <p id="login-modal-title" class="modal-subtitle">Sign in to start chatting</p>
     <div class="modal-actions">

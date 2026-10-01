@@ -5,7 +5,7 @@
 // `tool-card.test.ts` for the tool card end to end, `fundamentals/
 // turn-header.test.ts` for where the turn's surface stops). What those cannot
 // see is the affordance, and an invisible hit target is the same defect in the
-// other direction — vibekit-ui.md's "no dead zones" rule cuts both ways.
+// other direction — marotte-ui.md's "no dead zones" rule cuts both ways.
 //
 // `mountAppCSS` assembles the stylesheet from `css/MANIFEST` in declared order,
 // the way `cmd/bundle` concatenates it, because equal-specificity ties in this
@@ -140,7 +140,7 @@ describe("tool card summary affordance", () => {
         title: "remote_web_search",
         kind: "fetch",
         status: "completed",
-        input: { query: "vibekit" },
+        input: { query: "marotte" },
         live: false,
       }),
     );
@@ -148,7 +148,7 @@ describe("tool card summary affordance", () => {
     expect(css(summary, "cursor")).toBe("pointer");
     // A drag across either line must not select its label instead of toggling.
     expect(css(summary, "user-select")).toBe("none");
-    // Never `transition: all` (vibekit-ui.md); the hover fill is the only thing
+    // Never `transition: all` (marotte-ui.md); the hover fill is the only thing
     // that animates here.
     expect(css(summary, "transition-property")).toBe("background");
   });
@@ -272,7 +272,7 @@ describe("tool card summary affordance", () => {
         title: "remote_web_search",
         kind: "fetch",
         status: "completed",
-        input: { query: "vibekit" },
+        input: { query: "marotte" },
         live: false,
       }),
     );
@@ -302,7 +302,7 @@ describe("tool card summary affordance", () => {
         title: "remote_web_search",
         kind: "fetch",
         status: "completed",
-        input: { query: "vibekit" },
+        input: { query: "marotte" },
         live: false,
       }),
     );
@@ -366,7 +366,7 @@ describe("tool card summary affordance", () => {
             id: `css-title-gutter-${tier}`,
             // A disclosable card, because the chevron this measures against is
             // detached at build for a card with nothing to reveal.
-            output: "ok\tvibekit\t0.5s\n",
+            output: "ok\tmarotte\t0.5s\n",
             title: "Run Command",
             kind: "execute",
             status: "completed",
@@ -402,7 +402,7 @@ describe("tool card summary affordance", () => {
       "subtitle",
       {
         id: "css-subtitle-align",
-        output: "ok\tvibekit\t0.5s\n",
+        output: "ok\tmarotte\t0.5s\n",
         title: "Run Command",
         kind: "execute",
         input: { command: "go test ./... && go vet ./... && golangci-lint run ./..." },
@@ -617,7 +617,7 @@ describe("turn card header affordance", () => {
   });
 
   it("the fold toggle clears the 24px hit-target floor", async () => {
-    // It was 1rem. vibekit-ui.md: "24px minimum desktop", and this is the
+    // It was 1rem. marotte-ui.md: "24px minimum desktop", and this is the
     // measurement the whole change started from.
     const card = await turn("open");
     const btn = card.querySelector<HTMLElement>(".turn-fold-toggle")!;
@@ -894,7 +894,7 @@ describe("sub-page menu bars", () => {
   });
 });
 
-// The steer note is a CARD on the tool-card box, not a left rail. `#vibekit-ui`
+// The steer note is a CARD on the tool-card box, not a left rail. `#marotte-ui`
 // reserves a leading rail for work this agent did not do itself — the run card
 // and the delegated-work card — so a steer carrying one was borrowing the wrong
 // vocabulary, and the whole of Bug 4 was that it did.

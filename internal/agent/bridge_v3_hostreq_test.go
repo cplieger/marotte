@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestIsSafeExternalURL(t *testing.T) {
@@ -30,9 +30,9 @@ func TestIsSafeExternalURL(t *testing.T) {
 	}
 }
 
-func openExternalURLMsg(t *testing.T, id int64, url string) *vibekit.RPCResponse {
+func openExternalURLMsg(t *testing.T, id int64, url string) *marotte.RPCResponse {
 	t.Helper()
-	return &vibekit.RPCResponse{
+	return &marotte.RPCResponse{
 		Method: methodKiroOpenExternalURL,
 		ID:     &id,
 		Params: mustJSON(t, map[string]any{"url": url}),
@@ -45,7 +45,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 		before := h.bus.fanout.Position().Head
 		h.translateACPEvent("c1", openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
 		types := extractTypes(t, bufferedSince(h, before))
-		if missing := missingEvents(types, string(vibekit.EventOpenExternalURL)); len(missing) > 0 {
+		if missing := missingEvents(types, string(marotte.EventOpenExternalURL)); len(missing) > 0 {
 			t.Errorf("missing events %v; got %v", missing, types)
 		}
 	})
@@ -56,7 +56,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 		h.translateACPEvent("c1", openExternalURLMsg(t, 2, "javascript:alert(1)"))
 		types := extractTypes(t, bufferedSince(h, before))
 		for _, ty := range types {
-			if ty == string(vibekit.EventOpenExternalURL) {
+			if ty == string(marotte.EventOpenExternalURL) {
 				t.Fatalf("unsafe URL must not broadcast open_external_url; got %v", types)
 			}
 		}
@@ -67,15 +67,15 @@ func TestHandleKiroClientRequest_DoesNotClaimGetAccessToken(t *testing.T) {
 	h, _, _ := newTestHub()
 	id := int64(3)
 	tests := map[string]struct {
-		msg  *vibekit.RPCResponse
+		msg  *marotte.RPCResponse
 		want bool
 	}{
 		"relay_owned_auth": {
-			msg:  &vibekit.RPCResponse{ID: &id, Method: "_kiro/auth/get" + "AccessToken"},
+			msg:  &marotte.RPCResponse{ID: &id, Method: "_kiro/auth/get" + "AccessToken"},
 			want: false,
 		},
 		"shell_type": {
-			msg:  &vibekit.RPCResponse{ID: &id, Method: methodKiroShellType},
+			msg:  &marotte.RPCResponse{ID: &id, Method: methodKiroShellType},
 			want: true,
 		},
 		"open_external_url": {
@@ -105,9 +105,9 @@ func TestHandleOpenExternalURL_UnsafeSchemeIsRefusedWithInvalidParams(t *testing
 	if resp.err == nil {
 		t.Fatalf("openExternalUrl(javascript:) was answered with a success (%v), want an error", resp.result)
 	}
-	rpcErr, isRPC := errors.AsType[*vibekit.RPCError](resp.err)
+	rpcErr, isRPC := errors.AsType[*marotte.RPCError](resp.err)
 	if !isRPC {
-		t.Errorf("response error = %T, want *vibekit.RPCError", resp.err)
+		t.Errorf("response error = %T, want *marotte.RPCError", resp.err)
 	} else if rpcErr.Code != -32602 {
 		t.Errorf("response error code = %d, want -32602", rpcErr.Code)
 	}

@@ -19,30 +19,30 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // resumeReqOp and forkReqOp are the op-carrying envelopes these tests need: the
 // existing helpers next door take an explicit chat id, which is the shape being
 // replaced.
-func resumeReqOp(t *testing.T, sessionID, name, opID string) *vibekit.ClientCommand {
+func resumeReqOp(t *testing.T, sessionID, name, opID string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.ResumeSessionCommand{SessionID: sessionID, Name: name, OpID: opID})
+	payload, err := json.Marshal(marotte.ResumeSessionCommand{SessionID: sessionID, Name: name, OpID: opID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: vibekit.CmdResumeSession, Payload: payload}
+	return &marotte.ClientCommand{Type: marotte.CmdResumeSession, Payload: payload}
 }
 
-func forkReqOp(t *testing.T, parent vibekit.ChatID, title, opID string) *vibekit.ClientCommand {
+func forkReqOp(t *testing.T, parent marotte.ChatID, title, opID string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.ForkChatCommand{ParentChatID: parent, Title: title, OpID: opID})
+	payload, err := json.Marshal(marotte.ForkChatCommand{ParentChatID: parent, Title: title, OpID: opID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: vibekit.CmdForkChat, Payload: payload}
+	return &marotte.ClientCommand{Type: marotte.CmdForkChat, Payload: payload}
 }
 
 func TestCmdResumeSession_MintsAndReturnsTheChat(t *testing.T) {
@@ -122,8 +122,8 @@ func TestCmdForkChat_MintsAndReturnsTheChat(t *testing.T) {
 	// The outcome still travels beside the chat: it is what lets a report about a
 	// vague answer say whether the context was forked or re-narrated.
 	m, _ := body.(map[string]any)
-	if m["outcome"] != vibekit.ForkOutcomeForked {
-		t.Errorf("outcome = %v, want %q", m["outcome"], vibekit.ForkOutcomeForked)
+	if m["outcome"] != marotte.ForkOutcomeForked {
+		t.Errorf("outcome = %v, want %q", m["outcome"], marotte.ForkOutcomeForked)
 	}
 	if m["session_id"] != "sess_tangent" {
 		t.Errorf("session_id = %v, want sess_tangent", m["session_id"])
@@ -184,9 +184,9 @@ func TestCmdForkChat_RepeatOpReportsThePathTheFirstAttemptTook(t *testing.T) {
 	}
 
 	m, _ := body.(map[string]any)
-	if m["outcome"] != vibekit.ForkOutcomeFresh {
+	if m["outcome"] != marotte.ForkOutcomeFresh {
 		t.Errorf("outcome = %v, want %q: the first attempt had no session to fork",
-			m["outcome"], vibekit.ForkOutcomeFresh)
+			m["outcome"], marotte.ForkOutcomeFresh)
 	}
 	if m["session_id"] != "" {
 		t.Errorf("session_id = %v, want empty: a fresh tangent has no forked session to name",

@@ -89,7 +89,7 @@ vi.mock("./git-badge.js", () => ({ initGitBadge: H.mockInitGitBadge }));
 vi.mock("./git.js", () => ({ initGitPanel: H.mockInitGitPanel, loadGitRepos: vi.fn() }));
 vi.mock("./versions.js", () => ({
   loadVersions: vi.fn(),
-  getVersions: () => ({ vibekit: "", kiroCli: "" }),
+  getVersions: () => ({ marotte: "", kiroCli: "" }),
 }));
 vi.mock("./git-tabs.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this

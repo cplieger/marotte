@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TranslateRolesContractTest exercises every method of every translate role
@@ -40,7 +40,7 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 
 	t.Run("Broadcast_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.Bus.Broadcast(t.Context(), vibekit.ServerEvent{Type: "test_event", ChatID: "chat-1"})
+		r.Bus.Broadcast(t.Context(), marotte.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
@@ -75,17 +75,17 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.PendingPerms.PendingPermsAdd(42, vibekit.ServerEvent{Type: "permission_needed", ChatID: "c1"})
+		r.PendingPerms.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"})
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.Push.NotifyPush(t.Context(), "test body", vibekit.PushKindPermission, "")
+		r.Push.NotifyPush(t.Context(), "test body", marotte.PushKindPermission, "")
 	})
 
 	t.Run("buffers_and_lines_are_wired", func(t *testing.T) {
 		r := newRoles(t)
-		if r.Buffers.TurnFoldTarget(t.Context(), "c1", vibekit.TurnSourceWireTurnStart) == nil {
+		if r.Buffers.TurnFoldTarget(t.Context(), "c1", marotte.TurnSourceWireTurnStart) == nil {
 			t.Error("Buffers.TurnFoldTarget returned nil")
 		}
 		if _, ok := r.Buffers.OpenTurnBuffer("no-such-chat"); ok {
@@ -96,7 +96,7 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 
 	t.Run("SetGovernance_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.Governance.SetGovernance(vibekit.GovernanceStatePayload{})
+		r.Governance.SetGovernance(marotte.GovernanceStatePayload{})
 	})
 
 	t.Run("IsScheduledRun_false_for_an_unlaunched_run", func(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/chat/archive"
 )
 
 // archiveSvc returns the Store's archive service, creating it lazily.

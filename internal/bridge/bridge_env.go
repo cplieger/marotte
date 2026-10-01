@@ -2,7 +2,7 @@
 //
 // DIRECTION MATTERS, and this file guards the opposite one from
 // agent/agent_terminal_env.go. That file screens what the AGENT may INJECT into a
-// terminal it asks vibekit to run: names that redirect execution (LD_PRELOAD,
+// terminal it asks marotte to run: names that redirect execution (LD_PRELOAD,
 // PATH, GIT_SSH_COMMAND), refused wholesale so a per-command approval cannot be
 // turned into approval of something else. This file screens what the bridge
 // INHERITS from the server's own environment on its way DOWN to kiro-cli and
@@ -48,7 +48,7 @@ import (
 // shape will eventually catch a name that is not a credential — a build flag
 // spelled `*_SECRET`, a service discovery variable ending `_TOKEN` — and a guard
 // with no way past it becomes a guard people disable.
-const EnvAllowVar = "VIBEKIT_ALLOW_BRIDGE_ENV"
+const EnvAllowVar = "MAROTTE_ALLOW_BRIDGE_ENV"
 
 // credentialEnvSuffixes catch the two shapes that are a credential by
 // convention across every ecosystem: `*_TOKEN` and `*_SECRET`.
@@ -123,7 +123,7 @@ func isCredentialEnv(name string, allowed map[string]struct{}) bool {
 // minus credential-shaped names, then extra appended unfiltered. It also
 // returns the dropped NAMES, in inherited order, for the caller to log.
 //
-// extra is exempt on purpose. It is vibekit's own overlay (the install
+// extra is exempt on purpose. It is marotte's own overlay (the install
 // manager's active version directory leading PATH), constructed in this process
 // rather than inherited, and os/exec keeps the LAST value for a repeated key —
 // so filtering the concatenation could silently drop an overlay entry this
@@ -175,7 +175,7 @@ const MemoryEnvVar = "KIRO_FEATURE_MEMORY_EXTERNAL_ENABLED"
 // what opens the feature at all. Neither alone is sufficient, which is why one
 // setting drives both.
 //
-// Deliberately not routed through the credential screen: this name is vibekit's
+// Deliberately not routed through the credential screen: this name is marotte's
 // own, not something inherited from the server environment, so screening it would
 // only give an operator a way to shadow the veto's other half.
 func memoryEnv(on bool) []string {

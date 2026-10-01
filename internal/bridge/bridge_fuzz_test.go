@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/marotte/internal/ids"
 )
 
 // FuzzValidSessionID exercises the ACP session-id path-traversal

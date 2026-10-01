@@ -32,7 +32,7 @@
 // that anything able to set the server's environment chooses its binary, to buy
 // an install shape neither git nor bash has here.
 //
-// /usr/local/bin is deliberately excluded. Nothing vibekit bakes lands there,
+// /usr/local/bin is deliberately excluded. Nothing marotte bakes lands there,
 // and it is admin-group writable on some hosts, so including it would widen the
 // trusted set for no binary this package serves.
 package systembin

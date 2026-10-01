@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestTerminalResponders_AnswerAnUndecodableRequest is the red check for the
-// drop class: a frame carrying an id that vibekit declines to process gets a
+// drop class: a frame carrying an id that marotte declines to process gets a
 // well-formed fail-closed ANSWER, never a bare return.
 //
 // The id is already verified non-nil by the router, KAS awaits these with no
-// timeout, and vibekit's own Call has no deadline either — so a dropped request
+// timeout, and marotte's own Call has no deadline either — so a dropped request
 // does not fail the tool call, it strands the promise and wedges the batch until
 // the process dies. respondCreate has answered through respondErr all along;
 // its four siblings returned in silence, with nothing logged either.
@@ -38,7 +38,7 @@ func TestTerminalResponders_AnswerAnUndecodableRequest(t *testing.T) {
 			// earlier. This is the trigger the whole class needs — the fields are
 			// type-stable strings today, so what makes it reachable is an upstream
 			// shape change, not a malformed sender.
-			h.translateACPEvent("c1", &vibekit.RPCResponse{
+			h.translateACPEvent("c1", &marotte.RPCResponse{
 				Method: method,
 				ID:     &id,
 				Params: json.RawMessage(`{"terminalId":42,"command":42}`),
@@ -77,7 +77,7 @@ func TestTerminalResponders_UseTheRequestsOwnChatID(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(4712)
 
-	h.translateACPEvent("", &vibekit.RPCResponse{
+	h.translateACPEvent("", &marotte.RPCResponse{
 		Method: methodTermOutput,
 		ID:     &id,
 		Params: json.RawMessage(`{"terminalId":42}`),
@@ -91,7 +91,7 @@ func TestTerminalResponders_UseTheRequestsOwnChatID(t *testing.T) {
 	}
 
 	// The same frame on the chat that owns the bridge lands.
-	h.translateACPEvent("c1", &vibekit.RPCResponse{
+	h.translateACPEvent("c1", &marotte.RPCResponse{
 		Method: methodTermOutput,
 		ID:     &id,
 		Params: json.RawMessage(`{"terminalId":42}`),

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/marotte/internal/sanitize"
 )
 
 // Doc is one classified per-repo steering markdown file. The
@@ -75,7 +75,7 @@ func writeSteeringEntry(b *strings.Builder, repo string, d Doc) {
 }
 
 // writeRepoSteeringInstructions adds an explicit directive to the main
-// agent about how to consume per-repo steering. Vibekit's main agent
+// agent about how to consume per-repo steering. Marotte's main agent
 // boots at /workspace, so kiro-cli's auto-include logic only loads
 // steering at that level — the per-repo .kiro/steering/ dirs require
 // an explicit nudge.
@@ -365,7 +365,7 @@ func ParseHooks(data []byte) []HookEntry {
 //	{"version":"v1","hooks":[{name, trigger, matcher?,
 //	  action:{type:"command"|"agent", command|prompt}, timeout?}]}
 //
-// This is the on-disk format Kiro's createHook tool and vibekit's own
+// This is the on-disk format Kiro's createHook tool and marotte's own
 // create_hook command write (internal/command/hooks.go buildHookDoc);
 // triggers are PascalCase (SessionStart, PreToolUse, PostFileSave, …).
 // One file may carry multiple hooks; each becomes its own entry. The
@@ -411,7 +411,7 @@ func parseHookDoc(data []byte) []HookEntry {
 // kiro-cli treats as authoritative agent context.
 //
 // A raw newline can end the line a value was quoted on and start a line the
-// reader attributes to vibekit; a backtick can close the code span the value
+// reader attributes to marotte; a backtick can close the code span the value
 // sits inside. Measured end to end: a crafted `.git/HEAD` with an embedded
 // newline once rendered a fake steering section under a real heading, before
 // this was applied everywhere rather than only to hook fields and a README's

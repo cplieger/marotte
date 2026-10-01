@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // FuzzBufferConcurrentBlockAppend exercises the mutex-protected block
@@ -98,7 +98,7 @@ func FuzzBufferConcurrentBlockAppend(f *testing.F) {
 		for i := range blocks {
 			sub := blocks[i].AgentSubtaskID
 			typ := blocks[i].Type
-			if typ == vibekit.BlockText || typ == vibekit.BlockThinking {
+			if typ == marotte.BlockText || typ == marotte.BlockThinking {
 				if j, seen := last[sub]; seen && blocks[j].Type == typ {
 					t.Fatalf("consecutive %s of subtask %q at indices %d and %d with no block of that subtask between them",
 						typ, sub, j, i)
@@ -173,7 +173,7 @@ func TestBuffer_EmittedNothingCountsEachAccumulator(t *testing.T) {
 			b.AppendThinkingDelta("thinking", "")
 		},
 		"tool call": func(b *Buffer) {
-			b.AppendToolCall(&vibekit.ToolCall{ID: "tc-1"})
+			b.AppendToolCall(&marotte.ToolCall{ID: "tc-1"})
 		},
 		"block only": func(b *Buffer) { b.AppendToolUseBlock("tc-1", "") },
 	}

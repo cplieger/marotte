@@ -13,18 +13,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/rpcerr"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // validatePromptPayload parses and validates the prompt command payload.
-func validatePromptPayload(cmd *vibekit.ClientCommand) (vibekit.PromptCommand, int, error) {
-	var p vibekit.PromptCommand
+func validatePromptPayload(cmd *marotte.ClientCommand) (marotte.PromptCommand, int, error) {
+	var p marotte.PromptCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
@@ -55,7 +55,7 @@ const promptRetryDelay = 2 * time.Second
 // it — reading the response alone would decide the wire never closed the
 // turn while turn_end is still a few frames back.
 type promptReply struct {
-	resp *vibekit.RPCResponse
+	resp *marotte.RPCResponse
 	seq  uint64
 }
 
@@ -83,7 +83,7 @@ func retry(ctx context.Context, maxAttempts int, shouldRetry func(error) bool, f
 
 // callPromptWithRetry sends the prompt to kiro-cli, retrying only the
 // classes a second attempt can actually fix.
-func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID vibekit.ChatID) (promptReply, error) {
+func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID marotte.ChatID) (promptReply, error) {
 	return retry(ctx, 2, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
@@ -91,7 +91,7 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 			"chat_id", chatID, "class", class.String(), "retry", retry, keyError, err)
 		return retry
 	}, func() (promptReply, error) {
-		resp, seq, err := sb.CallAt(ctx, vibekit.MethodPrompt, params)
+		resp, seq, err := sb.CallAt(ctx, marotte.MethodPrompt, params)
 		return promptReply{resp: resp, seq: seq}, err
 	})
 }
@@ -103,7 +103,7 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 // which can still be withholding the turn's only text when this runs.
 // Both admission holds are already released, so the retry re-reserves
 // with a try and a user prompt that won the slot abandons it.
-func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, result vibekit.TurnResult, p *vibekit.PromptCommand, params map[string]any) {
+func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID marotte.ChatID, epoch marotte.TurnEpoch, result marotte.TurnResult, p *marotte.PromptCommand, params map[string]any) {
 	// A verb KAS answers itself produces no content by design, so an
 	// empty turn is the correct outcome and recovery is pure damage.
 	if kasClaimsPromptText(p.Text) {
@@ -111,7 +111,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	}
 	// WireEnded: a locally-closed turn's outcome is only the prompt
 	// response's, nothing richer, so re-prompting on it is a guess.
-	if !result.WireEnded || result.Stop != vibekit.StopReasonEndTurn || !result.EmittedNothing {
+	if !result.WireEnded || result.Stop != marotte.StopReasonEndTurn || !result.EmittedNothing {
 		return
 	}
 	if outcome.TurnOpenedAfter(chatID, epoch) {
@@ -119,7 +119,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 			"chat_id", chatID, "epoch", epoch)
 		return
 	}
-	if !outcome.TryReserveTurn(chatID, vibekit.TurnSourceEmptyRetry) {
+	if !outcome.TryReserveTurn(chatID, marotte.TurnSourceEmptyRetry) {
 		slog.Warn("empty turn: another turn was admitted during recovery, abandoning retry",
 			"chat_id", chatID)
 		return
@@ -136,16 +136,16 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 // `appendUserMessage` runs before admission deliberately, so the user row is already
 // on disk when these exits are reached — and a turn holding a trigger and nothing
 // else is read by both transcript projections as "nothing closed this turn", which
-// renders as an end vibekit could not read. This row makes the turn say what happened
+// renders as an end marotte could not read. This row makes the turn say what happened
 // instead. It STAMPS the outcome rather than leaving both projections to infer one from
 // the event kind: without the stamp `closesTurn` reads the segment as still open, so a
 // later agent-initiated message folds into the failed turn. `durable.Context` because
 // every one of these paths runs on a context that may already be cancelled.
-func appendTurnStopCarrier(ctx context.Context, chats ChatStore, chatID vibekit.ChatID, stop vibekit.StopReason, reason string) {
-	c := vibekit.ConcludeStopReason(stop)
-	evt := vibekit.Message{
-		ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
-		EventKind: vibekit.StopMarkerKind(c.Outcome), Content: reason,
+func appendTurnStopCarrier(ctx context.Context, chats ChatStore, chatID marotte.ChatID, stop marotte.StopReason, reason string) {
+	c := marotte.ConcludeStopReason(stop)
+	evt := marotte.Message{
+		ID: ids.NewMessageID(), Role: marotte.RoleEvent, Ts: time.Now().UnixMilli(),
+		EventKind: marotte.StopMarkerKind(c.Outcome), Content: reason,
 		TurnOutcome: c.Outcome, TurnStopReasonRaw: c.RawStop, TurnFailureReason: reason,
 	}
 	if err := chats.AppendMessage(durable.Context(ctx), chatID, &evt); err != nil {
@@ -160,18 +160,18 @@ func appendTurnStopCarrier(ctx context.Context, chats ChatStore, chatID vibekit.
 // One rule, two prose sources: the cancelled arm supplies NONE by rule, so `interrupted`
 // is the CALLER's to word — the exits that reach here describe different work, and this
 // row is the whole of what a reader ever learns about either.
-func turnStopBeforeEpoch(ctx context.Context, interrupted string) (stop vibekit.StopReason, reason string) {
+func turnStopBeforeEpoch(ctx context.Context, interrupted string) (stop marotte.StopReason, reason string) {
 	if errors.Is(context.Cause(ctx), ErrCancelGraceExpired) {
-		return vibekit.StopReasonCancelled, ""
+		return marotte.StopReasonCancelled, ""
 	}
-	return vibekit.StopReasonInterrupted, interrupted
+	return marotte.StopReasonInterrupted, interrupted
 }
 
 // refreshRetrySession abandons the session that answered nothing: close
 // its bridge, detach the chat from it, and record why on the transcript.
-func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatStore, chatID vibekit.ChatID) {
+func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatStore, chatID marotte.ChatID) {
 	bridges.CloseBridge(chatID)
-	if _, err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -183,9 +183,9 @@ func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatSt
 	}); err != nil {
 		slog.Error("empty turn: clear session ID", "chat_id", chatID, keyError, err)
 	}
-	evt := vibekit.Message{
-		ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
-		EventKind: vibekit.EventInterrupted, Content: "Session refreshed, retrying",
+	evt := marotte.Message{
+		ID: ids.NewMessageID(), Role: marotte.RoleEvent, Ts: time.Now().UnixMilli(),
+		EventKind: marotte.EventInterrupted, Content: "Session refreshed, retrying",
 	}
 	if err := chats.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)
@@ -194,7 +194,7 @@ func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatSt
 
 // retryEmptyTurnPrompt respawns the bridge and re-sends the prompt as a turn of
 // its own. The caller holds the retry's admission reservation.
-func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, p *vibekit.PromptCommand, params map[string]any) {
+func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID marotte.ChatID, p *marotte.PromptCommand, params map[string]any) {
 	sb2, err2 := bridges.OpenBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
@@ -206,15 +206,15 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 		// so the reader sees two consecutive dividers. The empty turn was finalized
 		// before recovery began and the retry's epoch never opens, so no turn carries
 		// this failure and the divider is its only durable surface.
-		evt := vibekit.Message{
-			ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
-			EventKind: vibekit.EventInterrupted, Content: reason,
+		evt := marotte.Message{
+			ID: ids.NewMessageID(), Role: marotte.RoleEvent, Ts: time.Now().UnixMilli(),
+			EventKind: marotte.EventInterrupted, Content: reason,
 		}
 		if err := chats.AppendMessage(durable.Context(ctx), chatID, &evt); err != nil {
 			slog.Error("empty turn: append respawn-failure event", "chat_id", chatID, keyError, err)
 		}
-		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-			Code:    vibekit.ErrCodeRecoveryFailed,
+		bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+			Code:    marotte.ErrCodeRecoveryFailed,
 			Message: reason,
 		}))
 		return
@@ -240,11 +240,11 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 	sb2.BeginPromptCall(cancelRetry)
 	defer sb2.EndPromptCall()
 
-	params[vibekit.KeySessionID] = sb2.SessionID()
+	params[marotte.KeySessionID] = sb2.SessionID()
 	// The retry is a turn of its own — its own epoch, buffer and bracket
 	// — closed on every path out of here, since the turn it replaces is
 	// already closed.
-	retryEpoch := outcome.StartTurn(ctx, chatID, vibekit.TurnSourceEmptyRetry)
+	retryEpoch := outcome.StartTurn(ctx, chatID, marotte.TurnSourceEmptyRetry)
 	if retryEpoch == 0 {
 		// Dead ctx: shutdown, or the turn context died. No ACP call made.
 		slog.Warn("empty turn: the retry turn could not start", "chat_id", chatID)
@@ -261,7 +261,7 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
 		stop, reason := promptFailureAccount(ctx, retryErr, promptParamsInlineImage(params))
 		outcome.AbandonInFlightTurn(ctx, chatID, retryEpoch, stop, reason)
-		if stop != vibekit.StopReasonCancelled {
+		if stop != marotte.StopReasonCancelled {
 			// Suppressed on a cancel for reportPromptFailure's reason, and the reader's
 			// own Stop reaches this branch: the retry holds the prompt slot and registers
 			// its own cancel, so the grace expiry trips it here like anywhere else. A
@@ -270,8 +270,8 @@ func retryEmptyTurnPrompt(ctx context.Context, bridges BridgeAccess, chats ChatS
 			//
 			// Turn-scoped: the retry ran as a turn of its own and the abandon above
 			// stamped this reason on it, so that card carries the cause.
-			bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-				Code:       vibekit.ErrCodeRecoveryFailed,
+			bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+				Code:       marotte.ErrCodeRecoveryFailed,
 				Message:    "Retry prompt failed: " + reason,
 				TurnScoped: true,
 			}))
@@ -301,15 +301,15 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 // stream before draft_changed would hold an already-sent draft at a version the
 // digest calls unchanged. So message_appended carries the stamp only when no
 // draft_changed follows.
-func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws Workspace, chatID vibekit.ChatID, p *vibekit.PromptCommand) error {
+func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws Workspace, chatID marotte.ChatID, p *marotte.PromptCommand) error {
 	supervisedDefault := supervisedDefaultSetting(ctx, ws.ConfigDir)
 	var (
-		userMsg     vibekit.Message
+		userMsg     marotte.Message
 		appended    bool
 		hadComposer bool
-		cleared     vibekit.ComposerState
+		cleared     marotte.ComposerState
 	)
-	version, err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		// Idempotent by message id: a retried prompt whose first attempt
 		// already persisted the user message skips the append and the
 		// broadcast so no duplicate user bubble renders.
@@ -317,13 +317,13 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 			return false
 		}
 		if !exists {
-			c.Name = vibekit.DefaultChatName
+			c.Name = marotte.DefaultChatName
 			c.Model = p.Model
 			c.SupervisedMode = supervisedDefault
 		}
-		userMsg = vibekit.Message{
+		userMsg = marotte.Message{
 			ID:      p.MessageID,
-			Role:    vibekit.RoleUser,
+			Role:    marotte.RoleUser,
 			Ts:      time.Now().UnixMilli(),
 			Content: p.Text,
 			// The attachments belong on the record too: for an image or
@@ -339,7 +339,7 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 		c.Draft = ""
 		c.Attachments = nil
 		cleared = c.Composer()
-		if c.Name == vibekit.DefaultChatName && len(c.Messages) == 1 {
+		if c.Name == marotte.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(p.Text, 80)
 			if name != p.Text {
 				name += ellipsis
@@ -352,9 +352,9 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 	if err != nil || !appended {
 		return err
 	}
-	appendedFrame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg)
+	appendedFrame := marotte.NewEvent(marotte.EventMessageAppended, chatID, &userMsg)
 	if !hadComposer {
-		appendedFrame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+		appendedFrame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 	}
 	bus.Broadcast(ctx, appendedFrame)
 	// Say the composer was cleared, since CmdSetDraft is not the only
@@ -370,7 +370,7 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 // hasMessageID reports whether the chat already contains a message with
 // the given id. Scans backwards — a retried prompt's original append is
 // almost always the most recent message.
-func hasMessageID(c *vibekit.Chat, id string) bool {
+func hasMessageID(c *marotte.Chat, id string) bool {
 	for i := range slices.Backward(c.Messages) {
 		if c.Messages[i].ID == id {
 			return true
@@ -403,7 +403,7 @@ type promptAck struct {
 // CmdPrompt handles the prompt command: validate → persist → admit → ack.
 // The turn itself runs on its own goroutine (runPromptTurn), so the POST
 // answers in the time of a disk append rather than a turn.
-func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientCommand) (any, error) {
+func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrMissingChatID)
 	}
@@ -446,7 +446,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 // client's 409→steer conversion works), and every other holder answers
 // 409 with the additive reason "starting", on which the client never
 // attempts an undeliverable steer.
-func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID) error {
+func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) error {
 	switch roles.turnOutcome.ReserveTurnForPrompt(ctx, chatID, AdmissionWait) {
 	case AdmissionAcquired:
 		return nil
@@ -461,15 +461,15 @@ func reservePromptAdmission(ctx context.Context, roles *promptRoles, chatID vibe
 // reservation CmdPrompt took, the turn context's cancel, and the in-flight
 // registration; every path out releases all three. Failures past the ack
 // are SSE-only: the POST has already answered.
-func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *promptRoles, chatID vibekit.ChatID, p *vibekit.PromptCommand) {
+func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) {
 	defer roles.lifecycle.InflightDone()
 	defer cancel()
 	sb, err := roles.bridges.OpenBridge(ctx, chatID, p.Model)
 	if err != nil {
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
 		reason := rpcerr.Text(err)
-		appendTurnStopCarrier(ctx, roles.chats, chatID, vibekit.StopReasonInterrupted, reason)
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: reason}))
+		appendTurnStopCarrier(ctx, roles.chats, chatID, marotte.StopReasonInterrupted, reason)
+		roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{Code: marotte.ErrCodeBridgeStartFailed, Message: reason}))
 		return
 	}
 	// The reservation already excludes every prompt and shell, so a held
@@ -478,8 +478,8 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
 		slog.Error("prompt: bridge slot held despite an owned admission reservation", "chat_id", chatID)
 		const reason = "The prompt could not start. Send it again."
-		appendTurnStopCarrier(ctx, roles.chats, chatID, vibekit.StopReasonInterrupted, reason)
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
+		appendTurnStopCarrier(ctx, roles.chats, chatID, marotte.StopReasonInterrupted, reason)
+		roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{Code: marotte.ErrCodePromptFailed, Message: reason}))
 		return
 	}
 	promptAdmittedTurn(ctx, roles, sb, chatID, p)
@@ -492,7 +492,7 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 // The release ORDER is the contract: capture the finalized result through
 // the still-held epoch handle, then the bridge slot, then the reservation,
 // and ReleaseTurn last so every epoch-based predicate reads a live record.
-func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chatID vibekit.ChatID, p *vibekit.PromptCommand) {
+func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chatID marotte.ChatID, p *marotte.PromptCommand) {
 	// The prompt Call gets its own cancellable context so CmdCancel's
 	// grace budget has something to trip when KAS never acks a
 	// session/cancel.
@@ -512,7 +512,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	// Open the turn at bridge-ready, immediately before dispatch, so
 	// everything true of it for its whole life is captured with the
 	// bridge live — the spawn and the MCP wait are excluded.
-	epoch := roles.turnOutcome.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := roles.turnOutcome.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	if epoch == 0 {
 		// Dead ctx: shutdown, or a cancel during the spawn/MCP
 		// window. With no epoch nothing would finalize, so no ACP call.
@@ -520,11 +520,11 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 		roles.turnOutcome.ReleaseTurnReservation(chatID)
 		stop, reason := turnStopBeforeEpoch(ctx, "The turn was cancelled before the agent answered.")
 		appendTurnStopCarrier(ctx, roles.chats, chatID, stop, reason)
-		if stop != vibekit.StopReasonCancelled {
+		if stop != marotte.StopReasonCancelled {
 			// Suppressed on a cancel for reportPromptFailure's reason: prompt_failed
 			// routes to a toast, and the reader asked for this stop.
-			roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-				Code: vibekit.ErrCodePromptFailed, Message: reason,
+			roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+				Code: marotte.ErrCodePromptFailed, Message: reason,
 			}))
 		}
 		return
@@ -573,9 +573,9 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 // One rendering of the cause on every surface that carries it: handing the
 // raw error to the broadcast would let RPCErrorText's machine-triplet
 // fallback overwrite the prose promptFailureReason produces.
-func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, err error, elapsed time.Duration, inlinedImage bool) {
+func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, epoch marotte.TurnEpoch, err error, elapsed time.Duration, inlinedImage bool) {
 	stop, reason := promptFailureAccount(ctx, err, inlinedImage)
-	if stop == vibekit.StopReasonCancelled {
+	if stop == marotte.StopReasonCancelled {
 		// Info rather than Error at THIS site: nothing here is actionable. The Warn
 		// callPromptWithRetry logs one frame earlier is pre-existing and still fires, so
 		// the cancelled path is not uniformly quiet. And NO error frame at all,
@@ -589,9 +589,9 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 	slog.Error("prompt failed", "chat_id", chatID, keyError, err, "elapsed", elapsed)
 	// An auth failure is the one prompt failure whose remedy is not "send
 	// again", so it routes through a different code.
-	code := vibekit.ErrCodePromptFailed
+	code := marotte.ErrCodePromptFailed
 	if classifyPromptFailure(err) == classAuth {
-		code = vibekit.ErrCodeAuthTokenUnavailable
+		code = marotte.ErrCodeAuthTokenUnavailable
 		if roles.auth != nil {
 			roles.auth.Record(err)
 		}
@@ -603,19 +603,19 @@ func reportPromptFailure(ctx context.Context, roles *promptRoles, chatID vibekit
 	// Turn-scoped: the abandon above stamps this same reason on the turn's
 	// carrier, so the card says it durably and a toast for the chat on screen
 	// would be a second copy of it.
-	roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID,
-		vibekit.ErrorPayload{Code: code, Message: reason, TurnScoped: true}))
+	roles.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID,
+		marotte.ErrorPayload{Code: code, Message: reason, TurnScoped: true}))
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map and
 // reports whether this prompt contains an inlined image.
-func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *vibekit.PromptCommand, historyImages int) (map[string]any, bool) {
+func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *marotte.PromptCommand, historyImages int) (map[string]any, bool) {
 	blocks := BuildPromptBlocks(ctx, p.Text, p.Attachments, historyImages, ws.ResolveInside)
 	params := SessionParams(sb, map[string]any{
-		vibekit.KeyPrompt: blocks,
+		marotte.KeyPrompt: blocks,
 	})
 	// Forward the client-generated user message id so KAS stores this
-	// turn under vibekit's own id — what makes rewind addressable:
+	// turn under marotte's own id — what makes rewind addressable:
 	// revertMultiple requires a messageId naming a user message, one KAS
 	// only knows because it was sent here.
 	if p.MessageID != "" {
@@ -625,7 +625,7 @@ func BuildPromptParams(ctx context.Context, ws Workspace, sb sessionScoped, p *v
 }
 
 func promptParamsInlineImage(params map[string]any) bool {
-	blocks, _ := params[vibekit.KeyPrompt].([]map[string]any)
+	blocks, _ := params[marotte.KeyPrompt].([]map[string]any)
 	return inlineImageBlockCount(blocks) > 0
 }
 
@@ -651,7 +651,7 @@ const (
 	// Non-retryable by construction: the payload is what was refused.
 	classRejected
 	// classAuth is the backend refusing the token rather than the
-	// request. CmdPrompt sends vibekit.ErrCodeAuthTokenUnavailable for
+	// request. CmdPrompt sends marotte.ErrCodeAuthTokenUnavailable for
 	// it, the only code the client routes to a Sign in CTA.
 	classAuth
 )
@@ -713,7 +713,7 @@ const (
 )
 
 // The per-field budgets promptFailureReason bounds a MAPPED error's upstream
-// text with. Two rather than one because that function composes vibekit's own
+// text with. Two rather than one because that function composes marotte's own
 // remedy sentence and the request id AFTER the prose: one bound over the whole
 // result would spend it on the prose and cut the actionable half off.
 //
@@ -732,32 +732,32 @@ func classifyPromptFailure(err error) promptFailureClass {
 	}
 	// A dead bridge arrives wrapped in a TransportError whose Retryable
 	// is true, so the identity check has to win first.
-	if errors.Is(err, vibekit.ErrBridgeExited) {
+	if errors.Is(err, marotte.ErrBridgeExited) {
 		return classPipeDeath
 	}
-	if errors.Is(err, vibekit.ErrNotIdle) {
+	if errors.Is(err, marotte.ErrNotIdle) {
 		return classBusy
 	}
-	if te, ok := errors.AsType[*vibekit.TransportError](err); ok {
+	if te, ok := errors.AsType[*marotte.TransportError](err); ok {
 		if te.Retryable {
 			return classTransient
 		}
 		return classFatal
 	}
-	if re, ok := errors.AsType[*vibekit.RPCError](err); ok {
+	if re, ok := errors.AsType[*marotte.RPCError](err); ok {
 		return classifyRPCFailure(re)
 	}
 	return classFatal
 }
 
 // classifyRPCFailure classifies an RPC error by its code.
-func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
+func classifyRPCFailure(re *marotte.RPCError) promptFailureClass {
 	switch re.Code {
-	case vibekit.RPCCodeNotIdle:
+	case marotte.RPCCodeNotIdle:
 		return classBusy
-	case vibekit.RPCCodeBridgeExited:
+	case marotte.RPCCodeBridgeExited:
 		// KAS's mapped-backend-error code, which happens to share a
-		// number with vibekit's own bridge-exited constant. A bridge
+		// number with marotte's own bridge-exited constant. A bridge
 		// exit never arrives here as an RPCError, so this is KAS's.
 		d := mappedFromData(re)
 		if d == nil {
@@ -770,7 +770,7 @@ func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
 			return classAuth
 		}
 		return classFatal
-	case vibekit.RPCCodeInternal:
+	case marotte.RPCCodeInternal:
 		// -32603 is KAS's catch-all: a genuine internal fault, plus
 		// every validation and auth failure. Both are excluded from
 		// retry — auth is pure latency, validation is a second upload
@@ -791,7 +791,7 @@ func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
 
 // mappedFromData decodes a mapped-error payload. Returns nil for an error
 // that is not one of KAS's mapped backend classes.
-func mappedFromData(re *vibekit.RPCError) *mappedErrorData {
+func mappedFromData(re *marotte.RPCError) *mappedErrorData {
 	raw := re.ErrorData()
 	if len(raw) == 0 {
 		return nil
@@ -813,7 +813,7 @@ func mappedFromData(re *vibekit.RPCError) *mappedErrorData {
 // `credentials` is deliberately not among the markers: it matched an AWS
 // SDK message stating a refresh will be attempted, so grading it
 // terminal-auth suppressed the retry the message was asking for.
-func isAuthShaped(re *vibekit.RPCError) bool {
+func isAuthShaped(re *marotte.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
 	for _, name := range authErrorNames {
 		if strings.Contains(hay, name) {
@@ -840,7 +840,7 @@ func isAuthShaped(re *vibekit.RPCError) bool {
 // isValidationShaped reports whether an internal error is really the
 // backend refusing the request as sent. Matching a name rather than
 // surrounding prose is what survives a reworded message.
-func isValidationShaped(re *vibekit.RPCError) bool {
+func isValidationShaped(re *marotte.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
 	for _, name := range validationErrorNames {
 		if strings.Contains(hay, name) {
@@ -850,7 +850,7 @@ func isValidationShaped(re *vibekit.RPCError) bool {
 	return false
 }
 
-func isImageValidationShaped(re *vibekit.RPCError) bool {
+func isImageValidationShaped(re *marotte.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
 	for _, name := range validationErrorNames {
 		if strings.HasPrefix(name, "Image") && strings.Contains(hay, name) {
@@ -869,24 +869,24 @@ func isImageValidationShaped(re *vibekit.RPCError) bool {
 // BridgeCoordinator.InterruptTurn, and shutdown. The HTTP request is NOT one —
 // lifetime.TurnContext wraps context.WithoutCancel, so it is detached — so an
 // absent sentinel means a fault, which keeps grading `interrupted`.
-func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (stop vibekit.StopReason, reason string) {
+func promptFailureAccount(ctx context.Context, err error, inlinedImage bool) (stop marotte.StopReason, reason string) {
 	if errors.Is(err, context.Canceled) {
 		if errors.Is(context.Cause(ctx), ErrCancelGraceExpired) {
 			// No prose: closeAsDiscarded says nothing for the same outcome, and
 			// DefaultFailureReason(TurnOutcomeCancelled) is empty because the footer's own
 			// word already reads "Cancelled" a row away.
-			return vibekit.StopReasonCancelled, ""
+			return marotte.StopReasonCancelled, ""
 		}
-		return vibekit.StopReasonInterrupted, "The turn was cancelled before the agent answered."
+		return marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered."
 	}
-	return vibekit.StopReasonInterrupted, promptFailureReason(err, inlinedImage)
+	return marotte.StopReasonInterrupted, promptFailureReason(err, inlinedImage)
 }
 
 // promptFailureReason renders a failure into something worth showing the
 // user. KAS's own message on a mapped error is already user-facing, so
 // this adds to it rather than replacing it.
 func promptFailureReason(err error, inlinedImage bool) string {
-	re, ok := errors.AsType[*vibekit.RPCError](err)
+	re, ok := errors.AsType[*marotte.RPCError](err)
 	if !ok {
 		return rpcerr.Text(err)
 	}
@@ -897,10 +897,10 @@ func promptFailureReason(err error, inlinedImage bool) string {
 		// "Internal error" and whose cause is in error.data.
 		return rpcerr.Text(err) + validationGuidance(re, inlinedImage)
 	}
-	if re.Code == vibekit.RPCCodeInternal && d.ErrorType == contextWindowExceededError {
+	if re.Code == marotte.RPCCodeInternal && d.ErrorType == contextWindowExceededError {
 		return "This chat exceeds the model's context limit. Type `/compact` or start a new chat, then send the prompt again."
 	}
-	if re.Code == vibekit.RPCCodeBridgeExited && d.ErrorType == "ModelRegistryUnavailableError" {
+	if re.Code == marotte.RPCCodeBridgeExited && d.ErrorType == "ModelRegistryUnavailableError" {
 		return rpcerr.Sanitize(re.Message, mappedProseCap) + " Run `kiro-cli login`, then send the prompt again."
 	}
 	// A mapped error's `data` is the machine triplet, not the text; the
@@ -936,7 +936,7 @@ func promptFailureReason(err error, inlinedImage bool) string {
 // validationGuidance is the recovery text for a validation-shaped refusal,
 // split by whether an image is what tripped it and whether this prompt
 // inlined one. Empty for everything else.
-func validationGuidance(re *vibekit.RPCError, inlinedImage bool) string {
+func validationGuidance(re *marotte.RPCError, inlinedImage bool) string {
 	if !isValidationShaped(re) {
 		return ""
 	}

@@ -3,7 +3,7 @@
 // (see the provider.go package comment). glab ships no machine-readable
 // auth-status output (`glab auth status` is human text only), so
 // discovering which hosts glab is logged into means reading its
-// config.yml. Read-only: vibekit never writes this file — token writes,
+// config.yml. Read-only: marotte never writes this file — token writes,
 // git-credential setup, and disconnect all go through glab's own
 // subcommands (auth.go). Retire this parser the day glab ships a JSON
 // status output.

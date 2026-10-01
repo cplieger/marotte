@@ -3,7 +3,7 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestStubDeps_Contract verifies that baseDeps satisfies the Deps
@@ -23,7 +23,7 @@ func TestStubDeps_Contract(t *testing.T) {
 	if _, ok := d.Get(ctx, "no-such-chat"); ok {
 		t.Error("Get on the nop store reported found")
 	}
-	if d.TurnFoldTarget(ctx, "c1", vibekit.TurnSourceWireTurnStart) == nil {
+	if d.TurnFoldTarget(ctx, "c1", marotte.TurnSourceWireTurnStart) == nil {
 		t.Error("TurnFoldTarget returned nil")
 	}
 	if _, ok := d.OpenTurnBuffer("no-such-chat"); ok {
@@ -37,7 +37,7 @@ func TestStubDeps_Contract(t *testing.T) {
 	}
 
 	// Broadcast must not panic.
-	d.Broadcast(ctx, vibekit.ServerEvent{})
+	d.Broadcast(ctx, marotte.ServerEvent{})
 }
 
 // TestBaseDeps_FullContract mirrors the runtime's TranslateDepsContractTest
@@ -50,19 +50,19 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	// three promoted methods reach it without panicking and report its no-op
 	// answers. A round-trip belongs to the tests that install a real store.
 	t.Run("chat_store_methods_are_reachable", func(t *testing.T) {
-		if _, err := d.Mutate(ctx, "c1", func(*vibekit.Chat, bool) bool { return true }); err != nil {
+		if _, err := d.Mutate(ctx, "c1", func(*marotte.Chat, bool) bool { return true }); err != nil {
 			t.Errorf("Mutate on the nop store returned %v, want nil", err)
 		}
 		if _, ok := d.Get(ctx, "c1"); ok {
 			t.Error("Get on the nop store reported found")
 		}
-		if err := d.AppendMessage(ctx, "c1", &vibekit.Message{}); err != nil {
+		if err := d.AppendMessage(ctx, "c1", &marotte.Message{}); err != nil {
 			t.Errorf("AppendMessage on the nop store returned %v, want nil", err)
 		}
 	})
 
 	t.Run("Broadcast_does_not_panic", func(t *testing.T) {
-		d.Broadcast(ctx, vibekit.ServerEvent{Type: "test_event", ChatID: "chat-1"})
+		d.Broadcast(ctx, marotte.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
@@ -81,15 +81,15 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
-		d.PendingPermsAdd(42, vibekit.ServerEvent{Type: "permission_needed", ChatID: "c1"})
+		d.PendingPermsAdd(42, marotte.ServerEvent{Type: "permission_needed", ChatID: "c1"})
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
-		d.NotifyPush(ctx, "test body", vibekit.PushKindPermission, "")
+		d.NotifyPush(ctx, "test body", marotte.PushKindPermission, "")
 	})
 
 	t.Run("buffer_and_line_methods_work", func(t *testing.T) {
-		if d.TurnFoldTarget(ctx, "c1", vibekit.TurnSourceWireTurnStart) == nil {
+		if d.TurnFoldTarget(ctx, "c1", marotte.TurnSourceWireTurnStart) == nil {
 			t.Error("TurnFoldTarget returned nil")
 		}
 		d.RecordFromDiffs("c1", nil, 0, "")

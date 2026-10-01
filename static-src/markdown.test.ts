@@ -2140,7 +2140,7 @@ describe("renderMarkdown unclosed inline openers", () => {
     { name: "unclosed [", input: "random[0,500)", expected: "<p>random[0,500)</p>" },
     { name: "unclosed ![", input: "an ![img", expected: "<p>an ![img</p>" },
     { name: "unclosed $", input: "a $x^2", expected: "<p>a $x^2</p>" },
-    // The delimiter restored is the one the parser consumed. vibekit reads
+    // The delimiter restored is the one the parser consumed. marotte reads
     // `\\(` as a math opener rather than an escaped paren, so `\\(` comes back.
     { name: "unclosed \\(", input: "a \\(x^2", expected: "<p>a \\(x^2</p>" },
     {

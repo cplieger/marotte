@@ -22,14 +22,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
-// mcpServerState is an alias for the vibekit-level MCPServerState enum.
-type mcpServerState = vibekit.MCPServerState
+// mcpServerState is an alias for the marotte-level MCPServerState enum.
+type mcpServerState = marotte.MCPServerState
 
 const (
 	mcpStateIdle      mcpServerState = "idle"
@@ -44,17 +44,17 @@ const (
 // for non-connected servers.
 //
 // Origin says where the server came from, which is what makes a row for a
-// server vibekit never configured safe to show: it has no config entry to
+// server marotte never configured safe to show: it has no config entry to
 // hang edit or delete on, so the row must declare itself read-only.
 type mcpServerRuntime struct {
 	Name      string
 	State     mcpServerState
-	Origin    vibekit.Origin
+	Origin    marotte.Origin
 	OAuthURL  string
 	Error     string
 	Tools     []string
-	Prompts   []vibekit.MCPPromptInfo
-	Resources []vibekit.MCPResourceInfo
+	Prompts   []marotte.MCPPromptInfo
+	Resources []marotte.MCPResourceInfo
 	// Relayed is the relay's single-use latch for THIS authorization attempt
 	// (mcp_oauth_relay.go): set the moment a relay RESERVES the attempt, and
 	// stays set once the loopback listener accepts it, so a resubmitted
@@ -75,7 +75,7 @@ type mcpRegistry struct {
 	bus *bus
 	// lifetime supplies the done channel the debounce loop exits on.
 	lifetime *lifetime
-	// config is the enabled/known name sets vibekit itself configured.
+	// config is the enabled/known name sets marotte itself configured.
 	// Optional: a registry with no config classifies every server as
 	// unconfigured.
 	config  mcpNameSets `wiring:"optional"`
@@ -154,10 +154,10 @@ func (reg *mcpRegistry) Snapshot() []mcpServerRuntime {
 // attributes an operator needs off the end of the line.
 const mcpSummaryNameCap = 8
 
-// PendingSummary reports which of vibekit's enabled MCP servers a readiness
+// PendingSummary reports which of marotte's enabled MCP servers a readiness
 // wait is still short of, partitioned by cause. Read-only.
 //
-// The two reads are SEQUENTIAL, never nested: EnabledNames reaches vibekit's
+// The two reads are SEQUENTIAL, never nested: EnabledNames reaches marotte's
 // own config store, which has its own lock, so taking it under reg.mu would
 // put two locks in an order nothing else here establishes.
 func (reg *mcpRegistry) PendingSummary(ctx context.Context) command.MCPPendingSummary {
@@ -236,7 +236,7 @@ func (reg *mcpRegistry) SignalReady() {
 // RecordConnected marks a server as connected (recording the prompts and
 // resources it advertises), broadcasts mcp_connected, and fires onChange.
 // prompts/resources may be nil (server exposes none).
-func (reg *mcpRegistry) RecordConnected(ctx context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
+func (reg *mcpRegistry) RecordConnected(ctx context.Context, name string, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo) {
 	origin, ok := reg.originFor(ctx, name)
 	if !ok {
 		return
@@ -252,7 +252,7 @@ func (reg *mcpRegistry) RecordConnected(ctx context.Context, name string, tools 
 	}
 	reg.mu.Unlock()
 
-	reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPConnected, "", vibekit.MCPConnectedPayload{Server: name}))
+	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPConnected, "", marotte.MCPConnectedPayload{Server: name}))
 	reg.signalChange()
 }
 
@@ -271,7 +271,7 @@ func (reg *mcpRegistry) RecordOAuth(ctx context.Context, name, url string) {
 	}
 	reg.mu.Unlock()
 
-	reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPOAuthNeeded, "", vibekit.MCPOAuthPayload{Server: name, URL: url}))
+	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPOAuthNeeded, "", marotte.MCPOAuthPayload{Server: name, URL: url}))
 	reg.signalChange()
 }
 
@@ -292,12 +292,12 @@ func (reg *mcpRegistry) RecordInitFailure(ctx context.Context, name, errMsg stri
 	}
 	reg.mu.Unlock()
 
-	reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPFailed, "", vibekit.MCPFailedPayload{Server: name, Error: errMsg}))
+	reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPFailed, "", marotte.MCPFailedPayload{Server: name, Error: errMsg}))
 	reg.signalChange()
 }
 
 // RecordDisabled records a server KAS reports as "disabled" — the one
-// record path whose whole population is servers vibekit did NOT configure.
+// record path whose whole population is servers marotte did NOT configure.
 //
 // A configured server is dropped here regardless of its own flag: the MCP
 // page renders its off state from the config row itself, so a runtime row
@@ -311,7 +311,7 @@ func (reg *mcpRegistry) RecordInitFailure(ctx context.Context, name, errMsg stri
 // doc regenerates.
 func (reg *mcpRegistry) RecordDisabled(ctx context.Context, name string) {
 	origin, ok := reg.originFor(ctx, name)
-	if !ok || origin == vibekit.OriginUser {
+	if !ok || origin == marotte.OriginUser {
 		return
 	}
 	reg.mu.Lock()
@@ -410,7 +410,7 @@ func (reg *mcpRegistry) clearAll(ctx context.Context) {
 		if ctx.Err() != nil {
 			break
 		}
-		reg.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPDisconnected, "", vibekit.MCPDisconnectedPayload{Server: name}))
+		reg.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPDisconnected, "", marotte.MCPDisconnectedPayload{Server: name}))
 	}
 	reg.signalChange()
 }
@@ -419,22 +419,22 @@ func (reg *mcpRegistry) clearAll(ctx context.Context) {
 // server came from.
 //
 // It narrows a plain enabled check: a server the user switched off is a
-// stale frame, correctly dropped, but a server vibekit never configured at
+// stale frame, correctly dropped, but a server marotte never configured at
 // all is not disabled, it is an integration reaching the agent through a
-// Power or a config vibekit does not own — dropping its frames left its
+// Power or a config marotte does not own — dropping its frames left its
 // tools in the agent's tool list while the MCP page said nothing about
-// their origin. Only one case returns false: the name is in vibekit's
+// their origin. Only one case returns false: the name is in marotte's
 // config and not enabled.
 //
 // A nil mcpConfig (test hubs) reports OriginUser for every name, keeping
 // recordDisabled's drop rule intact for those hubs.
-func (reg *mcpRegistry) originFor(ctx context.Context, name string) (vibekit.Origin, bool) {
+func (reg *mcpRegistry) originFor(ctx context.Context, name string) (marotte.Origin, bool) {
 	cfg := reg.config
 	if cfg == nil {
-		return vibekit.OriginUser, true
+		return marotte.OriginUser, true
 	}
 	if _, ok := cfg.EnabledNames(ctx)[name]; ok {
-		return vibekit.OriginUser, true
+		return marotte.OriginUser, true
 	}
 	if _, ok := cfg.ConfiguredNames(ctx)[name]; ok {
 		return "", false
@@ -442,9 +442,9 @@ func (reg *mcpRegistry) originFor(ctx context.Context, name string) (vibekit.Ori
 	// Past ConfiguredNames, membership in AllNames can only come from the
 	// powers block, so this is the only branch that reads the file.
 	if _, ok := cfg.AllNames(ctx)[name]; ok {
-		return vibekit.OriginPower, true
+		return marotte.OriginPower, true
 	}
-	return vibekit.OriginUnknown, true
+	return marotte.OriginUnknown, true
 }
 
 // statusServer is the JSON projection of one mcpServerRuntime. The field
@@ -453,18 +453,18 @@ func (reg *mcpRegistry) originFor(ctx context.Context, name string) (vibekit.Ori
 // field swap.
 type statusServer struct {
 	Name  string                 `json:"name"`
-	State vibekit.MCPServerState `json:"state"`
+	State marotte.MCPServerState `json:"state"`
 	// Origin is always sent (not omitempty): the client withholds edit
 	// affordances on anything but "user", and an absent field would make
 	// it guess.
-	Origin   vibekit.Origin `json:"origin"`
+	Origin   marotte.Origin `json:"origin"`
 	OAuthURL string         `json:"oauth_url,omitempty"`
 	Error    string         `json:"error,omitempty"`
 	// Tools is the connected server's tool names; the per-tool deny editor
 	// reads them from here to offer suggestions.
 	Tools     []string                  `json:"tools,omitempty"`
-	Prompts   []vibekit.MCPPromptInfo   `json:"prompts,omitempty"`
-	Resources []vibekit.MCPResourceInfo `json:"resources,omitempty"`
+	Prompts   []marotte.MCPPromptInfo   `json:"prompts,omitempty"`
+	Resources []marotte.MCPResourceInfo `json:"resources,omitempty"`
 	// Relayed says this attempt's callback is on its way to the loopback
 	// listener or was already delivered, so a reload or a second device
 	// does not offer the paste box again for a spent code.

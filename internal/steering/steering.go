@@ -23,15 +23,15 @@ import (
 	"sync"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // Read caps bound untrusted workspace input so a crafted repo can't
 // OOM the container by committing a multi-GiB README or tools.json.
 // The workspace hosts agent-cloned upstreams whose contents are
 // attacker-controlled from our point of view; everywhere else in
-// vibekit (bridge_fs, checkpoint blobs, forges, filebrowse) clamps
+// marotte (bridge_fs, checkpoint blobs, forges, filebrowse) clamps
 // reads via io.LimitReader for the same reason.
 const (
 	firstLineReadCap = 4 << 10 // README first non-heading line fits easily in 4 KiB
@@ -59,7 +59,7 @@ const (
 // generator uses. Returned by the snapshot function wired at construct
 // time; steering has no direct dependency on agent internals.
 type MCPSnapshot struct {
-	Servers []vibekit.MCPSnapshotServer
+	Servers []marotte.MCPSnapshotServer
 }
 
 // ForgeSnapshot describes connected forge providers for the steering file.
@@ -157,7 +157,7 @@ func (g *Generator) Generate(ctx context.Context) {
 	}
 
 	// Mode 0o600 matches the narrow-by-default stance of other
-	// vibekit writes: this file lists the workspace layout and
+	// marotte writes: this file lists the workspace layout and
 	// MCP server names which, while not secrets, are information
 	// that should stay scoped to the single user that runs
 	// kiro-cli. atomicfile.WriteFile is the atomic temp+rename helper so
@@ -198,7 +198,7 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 	writeWorkspace(ctx, &b, g.workDir, kinds)
 	writeGitPanel(&b, g.workDir, kinds)
 	writeUIGuide(&b)
-	writeAttachments(&b, vibekit.DefaultUploadDir, g.workDir)
+	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir)
 	writeLimitations(&b)
 	writeCapabilities(&b, g.configDir)
 	return []byte(b.String())
@@ -304,7 +304,7 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 		return
 	}
 	servers := slices.Clone(snap.Servers)
-	slices.SortFunc(servers, func(a, b vibekit.MCPSnapshotServer) int {
+	slices.SortFunc(servers, func(a, b marotte.MCPSnapshotServer) int {
 		return strings.Compare(a.Name, b.Name)
 	})
 
@@ -353,7 +353,7 @@ func writeForges(w io.Writer, snap ForgeSnapshot) {
 	}
 	fmt.Fprintf(w, "\nThese CLIs are pre-authenticated for git and for the API surface above.\n")
 	if kinds[kindGitHub] {
-		fmt.Fprintf(w, "\nThat covers the scopes vibekit requests at login plus any added out of band, which a reconnect preserves. An operation needing a scope outside that set fails with a 404 naming the scope and the `gh auth refresh` command that adds it; a scope-free read succeeding proves nothing, so read the live set with `gh api -i user | grep -i '^x-oauth-scopes'`.\n")
+		fmt.Fprintf(w, "\nThat covers the scopes marotte requests at login plus any added out of band, which a reconnect preserves. An operation needing a scope outside that set fails with a 404 naming the scope and the `gh auth refresh` command that adds it; a scope-free read succeeding proves nothing, so read the live set with `gh api -i user | grep -i '^x-oauth-scopes'`.\n")
 	}
 	fmt.Fprintf(w, "\n")
 	for i := range snap.Providers {
@@ -378,7 +378,7 @@ func connectedKinds(snap ForgeSnapshot) map[string]bool {
 // pointer to avoid copying the ~88-byte ForgeProvider value.
 func writeForgeProvider(w io.Writer, p *ForgeProvider) {
 	// Every field below is a forge CLI's report of a remote system's state, so
-	// it is defused like any other input vibekit did not author.
+	// it is defused like any other input marotte did not author.
 	user := cmp.Or(defuse(p.User), "(authenticated)")
 	fmt.Fprintf(w, "### %s (%s)\n\n", defuse(p.Kind), defuse(p.Host))
 	if p.Email != "" {

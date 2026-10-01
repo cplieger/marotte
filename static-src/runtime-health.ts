@@ -10,7 +10,7 @@
 //
 // Those four literals are the contract, and they have exactly one producer:
 // `kiroReasonText` in internal/server/kirocli.go, which renders the install
-// library's typed reason into vibekit's own wording. A rename there degrades
+// library's typed reason into marotte's own wording. A rename there degrades
 // every named state below to FALLBACK and nothing else notices, so
 // TestKiroReasonTextIsTheClientContract pins the strings on the Go side —
 // change them in both places or neither.

@@ -17,7 +17,7 @@ import type { Decoder } from "./validators.js";
 // No baseUrl and no prepareHeaders: every path is absolute same-origin and the
 // client sends no CSRF token, because the server enforces an Origin check
 // instead (internal/server/security.go). An ISOLATED instance, so nothing else
-// can mutate vibekit's fetch layer through the module-global default.
+// can mutate marotte's fetch layer through the module-global default.
 const fx = createFetch({ credentials: "same-origin" });
 
 /** Build fetch RequestOptions, attaching `signal` only when defined —

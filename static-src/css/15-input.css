@@ -163,7 +163,7 @@
      Rule: Cloud Four, "The Math Behind Nesting Rounded Corners"
      (https://cloudfour.com/thinks/the-math-behind-nesting-rounded-corners/),
      which omits the border term; the `gap = border-width + padding` form is the
-     correct one. Restated in vibekit-ui.md "Design".
+     correct one. Restated in marotte-ui.md "Design".
 
      THE `gap` TERM IS THE ROW'S PADDING, NOT --pill-inset, since the pill row pays
      for its controls' target expander out of its own inset: 12 - 1 - 6 = 5px on a
@@ -918,7 +918,7 @@
      it is the hard bound, because a card may never overflow the viewport it is
      anchored inside. `60dvh` is the SHAPE bound: a menu that fills the screen
      reads as a modal, which is the thing the expandable-pill pattern exists to
-     avoid (vibekit.md mandates it over floating popups for pill-row controls).
+     avoid (marotte.md mandates it over floating popups for pill-row controls).
      Measured at a 900px viewport with the room alone as the cap: the mode list
      rendered 839px tall from y=12 and still scrolled.
 
@@ -1613,7 +1613,7 @@
      required rather than decorative.
 
      The surface half is `--c-hover` / `--c-press`, gated: that is what every row and
-     box header in the app hovers to since the 2026-09 alignment (vibekit-ui.md "ONE
+     box header in the app hovers to since the 2026-09 alignment (marotte-ui.md "ONE
      HOVER RECIPE"), and it is right here because this IS a row inside a box — unlike
      the footer trigger, which is paired with one specific button. Measured step over
      this card, all three status tints: 1.591-1.601 dark / 1.346-1.350 light hovered
@@ -2265,7 +2265,7 @@
      the catalog's own name first and only falls back to the house table, so a row
      that renders one has to fit words nothing here chose — measured live, KAS
      2.21.2 sends "Low Medium High xHigh Max" where the house table spells the
-     fourth "x-high". Hence NOT abbreviating: a vibekit-side "Med" is a rewrite of
+     fourth "x-high". Hence NOT abbreviating: a marotte-side "Med" is a rewrite of
      foreign text that goes stale on the next tier upstream renames or adds. The
      slider now spends that budget on ONE label on its own LINE, so the widest
      foreign tier name no longer contests the rail's width at all and the card's own
@@ -2277,7 +2277,7 @@
 
 /* PHONE-SHAPED means narrow OR short, and a media-query list is CSS's OR:
    a phone on its long edge is mostly wider than 48rem, so the narrow arm
-   alone leaves the tier on screen in landscape (derivation: vibekit-ui.md
+   alone leaves the tier on screen in landscape (derivation: marotte-ui.md
    "Hit targets"). Its own block rather than a second arm on the touch-sizing
    one above, whose rules are width-driven geometry.
 

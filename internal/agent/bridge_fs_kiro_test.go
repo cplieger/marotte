@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/ignore"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ignore"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // kiroFSMsg builds one `_kiro/fs/*` request for the given method and path.
-func kiroFSMsg(t *testing.T, id int64, method, path string) *vibekit.RPCResponse {
+func kiroFSMsg(t *testing.T, id int64, method, path string) *marotte.RPCResponse {
 	t.Helper()
-	return &vibekit.RPCResponse{
+	return &marotte.RPCResponse{
 		ID:     &id,
 		Method: method,
 		Params: mustJSON(t, map[string]any{"sessionId": "sess_x", "path": path}),
@@ -349,7 +349,7 @@ func TestKiroFSDeleteSuccessCarriesNoMessage(t *testing.T) {
 
 // TestKiroFSDeleteDoesNotStage pins the "no second gate" decision. KAS
 // checkpoints before its own delete and restores a rejected one by writing the
-// snapshot back through fs/write_text_file; a vibekit gate here would intercept
+// snapshot back through fs/write_text_file; a marotte gate here would intercept
 // that restore, ask the user to approve undoing their own rejection, and stall
 // KAS mid-restorePendingChanges. So the delete must land on disk synchronously
 // even with supervised mode on.
@@ -360,7 +360,7 @@ func TestKiroFSDeleteDoesNotStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	_, _ = h.chatStore.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = h.chatStore.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.SupervisedMode = true
 		return true
 	})
@@ -386,9 +386,9 @@ func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 		{methodKiroFSStat, true},
 		{methodKiroFSReadDirectory, true},
 		{methodKiroFSDelete, true},
-		{vibekit.MethodFSRead, false},
-		{vibekit.MethodFSWrite, false},
-		// The read/write rung vibekit deliberately does NOT declare: claiming
+		{marotte.MethodFSRead, false},
+		{marotte.MethodFSWrite, false},
+		// The read/write rung marotte deliberately does NOT declare: claiming
 		// it here would silently move reads and writes off the staging path.
 		{"_kiro/fs/read_file", false},
 		{"_kiro/fs/write_file", false},

@@ -1,4 +1,4 @@
-// Vitest 5 configuration for vibekit TypeScript unit tests.
+// Vitest 5 configuration for marotte TypeScript unit tests.
 //
 // Two projects, and the DEFAULT is the browser. A test file runs in a real
 // headless Chromium unless its name opts out, because the browser is the
@@ -49,7 +49,7 @@ const sharedExclude = [
   ...configDefaults.exclude,
   "../static/**",
   "**/.stryker-tmp/**",
-  // The third project's files: node, but against a spawned vibekit binary rather
+  // The third project's files: node, but against a spawned marotte binary rather
   // than a fake, so neither of the two unit projects may collect them.
   "e2e-sse/**",
 ];
@@ -125,8 +125,8 @@ export default defineConfig({
         },
       },
       {
-        // The SSE lifecycle against the REAL server: `SSE_FIXTURE` names a vibekit
-        // binary built with `-tags vibekit_test`, the globalSetup starts it on a
+        // The SSE lifecycle against the REAL server: `SSE_FIXTURE` names a marotte
+        // binary built with `-tags marotte_test`, the globalSetup starts it on a
         // scratch config dir and a free port, and every file skips itself when the
         // variable is unset (the same belt the library's own fixture suite wears).
         // Node rather than the browser: the fixture answers a cross-site POST with
@@ -140,7 +140,7 @@ export default defineConfig({
           isolate: true,
           include: ["e2e-sse/**/*.test.ts"],
           exclude: [...configDefaults.exclude, "../static/**", "**/.stryker-tmp/**"],
-          globalSetup: ["./__test-helpers__/vibekit-server.setup.ts"],
+          globalSetup: ["./__test-helpers__/marotte-server.setup.ts"],
           // One file at a time: the cases arm the server's close-after hook, which
           // cuts the NEXT connection whoever opens it.
           fileParallelism: false,

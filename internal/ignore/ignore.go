@@ -1,6 +1,6 @@
 // Package ignore is a gitignore-style agent read filter.
 //
-// Users can point vibekit at one or more ignore files (.gitignore,
+// Users can point marotte at one or more ignore files (.gitignore,
 // .kiroignore, etc.). Any read path that matches the combined
 // patterns is refused by the fs/read_text_file handler. Writes are
 // NOT affected — matches git's semantics where ignored files are
@@ -18,7 +18,7 @@
 //     matches only a top-level "node" entry, not "src/node".
 //   - Trailing `/` restricts the rule to directories.
 //   - Directory-match implies descendants: "/secrets" matches
-//     "secrets" AND "secrets/vibekit.key" AND "secrets/sub/deep.json"
+//     "secrets" AND "secrets/marotte.key" AND "secrets/sub/deep.json"
 //     (standard gitignore semantics).
 //   - Leading `!` negates a previously-matched rule so users can
 //     carve out exceptions ("!/.env.example").
@@ -55,7 +55,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/settings"
 	"golang.org/x/sync/singleflight"
 )
 

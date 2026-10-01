@@ -1,4 +1,4 @@
-// The GitHub OAuth device flow: vibekit runs the whole protocol, then
+// The GitHub OAuth device flow: marotte runs the whole protocol, then
 // hands the resulting token to `gh auth login --with-token` (see
 // login.go).
 
@@ -41,12 +41,12 @@ type deviceTokenResult struct {
 // githubOAuthClientID is the OAuth app ID for GitHub device flow.
 const githubOAuthClientID = "178c6fc778ccc68e1d6a"
 
-// githubOAuthBaselineScopes is the FLOOR vibekit needs, not the whole
+// githubOAuthBaselineScopes is the FLOOR marotte needs, not the whole
 // request: repo ops + org listing (gh's own login minimum) plus
 // workflow so pushes touching .github/workflows aren't rejected.
 //
 // Do NOT add a capability scope here to serve a one-off need. Widening
-// the baseline widens EVERY user's token for a feature vibekit does not
+// the baseline widens EVERY user's token for a feature marotte does not
 // have, which is inherited consent rather than a decision anyone made.
 // The answer for a one-off is `gh auth refresh -s <scope>` inside the
 // container, which the union below then preserves for good.
@@ -93,7 +93,7 @@ func validScope(s string) bool {
 // parseScopeList splits a comma-separated scope list, dropping blanks
 // and anything not scope-shaped. gh reports `auth status` scopes
 // comma-and-space separated ("gist, read:org, repo"); GitHub's device
-// endpoint accepts the comma form vibekit sends.
+// endpoint accepts the comma form marotte sends.
 func parseScopeList(s string) []string {
 	var out []string
 	for part := range strings.SplitSeq(s, ",") {
@@ -143,7 +143,7 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 		return nil, err
 	}
 	// A scope GitHub has since retired would otherwise cost the user
-	// the login outright, so fall back to the floor: the set vibekit
+	// the login outright, so fall back to the floor: the set marotte
 	// knows GitHub still accepts.
 	//
 	// This is the ONE moment a capability loss is both happening and

@@ -143,7 +143,7 @@ describe("the reload guard counts one tab's boots", () => {
     // A tab that picks up a new bundle mid-loop: the retired anchor is the only stamp
     // it has, so it is read as the previous boot. Costs that one tab a wrong gap,
     // never the count.
-    store.setItem("vibekit.reload-guard", JSON.stringify({ n: 2, first: Date.now() }));
+    store.setItem("marotte.reload-guard", JSON.stringify({ n: 2, first: Date.now() }));
 
     const guard = await boot();
 
@@ -207,9 +207,9 @@ describe("a store it cannot use", () => {
   });
 
   it("treats bytes nothing wrote as no count at all", async () => {
-    store.setItem("vibekit.reload-guard", "not json");
+    store.setItem("marotte.reload-guard", "not json");
     expect((await boot()).reloadCount()).toBe(1);
-    store.setItem("vibekit.reload-guard", JSON.stringify({ n: "many", first: 0 }));
+    store.setItem("marotte.reload-guard", JSON.stringify({ n: "many", first: 0 }));
     expect((await boot()).reloadCount()).toBe(1);
   });
 });

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // HandleRunStepFrame projects one `session/update` from a run bridge to the clients
@@ -41,13 +41,13 @@ func (t *Translator) HandleRunStepFrame(ctx context.Context, workflowID string, 
 		return
 	}
 	switch base.Kind {
-	case vibekit.ACPUpdateAgentChunk:
-		t.forwardRunChunk(ctx, workflowID, env.Update, vibekit.RunStepText)
-	case vibekit.ACPUpdateThoughtChunk:
-		t.forwardRunChunk(ctx, workflowID, env.Update, vibekit.RunStepThinking)
-	case vibekit.ACPUpdateToolCall:
+	case marotte.ACPUpdateAgentChunk:
+		t.forwardRunChunk(ctx, workflowID, env.Update, marotte.RunStepText)
+	case marotte.ACPUpdateThoughtChunk:
+		t.forwardRunChunk(ctx, workflowID, env.Update, marotte.RunStepThinking)
+	case marotte.ACPUpdateToolCall:
 		t.forwardRunToolCall(ctx, workflowID, env.Update)
-	case vibekit.ACPUpdateToolUpdate:
+	case marotte.ACPUpdateToolUpdate:
 		t.forwardRunToolUpdate(ctx, workflowID, env.Update)
 	default:
 		// Silently, the chat dispatcher's own posture for a sub-kind with no handler.
@@ -58,18 +58,18 @@ func (t *Translator) HandleRunStepFrame(ctx context.Context, workflowID string, 
 // path's buffer cap: nothing accumulates here, so a pathological step costs one event per
 // delta rather than server memory.
 func (t *Translator) forwardRunChunk(
-	ctx context.Context, workflowID string, raw json.RawMessage, kind vibekit.RunStepKind,
+	ctx context.Context, workflowID string, raw json.RawMessage, kind marotte.RunStepKind,
 ) {
 	var chunk ACPChunkWire
 	if json.Unmarshal(raw, &chunk) != nil ||
-		chunk.Content.Type != vibekit.ContentTypeText || chunk.Content.Text == "" {
+		chunk.Content.Type != marotte.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
 	path := runNodePath(chunk.Meta.Kiro.Workflow)
 	if path == "" {
 		return
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStep, "", vibekit.RunStepPayload{
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunStep, "", marotte.RunStepPayload{
 		WorkflowID: workflowID,
 		NodePath:   path,
 		Kind:       kind,
@@ -119,16 +119,16 @@ func (t *Translator) forwardRunToolUpdate(ctx context.Context, workflowID string
 }
 
 func (t *Translator) broadcastRunTool(
-	ctx context.Context, workflowID, path string, call *vibekit.ToolCall,
+	ctx context.Context, workflowID, path string, call *marotte.ToolCall,
 ) {
 	// A copy: the registry holds the value this pointer addresses, and the event travels to
 	// a fan-out goroutine.
 	sent := *call
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStep, "", vibekit.RunStepPayload{
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunStep, "", marotte.RunStepPayload{
 		ToolCall:   &sent,
 		WorkflowID: workflowID,
 		NodePath:   path,
-		Kind:       vibekit.RunStepTool,
+		Kind:       marotte.RunStepTool,
 	}))
 }
 
@@ -137,7 +137,7 @@ func (t *Translator) broadcastRunTool(
 // tracker, and a run has none of those. Order matters in what does carry over — a nullish
 // title or kind must not wipe the create's value, and the terminal link is adopted before
 // the status so a frame carrying both does not look up an id the call lacks.
-func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
+func applyRunToolUpdate(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	if tu.Title != "" {
 		tc.Title = displayText(tu.Title)
 	}
@@ -151,7 +151,7 @@ func applyRunToolUpdate(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content
 		tc.Status = tu.Status
 	}
 	tc.Output += toolCallContentOutput(tu, content)
-	if tc.Status == vibekit.ToolFailed && tc.Output == "" {
+	if tc.Status == marotte.ToolFailed && tc.Output == "" {
 		if reason := rawOutputFailureText(tu.RawOutput); reason != "" {
 			tc.Output = sanitize.Output(reason)
 		}

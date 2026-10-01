@@ -236,7 +236,7 @@ describe("the fact sits beside the `i`", () => {
   });
 
   it("inherits the row's secondary ink rather than the hint tier", () => {
-    // Tertiary on this tinted band is under AA for 12px text (vibekit-ui.md), and
+    // Tertiary on this tinted band is under AA for 12px text (marotte-ui.md), and
     // this readout is the row's main text now.
     const { footer, slot } = mountCard(document, { fact: "5 commands" });
     expect(cs(slot).color).toBe(cs(footer).color);

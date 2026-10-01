@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // ErrTombstoned reports that a write was DECLINED because the chat id was
@@ -25,7 +25,7 @@ var ErrTombstoned = errors.New("chat: id was recently deleted")
 
 // errInvalidChatID returns the canonical error for a malformed chat ID.
 // Single source of truth for the error message format.
-func errInvalidChatID(id vibekit.ChatID) error {
+func errInvalidChatID(id marotte.ChatID) error {
 	return fmt.Errorf("invalid chat id: %q", id)
 }
 
@@ -34,7 +34,7 @@ func errInvalidChatID(id vibekit.ChatID) error {
 // is derived from the id the caller asked for and serialised by THAT id's
 // mutex, so writing an object carrying a different id would put a whole
 // chat over another chat's file under the wrong lock.
-func errChatIDMismatch(want vibekit.ChatID, got string) error {
+func errChatIDMismatch(want marotte.ChatID, got string) error {
 	return fmt.Errorf("chat %q holds id %q: refusing to write it over another chat's file", want, got)
 }
 

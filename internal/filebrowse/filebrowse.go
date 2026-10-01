@@ -1,7 +1,7 @@
 // Package filebrowse serves the browser's file surface: browsing, reading,
 // editing, uploading, and downloading. The browsable surface is
 // an ALLOW-LIST of granted roots (the /workspace, /config and uploads
-// mounts by default, plus any VIBEKIT_BROWSE_ROOTS grants), each kernel-confined
+// mounts by default, plus any MAROTTE_BROWSE_ROOTS grants), each kernel-confined
 // through its own os.Root; everything outside the grants is denied by
 // default. A sensitive-path list additionally blocks the credential
 // and state files living inside /config. The URL namespace is the
@@ -27,8 +27,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 const (

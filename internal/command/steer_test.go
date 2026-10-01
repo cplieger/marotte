@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // countingDeps makes the "this handler emits nothing" contract observable; the
@@ -25,23 +25,23 @@ type countingDeps struct {
 	events int
 }
 
-func (d *countingDeps) Broadcast(context.Context, vibekit.ServerEvent) { d.events++ }
+func (d *countingDeps) Broadcast(context.Context, marotte.ServerEvent) { d.events++ }
 
-func steerReq(t *testing.T, chatID vibekit.ChatID, text, messageID string) *vibekit.ClientCommand {
+func steerReq(t *testing.T, chatID marotte.ChatID, text, messageID string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.SteerCommand{Text: text, MessageID: messageID})
+	payload, err := json.Marshal(marotte.SteerCommand{Text: text, MessageID: messageID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{
-		Type:    vibekit.CmdSteer,
+	return &marotte.ClientCommand{
+		Type:    marotte.CmdSteer,
 		ChatID:  chatID,
 		Payload: payload,
 	}
 }
 
-func clearReq(chatID vibekit.ChatID) *vibekit.ClientCommand {
-	return &vibekit.ClientCommand{Type: vibekit.CmdSteerClear, ChatID: chatID}
+func clearReq(chatID marotte.ChatID) *marotte.ClientCommand {
+	return &marotte.ClientCommand{Type: marotte.CmdSteerClear, ChatID: chatID}
 }
 
 func queuedResult(id string) map[string]any {
@@ -61,10 +61,10 @@ func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	if b.gotMethod != vibekit.MethodSessionSteer {
-		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSessionSteer)
+	if b.gotMethod != marotte.MethodSessionSteer {
+		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSessionSteer)
 	}
-	if got := b.gotParams["sessionId"]; got != vibekit.SessionID("sess-1") {
+	if got := b.gotParams["sessionId"]; got != marotte.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", got)
 	}
 	// Trimmed, because KAS refuses a blank message and a user's trailing newline
@@ -127,7 +127,7 @@ func TestCmdSteer_MapsAnEpochDropToAConflict(t *testing.T) {
 // parameter — and a notification yields no acknowledgement and is excluded from
 // the session/load re-injection that carries real steers across a resume. So a
 // user message that happens to open this way would be silently reclassified AND
-// silently lost on the next reload. vibekit refuses instead, and refuses BEFORE
+// silently lost on the next reload. marotte refuses instead, and refuses BEFORE
 // the wire: the point is that the message never gets misfiled.
 func TestCmdSteer_RefusesTextKASWouldReadAsANotification(t *testing.T) {
 	for _, severity := range []string{"info", "success", "warning", "error"} {
@@ -177,7 +177,7 @@ func TestCmdSteer_AcceptsTextThatOnlyResemblesANotification(t *testing.T) {
 	}
 }
 
-// KAS puts no bound on the steering buffer, so the cap has to be vibekit's.
+// KAS puts no bound on the steering buffer, so the cap has to be marotte's.
 func TestCmdSteer_ValidatesTheMessage(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -256,8 +256,8 @@ func TestCmdSteerClear_ReportsWhatItDropped(t *testing.T) {
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (err %v)", statusOf(err), err)
 	}
-	if b.gotMethod != vibekit.MethodSessionSteerClear {
-		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSessionSteerClear)
+	if b.gotMethod != marotte.MethodSessionSteerClear {
+		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSessionSteerClear)
 	}
 	// The success body is the handler's RETURN value now, so the ids are read
 	// off it rather than out of serialized JSON.
@@ -332,7 +332,7 @@ func TestCmdSteer_RefusesAShellHolder(t *testing.T) {
 	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
 	deps := &bridgeDeps{
 		storeDeps: &storeDeps{
-			benchDeps: &benchDeps{holder: vibekit.TurnSourceLocalShell, holderOpen: true},
+			benchDeps: &benchDeps{holder: marotte.TurnSourceLocalShell, holderOpen: true},
 			store:     store,
 		},
 		bridge: b,
@@ -357,7 +357,7 @@ func TestCmdSteer_AllowsAWireStartedTurn(t *testing.T) {
 	b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
 	deps := &bridgeDeps{
 		storeDeps: &storeDeps{
-			benchDeps: &benchDeps{holder: vibekit.TurnSourceWireTurnStart, holderOpen: true},
+			benchDeps: &benchDeps{holder: marotte.TurnSourceWireTurnStart, holderOpen: true},
 			store:     store,
 		},
 		bridge: b,
@@ -385,14 +385,14 @@ func TestCmdSteer_RecordsTheReturnedIDAsTheUsersOwn(t *testing.T) {
 		t.Fatalf("CmdSteer: %v", err)
 	}
 
-	if got := ledger.SteerOrigin("c1", "steer-m-1"); got != vibekit.SteerOriginUser {
+	if got := ledger.SteerOrigin("c1", "steer-m-1"); got != marotte.SteerOriginUser {
 		t.Errorf("SteerOrigin(returned id) = %q, want %q — the translate layer has no other "+
-			"way to tell the user's words from a workflow's report", got, vibekit.SteerOriginUser)
+			"way to tell the user's words from a workflow's report", got, marotte.SteerOriginUser)
 	}
 	// The client's own messageId is NOT what a frame carries, so recording it
 	// would file the steer under a name nothing ever asks about.
-	if got := ledger.SteerOrigin("c1", "m-1"); got != vibekit.SteerOriginAgent {
-		t.Errorf("SteerOrigin(client id) = %q, want %q", got, vibekit.SteerOriginAgent)
+	if got := ledger.SteerOrigin("c1", "m-1"); got != marotte.SteerOriginAgent {
+		t.Errorf("SteerOrigin(client id) = %q, want %q", got, marotte.SteerOriginAgent)
 	}
 }
 
@@ -414,7 +414,7 @@ func TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheCallReturns(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ledger := NewSteerLedger()
 
-	var duringCall vibekit.SteerOrigin
+	var duringCall marotte.SteerOrigin
 	b := &recordingBridge{
 		result:    queuedResult("steer-m-1"),
 		sessionID: "sess-1",
@@ -428,11 +428,11 @@ func TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheCallReturns(t *testing.T) {
 		t.Fatalf("CmdSteer: %v", err)
 	}
 
-	if duringCall != vibekit.SteerOriginUser {
+	if duringCall != marotte.SteerOriginUser {
 		t.Errorf("SteerOrigin during the wire call = %q, want %q — KAS's own steering_queued "+
 			"notification is emitted before this call returns, so a ledger written afterwards "+
 			"races it and the frame labels the user's words as the agent's",
-			duringCall, vibekit.SteerOriginUser)
+			duringCall, marotte.SteerOriginUser)
 	}
 }
 

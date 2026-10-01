@@ -39,8 +39,8 @@ type file struct {
 
 const fileVersion = 1
 
-// persist writes vibekit's own record and then RENDERS KAS's config file
-// from it. Both or neither: a successful vibekit write followed by a
+// persist writes marotte's own record and then RENDERS KAS's config file
+// from it. Both or neither: a successful marotte write followed by a
 // failed KAS write would leave the UI showing a server the agent cannot
 // see. The caller rolls its in-memory mutation back on error.
 //

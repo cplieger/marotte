@@ -3,19 +3,19 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chunkDeltas returns every streamed text delta in a capture, in order, so a
 // test can assert the sentinel still REACHED the user. Ending the turn without
 // showing why would trade a wedge for a silence.
-func chunkDeltas(events []vibekit.ServerEvent) []string {
+func chunkDeltas(events []marotte.ServerEvent) []string {
 	var out []string
 	for _, e := range events {
-		if e.Type != vibekit.EventMessageChunk {
+		if e.Type != marotte.EventMessageChunk {
 			continue
 		}
-		if p, ok := e.Payload.(vibekit.MessageChunkPayload); ok {
+		if p, ok := e.Payload.(marotte.MessageChunkPayload); ok {
 			out = append(out, p.Delta)
 		}
 	}
@@ -24,7 +24,7 @@ func chunkDeltas(events []vibekit.ServerEvent) []string {
 
 // feedChunkAs streams one delta with a chosen reasoning flag and an optional
 // `_meta.kiro` block, which is how a workflow-step frame is staged.
-func feedChunkAs(t *testing.T, tr *Translator, chatID vibekit.ChatID, text string, isReasoning bool, meta map[string]any) {
+func feedChunkAs(t *testing.T, tr *Translator, chatID marotte.ChatID, text string, isReasoning bool, meta map[string]any) {
 	t.Helper()
 	frame := map[string]any{"content": map[string]any{"type": "text", "text": text}}
 	if meta != nil {
@@ -46,7 +46,7 @@ func feedChunkAs(t *testing.T, tr *Translator, chatID vibekit.ChatID, text strin
 func TestHandleAssistantChunk_SentinelEndsTheTurn(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, interruptSentinel)
 
@@ -103,13 +103,13 @@ func TestHandleAssistantChunk_SentinelIsExactMatchOnly(t *testing.T) {
 			text:        interruptSentinel,
 			isReasoning: true,
 		},
-		// The second member of kiro-cli's own TUI sentinel list. vibekit handles
+		// The second member of kiro-cli's own TUI sentinel list. marotte handles
 		// a user cancel end to end already, so matching it here could only end a
 		// turn the cancel path is ending — or end one on a quote.
 		"the user-cancel sentinel": {
 			text: "Response was interrupted by the user",
 		},
-		// A workflow STEP has no session/prompt of vibekit's to release, and the
+		// A workflow STEP has no session/prompt of marotte's to release, and the
 		// only stop verb is run-scoped, so a step's frame must not cancel the
 		// parent chat's live turn.
 		"a workflow step frame": {

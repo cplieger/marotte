@@ -966,14 +966,14 @@ describe("run view instructions", () => {
 
   it("renders the value in its own clamped box", async () => {
     const { body } = await paint(openRunView, "running", {
-      inputs: { repo: "vibekit", target: "static-src" },
+      inputs: { repo: "marotte", target: "static-src" },
     });
     expect([...body.querySelectorAll(".ev-in-k")].map((n) => n.textContent)).toEqual([
       "repo",
       "target",
     ]);
     expect([...body.querySelectorAll(".ev-in-text")].map((n) => n.textContent)).toEqual([
-      "vibekit",
+      "marotte",
       "static-src",
     ]);
   });
@@ -982,7 +982,7 @@ describe("run view instructions", () => {
   // so it is the floor rather than the proof.
   it("offers NO opener on a short instruction", async () => {
     const { body } = await paint(openRunView, "running", {
-      inputs: { repo: "vibekit" },
+      inputs: { repo: "marotte" },
     });
     expect(openers(body).map((b) => b.hidden)).toEqual([true]);
     await settleClamp();
@@ -1070,11 +1070,11 @@ describe("run view instructions", () => {
   // every clamp. Node identity is the assertion because that is what survives.
   it("does not rebuild the list when the inputs are unchanged", async () => {
     const { body, tab } = await paint(openRunView, "running", {
-      inputs: { repo: "vibekit" },
+      inputs: { repo: "marotte" },
       root: capturing("first"),
     });
     const before = body.querySelector(".ev-in-v");
-    await rerender(tab.id, { repo: "vibekit" }, "second");
+    await rerender(tab.id, { repo: "marotte" }, "second");
 
     // The premise, or this case asserts nothing: the page really did re-render.
     expect(body.querySelector(".ev-r-text")?.textContent).toContain("second");
@@ -1083,7 +1083,7 @@ describe("run view instructions", () => {
 
   it("rebuilds the list when the inputs change", async () => {
     const { body, tab } = await paint(openRunView, "running", {
-      inputs: { repo: "vibekit" },
+      inputs: { repo: "marotte" },
       root: capturing("first"),
     });
     const before = body.querySelector(".ev-in-v");

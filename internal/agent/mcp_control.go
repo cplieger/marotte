@@ -3,7 +3,7 @@ package agent
 // Live MCP control: reconnect a wedged server, and resolve MCP
 // prompts/resources on demand, via the v3 (KAS) _kiro/mcp/* C→A requests.
 //
-// vibekit's MCP config is global, but each chat bridge is a separate
+// marotte's MCP config is global, but each chat bridge is a separate
 // kiro-cli acp process with its own MCP pool. reconnect fans out to ALL
 // live bridges, since a wedged/expired-OAuth server is wedged per-pool.
 // getPrompt/getResource are equivalent reads against any connected pool, so
@@ -11,7 +11,7 @@ package agent
 //
 // _kiro/mcp/toggle is deliberately NOT wired: it is a GLOBAL notification
 // with no serverName, so it cannot enable/disable a specific server and
-// doesn't map onto vibekit's per-server enabled flag.
+// doesn't map onto marotte's per-server enabled flag.
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // spawnRecorder hands out a DISTINCT fake per spawn and remembers them, which the
@@ -64,7 +64,7 @@ func (s *spawnRecorder) sawCall(method string) (bridges, calls int) {
 // chatBridge is the fake the coordinator actually handed this chat, resolved
 // through the bridge map rather than by spawn order — the utility session starts
 // lazily on its first RPC, so which index it takes depends on the call sequence.
-func chatBridge(t *testing.T, h *Runtime, chatID vibekit.ChatID) *fakeBridge {
+func chatBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
 	t.Helper()
 	sb := h.runs.bridges.get(chatID)
 	if sb == nil {
@@ -87,7 +87,7 @@ func agentLaunchedRun(t *testing.T, results map[string]json.RawMessage, errs map
 	h := New(t.Context(), "/tmp/work", rec.factory, cs)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true
@@ -185,7 +185,7 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 		// the leases stay put — nothing here turns on them.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true
@@ -322,8 +322,8 @@ func TestCancel_FallsBackToTheUtilitySessionWhenNothingHostsTheRun(t *testing.T)
 // TestFinishTermination_ARefusedCancelKEEPSTheDeadline: a disarm running BEFORE the cancel
 // leaves a refusal's run executing with `Bounded() == false`, and armDeadline's idempotence
 // check then has nothing to protect, so nothing ever re-arms it — each of the 35 measured
-// refusals unbounded its run for the rest of its life. The deadline is the record that vibekit
-// is bounding a run, and a run whose cancel was refused is still one vibekit is bounding.
+// refusals unbounded its run for the rest of its life. The deadline is the record that marotte
+// is bounding a run, and a run whose cancel was refused is still one marotte is bounding.
 func TestFinishTermination_ARefusedCancelKEEPSTheDeadline(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner pid 979344 is live")}
@@ -372,7 +372,7 @@ func TestFinishTermination_ALandedCancelRELEASESTheDeadline(t *testing.T) {
 //
 // `endReason`'s one consumer is toWire, so a reason recorded before the cancel made a
 // parentless run's History row read `overran` while KAS reported it `running` — the
-// row claimed an outcome the run had not reached. The reason is what vibekit DID, so
+// row claimed an outcome the run had not reached. The reason is what marotte DID, so
 // it is recorded when the stop lands and not when it is attempted.
 func TestRecordEnd_IsNotStampedOnARunThatDidNotStop(t *testing.T) {
 	t.Run("a refused ceiling cancel records nothing", func(t *testing.T) {
@@ -529,7 +529,7 @@ func callsOf(br *fakeBridge, method string) int {
 // TestRetryTermination_ARunNoLongerBoundedIsLeftAlone: the re-attempt re-reads
 // before it acts, which is what makes an untracked AfterFunc safe here (healPaused's
 // precedent). A pause parks the deadline and a terminal frame releases the lease;
-// in both cases vibekit has stopped bounding the run, so it is not one this path may
+// in both cases marotte has stopped bounding the run, so it is not one this path may
 // cancel.
 func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	h, _, br := newTestHub()
@@ -552,7 +552,7 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	time.Sleep(2 * base)
 
 	if got := callsOf(br, methodKiroWorkflowCancel); got != before {
-		t.Errorf("a run vibekit had stopped bounding was cancelled anyway (%d → %d calls)",
+		t.Errorf("a run marotte had stopped bounding was cancelled anyway (%d → %d calls)",
 			before, got)
 	}
 }
@@ -572,7 +572,7 @@ func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", stalePauseReason),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true
@@ -609,7 +609,7 @@ func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", stalePauseReason),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: errors.New("registry.require threw")}
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true

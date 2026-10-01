@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestSetAttachments(t *testing.T) {
@@ -143,10 +143,10 @@ func TestSetAttachments(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		if _, err := s.SetAttachments(t.Context(), "c1", manyPaths(vibekit.MaxAttachments+1)); err == nil {
+		if _, err := s.SetAttachments(t.Context(), "c1", manyPaths(marotte.MaxAttachments+1)); err == nil {
 			t.Error("a list over the cap was accepted")
 		}
-		if _, err := s.SetAttachments(t.Context(), "c1", manyPaths(vibekit.MaxAttachments)); err != nil {
+		if _, err := s.SetAttachments(t.Context(), "c1", manyPaths(marotte.MaxAttachments)); err != nil {
 			t.Errorf("a list at exactly the cap was rejected: %v", err)
 		}
 	})
@@ -161,7 +161,7 @@ func TestSetAttachments(t *testing.T) {
 		if _, err := s.SetAttachments(t.Context(), "c1", []string{"a.txt", ""}); err == nil {
 			t.Error("an empty path was accepted")
 		}
-		long := strings.Repeat("x", vibekit.MaxAttachmentPathBytes+1)
+		long := strings.Repeat("x", marotte.MaxAttachmentPathBytes+1)
 		if _, err := s.SetAttachments(t.Context(), "c1", []string{long}); err == nil {
 			t.Error("an oversized path was accepted")
 		}

@@ -3,7 +3,7 @@ package push
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"pgregory.net/rapid"
 )
 
@@ -28,9 +28,9 @@ func TestSubscriptionLifecycle_RapidInvariants(t *testing.T) {
 
 			switch op {
 			case 0: // Subscribe
-				svc.Subscribe(vibekit.PushSubscription{
+				svc.Subscribe(marotte.PushSubscription{
 					Endpoint: endpoint,
-					Keys: vibekit.PushSubscriptionKeys{
+					Keys: marotte.PushSubscriptionKeys{
 						P256dh: "dGVzdA==",
 						Auth:   "dGVzdA==",
 					},

@@ -12,7 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func newTestStore(t *testing.T) *Store {

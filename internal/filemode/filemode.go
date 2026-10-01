@@ -21,7 +21,7 @@ import (
 // EnforceFile makes the regular file at path carry want, and returns the
 // mode the FILESYSTEM stored rather than the one that was asked for.
 //
-// It replaces os.Chmod at the three 0600/0700 objects vibekit keeps in
+// It replaces os.Chmod at the three 0600/0700 objects marotte keeps in
 // <configDir>, and the difference is the second half of the sequence. A mode
 // argument is a REQUEST: open(2) and mkdir(2) put it through umask, and a
 // filesystem carrying an inheritable group-write ACL stores 0660 for a 0o600

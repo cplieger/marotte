@@ -42,7 +42,7 @@ describe("rewind.revert", () => {
     expect(cmd.type).toBe("rewind_chat");
     expect(cmd.chat_id).toBe("c-1");
     // A message id, because that is what KAS's revert verb addresses — and it
-    // must name a user message, whose id space is shared only because vibekit
+    // must name a user message, whose id space is shared only because marotte
     // sends it on session/prompt.
     expect(cmd.payload.message_id).toBe("m-abc");
     expect(cmd.payload).not.toHaveProperty("turn_index");

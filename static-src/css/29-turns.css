@@ -14,7 +14,7 @@
    any width, on mobile, and when the request is three paragraphs.
 
    The bands are the transcript's ONLY band-rung fills and the card has no
-   internal rule: the fill step is each seam (vibekit-ui.md "Surfaces").
+   internal rule: the fill step is each seam (marotte-ui.md "Surfaces").
 
    ONE measure, and the card is it. Prose, evidence, the request band and the
    footer all end on the same x, at the body's own content edge. There used to be
@@ -70,7 +70,7 @@
 
 /* The turn card carries NO entry animation: it is the tallest box in the app
  * (3,203 CSS px measured), so animating it allocated a layer of 3.4 phone screens
- * per mount. `vibekit-ui.md` "Entry motion is a GPU budget". */
+ * per mount. `marotte-ui.md` "Entry motion is a GPU budget". */
 
 /* --------------------------------------------------------------------------
    Header — the trigger
@@ -241,7 +241,7 @@
 }
 
 /* THE ONE EXCEPTION, and it is stated at every surface that takes it: `unknown`
- * keeps a NEUTRAL mark, because an end vibekit could not read has no honest hue.
+ * keeps a NEUTRAL mark, because an end marotte could not read has no honest hue.
  * `severityOf` grades it `stopped` alongside `cancelled`, so a pure severity
  * partition would paint it yellow — which overturns a ruling this file already made
  * and `turn-outcome-css.test.ts` already pins. The meaningful contrast is against
@@ -620,7 +620,7 @@
    red check left every case in `turn-footer-inset.test.ts` green. It earns its place
    the day a footer child is taller than the band, and not before.
 
-   `--ctl-h-dense` because the footer IS a dense control row (`vibekit-ui.md` "One
+   `--ctl-h-dense` because the footer IS a dense control row (`marotte-ui.md` "One
    control height per row"), floored by `--hit-floor` so a finger never gets less
    than its target: 32 on a mouse, 44 on a coarse pointer. `max()` rather than two
    tier arms, since 01-tokens.css already moves both tokens and the floor's third
@@ -811,7 +811,7 @@
 
    TINTED BY SEVERITY so it never overstates. Red is the default because `broken` is
    the population this exists for; `stopped` takes the same yellow its footer glyph
-   takes, because a cancel the user asked for and a stop reason vibekit could not
+   takes, because a cancel the user asked for and a stop reason marotte could not
    read are not failures. Colour is never the only channel: the footer glyph, the
    rail marker and the tab dot all carry the same fact by shape.
 
@@ -847,7 +847,7 @@
 /* The `unknown` exception, now UNIFORM across all five outcome surfaces in this
  * file. It was the odd one out in the other direction: this is the surface that
  * always read the severity table, so `unknown` was the only outcome painting yellow
- * here and neutral on the header dot, the footer glyph and the rail. An end vibekit
+ * here and neutral on the header dot, the footer glyph and the rail. An end marotte
  * could not read has no honest hue on a mark, and it has none in prose either.
  *
  * MEASURED before adopting it, because this surface is PROSE at `--fs-sm` rather
@@ -1021,7 +1021,7 @@
 /* FILLED and neutral, not the default green ring. The glyph's resting state is a
  * green ring meaning "clean", so with no rule an unknown turn would carry the mark
  * of a clean one — the one direction a status glyph must never fail in. Neutral
- * because an end vibekit could not read has no honest hue (the exception stated at
+ * because an end marotte could not read has no honest hue (the exception stated at
  * the header dot); filled because the ring is reserved for a turn that finished
  * cleanly. */
 .turn-footer[data-outcome="unknown"] .turn-ledger-glyph {
@@ -1179,7 +1179,7 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-/* THE ONE HOVER RECIPE (vibekit-ui.md "Color system"): the interaction ladder's
+/* THE ONE HOVER RECIPE (marotte-ui.md "Color system"): the interaction ladder's
    wash, gated on `any-hover`. It used to paint `--c-bg-tertiary`, which on the turn
    footer — itself `--c-bg-tertiary` — was band on band, a hover that painted nothing,
    and on the delegate card's box-toned foot was the rung jump the app migrated
@@ -1448,7 +1448,7 @@
 }
 
 /* The `unknown` exception, stated rather than inherited — it had no rule at all
- * once, so an end vibekit could not read painted in the resting tertiary ink, which
+ * once, so an end marotte could not read painted in the resting tertiary ink, which
  * is byte-identical to a clean turn's and therefore looked like a decision nobody
  * had made. `completed` still has no rule and still falls through to that same
  * resting ink; the separation is carried by the marker's WORDS (the tooltip and the

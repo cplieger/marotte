@@ -9,7 +9,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // configOptionFrame builds a config_option_update carrying one effortLevel
@@ -18,10 +18,10 @@ import (
 // sessionID and workflow are the two facts ClassifyFrame reads: an empty
 // sessionID is the chat's own frame, and a non-empty one plus a workflow marker
 // is a run STEP's.
-func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *vibekit.RPCResponse {
+func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *marotte.RPCResponse {
 	t.Helper()
 	update := map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateConfigOption),
+		"sessionUpdate": string(marotte.ACPUpdateConfigOption),
 		"configOptions": []any{
 			map[string]any{
 				"id":           "effortLevel",
@@ -42,14 +42,14 @@ func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *
 		"sessionId": sessionID,
 		"update":    mustJSON(t, update),
 	})
-	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
 // healEffortFixture wires a chat that chose `chose` plus an open bridge.
 func healEffortFixture(t *testing.T, chose string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Effort = chose
 		return true

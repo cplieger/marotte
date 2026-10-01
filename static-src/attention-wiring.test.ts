@@ -466,10 +466,10 @@ describe("the icon sink", () => {
 
   it("drives the whole chain from a fold value", () => {
     document.head.innerHTML = '<link rel="icon" href="/favicon.svg">';
-    document.title = "Vibekit for Kiro";
+    document.title = "Marotte for Kiro";
     const surfaces = createAttention(browserAttentionEnv());
     surfaces.apply({ count: 2, worst: "waiting" });
-    expect(document.title).toBe("(2) Vibekit for Kiro");
+    expect(document.title).toBe("(2) Marotte for Kiro");
     // `waiting` shares the `input` asset: three variants ship, not four.
     expect(document.querySelector("link")?.getAttribute("href")).toBe("/favicon-input.svg");
   });
@@ -652,7 +652,7 @@ describe("initAttention", () => {
     localStorage.clear();
     document.body.innerHTML = "";
     document.head.innerHTML = '<link rel="icon" href="/favicon.svg">';
-    document.title = "Vibekit for Kiro";
+    document.title = "Marotte for Kiro";
     vi.stubGlobal("navigator", {});
     // The persistent desktop sidebar, with the list clipping to 100..600. The
     // rows are placed per test; the store's own renderDOM is rAF-coalesced and
@@ -675,7 +675,7 @@ describe("initAttention", () => {
   });
 
   it("starts silent, leaving the served title alone", () => {
-    expect(document.title).toBe("Vibekit for Kiro");
+    expect(document.title).toBe("Marotte for Kiro");
     expect(iconVariant()).toBe("/favicon.svg");
   });
 
@@ -1084,7 +1084,7 @@ describe("initAttention", () => {
 
     dispose?.();
     _resetForTest();
-    document.title = "Vibekit for Kiro";
+    document.title = "Marotte for Kiro";
     dispose = initAttention();
     // The collection is re-adopted through a real `GET /api/tabs`, which is what a
     // reload does — so the row comes back under the id the acknowledgement names.
@@ -1114,7 +1114,7 @@ describe("initAttention", () => {
     window.dispatchEvent(new Event("pagehide"));
 
     expect(iconVariant()).toBe("/favicon.svg");
-    expect(document.title).toBe("Vibekit for Kiro");
+    expect(document.title).toBe("Marotte for Kiro");
   });
 
   it("KEEPS the cue when the browser merely freezes a background tab", async () => {

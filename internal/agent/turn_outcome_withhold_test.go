@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // newWithholdHub is a runtime whose push service HAS a subscriber, so a withheld
@@ -61,32 +61,32 @@ func awaitNoPush(t *testing.T, fp *runOutcomePush, why string) {
 // class of claim while a run is live, and a cancel earns no push either way.
 func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 	tests := map[string]struct {
-		stop     vibekit.StopReason
+		stop     marotte.StopReason
 		liveRun  bool
 		wantPush bool
 		why      string
 	}{
 		"a clean turn with a live run is withheld": {
-			stop:     vibekit.StopReasonEndTurn,
+			stop:     marotte.StopReasonEndTurn,
 			liveRun:  true,
 			wantPush: false,
 			why:      "the turn ended; the work the turn started has not",
 		},
 		"a BROKEN turn with a live run is withheld too": {
-			stop:     vibekit.StopReasonError,
+			stop:     marotte.StopReasonError,
 			liveRun:  true,
 			wantPush: false,
 			why: "the withhold leads the severity switch on purpose: a failed turn that " +
 				"launched a still-running run makes the same false claim",
 		},
 		"a clean turn with no live run pushes": {
-			stop:     vibekit.StopReasonEndTurn,
+			stop:     marotte.StopReasonEndTurn,
 			liveRun:  false,
 			wantPush: true,
 			why:      "the control: nothing outstanding, so the ordinary notification is correct",
 		},
 		"a broken turn with no live run pushes": {
-			stop:     vibekit.StopReasonError,
+			stop:     marotte.StopReasonError,
 			liveRun:  false,
 			wantPush: true,
 			why:      "the other control, so a fix that silenced one severity cannot pass",
@@ -99,7 +99,7 @@ func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 				seedRunLease(t, h, "wf_1", "c1")
 			}
 
-			h.coord.pushTurnOutcome(t.Context(), "c1", vibekit.ConcludeStopReason(tc.stop), "")
+			h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(tc.stop), "")
 
 			if !tc.wantPush {
 				awaitNoPush(t, fp, tc.why)
@@ -107,9 +107,9 @@ func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 			}
 			select {
 			case got := <-fp.sent:
-				if got.kind != vibekit.PushKindAgentFinished {
+				if got.kind != marotte.PushKindAgentFinished {
 					t.Errorf("push kind = %q, want %q (%s)",
-						got.kind, vibekit.PushKindAgentFinished, tc.why)
+						got.kind, marotte.PushKindAgentFinished, tc.why)
 				}
 			case <-time.After(2 * time.Second):
 				t.Errorf("no push sent; %s", tc.why)
@@ -125,7 +125,7 @@ func TestPushTurnOutcome_AnotherChatsRunDoesNotWithhold(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "c2")
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", vibekit.ConcludeStopReason(vibekit.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
 
 	select {
 	case got := <-fp.sent:
@@ -143,7 +143,7 @@ func TestPushTurnOutcome_AParentlessRunDoesNotWithhold(t *testing.T) {
 	h, fp := newWithholdHub(t)
 	seedRunLease(t, h, "wf_1", "")
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", vibekit.ConcludeStopReason(vibekit.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
 
 	select {
 	case <-fp.sent:
@@ -161,7 +161,7 @@ func TestPushTurnOutcome_NilPredicateWithholdsNothing(t *testing.T) {
 	seedRunLease(t, h, "wf_1", "c1")
 	h.coord.chatHasLiveRun = nil
 
-	h.coord.pushTurnOutcome(t.Context(), "c1", vibekit.ConcludeStopReason(vibekit.StopReasonEndTurn), "")
+	h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(marotte.StopReasonEndTurn), "")
 
 	select {
 	case <-fp.sent:
@@ -182,7 +182,7 @@ func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 			}
 
 			h.coord.pushTurnOutcome(t.Context(), "c1",
-				vibekit.ConcludeStopReason(vibekit.StopReasonCancelled), "")
+				marotte.ConcludeStopReason(marotte.StopReasonCancelled), "")
 
 			awaitNoPush(t, fp, "a cancel is the reader's own gesture, so no severity arm notifies")
 		})

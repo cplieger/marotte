@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestSteerLedger_RecordedIDIsTheUsers(t *testing.T) {
 	l := NewSteerLedger()
 	l.RecordUserSteer("c1", "steer-m-1")
 
-	if got := l.SteerOrigin("c1", "steer-m-1"); got != vibekit.SteerOriginUser {
-		t.Errorf("SteerOrigin(recorded) = %q, want %q", got, vibekit.SteerOriginUser)
+	if got := l.SteerOrigin("c1", "steer-m-1"); got != marotte.SteerOriginUser {
+		t.Errorf("SteerOrigin(recorded) = %q, want %q", got, marotte.SteerOriginUser)
 	}
 }
 
@@ -29,7 +29,7 @@ func TestSteerLedger_UnknownIDIsTheAgents(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
-		chat    vibekit.ChatID
+		chat    marotte.ChatID
 		steerID string
 	}{
 		{"never recorded", "c1", "notify-wf-9"},
@@ -37,8 +37,8 @@ func TestSteerLedger_UnknownIDIsTheAgents(t *testing.T) {
 		{"empty id", "c1", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := l.SteerOrigin(tc.chat, tc.steerID); got != vibekit.SteerOriginAgent {
-				t.Errorf("SteerOrigin = %q, want %q", got, vibekit.SteerOriginAgent)
+			if got := l.SteerOrigin(tc.chat, tc.steerID); got != marotte.SteerOriginAgent {
+				t.Errorf("SteerOrigin = %q, want %q", got, marotte.SteerOriginAgent)
 			}
 		})
 	}
@@ -62,8 +62,8 @@ func TestSteerLedger_ExpiredIDIsTheAgents(t *testing.T) {
 	l.RecordUserSteer("c1", "steer-m-1")
 
 	l.now = func() time.Time { return now.Add(steerTTL + time.Second) }
-	if got := l.SteerOrigin("c1", "steer-m-1"); got != vibekit.SteerOriginAgent {
-		t.Errorf("SteerOrigin(expired) = %q, want %q", got, vibekit.SteerOriginAgent)
+	if got := l.SteerOrigin("c1", "steer-m-1"); got != marotte.SteerOriginAgent {
+		t.Errorf("SteerOrigin(expired) = %q, want %q", got, marotte.SteerOriginAgent)
 	}
 }
 
@@ -74,12 +74,12 @@ func TestSteerLedger_ForgetChatDropsOnlyThatChat(t *testing.T) {
 
 	l.ForgetChat("c1")
 
-	if got := l.SteerOrigin("c1", "steer-a"); got != vibekit.SteerOriginAgent {
-		t.Errorf("c1 after ForgetChat = %q, want %q", got, vibekit.SteerOriginAgent)
+	if got := l.SteerOrigin("c1", "steer-a"); got != marotte.SteerOriginAgent {
+		t.Errorf("c1 after ForgetChat = %q, want %q", got, marotte.SteerOriginAgent)
 	}
-	if got := l.SteerOrigin("c2", "steer-b"); got != vibekit.SteerOriginUser {
+	if got := l.SteerOrigin("c2", "steer-b"); got != marotte.SteerOriginUser {
 		t.Errorf("c2 after forgetting c1 = %q, want %q — a sibling chat's steers are untouched",
-			got, vibekit.SteerOriginUser)
+			got, marotte.SteerOriginUser)
 	}
 }
 
@@ -102,11 +102,11 @@ func TestSteerLedger_BoundedByEvictingTheOldest(t *testing.T) {
 	if n := len(l.sent); n > l.maxN {
 		t.Errorf("held %d entries with maxN %d", n, l.maxN)
 	}
-	if got := l.SteerOrigin("c1", "a"); got != vibekit.SteerOriginAgent {
+	if got := l.SteerOrigin("c1", "a"); got != marotte.SteerOriginAgent {
 		t.Errorf("the oldest entry survived eviction: %q", got)
 	}
-	if got := l.SteerOrigin("c1", "f"); got != vibekit.SteerOriginUser {
-		t.Errorf("the newest entry = %q, want %q", got, vibekit.SteerOriginUser)
+	if got := l.SteerOrigin("c1", "f"); got != marotte.SteerOriginUser {
+		t.Errorf("the newest entry = %q, want %q", got, marotte.SteerOriginUser)
 	}
 }
 
@@ -115,8 +115,8 @@ func TestSteerLedger_BoundedByEvictingTheOldest(t *testing.T) {
 func TestSteerLedger_NilAnswersAgent(t *testing.T) {
 	var l *SteerLedger
 	l.RecordUserSteer("c1", "steer-m-1")
-	if got := l.SteerOrigin("c1", "steer-m-1"); got != vibekit.SteerOriginAgent {
-		t.Errorf("SteerOrigin on a nil ledger = %q, want %q", got, vibekit.SteerOriginAgent)
+	if got := l.SteerOrigin("c1", "steer-m-1"); got != marotte.SteerOriginAgent {
+		t.Errorf("SteerOrigin on a nil ledger = %q, want %q", got, marotte.SteerOriginAgent)
 	}
 	l.ForgetChat("c1")
 }

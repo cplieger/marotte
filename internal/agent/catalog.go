@@ -4,8 +4,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Catalog is the workspace's mode and model catalog: what KAS says this
@@ -19,8 +19,8 @@ type Catalog struct {
 	// versions holds the `catalog` counter, bumped under mu when either list
 	// changes; nil defaults to a private registry on first use.
 	versions *subject.Versions
-	modes    []vibekit.SessionMode
-	models   []vibekit.SessionModel
+	modes    []marotte.SessionMode
+	models   []marotte.SessionModel
 	mu       sync.Mutex
 }
 
@@ -36,7 +36,7 @@ func (c *Catalog) registry() *subject.Versions {
 // list is ignored: session/load routinely omits the catalog while KAS resolves
 // it, and modes have no repair channel (config_option_update carries models
 // only), so an emptied mode list would stay empty for the whole session.
-func (c *Catalog) SetModes(modes []vibekit.SessionMode) bool {
+func (c *Catalog) SetModes(modes []marotte.SessionMode) bool {
 	if len(modes) == 0 {
 		return false
 	}
@@ -52,7 +52,7 @@ func (c *Catalog) SetModes(modes []vibekit.SessionMode) bool {
 
 // SetModels replaces the model catalog, reporting whether it changed. Empty is
 // ignored for SetModes's reason.
-func (c *Catalog) SetModels(models []vibekit.SessionModel) bool {
+func (c *Catalog) SetModels(models []marotte.SessionModel) bool {
 	if len(models) == 0 {
 		return false
 	}
@@ -68,11 +68,11 @@ func (c *Catalog) SetModels(models []vibekit.SessionModel) bool {
 
 // ModesModelsStamped returns both lists with the `catalog` stamp, counter first
 // and lists second under one lock, for the REST envelope and the resolver.
-func (c *Catalog) ModesModelsStamped() (modes []vibekit.SessionMode, models []vibekit.SessionModel, stamp *vibekit.SubjectStamp) {
+func (c *Catalog) ModesModelsStamped() (modes []marotte.SessionMode, models []marotte.SessionModel, stamp *marotte.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	version, _ := c.registry().Current(subject.KindCatalog, "")
-	return slices.Clone(c.modes), slices.Clone(c.models), vibekit.NewSubjectStamp(string(subject.KindCatalog), "", version)
+	return slices.Clone(c.modes), slices.Clone(c.models), marotte.NewSubjectStamp(string(subject.KindCatalog), "", version)
 }
 
 // DefaultEffortFor returns the model's own default reasoning tier, or "" when

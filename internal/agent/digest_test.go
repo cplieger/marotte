@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func held(kind subject.Kind, ref string) sse.Held {
@@ -35,7 +35,7 @@ func stateFor(t *testing.T, states []sse.State, kind subject.Kind, ref string) s
 
 func TestResolveDigest_OneStatePerHeldFromTheRegistry(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// The fake store mints into its own counter; the resolver reads the runtime's
@@ -78,7 +78,7 @@ func TestResolveDigest_OneStatePerHeldFromTheRegistry(t *testing.T) {
 
 func TestResolveDigest_ChatWhoseRecordIsGoneAnswersGone(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "kept", func(c *vibekit.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "kept", func(c *marotte.Chat, _ bool) bool { c.Name = "x"; return true }); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	h.versions.BumpCounter(subject.KindChat, "deleted") // a version the registry still remembers
@@ -124,7 +124,7 @@ func TestResolveDigest_TabsIsTheStoresCollectionVersion(t *testing.T) {
 	}
 	h, _, _ := newTestHub()
 	WithTabs(st)(h)
-	if _, _, _, err := st.Open(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindSettings}); err != nil {
+	if _, _, _, err := st.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindSettings}); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindTabs, "")})

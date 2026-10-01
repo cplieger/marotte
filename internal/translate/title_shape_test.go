@@ -13,7 +13,7 @@ import (
 const liveRefusalTitle = "I need more context to generate a title. Could you share the user's first mes..."
 
 // The refusal above is what the model said when KAS asked it to title a conversation
-// whose first prompt was the single word "test". vibekit cannot fix KAS's guard, so the
+// whose first prompt was the single word "test". marotte cannot fix KAS's guard, so the
 // door's job is to refuse the answer, and asserting the reason per case is what stops a
 // later edit collapsing the rules into one unhelpful string.
 //
@@ -106,8 +106,8 @@ func TestTitleRefusal(t *testing.T) {
 			want:  "",
 		},
 		{name: "a_live_agent_title_title_case", title: "Fix ResizeObserver Error In Safari", want: ""},
-		{name: "a_live_agent_title_sentence_case", title: "Safari ResizeObserver loop in vibekit", want: ""},
-		{name: "a_live_agent_title_seven_words", title: "Fix Race Condition In Vibekit Page Titles", want: ""},
+		{name: "a_live_agent_title_sentence_case", title: "Safari ResizeObserver loop in marotte", want: ""},
+		{name: "a_live_agent_title_seven_words", title: "Fix Race Condition In Marotte Page Titles", want: ""},
 		{
 			// The sentence-break scan needs a three-rune window, so a shorter title
 			// has no bound to find. Unreachable from the focus door, which refuses

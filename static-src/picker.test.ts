@@ -197,7 +197,7 @@ describe("the model picker with no models", () => {
     expect(text).toContain("No models available yet.");
     // aria-busy off: the answer arrived, and an empty catalog is a real answer.
     expect(grid().hasAttribute("aria-busy")).toBe(false);
-    // vibekit cannot know WHY the catalog is empty — KAS omits its `model` option
+    // marotte cannot know WHY the catalog is empty — KAS omits its `model` option
     // identically for a stale cache and for an account entitled to nothing — so
     // copy naming an account or an entitlement would be inventing a cause.
     expect(text.toLowerCase()).not.toContain("account");

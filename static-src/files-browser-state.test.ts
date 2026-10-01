@@ -407,15 +407,15 @@ describe("pointFilesTab normalises what it is handed", () => {
   });
 
   const cases: [string, string][] = [
-    ["a rootless path an older build persisted", "workspace/vibekit"],
-    ["the same path spelled absolutely", "/workspace/vibekit"],
-    ["a trailing slash", "/workspace/vibekit/"],
+    ["a rootless path an older build persisted", "workspace/marotte"],
+    ["the same path spelled absolutely", "/workspace/marotte"],
+    ["a trailing slash", "/workspace/marotte/"],
   ];
 
   for (const [name, saved] of cases) {
     it(`fetches the absolute listing for ${name}`, () => {
       pointFilesTab(FB_ROOT, saved);
-      expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2Fworkspace%2Fvibekit");
+      expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2Fworkspace%2Fmarotte");
     });
   }
 

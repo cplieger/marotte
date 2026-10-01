@@ -12,10 +12,10 @@ import (
 	"github.com/cplieger/envx/v2"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/vibekit/internal/auth"
-	"github.com/cplieger/vibekit/internal/bridge"
-	"github.com/cplieger/vibekit/internal/filebrowse"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/auth"
+	"github.com/cplieger/marotte/internal/bridge"
+	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -42,7 +42,7 @@ type Config struct {
 	// from at boot and on the ToolCatalogRefresh schedule.
 	ToolCatalogURL string
 	// ToolCatalogOverlays are the bundled-tools files the engine
-	// re-applies to every loaded catalog: the tools vibekit needs to
+	// re-applies to every loaded catalog: the tools marotte needs to
 	// function and the ones it recommends, plus the UI copy for them. The
 	// published catalog is a general reference and carries none of it. A
 	// missing file is warned about and dropped, never fatal (see
@@ -84,15 +84,15 @@ type Config struct {
 	BridgeEnvAllow map[string]struct{}
 	// BrowseRoots is the file browser's allow-list: the granted
 	// directories the /api/file* surface can see. Always WorkDir +
-	// ConfigDir + vibekit.DefaultUploadDir, plus any extra grants from
-	// VIBEKIT_BROWSE_ROOTS (colon-separated absolute paths, e.g.
+	// ConfigDir + marotte.DefaultUploadDir, plus any extra grants from
+	// MAROTTE_BROWSE_ROOTS (colon-separated absolute paths, e.g.
 	// "/tmp:/data"). Everything outside the grants is denied by default.
 	BrowseRoots []string
 	// ACPArgs are operator-supplied kiro-cli launch flags from
-	// VIBEKIT_KIRO_ACP_ARGS, already filtered by bridge.ParseACPArgs (which
+	// MAROTTE_KIRO_ACP_ARGS, already filtered by bridge.ParseACPArgs (which
 	// refuses --agent-engine and the two inert trust flags). Appended to every
 	// CHAT bridge's argv, never to the utility bridge's. An escape hatch for a
-	// flag upstream adds, not a capability switch: vibekit already pins v3 and
+	// flag upstream adds, not a capability switch: marotte already pins v3 and
 	// sends model via session/new `_meta.kiro.modelId` or session/set_config_option (`configId: model`).
 	ACPArgs []string
 	// ToolCatalogRefresh is the engine refresh cadence under toolbelt's
@@ -106,10 +106,10 @@ type Config struct {
 // sensible defaults.
 func ConfigFromEnv() Config {
 	ac := auth.DefaultConfig
-	ac.LoginURLTimeout = envx.Duration("VIBEKIT_AUTH_LOGIN_URL_TIMEOUT", ac.LoginURLTimeout)
-	ac.LoginTimeout = envx.Duration("VIBEKIT_AUTH_LOGIN_TIMEOUT", ac.LoginTimeout)
-	ac.LogoutTimeout = envx.Duration("VIBEKIT_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
-	ac.WhoamiTimeout = envx.Duration("VIBEKIT_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
+	ac.LoginURLTimeout = envx.Duration("MAROTTE_AUTH_LOGIN_URL_TIMEOUT", ac.LoginURLTimeout)
+	ac.LoginTimeout = envx.Duration("MAROTTE_AUTH_LOGIN_TIMEOUT", ac.LoginTimeout)
+	ac.LogoutTimeout = envx.Duration("MAROTTE_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
+	ac.WhoamiTimeout = envx.Duration("MAROTTE_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
 
 	configDir := cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config")
 	workDir := cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace")
@@ -120,29 +120,29 @@ func ConfigFromEnv() Config {
 		KiroCLIVersion:     envx.String("KIRO_CLI_VERSION"),
 		KiroCLISHA256:      envx.String("KIRO_CLI_SHA256"),
 		KiroCLISHA256ARM64: envx.String("KIRO_CLI_SHA256_ARM64"),
-		VapidSub:           cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:vibekit@noreply.invalid"),
-		ToolsDir:           cmp.Or(envx.String("VIBEKIT_TOOLS_DIR"), filepath.Join(configDir, "tools")),
-		ToolCatalogPath:    cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG"), "/opt/vibekit/tool-catalog.json"),
-		ToolCatalogURL:     cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
+		VapidSub:           cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:marotte@noreply.invalid"),
+		ToolsDir:           cmp.Or(envx.String("MAROTTE_TOOLS_DIR"), filepath.Join(configDir, "tools")),
+		ToolCatalogPath:    cmp.Or(envx.String("MAROTTE_TOOL_CATALOG"), "/opt/marotte/tool-catalog.json"),
+		ToolCatalogURL:     cmp.Or(envx.String("MAROTTE_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
-			toolbelt.RefreshEnv(envx.String("VIBEKIT_TOOL_CATALOG_REFRESH")),
-			"VIBEKIT_TOOL_CATALOG_REFRESH",
+			toolbelt.RefreshEnv(envx.String("MAROTTE_TOOL_CATALOG_REFRESH")),
+			"MAROTTE_TOOL_CATALOG_REFRESH",
 		),
-		ToolCatalogOverlays: bundledToolsFiles(os.Getenv("VIBEKIT_BUNDLED_TOOLS")),
+		ToolCatalogOverlays: bundledToolsFiles(os.Getenv("MAROTTE_BUNDLED_TOOLS")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
 		TrustedInstallUIDs:  parseTrustedInstallUIDs(os.Getenv("TRUSTED_INSTALL_UIDS")),
 		HostPolicy:          parseAllowedHosts(os.Getenv("ALLOWED_HOSTS")),
-		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
-		ACPArgs:             bridge.ParseACPArgs(os.Getenv("VIBEKIT_KIRO_ACP_ARGS")),
+		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("MAROTTE_BROWSE_ROOTS")),
+		ACPArgs:             bridge.ParseACPArgs(os.Getenv("MAROTTE_KIRO_ACP_ARGS")),
 		BridgeEnvAllow:      bridge.ParseEnvAllowlist(os.Getenv(bridge.EnvAllowVar)),
 		AuthConfig:          ac,
 	}
 }
 
-// defaultBundledTools is the image path of vibekit's bundled-tools file
+// defaultBundledTools is the image path of marotte's bundled-tools file
 // (shipped by the Dockerfile beside the binary). A var, not a const, so a test
 // can point the default at an absent path; never reassigned in production.
-var defaultBundledTools = "/opt/vibekit/bundled-tools.json"
+var defaultBundledTools = "/opt/marotte/bundled-tools.json"
 
 // bundledToolsFiles resolves the bundled-tools list.
 //
@@ -164,21 +164,21 @@ func bundledToolsFiles(explicit string) []string {
 		slog.Warn("config: bundled tools file does not resolve; the seeded language servers "+
 			"will not resolve at enable time",
 			"path", path, "explicit", explicit != "",
-			"env", "VIBEKIT_BUNDLED_TOOLS", "error", err)
+			"env", "MAROTTE_BUNDLED_TOOLS", "error", err)
 		return nil
 	}
 	return []string{path}
 }
 
 // browseRoots assembles the file browser's allow-list: the three
-// standard mounts plus any extra VIBEKIT_BROWSE_ROOTS grants. Like
+// standard mounts plus any extra MAROTTE_BROWSE_ROOTS grants. Like
 // parseTrustedProxies this is the LENIENT parser: malformed entries
 // are logged and skipped rather than aborting startup — a typo in the
 // deployment config must not take the whole UI down, and the three
 // standard mounts always survive.
 //
 // The uploads directory is a standard mount because the handler denies by
-// default: an upload with no "dir" targets vibekit.DefaultUploadDir, and an
+// default: an upload with no "dir" targets marotte.DefaultUploadDir, and an
 // ungranted target is refused with a 403 rather than redirected to whatever
 // mount does exist. It is one dedicated directory with its own os.Root, the
 // same shape /workspace and /config already have — not "/", which
@@ -186,11 +186,11 @@ func bundledToolsFiles(explicit string) []string {
 func browseRoots(workDir, configDir, raw string) []string {
 	extra, invalid := filebrowse.ParseBrowseRoots(raw)
 	if len(invalid) > 0 {
-		slog.Warn("config: ignoring malformed VIBEKIT_BROWSE_ROOTS entries (want absolute paths, colon-separated)",
+		slog.Warn("config: ignoring malformed MAROTTE_BROWSE_ROOTS entries (want absolute paths, colon-separated)",
 			"entries", invalid)
 	}
 	roots := make([]string, 0, 3+len(extra))
-	roots = append(roots, workDir, configDir, vibekit.DefaultUploadDir)
+	roots = append(roots, workDir, configDir, marotte.DefaultUploadDir)
 	return append(roots, extra...)
 }
 
@@ -241,13 +241,13 @@ func parseTrustedProxies(raw string) []*net.IPNet {
 // exact reason, so the promise is now the library's to keep as well as this
 // function's.
 //
-// The name carries the WT_ prefix rather than VIBEKIT_ because it is not
-// vibekit's question — web-terminal-kiro installs kiro-cli through the same
+// The name carries the WT_ prefix rather than MAROTTE_ because it is not
+// marotte's question — web-terminal-kiro installs kiro-cli through the same
 // library and reads the same variable, so one name lets one document answer it
 // for both. The knob is pinstall's in substance, and so is the PARSING: the rule
 // this used to implement locally follows from Config.TrustedUIDs' contract, so it
 // now lives beside that field as pinstall.ParseIdentities and both consumers call
-// it. What stays here is what is genuinely vibekit's — the variable it reads and
+// it. What stays here is what is genuinely marotte's — the variable it reads and
 // the words its operator sees.
 func parseTrustedInstallUIDs(raw string) []int {
 	uids, rejected := pinstall.ParseIdentities(raw)
@@ -260,11 +260,11 @@ func parseTrustedInstallUIDs(raw string) []int {
 }
 
 // parseAllowedHosts parses the comma-separated ALLOWED_HOSTS list of exact
-// hostnames / IPs vibekit answers for into a webhttp.HostPolicy — the shared
+// hostnames / IPs marotte answers for into a webhttp.HostPolicy — the shared
 // exact-match Host allowlist that closes the DNS-rebinding hole the CSRF
 // check alone leaves open (a rebinding attack makes Origin and Host AGREE,
 // so http.CrossOriginProtection admits it; only an exact-Host check breaks
-// that chain, CWE-346 — and vibekit's HTTP surface is otherwise
+// that chain, CWE-346 — and marotte's HTTP surface is otherwise
 // unauthenticated, with a PTY at /api/shell/ws). The library owns the
 // mechanism (webhttp.CanonicalHost canonicalization, X-Forwarded-Host
 // ignored, the loopback peer+Host carve-out that keeps the image's own
@@ -288,7 +288,7 @@ func parseAllowedHosts(raw string) *webhttp.HostPolicy {
 	if len(invalid) > 0 {
 		slog.Warn("config: dropping malformed ALLOWED_HOSTS entries; they cannot match any browser-sent Host",
 			"entries", invalid,
-			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,vibekit.example.com")
+			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,marotte.example.com")
 	}
 	if policy.Active() && policy.Size() == 0 {
 		slog.Warn("config: ALLOWED_HOSTS has no usable entries; rejecting every non-loopback request (fail closed)",

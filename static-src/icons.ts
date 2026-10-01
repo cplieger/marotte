@@ -19,7 +19,7 @@ function svg(tier: IconTier, d: string, extra = ""): string {
 // ---------------------------------------------------------------------------
 // SHARED DRAWINGS. Six paths were each written out two to four times across the
 // constants below, so one drawing had several definitions and nothing held them
-// equal — the drift `vibekit-ui.md` "ONE CONCEPT, ONE DRAWING" exists to prevent,
+// equal — the drift `marotte-ui.md` "ONE CONCEPT, ONE DRAWING" exists to prevent,
 // reached from the other side. A tier variant is a different SIZE of one mark, not
 // a second mark, so the path is named once here and the tier is chosen at the call.
 // Every exported string below is byte-identical to what it was before the split.
@@ -265,7 +265,7 @@ export const ICON_SAVE_FAIL = svg(
  *  introspect left the book family for a graduation cap, and this glyph is now the
  *  browser's own drawing. What the share costs instead is one silhouette across two
  *  REGISTERS — sidebar chrome and transcript content — which is the cheaper trade and
- *  the reason it is allowed here at all; `vibekit-ui.md` "ONE CONCEPT, ONE DRAWING"
+ *  the reason it is allowed here at all; `marotte-ui.md` "ONE CONCEPT, ONE DRAWING"
  *  carries the ruling. */
 const ICON_TOOL_READ = svg("ui", PATH_BOOK_OPEN);
 const ICON_TOOL_EDIT = svg("ui", PATH_PENCIL);
@@ -634,7 +634,7 @@ export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path 
  *
  *  THE ONLY OPEN BOOK IN THE APP, and it stays OPEN because `ICON_REPO` is the closed
  *  one: drawing a closed book here would give that silhouette two meanings — the defect
- *  `vibekit-ui.md` records at the two wrenches. It was one of THREE open books, all
+ *  `marotte-ui.md` records at the two wrenches. It was one of THREE open books, all
  *  three near-identical at 16px and each meaning something else; the other two are
  *  resolved (2026-09) rather than merely distinguished — `ICON_TOOL_READ` shares this
  *  drawing through `PATH_BOOK_OPEN`, and the introspect subagent left for a graduation

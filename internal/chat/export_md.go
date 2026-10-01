@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // renderChatMarkdown renders a persisted chat as a self-contained Markdown
@@ -21,7 +21,7 @@ import (
 // the same ANSI-strip + hidden-codepoint scrub the store applies when
 // persisting tool output — so a hostile tool result can't smuggle terminal
 // escapes or prompt-injection codepoints into the exported file.
-func renderChatMarkdown(c *vibekit.Chat) string {
+func renderChatMarkdown(c *marotte.Chat) string {
 	var b strings.Builder
 	title := oneLine(c.Name)
 	if title == "" {
@@ -41,7 +41,7 @@ func renderChatMarkdown(c *vibekit.Chat) string {
 
 // writeChatMetadata emits the header bullet list (id, model, mode,
 // timestamps, message count). Empty fields are skipped.
-func writeChatMetadata(b *strings.Builder, c *vibekit.Chat) {
+func writeChatMetadata(b *strings.Builder, c *marotte.Chat) {
 	if c.ID != "" {
 		fmt.Fprintf(b, "- **Chat ID:** `%s`\n", oneLine(c.ID))
 	}
@@ -62,7 +62,7 @@ func writeChatMetadata(b *strings.Builder, c *vibekit.Chat) {
 
 // writeMessageMarkdown renders one message: heading, timestamp, reasoning
 // (collapsible), content, plan checklist, and tool calls, then a rule.
-func writeMessageMarkdown(b *strings.Builder, m *vibekit.Message) {
+func writeMessageMarkdown(b *strings.Builder, m *marotte.Message) {
 	b.WriteString(messageHeading(m))
 	if ts := mdTimestamp(m.Ts); ts != "" {
 		fmt.Fprintf(b, "_%s_\n\n", ts)
@@ -87,13 +87,13 @@ func writeMessageMarkdown(b *strings.Builder, m *vibekit.Message) {
 
 // messageHeading returns the "## Role" heading (with the event kind for
 // event messages) including its trailing blank line.
-func messageHeading(m *vibekit.Message) string {
+func messageHeading(m *marotte.Message) string {
 	switch m.Role {
-	case vibekit.RoleUser:
+	case marotte.RoleUser:
 		return userHeading(m)
-	case vibekit.RoleAssistant:
+	case marotte.RoleAssistant:
 		return "## Assistant\n\n"
-	case vibekit.RoleEvent:
+	case marotte.RoleEvent:
 		kind := oneLine(string(m.EventKind))
 		if kind == "" {
 			kind = "event"
@@ -116,11 +116,11 @@ func messageHeading(m *vibekit.Message) string {
 // message a reader most wants back out of an export. An UNKNOWN state (the whole
 // legacy population, plus every row the session/load replay projection writes)
 // claims neither, matching the note the client renders for it.
-func userHeading(m *vibekit.Message) string {
-	if m.UserKind != vibekit.UserKindSteer {
+func userHeading(m *marotte.Message) string {
+	if m.UserKind != marotte.UserKindSteer {
 		return "## User\n\n"
 	}
-	if m.SteerState == vibekit.SteerStateDropped {
+	if m.SteerState == marotte.SteerStateDropped {
 		return "## User (mid-turn, not delivered)\n\n"
 	}
 	return "## User (mid-turn)\n\n"
@@ -128,16 +128,16 @@ func userHeading(m *vibekit.Message) string {
 
 // writePlanMarkdown renders the plan as a GitHub task-list checklist.
 // Completed → [x]; in-progress → [ ] with a suffix (GFM has no third box).
-func writePlanMarkdown(b *strings.Builder, plan []vibekit.PlanEntry) {
+func writePlanMarkdown(b *strings.Builder, plan []marotte.PlanEntry) {
 	b.WriteString("**Plan**\n\n")
 	for i := range plan {
 		box, suffix := "[ ]", ""
 		switch plan[i].Status {
-		case vibekit.PlanCompleted:
+		case marotte.PlanCompleted:
 			box = "[x]"
-		case vibekit.PlanInProgress:
+		case marotte.PlanInProgress:
 			suffix = " _(in progress)_"
-		case vibekit.PlanPending:
+		case marotte.PlanPending:
 			// leave the default unchecked box
 		}
 		fmt.Fprintf(b, "- %s %s%s\n", box, oneLine(plan[i].Content), suffix)
@@ -148,7 +148,7 @@ func writePlanMarkdown(b *strings.Builder, plan []vibekit.PlanEntry) {
 // writeToolCallMarkdown renders one tool call as a collapsible block:
 // "Tool: <title> — <status>" summary, then duration, locations, and the
 // sanitised input/output in fenced code blocks.
-func writeToolCallMarkdown(b *strings.Builder, tc *vibekit.ToolCall) {
+func writeToolCallMarkdown(b *strings.Builder, tc *marotte.ToolCall) {
 	title := oneLine(tc.Title)
 	if title == "" {
 		title = oneLine(string(tc.Kind))
@@ -183,7 +183,7 @@ func writeToolCallMarkdown(b *strings.Builder, tc *vibekit.ToolCall) {
 }
 
 // writeToolLocations renders the tool call's file locations as a list.
-func writeToolLocations(b *strings.Builder, locs []vibekit.ToolLocation) {
+func writeToolLocations(b *strings.Builder, locs []marotte.ToolLocation) {
 	if len(locs) == 0 {
 		return
 	}

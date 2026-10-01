@@ -38,9 +38,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -61,7 +61,7 @@ const (
 // 1 method against a *agent.Runtime exporting well over a hundred; this package fires
 // exactly one event kind and needs nothing else from the runtime at all.
 type broadcaster interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
 // HTTPHandler exposes the forges package over HTTP.
@@ -95,7 +95,7 @@ func (h *HTTPHandler) SetOnChange(fn func()) { h.onChange = fn }
 // callback. No-op parts are skipped when unwired.
 func (h *HTTPHandler) notifyChanged(ctx context.Context) {
 	if h.broadcaster != nil {
-		h.broadcaster.Broadcast(ctx, vibekit.NewEvent(vibekit.EventForgesChanged, "", vibekit.ForgesChangedPayload{}))
+		h.broadcaster.Broadcast(ctx, marotte.NewEvent(marotte.EventForgesChanged, "", marotte.ForgesChangedPayload{}))
 	}
 	if h.onChange != nil {
 		h.onChange()
@@ -246,7 +246,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		Host:  host,
 		Token: body.Token,
 	}); err != nil {
-		// Return the validation failure as a 2xx {error} envelope (vibekit
+		// Return the validation failure as a 2xx {error} envelope (marotte
 		// convention): the client's apiPost/action layer collapses any non-2xx
 		// to null → a generic "Network error.", hiding the real reason (bad
 		// credentials, missing scope, wrong host). On a 2xx the PAT form's

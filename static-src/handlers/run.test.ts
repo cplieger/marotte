@@ -66,7 +66,7 @@ vi.mock("../actions/runs.js", () => ({
 vi.mock("../notify.js", () => ({
   notifyIfHidden: vi.fn(),
   closeNotificationsFor: vi.fn(() => Promise.resolve()),
-  NOTIFY_TITLE: "Vibekit",
+  NOTIFY_TITLE: "Marotte",
 }));
 
 import "./run.js";
@@ -661,7 +661,7 @@ describe("a step's question", () => {
 
   it("pushes a notification, because this ask blocks a run indefinitely", () => {
     ask();
-    expect(notify).toHaveBeenCalledWith("Vibekit", "A workflow step is waiting for your answer", {
+    expect(notify).toHaveBeenCalledWith("Marotte", "A workflow step is waiting for your answer", {
       kind: "run",
       workflowID: "wf_1",
     });

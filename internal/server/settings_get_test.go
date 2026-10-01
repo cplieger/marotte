@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // getEffective issues GET /api/settings against a config dir and decodes the
@@ -23,14 +23,14 @@ import (
 // of the assertion: a response missing a field would leave it at its Go zero
 // value, which for chat_retention_days is 0 ("delete chats on close") and would be
 // caught by every case below that expects a real default.
-func getEffective(t *testing.T, dir string) vibekit.EffectiveSettings {
+func getEffective(t *testing.T, dir string) marotte.EffectiveSettings {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	handleSettingsGet(rec, filepath.Join(dir, settings.Filename))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/settings = %d, want 200 (the read fails OPEN)", rec.Code)
 	}
-	var got vibekit.EffectiveSettings
+	var got marotte.EffectiveSettings
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response %s: %v", rec.Body.String(), err)
 	}
@@ -111,12 +111,12 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 	tests := []struct {
 		desc  string
 		raw   string
-		check func(*testing.T, vibekit.EffectiveSettings)
+		check func(*testing.T, marotte.EffectiveSettings)
 	}{
 		{
 			desc: "a string where a number is declared",
 			raw:  `{"chat_retention_days":"seven"}`,
-			check: func(t *testing.T, got vibekit.EffectiveSettings) {
+			check: func(t *testing.T, got marotte.EffectiveSettings) {
 				if got.ChatRetentionDays != settings.DefaultChatRetentionDays {
 					t.Errorf("chat_retention_days = %d, want the default %d", got.ChatRetentionDays, settings.DefaultChatRetentionDays)
 				}
@@ -125,7 +125,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 		{
 			desc: "a number where a bool is declared",
 			raw:  `{"knowledge_enabled":0}`,
-			check: func(t *testing.T, got vibekit.EffectiveSettings) {
+			check: func(t *testing.T, got marotte.EffectiveSettings) {
 				if !got.KnowledgeEnabled {
 					t.Error("knowledge_enabled = false; a 0 must not be read as false, it must be refused for the default true")
 				}
@@ -134,7 +134,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 		{
 			desc: "a null, which encoding/json would otherwise accept as a no-op",
 			raw:  `{"chat_retention_days":null}`,
-			check: func(t *testing.T, got vibekit.EffectiveSettings) {
+			check: func(t *testing.T, got marotte.EffectiveSettings) {
 				// The trap: json.Unmarshal of null into an int succeeds and leaves the
 				// scratch at 0, so accepting it would persist "delete chats on close".
 				if got.ChatRetentionDays != settings.DefaultChatRetentionDays {
@@ -146,7 +146,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 		{
 			desc: "a string where a list is declared",
 			raw:  `{"agent_ignore_files":".gitignore"}`,
-			check: func(t *testing.T, got vibekit.EffectiveSettings) {
+			check: func(t *testing.T, got marotte.EffectiveSettings) {
 				if !slices.Equal(got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles()) {
 					t.Errorf("agent_ignore_files = %v, want the default %v", got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
 				}
@@ -162,7 +162,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 			// did.
 			desc: "a partially-decodable list does not mix stored and default elements",
 			raw:  `{"agent_ignore_files":["zzz",7]}`,
-			check: func(t *testing.T, got vibekit.EffectiveSettings) {
+			check: func(t *testing.T, got marotte.EffectiveSettings) {
 				if !slices.Equal(got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles()) {
 					t.Errorf("agent_ignore_files = %v, want the whole default %v with nothing of the stored list in it",
 						got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
@@ -175,7 +175,7 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 			// silently — the same end state as the live bug this change fixes.
 			desc: "a null over a list does not wipe it",
 			raw:  `{"agent_ignore_files":null}`,
-			check: func(t *testing.T, got vibekit.EffectiveSettings) {
+			check: func(t *testing.T, got marotte.EffectiveSettings) {
 				if !slices.Equal(got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles()) {
 					t.Errorf("agent_ignore_files = %v, want the default %v; a stored null must not empty the list",
 						got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
@@ -459,7 +459,7 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 
 	// The gate, not just the key: preflightSend drops a kind whose preference is
 	// false, so this is the hop that makes the toggle silence anything.
-	if on, known := mp.prefs[vibekit.PushKindRunOutcome]; !known || on {
+	if on, known := mp.prefs[marotte.PushKindRunOutcome]; !known || on {
 		t.Errorf("prefs[run_outcome] = (%v, known=%v) after the patch, want (false, true)", on, known)
 	}
 
@@ -493,7 +493,7 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 	if !getEffective(t, dir).NotifyRunOutcome {
 		t.Error("GET after re-enabling = notify_run_outcome false, want true")
 	}
-	if !mp.prefs[vibekit.PushKindRunOutcome] {
+	if !mp.prefs[marotte.PushKindRunOutcome] {
 		t.Error("prefs[run_outcome] = false after re-enabling, want true")
 	}
 }
@@ -506,7 +506,7 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 // no dependency's struct), and the one normalisation it needs is the slice: an
 // empty agent_ignore_files decoded from `[]` and a nil one from an absent key both
 // mean "no patterns", and DeepEqual would call them different.
-func effectiveEqual(a, b vibekit.EffectiveSettings) bool {
+func effectiveEqual(a, b marotte.EffectiveSettings) bool {
 	if len(a.AgentIgnoreFiles) == 0 {
 		a.AgentIgnoreFiles = nil
 	}

@@ -24,7 +24,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/slogx"
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // levelVar is the shared LevelVar the installed handler follows: slogx.Setup

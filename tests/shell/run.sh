@@ -14,7 +14,7 @@
 # harness_test.sh beside it are synced from cplieger/ci), so the per-repo scope
 # rationale lives here.
 #
-# entrypoint.sh IS vibekit's boot path, and it is now a SHORT one: it declares the
+# entrypoint.sh IS marotte's boot path, and it is now a SHORT one: it declares the
 # Renovate-pinned kiro-cli literals and exports them, creates and proves /config,
 # prunes the superseded kiro-cli agent-runtime trees, sweeps the legacy $HOME
 # residue, and execs the server. The INSTALL is no longer here — the Go server owns

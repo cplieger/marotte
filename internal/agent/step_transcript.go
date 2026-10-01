@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/rpcerr"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // stepTranscriptBudget bounds ONE step read end to end: the `session/load` RPC and the
@@ -38,12 +38,12 @@ var errRunStateUndecodable = errors.New("this run's state could not be decoded")
 // StepTranscript reads one step's transcript out of KAS. Three-valued: `ready` with the
 // messages, `gone` when KAS no longer holds the session (or the step never started), and
 // `unavailable` when the read could not be completed. Only the last is worth retrying.
-func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string) (vibekit.RunStepTranscript, error) {
-	out := vibekit.RunStepTranscript{
-		Messages:   []vibekit.Message{},
+func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string) (marotte.RunStepTranscript, error) {
+	out := marotte.RunStepTranscript{
+		Messages:   []marotte.Message{},
 		WorkflowID: workflowID,
 		NodePath:   nodePath,
-		State:      vibekit.RunStepTranscriptUnavailable,
+		State:      marotte.RunStepTranscriptUnavailable,
 	}
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
@@ -72,7 +72,7 @@ func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string)
 	}
 	if sessionID == "" {
 		// A step that never ran has no session, so there is nothing to load and never was.
-		out.State = vibekit.RunStepTranscriptGone
+		out.State = marotte.RunStepTranscriptGone
 		return out, nil
 	}
 
@@ -104,12 +104,12 @@ func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 // projected. A RAW `session/load` Call rather than bridge.Start: Start's load path calls
 // adoptLoadedSession, which REBINDS the bridge's sessionID, so a step's id would be
 // reported as the utility session's own and take it out of the orphan reaper's keep-list.
-func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]vibekit.Message, vibekit.RunStepTranscriptState) {
+func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]marotte.Message, marotte.RunStepTranscriptState) {
 	if !rs.stepReplays.open(sessionID, translate.NewProjection(newMessageID, rs.workDir)) {
 		// Refused rather than joined: two readers of one barrier is a lifecycle this
 		// registry does not carry, and the retry meets a settled registry a moment later.
 		slog.Debug("step transcript: a read of this session is already in flight", "session_id", sessionID)
-		return nil, vibekit.RunStepTranscriptUnavailable
+		return nil, marotte.RunStepTranscriptUnavailable
 	}
 	// Taken on EVERY path, expiry included, so an abandoned replay leaks neither a map
 	// entry nor a waiter.
@@ -120,13 +120,13 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]vibe
 
 	u := rs.utility()
 	if u == nil {
-		return nil, vibekit.RunStepTranscriptUnavailable
+		return nil, marotte.RunStepTranscriptUnavailable
 	}
 	// The empty-result arm stays beside the error one: KAS refusing to hydrate a reaped
 	// session normally errors, but a `{"result":null}` reply would otherwise wait out
 	// the whole budget on a replay that is never coming.
-	raw, at, err := u.session.rawCallAt(cctx, "step transcript load", vibekit.MethodSessionLoad,
-		callerParams(map[string]any{vibekit.KeySessionID: sessionID}))
+	raw, at, err := u.session.rawCallAt(cctx, "step transcript load", marotte.MethodSessionLoad,
+		callerParams(map[string]any{marotte.KeySessionID: sessionID}))
 	if err != nil || len(raw) == 0 {
 		// KAS's reason is machine prose, so it is logged and NOT forwarded.
 		slog.Warn("step transcript: session load failed", "session_id", sessionID,
@@ -134,7 +134,7 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]vibe
 		// UNAVAILABLE, never `gone`: KAS answers an id it does not hold and a transient
 		// fault with the same -32603 shape, and only the latter is worth retrying, so
 		// `gone` is reserved for what this side can PROVE — a step with no session id.
-		return nil, vibekit.RunStepTranscriptUnavailable
+		return nil, marotte.RunStepTranscriptUnavailable
 	}
 	// rawCallAt for the POSITION: the replay is complete once the consumer has folded
 	// everything preceding this response, and this is the only place that number is known.
@@ -150,24 +150,24 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]vibe
 	case <-cctx.Done():
 		slog.Warn("step transcript: the replay did not settle inside the budget",
 			"session_id", sessionID, "budget", stepTranscriptBudget)
-		return nil, vibekit.RunStepTranscriptUnavailable
+		return nil, marotte.RunStepTranscriptUnavailable
 	}
 
-	return stepTranscriptRows(rs.stepReplays.take(sessionID)), vibekit.RunStepTranscriptReady
+	return stepTranscriptRows(rs.stepReplays.take(sessionID)), marotte.RunStepTranscriptReady
 }
 
 // stepTranscriptRows drops the first user row because KAS persists a step's
 // instruction first and the pane already renders it. Later user rows are human
 // interventions; this is positional because KAS exposes no durable discriminator.
 // Event rows stay out because a step has no turn card to badge.
-func stepTranscriptRows(msgs []vibekit.Message) []vibekit.Message {
-	out := make([]vibekit.Message, 0, len(msgs))
+func stepTranscriptRows(msgs []marotte.Message) []marotte.Message {
+	out := make([]marotte.Message, 0, len(msgs))
 	instructionSeen := false
 	for i := range msgs {
 		switch msgs[i].Role {
-		case vibekit.RoleAssistant:
+		case marotte.RoleAssistant:
 			out = append(out, msgs[i])
-		case vibekit.RoleUser:
+		case marotte.RoleUser:
 			if instructionSeen {
 				out = append(out, msgs[i])
 			}

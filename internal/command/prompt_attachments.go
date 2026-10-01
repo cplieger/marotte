@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// documentExts maps a file extension to the MIME type vibekit sends when
+// documentExts maps a file extension to the MIME type marotte sends when
 // inlining an attachment as an ACP embedded `resource` block.
 //
 // Must stay a subset of KAS's SUPPORTED_DOCUMENT_MIME_TYPES:
@@ -44,7 +44,7 @@ var unsupportedDocExts = map[string]bool{
 	".odp":  true,
 }
 
-// imageExts maps an image extension to the MIME type vibekit sends when
+// imageExts maps an image extension to the MIME type marotte sends when
 // inlining an attachment as an ACP `image` content block.
 //
 // KAS's extractContentFromPrompt pushes the image block unconditionally
@@ -94,8 +94,8 @@ const MaxHistoryInlineImages = 16
 // block followed by one block per attachment. On v3 (KAS) a supported
 // document type is always inlined as an embedded `resource` block;
 // everything else becomes a text path reference.
-func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.Attachment, historyImages int, resolve func(string) (string, error)) []map[string]any {
-	blocks := []map[string]any{vibekit.TextBlock(text)}
+func BuildPromptBlocks(ctx context.Context, text string, attachments []marotte.Attachment, historyImages int, resolve func(string) (string, error)) []map[string]any {
+	blocks := []map[string]any{marotte.TextBlock(text)}
 	budget := MaxInlineTurnEncodedBytes
 	imageAllowance := max(MaxHistoryInlineImages-historyImages, 0)
 	for _, att := range attachments {
@@ -110,7 +110,7 @@ func BuildPromptBlocks(ctx context.Context, text string, attachments []vibekit.A
 	return blocks
 }
 
-func historyInlineImageCount(c *vibekit.Chat, currentMessageID string) int {
+func historyInlineImageCount(c *marotte.Chat, currentMessageID string) int {
 	if c == nil {
 		return MaxHistoryInlineImages
 	}
@@ -121,7 +121,7 @@ func historyInlineImageCount(c *vibekit.Chat, currentMessageID string) int {
 			count = 0
 			continue
 		}
-		if msg.ID == currentMessageID || msg.Role != vibekit.RoleUser {
+		if msg.ID == currentMessageID || msg.Role != marotte.RoleUser {
 			continue
 		}
 		for _, att := range msg.Attachments {
@@ -133,7 +133,7 @@ func historyInlineImageCount(c *vibekit.Chat, currentMessageID string) int {
 	return count
 }
 
-func isImageAttachment(att vibekit.Attachment) bool {
+func isImageAttachment(att marotte.Attachment) bool {
 	_, ok := imageExts[strings.ToLower(filepath.Ext(att.Path))]
 	return ok
 }
@@ -153,7 +153,7 @@ func inlineImageBlockCount(blocks []map[string]any) int {
 // image as an `image` block; everything else becomes a path reference.
 // Returns the encoded bytes this block consumed from the turn's inline
 // budget (zero for a path-reference block).
-func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
+func attachmentBlock(att marotte.Attachment, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
 	displayName := filepath.Base(att.Path)
 	ext := strings.ToLower(filepath.Ext(att.Path))
 
@@ -169,20 +169,20 @@ func attachmentBlock(att vibekit.Attachment, resolve func(string) (string, error
 	if _, err := resolve(att.Path); err != nil {
 		slog.Warn("attachment: path escapes workspace",
 			"path", displayName, keyError, err)
-		return vibekit.TextBlock("Attached file (invalid path): " + displayName), 0
+		return marotte.TextBlock("Attached file (invalid path): " + displayName), 0
 	}
 	if unsupportedDocExts[ext] {
-		return vibekit.TextBlock("Attached file: " + att.Path +
+		return marotte.TextBlock("Attached file: " + att.Path +
 			" (binary document — read it with your file tools; this format may not be readable as text)"), 0
 	}
-	return vibekit.TextBlock("Attached file: " + att.Path), 0
+	return marotte.TextBlock("Attached file: " + att.Path), 0
 }
 
 // inlineResourceBlock reads a document attachment from disk and returns an
 // ACP embedded `resource` content block (v3/KAS has no `document` type; the
 // document rides the blob variant of EmbeddedResourceResource). On any
 // failure it returns a descriptive text block instead.
-func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
+func inlineResourceBlock(att marotte.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
 	abs, data, fallback := readForInline(att, displayName, mime, resolve, budget, true)
 	if fallback != nil {
 		return fallback, 0
@@ -204,7 +204,7 @@ func inlineResourceBlock(att vibekit.Attachment, displayName, mime string, resol
 //
 // The block carries `data` and `mimeType`, deliberately no `uri`: KAS's
 // toDataUrl returns a present uri instead of building the base64 data URL.
-func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
+func inlineImageBlock(att marotte.Attachment, displayName, mime string, resolve func(string) (string, error), budget int, allowImage bool) (block map[string]any, spentBytes int) {
 	_, data, fallback := readForInline(att, displayName, mime, resolve, budget, allowImage)
 	if fallback != nil {
 		return fallback, 0
@@ -226,7 +226,7 @@ func inlineImageBlock(att vibekit.Attachment, displayName, mime string, resolve 
 // so the budget accounting cannot drift between two copies. Every failure
 // degrades to a path reference: the agent still learns the file exists.
 func readForInline(
-	att vibekit.Attachment,
+	att marotte.Attachment,
 	displayName, mime string,
 	resolve func(string) (string, error),
 	budget int,
@@ -241,12 +241,12 @@ func readForInline(
 	if err != nil {
 		slog.Warn("attachment: path escapes workspace",
 			"path", displayName, keyError, err)
-		return "", nil, vibekit.TextBlock("Attached file (invalid path): " + displayName)
+		return "", nil, marotte.TextBlock("Attached file (invalid path): " + displayName)
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		slog.Warn("attachment: stat failed", "path", displayName, keyError, err)
-		return "", nil, vibekit.TextBlock("Attached file (unreadable): " + displayName)
+		return "", nil, marotte.TextBlock("Attached file (unreadable): " + displayName)
 	}
 	if info.Size() > MaxDocumentBytes {
 		slog.Warn("attachment: too large",
@@ -257,10 +257,10 @@ func readForInline(
 			// MaxDocumentBytes is KAS's own MAX_IMAGE_SIZE, so the image
 			// tool refuses at the same threshold — the only remedy is a
 			// smaller file.
-			return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+			return "", nil, marotte.TextBlock("Attached file: " + att.Path +
 				" (too large to inline, and the image tool refuses it at this size too — attach a smaller or resized image)")
 		}
-		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
 			" (too large to inline — read it with your file tools)")
 	}
 	// An estimate against the same encoded unit the budget is denominated
@@ -269,17 +269,17 @@ func readForInline(
 		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
 			"path", displayName, "size", info.Size(), "remaining_encoded", budget)
 		if isBinaryDoc {
-			return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+			return "", nil, marotte.TextBlock("Attached file: " + att.Path +
 				" (not inlined: this turn's attachment budget is spent — read it with your file tools; this format may not be readable as text)")
 		}
-		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
 			" (not inlined: this turn's attachment budget is spent — read it with your file tools)")
 	}
 	data, err = os.ReadFile(abs)
 	if err != nil {
 		slog.Warn("attachment: read failed",
 			"path", displayName, keyError, err)
-		return "", nil, vibekit.TextBlock("Attached file (unreadable): " + displayName)
+		return "", nil, marotte.TextBlock("Attached file (unreadable): " + displayName)
 	}
 	// The encoded gate must run here: after the read, on len(data), since
 	// no pre-read check can see base64's 4/3 inflation. EncodedLen rather
@@ -289,16 +289,16 @@ func readForInline(
 		slog.Warn("attachment: encoded payload over cap, sending a path reference",
 			"path", displayName, "size", len(data), "encoded", encoded, "cap", MaxInlineEncodedBytes)
 		if isBinaryDoc {
-			return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+			return "", nil, marotte.TextBlock("Attached file: " + att.Path +
 				" (too large to inline — read it with your file tools; this format may not be readable as text)")
 		}
-		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
 			" (too large to inline — read it with your file tools)")
 	}
 	if isImage && !allowImage {
 		slog.Warn("attachment: replayed image history budget exhausted, sending a path reference",
 			"path", displayName, "cap", MaxHistoryInlineImages)
-		return "", nil, vibekit.TextBlock("Attached file: " + att.Path +
+		return "", nil, marotte.TextBlock("Attached file: " + att.Path +
 			" (not inlined: this chat's replayed image history budget is spent — read it with your file tools)")
 	}
 	return abs, data, nil

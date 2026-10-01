@@ -965,7 +965,7 @@ function downloadSelected(): void {
     // A same-origin anchor to this route, and it is safe for exactly one reason:
     // the server answers `Content-Disposition: attachment`, so a `.svg` — which
     // arrives as `Content-Type: image/svg+xml` and is script-capable when
-    // navigated to — is SAVED rather than rendered as a document on vibekit's
+    // navigated to — is SAVED rather than rendered as a document on marotte's
     // origin. The `download` attribute is the same instruction from this side.
     // Never turn this into a "view in a tab" affordance.
     const a = el("a", {

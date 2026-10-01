@@ -25,7 +25,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 var errRetryable = errors.New("retryable")
@@ -36,7 +36,7 @@ func countingFn(succeedOn int, calls *int) func() (promptReply, error) {
 	return func() (promptReply, error) {
 		*calls++
 		if succeedOn > 0 && *calls >= succeedOn {
-			return promptReply{resp: &vibekit.RPCResponse{}}, nil
+			return promptReply{resp: &marotte.RPCResponse{}}, nil
 		}
 		return promptReply{}, errRetryable
 	}
@@ -163,12 +163,12 @@ type countingCaller struct {
 	calls int
 }
 
-func (c *countingCaller) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
+func (c *countingCaller) Call(context.Context, string, any) (*marotte.RPCResponse, error) {
 	c.calls++
 	return nil, c.err
 }
 
-func (c *countingCaller) CallAt(context.Context, string, any) (*vibekit.RPCResponse, uint64, error) {
+func (c *countingCaller) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
 	c.calls++
 	return nil, 0, c.err
 }
@@ -193,21 +193,21 @@ func TestCallPromptWithRetry_LadderPerClass(t *testing.T) {
 		wantWait  time.Duration
 	}{
 		"a validation refusal is sent once": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "ImageSizeExceeded: image exceeds 5 MB maximum",
 			}),
 			wantCalls: 1,
 			wantWait:  0,
 		},
 		"an unclassified internal error still spends the ladder": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "upstream connection reset",
 			}),
 			wantCalls: 3,
 			wantWait:  2 * promptRetryDelay,
 		},
 		"a dead bridge is sent once": {
-			err:       &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true},
+			err:       &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true},
 			wantCalls: 1,
 			wantWait:  0,
 		},

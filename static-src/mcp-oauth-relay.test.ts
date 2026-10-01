@@ -1,5 +1,5 @@
 // The OAuth loopback relay's row affordance. KAS binds its redirect listener on
-// the CONTAINER's localhost, so a browser reaching vibekit from another machine
+// the CONTAINER's localhost, so a browser reaching marotte from another machine
 // is sent to its own localhost and the sign-in dies with no recovery path. This
 // box is that path: the user pastes the dead address and the server replays it
 // inward.

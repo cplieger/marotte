@@ -8,13 +8,13 @@
 // feature detection). It used to live in internal/workflow as Details, reachable
 // only from the run handlers, so the 127-of-137 error frames that carry their
 // text in `error.data` rendered to chat users as the literal
-// "ACP error -32603: Internal error". Then it lived in internal/vibekit beside the
+// "ACP error -32603: Internal error". Then it lived in internal/marotte beside the
 // wire and domain TYPES, which is what made that package's own claim to declare
 // no interfaces false — the detailer below is the interface it was declaring
 // three files away.
 //
-// Nothing here imports another vibekit package. The one shape it needs is
-// reached through detailer rather than through *vibekit.RPCError, so an error is
+// Nothing here imports another marotte package. The one shape it needs is
+// reached through detailer rather than through *marotte.RPCError, so an error is
 // found by errors.AsType at any wrapping depth and this package stays a leaf.
 package rpcerr
 
@@ -47,7 +47,7 @@ const maxTextBytes = 2048
 // implementation was ever reachable. net.Error is the stdlib's answer to the same
 // question and embeds error for the same reason.
 //
-// Consumer cost is zero: the sole implementation is *vibekit.RPCError, which had
+// Consumer cost is zero: the sole implementation is *marotte.RPCError, which had
 // to have an Error method to be in a chain at all.
 type detailer interface {
 	error

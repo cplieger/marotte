@@ -387,7 +387,7 @@ describe("the table outside Custom", () => {
 
 describe("what a profile description promises", () => {
   // A profile has two halves and they reach different places. Its presets ride the
-  // session door and cover only the sessions vibekit opens; Kiro creates a workflow
+  // session door and cover only the sessions marotte opens; Kiro creates a workflow
   // step's session itself, so a preset never arrives there. Only the loosest rung
   // also writes a durable user-scope rule, which is the half a step session reads —
   // so it is the only one that may claim step coverage, and it has to disclose the

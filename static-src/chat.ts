@@ -540,7 +540,7 @@ export async function attachPathsToActiveChat(paths: readonly string[]): Promise
 /** Open a session the previous-session picker listed.
  *
  *  Every row the picker offers is a TAB CONVERSATION — the server lists a session only
- *  when a vibekit chat claims it (`toResumable`) — so `chat_id` is always present. */
+ *  when a marotte chat claims it (`toResumable`) — so `chat_id` is always present. */
 export async function openPreviousSession(
   row: ResumableSession,
 ): Promise<"opened" | "gone" | "failed"> {

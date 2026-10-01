@@ -45,7 +45,7 @@ func (us *utilitySession) rawCallAt(ctx context.Context, label, method string, p
 	// caller with (nil, nil) and no way to recover the reason: `inspectConfirmsGone`
 	// cannot tell an unknown workflow from a transient fault, and `control`'s utility
 	// fallback read a refused cancel as landed while its carrier path (runCallErr)
-	// reported one. Wrapped, so `rpcerr.Details` still reaches the *vibekit.RPCError.
+	// reported one. Wrapped, so `rpcerr.Details` still reaches the *marotte.RPCError.
 	if resp.Error != nil {
 		return nil, at, fmt.Errorf("%s: %w", label, resp.Error)
 	}

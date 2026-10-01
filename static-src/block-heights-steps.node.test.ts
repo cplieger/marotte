@@ -35,7 +35,7 @@ const GAP_PX = 12;
 const CARD_PX = 71;
 
 /** A step's subtask id, in the spelling the server stamps
- *  (`vibekit.StepSubtaskID`: `wf:<workflowId>:<nodePath>`). */
+ *  (`marotte.StepSubtaskID`: `wf:<workflowId>:<nodePath>`). */
 const STEP = "wf:run-7:seq/coder";
 
 /** A DELEGATE's subtask id: a bare uuid, which is what makes it not a step's. */

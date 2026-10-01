@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // launchableRecipe is the fake-bridge reply set a launch needs: one recipe, an

@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/liveness"
+	"github.com/cplieger/marotte/internal/liveness"
 )
 
 // The option is set on the LISTENER and inherited by accept(2): the accepted side

@@ -8,7 +8,7 @@
 // enter/leave state classes with transition-end settling — is
 // @cplieger/ui-primitives' createPopup: the non-positioning popup primitive,
 // which is exactly this pattern's shape. The card is a SIBLING of the pill
-// inside .pill-slot, which positions it (vibekit.md mandates the
+// inside .pill-slot, which positions it (marotte.md mandates the
 // expandable-pill pattern over floating popups for pill-row controls, so
 // popover's placement engine is deliberately not involved). Sibling rather
 // than child for two reasons: the pill's press scale would otherwise shrink

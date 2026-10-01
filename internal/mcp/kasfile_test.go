@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // readKAS decodes the rendered KAS config file.
@@ -199,7 +199,7 @@ func TestWriteKASConfig_DisabledServerStaysWithFlag(t *testing.T) {
 
 // TestWriteKASConfig_PreservesForeignKeys pins the shared-file contract: KAS
 // reads `powers.mcpServers` out of this same file, so a write must replace ONLY
-// the key vibekit owns.
+// the key marotte owns.
 func TestWriteKASConfig_PreservesForeignKeys(t *testing.T) {
 	dir := t.TempDir()
 	kas := filepath.Join(dir, "mcp.json")
@@ -281,7 +281,7 @@ func TestPairsRecord_LastDuplicateWins(t *testing.T) {
 // user configured without credentials must carry no `oauth` block at all. An
 // empty one is worse than none — KAS would read a client id and secret that are
 // both the empty string and attempt the flow with them, which fails at the
-// provider with nothing in vibekit's own UI to explain why.
+// provider with nothing in marotte's own UI to explain why.
 func TestWriteKASConfig_RemoteWithoutOAuthCarriesNoBlock(t *testing.T) {
 	s, kas := newIsolatedStore(t)
 	srv := &Server{
@@ -301,7 +301,7 @@ func TestWriteKASConfig_RemoteWithoutOAuthCarriesNoBlock(t *testing.T) {
 	}
 }
 
-// The size cap bounds the RE-READ of a file vibekit shares with KAS, so its two
+// The size cap bounds the RE-READ of a file marotte shares with KAS, so its two
 // sides have different consequences: a file at the cap is still merged with (its
 // foreign keys survive a write), and one past it is skipped — silently, because
 // being too big to merge is not a stat failure and reporting it as one sends the

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // allRunStatuses is KAS's WorkflowStatusSchema, exhaustively, so a case can be
@@ -26,7 +26,7 @@ func TestAffordance_VerbsByStatus(t *testing.T) {
 		want   []string
 	}{
 		{"running", []string{verbPause, verbCancel}},
-		{string(vibekit.RunStatusPaused), []string{verbResume, verbCancel}},
+		{string(marotte.RunStatusPaused), []string{verbResume, verbCancel}},
 		{"completed", []string{}},
 		{"failed", []string{verbRetry}},
 		{"aborted", []string{verbRetry}},
@@ -79,7 +79,7 @@ func TestAffordance_HostedOnlyVerbsAreWithheldWithAReason(t *testing.T) {
 		verb   string
 	}{
 		{"running", verbPause},
-		{string(vibekit.RunStatusPaused), verbResume},
+		{string(marotte.RunStatusPaused), verbResume},
 	} {
 		t.Run(tc.status+"/"+tc.verb, func(t *testing.T) {
 			got := affordanceOf(runFacts{status: tc.status})
@@ -205,7 +205,7 @@ func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 	seed := func(t *testing.T, sessions ...string) *Runtime {
 		t.Helper()
 		h, cs, _ := newTestHub()
-		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name = "Nightly publish"
 			for _, s := range sessions {
 				c.RecordSession(s)
@@ -255,7 +255,7 @@ func TestAffordance_ChatParentedRunIsHostedByItsChatsBridge(t *testing.T) {
 			"workflowId": "wf_1", "status": "running", "parentSessionId": "sess_owned",
 		}),
 	}
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Nightly publish"
 		c.RecordSession("sess_owned")
 		return true

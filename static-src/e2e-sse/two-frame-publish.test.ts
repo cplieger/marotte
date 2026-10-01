@@ -1,4 +1,4 @@
-// The two-frame publish and the stamp it must not carry, against the REAL vibekit binary
+// The two-frame publish and the stamp it must not carry, against the REAL marotte binary
 // (Part IV item 15). One saved Mutate publishes a header frame (`chat_updated`, stamped
 // `chats`) and then its transcript frames (`message_appended`, or `message_appended` then
 // `draft_changed`), with the ONE `chat` stamp on the last of them. A client that loses the
@@ -12,7 +12,7 @@
 // answers `unchanged` here and leaves the client one message (or one stale draft) behind
 // until the next unrelated mutation.
 //
-// The client is the library's stream over vibekit's envelope door and version map, the
+// The client is the library's stream over marotte's envelope door and version map, the
 // three pieces `sse-adapter.ts` composes minus the page: the page modules the adapter's
 // loaders reach need the SPA's DOM, and the property under test is the server's stamping
 // seen through the client's map, not the store. Node rather than the browser because the
@@ -37,7 +37,7 @@ import type { ServerEvent } from "../types.js";
 import { decodeSubjectStamp } from "../wire/decoders.gen.js";
 
 const SKIP_REASON =
-  "vibekit fixture not started: set SSE_FIXTURE to a vibekit binary built with -tags vibekit_test";
+  "marotte fixture not started: set SSE_FIXTURE to a marotte binary built with -tags marotte_test";
 const FIXTURE = process.env["SSE_FIXTURE"];
 if (FIXTURE === undefined || FIXTURE === "") {
   console.warn(`[vitest] ${SKIP_REASON}`);
@@ -88,7 +88,7 @@ function subjects(states: readonly { kind: string; ref: string }[]): string[] {
 }
 
 describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish", () => {
-  const base = (): string => inject("vibekitURL");
+  const base = (): string => inject("marotteURL");
   let client: Client | null = null;
 
   const unlisten = (): (() => void) => () => undefined;

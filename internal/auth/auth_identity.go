@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/marotte/internal/procout"
 )
 
 // identityTTL is how long a cached identity is served before a read kicks a
 // refresh behind the answer. Sign-in and sign-out publish directly, so the timer
-// only has to catch a change vibekit did not make: expiring credentials, or
+// only has to catch a change marotte did not make: expiring credentials, or
 // `kiro-cli logout` run in a terminal.
 const identityTTL = time.Minute
 
@@ -85,7 +85,7 @@ func (c *identityCache) snapshot() WhoamiResponse {
 	return c.resp
 }
 
-// publish records an identity vibekit itself decided and marks the entry fresh.
+// publish records an identity marotte itself decided and marks the entry fresh.
 // The generation bump makes it WIN against a read already in flight: without it,
 // a fork started just before a logout republishes `signed_in` over this
 // `signed_out`.
@@ -196,7 +196,7 @@ func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
 		return unavailableIdentity(reasonUnreadable)
 	}
 	// Only the arms above this line are withheld from the registrar: an identity
-	// vibekit could not READ must not read as an account change, or a kiro-cli
+	// marotte could not READ must not read as an account change, or a kiro-cli
 	// that timed out would retire every live bridge. A signed-out answer IS an
 	// answer, so it is observed.
 	h.registrar.Observe(identityFingerprint(&info))

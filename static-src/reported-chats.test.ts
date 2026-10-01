@@ -152,7 +152,7 @@ describe("symptom 1: every failed turn now SAYS something", () => {
   it("keeps chat 2's own upstream sentence rather than replacing it", () => {
     // The one reason that WAS durable, and the fallback must not outrank it: this
     // chat's interrupted divider carries KAS's own text, which is more specific
-    // than anything vibekit can say.
+    // than anything marotte can say.
     const turn = turnsOf("reported-interrupted-hollow-dot")[0];
     expect(turn === undefined ? "" : turnFailureText(turn)).toBe(
       "A network error occurred. Please check your connection and try again.",
@@ -297,7 +297,7 @@ describe("a turn NOTHING closed reads unknown and still says something", () => {
 
   it("carries inline text, so the turn is not a mark over an empty body", () => {
     expect(turnFailureText(carrierlessFirstTurn("reported-failed-no-reason"))).toBe(
-      "The turn ended for a reason vibekit could not read.",
+      "The turn ended for a reason marotte could not read.",
     );
   });
 

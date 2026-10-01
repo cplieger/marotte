@@ -12,7 +12,7 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // v3MCPStatus is the _kiro/mcp/status payload. v3 consolidates v2's
@@ -64,7 +64,7 @@ type v3MCPResource struct {
 // onto the same MCP-registry state the v2 mcp/* handlers drive: connected
 // servers record their tool names + connected state; failed servers record
 // an init failure, or an OAuth prompt when an authorization URL is present.
-func (t *Translator) HandleMCPStatus(ctx context.Context, _ vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3MCPStatus](msg, "mcp/status")
 	if !ok {
 		return
@@ -88,10 +88,10 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ vibekit.ChatID, msg 
 			}
 			t.mcp.RecordInitFailure(ctx, s.Name, s.ErrorMessage)
 		case "disabled":
-			// A vibekit-configured server's off state is already on its config
+			// A marotte-configured server's off state is already on its config
 			// row, which is what the MCP page renders it from — so the recorder
 			// drops this frame for one, exactly as the default arm used to. It
-			// keeps the frame only for a server vibekit never configured, where
+			// keeps the frame only for a server marotte never configured, where
 			// this is the ONLY evidence the server exists: without it, a Power's
 			// disabled server is invisible on a page that claims to list the
 			// agent's integrations.
@@ -121,41 +121,41 @@ func mcpToolNames(tools []struct {
 	return names
 }
 
-// mcpPrompts maps the wire prompt entries to the vibekit discovery type,
+// mcpPrompts maps the wire prompt entries to the marotte discovery type,
 // dropping entries with no machine promptName (unaddressable).
-func mcpPrompts(in []v3MCPPrompt) []vibekit.MCPPromptInfo {
+func mcpPrompts(in []v3MCPPrompt) []marotte.MCPPromptInfo {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]vibekit.MCPPromptInfo, 0, len(in))
+	out := make([]marotte.MCPPromptInfo, 0, len(in))
 	for _, p := range in {
 		if p.PromptName == "" {
 			continue
 		}
-		info := vibekit.MCPPromptInfo{Name: p.Name, PromptName: p.PromptName, Description: p.Description}
+		info := marotte.MCPPromptInfo{Name: p.Name, PromptName: p.PromptName, Description: p.Description}
 		for _, a := range p.Arguments {
 			if a.Name == "" {
 				continue
 			}
-			info.Arguments = append(info.Arguments, vibekit.MCPPromptArg{Name: a.Name, Description: a.Description, Required: a.Required})
+			info.Arguments = append(info.Arguments, marotte.MCPPromptArg{Name: a.Name, Description: a.Description, Required: a.Required})
 		}
 		out = append(out, info)
 	}
 	return out
 }
 
-// mcpResources maps the wire resource entries to the vibekit discovery type,
+// mcpResources maps the wire resource entries to the marotte discovery type,
 // dropping entries with no uri (unaddressable).
-func mcpResources(in []v3MCPResource) []vibekit.MCPResourceInfo {
+func mcpResources(in []v3MCPResource) []marotte.MCPResourceInfo {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]vibekit.MCPResourceInfo, 0, len(in))
+	out := make([]marotte.MCPResourceInfo, 0, len(in))
 	for _, res := range in {
 		if res.URI == "" {
 			continue
 		}
-		out = append(out, vibekit.MCPResourceInfo{Name: res.Name, URI: res.URI, Description: res.Description, MimeType: res.MimeType})
+		out = append(out, marotte.MCPResourceInfo{Name: res.Name, URI: res.URI, Description: res.Description, MimeType: res.MimeType})
 	}
 	return out
 }

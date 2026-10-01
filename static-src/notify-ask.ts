@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // WHEN may this app ask the browser for notification permission, and what does a
 // grant lead to. Ported from `@cplieger/web-terminal-ui`'s `features/tabs/notify.ts`
-// arm/gesture model, with the one thing vibekit has that the terminal does not: a
+// arm/gesture model, with the one thing marotte has that the terminal does not: a
 // settings switch behind the browser's own permission.
 //
 // THE PROMPT NEEDS A USER GESTURE AND THERE IS NO WAY AROUND IT. Firefox 72+ and

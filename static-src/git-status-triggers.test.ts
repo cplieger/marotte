@@ -88,7 +88,7 @@ describe("the git-status store's triggers", () => {
 
 // The catch-all for every writer this client cannot see: a `git commit` typed in
 // the shell, an edit made by a command, another window on the same workspace. It
-// closes the hole the timer's removal left — without it, a change vibekit's agent
+// closes the hole the timer's removal left — without it, a change marotte's agent
 // did not make never reached the badge, the file-browser decorations or the docs
 // page, indefinitely.
 //

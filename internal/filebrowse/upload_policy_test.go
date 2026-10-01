@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // clientPolicyPath is the TypeScript module holding the composer's copy of the
@@ -118,10 +118,10 @@ func TestUploadPolicyMatchesClient(t *testing.T) {
 		// own (it doubles as the attachment path prefix), so compare the
 		// cleaned forms rather than the raw strings.
 		got := filepath.Clean("/" + string(m[1]))
-		want := filepath.Clean("/" + vibekit.DefaultUploadDir)
+		want := filepath.Clean("/" + marotte.DefaultUploadDir)
 		if got != want {
-			t.Errorf("UPLOADS_DIR in %s = %q (cleans to %q), want vibekit.DefaultUploadDir %q (cleans to %q)",
-				clientPolicyPath, m[1], got, vibekit.DefaultUploadDir, want)
+			t.Errorf("UPLOADS_DIR in %s = %q (cleans to %q), want marotte.DefaultUploadDir %q (cleans to %q)",
+				clientPolicyPath, m[1], got, marotte.DefaultUploadDir, want)
 		}
 	})
 }

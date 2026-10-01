@@ -26,8 +26,8 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // v3CodeReferences is the _kiro/code_references notification payload.
@@ -50,7 +50,7 @@ type v3CodeReference struct {
 // persisted onto the finalized assistant message at turn end (bridge_coord.go)
 // so the chip survives reload — the streamed assistant turn is never
 // re-broadcast as message_appended.
-func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandleCodeReferences(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3CodeReferences](msg, "code_references")
 	if !ok {
 		return
@@ -63,14 +63,14 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}
-	refs := make([]vibekit.CodeReference, 0, len(p.References))
+	refs := make([]marotte.CodeReference, 0, len(p.References))
 	for _, r := range p.References {
 		// Match KAS's own filter: a reference with no license name carries
 		// no attribution value.
 		if r.LicenseName == "" {
 			continue
 		}
-		refs = append(refs, vibekit.CodeReference{
+		refs = append(refs, marotte.CodeReference{
 			LicenseName: r.LicenseName,
 			Repository:  r.Repository,
 			URL:         r.URL,
@@ -80,7 +80,7 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 		return
 	}
 	// A step's copy is already dropped above, so this frame is the chat's own.
-	buf := t.buffers.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart)
+	buf := t.buffers.TurnFoldTarget(ctx, chatID, marotte.TurnSourceWireTurnStart)
 	// Only attach to an in-flight turn. References fire mid-completion (the
 	// model must generate the licensed code first), so by the time one
 	// arrives the assistant buffer is Started with a message id. Dropping a
@@ -90,10 +90,10 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 		return
 	}
 	all, version := buf.AppendCodeReferences(refs)
-	frame := vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
+	frame := marotte.NewEvent(marotte.EventCodeReferences, chatID, marotte.CodeReferencesPayload{
 		MessageID:  buf.MessageID,
 		References: all,
 	})
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
 	t.bus.Broadcast(ctx, frame)
 }

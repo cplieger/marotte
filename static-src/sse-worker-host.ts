@@ -1,6 +1,6 @@
 // The profile's stream owner, hosted in the SharedWorker: `@cplieger/sse`'s
-// `createWorkerHost` around vibekit's two routes, plus the two decisions that are
-// vibekit's own. `sse-worker.ts` is the classic-script entry that wires `onconnect`.
+// `createWorkerHost` around marotte's two routes, plus the two decisions that are
+// marotte's own. `sse-worker.ts` is the classic-script entry that wires `onconnect`.
 //
 // The host holds the profile's version map (every tab reports each stamp it records)
 // and performs ONE digest per run; the verdict rides the run to every tab, whose body
@@ -82,7 +82,7 @@ function reconnectForAttach(ev: LifecycleEvent, stream: Stream): void {
   }
 }
 
-/** Build the host over vibekit's routes. */
+/** Build the host over marotte's routes. */
 export function createSSEHost(): WorkerHost {
   const versions = createVersionMap();
   const digest = createDigestClient({ url: "/api/sync", timeoutMs: DIGEST_TIMEOUT_MS });

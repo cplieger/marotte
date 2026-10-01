@@ -10,9 +10,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestEpoch_IsTheHubsCurrentEpoch(t *testing.T) {
@@ -33,7 +33,7 @@ func TestLiveRuns_SubjectIsTheLeaseStoresVersionWithTheEpoch(t *testing.T) {
 	out := getLiveRuns(t, rr)
 
 	_, version := st.ListStamped()
-	want := vibekit.SubjectStamp{Kind: string(subject.KindRuns), Version: version, Epoch: h.Epoch()}
+	want := marotte.SubjectStamp{Kind: string(subject.KindRuns), Version: version, Epoch: h.Epoch()}
 	if out.Subject == nil || *out.Subject != want {
 		t.Errorf("GET /api/runs/live subject = %+v, want %+v", out.Subject, want)
 	}
@@ -44,21 +44,21 @@ func TestLiveRuns_SubjectIsTheLeaseStoresVersionWithTheEpoch(t *testing.T) {
 
 func TestConfigTemplate_SubjectIsTheCatalogVersionWithTheEpoch(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.catalog.SetModes([]vibekit.SessionMode{{ID: "vibe", Name: "Default"}})
-	h.catalog.SetModels([]vibekit.SessionModel{{ID: "m1", Name: "One"}})
+	h.catalog.SetModes([]marotte.SessionMode{{ID: "vibe", Name: "Default"}})
+	h.catalog.SetModels([]marotte.SessionModel{{ID: "m1", Name: "One"}})
 
 	rec := httptest.NewRecorder()
 	h.handleConfigTemplate(rec, httptest.NewRequest(http.MethodGet, "/api/config-template", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var got vibekit.ConfigTemplateResponse
+	var got marotte.ConfigTemplateResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 
 	current, _ := h.versions.Current(subject.KindCatalog, "")
-	want := vibekit.SubjectStamp{Kind: string(subject.KindCatalog), Version: current, Epoch: h.Epoch()}
+	want := marotte.SubjectStamp{Kind: string(subject.KindCatalog), Version: current, Epoch: h.Epoch()}
 	if got.Subject == nil || *got.Subject != want {
 		t.Errorf("GET /api/config-template subject = %+v, want %+v", got.Subject, want)
 	}
@@ -73,7 +73,7 @@ func TestConfigTemplate_UnmintedCatalogStampsZero(t *testing.T) {
 	h, _, _ := newTestHub()
 	rec := httptest.NewRecorder()
 	h.handleConfigTemplate(rec, httptest.NewRequest(http.MethodGet, "/api/config-template", nil))
-	var got vibekit.ConfigTemplateResponse
+	var got marotte.ConfigTemplateResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

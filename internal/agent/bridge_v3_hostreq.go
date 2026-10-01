@@ -12,13 +12,13 @@ import (
 	"log/slog"
 	"net/url"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const methodKiroShellType = "_kiro/terminal/shell_type"
 
 // handleKiroClientRequest answers the v3-only server-to-client requests.
-func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroShellType:
 		in.respondBridge(ctx, chatID, msg, kiroShellTypeResult(), nil)
@@ -32,7 +32,7 @@ func (in *inbound) handleKiroClientRequest(ctx context.Context, chatID vibekit.C
 }
 
 // respondKiroOpenExternalURL acknowledges a safe URL before broadcasting it.
-func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		URL string `json:"url"`
 	}
@@ -41,7 +41,7 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID vibeki
 	}
 	if !isSafeExternalURL(p.URL) {
 		slog.Warn("v3 openExternalUrl: rejecting unsafe scheme", "chat_id", chatID)
-		in.respondBridge(ctx, chatID, msg, nil, &vibekit.RPCError{
+		in.respondBridge(ctx, chatID, msg, nil, &marotte.RPCError{
 			Code:    -32602,
 			Message: "openExternalUrl: only http/https URLs are allowed",
 		})
@@ -49,7 +49,7 @@ func (in *inbound) respondKiroOpenExternalURL(ctx context.Context, chatID vibeki
 	}
 	// Ack first so the agent's OAuth redirect is not blocked on the UI.
 	in.respondBridge(ctx, chatID, msg, map[string]any{"success": true}, nil)
-	in.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventOpenExternalURL, chatID, vibekit.OpenExternalURLPayload{URL: p.URL}))
+	in.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventOpenExternalURL, chatID, marotte.OpenExternalURLPayload{URL: p.URL}))
 }
 
 func isSafeExternalURL(u string) bool {

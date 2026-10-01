@@ -246,7 +246,7 @@
      plus a 1px border reserved on every row, so a 44px child STACKS on that
      chrome: measured at 390x844 on the coarse tier, every `.tab` rendered 62px
      tall against `#new-chat`'s 44px. That is the row outgrowing the floor
-     (`vibekit-ui.md` "Hit targets"), and the row is already a 44px target itself,
+     (`marotte-ui.md` "Hit targets"), and the row is already a 44px target itself,
      so the × needs no 44px box of its own — it takes the documented expander
      instead, an absolutely positioned `::after` sized off `--hit-floor`, the same
      escape `.shell-resize` and `.tool-file-link` use.
@@ -279,7 +279,7 @@
 /* PHONE-SHAPED means narrow OR short, and a media query list is CSS's OR. The
    short arm answers LANDSCAPE, where a phone is mostly wider than 48rem and the
    narrow arm stops matching; 30rem measures the short edge, the axis a rotation
-   cannot change (derivation: vibekit-ui.md "Hit targets"). The rule sits outside
+   cannot change (derivation: marotte-ui.md "Hit targets"). The rule sits outside
    the width block above because that block is layout — widening that prelude would
    hand a short desktop window the drawer and the safe-area rules. The other two
    conditions are pointer-mode.ts's and travel on `.hidden`, whose

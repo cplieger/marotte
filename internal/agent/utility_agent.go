@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const maxUtilityPrompts = 20
@@ -33,7 +33,7 @@ type utilityAgent struct {
 	// currentEffort is the reasoning-effort level last applied to the live
 	// session (empty = model default). Per-task levels: cheap tasks run
 	// low, diff-reading tasks run medium. Only re-applied when it differs.
-	currentEffort vibekit.EffortLevel
+	currentEffort marotte.EffortLevel
 
 	// turnMu serializes text-generation turns. Ambient tasks are not
 	// latency-critical enough to warrant parallelism, and one session
@@ -67,7 +67,7 @@ func newUtilityAgent(session *utilitySession) *utilityAgent {
 // prompt input, whichever comes first, to bound both context bleed and
 // the re-billed dead context each turn drags along. effort is the
 // per-task reasoning-effort level ("" keeps the session's current level).
-func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
+func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error) {
 	ua.turnMu.Lock()
 	defer ua.turnMu.Unlock()
 
@@ -92,8 +92,8 @@ func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort
 
 	drainLeftoverChunks(lease.chunks)
 
-	resp, err := lease.bridge.Call(ctx, vibekit.MethodPrompt, utilitySessionParams(lease.bridge, map[string]any{
-		vibekit.KeyPrompt: []map[string]any{vibekit.TextBlock(utilitySystemPrompt + prompt)},
+	resp, err := lease.bridge.Call(ctx, marotte.MethodPrompt, utilitySessionParams(lease.bridge, map[string]any{
+		marotte.KeyPrompt: []map[string]any{marotte.TextBlock(utilitySystemPrompt + prompt)},
 	}))
 	if err != nil {
 		ua.session.resetIf(lease.gen)
@@ -124,12 +124,12 @@ func (ua *utilityAgent) syncCounters(gen uint64) {
 // effortLevel config option, in which case the failure is latched
 // (effortUnsupported) so subsequent tasks don't re-pay the round-trip
 // until the next session start. Caller holds turnMu.
-func (ua *utilityAgent) applyEffort(ctx context.Context, lease sessionLease, effort vibekit.EffortLevel) {
+func (ua *utilityAgent) applyEffort(ctx context.Context, lease sessionLease, effort marotte.EffortLevel) {
 	if effort == "" || effort == ua.currentEffort || ua.effortUnsupported || !effort.Valid() {
 		return
 	}
-	_, err := lease.bridge.Call(ctx, vibekit.MethodSetConfigOption, utilitySessionParams(lease.bridge, map[string]any{
-		"configId": vibekit.ConfigOptionEffort,
+	_, err := lease.bridge.Call(ctx, marotte.MethodSetConfigOption, utilitySessionParams(lease.bridge, map[string]any{
+		"configId": marotte.ConfigOptionEffort,
 		"value":    string(effort),
 	}))
 	if err != nil {
@@ -166,7 +166,7 @@ func drainLeftoverChunks(chunks <-chan utilityChunkPayload) {
 // session/prompt, already awaited by Call before this runs. So this only
 // drains chunks that arrived before the response landed, until a short idle
 // debounce elapses or ctx / the 60s hard ceiling fire.
-func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, resp *vibekit.RPCResponse) (string, error) {
+func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, resp *marotte.RPCResponse) (string, error) {
 	if resp == nil {
 		return "", errors.New("nil response")
 	}

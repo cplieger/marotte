@@ -4,15 +4,15 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: the whole of one
 // tool call's input, output and diffs.
-func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID, toolCallID string) {
+func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, toolCallID string) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -37,7 +37,7 @@ func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 		httpreply.NotFound(w, "unknown tool call")
 		return
 	}
-	webhttp.WriteJSON(w, vibekit.ToolCallBulk{
+	webhttp.WriteJSON(w, marotte.ToolCallBulk{
 		ID:          tc.ID,
 		Input:       tc.Input,
 		Output:      tc.Output,
@@ -47,7 +47,7 @@ func (rt *Router) handleToolCall(w http.ResponseWriter, r *http.Request, chatID 
 }
 
 // findToolCall locates a tool call by id, newest message first.
-func findToolCall(msgs []vibekit.Message, id string) (*vibekit.ToolCall, bool) {
+func findToolCall(msgs []marotte.Message, id string) (*marotte.ToolCall, bool) {
 	for i := range slices.Backward(msgs) {
 		for j := range msgs[i].ToolCalls {
 			if msgs[i].ToolCalls[j].ID == id {
@@ -60,7 +60,7 @@ func findToolCall(msgs []vibekit.Message, id string) (*vibekit.ToolCall, bool) {
 
 // previewMessage returns m with every oversized tool call replaced by its
 // preview, or m unchanged when nothing needed cutting.
-func previewMessage(m *vibekit.Message) vibekit.Message {
+func previewMessage(m *marotte.Message) marotte.Message {
 	out, _ := boundMessage(m, previewToolCall)
 	return out
 }
@@ -70,9 +70,9 @@ func previewMessage(m *vibekit.Message) vibekit.Message {
 //
 // HasFull covers input, output and diffs together because the client fetches one
 // bulk for all three.
-func previewToolCall(tc *vibekit.ToolCall) (vibekit.ToolCall, bool) {
+func previewToolCall(tc *marotte.ToolCall) (marotte.ToolCall, bool) {
 	out, cut := boundToolCall(tc, previewBudget)
-	if cut == (vibekit.ToolTruncation{}) {
+	if cut == (marotte.ToolTruncation{}) {
 		return out, false
 	}
 	out.OutputBytes = cut.OutputBytes

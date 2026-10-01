@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A single frame can carry both the type:"terminal" content block and `completed`,
@@ -22,7 +22,7 @@ func TestAdoptTerminalOutput_LinkAndCompletionInOneFrame(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	deps.terminals[termID] = termRendered{
 		text:  "hello\n",
-		spans: []vibekit.TextSpan{{Start: 0, End: 5, FG: 1, BG: -1}},
+		spans: []marotte.TextSpan{{Start: 0, End: 5, FG: 1, BG: -1}},
 	}
 
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -215,10 +215,10 @@ func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	}), FrameAttribution{})
 
 	for _, e := range *events {
-		if e.Type != vibekit.EventToolCall {
+		if e.Type != marotte.EventToolCall {
 			continue
 		}
-		p, ok := e.Payload.(vibekit.ToolCallPayload)
+		p, ok := e.Payload.(marotte.ToolCallPayload)
 		if !ok {
 			t.Fatalf("tool_call payload = %T", e.Payload)
 		}

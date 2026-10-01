@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// The SSE adapter: vibekit's half of the wake path. The stream, the cursor, the
+// The SSE adapter: marotte's half of the wake path. The stream, the cursor, the
 // hold-and-drain and the single-flight rule are the library's and are tested there;
 // what THIS file owns is the seam — which frames reach the bus and when their
 // stamps are observed, what the `revalidate` body does with a digest answer, and

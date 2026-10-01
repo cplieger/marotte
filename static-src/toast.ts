@@ -3,19 +3,19 @@
 //
 // The hand-rolled toast.ts + toast-engine.ts (timer/queue state machine + DOM
 // view) were replaced by the library's default `toast` singleton, whose
-// defaults already match vibekit's: up to 3 visible (rest queued, cap 20),
+// defaults already match marotte's: up to 3 visible (rest queued, cap 20),
 // info/success auto-dismiss after 4s, error sticky, hover OR focus pauses and
 // resumes only once BOTH end, click / Escape (newest first) / Enter / Space
 // dismiss. Screen-reader announcement is decoupled into the shared announce()
 // live region (error = assertive, info/success = polite) instead of a
 // role/aria-live on the stack — strictly better a11y (no nested live regions).
 //
-// This module is the thin vibekit wrapper preserving the public surface
+// This module is the thin marotte wrapper preserving the public surface
 // (`info` / `success` / `error` / `showToast` + the `ToastLevel` / `ToastRetry`
 // types) so the ~hundreds of call sites (and the @cplieger/actions boot wiring
 // in actions/boot.ts) are unchanged. Visuals live in the .uip-toast skin
 // (css/04-uip-skin.css), ported 1:1 from the old .vk-toast (bottom-right stack,
-// solid error/success variants, the countdown progress bar, vibekit's motion).
+// solid error/success variants, the countdown progress bar, marotte's motion).
 // ---------------------------------------------------------------------------
 
 import { toast, _resetForTest as uipResetToast } from "@cplieger/ui-primitives/toast";
@@ -34,7 +34,7 @@ export function success(message: string): () => void {
 }
 
 /** How long an error toast stays up. The library's default for `error` is 0
- *  (sticky), which vibekit overrides: an error nobody dismisses never leaves,
+ *  (sticky), which marotte overrides: an error nobody dismisses never leaves,
  *  so two or three of them stack and stay stacked for the rest of the session.
  *  12s is well past a comfortable read for a one-line failure, and the stack
  *  still pauses on hover/focus, so a user reading one is never cut off.
@@ -95,7 +95,7 @@ export function errorWithAction(message: string, action: ToastRetry): () => void
 }
 
 /** Show a toast with explicit level + duration. Use durationMs=0 for a sticky
- *  toast that requires manual dismissal. Pass undefined to use vibekit's level
+ *  toast that requires manual dismissal. Pass undefined to use marotte's level
  *  default (4s for info/success, 12s for error — see error() above). */
 export function showToast(
   message: string,

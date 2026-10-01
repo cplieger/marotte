@@ -10,21 +10,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fatMessage builds an assistant message whose tool call carries outputBytes of
 // output — the shape that made a six-message chat answer 13,010,641 bytes.
-func fatMessage(id string, outputBytes int) vibekit.Message {
-	return vibekit.Message{
+func fatMessage(id string, outputBytes int) marotte.Message {
+	return marotte.Message{
 		ID:   id,
-		Role: vibekit.RoleAssistant,
+		Role: marotte.RoleAssistant,
 		Ts:   100,
-		ToolCalls: []vibekit.ToolCall{{
+		ToolCalls: []marotte.ToolCall{{
 			ID:     id + "-tc",
 			Title:  "Execute",
-			Kind:   vibekit.ToolKindExecute,
-			Status: vibekit.ToolCompleted,
+			Kind:   marotte.ToolKindExecute,
+			Status: marotte.ToolCompleted,
 			Output: strings.Repeat("x", outputBytes),
 		}},
 	}
@@ -33,12 +33,12 @@ func fatMessage(id string, outputBytes int) vibekit.Message {
 // blockyMessage builds an assistant message carrying blocks blocks and nothing
 // else large — the shape a BYTE budget cannot see, since a text block of a few
 // words costs the wire almost nothing and the client's paint one whole row.
-func blockyMessage(id string, blocks int) vibekit.Message {
-	bs := make([]vibekit.Block, blocks)
+func blockyMessage(id string, blocks int) marotte.Message {
+	bs := make([]marotte.Block, blocks)
 	for i := range bs {
-		bs[i] = vibekit.Block{Type: vibekit.BlockText, Text: "x"}
+		bs[i] = marotte.Block{Type: marotte.BlockText, Text: "x"}
 	}
-	return vibekit.Message{ID: id, Role: vibekit.RoleAssistant, Ts: 100, Blocks: bs}
+	return marotte.Message{ID: id, Role: marotte.RoleAssistant, Ts: 100, Blocks: bs}
 }
 
 // toolyMessage builds the v3 shape of a tool-heavy assistant turn: one tool call
@@ -46,21 +46,21 @@ func blockyMessage(id string, blocks int) vibekit.Message {
 // equal in both residency units, so it is the shape that shows the CLIENT'S two
 // budgets diverging — 320 blocks admits ~320 tool cards against a client that
 // mounts 96.
-func toolyMessage(id string, calls int) vibekit.Message {
-	m := vibekit.Message{
+func toolyMessage(id string, calls int) marotte.Message {
+	m := marotte.Message{
 		ID:        id,
-		Role:      vibekit.RoleAssistant,
+		Role:      marotte.RoleAssistant,
 		Ts:        100,
-		ToolCalls: make([]vibekit.ToolCall, calls),
-		Blocks:    make([]vibekit.Block, calls),
+		ToolCalls: make([]marotte.ToolCall, calls),
+		Blocks:    make([]marotte.Block, calls),
 	}
 	for i := range calls {
 		tcID := fmt.Sprintf("%s-tc%d", id, i)
-		m.ToolCalls[i] = vibekit.ToolCall{
-			ID: tcID, Title: "Execute", Kind: vibekit.ToolKindExecute,
-			Status: vibekit.ToolCompleted, Output: "x",
+		m.ToolCalls[i] = marotte.ToolCall{
+			ID: tcID, Title: "Execute", Kind: marotte.ToolKindExecute,
+			Status: marotte.ToolCompleted, Output: "x",
 		}
-		m.Blocks[i] = vibekit.Block{Type: vibekit.BlockToolUse, ToolCallID: tcID}
+		m.Blocks[i] = marotte.Block{Type: marotte.BlockToolUse, ToolCallID: tcID}
 	}
 	return m
 }
@@ -68,10 +68,10 @@ func toolyMessage(id string, calls int) vibekit.Message {
 // wordyMessage builds an assistant message carrying contentBytes of prose. The
 // shape a fixture sized against maxMaxBytes needs: previewMessage bounds a tool
 // call's output to 8 KiB, and leaves `content` whole.
-func wordyMessage(id string, contentBytes int) vibekit.Message {
-	return vibekit.Message{
+func wordyMessage(id string, contentBytes int) marotte.Message {
+	return marotte.Message{
 		ID:      id,
-		Role:    vibekit.RoleAssistant,
+		Role:    marotte.RoleAssistant,
 		Ts:      100,
 		Content: strings.Repeat("x", contentBytes),
 	}
@@ -79,23 +79,23 @@ func wordyMessage(id string, contentBytes int) vibekit.Message {
 
 // nothingMessage builds the assistant message that reaches the transcript with
 // nothing in it: carriesNothing is true of it, so it is in no turn at all.
-func nothingMessage(id string) vibekit.Message {
-	return vibekit.Message{ID: id, Role: vibekit.RoleAssistant, Ts: 100}
+func nothingMessage(id string) marotte.Message {
+	return marotte.Message{ID: id, Role: marotte.RoleAssistant, Ts: 100}
 }
 
 // windowPage is the part of a single-chat GET these tests read: the window plus
 // the three fields describing its left edge.
 type windowPage struct {
-	Messages          []vibekit.Message `json:"messages"`
+	Messages          []marotte.Message `json:"messages"`
 	HasMore           bool              `json:"has_more"`
 	TurnOffset        int               `json:"turn_offset"`
 	TurnSegmentClosed bool              `json:"turn_segment_closed"`
 }
 
 // servePage runs GET /api/chats/c1<query> against store s holding msgs.
-func servePage(t *testing.T, s *Store, msgs []vibekit.Message, query string) (page windowPage, ids []string, bodyLen int) {
+func servePage(t *testing.T, s *Store, msgs []marotte.Message, query string) (page windowPage, ids []string, bodyLen int) {
 	t.Helper()
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = msgs
 		return true
@@ -120,7 +120,7 @@ func servePage(t *testing.T, s *Store, msgs []vibekit.Message, query string) (pa
 
 // serveOne runs GET /api/chats/c1<query> against a store holding msgs and
 // returns the decoded window plus the raw body length.
-func serveOne(t *testing.T, msgs []vibekit.Message, query string) (ids []string, hasMore bool, bodyLen int) {
+func serveOne(t *testing.T, msgs []marotte.Message, query string) (ids []string, hasMore bool, bodyLen int) {
 	t.Helper()
 	s, _ := newTestStore(t)
 	page, ids, bodyLen := servePage(t, s, msgs, query)
@@ -132,7 +132,7 @@ func TestHandleOne_ByteBudgetCutsAtAMessageBoundary(t *testing.T) {
 	// the third would overrun. The cut is at the boundary, so the answer is the two
 	// newest turns, and has_more names the two the client does not have. turns=1 is
 	// what leaves the byte ceiling as the thing that cuts.
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), fatMessage("a", 4096),
 		user("ub", "b", 100), fatMessage("b", 4096),
 		user("uc", "c", 100), fatMessage("c", 4096),
@@ -160,7 +160,7 @@ func TestHandleOne_ByteBudgetLetsOneOversizeMessageThroughWhole(t *testing.T) {
 	// envelope is the reconcile unit, so there is no honest half-message, and a
 	// budget that could answer nothing would make the newest message of a big
 	// chat unreachable.
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), fatMessage("a", 64),
 		user("ub", "big", 100), fatMessage("big", 200_000),
 	}
@@ -180,7 +180,7 @@ func TestHandleOne_HasMoreIsHonestAgainstTheBytes(t *testing.T) {
 	// The defect the budget replaces: has_more used to describe only the message
 	// COUNT, so a response that dropped nothing by count and everything by size
 	// still said false. Same three turns, two budgets, two honest answers.
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), fatMessage("a", 4096),
 		user("ub", "b", 100), fatMessage("b", 4096),
 		user("uc", "c", 100), fatMessage("c", 4096),
@@ -202,7 +202,7 @@ func TestHandleOne_HasMoreIsHonestAgainstTheBytes(t *testing.T) {
 
 func TestHandleOne_ByteBudgetComposesWithLimitAndBeforeID(t *testing.T) {
 	// Both budgets apply, and the cursor still bounds the top of the window.
-	msgs := make([]vibekit.Message, 6)
+	msgs := make([]marotte.Message, 6)
 	for i := range msgs {
 		msgs[i] = fatMessage(string(rune('a'+i)), 64)
 	}
@@ -221,9 +221,9 @@ func TestHandleOne_EmptyWindowIsAnArrayNotNull(t *testing.T) {
 	// The generated decoder rejects `null` for an array, so an empty window has
 	// to marshal as []. Same guard the make+copy this replaced provided.
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Messages = []vibekit.Message{fatMessage("a", 8)}
+		c.Messages = []marotte.Message{fatMessage("a", 8)}
 		return true
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1?before_id=a", nil)
@@ -243,7 +243,7 @@ func TestHandleOne_EmptyWindowIsAnArrayNotNull(t *testing.T) {
 // The byte budget is deliberately generous here, so a byte-only cut cannot
 // produce this answer and the assertion is about the block budget alone.
 func TestHandleOne_BlockBudgetCutsAtAMessageBoundary(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), blockyMessage("a", 40),
 		user("ub", "b", 100), blockyMessage("b", 40),
 		user("uc", "c", 100), blockyMessage("c", 40),
@@ -265,7 +265,7 @@ func TestHandleOne_BlockBudgetCutsAtAMessageBoundary(t *testing.T) {
 // however many blocks it carries, or the newest message of a block-heavy chat
 // would be unreachable. One measured assistant message carries 580 blocks.
 func TestHandleOne_BlockBudgetLetsOneOversizeMessageThroughWhole(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), blockyMessage("a", 2),
 		user("ub", "big", 100), blockyMessage("big", 600),
 	}
@@ -283,7 +283,7 @@ func TestHandleOne_BlockBudgetLetsOneOversizeMessageThroughWhole(t *testing.T) {
 // has_more answers against whichever budget cut the page, so a client that reads
 // it can still reach everything the block budget held back.
 func TestHandleOne_HasMoreIsHonestAgainstTheBlocks(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), blockyMessage("a", 40),
 		user("ub", "b", 100), blockyMessage("b", 40),
 		user("uc", "c", 100), blockyMessage("c", 40),
@@ -312,7 +312,7 @@ func TestHandleOne_HasMoreIsHonestAgainstTheBlocks(t *testing.T) {
 // The block and byte budgets are deliberately generous here, so neither could
 // produce this answer and the assertion is about the tool-call budget alone.
 func TestHandleOne_ToolCallBudgetCutsAtAMessageBoundary(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), toolyMessage("a", 40),
 		user("ub", "b", 100), toolyMessage("b", 40),
 		user("uc", "c", 100), toolyMessage("c", 40),
@@ -336,7 +336,7 @@ func TestHandleOne_ToolCallBudgetCutsAtAMessageBoundary(t *testing.T) {
 // 353 of them, so a budget that could answer nothing would make the newest message
 // of a tool-heavy chat unreachable.
 func TestHandleOne_ToolCallBudgetLetsOneOversizeMessageThroughWhole(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), toolyMessage("a", 2),
 		user("ub", "big", 100), toolyMessage("big", 400),
 	}
@@ -356,7 +356,7 @@ func TestHandleOne_ToolCallBudgetLetsOneOversizeMessageThroughWhole(t *testing.T
 // is the block default, and every tool call the client synthesizes a block for
 // costs a block too, so the default cannot cut a page the blocks admitted.
 func TestHandleOne_TheDefaultToolCallBudgetCutsNothingTheBlocksAllow(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), toolyMessage("a", 80),
 		user("ub", "b", 100), toolyMessage("b", 80),
 		user("uc", "c", 100), toolyMessage("c", 80),
@@ -380,7 +380,7 @@ func TestHandleOne_TheDefaultToolCallBudgetCutsNothingTheBlocksAllow(t *testing.
 // the synthesis is gated on the ASSISTANT role, which every other role misses.
 func TestCostOfMessage_MirrorsTheClientsAccounting(t *testing.T) {
 	tests := map[string]struct {
-		msg  vibekit.Message
+		msg  marotte.Message
 		want messageCost
 	}{
 		"a message's own blocks are what it costs": {
@@ -388,31 +388,31 @@ func TestCostOfMessage_MirrorsTheClientsAccounting(t *testing.T) {
 			want: messageCost{Blocks: 7},
 		},
 		"an empty message still costs one row": {
-			msg:  vibekit.Message{ID: "a", Role: vibekit.RoleAssistant},
+			msg:  marotte.Message{ID: "a", Role: marotte.RoleAssistant},
 			want: messageCost{Blocks: 1},
 		},
 		"a legacy message costs its synthesized blocks, not one": {
-			msg: vibekit.Message{
-				ID: "a", Role: vibekit.RoleAssistant,
+			msg: marotte.Message{
+				ID: "a", Role: marotte.RoleAssistant,
 				Content:   "hello",
 				Reasoning: "thinking",
-				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}, {ID: "t3"}},
+				ToolCalls: []marotte.ToolCall{{ID: "t1"}, {ID: "t2"}, {ID: "t3"}},
 			},
 			want: messageCost{Blocks: 5, ToolCalls: 3},
 		},
 		"a legacy tool-only message costs one per tool call": {
-			msg: vibekit.Message{
-				ID: "a", Role: vibekit.RoleAssistant,
-				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
+			msg: marotte.Message{
+				ID: "a", Role: marotte.RoleAssistant,
+				ToolCalls: []marotte.ToolCall{{ID: "t1"}, {ID: "t2"}},
 			},
 			want: messageCost{Blocks: 2, ToolCalls: 2},
 		},
 		"blocks present win over the synthesis": {
-			msg: vibekit.Message{
-				ID: "a", Role: vibekit.RoleAssistant,
+			msg: marotte.Message{
+				ID: "a", Role: marotte.RoleAssistant,
 				Content:   "hello",
-				Blocks:    []vibekit.Block{{Type: vibekit.BlockText, Text: "hello"}},
-				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
+				Blocks:    []marotte.Block{{Type: marotte.BlockText, Text: "hello"}},
+				ToolCalls: []marotte.ToolCall{{ID: "t1"}, {ID: "t2"}},
 			},
 			want: messageCost{Blocks: 1, ToolCalls: 2},
 		},
@@ -420,11 +420,11 @@ func TestCostOfMessage_MirrorsTheClientsAccounting(t *testing.T) {
 			// normalizeMessage returns any non-assistant message untouched, so the
 			// client leaves its blocks array empty and turnCost charges max(1, 0).
 			// Synthesizing here would price it at 4 and cut a page the client holds.
-			msg: vibekit.Message{
-				ID: "a", Role: vibekit.RoleUser,
+			msg: marotte.Message{
+				ID: "a", Role: marotte.RoleUser,
 				Content:   "hello",
 				Reasoning: "thinking",
-				ToolCalls: []vibekit.ToolCall{{ID: "t1"}, {ID: "t2"}},
+				ToolCalls: []marotte.ToolCall{{ID: "t1"}, {ID: "t2"}},
 			},
 			want: messageCost{Blocks: 1, ToolCalls: 2},
 		},
@@ -447,13 +447,13 @@ func TestCostOfMessage_MirrorsTheClientsAccounting(t *testing.T) {
 // The block budget is what cuts each window here, so the three cases are three
 // genuinely different left edges rather than three spellings of one.
 func TestHandleOne_ServesTheWindowBase(t *testing.T) {
-	settled := func(id string, blocks int) vibekit.Message {
+	settled := func(id string, blocks int) marotte.Message {
 		m := blockyMessage(id, blocks)
-		m.TurnOutcome = vibekit.TurnOutcomeCompleted
+		m.TurnOutcome = marotte.TurnOutcomeCompleted
 		return m
 	}
 	// Three turns, each a prompt plus a settled 40-block reply.
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("u1", "a", 100), settled("a1", 40),
 		user("u2", "b", 200), settled("a2", 40),
 		user("u3", "c", 300), blockyMessage("a3", 40),
@@ -501,7 +501,7 @@ func TestHandleOne_ServesTheWindowBase(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			_, _ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Messages = msgs
 				return true
@@ -513,7 +513,7 @@ func TestHandleOne_ServesTheWindowBase(t *testing.T) {
 				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 			}
 			var got struct {
-				Messages          []vibekit.Message `json:"messages"`
+				Messages          []marotte.Message `json:"messages"`
 				HasMore           bool              `json:"has_more"`
 				TurnOffset        int               `json:"turn_offset"`
 				TurnSegmentClosed bool              `json:"turn_segment_closed"`
@@ -547,7 +547,7 @@ func TestHandleOne_ServesTheWindowBase(t *testing.T) {
 // boundary. Every ceiling below is tight enough that a message-granular cut would
 // land inside the newest turn, and the floor is what keeps the edge out of it.
 func TestHandleOne_WindowDeliversWholeTurns(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("ua", "a", 100), toolyMessage("a", 40),
 		user("ub", "b", 100), toolyMessage("b", 40),
 		user("uc", "c", 100), toolyMessage("c", 40),
@@ -625,12 +625,12 @@ func TestHandleOne_WindowDeliversWholeTurns(t *testing.T) {
 // opens. Each reply here follows a settled one, so each opens a headerless turn,
 // and the ceilings have to bound the page as they do for a prompted chat.
 func TestHandleOne_APromptlessTranscriptIsCutByTheBytes(t *testing.T) {
-	settled := func(id string) vibekit.Message {
+	settled := func(id string) marotte.Message {
 		m := fatMessage(id, 4096)
-		m.TurnOutcome = vibekit.TurnOutcomeCompleted
+		m.TurnOutcome = marotte.TurnOutcomeCompleted
 		return m
 	}
-	msgs := []vibekit.Message{settled("a"), settled("b"), settled("c"), settled("d")}
+	msgs := []marotte.Message{settled("a"), settled("b"), settled("c"), settled("d")}
 
 	ids, hasMore, bodyLen := serveOne(t, msgs, "?max_bytes=10240&turns=1")
 
@@ -650,21 +650,21 @@ func TestHandleOne_APromptlessTranscriptIsCutByTheBytes(t *testing.T) {
 // than the floor asks for keeps every one of them, and the ceilings still cut once
 // the turns it does hold are served.
 func TestHandleOne_TheFloorIsBoundedByTheTurnsTheChatOffers(t *testing.T) {
-	twoTurns := []vibekit.Message{
+	twoTurns := []marotte.Message{
 		user("ua", "a", 100), fatMessage("a", 4096),
 		user("ub", "b", 100), fatMessage("b", 4096),
 	}
 	// Two messages that render nothing precede the first turn, so the floor this chat
 	// can meet is reached while older messages are still unserved.
-	leading := append([]vibekit.Message{nothingMessage("n0"), nothingMessage("n1")}, twoTurns...)
-	rendersNothing := []vibekit.Message{
+	leading := append([]marotte.Message{nothingMessage("n0"), nothingMessage("n1")}, twoTurns...)
+	rendersNothing := []marotte.Message{
 		nothingMessage("n0"), nothingMessage("n1"),
 		nothingMessage("n2"), nothingMessage("n3"),
 	}
 
 	tests := []struct {
 		name     string
-		msgs     []vibekit.Message
+		msgs     []marotte.Message
 		query    string
 		wantIDs  []string
 		wantMore bool
@@ -718,7 +718,7 @@ func TestHandleOne_TheHardByteStopBoundsEveryFloor(t *testing.T) {
 	fat := maxWholeTurnBytes/3 + 1<<20
 
 	t.Run("the floor cannot carry a page past the stop", func(t *testing.T) {
-		msgs := []vibekit.Message{
+		msgs := []marotte.Message{
 			user("ua", "a", 100), wordyMessage("a", fat),
 			user("ub", "b", 100), wordyMessage("b", fat),
 			user("uc", "c", 100), wordyMessage("c", fat),
@@ -742,7 +742,7 @@ func TestHandleOne_TheHardByteStopBoundsEveryFloor(t *testing.T) {
 
 	t.Run("one oversize newest message still goes through whole", func(t *testing.T) {
 		big := maxWholeTurnBytes + 1<<20
-		msgs := []vibekit.Message{
+		msgs := []marotte.Message{
 			user("ua", "a", 100), wordyMessage("a", 64),
 			user("ub", "b", 100), wordyMessage("big", big),
 		}
@@ -773,13 +773,13 @@ func TestHandleOne_TheHardByteStopBoundsEveryFloor(t *testing.T) {
 // boundary in one unit, so a turn the AGENT opened is served whole like any other
 // and the ordinal addresses a turn the window holds whole.
 func TestHandleOne_AHeaderlessTurnIsServedWhole(t *testing.T) {
-	settled := func(m vibekit.Message) vibekit.Message {
-		m.TurnOutcome = vibekit.TurnOutcomeCompleted
+	settled := func(m marotte.Message) marotte.Message {
+		m.TurnOutcome = marotte.TurnOutcomeCompleted
 		return m
 	}
 	// Turn 1 settles, so h1 opens a headerless turn 2 that h2 and h3 continue: the
 	// byte ceiling below breaches inside it.
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("u1", "a", 100), settled(fatMessage("a1", 4096)),
 		fatMessage("h1", 4096), fatMessage("h2", 4096), settled(fatMessage("h3", 4096)),
 	}
@@ -806,7 +806,7 @@ func TestHandleOne_AHeaderlessTurnIsServedWhole(t *testing.T) {
 // resolved from the first row that DOES render. A ceiling may still cut there
 // rather than walking back into the turn before it.
 func TestHandleOne_ALeftEdgeOnARowThatRendersNothingResolvesToItsTurn(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("u1", "a", 100), fatMessage("a1", 4096),
 		nothingMessage("n"),
 		user("u2", "b", 100), fatMessage("a2", 4096),
@@ -832,16 +832,16 @@ func TestHandleOne_ALeftEdgeOnARowThatRendersNothingResolvesToItsTurn(t *testing
 // for that edge counts exactly the turns PRECEDING it, so the window holds its first
 // turn whole. Two traversals of one boundary rule, checked against each other.
 func TestTurnOpeners_AgreeWithTheOrdinalAtEveryAdmissibleCut(t *testing.T) {
-	settled := func(m vibekit.Message) vibekit.Message {
-		m.TurnOutcome = vibekit.TurnOutcomeCompleted
+	settled := func(m marotte.Message) marotte.Message {
+		m.TurnOutcome = marotte.TurnOutcomeCompleted
 		return m
 	}
-	event := func(id string, ts int64) vibekit.Message {
-		return vibekit.Message{
-			ID: id, Role: vibekit.RoleEvent, EventKind: vibekit.EventModelSwitched, Ts: ts,
+	event := func(id string, ts int64) marotte.Message {
+		return marotte.Message{
+			ID: id, Role: marotte.RoleEvent, EventKind: marotte.EventModelSwitched, Ts: ts,
 		}
 	}
-	fixtures := map[string][]vibekit.Message{
+	fixtures := map[string][]marotte.Message{
 		"prompted turns": {
 			user("u1", "a", 100), assistant("a1", 200),
 			user("u2", "b", 300), assistant("a2", 400),
@@ -1004,7 +1004,7 @@ func TestParseMaxBytesParam_HonoursTheInclusiveRange(t *testing.T) {
 func TestHandleOne_TheNewestTurnIsServedWholePastEveryCallerCeiling(t *testing.T) {
 	// One turn of five messages: a prompt, prose, a block-heavy row and two tool-heavy
 	// ones, so each ceiling below has something of its own kind to refuse.
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("uold", "old", 100), fatMessage("old", 4096),
 		user("unew", "new", 100),
 		wordyMessage("n1", 8192),
@@ -1040,7 +1040,7 @@ func TestHandleOne_ANewestTurnOverTheCallerCeilingIsServedWhole(t *testing.T) {
 	// Three messages of 3 MiB each: 9 MiB, over maxMaxBytes (8) and under
 	// maxWholeTurnBytes (16), so the answer differs depending on which one stops the floor.
 	const each = 3 << 20
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("uold", "old", 100), wordyMessage("old", 4096),
 		user("unew", "new", 100),
 		wordyMessage("n1", each), wordyMessage("n2", each), wordyMessage("n3", each),
@@ -1078,7 +1078,7 @@ func TestHandleOne_ANewestTurnOverTheCallerCeilingIsServedWhole(t *testing.T) {
 func TestHandleOne_TheMessageCapStaysAHardCut(t *testing.T) {
 	// The cut lands MID-TURN: the newest turn holds three messages and only its last is
 	// served, so this is the floor being overridden rather than a turn that happened to fit.
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		user("uold", "old", 100), fatMessage("old", 4096),
 		user("unew", "new", 100), fatMessage("n1", 4096), fatMessage("n2", 4096),
 	}
@@ -1097,7 +1097,7 @@ func TestHandleOne_TheMessageCapStaysAHardCut(t *testing.T) {
 
 // serveOnePage is serveOne's sibling for a case that reads the window's left-edge fields as
 // well as its ids. serveOne discards the page, so a case needing turn_offset cannot use it.
-func serveOnePage(t *testing.T, msgs []vibekit.Message, query string) (windowPage, []string, int) {
+func serveOnePage(t *testing.T, msgs []marotte.Message, query string) (windowPage, []string, int) {
 	t.Helper()
 	s, _ := newTestStore(t)
 	return servePage(t, s, msgs, query)

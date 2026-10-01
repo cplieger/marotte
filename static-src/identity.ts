@@ -30,10 +30,10 @@ export type IdentityVerdict =
 /** The reason a request that never reached the union carries.
  *
  *  A null response means the fetch failed or the body did not decode, which is
- *  the same CLAIM as the server's own `unavailable`: vibekit does not know who is
+ *  the same CLAIM as the server's own `unavailable`: marotte does not know who is
  *  signed in. Distinguished only by the reason, because the two have different
  *  remedies and a retry banner should be able to say which happened. */
-const REASON_UNREACHABLE = "vibekit could not be reached";
+const REASON_UNREACHABLE = "marotte could not be reached";
 
 /** Read the current identity. Never throws and never rejects: every failure IS
  *  the `unavailable` arm, so no caller has to re-derive the union from an

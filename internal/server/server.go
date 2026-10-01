@@ -14,15 +14,15 @@ import (
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/tabs"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/webhttp/v3"
 )
 
 const port = "9847"
 
 // listenPort is the port the listener binds. The release binary always binds `port`;
-// a binary built with -tags vibekit_test may point it elsewhere (testhooks_vibekittest.go)
+// a binary built with -tags marotte_test may point it elsewhere (testhooks_marottetest.go)
 // so the browser-mode suite can start one beside a serving instance.
 var listenPort = port
 
@@ -235,7 +235,7 @@ func New(opts ...Option) *Server {
 // synthesises its 405 + Allow only when NO pattern matched at all, and the "/" SPA mount
 // matches every path and method, so a method-mismatched request lands there and is answered
 // 200 with index.html. That fallback is not optional, so httpreply.RequireMethod is the
-// whole of vibekit's 405 surface: do not put a method back on a pattern here.
+// whole of marotte's 405 surface: do not put a method back on a pattern here.
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
@@ -334,7 +334,7 @@ func (s *Server) ListenAndServe() error {
 	// bind, and this HTTP surface carries no auth of its own.
 	if !s.hostPolicy.Active() {
 		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
-			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
+			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,marotte.example.com)")
 	}
 
 	// webhttp.Run owns the serve/shutdown sequence. The pre-drain hook is what keeps the

@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/kirosession"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/kirosession"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // --- helpers ---
@@ -27,7 +27,7 @@ import (
 // recordingStartBridge records the StartOpts passed to Start, else a fakeBridge.
 type recordingStartBridge struct {
 	*fakeBridge
-	lastStart vibekit.StartOpts
+	lastStart marotte.StartOpts
 	recMu     sync.Mutex
 }
 
@@ -35,14 +35,14 @@ func newRecordingStartBridge() *recordingStartBridge {
 	return &recordingStartBridge{fakeBridge: newFakeBridge()}
 }
 
-func (b *recordingStartBridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
+func (b *recordingStartBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	b.recMu.Lock()
 	b.lastStart = *opts
 	b.recMu.Unlock()
 	return b.fakeBridge.Start(ctx, opts)
 }
 
-func (b *recordingStartBridge) startOpts() vibekit.StartOpts {
+func (b *recordingStartBridge) startOpts() marotte.StartOpts {
 	b.recMu.Lock()
 	defer b.recMu.Unlock()
 	return b.lastStart
@@ -68,18 +68,18 @@ type recordingPush struct {
 	// noSubs flips HasSubscribers to false for the drop path. The zero value keeps a
 	// subscriber present, so every fixture that predates it is unchanged.
 	noSubs  atomic.Bool
-	subject vibekit.PushSubject
+	subject marotte.PushSubject
 }
 
 func (p *recordingPush) RegisterRoutes(*http.ServeMux)            {}
-func (p *recordingPush) Subscribe(vibekit.PushSubscription)       {}
+func (p *recordingPush) Subscribe(marotte.PushSubscription)       {}
 func (p *recordingPush) Unsubscribe(string)                       {}
 func (p *recordingPush) HasSubscribers() bool                     { return !p.noSubs.Load() }
-func (p *recordingPush) SetPreferences(map[vibekit.PushKind]bool) {}
+func (p *recordingPush) SetPreferences(map[marotte.PushKind]bool) {}
 func (p *recordingPush) ReloadPreferences(context.Context)        { p.reloads.Add(1) }
 func (p *recordingPush) Close()                                   {}
-func (p *recordingPush) Retract(vibekit.PushSubject)              {}
-func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKind, subject vibekit.PushSubject) {
+func (p *recordingPush) Retract(marotte.PushSubject)              {}
+func (p *recordingPush) Send(_ context.Context, _, body string, _ marotte.PushKind, subject marotte.PushSubject) {
 	p.subject = subject
 	select {
 	case p.sends <- body:
@@ -94,7 +94,7 @@ func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKi
 func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-chat"
 		return true // no ACPSessionID -> fresh session/new path
@@ -138,7 +138,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 
 	ctx := t.Context()
 	const acpSession = "sess_forked"
-	if _, err := cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.SupervisedMode = true
 		c.RecordSession(acpSession) // -> the session/load path
@@ -151,7 +151,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	var opts vibekit.StartOpts
+	var opts marotte.StartOpts
 	var found bool
 	mu.Lock()
 	for _, rb := range spawned {
@@ -180,7 +180,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -204,11 +204,11 @@ func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 func TestTryFastModelSwitch_ClosesTheTurnInFlight(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	h.coord.StartTurn(ctx, "c1", vibekit.TurnSourceWireTurnStart)
+	h.coord.StartTurn(ctx, "c1", marotte.TurnSourceWireTurnStart)
 	buf := h.stageTurnBuffer(t, "c1")
 	buf.Started = true
 	buf.MessageID = newMessageID()
@@ -240,11 +240,11 @@ func TestTryFastModelSwitch_ClosesTheTurnInFlight(t *testing.T) {
 func TestTryFastModelSwitch_LeavesThePromptsOwnTurnOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	epoch := h.coord.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
 	buf := h.stageTurnBuffer(t, "c1")
 	buf.Started = true
 	buf.MessageID = newMessageID()
@@ -264,7 +264,7 @@ func TestTryFastModelSwitch_LeavesThePromptsOwnTurnOpen(t *testing.T) {
 func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -280,13 +280,13 @@ func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 // --- repairEffort: the level KAS changed on its own ---
 
 // A prompt on an ALREADY-OPEN bridge re-asserts the chat's level, the only
-// checkpoint that catches a level KAS moved without vibekit asking:
+// checkpoint that catches a level KAS moved without marotte asking:
 // pinSessionModelId settling an unset model on the first prompt, or a switch made
-// from the Kiro IDE or TUI on a shared session. Neither is a vibekit action.
+// from the Kiro IDE or TUI on a shared session. Neither is a marotte action.
 func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Effort = "max"
 		return true
@@ -294,7 +294,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	// Stand in for KAS moving the level underneath vibekit.
+	// Stand in for KAS moving the level underneath marotte.
 	br.mu.Lock()
 	br.effort = "high"
 	br.mu.Unlock()
@@ -313,7 +313,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
 
-			got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c1", Effort: test.chatEffort, Model: test.chatModel})
+			got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c1", Effort: test.chatEffort, Model: test.chatModel})
 
 			if got != test.want {
 				t.Errorf("effortFor(chat=%q, model=%q, last_effort_by_model=%v) = %q, want %q",
@@ -397,7 +397,7 @@ func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 		if got := h.coord.effortSeedFor(t.Context(), model); got != want {
 			t.Errorf("effortSeedFor(%q) = %q, want %q — each model keeps its own remembered level", model, got, want)
 		}
-		if got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c-" + model, Model: model}); got != want {
+		if got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c-" + model, Model: model}); got != want {
 			t.Errorf("effortFor(chat on %q) = %q, want %q — each model keeps its own remembered level", model, got, want)
 		}
 	}
@@ -409,9 +409,9 @@ func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
 func TestEffortFor_FallsBackToTheModelsCatalogDefault(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.coord.lifecycle.configDir = t.TempDir()
-	h.coord.catalog.SetModels([]vibekit.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
+	h.coord.catalog.SetModels([]marotte.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
 
-	got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c1", Model: "m1"})
+	got := h.coord.effortFor(t.Context(), &marotte.Chat{ID: "c1", Model: "m1"})
 
 	if got != "high" {
 		t.Errorf("effortFor(chat on m1, no choice and no seed) = %q, want high — the model's own default_effort_level is the last rung", got)
@@ -421,7 +421,7 @@ func TestEffortFor_FallsBackToTheModelsCatalogDefault(t *testing.T) {
 // EffortForSwitch resolves against the TARGET model: the level remembered for that
 // model, else the target's own default from the WORKSPACE catalog.
 func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
-	catalog := []vibekit.SessionModel{
+	catalog := []marotte.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high"},
 		{ID: "m2", DefaultEffortLevel: "medium"},
 	}
@@ -462,7 +462,7 @@ func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
 	writeEffortSeed(t, dir, map[string]string{"m1": "max"})
 	h, _, _ := newTestHub()
 	h.coord.lifecycle.configDir = dir
-	chat := &vibekit.Chat{ID: "c1", Model: "m1"}
+	chat := &marotte.Chat{ID: "c1", Model: "m1"}
 
 	if got := h.coord.effortFor(t.Context(), chat); got != "max" {
 		t.Fatalf("effortFor = %q, want max", got)
@@ -517,10 +517,10 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
-	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
+	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	select {
@@ -540,14 +540,14 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch, buf := h.stagePromptTurn(t, "c1")
 	buf.Started = true
 	buf.MessageID = "m-asst"
 
 	logs := captureLogs(t)
-	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
+	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
 	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
 
 	got := logs.String()
@@ -563,7 +563,7 @@ func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
 	h.coord.PersistModelSwitch(ctx, "c1", "m-new", 1234)
@@ -587,21 +587,21 @@ func TestAdoptKASTitle(t *testing.T) {
 	}{
 		{
 			name:  "adopts a real title onto a default-named chat",
-			start: vibekit.DefaultChatName,
-			title: "Vibekit conversational surface",
-			want:  "Vibekit conversational surface",
+			start: marotte.DefaultChatName,
+			title: "Marotte conversational surface",
+			want:  "Marotte conversational surface",
 		},
 		{
 			name:  "refuses KAS's own placeholder",
-			start: vibekit.DefaultChatName,
+			start: marotte.DefaultChatName,
 			title: translate.KASDefaultSessionTitle,
-			want:  vibekit.DefaultChatName,
+			want:  marotte.DefaultChatName,
 		},
 		{
 			name:  "refuses an empty title",
-			start: vibekit.DefaultChatName,
+			start: marotte.DefaultChatName,
 			title: "",
-			want:  vibekit.DefaultChatName,
+			want:  marotte.DefaultChatName,
 		},
 		{
 			name:  "never overwrites a first-prompt label",
@@ -618,7 +618,7 @@ func TestAdoptKASTitle(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &vibekit.Chat{Name: tc.start}
+			c := &marotte.Chat{Name: tc.start}
 			adoptKASTitle(c, tc.title)
 			if c.Name != tc.want {
 				t.Errorf("adoptKASTitle(%q, %q) left name %q, want %q",
@@ -631,7 +631,7 @@ func TestAdoptKASTitle(t *testing.T) {
 // This rung reads what KAS STORED, so it gets the SAME door treatment the live focus
 // channel gets — sanitizer, bound, rune cap and shape rules — and the cases below are
 // one per part of it. A stored title is not the safer input: KAS keeps its own session
-// title independently of vibekit's chat name, nothing bounded or sanitized it on the
+// title independently of marotte's chat name, nothing bounded or sanitized it on the
 // way in, a session titled by a pre-gate build re-offers that string on every resume,
 // and a rename from the IDE or the TUI can put one there at any time. It is also the
 // worse door, because a resume names a chat whose record was recreated and is
@@ -646,12 +646,12 @@ func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 			// Verbatim from the live volume's poisoned chat record.
 			name:  "a_stored_model_refusal",
 			title: "I need more context to generate a title. Could you share the user's first mes...",
-			want:  vibekit.DefaultChatName,
+			want:  marotte.DefaultChatName,
 		},
 		{
 			name:  "a_stored_truncation_of_the_first_prompt",
-			title: "Safari on Mac throws this console error for vibekit: [Error] ResizeObserver l...",
-			want:  vibekit.DefaultChatName,
+			title: "Safari on Mac throws this console error for marotte: [Error] ResizeObserver l...",
+			want:  marotte.DefaultChatName,
 		},
 		{
 			// Nothing on the wire bounds this field and a stored title is not
@@ -662,7 +662,7 @@ func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 			// of them cannot open it. The log test below is what pins the bound.
 			name:  "an_unbounded_stored_title",
 			title: strings.Repeat("x", 700),
-			want:  vibekit.DefaultChatName,
+			want:  marotte.DefaultChatName,
 		},
 		{
 			// The sanitizer, and the reason it runs before the rules rather than
@@ -679,7 +679,7 @@ func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &vibekit.Chat{Name: vibekit.DefaultChatName}
+			c := &marotte.Chat{Name: marotte.DefaultChatName}
 			adoptKASTitle(c, tc.title)
 			if c.Name != tc.want {
 				t.Errorf("adoptKASTitle(%q) left name %q, want %q", tc.title, c.Name, tc.want)
@@ -688,7 +688,7 @@ func TestAdoptKASTitle_AppliesTheWholeDoorTreatment(t *testing.T) {
 	}
 }
 
-// The refusal line is the one place a title vibekit did NOT adopt still reaches an
+// The refusal line is the one place a title marotte did NOT adopt still reaches an
 // operator, and it is the same untrusted string: nothing on the wire bounds the field
 // and a stored title is not Ete-capped. So the line carries the SANITIZED form plus the
 // rule that fired. Logging the raw argument instead is a one-word edit that puts
@@ -697,7 +697,7 @@ func TestAdoptKASTitle_LogsTheSanitizedTitleWithItsReason(t *testing.T) {
 	logs := captureLogs(t)
 	stored := "\x1b[31m" + strings.Repeat("x", 700) + "\nmore"
 
-	adoptKASTitle(&vibekit.Chat{Name: vibekit.DefaultChatName}, stored)
+	adoptKASTitle(&marotte.Chat{Name: marotte.DefaultChatName}, stored)
 
 	var rec struct {
 		Title  string `json:"title"`
@@ -815,7 +815,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs)
 	cs.Bus = h
 
-	setSession := func(chatID vibekit.ChatID, sessionID string) {
+	setSession := func(chatID marotte.ChatID, sessionID string) {
 		t.Helper()
 		sb, _ := h.bridge.mgr.orInsert(chatID)
 		fb, ok := sb.bridge.(*fakeBridge)
@@ -856,7 +856,7 @@ func TestApplyLoadedSessionFacts_KeepsWhatTheResultOmitted(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := &vibekit.Chat{Name: "A", CurrentModeID: "spec"}
+			c := &marotte.Chat{Name: "A", CurrentModeID: "spec"}
 			br := &fakeBridge{currentMode: tc.mode}
 
 			applyLoadedSessionFacts(c, br, "")
@@ -884,7 +884,7 @@ func TestApplyLoadedSessionFacts_KeepsContextThresholds(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := &vibekit.Chat{Name: "A"}
+			c := &marotte.Chat{Name: "A"}
 			c.Usage.SummarizationThresholdPct = 80
 			c.Usage.TruncationThresholdPct = 95
 			br := &fakeBridge{summarizationPct: tc.summarization, truncationPct: tc.truncation}
@@ -927,7 +927,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			br.mu.Lock()
 			br.currentMode = tc.actual
 			br.mu.Unlock()
-			_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
 				c.CurrentModeID = tc.requested
 				return true
@@ -944,7 +944,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 
 			var reported bool
 			for _, p := range errorPayloadsSince(t, h, since) {
-				if p.Code != vibekit.ErrCodeModeNotApplied {
+				if p.Code != marotte.ErrCodeModeNotApplied {
 					continue
 				}
 				reported = true
@@ -989,7 +989,7 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs)
 			cs.Bus = h
 			h.mcpRegistry.SignalReady()
-			_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
 				c.SupervisedMode = tc.supervised
 				return true
@@ -1012,7 +1012,7 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 
 			var reported bool
 			for _, p := range errorPayloadsSince(t, h, since) {
-				if p.Code == vibekit.ErrCodeSupervisedNotApplied {
+				if p.Code == marotte.ErrCodeSupervisedNotApplied {
 					reported = true
 				}
 			}
@@ -1026,23 +1026,23 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 
 // Closing a chat must NOT reap its durable KAS session; deleting one must. Sharing the delete
 // path breaks the contract twice: the chat record survives with nothing left to
-// `session/load`, and the History page — which lists KAS's sessions, not vibekit's chat files
+// `session/load`, and the History page — which lists KAS's sessions, not marotte's chat files
 // — can only ever show chats that are still open. The delete arm is the control: without it, a
 // close-preserves assertion would also pass if the reaper were simply unwired.
 func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	cases := []struct {
 		name        string
-		teardown    func(h *Runtime, ctx context.Context, id vibekit.ChatID)
+		teardown    func(h *Runtime, ctx context.Context, id marotte.ChatID)
 		wantSurvive bool
 	}{
 		{
 			name:        "close keeps the session on disk",
-			teardown:    func(h *Runtime, ctx context.Context, id vibekit.ChatID) { h.CloseChatState(ctx, id) },
+			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.CloseChatState(ctx, id) },
 			wantSurvive: true,
 		},
 		{
 			name:        "delete reaps it (control)",
-			teardown:    func(h *Runtime, ctx context.Context, id vibekit.ChatID) { h.DeleteChatState(ctx, id) },
+			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.DeleteChatState(ctx, id) },
 			wantSurvive: false,
 		},
 	}
@@ -1067,7 +1067,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			t.Cleanup(func() { shutdownHub(t, h) })
 
 			ctx := t.Context()
-			if _, err := cs.Mutate(ctx, "c-owner", func(c *vibekit.Chat, _ bool) bool {
+			if _, err := cs.Mutate(ctx, "c-owner", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "owner"
 				c.RecordSession("sess_owned")
 				return true
@@ -1093,19 +1093,19 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 	cases := []struct {
 		name        string
-		teardown    func(h *Runtime, ctx context.Context, id vibekit.ChatID)
+		teardown    func(h *Runtime, ctx context.Context, id marotte.ChatID)
 		wantSurvive bool
 	}{
 		{
 			name: "the captured chain reaps with the record gone",
-			teardown: func(h *Runtime, ctx context.Context, id vibekit.ChatID) {
+			teardown: func(h *Runtime, ctx context.Context, id marotte.ChatID) {
 				h.DeleteChatStateByChain(ctx, id, []string{"sess_owned"})
 			},
 			wantSurvive: false,
 		},
 		{
 			name:        "the record-reading grade no-ops without one (control)",
-			teardown:    func(h *Runtime, ctx context.Context, id vibekit.ChatID) { h.DeleteChatState(ctx, id) },
+			teardown:    func(h *Runtime, ctx context.Context, id marotte.ChatID) { h.DeleteChatState(ctx, id) },
 			wantSurvive: true,
 		},
 	}
@@ -1149,7 +1149,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 // awaited rather than assumed, and the wait fails closed.
 func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	h, cs, br := newTestHub()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
 			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
@@ -1157,7 +1157,7 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owned")
 		return true
@@ -1188,15 +1188,15 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// The first frame has no turn to fold into, so it opens one and pays for the facts.
-	h.coord.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart)
+	h.coord.TurnFoldTarget(ctx, chatID, marotte.TurnSourceWireTurnStart)
 	before := cs.Gets.Load()
 
 	for range 20 {
-		h.coord.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart)
+		h.coord.TurnFoldTarget(ctx, chatID, marotte.TurnSourceWireTurnStart)
 	}
 
 	if got := cs.Gets.Load(); got != before {
@@ -1222,18 +1222,18 @@ func TestOpenTurnBuffer_DoesNotOpenATurn(t *testing.T) {
 
 func TestApplyLoadedSessionFacts_RefreshesTheEntitlementSet(t *testing.T) {
 	cases := map[string]struct {
-		catalog []vibekit.SessionModel
+		catalog []marotte.SessionModel
 		want    []string
 	}{
 		"absent keeps the seed": {want: []string{"seed"}},
 		"present replaces the seed": {
-			catalog: []vibekit.SessionModel{{ID: "old", Description: "[Deprecated]"}, {ID: "new"}},
+			catalog: []marotte.SessionModel{{ID: "old", Description: "[Deprecated]"}, {ID: "new"}},
 			want:    []string{"old", "new"},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			chat := &vibekit.Chat{ServedModelIDs: []string{"seed"}}
+			chat := &marotte.Chat{ServedModelIDs: []string{"seed"}}
 			applyLoadedSessionFacts(chat, &fakeBridge{catalog: tc.catalog}, "")
 			if !slices.Equal(chat.ServedModelIDs, tc.want) {
 				t.Errorf("ServedModelIDs = %v, want %v", chat.ServedModelIDs, tc.want)

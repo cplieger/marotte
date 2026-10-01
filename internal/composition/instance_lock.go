@@ -8,12 +8,12 @@ import (
 )
 
 // acquireInstanceLock takes a non-blocking exclusive flock on
-// <configDir>/vibekit.lock. If another vibekit process already holds
+// <configDir>/marotte.lock. If another marotte process already holds
 // the lock, returns an error. The lock is held for the lifetime of
 // the process (the fd is intentionally never closed); the kernel
 // releases it automatically on exit, including crash/SIGKILL.
 func acquireInstanceLock(configDir string) error {
-	path := filepath.Join(configDir, "vibekit.lock")
+	path := filepath.Join(configDir, "marotte.lock")
 	// O_CREATE|O_RDWR (no O_TRUNC, no O_APPEND): we never write payload
 	// to the lock file, only use its fd as the flock target. If file
 	// existed from a prior run, we keep its (empty) contents.

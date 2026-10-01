@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/chat/archive"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The projection round-trips what the store WROTE: one record, so the reader
@@ -20,13 +20,13 @@ import (
 func TestLoadRetentionHeader_ReadsWhatTheStoreWrote(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := t.Context()
-	if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "projected"
 		c.RecordSession("sess_old")
 		c.RecordSession("sess_new")
-		c.Messages = append(c.Messages, vibekit.Message{
+		c.Messages = append(c.Messages, marotte.Message{
 			ID:      "m1",
-			Role:    vibekit.RoleAssistant,
+			Role:    marotte.RoleAssistant,
 			Content: strings.Repeat("tool output nobody reads to decide retention ", 500),
 		})
 		return true
@@ -72,7 +72,7 @@ func TestLoadRetentionHeader_DraftingRoundTripsTheComposer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, _ := newTestStore(t)
 			ctx := t.Context()
-			if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+			if _, err := s.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "composer"
 				return true
 			}); err != nil {
@@ -185,7 +185,7 @@ func TestLoadRetentionHeader_MatchesKeysTheWayEncodingJSONDoes(t *testing.T) {
 // encoding/json really does fold these keys. A Go release that tightened field
 // matching would otherwise make the folding above wrong rather than red.
 func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
-	var c vibekit.Chat
+	var c marotte.Chat
 	body := `{"Draft":"unsent words","Updated_At":1730000000000,"ACP_Session_ID":"sess_new"}`
 	if err := json.Unmarshal([]byte(body), &c); err != nil {
 		t.Fatalf("Setup: unmarshal: %v", err)
@@ -207,7 +207,7 @@ func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
 func TestLoadRetentionHeader_SkipsMessagesRatherThanDecodingThem(t *testing.T) {
 	s, _ := newTestStore(t)
 	path := filepath.Join(s.dir, "c1"+chatFileSuffix)
-	// Valid JSON, invalid vibekit.Message: role is a number, block field mistyped.
+	// Valid JSON, invalid marotte.Message: role is a number, block field mistyped.
 	body := `{
   "id": "c1",
   "name": "odd",

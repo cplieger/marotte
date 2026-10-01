@@ -33,7 +33,7 @@
 // the answer, so a burst costs one scan.
 //
 // A watcher was considered and rejected, and the reason is checkable in the tree:
-// vibekit IS the writer for the agent's half, so it holds a more precise fact than
+// marotte IS the writer for the agent's half, so it holds a more precise fact than
 // inotify does — it can name the repos — while a recursive watch over 54 worktrees
 // would need tens of thousands of inotify watches against a host
 // `fs.inotify.max_user_watches` the container cannot raise, and a `.git/index`-only

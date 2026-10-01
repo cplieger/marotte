@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func compactReq(chatID vibekit.ChatID) *vibekit.ClientCommand {
-	return &vibekit.ClientCommand{Type: vibekit.CmdCompact, ChatID: chatID}
+func compactReq(chatID marotte.ChatID) *marotte.ClientCommand {
+	return &marotte.ClientCommand{Type: marotte.CmdCompact, ChatID: chatID}
 }
 
 // TestCmdCompact_ReportsAcceptanceNotCompaction pins the one thing this handler
@@ -52,8 +52,8 @@ func TestCmdCompact_SendsTheSessionsWire(t *testing.T) {
 		t.Fatalf("CmdCompact: %v", err)
 	}
 
-	if b.gotMethod != vibekit.MethodSessionCompact {
-		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSessionCompact)
+	if b.gotMethod != marotte.MethodSessionCompact {
+		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSessionCompact)
 	}
 	if got := b.gotParams["sessionId"]; got != b.sessionID {
 		t.Errorf("sessionId = %v, want %v", got, b.sessionID)

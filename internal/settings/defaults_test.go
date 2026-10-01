@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestEffectiveKeys_AreAllKnown(t *testing.T) {
@@ -36,7 +36,7 @@ func TestEffectiveSettings_EveryFieldIsSettable(t *testing.T) {
 	for _, k := range effectiveKeys() {
 		settable[k] = struct{}{}
 	}
-	rt := reflect.TypeFor[vibekit.EffectiveSettings]()
+	rt := reflect.TypeFor[marotte.EffectiveSettings]()
 	for f := range rt.Fields() {
 		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 		if tag == "" || tag == "-" {
@@ -105,7 +105,7 @@ func TestWarnUnknownKeys(t *testing.T) {
 // hand-written too, so nothing could compare the two; it named 8 keys while the
 // client read 15, and the drift was invisible.
 //
-// The client's type is now GENERATED from vibekit.EffectiveSettings, so the
+// The client's type is now GENERATED from marotte.EffectiveSettings, so the
 // comparison is mechanical: KnownKeys must cover every key that type carries, and
 // TestEffectiveSettings_EveryFieldIsSettable holds the other direction.
 func TestKnownKeys_CoversTheClientSurface(t *testing.T) {
@@ -125,7 +125,7 @@ func TestKnownKeys_CoversTheClientSurface(t *testing.T) {
 		t.Errorf("%q is in the effective view; it is owned by the permissions endpoints, not this payload", KeySecurityProfile)
 	}
 	// model_effort is deliberately absent from both sides now: reasoning effort
-	// is per-chat, on the chat record (vibekit.Chat.Effort). A key here with no
+	// is per-chat, on the chat record (marotte.Chat.Effort). A key here with no
 	// frontend writer and no server reader would only invite one back.
 	if _, ok := KnownKeys["model_effort"]; ok {
 		t.Error("KnownKeys still declares model_effort; effort moved to the chat record")

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
 func TestTruncateRunes(t *testing.T) {

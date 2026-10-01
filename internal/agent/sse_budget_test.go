@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Fixture sizes, all deliberately OVER the state measured on the live instance
@@ -77,13 +77,13 @@ func newBudgetRuntime(t *testing.T) *Runtime {
 //   - One open chat TAB per chat, matching the live shape.
 //   - 2 pending permission asks and 1 pending run ask, so the connect carries a
 //     real pending set beside the busy list.
-func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []vibekit.ChatID {
+func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []marotte.ChatID {
 	tb.Helper()
-	ids := make([]vibekit.ChatID, 0, n)
+	ids := make([]marotte.ChatID, 0, n)
 	for i := range n {
-		id := vibekit.ChatID(fmt.Sprintf("c-budget-%02d", i))
+		id := marotte.ChatID(fmt.Sprintf("c-budget-%02d", i))
 		rt.bridge.mgr.orInsert(id)
-		if epoch := rt.coord.StartTurn(tb.Context(), id, vibekit.TurnSourcePrompt); epoch == 0 {
+		if epoch := rt.coord.StartTurn(tb.Context(), id, marotte.TurnSourcePrompt); epoch == 0 {
 			tb.Fatalf("StartTurn(%q) refused, so the chat is not busy and the connect replays nothing", id)
 		}
 		buf := rt.liveTurnBuffer(id)
@@ -116,11 +116,11 @@ func fillTurnBuffer(buf *buffer.Buffer, chatID string) {
 	output := strings.Repeat("o", fixtureToolOutputBytes)
 	for i := range fixtureToolCalls {
 		toolID := fmt.Sprintf("%s-tool-%02d", chatID, i)
-		buf.AppendToolCall(&vibekit.ToolCall{
+		buf.AppendToolCall(&marotte.ToolCall{
 			ID:     toolID,
 			Title:  "budget fixture",
-			Kind:   vibekit.ToolKindExecute,
-			Status: vibekit.ToolCompleted,
+			Kind:   marotte.ToolKindExecute,
+			Status: marotte.ToolCompleted,
 			Output: output,
 		})
 		buf.AppendToolUseBlock(toolID, "")
@@ -129,10 +129,10 @@ func fillTurnBuffer(buf *buffer.Buffer, chatID string) {
 
 // openBudgetChatTab puts the chat in the server-owned open-tab set, which is the
 // half of the fixture a tab filter reads.
-func openBudgetChatTab(tb testing.TB, rt *Runtime, id vibekit.ChatID) {
+func openBudgetChatTab(tb testing.TB, rt *Runtime, id marotte.ChatID) {
 	tb.Helper()
-	if _, _, _, err := rt.tabs.Open(tb.Context(), vibekit.OpenTab{
-		Kind: vibekit.TabKindChat,
+	if _, _, _, err := rt.tabs.Open(tb.Context(), marotte.OpenTab{
+		Kind: marotte.TabKindChat,
 		Ref:  string(id),
 	}); err != nil {
 		tb.Fatalf("open chat tab for %q: %v", id, err)
@@ -141,20 +141,20 @@ func openBudgetChatTab(tb testing.TB, rt *Runtime, id vibekit.ChatID) {
 
 // seedPendingDecisions adds the unanswered asks a real reconnect replays beside the
 // snapshots, so the measured total includes the part no snapshot cap can shrink.
-func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []vibekit.ChatID) {
+func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 	tb.Helper()
 	if len(ids) == 0 {
 		tb.Fatal("no chats in the fixture, so there is nothing to attach a pending ask to")
 	}
 	for i := range fixturePendingPerms {
 		requestID := int64(i + 1)
-		rt.bus.pendingPerms.Add(requestID, vibekit.NewEvent(
-			vibekit.EventPermissionNeeded, ids[i%len(ids)], vibekit.PermissionNeededPayload{
+		rt.bus.pendingPerms.Add(requestID, marotte.NewEvent(
+			marotte.EventPermissionNeeded, ids[i%len(ids)], marotte.PermissionNeededPayload{
 				RequestID:  requestID,
 				ToolCallID: fmt.Sprintf("perm-%d", requestID),
 				Title:      "Run a command",
-				Kind:       vibekit.ToolKindExecute,
-				Options: []vibekit.PermissionOption{
+				Kind:       marotte.ToolKindExecute,
+				Options: []marotte.PermissionOption{
 					{OptionID: "allow", Name: "Allow", Kind: "allow_once"},
 					{OptionID: "reject", Name: "Reject", Kind: "reject_once"},
 				},
@@ -162,7 +162,7 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []vibekit.ChatID) {
 		))
 	}
 	for i := range fixturePendingRunAsks {
-		if !rt.runs.asks.Add(&runAsk{chatID: ids[0], payload: vibekit.RunInputNeededPayload{
+		if !rt.runs.asks.Add(&runAsk{chatID: ids[0], payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf-budget",
 			AskID:      fmt.Sprintf("ask-%d", i+1),
 			Question:   "Which branch should the step target?",
@@ -216,7 +216,7 @@ func measureColdConnect(t *testing.T, n int) int {
 	if strings.Contains(body, strings.Repeat("r", 64)) || strings.Contains(body, strings.Repeat("c", 64)) {
 		t.Fatalf("the connect carries turn content: %d bytes over %d busy chats", len(body), n)
 	}
-	if strings.Contains(body, string(vibekit.EventType("turn_state"))) {
+	if strings.Contains(body, string(marotte.EventType("turn_state"))) {
 		t.Fatalf("the connect carries a turn_state frame; that channel is gone")
 	}
 	return len(body)

@@ -15,14 +15,14 @@ const (
 	methodV3CustomAgentConfigErr = "_kiro/customAgent/config_error"          // {sessionId, path, error}
 	methodV3SystemNotify         = "_kiro/system/notify"                     // {level, message} — broadcast banner (see init_errors.go)
 	methodV3Governance           = "_kiro/governance/state"                  // org/account feature-flag policy → governance_state SSE + GET /api/governance (HandleGovernanceState)
-	methodV3ToolsDidChange       = "_kiro/tools/didChange"                   // recognised-ignored (tool catalog; vibekit fetches via REST)
-	methodV3SteeringDocs         = "_kiro/steering/documents_changed"        // recognised-ignored (vibekit fetches via /api/workspace/kiro-config)
+	methodV3ToolsDidChange       = "_kiro/tools/didChange"                   // recognised-ignored (tool catalog; marotte fetches via REST)
+	methodV3SteeringDocs         = "_kiro/steering/documents_changed"        // recognised-ignored (marotte fetches via /api/workspace/kiro-config)
 	methodV3ProgressiveContext   = "_kiro/progressive_context/items_changed" // recognised-ignored (skills/steering list; REST-sourced)
-	methodV3Powers               = "_kiro/powers/items_changed"              // recognised-ignored (Kiro powers; not a vibekit surface)
+	methodV3Powers               = "_kiro/powers/items_changed"              // recognised-ignored (Kiro powers; not a marotte surface)
 	methodV3CodeReferences       = "_kiro/code_references"                   // licensed-code attributions → per-turn chip (HandleCodeReferences)
 )
 
-// v3 (KAS) native Cedar policy method names. list/explain are C→A requests vibekit
+// v3 (KAS) native Cedar policy method names. list/explain are C→A requests marotte
 // issues on the utility bridge for the read-only policy VIEW; changed/error are A→C
 // notifications. policy/check is deliberately NOT used: it raises a real
 // session/request_permission, so it is unsafe as a UI pre-flight query, and explain
@@ -54,7 +54,7 @@ const methodKiroSessionNotify = "_kiro/session/notify"
 // KAS's own filesystem verbs, A→C, each gated on
 // `clientCapabilities.fs._meta.kiro.<name>`. NOT declaring one does not remove the
 // capability: the else-branch is KAS's in-process NodeFileSystem, so an undeclared
-// verb is the same operation with no vibekit path check on it. The read/write rung is
+// verb is the same operation with no marotte path check on it. The read/write rung is
 // deliberately NOT declared — it would bypass supervised staging.
 const (
 	methodKiroFSStat          = "_kiro/fs/stat"
@@ -115,7 +115,7 @@ const (
 	methodWFStepsQueued   = "_kiro/workflow/steps_queued"   // {workflowId, pendingSteps[], resolution?}
 )
 
-// C→A workflow verbs vibekit issues, beyond list/inspect above.
+// C→A workflow verbs marotte issues, beyond list/inspect above.
 //
 //   - listRecipes: `source` is the launch key, `bundled://<name>` or an absolute
 //     *.workflow.json path.
@@ -123,7 +123,7 @@ const (
 //     `@kiro/agent` 0.63.3 (kiro-cli 2.21.4) — the engine throws
 //     "requires 'parentSessionId': the ACP session the workflow is launched from"
 //     with no substitute. 0.60.10 accepted `workspacePaths` instead and that
-//     escape is gone, so a launch omitting it fails outright. vibekit sends the
+//     escape is gone, so a launch omitting it fails outright. marotte sends the
 //     RUN BRIDGE'S OWN session, which is the session the call travels on, and
 //     that parent now supplies four things: the notification route (all nine
 //     lifecycle frames go to the parent's outbound rather than being broadcast),
@@ -157,7 +157,7 @@ const (
 	// prerequisite for every verb reaching a run it has never seen.
 	methodKiroWorkflowLoad = "_kiro/workflow/load"
 
-	// Mutates a live run. vibekit narrows it to a step-status update (mark a step
+	// Mutates a live run. marotte narrows it to a step-status update (mark a step
 	// completed/failed so the run advances); `replace_remaining` is a plan editor
 	// and is not wired.
 	methodKiroWorkflowUpdate = "_kiro/workflow/update"
@@ -166,7 +166,7 @@ const (
 // v3 (KAS) hook-management method names. list/setEnabled are C→A requests on the
 // utility bridge and are gated on v2Hooks; didChange is an A→C notification.
 // `_kiro/hooks/triggerHook` and `_kiro/hooks/executeHook` are deliberately ABSENT:
-// answering executeHook is what made vibekit run `sh -c` on a command a hook file
+// answering executeHook is what made marotte run `sh -c` on a command a hook file
 // specifies, and naming a method here makes it reachable.
 const (
 	methodKiroHooksList       = "_kiro/hooks/list"       // C→A request: {workspacePaths?,trigger?,toolId?,includeDisabled?} → {hooks[]}

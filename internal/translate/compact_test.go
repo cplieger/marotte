@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // summarizationInfo builds a session_info_update payload carrying a
@@ -26,13 +26,13 @@ func summarizationInfo(t *testing.T, status, summary string) json.RawMessage {
 
 // eventMsgsByKind returns the persisted RoleEvent messages on chatID whose
 // EventKind matches.
-func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID vibekit.ChatID, kind vibekit.EventKind) []vibekit.Message {
+func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID marotte.ChatID, kind marotte.EventKind) []marotte.Message {
 	t.Helper()
 	c, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		return nil
 	}
-	var got []vibekit.Message
+	var got []marotte.Message
 	for _, m := range c.Messages {
 		if m.EventKind == kind {
 			got = append(got, m)
@@ -42,16 +42,16 @@ func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID 
 }
 
 // errorPayloads collects every EventError payload broadcast.
-func errorPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.ErrorPayload {
+func errorPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte.ErrorPayload {
 	t.Helper()
-	var got []vibekit.ErrorPayload
+	var got []marotte.ErrorPayload
 	for _, e := range *events {
-		if e.Type != vibekit.EventError {
+		if e.Type != marotte.EventError {
 			continue
 		}
-		p, ok := e.Payload.(vibekit.ErrorPayload)
+		p, ok := e.Payload.(marotte.ErrorPayload)
 		if !ok {
-			t.Fatalf("EventError payload type = %T, want vibekit.ErrorPayload", e.Payload)
+			t.Fatalf("EventError payload type = %T, want marotte.ErrorPayload", e.Payload)
 		}
 		got = append(got, p)
 	}
@@ -59,10 +59,10 @@ func errorPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.ErrorP
 }
 
 // countCompactionStarted counts compaction_started broadcasts.
-func countCompactionStarted(events *[]vibekit.ServerEvent) int {
+func countCompactionStarted(events *[]marotte.ServerEvent) int {
 	n := 0
 	for _, e := range *events {
-		if e.Type == vibekit.EventCompactionStarted {
+		if e.Type == marotte.EventCompactionStarted {
 			n++
 		}
 	}
@@ -82,10 +82,10 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, ""), FrameAttribution{})
 
-			if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(msgs) != 0 {
+			if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed); len(msgs) != 0 {
 				t.Errorf("EventCompactFailed messages = %d, want 0 (cancel is benign)", len(msgs))
 			}
-			if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompacted); len(msgs) != 0 {
+			if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompacted); len(msgs) != 0 {
 				t.Errorf("EventCompacted messages = %d, want 0 (cancel is not a completion)", len(msgs))
 			}
 			if p := errorPayloads(t, events); len(p) != 0 {
@@ -117,21 +117,21 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
-	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompacted)
+	msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompacted)
 	if len(msgs) != 1 {
 		t.Fatalf("EventCompacted messages = %d, want 1", len(msgs))
 	}
 	if msgs[0].Content != "history summary" {
 		t.Errorf("EventCompacted content = %q, want %q", msgs[0].Content, "history summary")
 	}
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
 		t.Errorf("persisted roles = %v, want just the event (nothing to seal between turns)", got)
 	}
 	c, _ := store.Get(t.Context(), "c1")
 	if c.CompactionWatermark != "evt-1" {
 		t.Errorf("CompactionWatermark = %q, want %q (must equal the compacted event id)", c.CompactionWatermark, "evt-1")
 	}
-	if failed := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(failed) != 0 {
+	if failed := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed); len(failed) != 0 {
 		t.Errorf("EventCompactFailed messages = %d, want 0 on success", len(failed))
 	}
 	if len(deps.compactionFailures) != 0 {
@@ -145,13 +145,13 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 // roleOrder is the persisted messages' roles, in order — the shape a mid-turn
 // compaction is judged on, since where the summary sits is array position and
 // nothing else.
-func roleOrder(t *testing.T, store *testsupport.InMemoryChatStore, chatID vibekit.ChatID) []vibekit.Role {
+func roleOrder(t *testing.T, store *testsupport.InMemoryChatStore, chatID marotte.ChatID) []marotte.Role {
 	t.Helper()
 	c, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		t.Fatalf("chat %q not found", chatID)
 	}
-	roles := make([]vibekit.Role, 0, len(c.Messages))
+	roles := make([]marotte.Role, 0, len(c.Messages))
 	for _, m := range c.Messages {
 		roles = append(roles, m.Role)
 	}
@@ -177,7 +177,7 @@ func TestHandleV3Summarization_SealsTheSegmentBeforeTheEvent(t *testing.T) {
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
 	got := roleOrder(t, store, "c1")
-	want := []vibekit.Role{vibekit.RoleAssistant, vibekit.RoleEvent}
+	want := []marotte.Role{marotte.RoleAssistant, marotte.RoleEvent}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("persisted roles = %v, want %v (the sealed segment must precede the summary)", got, want)
 	}
@@ -220,16 +220,16 @@ func TestHandleV3Summarization_SealsTheSegmentBeforeTheEvent(t *testing.T) {
 // back and its card renders as a permanent spinner in a message nothing rewrites.
 func TestHandleV3Summarization_DoesNotSealWithAToolInFlight(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	deps.sealRefusals = map[vibekit.ChatID]bool{"c1": true}
+	deps.sealRefusals = map[marotte.ChatID]bool{"c1": true}
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
 	buf := deps.bufStore.GetOrInit("c1")
 	buf.StartTurn("m-pre")
 	buf.AppendTextDelta("before the compaction", "")
-	buf.AppendToolCall(&vibekit.ToolCall{ID: "t-1", Status: vibekit.ToolInProgress})
+	buf.AppendToolCall(&marotte.ToolCall{ID: "t-1", Status: marotte.ToolInProgress})
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
 		t.Errorf("persisted roles = %v, want just the event (a declined split appends nothing else)", got)
 	}
 	// The turn keeps its content, so its closer still persists the whole reply.
@@ -246,7 +246,7 @@ func TestHandleV3Summarization_NoTurnOpenAppendsOnly(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
 		t.Errorf("persisted roles = %v, want just the event", got)
 	}
 }
@@ -263,7 +263,7 @@ func TestHandleV3Summarization_FailureDoesNotSealTheTurn(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
 
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != vibekit.RoleEvent {
+	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
 		t.Errorf("persisted roles = %v, want just the failed-compaction event", got)
 	}
 	if snap := deps.bufStore.Get("c1").TakeTurn(); snap.Content != "mid-reply" {
@@ -281,7 +281,7 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
 
-	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed)
+	msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed)
 	if len(msgs) != 1 {
 		t.Fatalf("EventCompactFailed messages = %d, want 1", len(msgs))
 	}
@@ -292,8 +292,8 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	if len(p) != 1 {
 		t.Fatalf("EventError broadcasts = %d, want 1", len(p))
 	}
-	if p[0].Code != vibekit.ErrCodeCompactionFailed {
-		t.Errorf("error code = %q, want %q", p[0].Code, vibekit.ErrCodeCompactionFailed)
+	if p[0].Code != marotte.ErrCodeCompactionFailed {
+		t.Errorf("error code = %q, want %q", p[0].Code, marotte.ErrCodeCompactionFailed)
 	}
 	if p[0].Message != "error" {
 		t.Errorf("error message = %q, want %q", p[0].Message, "error")
@@ -321,10 +321,10 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	if p := errorPayloads(t, events); len(p) != 0 {
 		t.Errorf("EventError broadcasts = %+v, want none while running", p)
 	}
-	if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompacted); len(msgs) != 0 {
+	if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompacted); len(msgs) != 0 {
 		t.Errorf("EventCompacted messages = %d, want 0 while running", len(msgs))
 	}
-	if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(msgs) != 0 {
+	if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed); len(msgs) != 0 {
 		t.Errorf("EventCompactFailed messages = %d, want 0 while running", len(msgs))
 	}
 }
@@ -400,7 +400,7 @@ func TestHandleCompactionFailed_BoundsAndSanitizesTheDetail(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, detail, ""), FrameAttribution{})
 
-	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed)
+	msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed)
 	if len(msgs) != 1 {
 		t.Fatalf("EventCompactFailed messages = %d, want 1", len(msgs))
 	}

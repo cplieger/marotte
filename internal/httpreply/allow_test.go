@@ -9,7 +9,7 @@ import (
 
 // TestMethodNotAllowedSetsAllow pins the RFC 9110 §15.5.6 requirement that a
 // 405 names the resource's permitted methods, and the §10.2.1 rendering of
-// that list. Every 405 vibekit emits routes through MethodNotAllowed, so this
+// that list. Every 405 marotte emits routes through MethodNotAllowed, so this
 // is the one place the header format is decided.
 func TestMethodNotAllowedSetsAllow(t *testing.T) {
 	tests := map[string]struct {

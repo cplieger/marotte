@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeStore is a minimal StoreAccess for purge tests. Only Dir and
@@ -19,7 +19,7 @@ import (
 type fakeStore struct {
 	dir   string
 	mu    sync.Mutex
-	locks map[vibekit.ChatID]*sync.Mutex
+	locks map[marotte.ChatID]*sync.Mutex
 	// removals counts successful Removes; its value is the `chats` version the
 	// fake mints, so a purge's chat_deleted stamp is checkable.
 	removals int
@@ -29,14 +29,14 @@ type fakeStore struct {
 }
 
 func newFakeStore(dir string) *fakeStore {
-	return &fakeStore{dir: dir, locks: make(map[vibekit.ChatID]*sync.Mutex)}
+	return &fakeStore{dir: dir, locks: make(map[marotte.ChatID]*sync.Mutex)}
 }
 
 func (f *fakeStore) Dir() string { return f.dir }
 
 // Lock returns a stable per-chat mutex so the purge code's
 // lock/unlock pairing behaves like the real store.
-func (f *fakeStore) Lock(chatID vibekit.ChatID) *sync.Mutex {
+func (f *fakeStore) Lock(chatID marotte.ChatID) *sync.Mutex {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m, ok := f.locks[chatID]
@@ -47,14 +47,14 @@ func (f *fakeStore) Lock(chatID vibekit.ChatID) *sync.Mutex {
 	return m
 }
 
-func (f *fakeStore) LoadRetentionHeader(vibekit.ChatID) (RetentionHeader, error) {
+func (f *fakeStore) LoadRetentionHeader(marotte.ChatID) (RetentionHeader, error) {
 	if f.header != nil {
 		return *f.header, nil
 	}
 	return RetentionHeader{}, errors.New("fakeStore: chat is unreadable")
 }
 
-func (f *fakeStore) Remove(chatID vibekit.ChatID) (string, error) {
+func (f *fakeStore) Remove(chatID marotte.ChatID) (string, error) {
 	if err := os.Remove(filepath.Join(f.dir, string(chatID)+chatFileSuffix)); err != nil {
 		return "", err
 	}
@@ -69,24 +69,24 @@ func (f *fakeStore) Remove(chatID vibekit.ChatID) (string, error) {
 // goroutines).
 type purgeRecorder struct {
 	mu     sync.Mutex
-	ids    []vibekit.ChatID
-	chains map[vibekit.ChatID][]string
+	ids    []marotte.ChatID
+	chains map[marotte.ChatID][]string
 }
 
 // recordPurge satisfies WithOnPurge, keeping the session chain the purge
 // handed over so tests can assert the chat's sessions were offered for reaping.
-func (r *purgeRecorder) recordPurge(id vibekit.ChatID, sessionChain []string) {
+func (r *purgeRecorder) recordPurge(id marotte.ChatID, sessionChain []string) {
 	r.mu.Lock()
 	r.ids = append(r.ids, id)
 	if r.chains == nil {
-		r.chains = map[vibekit.ChatID][]string{}
+		r.chains = map[marotte.ChatID][]string{}
 	}
 	r.chains[id] = sessionChain
 	r.mu.Unlock()
 }
 
 // chainFor returns the session chain recorded for a purged chat.
-func (r *purgeRecorder) chainFor(id vibekit.ChatID) []string {
+func (r *purgeRecorder) chainFor(id marotte.ChatID) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.chains[id]
@@ -98,7 +98,7 @@ func (r *purgeRecorder) sorted() []string {
 	return idsToSortedStrings(r.ids)
 }
 
-func idsToSortedStrings(ids []vibekit.ChatID) []string {
+func idsToSortedStrings(ids []marotte.ChatID) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
 		out[i] = string(id)

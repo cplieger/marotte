@@ -1,7 +1,7 @@
 package forges
 
 // The production PRSource's two rules: whose PRs (the author filter, which is
-// client-side because no CLI takes an author filter in the shape vibekit calls
+// client-side because no CLI takes an author filter in the shape marotte calls
 // them), and which repos (the host-to-forge match).
 
 import (
@@ -34,8 +34,8 @@ func TestMatchRepos(t *testing.T) {
 	}{
 		{
 			name:    "MatchesCaseInsensitively",
-			origins: []RepoOrigin{{Host: "github.com", Slug: "cplieger/vibekit"}},
-			want:    []PRRepo{{ForgeID: "github:github.com", Slug: "cplieger/vibekit"}},
+			origins: []RepoOrigin{{Host: "github.com", Slug: "cplieger/marotte"}},
+			want:    []PRRepo{{ForgeID: "github:github.com", Slug: "cplieger/marotte"}},
 		},
 		{
 			name:    "KeepsAGitLabSubgroupSlugWhole",
@@ -120,7 +120,7 @@ func TestManagerPRSource_FiltersByAuthor(t *testing.T) {
 			{Number: 3, Author: "CPlieger", CheckStatus: checkFailing, Title: "mine, other case"},
 		},
 	}
-	src := newStubSource(ops, []PRRepo{{ForgeID: "github:github.com", Slug: "cplieger/vibekit"}})
+	src := newStubSource(ops, []PRRepo{{ForgeID: "github:github.com", Slug: "cplieger/marotte"}})
 
 	got, err := src.OpenAuthoredPRs(t.Context())
 	if err != nil {

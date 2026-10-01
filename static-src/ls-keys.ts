@@ -14,7 +14,7 @@
  *  reset every reader's shell height and theme. The arrangement itself is
  *  server-owned: the tab SET is its own collection (`internal/tabs`, projected by
  *  `tabs.ts`), and the theme and browser path are `config.json` keys. */
-export const LS_UI_STATE_KEY = "vibekit.ui-state";
+export const LS_UI_STATE_KEY = "marotte.ui-state";
 
 /** Per-chat, per-turn fold overrides: which turns THIS reader has opened or
  *  folded by hand.
@@ -25,14 +25,14 @@ export const LS_UI_STATE_KEY = "vibekit.ui-state";
  *  sections this reader has open"), and sharing it reproduced the very defect
  *  that moved the arrangement server-side — a fold on one screen rearranged a
  *  transcript someone else was reading. */
-export const LS_TURN_FOLDS_KEY = "vibekit.turn-folds";
+export const LS_TURN_FOLDS_KEY = "marotte.turn-folds";
 
 /** Per-chat dismissed banner codes: which notices THIS reader has acknowledged.
  *
  *  Per-device for the fold's reason, one step stronger: an acknowledgement is
  *  the viewer's (web-terminal's rule verbatim), so a phone dismissing a banner
  *  must not silence the desktop. It used to be `ui-state.dismissed_banners`. */
-export const LS_DISMISSED_BANNERS_KEY = "vibekit.dismissed-banners";
+export const LS_DISMISSED_BANNERS_KEY = "marotte.dismissed-banners";
 
 /** Whether THIS DEVICE has already had its notification-permission ask.
  *
@@ -46,7 +46,7 @@ export const LS_DISMISSED_BANNERS_KEY = "vibekit.dismissed-banners";
  *  the client as a resolved boolean, so "never opted in" and "switched off on
  *  purpose" are one value there, and without the marker a later grant would quietly
  *  reverse the refusal. See `notify-ask.ts`. */
-export const LS_NOTIFY_ASK_KEY = "vibekit.notify-ask";
+export const LS_NOTIFY_ASK_KEY = "marotte.notify-ask";
 
 /** Every key above, so a sign-out can drop them without naming them one by one.
  *

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/liveness"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/liveness"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // deferredOn holds the switch on for one test, whatever its default, and shrinks
@@ -72,7 +72,7 @@ func TestDeferred_DefaultHoldsASuppressedSend(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", vibekit.PushKindPermission, vibekit.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
 
 	if n := s.heldCount(); n != 1 {
 		t.Errorf("held deliveries with the default switch = %d, want 1", n)
@@ -90,7 +90,7 @@ func TestDeferred_OffHoldsNothing(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", vibekit.PushKindPermission, vibekit.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
 
 	if n := s.heldCount(); n != 0 {
 		t.Errorf("held deliveries with the switch off = %d, want 0", n)
@@ -104,7 +104,7 @@ func TestDeferred_HeldDeliveryLandsWhenTheProfileFlipsToGone(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", vibekit.PushKindPermission, vibekit.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
 	if n := s.heldCount(); n != 1 {
 		t.Fatalf("held deliveries = %d, want 1", n)
 	}
@@ -127,7 +127,7 @@ func TestDeferred_HeldDeliveryIsDroppedAtItsTTL(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", vibekit.PushKindPermission, vibekit.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
 	// Past the permission TTL the profile also reads gone; the TTL is judged first.
 	clock.Advance(ttlPermission + time.Millisecond)
 	waitFor(t, "the held set to empty", func() bool { return s.heldCount() == 0 })
@@ -144,8 +144,8 @@ func TestDeferred_RetractionBeforeTheFlipDeliversNothing(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "title", "body", vibekit.PushKindPermission, vibekit.ChatSubject("c1"))
-	s.Retract(vibekit.ChatSubject("c1"))
+	s.Send(t.Context(), "title", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
+	s.Retract(marotte.ChatSubject("c1"))
 	if n := s.heldCount(); n != 0 {
 		t.Fatalf("held deliveries after the retraction = %d, want 0", n)
 	}
@@ -166,13 +166,13 @@ func TestDeferred_ASecondEventReplacesTheHeldPayload(t *testing.T) {
 	s.Unsubscribe(goneEP)
 	s.presence.Observe(connected(TagOf(presentEP)))
 
-	s.Send(t.Context(), "first", "body", vibekit.PushKindPermission, vibekit.ChatSubject("c1"))
+	s.Send(t.Context(), "first", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
 	resetDebounce(s)
-	s.Send(t.Context(), "second", "body", vibekit.PushKindPermission, vibekit.ChatSubject("c1"))
+	s.Send(t.Context(), "second", "body", marotte.PushKindPermission, marotte.ChatSubject("c1"))
 	if n := s.heldCount(); n != 1 {
 		t.Fatalf("held deliveries after two events on one key = %d, want 1", n)
 	}
-	key := heldKey{tag: TagOf(presentEP), kind: vibekit.PushKindPermission, subject: "c1"}
+	key := heldKey{tag: TagOf(presentEP), kind: marotte.PushKindPermission, subject: "c1"}
 	s.deferred.mu.Lock()
 	held := s.deferred.held[key]
 	s.deferred.mu.Unlock()

@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // MaxHookField caps the per-field size for CmdCreateHook payloads.
@@ -48,7 +48,7 @@ func hookFieldsExceedLimit(p *hookCreatePayload) bool {
 }
 
 // validateHookPayload decodes + validates a CmdCreateHook payload.
-func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
+func validateHookPayload(cmd *marotte.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
 	if uErr := json.Unmarshal(cmd.Payload, &p); uErr != nil || p.Name == "" || p.EventType == "" {
 		return p, "", http.StatusBadRequest, ErrInvalidPayload
 	}
@@ -71,11 +71,11 @@ func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeN
 		return p, "", http.StatusBadRequest,
 			errors.New("action_type must be askAgent or runCommand")
 	}
-	trigger, known := vibekit.NormalizeHookTrigger(p.EventType)
+	trigger, known := marotte.NormalizeHookTrigger(p.EventType)
 	if !known {
 		return p, "", http.StatusBadRequest,
 			fmt.Errorf("event_type %q is not a trigger kiro-cli loads; expected one of: %s",
-				p.EventType, vibekit.KnownHookTriggers())
+				p.EventType, marotte.KnownHookTriggers())
 	}
 	// A matcher on a trigger that has nothing to match on is always a typo,
 	// and upstream will not say so — KAS logs its own warning with nothing
@@ -85,7 +85,7 @@ func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeN
 	// The sibling condition — a PreToolUse/PostToolUse hook with no matcher
 	// — is deliberately not refused: "run on every tool call" is legitimate
 	// and gets a badge on the read surface instead.
-	if vibekit.ClassifyHookMatcher(trigger.Name, p.Patterns) == vibekit.HookMatcherIneffective {
+	if marotte.ClassifyHookMatcher(trigger.Name, p.Patterns) == marotte.HookMatcherIneffective {
 		return p, "", http.StatusBadRequest,
 			fmt.Errorf("trigger %s has nothing to match against, so its matcher %q would be ignored; leave patterns empty for this trigger",
 				trigger.Name, strings.TrimSpace(p.Patterns))
@@ -102,12 +102,12 @@ func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeN
 //
 //	{ "version": "v1", "hooks": [ { name, trigger, matcher?, action, timeout? } ] }
 //
-// trigger is PascalCase (see vibekit.NormalizeHookTrigger); action.type is
+// trigger is PascalCase (see marotte.NormalizeHookTrigger); action.type is
 // "command" (carries command) or "agent" (carries prompt).
 //
 // Three independent v-numbers collide here, so do not reconcile them: the
-// agent engine is v1/v2/v3 (vibekit pins v3), the hook engine is v1/v2 with
-// no v3 (vibekit declares v2 via _meta.kiro.hooks), and this document's
+// agent engine is v1/v2/v3 (marotte pins v3), the hook engine is v1/v2 with
+// no v3 (marotte declares v2 via _meta.kiro.hooks), and this document's
 // "version" field is a literal "v1" KAS's schema requires — bumping it to
 // "v2" to match the hook engine makes every hook unloadable.
 type hookAction struct {
@@ -133,11 +133,11 @@ type hookDoc struct {
 // mustTrigger resolves an event type validateHookPayload has already
 // accepted.
 func mustTrigger(eventType string) string {
-	t, _ := vibekit.NormalizeHookTrigger(eventType)
+	t, _ := marotte.NormalizeHookTrigger(eventType)
 	return t.Name
 }
 
-// buildHookAction maps vibekit's action_type payload ("askAgent" /
+// buildHookAction maps marotte's action_type payload ("askAgent" /
 // "runCommand") to the v1 action shape. validateHookPayload guarantees
 // one of the two values, so the default arm is defensive only.
 func buildHookAction(p *hookCreatePayload) hookAction {
@@ -168,7 +168,7 @@ func buildHookDoc(p *hookCreatePayload) hookDoc {
 }
 
 // CmdCreateHook creates a hook file from chat context.
-func CmdCreateHook(ctx context.Context, ws Workspace, cmd *vibekit.ClientCommand) (any, error) {
+func CmdCreateHook(ctx context.Context, ws Workspace, cmd *marotte.ClientCommand) (any, error) {
 	p, safeName, code, vErr := validateHookPayload(cmd)
 	if vErr != nil {
 		return nil, StatusError(code, vErr)

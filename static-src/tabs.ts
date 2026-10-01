@@ -9,7 +9,7 @@
 //
 // THREE OWNERS, and the split is what stops any of them drifting:
 //
-//   - `TabSubject` is the SHARED half (internal/vibekit/domain_tabs.go): id,
+//   - `TabSubject` is the SHARED half (internal/marotte/domain_tabs.go): id,
 //     kind, ref, parent, pinned, owns. Persisted, transmitted, identical on every
 //     connected device.
 //   - `TabViewSpec` is the LOCAL half (tab-view.ts), produced from a subject by
@@ -50,7 +50,7 @@
 import { pushRoute } from "./router.js";
 import type { Route, SettingsTab, GitTab, DocsTab } from "./route-path.js";
 // The nine tab kinds have ONE definition and it is the Go const block in
-// internal/vibekit/domain_tabs.go, emitted here by wire-codegen as a registered
+// internal/marotte/domain_tabs.go, emitted here by wire-codegen as a registered
 // enum. It was a hand-written union derived from TAB_VIEWS' keys, which is two
 // enumerations of one vocabulary in two languages with nothing holding them
 // together — and the client's per-kind handling has to be TOTAL, so an unknown
@@ -1231,7 +1231,7 @@ function dotPhrase(kind: TabKind, status: TabDotStatus, since?: number): string 
 /** How long ago a finished thing finished, appended to its own phrase.
  *
  *  It does NOT tick: a 1s interval over a sidebar of finished chats is the wakeup
- *  cost `vibekit-ui.md` forbids, and both surfaces this feeds are read on demand —
+ *  cost `marotte-ui.md` forbids, and both surfaces this feeds are read on demand —
  *  the tooltip on hover, the word when a screen reader reaches the row. */
 function withAge(phrase: string, since?: number): string {
   return since === undefined ? phrase : `${phrase} · ${relativeTime(since)}`;

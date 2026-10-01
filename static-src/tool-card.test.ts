@@ -577,9 +577,9 @@ describe("disclose_context and policy denials", () => {
       kind: "other",
       status: "completed",
       live: false,
-      disclosed: { type: "steering", display_name: "vibekit", uri: "file:///x/vibekit.md" },
+      disclosed: { type: "steering", display_name: "marotte", uri: "file:///x/marotte.md" },
     });
-    expect(card.dataset["title"]).toBe("Loaded steering: vibekit");
+    expect(card.dataset["title"]).toBe("Loaded steering: marotte");
   });
 
   // A refusal is not a failure: the command never ran, so sending the reader to
@@ -731,14 +731,14 @@ describe("tool card: whole-header disclosure", () => {
       title: "remote_web_search",
       kind: "fetch",
       status: "completed",
-      input: { query: "vibekit fold animation" },
+      input: { query: "marotte fold animation" },
       live: false,
     });
     document.body.appendChild(card);
 
     const subtitle = card.querySelector<HTMLElement>(".tool-subtitle")!;
     const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
-    expect(subtitle.textContent).toBe("vibekit fold animation");
+    expect(subtitle.textContent).toBe("marotte fold animation");
 
     subtitle.click();
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -752,7 +752,7 @@ describe("tool card: whole-header disclosure", () => {
       title: "remote_web_search",
       kind: "fetch",
       status: "completed",
-      input: { query: "vibekit" },
+      input: { query: "marotte" },
       live: false,
     });
     const title = card.querySelector<HTMLElement>(".tool-title")!;
@@ -818,13 +818,13 @@ describe("tool card: whole-header disclosure", () => {
       title: "fsWrite",
       kind: "write",
       status: "completed",
-      input: { path: "/workspace/vibekit/static-src/fundamentals/turn-footer.ts" },
+      input: { path: "/workspace/marotte/static-src/fundamentals/turn-footer.ts" },
       live: false,
     });
     const link = card.querySelector<HTMLElement>(".tool-file-link")!;
 
     expect(link.getAttribute("data-tooltip")).toBe(
-      "/workspace/vibekit/static-src/fundamentals/turn-footer.ts",
+      "/workspace/marotte/static-src/fundamentals/turn-footer.ts",
     );
     expect(link.getAttribute("aria-label")).toBe("Open the diff for turn-footer.ts");
   });

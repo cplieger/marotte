@@ -9,26 +9,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// runStatuses reads the run-status vocabulary off the fixture internal/vibekit and
+// runStatuses reads the run-status vocabulary off the fixture internal/marotte and
 // internal/kascap already share, so a case is total over it rather than over a copy.
-func runStatuses(t *testing.T) []vibekit.RunStatus {
+func runStatuses(t *testing.T) []marotte.RunStatus {
 	t.Helper()
-	raw, err := os.ReadFile("../vibekit/testdata/run_statuses.json")
+	raw, err := os.ReadFile("../marotte/testdata/run_statuses.json")
 	if err != nil {
 		t.Fatalf("read run-status contract: %v", err)
 	}
 	var contract struct {
 		Runs []struct {
-			Status vibekit.RunStatus `json:"status"`
+			Status marotte.RunStatus `json:"status"`
 		} `json:"runs"`
 	}
 	if err := json.Unmarshal(raw, &contract); err != nil {
 		t.Fatalf("decode run-status contract: %v", err)
 	}
-	out := make([]vibekit.RunStatus, 0, len(contract.Runs))
+	out := make([]marotte.RunStatus, 0, len(contract.Runs))
 	for _, row := range contract.Runs {
 		out = append(out, row.Status)
 	}
@@ -44,10 +44,10 @@ func TestRunVerbGates(t *testing.T) {
 
 	cases := map[string]struct {
 		verb  runVerb
-		legal []vibekit.RunStatus
+		legal []marotte.RunStatus
 	}{
-		"pause is live-only":     {runVerbPause, []vibekit.RunStatus{vibekit.RunStatusRunning}},
-		"resume is paused-only":  {runVerbResume, []vibekit.RunStatus{vibekit.RunStatusPaused}},
+		"pause is live-only":     {runVerbPause, []marotte.RunStatus{marotte.RunStatusRunning}},
+		"resume is paused-only":  {runVerbResume, []marotte.RunStatus{marotte.RunStatusPaused}},
 		"cancel is unrestricted": {runVerbCancel, all},
 	}
 
@@ -104,7 +104,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 			}),
 			methodKiroWorkflowPause: json.RawMessage(`{"paused":true}`),
 		}
-		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"
 			for _, s := range sessions {
 				c.RecordSession(s)
@@ -187,7 +187,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	t.Run("an unreadable run inventory refuses rather than guessing", func(t *testing.T) {
 		h, cs, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroWorkflowList: errRecipeBusy}
-		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true
@@ -206,7 +206,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 // pausedFrame builds a `_kiro/workflow/paused` notification carrying only
 // `{workflowId, pauseReason}` — the shape KAS sends for a pause it did NOT
 // classify: an interruption, a permanent failure, a need-input park.
-func pausedFrame(t *testing.T, workflowID, reason string) *vibekit.RPCResponse {
+func pausedFrame(t *testing.T, workflowID, reason string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
 		"workflowId": workflowID, "pauseReason": reason,
@@ -214,14 +214,14 @@ func pausedFrame(t *testing.T, workflowID, reason string) *vibekit.RPCResponse {
 	if err != nil {
 		t.Fatalf("marshal paused frame: %v", err)
 	}
-	return &vibekit.RPCResponse{Params: params}
+	return &marotte.RPCResponse{Params: params}
 }
 
 // pausedFrameWithDetail builds the run-level pause frame KAS sends when it
 // CLASSIFIED the fault. The detail is a raw map rather than the `pauseDetail`
 // struct, so the fixture describes the WIRE: marshalling the very type under test
 // would let a renamed JSON tag move both sides together.
-func pausedFrameWithDetail(t *testing.T, workflowID, reason, class, code string) *vibekit.RPCResponse {
+func pausedFrameWithDetail(t *testing.T, workflowID, reason, class, code string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
 		"workflowId":  workflowID,
@@ -233,14 +233,14 @@ func pausedFrameWithDetail(t *testing.T, workflowID, reason, class, code string)
 	if err != nil {
 		t.Fatalf("marshal paused frame: %v", err)
 	}
-	return &vibekit.RPCResponse{Params: params}
+	return &marotte.RPCResponse{Params: params}
 }
 
 // pausedDriftedDetail builds the pause frame KAS would send if `pauseDetail`
 // stopped being an object — the shape change the heal must survive rather than be
 // blinded by. A string is the cheapest drift and the decoder treats every
 // non-object alike; the decode test enumerates the rest.
-func pausedDriftedDetail(t *testing.T, workflowID, reason string) *vibekit.RPCResponse {
+func pausedDriftedDetail(t *testing.T, workflowID, reason string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{
 		"workflowId": workflowID, "pauseReason": reason,
@@ -249,7 +249,7 @@ func pausedDriftedDetail(t *testing.T, workflowID, reason string) *vibekit.RPCRe
 	if err != nil {
 		t.Fatalf("marshal paused frame: %v", err)
 	}
-	return &vibekit.RPCResponse{Params: params}
+	return &marotte.RPCResponse{Params: params}
 }
 
 // inspectDriftedDetail is the same drift on the INSPECT reply, so the heal's own
@@ -260,7 +260,7 @@ func inspectDriftedDetail(t *testing.T, workflowID, reason string) json.RawMessa
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
 		"state": map[string]any{
-			"status":      vibekit.RunStatusPaused,
+			"status":      marotte.RunStatusPaused,
 			"pauseReason": reason,
 			"pauseDetail": "transient-error",
 		},
@@ -300,7 +300,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 			methodKiroWorkflowInspect: reply,
 			methodKiroWorkflowResume:  json.RawMessage(`{}`),
 		}
-		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true
@@ -337,7 +337,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		fastHeal(t)
 		h, br := seed(t, transient)
 		var forwarded bool
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
 			forwarded = true
 		})
 		heal(t.Context(), "c1", pausedFrame(t, "wf_1", transient))
@@ -360,7 +360,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 			"(branch paused on transient error EAI_AGAIN)."
 		fastHeal(t)
 		h, br := seedReply(t, inspectPausedWithDetail(t, "wf_1", wrapper, transientDetail()))
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrameWithDetail(t, "wf_1", wrapper, "transient-error", "EAI_AGAIN"))
 		if !waitForResume(t, br) {
 			t.Fatalf("no resume was issued for a transient fault parked inside a parallel "+
@@ -377,11 +377,11 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	t.Run("a detail whose wire shape drifted still heals off the reason", func(t *testing.T) {
 		fastHeal(t)
 		h, br := seedReply(t, inspectDriftedDetail(t, "wf_1", interruptedPauseReason))
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedDriftedDetail(t, "wf_1", interruptedPauseReason))
 		if !waitForResume(t, br) {
 			t.Fatalf("no resume was issued for an interrupted step whose pauseDetail arrived in "+
-				"a shape vibekit does not decode; discarding the whole frame there breaks the "+
+				"a shape marotte does not decode; discarding the whole frame there breaks the "+
 				"heal for EVERY pause, not just the branch ones. calls were %v", br.callLog())
 		}
 	})
@@ -393,7 +393,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	t.Run("a plain-step interruption with no detail is still resumed", func(t *testing.T) {
 		fastHeal(t)
 		h, br := seed(t, interruptedPauseReason)
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrame(t, "wf_1", interruptedPauseReason))
 		if !waitForResume(t, br) {
 			t.Fatalf("no resume was issued for an interruption, which carries NO pauseDetail; "+
@@ -409,7 +409,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		t.Run(name+" is left alone", func(t *testing.T) {
 			fastHeal(t)
 			h, br := seed(t, reason)
-			heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+			heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 			heal(t.Context(), "c1", pausedFrame(t, "wf_1", reason))
 			// Give a scheduled heal every chance to fire before concluding none was.
 			time.Sleep(50 * time.Millisecond)
@@ -433,7 +433,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		fastHeal(t)
 		h, br := seed(t, transient)
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "aborted", transient))
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrame(t, "wf_1", transient))
 		time.Sleep(50 * time.Millisecond)
 		if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
@@ -450,7 +450,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		fastHeal(t)
 		logs := captureLogs(t)
 		h, _ := seed(t, parked)
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrame(t, "wf_1", parked))
 		out := logs.String()
 		if !strings.Contains(out, parked) {
@@ -469,7 +469,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 		fastHeal(t)
 		logs := captureLogs(t)
 		h, br := seed(t, transient)
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "c1", pausedFrame(t, "wf_1", transient))
 		if !waitForResume(t, br) {
 			t.Fatalf("no resume was issued, so this case is not exercising the accepted path; "+
@@ -484,7 +484,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 	t.Run("a frame with no chat id or no run id does nothing", func(t *testing.T) {
 		fastHeal(t)
 		h, br := seed(t, transient)
-		heal := h.runs.healPaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		heal := h.runs.healPaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		heal(t.Context(), "", pausedFrame(t, "wf_1", transient))
 		heal(t.Context(), "c1", pausedFrame(t, "", transient))
 		time.Sleep(50 * time.Millisecond)
@@ -528,7 +528,7 @@ func TestHealBudget_BoundsThePauseHealLoopAndProgressRefillsIt(t *testing.T) {
 				t.Fatal("setup: the budget was refused before it was spent")
 			}
 		}
-		progress := h.runs.healProgress(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})
+		progress := h.runs.healProgress(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})
 		progress(t.Context(), "c1", pausedFrame(t, "wf_1", ""))
 
 		attempt, ok := h.runs.claimHeal("wf_1")

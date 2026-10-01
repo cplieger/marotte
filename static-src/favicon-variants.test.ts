@@ -13,7 +13,7 @@
 // cues, because `crashed` and `failed` both render as `alert`.
 //
 // Regenerate from the workspace root with:
-//   python3 .kiro/scripts/gen-attention-icons.py --app vibekit --static vibekit/static
+//   python3 .kiro/scripts/gen-attention-icons.py --app marotte --static marotte/static
 // which reads the base icon and appends one dot rather than redrawing anything.
 //
 // Skipped assets under Stryker: its sandbox copies static-src only
@@ -87,7 +87,7 @@ const VARIANTS = ["input", "done", "alert"] as const;
 /** The generator's geometry constants, in the 32-unit space it declares them in:
  *  a dot of radius DOT_R with PAD of clear space above and right of it. Every
  *  output scales from this, so the ratios below hold whatever an app's viewBox is
- *  (vibekit's is 48). */
+ *  (marotte's is 48). */
 const DOT_R = 5.5;
 const PAD = 3;
 const UNIT = 32;
@@ -148,7 +148,7 @@ describe("attention favicon variants", () => {
       return;
     }
     // The generator declares its geometry in a 32-unit space and scales it onto
-    // the base's viewBox. vibekit's icon is 48, so an unscaled dot would sit
+    // the base's viewBox. marotte's icon is 48, so an unscaled dot would sit
     // mid-artwork at two thirds the intended size — visible only by looking. Every
     // variant is checked, not just one: they come from one code path, so a variant
     // whose dot moved was hand-edited, and that is exactly what nothing else here
@@ -267,7 +267,7 @@ describe("attention favicon variants", () => {
     for (const variant of VARIANTS) {
       const { token, oklch } = CUES[variant];
       // The FIRST declaration, which is the default theme's :root — that is the
-      // block the generator's vibekit entry transcribed. The light-theme overrides
+      // block the generator's marotte entry transcribed. The light-theme overrides
       // further down are deliberately out of scope: one icon serves both themes.
       const declared = new RegExp(`${token}:\\s*([^;]+);`).exec(css);
       expect(declared?.[1]?.trim(), `${token} moved: re-run gen-attention-icons.py`).toBe(oklch);

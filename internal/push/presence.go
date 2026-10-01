@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/liveness"
+	"github.com/cplieger/marotte/internal/liveness"
 )
 
 // Presence folds the hub's connected/disconnected feed and the client's keepalive

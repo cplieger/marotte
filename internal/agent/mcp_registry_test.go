@@ -16,7 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeMCPConfig is the registry filter tests' MCP name census.
@@ -159,7 +159,7 @@ func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 
 func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 	cfg := enabledConfig("github")
-	// The two names below are vibekit's own, switched off — the only case the
+	// The two names below are marotte's own, switched off — the only case the
 	// guard still drops. A name in NEITHER set is a different verdict entirely
 	// (see TestMCPRegistry_RecordsUnconfiguredServerWithOrigin).
 	cfg.configured["disabled-server"] = struct{}{}
@@ -178,20 +178,20 @@ func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 }
 
 // TestMCPRegistry_RecordsUnconfiguredServerWithOrigin is the T15 core: a server
-// vibekit never configured is RECORDED (not dropped like a user-disabled one),
+// marotte never configured is RECORDED (not dropped like a user-disabled one),
 // carrying the origin that tells the UI the row is read-only. Before the guard
 // was narrowed, every one of these cases produced no row at all while the
 // server's tools sat in the agent's tool list.
 func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 	cases := map[string]struct {
 		inAllNames bool
-		wantOrigin vibekit.Origin
+		wantOrigin marotte.Origin
 	}{
 		"a power's server is named by the config file's powers block": {
-			inAllNames: true, wantOrigin: vibekit.OriginPower,
+			inAllNames: true, wantOrigin: marotte.OriginPower,
 		},
-		"a server from a source vibekit cannot read is unattributable": {
-			inAllNames: false, wantOrigin: vibekit.OriginUnknown,
+		"a server from a source marotte cannot read is unattributable": {
+			inAllNames: false, wantOrigin: marotte.OriginUnknown,
 		},
 	}
 	for name, tc := range cases {
@@ -225,17 +225,17 @@ func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 	ctx := t.Context()
 	h.mcpRegistry.RecordConnected(ctx, "github", nil, nil, nil)
 	h.mcpRegistry.RecordOAuth(ctx, "github", "https://oauth.example/auth")
-	if got := h.mcpRegistry.Snapshot()[0].Origin; got != vibekit.OriginUser {
-		t.Errorf("origin after recordOAuth = %q, want %q", got, vibekit.OriginUser)
+	if got := h.mcpRegistry.Snapshot()[0].Origin; got != marotte.OriginUser {
+		t.Errorf("origin after recordOAuth = %q, want %q", got, marotte.OriginUser)
 	}
 	h.mcpRegistry.RecordInitFailure(ctx, "github", "boom")
-	if got := h.mcpRegistry.Snapshot()[0].Origin; got != vibekit.OriginUser {
-		t.Errorf("origin after recordInitFailure = %q, want %q", got, vibekit.OriginUser)
+	if got := h.mcpRegistry.Snapshot()[0].Origin; got != marotte.OriginUser {
+		t.Errorf("origin after recordInitFailure = %q, want %q", got, marotte.OriginUser)
 	}
 }
 
 // TestMCPRegistry_RecordDisabled covers the amendment: KAS's "disabled" status
-// becomes a read-only row for a server vibekit never configured, and stays
+// becomes a read-only row for a server marotte never configured, and stays
 // discarded for one it did. The second half is what keeps the narrowed guard
 // from resurrecting a server the user switched off mid-session — the whole
 // reason the early return was kept rather than deleted.
@@ -243,7 +243,7 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	cases := map[string]struct {
 		cfg        func() *fakeMCPConfig
 		wantRow    bool
-		wantOrigin vibekit.Origin
+		wantOrigin marotte.Origin
 	}{
 		"the user's own server, enabled: the config row already says off-or-on": {
 			cfg:     func() *fakeMCPConfig { return enabledConfig("mine") },
@@ -264,11 +264,11 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 				c.all["mine"] = struct{}{}
 				return c
 			},
-			wantRow: true, wantOrigin: vibekit.OriginPower,
+			wantRow: true, wantOrigin: marotte.OriginPower,
 		},
 		"an unattributable server: still shown, origin unknown": {
 			cfg:     func() *fakeMCPConfig { return enabledConfig() },
-			wantRow: true, wantOrigin: vibekit.OriginUnknown,
+			wantRow: true, wantOrigin: marotte.OriginUnknown,
 		},
 	}
 	for name, tc := range cases {
@@ -320,7 +320,7 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Alphabetical: mine, theirs.
-	if body.Servers[0].Origin != vibekit.OriginUser || body.Servers[1].Origin != vibekit.OriginPower {
+	if body.Servers[0].Origin != marotte.OriginUser || body.Servers[1].Origin != marotte.OriginPower {
 		t.Errorf("origins = %q / %q", body.Servers[0].Origin, body.Servers[1].Origin)
 	}
 }

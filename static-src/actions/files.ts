@@ -20,7 +20,7 @@ import { uploadFiles } from "../upload.js";
 // latter so no field's content can forge a component boundary.
 //
 // These keys leave the client as an `Idempotency-Key` HTTP header, which
-// vibekit's Go middleware (internal/server/idempotency.go) treats as an
+// marotte's Go middleware (internal/server/idempotency.go) treats as an
 // OPAQUE string — it never parses or builds one — so byte parity with a
 // Go-side key is not required here, only consistency within this client.
 import { join as joinKey } from "@cplieger/keyenc";

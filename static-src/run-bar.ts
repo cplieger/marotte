@@ -217,7 +217,7 @@ function render(bar: HTMLUListElement): void {
 function buildRow(id: string, chatID: string): HTMLElement {
   // The workflow mark, by attribute rather than a painted child: 12-tabs.css paints
   // this row, a run's own tab row and a chat row's fold mark from one rule
-  // (`vibekit-ui.md` "The composer's run bar carries the SAME mark"). No attribute
+  // (`marotte-ui.md` "The composer's run bar carries the SAME mark"). No attribute
   // means reserved box, nothing to show.
   const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
   const clock = el("span", { className: "run-bar-clock" });

@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/mcp/prewarm"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/mcp/prewarm"
 )
 
 // List returns a deep copy of every server with secrets masked. Safe to
@@ -346,7 +346,7 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 	}
 	s.mu.Unlock()
 	// Log the STORED record's id, not the request parameter: identical
-	// bytes, but the stored value is vibekit-generated, which breaks the
+	// bytes, but the stored value is marotte-generated, which breaks the
 	// user-input taint chain a raw path segment would carry into the log.
 	slog.Info("mcp: server deleted", "id", removed.ID)
 	s.notifyChange()

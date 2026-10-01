@@ -1,7 +1,7 @@
 package mcp
 
 // KAS's own MCP config file is the source of truth for what the agent connects
-// to. vibekit RENDERS it from its store and sends nothing inline.
+// to. marotte RENDERS it from its store and sends nothing inline.
 //
 // Why the file and not the `mcpServers` session parameter:
 //
@@ -13,7 +13,7 @@ package mcp
 //     `cwd` and `timeout`. The file delivers them.
 //
 // PRECEDENCE IS WHY THIS IS ATOMIC. KAS merges `client > file-based`, so as
-// long as vibekit still sends an inline entry, the inline copy wins and
+// long as marotte still sends an inline entry, the inline copy wins and
 // edits to the file appear to do nothing.
 //
 // The file is shared: KAS also reads `powers.mcpServers` out of it, so a
@@ -33,15 +33,15 @@ import (
 	"os"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// kasServerKey is the top-level key vibekit owns in KAS's config file.
+// kasServerKey is the top-level key marotte owns in KAS's config file.
 const kasServerKey = "mcpServers"
 
-// kasPowersKey is the top-level key KAS fills from installed Powers. vibekit
+// kasPowersKey is the top-level key KAS fills from installed Powers. marotte
 // never writes it (readKASConfig preserves it verbatim) and reads it for one
-// reason: to tell a Power's server apart from a server vibekit cannot see at
+// reason: to tell a Power's server apart from a server marotte cannot see at
 // all, so a runtime status row can say which.
 const kasPowersKey = "powers"
 
@@ -50,7 +50,7 @@ const kasPowersKey = "powers"
 const kasFileMaxBytes = 4 << 20
 
 // kasServer is one entry of KAS's `mcpServers` map, matching its
-// McpServerWireSchema. Only the fields vibekit has a value for are
+// McpServerWireSchema. Only the fields marotte has a value for are
 // emitted: every one is `omitempty`, because an explicit null or zero is
 // a different declaration than an absent field.
 //
@@ -165,7 +165,7 @@ func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 }
 
 // readKASConfig returns the existing document's top-level keys minus the one
-// vibekit owns, so a write can put ours back without touching `powers` or
+// marotte owns, so a write can put ours back without touching `powers` or
 // anything else. An absent, oversized or malformed file yields an empty
 // document.
 func (s *Store) readKASConfig() map[string]json.RawMessage {
@@ -185,7 +185,7 @@ func (s *Store) readKASConfig() map[string]json.RawMessage {
 	var doc map[string]json.RawMessage
 	// KAS parses this with JSONC, so a hand-written file may carry comments that
 	// encoding/json rejects. Losing an unknown key is the cost of not vendoring a
-	// JSONC parser to preserve keys vibekit does not write; it is logged.
+	// JSONC parser to preserve keys marotte does not write; it is logged.
 	if err := json.Unmarshal(data, &doc); err != nil {
 		slogWarnKAS("existing file unparseable, its non-mcpServers keys will be dropped", s.kasPath, err)
 		return empty
@@ -196,15 +196,15 @@ func (s *Store) readKASConfig() map[string]json.RawMessage {
 
 // powerNames returns the server names the file's `powers.mcpServers` block
 // declares. Empty when the file is absent, oversized, unparseable, or
-// carries no powers block — every one of which means "vibekit cannot
+// carries no powers block — every one of which means "marotte cannot
 // attribute this name", which is OriginUnknown rather than an error.
 //
 // This reads the file rather than caching it: AllNames is consulted only
-// for a name vibekit's own config does NOT hold, so a status frame for a
+// for a name marotte's own config does NOT hold, so a status frame for a
 // configured server never reaches the disk.
 func (s *Store) powerNames() map[string]struct{} {
 	out := map[string]struct{}{}
-	// readKASConfig deletes the key vibekit owns and keeps the rest, so the
+	// readKASConfig deletes the key marotte owns and keeps the rest, so the
 	// powers block arrives here untouched.
 	raw, ok := s.readKASConfig()[kasPowersKey]
 	if !ok {

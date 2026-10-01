@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // realInspect keeps fields this package does not decode, so the test also proves
@@ -143,7 +143,7 @@ func TestStepSessions_EmptyInputs(t *testing.T) {
 
 // rpcErr builds the error shape a KAS failure arrives as.
 func rpcErr(message, data string) error {
-	e := &vibekit.RPCError{Code: -32603, Message: message}
+	e := &marotte.RPCError{Code: -32603, Message: message}
 	if data != "" {
 		e.Data = json.RawMessage(data)
 	}

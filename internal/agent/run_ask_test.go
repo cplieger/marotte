@@ -3,7 +3,7 @@ package agent
 // Tests for the pending-run-ask registry and the two doors a workflow step's
 // question arrives through.
 //
-// What is pinned here is vibekit's own bookkeeping, not KAS's behaviour: which
+// What is pinned here is marotte's own bookkeeping, not KAS's behaviour: which
 // frames become an answerable ask, that exactly one surface can answer one, that
 // a failed send hands the ask back, and that nothing ends up holding a card for a
 // run whose wait is over.
@@ -15,12 +15,12 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // notifyAsk builds a `_kiro/session/notify` frame KAS would send for a step's
 // question.
-func notifyAsk(workflowID, nodeID, message, notifyID string) *vibekit.RPCResponse {
+func notifyAsk(workflowID, nodeID, message, notifyID string) *marotte.RPCResponse {
 	return runNotif(methodKiroSessionNotify, map[string]any{
 		"sessionId":       "sess_parent",
 		"callerSessionId": "sess_step",
@@ -37,10 +37,10 @@ func notifyAsk(workflowID, nodeID, message, notifyID string) *vibekit.RPCRespons
 //
 // By POINTER, matching the registry: an entry is immutable after Add and every
 // method that hands one back has already deleted it, so nothing shares one.
-func askOf(chatID vibekit.ChatID, workflowID, askID, nodeID string) *runAsk {
+func askOf(chatID marotte.ChatID, workflowID, askID, nodeID string) *runAsk {
 	return &runAsk{
 		chatID: chatID,
-		payload: vibekit.RunInputNeededPayload{
+		payload: marotte.RunInputNeededPayload{
 			WorkflowID: workflowID,
 			AskID:      askID,
 			NodeID:     nodeID,
@@ -195,8 +195,8 @@ func TestPendingRunAsks_ListFiltersByChatButKeepsRunKeyedAsks(t *testing.T) {
 		t.Errorf("List(\"\") returned %d events, want 3", len(all))
 	}
 	for _, evt := range got {
-		if evt.Type != vibekit.EventRunInputNeeded {
-			t.Errorf("List emitted %q, want %q", evt.Type, vibekit.EventRunInputNeeded)
+		if evt.Type != marotte.EventRunInputNeeded {
+			t.Errorf("List emitted %q, want %q", evt.Type, marotte.EventRunInputNeeded)
 		}
 	}
 }
@@ -217,7 +217,7 @@ func TestRunDispatch_SessionNotifyBecomesAnAsk(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(events), events)
 	}
-	if events[0].Type != string(vibekit.EventRunInputNeeded) {
+	if events[0].Type != string(marotte.EventRunInputNeeded) {
 		t.Fatalf("type = %q, want run_input_needed", events[0].Type)
 	}
 	if events[0].ChatID != "run:wf_1" {
@@ -243,7 +243,7 @@ func TestRunDispatch_SessionNotifyBecomesAnAsk(t *testing.T) {
 // the ask belongs in that chat's own dock.
 func TestTranslateACPEvent_SessionNotifyBecomesAnAsk(t *testing.T) {
 	h, cs, _ := newTestHub()
-	cs.Chats["c1"] = &vibekit.Chat{ID: "c1"}
+	cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
 
 	h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
@@ -311,8 +311,8 @@ func TestRunAskCleared(t *testing.T) {
 		// NOBODY answered, so the reason must not claim anybody did — SettledByUser
 		// makes every other window read "answered in another window" for a question
 		// that was discarded.
-		if got := settled[0]["settled_by"]; got != string(vibekit.SettledByMoot) {
-			t.Errorf("settled_by = %q, want %q", got, vibekit.SettledByMoot)
+		if got := settled[0]["settled_by"]; got != string(marotte.SettledByMoot) {
+			t.Errorf("settled_by = %q, want %q", got, marotte.SettledByMoot)
 		}
 	})
 
@@ -330,7 +330,7 @@ func TestRunAskCleared(t *testing.T) {
 
 	t.Run("the asking node completing retires it and says so", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		cs.Chats["c1"] = &vibekit.Chat{ID: "c1"}
+		cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
 		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
 		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
@@ -345,17 +345,17 @@ func TestRunAskCleared(t *testing.T) {
 		if len(settled) != 1 {
 			t.Fatalf("run_input_settled events = %d, want 1", len(settled))
 		}
-		// MOOT, not user: vibekit's own answer path settles the entry it claimed
+		// MOOT, not user: marotte's own answer path settles the entry it claimed
 		// before it sends, so nothing reaching this door was answered here — and this
 		// frame fires for a failed and an aborted node just as readily.
-		if got := settled[0]["settled_by"]; got != string(vibekit.SettledByMoot) {
-			t.Errorf("settled_by = %q, want %q", got, vibekit.SettledByMoot)
+		if got := settled[0]["settled_by"]; got != string(marotte.SettledByMoot) {
+			t.Errorf("settled_by = %q, want %q", got, marotte.SettledByMoot)
 		}
 	})
 
 	t.Run("a node that FAILED still does not claim an answer", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		cs.Chats["c1"] = &vibekit.Chat{ID: "c1"}
+		cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
 		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
 		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
@@ -365,15 +365,15 @@ func TestRunAskCleared(t *testing.T) {
 		if len(settled) != 1 {
 			t.Fatalf("run_input_settled events = %d, want 1", len(settled))
 		}
-		if got := settled[0]["settled_by"]; got != string(vibekit.SettledByMoot) {
+		if got := settled[0]["settled_by"]; got != string(marotte.SettledByMoot) {
 			t.Errorf("settled_by = %q, want %q — nobody answered a step that failed",
-				got, vibekit.SettledByMoot)
+				got, marotte.SettledByMoot)
 		}
 	})
 
 	t.Run("a sibling node completing leaves it alone", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		cs.Chats["c1"] = &vibekit.Chat{ID: "c1"}
+		cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
 		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
 		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
@@ -403,7 +403,7 @@ func settledPayloads(t *testing.T, h *Runtime) []map[string]string {
 	t.Helper()
 	var out []map[string]string
 	for _, e := range bufferedEvents(h) {
-		if e.Type == string(vibekit.EventRunInputSettled) {
+		if e.Type == string(marotte.EventRunInputSettled) {
 			out = append(out, marshalPayload(t, e.Payload))
 		}
 	}
@@ -516,7 +516,7 @@ func TestPausedLeaf(t *testing.T) {
 // status and the pause reason, and the answer path's resolve-from-inspect
 // fallback, which varies the session id — so the two cannot disagree about what a
 // parked run's state looks like.
-func parkedInspect(t *testing.T, status vibekit.RunStatus, pauseReason, stepSession string) json.RawMessage {
+func parkedInspect(t *testing.T, status marotte.RunStatus, pauseReason, stepSession string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"state": map[string]any{
@@ -557,7 +557,7 @@ func eventOfType(t *testing.T, h *Runtime, want string) bufferedEvent {
 // question gone. Without a reconstructed ask the only recourse would be
 // cancelling work one sentence from finishing.
 func TestReconcileNeedInput(t *testing.T) {
-	inspect := func(status vibekit.RunStatus, pauseReason string) json.RawMessage {
+	inspect := func(status marotte.RunStatus, pauseReason string) json.RawMessage {
 		return parkedInspect(t, status, pauseReason, "sess_step")
 	}
 
@@ -566,7 +566,7 @@ func TestReconcileNeedInput(t *testing.T) {
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", inspect("paused", needInputPauseReason))
 
 		events := bufferedEvents(h)
-		if len(events) != 1 || events[0].Type != string(vibekit.EventRunInputNeeded) {
+		if len(events) != 1 || events[0].Type != string(marotte.EventRunInputNeeded) {
 			t.Fatalf("got %+v, want one run_input_needed", events)
 		}
 		p := marshalPayload(t, events[0].Payload)
@@ -604,7 +604,7 @@ func TestReconcileNeedInput(t *testing.T) {
 				"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
 			}),
 		}
-		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true
@@ -616,7 +616,7 @@ func TestReconcileNeedInput(t *testing.T) {
 		}
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", inspect("paused", needInputPauseReason))
 
-		evt := eventOfType(t, h, string(vibekit.EventRunInputNeeded))
+		evt := eventOfType(t, h, string(marotte.EventRunInputNeeded))
 		if evt.ChatID != "c1" {
 			t.Errorf("chat_id = %q, want c1: keyed to run:wf_1 the card renders only in "+
 				"the run tab and never in the launching chat's composer dock", evt.ChatID)
@@ -630,7 +630,7 @@ func TestReconcileNeedInput(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", inspect("paused", needInputPauseReason))
 
-		evt := eventOfType(t, h, string(vibekit.EventRunInputNeeded))
+		evt := eventOfType(t, h, string(marotte.EventRunInputNeeded))
 		if evt.ChatID != string(runChatID("wf_1")) {
 			t.Errorf("chat_id = %q, want run:wf_1", evt.ChatID)
 		}
@@ -672,7 +672,7 @@ func TestReconcileNeedInput(t *testing.T) {
 // TestReconcileNeedInput_InsideAParallelBranch pins the arm no pause reason can reach:
 // a branch's own sentence is written to a throwaway state copy, so the run keeps only
 // a wrapper that KAS also emits for an interruption and a permanent failure, and what
-// survives is the branch NODE's completionSignal (vibekit-acp.md has the read).
+// survives is the branch NODE's completionSignal (marotte-acp.md has the read).
 //
 // Its own function rather than a case in the table above: the fixture is a different
 // tree shape, and the checking logic here is about which NODE was named.
@@ -717,7 +717,7 @@ func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", branched(t, needInputSignal, ""))
 
-		evt := eventOfType(t, h, string(vibekit.EventRunInputNeeded))
+		evt := eventOfType(t, h, string(marotte.EventRunInputNeeded))
 		p := marshalPayload(t, evt.Payload)
 		if p["node_id"] != "verify" {
 			t.Errorf("node_id = %q, want verify", p["node_id"])
@@ -736,7 +736,7 @@ func TestReconcileNeedInput_InsideAParallelBranch(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.reconcileNeedInput(t.Context(), "wf_1", branched(t, "", needInputSignal))
 
-		evt := eventOfType(t, h, string(vibekit.EventRunInputNeeded))
+		evt := eventOfType(t, h, string(marotte.EventRunInputNeeded))
 		p := marshalPayload(t, evt.Payload)
 		if p["node_id"] != "plan" {
 			t.Errorf("node_id = %q, want plan: the ask must follow the signal rather "+
@@ -807,7 +807,7 @@ func TestAnswerInput(t *testing.T) {
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
 			},
 		})
@@ -822,9 +822,9 @@ func TestAnswerInput(t *testing.T) {
 		// The answer verb is a plain session/prompt addressed to the STEP's own
 		// session, which KAS reroutes into the run (tryResumeStepWithMessage).
 		// Addressed anywhere else it would be an ordinary prompt on a chat.
-		params := br.paramsFor(vibekit.MethodPrompt)
+		params := br.paramsFor(marotte.MethodPrompt)
 		if params == nil {
-			t.Fatalf("no %s call, calls were %v", vibekit.MethodPrompt, br.callLog())
+			t.Fatalf("no %s call, calls were %v", marotte.MethodPrompt, br.callLog())
 		}
 		if params["sessionId"] != "sess_step" {
 			t.Errorf("sessionId = %v, want sess_step", params["sessionId"])
@@ -837,7 +837,7 @@ func TestAnswerInput(t *testing.T) {
 		if !ok || block["type"] != "text" || block["text"] != "the main branch" {
 			t.Errorf("prompt block = %#v, want a text block carrying the answer", blocks[0])
 		}
-		if !hasEventType(bufferedEvents(h), string(vibekit.EventRunInputSettled)) {
+		if !hasEventType(bufferedEvents(h), string(marotte.EventRunInputSettled)) {
 			t.Error("no run_input_settled event, so the card on every other surface stays live")
 		}
 	})
@@ -858,7 +858,7 @@ func TestAnswerInput(t *testing.T) {
 
 	t.Run("a failed send hands the ask back AND re-offers it", func(t *testing.T) {
 		h, br := setup(t)
-		br.callErrs = map[string]error{vibekit.MethodPrompt: errors.New("bridge died")}
+		br.callErrs = map[string]error{marotte.MethodPrompt: errors.New("bridge died")}
 		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
 			t.Fatal("AnswerInput = nil, want the transport error")
 		}
@@ -872,10 +872,10 @@ func TestAnswerInput(t *testing.T) {
 		// visible to nobody until the next SSE connect refills it from the replay —
 		// which is the outcome the restore exists to prevent, one layer up. And it
 		// must NOT be a settle: the question is still open.
-		if !hasEventType(bufferedEvents(h), string(vibekit.EventRunInputNeeded)) {
+		if !hasEventType(bufferedEvents(h), string(marotte.EventRunInputNeeded)) {
 			t.Error("no run_input_needed event, so the restored ask reaches no surface")
 		}
-		if hasEventType(bufferedEvents(h), string(vibekit.EventRunInputSettled)) {
+		if hasEventType(bufferedEvents(h), string(marotte.EventRunInputSettled)) {
 			t.Error("a failed send announced a settle, want the ask re-offered instead")
 		}
 	})
@@ -891,12 +891,12 @@ func TestAnswerInput(t *testing.T) {
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowInspect: parkedInspect(
-				t, vibekit.RunStatusPaused, needInputPauseReason, "sess_from_inspect",
+				t, marotte.RunStatusPaused, needInputPauseReason, "sess_from_inspect",
 			),
 		}
 		h.runs.asks.Add(&runAsk{
 			chatID: runChatID("wf_1"),
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "reconciled:root/review", NodeID: "review",
 			},
 		})
@@ -905,9 +905,9 @@ func TestAnswerInput(t *testing.T) {
 		); err != nil {
 			t.Fatalf("AnswerInput = %v, want nil", err)
 		}
-		params := br.paramsFor(vibekit.MethodPrompt)
+		params := br.paramsFor(marotte.MethodPrompt)
 		if params == nil {
-			t.Fatalf("no %s call, calls were %v", vibekit.MethodPrompt, br.callLog())
+			t.Fatalf("no %s call, calls were %v", marotte.MethodPrompt, br.callLog())
 		}
 		// The paused LEAF's session, not the root's and not the chat's: KAS reroutes a
 		// prompt into the run only when it is addressed to the parked step itself.
@@ -927,7 +927,7 @@ func TestAnswerInput(t *testing.T) {
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 		h.runs.asks.Add(&runAsk{
 			chatID:  "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{WorkflowID: "wf_1", AskID: "a1"},
+			payload: marotte.RunInputNeededPayload{WorkflowID: "wf_1", AskID: "a1"},
 		})
 		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err == nil {
 			t.Fatal("AnswerInput with no answer address = nil, want a refusal")
@@ -935,7 +935,7 @@ func TestAnswerInput(t *testing.T) {
 		if !h.runs.asks.HasRun("wf_1") {
 			t.Fatal("the ask was consumed by a refusal, want it left answerable")
 		}
-		if !hasEventType(bufferedEvents(h), string(vibekit.EventRunInputNeeded)) {
+		if !hasEventType(bufferedEvents(h), string(marotte.EventRunInputNeeded)) {
 			t.Error("no run_input_needed event, so the restored ask reaches no surface")
 		}
 	})
@@ -961,7 +961,7 @@ func TestAnswerInput(t *testing.T) {
 		h, _, br := newTestHub()
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
 			},
 		})
@@ -975,7 +975,7 @@ func TestAnswerInput(t *testing.T) {
 			t.Error("no bridge was registered under the run's synthetic chat id, so its " +
 				"lifecycle frames have nowhere to route")
 		}
-		if !slices.Contains(br.callLog(), vibekit.MethodPrompt) {
+		if !slices.Contains(br.callLog(), marotte.MethodPrompt) {
 			t.Errorf("the answer never reached KAS; calls were %v", br.callLog())
 		}
 		if h.runs.asks.HasRun("wf_1") {

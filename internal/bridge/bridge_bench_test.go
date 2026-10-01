@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // BenchmarkReadLoop_Notifications measures JSON unmarshal throughput for
 // notification-shaped messages (the hot path in readLoop).
 func BenchmarkReadLoop_Notifications(b *testing.B) {
-	notif := vibekit.RPCResponse{
+	notif := marotte.RPCResponse{
 		JSONRPC: jsonRPCVersion,
 		Method:  "session/update",
 		Params:  json.RawMessage(`{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"content","text":"hello world"}}}`),
@@ -31,7 +31,7 @@ func BenchmarkReadLoop_Notifications(b *testing.B) {
 			if rerr != nil {
 				break
 			}
-			var resp vibekit.RPCResponse
+			var resp marotte.RPCResponse
 			if err := json.Unmarshal(line, &resp); err != nil {
 				b.Fatal(err)
 			}
@@ -53,7 +53,7 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 	for _, sz := range sizes {
 		b.Run(sz.name, func(b *testing.B) {
 			payload := strings.Repeat("x", sz.size)
-			resp := vibekit.RPCResponse{
+			resp := marotte.RPCResponse{
 				JSONRPC: jsonRPCVersion,
 				ID:      new(int64(42)),
 				Result:  json.RawMessage(`"` + payload + `"`),
@@ -78,7 +78,7 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 					if rerr != nil {
 						break
 					}
-					var resp vibekit.RPCResponse
+					var resp marotte.RPCResponse
 					if err := json.Unmarshal(line, &resp); err != nil {
 						b.Fatal(err)
 					}

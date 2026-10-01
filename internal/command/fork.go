@@ -15,9 +15,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // errForkParentUnknown is returned when the chat being forked has no record.
@@ -29,12 +29,12 @@ var errForkParentUnknown = errors.New("the chat this tangent came from no longer
 var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens into")
 
 // forkPayload decodes and validates the tangent command's payload.
-func forkPayload(cmd *vibekit.ClientCommand) (vibekit.ForkChatCommand, error) {
-	var p vibekit.ForkChatCommand
+func forkPayload(cmd *marotte.ClientCommand) (marotte.ForkChatCommand, error) {
+	var p marotte.ForkChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > vibekit.MaxChatNameBytes {
+	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > marotte.MaxChatNameBytes {
 		return p, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if !ValidIdent(p.OpID) {
@@ -46,7 +46,7 @@ func forkPayload(cmd *vibekit.ClientCommand) (vibekit.ForkChatCommand, error) {
 // CmdForkChat opens a tangent off another chat and returns the chat it
 // created plus the tab it opened for it. The new chat's id is minted here
 // when the envelope carries none.
-func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
+func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
 	p, err := forkPayload(cmd)
 	if err != nil {
 		return nil, err
@@ -128,8 +128,8 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 // tangent inherited nothing.
 //
 // It refuses nothing, and a failure does not heal itself: the chat stays as it stands.
-// Why the load runs here, and what a late swap reaches: `vibekit.md`'s `fork_chat` row.
-func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStore, c *vibekit.Chat) (*vibekit.Chat, bool) {
+// Why the load runs here, and what a late swap reaches: `marotte.md`'s `fork_chat` row.
+func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStore, c *marotte.Chat) (*marotte.Chat, bool) {
 	if c == nil || c.ACPSessionID == "" {
 		return c, false
 	}
@@ -140,7 +140,7 @@ func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStor
 	}
 	want := c.ACPSessionID
 	if len(c.Messages) == 0 {
-		id := vibekit.ChatID(c.ID)
+		id := marotte.ChatID(c.ID)
 		resumeForkedSession(ctx, bridges, id, want)
 		if refreshed, exists := chats.Get(ctx, id); exists {
 			c = refreshed
@@ -153,7 +153,7 @@ func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStor
 // land. Its own bridge rather than the parent's, which is already resumed: the
 // projection is keyed by chat, so a load issued on the parent's bridge would ingest
 // the fork's history into the PARENT's transcript.
-func resumeForkedSession(ctx context.Context, bridges BridgeAccess, chatID vibekit.ChatID, want string) {
+func resumeForkedSession(ctx context.Context, bridges BridgeAccess, chatID marotte.ChatID, want string) {
 	// durable for the OPEN, the request's own for the WAIT: a cancelled spawn takes
 	// tryLoadSession's failure branch, which DETACHES the forked session.
 	bridge, err := bridges.OpenBridge(durable.Context(ctx), chatID, "")
@@ -178,23 +178,23 @@ func resumeForkedSession(ctx context.Context, bridges BridgeAccess, chatID vibek
 // that fell through to a fresh session both report fresh.
 func forkOutcomeOf(sessionID string, inherited bool) string {
 	if sessionID == "" || !inherited {
-		return vibekit.ForkOutcomeFresh
+		return marotte.ForkOutcomeFresh
 	}
-	return vibekit.ForkOutcomeForked
+	return marotte.ForkOutcomeForked
 }
 
 // forkCreate is the tangent's create request: one builder for both call
 // sites (replay and fresh fork) so the record's shape cannot drift between
 // them. The tab hangs under the parent's tab, which is what makes a tangent
 // read as a tangent; a parent with no open tab promotes it to top level.
-func forkCreate(p vibekit.ForkChatCommand, chatID vibekit.ChatID, parent *vibekit.Chat, sessionID string) ChatCreate {
+func forkCreate(p marotte.ForkChatCommand, chatID marotte.ChatID, parent *marotte.Chat, sessionID string) ChatCreate {
 	return ChatCreate{
 		OpID:        p.OpID,
 		ChatID:      chatID,
 		RequireChat: p.ParentChatID,
 		ParentChat:  p.ParentChatID,
-		Init: func(c *vibekit.Chat) {
-			c.Name = vibekit.DefaultChatName
+		Init: func(c *marotte.Chat) {
+			c.Name = marotte.DefaultChatName
 			c.Model = parent.Model
 			c.CurrentModeID = parent.CurrentModeID
 			c.Effort = parent.Effort
@@ -218,7 +218,7 @@ func forkCreate(p vibekit.ForkChatCommand, chatID vibekit.ChatID, parent *vibeki
 // session id, or "" when the tangent has to start fresh. Every refusal is a
 // warning and an empty string, since the caller's answer is always to open the
 // tangent without a bound session.
-func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibekit.ForkChatCommand) string {
+func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p marotte.ForkChatCommand) string {
 	bridge := bridges.Bridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// Branching a conversation requires its context, so resume its bridge on
@@ -235,11 +235,11 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibe
 		}
 	}
 
-	meta := map[string]any{"createdReason": vibekit.CreatedReasonTangent}
+	meta := map[string]any{"createdReason": marotte.CreatedReasonTangent}
 	if p.Title != "" {
 		meta["title"] = p.Title
 	}
-	resp, err := bridge.Call(ctx, vibekit.MethodSessionFork, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, marotte.MethodSessionFork, SessionParams(bridge, map[string]any{
 		"cwd":   ws.Dir,
 		"_meta": map[string]any{"kiro": meta},
 	}))
@@ -257,7 +257,7 @@ func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibe
 	if !ids.ValidSessionID(out.SessionID) {
 		// A reply with no usable session id is a refusal however it is
 		// spelled. Validated because the value reaches a filesystem path
-		// inside KAS and vibekit's own reaper keep-list.
+		// inside KAS and marotte's own reaper keep-list.
 		slog.Warn("tangent: session/fork returned no usable session id, starting fresh",
 			"parent", p.ParentChatID)
 		return ""

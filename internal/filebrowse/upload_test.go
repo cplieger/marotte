@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// uploadsHandler grants one mount CLAIMING vibekit.DefaultUploadDir ITSELF,
+// uploadsHandler grants one mount CLAIMING marotte.DefaultUploadDir ITSELF,
 // backed by a throwaway directory, so the default upload target resolves
 // without the test machine needing a real one. Returns the backing directory so
 // a test can assert where the bytes actually landed.
@@ -29,7 +29,7 @@ func uploadsHandler(t *testing.T) (*Handler, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim := filepath.Clean("/" + vibekit.DefaultUploadDir)
+	claim := filepath.Clean("/" + marotte.DefaultUploadDir)
 	return &Handler{mounts: []mount{{
 		root: backing,
 		dir:  claim,
@@ -106,7 +106,7 @@ func TestHandleUpload_DefaultDirIsTheUploadsMount(t *testing.T) {
 		// resolved on this machine (a symlinked path), not that the default
 		// changed. Say so rather than leaving a bare status mismatch.
 		t.Fatalf("status = %d, want 200; body %q (a 403 points at path resolution for %q, not at the default)",
-			rec.Code, rec.Body.String(), vibekit.DefaultUploadDir)
+			rec.Code, rec.Body.String(), marotte.DefaultUploadDir)
 	}
 	got, err := os.ReadFile(filepath.Join(backing, "note.txt"))
 	if err != nil {

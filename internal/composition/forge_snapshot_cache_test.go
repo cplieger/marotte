@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/marotte/internal/steering"
 )
 
 // newCacheForTest builds a forgeSnapshotCache around an injected build

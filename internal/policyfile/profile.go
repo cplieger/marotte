@@ -5,18 +5,18 @@ import "slices"
 // Named security profiles for the Settings -> Permissions picker.
 //
 // A profile is a POSTURE, expressed MAINLY as a set of KAS policy presets rather
-// than as rules vibekit authors. That indirection is most of the design:
+// than as rules marotte authors. That indirection is most of the design:
 // `_meta.kiro.policyPreset` takes preset ids at the session door and KAS resolves
 // each against its own registry, injecting the rules at SESSION scope with
 // `source: preset:<id>`. So the preset half writes nothing to disk, cannot go
 // stale against upstream's judgement about which commands are safe, and covers
-// every session vibekit opens itself.
+// every session marotte opens itself.
 //
 // "Mainly" is load-bearing: the presets are NOT the whole posture. A preset is
 // bound to the one session it arrived on, and KAS creates a workflow step's
 // session itself with no `_meta`, so a preset can never reach one. The loosest
 // rung therefore ALSO writes rules to the user-scope permissions file, which is
-// the only mechanism vibekit has that such a session reads. Every other rung
+// the only mechanism marotte has that such a session reads. Every other rung
 // writes none, because a user-scope rule is durable — it survives a restart and
 // applies to every ACP client sharing this HOME. [Profile.FileRules] records that
 // asymmetry and why it is the decision rather than an omission.
@@ -29,7 +29,7 @@ import "slices"
 // list here would be copying a security review that upstream maintains.
 //
 // FOUR constraints on the mechanism, all measured off the 2.19.1 bundle and
-// recorded in vibekit-acp.md. A preset can only be SELECTED, never authored, and
+// recorded in marotte-acp.md. A preset can only be SELECTED, never authored, and
 // `validatePresetIds` fails `session/new` OUTRIGHT on an unknown id — hence
 // TestPresetIDs_MatchKAS. No RPC enumerates a preset's rules, so materializing a
 // profile into the editable table means reading them back off a live session's
@@ -52,7 +52,7 @@ const (
 	PresetAllowAll      = "allow-all"
 )
 
-// Profile ids. vibekit's own vocabulary, persisted as a setting, so free to
+// Profile ids. marotte's own vocabulary, persisted as a setting, so free to
 // differ from KAS's preset names — and they do differ, because a profile is a
 // POSTURE while a preset is a rule bundle.
 //
@@ -62,7 +62,7 @@ const (
 // the set and makes the ordering readable: guarded, read-only, trusted,
 // unrestricted. "Normal" named a default rather than a behaviour, "reads" was a
 // verb doing an adjective's job, and "yolo" is a joke in a security control — the
-// honest word for it is what it does, which is remove every restriction vibekit
+// honest word for it is what it does, which is remove every restriction marotte
 // can remove.
 //
 // Crew time-boxes its loosest level with a duration and a one-time
@@ -94,7 +94,7 @@ type Profile struct {
 	Presets []string
 	// FileRules are the rules this profile writes to the USER-scope permissions
 	// file, in ADDITION to sending its presets at the session door — the half that
-	// reaches a session vibekit did not open.
+	// reaches a session marotte did not open.
 	//
 	// A preset arrives at SESSION scope bound to the one session it was sent on,
 	// and KAS creates a workflow step's session itself with no _meta, so a preset
@@ -106,7 +106,7 @@ type Profile struct {
 	// describe it.
 	//
 	// THE PICKER'S COPY DUPLICATES THIS DISTRIBUTION and the wire does not carry
-	// it: vibekit.SecurityProfile ships ID and Presets only, so
+	// it: marotte.SecurityProfile ships ID and Presets only, so
 	// profileDescription in static-src/permissions-ui.ts states "the only preset
 	// profile that also covers workflow steps" from a hand-maintained copy of which
 	// rung holds these rules. ("Preset" is the narrowing that keeps it true: Custom
@@ -124,7 +124,7 @@ type Profile struct {
 // permissive rather than alphabetically.
 var profiles = []Profile{
 	{
-		// The baseline vibekit already ships: reading THIS workspace is free and
+		// The baseline marotte already ships: reading THIS workspace is free and
 		// everything else asks. Named rather than implicit so "no profile" is not
 		// a state the picker has to render.
 		ID:      ProfileGuarded,
@@ -160,14 +160,14 @@ var profiles = []Profile{
 		// .kiro/hooks/** and .vscode/**, because deny and ask both beat allow and
 		// that scope sits above every file. The UI says so beside the option.
 		//
-		// The ONE rung that also writes file rules, and the only one vibekit can
+		// The ONE rung that also writes file rules, and the only one marotte can
 		// author from its own definitions: `allow-all` resolves to a single
 		// umbrella, and RelaxCapabilities() is already the derived, tested answer to
 		// "the broadest grant a permissions file can express". The rungs below it
 		// grant through edit-workspace and dev-shell, whose rule sets are a security
 		// review upstream maintains (see the package comment) — spelling those to
 		// disk would freeze upstream's judgement at today's bundle and make it
-		// vibekit's to keep current.
+		// marotte's to keep current.
 		ID:        ProfileUnrestricted,
 		Presets:   []string{PresetAllowAll},
 		FileRules: relaxRules(),
@@ -292,6 +292,6 @@ func ProfileFor(id string) (Profile, bool) {
 }
 
 // DefaultProfile is what an unset or unrecognised setting resolves to. Guarded
-// rather than Custom: it reproduces the floor vibekit ships today, where Custom
+// rather than Custom: it reproduces the floor marotte ships today, where Custom
 // would silently remove the fs_read floor from an instance that never chose to.
 const DefaultProfile = ProfileGuarded

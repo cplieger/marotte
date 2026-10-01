@@ -18,12 +18,12 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 type chatStatusCache struct {
-	byChat map[vibekit.ChatID]vibekit.ChatStatusPayload
+	byChat map[marotte.ChatID]marotte.ChatStatusPayload
 	// versions holds the `status` counter. The projection it certifies is the
 	// RETAINED WAITING SET (what status_snapshot carries), so a write that moves
 	// only a non-waiting row does not mint: ClearAtTurnEnd never does, ClearWaiting
@@ -34,7 +34,7 @@ type chatStatusCache struct {
 }
 
 func newChatStatusCache() *chatStatusCache {
-	return &chatStatusCache{byChat: make(map[vibekit.ChatID]vibekit.ChatStatusPayload)}
+	return &chatStatusCache{byChat: make(map[marotte.ChatID]marotte.ChatStatusPayload)}
 }
 
 // MergeStamped records a chat's latest self-declared status against what the chat already
@@ -48,7 +48,7 @@ func newChatStatusCache() *chatStatusCache {
 // content chunk (the agent declares intent before producing output), which is why this is
 // keyed on the chat rather than hung off a turn. A chat-less declaration merges against
 // nothing and mints nothing; its stamp is the current version, read in the same section.
-func (c *chatStatusCache) MergeStamped(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) (vibekit.ChatStatusPayload, *vibekit.SubjectStamp) {
+func (c *chatStatusCache) MergeStamped(chatID marotte.ChatID, p marotte.ChatStatusPayload) (marotte.ChatStatusPayload, *marotte.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if chatID == "" {
@@ -81,22 +81,22 @@ func (c *chatStatusCache) registry() *subject.Versions {
 }
 
 // statusStamp is the `status` stamp at version.
-func statusStamp(version string) *vibekit.SubjectStamp {
-	return vibekit.NewSubjectStamp(string(subject.KindStatus), "", version)
+func statusStamp(version string) *marotte.SubjectStamp {
+	return marotte.NewSubjectStamp(string(subject.KindStatus), "", version)
 }
 
 // waitingRowsLocked is the retained waiting_on_user set minus the chats in busy, in
 // chat order: a chat whose turn is running must still suppress a stale
 // waiting_on_user, and a PRIME's chat is covered the same way. Callers hold c.mu.
-func (c *chatStatusCache) waitingRowsLocked(busy map[vibekit.ChatID]openTurnFacts) []vibekit.StatusRow {
-	rows := make([]vibekit.StatusRow, 0, len(c.byChat))
+func (c *chatStatusCache) waitingRowsLocked(busy map[marotte.ChatID]openTurnFacts) []marotte.StatusRow {
+	rows := make([]marotte.StatusRow, 0, len(c.byChat))
 	for id, p := range c.byChat {
-		if _, isBusy := busy[id]; isBusy || p.Status != vibekit.ChatStatusWaitingOnUser {
+		if _, isBusy := busy[id]; isBusy || p.Status != marotte.ChatStatusWaitingOnUser {
 			continue
 		}
-		rows = append(rows, vibekit.StatusRow{ChatID: id, Status: p.Status, Description: p.Description})
+		rows = append(rows, marotte.StatusRow{ChatID: id, Status: p.Status, Description: p.Description})
 	}
-	slices.SortFunc(rows, func(a, b vibekit.StatusRow) int { return cmp.Compare(a.ChatID, b.ChatID) })
+	slices.SortFunc(rows, func(a, b marotte.StatusRow) int { return cmp.Compare(a.ChatID, b.ChatID) })
 	return rows
 }
 
@@ -108,16 +108,16 @@ func (c *chatStatusCache) waitingRowsLocked(busy map[vibekit.ChatID]openTurnFact
 // unchanged across a connection loss. Both reads are under c.mu here, so the order
 // is belt and braces for this store; it is normative for the pending snapshot,
 // whose three stores cannot share a section.
-func (c *chatStatusCache) SnapshotStamped(busy map[vibekit.ChatID]openTurnFacts) (vibekit.StatusSnapshotPayload, *vibekit.SubjectStamp) {
+func (c *chatStatusCache) SnapshotStamped(busy map[marotte.ChatID]openTurnFacts) (marotte.StatusSnapshotPayload, *marotte.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	version, _ := c.registry().Current(subject.KindStatus, "")
 	rows := c.waitingRowsLocked(busy)
-	return vibekit.StatusSnapshotPayload{Rows: rows}, statusStamp(version)
+	return marotte.StatusSnapshotPayload{Rows: rows}, statusStamp(version)
 }
 
 // Snapshot copies every retained status, for the connect-time replay.
-func (c *chatStatusCache) Snapshot() map[vibekit.ChatID]vibekit.ChatStatusPayload {
+func (c *chatStatusCache) Snapshot() map[marotte.ChatID]marotte.ChatStatusPayload {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return maps.Clone(c.byChat)
@@ -133,10 +133,10 @@ func (c *chatStatusCache) Snapshot() map[vibekit.ChatID]vibekit.ChatStatusPayloa
 // when the event fired: a refresh, or a second device joining later, lost it
 // — exactly the state someone picking the work up on another screen needs.
 // Kept until the next status the agent declares or the chat going away.
-func (c *chatStatusCache) ClearAtTurnEnd(chatID vibekit.ChatID) {
+func (c *chatStatusCache) ClearAtTurnEnd(chatID marotte.ChatID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.byChat[chatID].Status == vibekit.ChatStatusWaitingOnUser {
+	if c.byChat[chatID].Status == marotte.ChatStatusWaitingOnUser {
 		return
 	}
 	delete(c.byChat, chatID)
@@ -152,10 +152,10 @@ func (c *chatStatusCache) ClearAtTurnEnd(chatID vibekit.ChatID) {
 // without the bump a digest between this delete and the discharge's own frame read
 // unchanged for a set that shrank. The discharge's MergeStamped then bumps a second
 // time, which is one spurious changed and never a false unchanged.
-func (c *chatStatusCache) ClearWaiting(chatID vibekit.ChatID) bool {
+func (c *chatStatusCache) ClearWaiting(chatID marotte.ChatID) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.byChat[chatID].Status != vibekit.ChatStatusWaitingOnUser {
+	if c.byChat[chatID].Status != marotte.ChatStatusWaitingOnUser {
 		return false
 	}
 	delete(c.byChat, chatID)
@@ -166,10 +166,10 @@ func (c *chatStatusCache) ClearWaiting(chatID vibekit.ChatID) bool {
 // Clear drops a chat's status unconditionally. For a chat going away (closed or
 // deleted), where no status can still be true of it. Mints only when the row it
 // removes was the retained waiting_on_user claim, for ClearWaiting's reason.
-func (c *chatStatusCache) Clear(chatID vibekit.ChatID) {
+func (c *chatStatusCache) Clear(chatID marotte.ChatID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	waiting := c.byChat[chatID].Status == vibekit.ChatStatusWaitingOnUser
+	waiting := c.byChat[chatID].Status == marotte.ChatStatusWaitingOnUser
 	delete(c.byChat, chatID)
 	if waiting {
 		c.registry().BumpCounter(subject.KindStatus, "")

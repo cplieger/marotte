@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"golang.org/x/sync/singleflight"
 )
 

@@ -2,7 +2,7 @@
 // Confirm dialog — adopted from @cplieger/ui-primitives.
 //
 // The hand-rolled native-<dialog> confirmation was replaced by the library's
-// `ask` primitive (boolean shape), wrapped here to preserve vibekit's
+// `ask` primitive (boolean shape), wrapped here to preserve marotte's
 // positional signature `confirm(message, confirmLabel?, variant?)` so the
 // ~dozen call sites (editor-core, files, tools, git-*, forge-auth, mcp-ui,
 // tabs, …) are unchanged.

@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // FuzzResolveSwitchModel exercises model resolution logic with
@@ -16,8 +16,8 @@ func FuzzResolveSwitchModel(f *testing.F) {
 	f.Add("model-a", "model-a")
 
 	f.Fuzz(func(t *testing.T, current, requested string) {
-		chat := &vibekit.Chat{Model: current}
-		p := vibekit.SwitchModelCommand{Model: requested}
+		chat := &marotte.Chat{Model: current}
+		p := marotte.SwitchModelCommand{Model: requested}
 		model, isSwitch := resolveSwitchModel(chat, p)
 
 		if requested == "" || requested == "auto" || requested == current {

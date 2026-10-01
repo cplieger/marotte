@@ -6,7 +6,7 @@ import (
 	"net"
 	"syscall"
 
-	"github.com/cplieger/vibekit/internal/liveness"
+	"github.com/cplieger/marotte/internal/liveness"
 )
 
 // tcpUserTimeout is TCP_USER_TIMEOUT (tcp(7)). Package-local because syscall

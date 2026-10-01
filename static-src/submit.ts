@@ -12,14 +12,14 @@
 // correcting had finished — the one moment it could no longer help. Its escape
 // hatch was a per-chip "send now" that CANCELLED the running turn to get ahead
 // of it, discarding everything since the last durable step. Both existed because
-// vibekit believed it could not reach a live turn. It could: KAS has taken a
+// marotte believed it could not reach a live turn. It could: KAS has taken a
 // per-session steering buffer and a mid-turn injection point all along, and the
 // belief traced to a probe of the wrong method name (`session/steer`, which does
 // not exist, rather than `_session/steer`) whose -32601 was recorded as a
 // capability KAS lacked.
 //
 // So there is no queue here, no drain, no re-entrancy guard, no FIFO to keep in
-// order and no idle re-check. KAS owns the buffer; `session.steers` is vibekit's
+// order and no idle re-check. KAS owns the buffer; `session.steers` is marotte's
 // read-only projection of it (store.ts), written only by the three steer SSE
 // events. Nothing in this module writes it.
 //
@@ -109,7 +109,7 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   // would race a fresh failure arriving for this very attempt.
   // Ahead of the typed-command branch on purpose: a command is an attempt too.
   clearAgentDown();
-  // Typed commands vibekit owns are intercepted BEFORE anything else: before the
+  // Typed commands marotte owns are intercepted BEFORE anything else: before the
   // attachments are taken and before a message id is minted. A command is not a
   // prompt, so it must not consume an attachment or leave a user bubble behind.
   if (handleTypedCommand(chatID, text)) {

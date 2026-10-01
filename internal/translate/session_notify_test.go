@@ -10,7 +10,7 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // notifyParams is the shape KAS puts on `_kiro/session/notify`, with the values a
@@ -25,7 +25,7 @@ type notifyParams struct {
 	notifyID   string
 }
 
-func notifyFrame(p notifyParams) *vibekit.RPCResponse {
+func notifyFrame(p notifyParams) *marotte.RPCResponse {
 	return notif("_kiro/session/notify", map[string]any{
 		"sessionId":       testParent,
 		"callerSessionId": p.caller,

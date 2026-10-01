@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The interfaces below are the runtime's dependency contracts, declared at the
@@ -33,13 +33,13 @@ type RouteRegistrar interface {
 // Delete is deliberately absent: only cmdDeleteChat may remove a chat file, so
 // the path that tears bridges down on exit and restart must not be able to.
 type bridgeChatRecords interface {
-	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
+	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	// Mutate is the single write primitive: load, apply, save, broadcast.
-	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) (string, error)
-	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
+	AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error
 	// UpdateMessage amends ONE persisted message by id and NO-OPS when that id
 	// is absent, which is what a truncation leaves (amendLostReason).
-	UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error
+	UpdateMessage(ctx context.Context, chatID marotte.ChatID, msgID string, mutate func(*marotte.Message)) error
 }
 
 // chatRecords is the runtime's field type: a UNION of the narrower views the
@@ -49,27 +49,27 @@ type bridgeChatRecords interface {
 type chatRecords interface {
 	bridgeChatRecords
 
-	List(ctx context.Context) []vibekit.ChatHeader
+	List(ctx context.Context) []marotte.ChatHeader
 	// Exists is the digest resolver's `chat` gone predicate: file present and not
 	// tombstoned, read under NO per-chat mutex, because Mutate holds that mutex
 	// across an fsynced file rewrite the resolver must never wait out.
-	Exists(id vibekit.ChatID) bool
+	Exists(id marotte.ChatID) bool
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
-	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
-	SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error)
+	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
+	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
 	// Delete removes the chat file; only cmdDeleteChat calls it.
-	Delete(ctx context.Context, id vibekit.ChatID) error
+	Delete(ctx context.Context, id marotte.ChatID) error
 	// UpsertTurnPlan writes the turn's single plan row; only HandlePlan calls it.
-	UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	UpsertTurnPlan(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error
 }
 
 // pushNotifier is the notification SEND half. *push.Service satisfies it.
 type pushNotifier interface {
 	HasSubscribers() bool
-	Send(ctx context.Context, title, body string, notifyType vibekit.PushKind, subject vibekit.PushSubject)
+	Send(ctx context.Context, title, body string, notifyType marotte.PushKind, subject marotte.PushSubject)
 	// Retract drops any push about subject still held for a later delivery: the
 	// ask was answered, so a nudge about it has nothing left to say.
-	Retract(subject vibekit.PushSubject)
+	Retract(subject marotte.PushSubject)
 }
 
 // pushService is the runtime's whole view of push: the send half plus the two
@@ -91,13 +91,13 @@ type pushService interface {
 
 // acpSession names the ACP session an RPC is addressed to.
 type acpSession interface {
-	SessionID() vibekit.SessionID
+	SessionID() marotte.SessionID
 }
 
 // acpCaller sends a JSON-RPC request and waits for its response. Returns
 // ctx.Err() if ctx is cancelled before the response arrives.
 type acpCaller interface {
-	Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error)
+	Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error)
 }
 
 // acpResponder answers an INBOUND request from kiro-cli. The utility session's
@@ -122,7 +122,7 @@ type acpSessionCaller interface {
 	// CallAt is Call plus the read loop position the response arrived at, for a
 	// caller ordering a LOCAL decision against notifications still queued behind
 	// it — a turn_end or a session/load replay that PRECEDES the response.
-	CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error)
+	CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error)
 }
 
 // acpSessionResponder is what the utility session's forward goroutine needs of
@@ -139,7 +139,7 @@ type acpSessionResponder interface {
 type acpSessionFacts interface {
 	acpSession
 
-	ModelID() vibekit.ModelID
+	ModelID() marotte.ModelID
 	// CurrentMode returns the active mode id, empty when the agent has none.
 	CurrentMode() string
 	// SessionTitle returns KAS's own title (flat _meta.title). Advisory:
@@ -150,12 +150,12 @@ type acpSessionFacts interface {
 	// every caller writes only a positive value.
 	ContextThresholds() (summarization, truncation float64)
 	// Modes returns the session modes the agent supports; empty if it has none.
-	Modes() []vibekit.SessionMode
+	Modes() []marotte.SessionMode
 	// Catalog returns every advertised model, UNFILTERED — the entitlement input
 	// ApplyServedModels reads, where Models' display filter would refuse a live model.
-	Catalog() []vibekit.SessionModel
+	Catalog() []marotte.SessionModel
 	// Models returns the swappable models, deprecated/internal entries filtered.
-	Models() []vibekit.SessionModel
+	Models() []marotte.SessionModel
 }
 
 // utilityBridge is the long-lived utility session's ACP surface. It never
@@ -168,11 +168,11 @@ type utilityBridge interface {
 
 	// Start launches a fresh kiro-cli ACP subprocess. ctx bounds the startup
 	// handshake ONLY; the subprocess's lifetime is StartOpts.Lifetime, REQUIRED.
-	Start(ctx context.Context, opts *vibekit.StartOpts) error
+	Start(ctx context.Context, opts *marotte.StartOpts) error
 	// NotifCh yields incoming ACP notifications with the read loop's sequence,
 	// closing when the subprocess exits. The forward goroutine must be draining
 	// it BEFORE Start: on v3 session/new blocks on requests that arrive here.
-	NotifCh() <-chan vibekit.Notification
+	NotifCh() <-chan marotte.Notification
 }
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat.

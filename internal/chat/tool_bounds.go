@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // toolBudget is how much of one tool call's three bulky fields a consumer keeps. Two exist,
@@ -55,8 +55,8 @@ var persistBudget = toolBudget{
 
 // storeChat returns chat bounded to persistBudget, copy-on-write all the way down: the common
 // chat is written with no clone at all, and a caller holding its own Message never sees the cut.
-func storeChat(chat *vibekit.Chat) *vibekit.Chat {
-	var bounded []vibekit.Message
+func storeChat(chat *marotte.Chat) *marotte.Chat {
+	var bounded []marotte.Message
 	for i := range chat.Messages {
 		m, cut := boundMessage(&chat.Messages[i], storeToolCall)
 		if !cut {
@@ -78,9 +78,9 @@ func storeChat(chat *vibekit.Chat) *vibekit.Chat {
 // storeToolCall returns tc bounded to persistBudget with its Truncated record set, and whether
 // anything was cut. It must stay idempotent: every mutation loads the persisted chat and writes
 // it back, so an already-bounded call arrives here again.
-func storeToolCall(tc *vibekit.ToolCall) (vibekit.ToolCall, bool) {
+func storeToolCall(tc *marotte.ToolCall) (marotte.ToolCall, bool) {
 	out, cut := boundToolCall(tc, persistBudget)
-	if cut == (vibekit.ToolTruncation{}) {
+	if cut == (marotte.ToolTruncation{}) {
 		return out, false
 	}
 	out.Truncated = mergeTruncation(tc.Truncated, cut)
@@ -89,7 +89,7 @@ func storeToolCall(tc *vibekit.ToolCall) (vibekit.ToolCall, bool) {
 
 // mergeTruncation keeps whichever measurement is larger per field, so the
 // ORIGINAL size survives every later rewrite of an already-bounded call.
-func mergeTruncation(prior *vibekit.ToolTruncation, cut vibekit.ToolTruncation) *vibekit.ToolTruncation {
+func mergeTruncation(prior *marotte.ToolTruncation, cut marotte.ToolTruncation) *marotte.ToolTruncation {
 	if prior == nil {
 		return &cut
 	}
@@ -103,8 +103,8 @@ func mergeTruncation(prior *vibekit.ToolTruncation, cut vibekit.ToolTruncation) 
 
 // boundMessage returns m with every tool call bound by f, or m unchanged when nothing needed
 // cutting: copy-on-write, so a message with nothing over budget costs one pass and no allocation.
-func boundMessage(m *vibekit.Message, f func(*vibekit.ToolCall) (vibekit.ToolCall, bool)) (vibekit.Message, bool) {
-	var bounded []vibekit.ToolCall
+func boundMessage(m *marotte.Message, f func(*marotte.ToolCall) (marotte.ToolCall, bool)) (marotte.Message, bool) {
+	var bounded []marotte.ToolCall
 	for i := range m.ToolCalls {
 		tc, cut := f(&m.ToolCalls[i])
 		if !cut {
@@ -126,9 +126,9 @@ func boundMessage(m *vibekit.Message, f func(*vibekit.ToolCall) (vibekit.ToolCal
 // boundToolCall returns a copy of tc bounded to b, and what it cut: a zero ToolTruncation means
 // nothing was over budget. It sets no marker of its own, because the two callers publish
 // different ones — the bytes are fetchable for one of them and gone for the other.
-func boundToolCall(tc *vibekit.ToolCall, b toolBudget) (vibekit.ToolCall, vibekit.ToolTruncation) {
+func boundToolCall(tc *marotte.ToolCall, b toolBudget) (marotte.ToolCall, marotte.ToolTruncation) {
 	out := *tc
-	var cut vibekit.ToolTruncation
+	var cut marotte.ToolTruncation
 	if text, ok := boundOutput(tc.Output, b); ok {
 		out.Output = text
 		// Dropped with the cut — boundOutput says why.
@@ -223,7 +223,7 @@ func cutRunesFront(s string) string {
 }
 
 // diffsBytes is what a diff slice costs in content, the measure boundDiffs spends.
-func diffsBytes(diffs []vibekit.ToolDiff) int {
+func diffsBytes(diffs []marotte.ToolDiff) int {
 	total := 0
 	for i := range diffs {
 		total += len(diffs[i].Path) + len(diffs[i].OldText) + len(diffs[i].NewText)
@@ -234,7 +234,7 @@ func diffsBytes(diffs []vibekit.ToolDiff) int {
 // boundDiffs keeps the leading diffs that fit b.diffBytes, WHOLE or not at all: a ToolDiff is a
 // before/after pair the client runs its own line-diff over, so a truncated pair yields hunks
 // describing an edit that never happened.
-func boundDiffs(diffs []vibekit.ToolDiff, b toolBudget) ([]vibekit.ToolDiff, bool) {
+func boundDiffs(diffs []marotte.ToolDiff, b toolBudget) ([]marotte.ToolDiff, bool) {
 	spent := 0
 	for i := range diffs {
 		size := len(diffs[i].Path) + len(diffs[i].OldText) + len(diffs[i].NewText)

@@ -3,7 +3,7 @@ package push
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // The registry's DefaultOn and the effective view must answer the same thing for

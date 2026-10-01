@@ -9,10 +9,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/procgroup"
-	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/procgroup"
+	"github.com/cplieger/marotte/internal/procout"
+	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/webhttp/v3"
 )
 

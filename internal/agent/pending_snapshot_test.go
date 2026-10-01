@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 	"pgregory.net/rapid"
 )
 
@@ -26,8 +26,8 @@ func pendingFixture() *Runtime {
 	return rt
 }
 
-func permNeeded(chat vibekit.ChatID, id int64) vibekit.ServerEvent {
-	return vibekit.NewEvent(vibekit.EventPermissionNeeded, chat, vibekit.PermissionNeededPayload{RequestID: id})
+func permNeeded(chat marotte.ChatID, id int64) marotte.ServerEvent {
+	return marotte.NewEvent(marotte.EventPermissionNeeded, chat, marotte.PermissionNeededPayload{RequestID: id})
 }
 
 // snapshotKeys reduces a snapshot's items to the identities the client would hold.
@@ -74,7 +74,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 			rt.bus.pendingPerms.Add(id, permNeeded("c1", id))
 		}
 		rt.runs.asks.Add(askOf("c2", "wf", "a1", "n1"))
-		rt.bus.steers.SteerWaiting("c3", vibekit.SteerQueuedPayload{SteerID: "s1"})
+		rt.bus.steers.SteerWaiting("c3", marotte.SteerQueuedPayload{SteerID: "s1"})
 
 		addAt := rapid.IntRange(-1, 3).Draw(t, "addAfterRead")
 		resolveAt := rapid.IntRange(-1, 3).Draw(t, "resolveAfterRead")
@@ -124,7 +124,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 func TestPendingSnapshot_CounterLastHasAFalseUnchanged(t *testing.T) {
 	rt := pendingFixture()
 	rt.bus.pendingPerms.Add(1, permNeeded("c1", 1))
-	counterLast := func(afterPerms func()) ([]vibekit.ServerEvent, string) {
+	counterLast := func(afterPerms func()) ([]marotte.ServerEvent, string) {
 		events := rt.bus.pendingPerms.List("")
 		afterPerms()
 		events = append(events, rt.runs.asks.List("")...)
@@ -155,7 +155,7 @@ func TestPendingSnapshot_EmptySetIsOneFrameWithItems(t *testing.T) {
 	if payload.Items == nil || len(payload.Items) != 0 {
 		t.Errorf("empty snapshot Items = %#v, want an empty non-nil slice", payload.Items)
 	}
-	want := vibekit.SubjectStamp{Kind: "pending", Version: subject.Unminted}
+	want := marotte.SubjectStamp{Kind: "pending", Version: subject.Unminted}
 	if stamp == nil || *stamp != want {
 		t.Errorf("empty snapshot stamp = %+v, want %+v", stamp, want)
 	}

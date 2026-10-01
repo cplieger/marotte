@@ -7,7 +7,7 @@ import (
 	"text/template"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/marotte/internal/modeltext"
 )
 
 // Subject-line shaping bounds, in RUNES. 72 is the conventional git subject
@@ -51,7 +51,7 @@ PREFIXES (must match one):
   {{.}}
 {{- end}}
 
-SCOPE: the app or module name (e.g. "vibekit", "subflux", "age").
+SCOPE: the app or module name (e.g. "marotte", "subflux", "age").
 For multi-app changes use comma-separated scopes.
 
 RECENT COMMITS (match the style):

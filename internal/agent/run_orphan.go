@@ -1,6 +1,6 @@
 package agent
 
-// Restart orphans: the runs vibekit launched whose owning process died. TWO clearing
+// Restart orphans: the runs marotte launched whose owning process died. TWO clearing
 // paths, answering different questions — the BOOT sweep "is this system idle", the
 // ADMISSION backstop "may this run start". No automatic relaunch (user decision).
 //
@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/rpcerr"
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // orphanSweepBudget bounds the whole boot sweep: one sequential `inspect` per candidate
@@ -54,9 +54,9 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
 		slog.Warn("boot: run list unavailable, skipping the orphan sweep", "error", err)
 		return false
 	}
-	status := make(map[string]vibekit.RunStatus, len(runs))
+	status := make(map[string]marotte.RunStatus, len(runs))
 	for i := range runs {
-		status[runs[i].WorkflowID] = vibekit.RunStatus(runs[i].Status)
+		status[runs[i].WorkflowID] = marotte.RunStatus(runs[i].Status)
 	}
 	rs.reconcileLeasePresence(cctx, status, time.Now(), true)
 
@@ -73,7 +73,7 @@ func (rs *Runs) SweepOrphaned(ctx context.Context) (reached bool) {
 		case l.Origin == runlease.OriginAgent:
 			// Chat-parented by construction: KAS parents an agent's run on the calling
 			// chat's session, so it heals WITH that chat when its bridge rehydrates.
-		case st == vibekit.RunStatusPaused && rs.restartPaused(cctx, l.WorkflowID):
+		case st == marotte.RunStatusPaused && rs.restartPaused(cctx, l.WorkflowID):
 			rs.clearOrphaned(cctx, l)
 		}
 	}
@@ -105,7 +105,7 @@ func (rs *Runs) releaseIfOver(ctx context.Context, workflowID string) {
 // releases, a listed row resets the absence clock, and an ABSENT row starts or spends it.
 // Absence never CANCELS, and it releases only on per-run evidence or a spent budget — a
 // list that cannot see a run is not evidence the run is over. Boot passes inspectAbsent.
-func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]vibekit.RunStatus, now time.Time, inspectAbsent bool) {
+func (rs *Runs) reconcileLeasePresence(ctx context.Context, status map[string]marotte.RunStatus, now time.Time, inspectAbsent bool) {
 	held := rs.leaseStore().List()
 	for i := range held {
 		l := &held[i]
@@ -174,16 +174,16 @@ func (rs *Runs) setFirstAbsentAt(ctx context.Context, workflowID string, at time
 }
 
 // clearBlockingOrphan is the admission backstop: is a row blocking a launch an orphan
-// vibekit itself owns, and clear it if so. Admission reads KAS's run LIST rather than the
-// leases, because that list is the only thing that sees the runs vibekit did not launch.
-func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID string, status vibekit.RunStatus) bool {
-	if status != vibekit.RunStatusPaused {
+// marotte itself owns, and clear it if so. Admission reads KAS's run LIST rather than the
+// leases, because that list is the only thing that sees the runs marotte did not launch.
+func (rs *Runs) clearBlockingOrphan(ctx context.Context, workflowID string, status marotte.RunStatus) bool {
+	if status != marotte.RunStatusPaused {
 		// A running row is not an orphan, whatever else is true of it.
 		return false
 	}
 	l, held := rs.lease(workflowID)
 	if !held || l.Origin == runlease.OriginAgent {
-		// Not vibekit's own to clear: a run with no lease came from the TUI, and an
+		// Not marotte's own to clear: a run with no lease came from the TUI, and an
 		// agent's run belongs to its chat.
 		return false
 	}
@@ -244,12 +244,12 @@ func (rs *Runs) restartPaused(ctx context.Context, workflowID string) bool {
 		return false
 	}
 	return res.WorkflowID == workflowID &&
-		res.State.Status == vibekit.RunStatusPaused &&
+		res.State.Status == marotte.RunStatusPaused &&
 		res.State.PauseReason == stalePauseReason
 }
 
 // involuntarilyPaused reports whether a paused run stopped for a cause nobody chose, and
-// is therefore vibekit's to resume unasked. restartPaused's sibling with a wider PAUSE
+// is therefore marotte's to resume unasked. restartPaused's sibling with a wider PAUSE
 // predicate, argued at resumablePause; FALSE on any RPC failure.
 func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool {
 	if workflowID == "" {
@@ -260,7 +260,7 @@ func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool
 		return false
 	}
 	return res.WorkflowID == workflowID &&
-		res.State.Status == vibekit.RunStatusPaused &&
+		res.State.Status == marotte.RunStatusPaused &&
 		resumablePause(res.State.PauseReason, res.State.PauseDetail)
 }
 
@@ -270,7 +270,7 @@ func (rs *Runs) involuntarilyPaused(ctx context.Context, workflowID string) bool
 type inspectRunState struct {
 	State struct {
 		PauseDetail *pauseDetail      `json:"pauseDetail"`
-		Status      vibekit.RunStatus `json:"status"`
+		Status      marotte.RunStatus `json:"status"`
 		PauseReason string            `json:"pauseReason"`
 	} `json:"state"`
 	WorkflowID string `json:"workflowId"`

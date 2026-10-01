@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Organization / account governance policy (v3 _kiro/governance/state).
 //
-// KAS pushes an account/workspace feature-flag policy on every session; vibekit
+// KAS pushes an account/workspace feature-flag policy on every session; marotte
 // caches the latest server-side and serves a snapshot at GET /api/governance so
 // a fresh page load can read it with no chat open, then keeps it live via the
 // governance_state SSE. This module is the single client owner of that state:
@@ -115,7 +115,7 @@ function renderOrgPolicy(g: GovernanceStatePayload): void {
     el(
       "p",
       { className: "section-hint" },
-      "Controlled by your organization or account \u2014 shown here for transparency and not changeable from Vibekit.",
+      "Controlled by your organization or account \u2014 shown here for transparency and not changeable from Marotte.",
     ),
     grid,
   ];

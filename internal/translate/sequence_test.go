@@ -6,16 +6,16 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // newEventCaptureDeps returns a baseDeps that captures broadcast events into
 // the returned slice pointer. Tests read *events after exercising the
 // translator.
-func newEventCaptureDeps() (*baseDeps, *[]vibekit.ServerEvent) {
-	events := &[]vibekit.ServerEvent{}
+func newEventCaptureDeps() (*baseDeps, *[]marotte.ServerEvent) {
+	events := &[]marotte.ServerEvent{}
 	deps := newBaseDeps()
-	deps.onBroadcast = func(_ context.Context, evt vibekit.ServerEvent) {
+	deps.onBroadcast = func(_ context.Context, evt marotte.ServerEvent) {
 		*events = append(*events, evt)
 	}
 	return deps, events
@@ -26,7 +26,7 @@ func newEventCaptureDeps() (*baseDeps, *[]vibekit.ServerEvent) {
 func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	// First chunk: should create message + emit chunk
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -37,10 +37,10 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 		t.Fatalf("expected at least 2 events (message_created + message_chunk), got %d: %v",
 			len(*events), eventTypes(*events))
 	}
-	if (*events)[0].Type != vibekit.EventMessageCreated {
+	if (*events)[0].Type != marotte.EventMessageCreated {
 		t.Errorf("event[0].Type = %q, want message_created", (*events)[0].Type)
 	}
-	if (*events)[1].Type != vibekit.EventMessageChunk {
+	if (*events)[1].Type != marotte.EventMessageChunk {
 		t.Errorf("event[1].Type = %q, want message_chunk", (*events)[1].Type)
 	}
 
@@ -54,7 +54,7 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 		t.Fatalf("expected 1 event (message_chunk only), got %d: %v",
 			len(*events), eventTypes(*events))
 	}
-	if (*events)[0].Type != vibekit.EventMessageChunk {
+	if (*events)[0].Type != marotte.EventMessageChunk {
 		t.Errorf("event[0].Type = %q, want message_chunk", (*events)[0].Type)
 	}
 }
@@ -62,7 +62,7 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	// Start a streaming turn first (tool calls require an active buffer)
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -80,7 +80,7 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 
 	found := false
 	for _, evt := range *events {
-		if evt.Type == vibekit.EventToolCall {
+		if evt.Type == marotte.EventToolCall {
 			found = true
 			break
 		}
@@ -93,7 +93,7 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	// Start turn + add tool call
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -115,7 +115,7 @@ func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 
 	found := false
 	for _, evt := range *events {
-		if evt.Type == vibekit.EventToolCallUpdate {
+		if evt.Type == marotte.EventToolCallUpdate {
 			found = true
 			break
 		}
@@ -132,7 +132,7 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	tr := New(rolesOf(wrapper))
 
 	// v3 consolidated MCP status: a "connected" server records a connection.
-	tr.HandleMCPStatus(t.Context(), "", &vibekit.RPCResponse{
+	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"servers": []map[string]any{
 				{"name": "github", "status": "connected"},
@@ -155,7 +155,7 @@ func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 	var disabled []string
 	tr := New(rolesOf(&mcpCaptureDeps{baseDeps: deps, disabled: &disabled}))
 
-	tr.HandleMCPStatus(t.Context(), "", &vibekit.RPCResponse{
+	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"servers": []map[string]any{
 				{"name": "off-server", "status": "disabled"},
@@ -177,12 +177,12 @@ func TestSequence_MCPStatus_CapturesToolsPromptsAndResources(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	var connected string
 	var tools []string
-	var prompts []vibekit.MCPPromptInfo
-	var resources []vibekit.MCPResourceInfo
+	var prompts []marotte.MCPPromptInfo
+	var resources []marotte.MCPResourceInfo
 	wrapper := &mcpCaptureDeps{baseDeps: deps, connected: &connected, tools: &tools, prompts: &prompts, resources: &resources}
 	tr := New(rolesOf(wrapper))
 
-	tr.HandleMCPStatus(t.Context(), "", &vibekit.RPCResponse{
+	tr.HandleMCPStatus(t.Context(), "", &marotte.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"servers": []map[string]any{
 				{
@@ -235,8 +235,8 @@ type mcpCaptureDeps struct {
 	*baseDeps
 	connected *string
 	tools     *[]string
-	prompts   *[]vibekit.MCPPromptInfo
-	resources *[]vibekit.MCPResourceInfo
+	prompts   *[]marotte.MCPPromptInfo
+	resources *[]marotte.MCPResourceInfo
 	disabled  *[]string
 }
 
@@ -250,12 +250,12 @@ func (d *mcpCaptureDeps) MCPRecorder() MCPRecorder {
 type captureMCPRecorder struct {
 	connected *string
 	tools     *[]string
-	prompts   *[]vibekit.MCPPromptInfo
-	resources *[]vibekit.MCPResourceInfo
+	prompts   *[]marotte.MCPPromptInfo
+	resources *[]marotte.MCPResourceInfo
 	disabled  *[]string
 }
 
-func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
+func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo) {
 	if r.connected != nil {
 		*r.connected = name
 	}
@@ -282,7 +282,7 @@ func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string) {
 func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
-	chatID := vibekit.ChatID("c-reason")
+	chatID := marotte.ChatID("c-reason")
 
 	// Send a reasoning chunk (isReasoning=true)
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -334,7 +334,7 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
-func eventTypes(events []vibekit.ServerEvent) []string {
+func eventTypes(events []marotte.ServerEvent) []string {
 	types := make([]string, len(events))
 	for i, e := range events {
 		types[i] = string(e.Type)

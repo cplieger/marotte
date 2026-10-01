@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The tabs envelope carries the collection version a second time, as the `tabs`
@@ -14,7 +14,7 @@ import (
 func TestTabs_SubjectIsTheCollectionVersionWithTheEpoch(t *testing.T) {
 	s, st := newTabsServer(t)
 	s.agent = &fakeEngine{}
-	if _, _, _, err := st.Open(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindSettings}); err != nil {
+	if _, _, _, err := st.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindSettings}); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
@@ -23,7 +23,7 @@ func TestTabs_SubjectIsTheCollectionVersionWithTheEpoch(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
-	want := vibekit.SubjectStamp{Kind: "tabs", Version: strconv.FormatUint(got.Version, 10), Epoch: "fake-epoch"}
+	want := marotte.SubjectStamp{Kind: "tabs", Version: strconv.FormatUint(got.Version, 10), Epoch: "fake-epoch"}
 	if got.Subject == nil || *got.Subject != want {
 		t.Errorf("subject = %+v, want %+v", got.Subject, want)
 	}

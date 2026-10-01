@@ -31,7 +31,7 @@ const acpMethodFloor = 60
 
 // TestACPMethodsPresent is the upgrade gate that answers the question a
 // kiro-cli bump actually raises: does the agent server still speak every verb
-// vibekit depends on?
+// marotte depends on?
 //
 // It exists because the capability census could not answer it. That census
 // introspects the bundle's IDENTIFIERS, so kiro-cli 2.20.0 broke it by shipping
@@ -45,7 +45,7 @@ const acpMethodFloor = 60
 // ends compare it byte for byte, which is exactly the property that makes it a
 // durable anchor where an identifier is not. So this test should keep working
 // across upstream builds that reshape the census, and when it DOES fail it
-// names a verb vibekit calls into the void.
+// names a verb marotte calls into the void.
 //
 // Scope, stated because it bounds what a pass means: presence of the name, not
 // agreement about its params, its result shape or its semantics. Those are the
@@ -54,10 +54,10 @@ const acpMethodFloor = 60
 func TestACPMethodsPresent(t *testing.T) {
 	active := activeKASVersion(t)
 	src, path := bundleSource(t, active)
-	methods := vibekitACPMethods(t)
+	methods := marotteACPMethods(t)
 
 	if len(methods) < acpMethodFloor {
-		t.Fatalf(`derived only %d ACP method name(s) from vibekit's own sources, want >= %d.
+		t.Fatalf(`derived only %d ACP method name(s) from marotte's own sources, want >= %d.
 The sweep, not the surface, is what changed: a method spelled by concatenation
 or moved into a file this walk skips is invisible to it, and every assertion
 below would then pass for having nothing to check.`, len(methods), acpMethodFloor)
@@ -70,28 +70,28 @@ below would then pass for having nothing to check.`, len(methods), acpMethodFloo
 		}
 	}
 	if len(absent) > 0 {
-		t.Errorf(`kiro-cli %s does not carry %d ACP method name(s) vibekit uses:
+		t.Errorf(`kiro-cli %s does not carry %d ACP method name(s) marotte uses:
   %s
-vibekit either calls these and gets an unknown-method error, or serves them and
+marotte either calls these and gets an unknown-method error, or serves them and
 the handler is now dead. Read each one against the bundle: a RENAME upstream
 needs the same rename here, and a REMOVAL needs the feature retired rather than
 left calling into the void.
 Bundle: %s`, active, len(absent), strings.Join(absent, "\n  "), path)
 		return
 	}
-	t.Logf("kiro-cli %s carries all %d ACP method names vibekit uses", active, len(methods))
+	t.Logf("kiro-cli %s carries all %d ACP method names marotte uses", active, len(methods))
 }
 
-// vibekitACPMethods returns every ACP method name vibekit's production sources
+// marotteACPMethods returns every ACP method name marotte's production sources
 // name, sorted and deduplicated.
 //
-// Derived rather than listed, so a method added to vibekit is covered without
+// Derived rather than listed, so a method added to marotte is covered without
 // anyone remembering to extend a fixture — the failure mode a hand-kept list
 // has is silently omitting the one verb that later breaks. Test files are
 // excluded because they deliberately name verbs that do NOT exist, to exercise
 // the unknown-method paths (`session/somethingNew`, `terminal/not_a_verb`), and
 // those would read as upstream removals here.
-func vibekitACPMethods(t *testing.T) []string {
+func marotteACPMethods(t *testing.T) []string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
 	if err != nil {

@@ -322,7 +322,7 @@ func TestNormaliseRegistryResponse_NextCursorIsASecondWitness(t *testing.T) {
 // upstreamGolden is one real reply from registry.modelcontextprotocol.io,
 // captured 2026-09-12 with `GET /v0.1/servers?search=filesystem&limit=6` and
 // re-indented; nothing else about it was edited. It is the upstream shape
-// vibekit does not own: a field the decoder stops carrying, or a key upstream
+// marotte does not own: a field the decoder stops carrying, or a key upstream
 // renames, fails here rather than decoding to an empty list.
 const upstreamGolden = "registry_search_upstream.json"
 

@@ -37,7 +37,7 @@ func newGitea(kind Kind, host string) *giteaProvider {
 }
 
 // loginName returns the tea login alias that maps to this host —
-// vibekit uses the host itself as the login name.
+// marotte uses the host itself as the login name.
 func (p *giteaProvider) loginName() string { return p.host }
 
 // withLogin prepends the --login flag for the host's tea config.
@@ -605,7 +605,7 @@ const apiMaxResponseBytes = 32 << 20 // 32 MiB
 var teaTokenCache sync.Map // host → token string
 
 // teaHelperToken mints the API token for host through tea's own
-// git-credential-protocol interface. vibekit holds the token in
+// git-credential-protocol interface. marotte holds the token in
 // memory only — it never persists a second copy.
 func teaHelperToken(ctx context.Context, host string) (string, error) {
 	if v, ok := teaTokenCache.Load(host); ok {

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/schedule"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // kasRuns builds a workflow/list reply, DEFAULTING `workflowName` to the row's `name`.
@@ -39,7 +39,7 @@ func kasRuns(t *testing.T, rows ...map[string]any) json.RawMessage {
 // refuses a reply that does not echo the run it asked about: a fixture omitting the id
 // lets every positive case pass against the exact unsafe shape that check rejects — an
 // orphan's pause state while naming some other, live run.
-func inspectReply(t *testing.T, workflowID string, status vibekit.RunStatus, reason string) json.RawMessage {
+func inspectReply(t *testing.T, workflowID string, status marotte.RunStatus, reason string) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
@@ -54,7 +54,7 @@ func inspectReply(t *testing.T, workflowID string, status vibekit.RunStatus, rea
 // inspectPaused is the ordinary positive shape: this run, paused, for this reason.
 func inspectPaused(t *testing.T, workflowID, reason string) json.RawMessage {
 	t.Helper()
-	return inspectReply(t, workflowID, vibekit.RunStatusPaused, reason)
+	return inspectReply(t, workflowID, marotte.RunStatusPaused, reason)
 }
 
 // inspectPausedWithDetail is the shape a pause KAS CLASSIFIED comes back as: the same
@@ -67,7 +67,7 @@ func inspectPausedWithDetail(t *testing.T, workflowID, reason string, d pauseDet
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
 		"state": map[string]any{
-			"status":      vibekit.RunStatusPaused,
+			"status":      marotte.RunStatusPaused,
 			"pauseReason": reason,
 			"pauseDetail": map[string]any{
 				"class": d.Class, "code": d.Code,
@@ -203,23 +203,23 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
-		status vibekit.RunStatus
+		status marotte.RunStatus
 		reason string
 	}{
 		"a TUI-launched run, which has no lease": {
-			lease: nil, status: vibekit.RunStatusPaused, reason: stalePauseReason,
+			lease: nil, status: marotte.RunStatusPaused, reason: stalePauseReason,
 		},
 		"an agent-launched run, which its chat resumes": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginAgent},
-			status: vibekit.RunStatusPaused, reason: stalePauseReason,
+			status: marotte.RunStatusPaused, reason: stalePauseReason,
 		},
 		"a run paused by a policy stop": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual},
-			status: vibekit.RunStatusPaused, reason: "Maximum iterations reached",
+			status: marotte.RunStatusPaused, reason: "Maximum iterations reached",
 		},
 		"a run paused by a person on purpose": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled},
-			status: vibekit.RunStatusPaused, reason: "Paused by user request",
+			status: marotte.RunStatusPaused, reason: "Paused by user request",
 		},
 		"a run that is still running": {
 			lease:  &runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled},
@@ -274,7 +274,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "nightly", "status": vibekit.RunStatusPaused,
+			"workflowId": "wf_1", "name": "nightly", "status": marotte.RunStatusPaused,
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -303,7 +303,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 		t.Errorf("the orphan recorded %q, want %q", got, runEndOrphaned)
 	}
 	if _, held := h.runs.lease("wf_1"); held {
-		t.Error("the cleared orphan kept its lease, so the recipe still reads as vibekit's own")
+		t.Error("the cleared orphan kept its lease, so the recipe still reads as marotte's own")
 	}
 }
 
@@ -316,7 +316,7 @@ func TestSweepOrphanedRuns_RecordsTheSweepOnTheSchedulesRow(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "nightly", "status": vibekit.RunStatusPaused,
+			"workflowId": "wf_1", "name": "nightly", "status": marotte.RunStatusPaused,
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -496,7 +496,7 @@ func TestSweepOrphanedRuns_ContinuousAbsenceBackstopReleasesAndRecordsOutcome(t 
 func TestSweepOrphanedRuns_InspectUnknownReleasesImmediately(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: kasRuns(t)}
-	br.callRPCErrs = map[string]*vibekit.RPCError{
+	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowInspect: {
 			Code: -32603, Message: "Internal error",
 			Data: json.RawMessage(`{"details":"workflow not found"}`),
@@ -588,7 +588,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_1", "name": "publish", "status": vibekit.RunStatusPaused,
+			"workflowId": "wf_1", "name": "publish", "status": marotte.RunStatusPaused,
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 	}
@@ -620,7 +620,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 // window, narrowed. Both callers establish "orphan" from an earlier read and then cancel;
 // re-asking immediately before the cancel shrinks the gap to one RPC round trip, which is
 // as far as it goes — KAS exposes no compare-and-cancel and no state token `cancel` will
-// honour. What makes the remainder safe is that nothing vibekit owns can resume a run this
+// honour. What makes the remainder safe is that nothing marotte owns can resume a run this
 // function reaches: Resume needs the run's own `run:<id>` bridge, which a restart destroys.
 func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T) {
 	for name, reply := range map[string]json.RawMessage{
@@ -666,7 +666,7 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: kasRuns(t, map[string]any{
-			"workflowId": "wf_old", "name": "publish", "status": vibekit.RunStatusPaused,
+			"workflowId": "wf_old", "name": "publish", "status": marotte.RunStatusPaused,
 		}),
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_old", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
@@ -711,20 +711,20 @@ func TestRecipeIdle_RefusesALabelledRunOfTheSameRecipe(t *testing.T) {
 
 // TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain is why admission keeps
 // reading KAS's list rather than the leases: that list is the only thing that sees the two
-// populations vibekit does not launch, so a lease-only admission would make an
+// populations marotte does not launch, so a lease-only admission would make an
 // agent-launched and a TUI-launched run invisible to the single-run rule.
 func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lease  *runlease.Lease
-		status vibekit.RunStatus
+		status marotte.RunStatus
 		reason string
 	}{
 		"a TUI-launched run, unleased": {
-			lease: nil, status: vibekit.RunStatusPaused, reason: stalePauseReason,
+			lease: nil, status: marotte.RunStatusPaused, reason: stalePauseReason,
 		},
 		"an agent-launched run": {
 			lease:  &runlease.Lease{WorkflowID: "wf_old", Recipe: "publish", Origin: runlease.OriginAgent},
-			status: vibekit.RunStatusPaused, reason: stalePauseReason,
+			status: marotte.RunStatusPaused, reason: stalePauseReason,
 		},
 		"a leased run that is still running": {
 			lease:  &runlease.Lease{WorkflowID: "wf_old", Recipe: "publish", Origin: runlease.OriginManual},
@@ -732,7 +732,7 @@ func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 		},
 		"a leased run paused on purpose": {
 			lease:  &runlease.Lease{WorkflowID: "wf_old", Recipe: "publish", Origin: runlease.OriginManual},
-			status: vibekit.RunStatusPaused, reason: "Paused by user request",
+			status: marotte.RunStatusPaused, reason: "Paused by user request",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

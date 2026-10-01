@@ -1,6 +1,6 @@
 // Package kirosession reaps the kiro-cli / KAS on-disk session state that backs
-// session/load resume: it exists only to reload a chat vibekit still keeps, so it
-// dies with that chat. vibekit is the sole retention authority — KAS's own
+// session/load resume: it exists only to reload a chat marotte still keeps, so it
+// dies with that chat. marotte is the sole retention authority — KAS's own
 // sessionEviction defaults to disabled and the boot conformance check keeps it so.
 //
 // Layout (KAS 2.12):
@@ -30,7 +30,7 @@ import (
 const sessionPrefix = "sess_"
 
 // defaultGuard spares session state younger than this from the orphan sweep: it
-// covers the create race, since KAS writes the session dir a moment before vibekit
+// covers the create race, since KAS writes the session dir a moment before marotte
 // persists the chat file that references it. Direct Reap is not subject to it —
 // there the caller knows the chat is gone.
 const defaultGuard = 10 * time.Minute

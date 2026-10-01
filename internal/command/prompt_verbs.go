@@ -10,11 +10,11 @@ package command
 // the turn as interrupted, and re-sends the verb, launching a second run.
 // Measured on `/goal` (kiro-cli 2.18.1).
 //
-// `/goal` is the only member, and only because vibekit sends the `goal`
+// `/goal` is the only member, and only because marotte sends the `goal`
 // setting at the connection door. With that key absent KAS never reaches
 // parseGoalCommand and the turn carries content like any other.
 //
-// Deliberately not a general slash-command table: vibekit does not
+// Deliberately not a general slash-command table: marotte does not
 // enumerate KAS's command list. The question here is narrower — does KAS
 // answer this text without a model call.
 

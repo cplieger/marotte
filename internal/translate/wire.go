@@ -11,7 +11,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Shared ACP wire-format decode types for the translate layer, so a field kiro-cli
@@ -91,7 +91,7 @@ type ACPKiroBlock struct {
 	// ReplayID is the id KAS will report as this message's `messageId` when the session
 	// is REPLAYED, and it arrives on the LIVE frame ONLY — a replayed frame carries
 	// `messageId` instead and never this one (measured on kiro-cli 2.21.4: `<uuid>-say`
-	// under both spellings). The AGENT's id space like MessageID below, never vibekit's
+	// under both spellings). The AGENT's id space like MessageID below, never marotte's
 	// own Message.ID.
 	ReplayID string `json:"replayId"`
 	// UserMessageTag marks a user row KAS filed under a PROMPT rather than as steering.
@@ -207,19 +207,19 @@ type ACPWorkflowMeta struct {
 // agentSubtaskId, so empty matched empty.
 //
 // It reuses agent_subtask_id rather than adding a channel, so a step renders through
-// the grouping the client already has. The format lives in vibekit.StepSubtaskID,
+// the grouping the client already has. The format lives in marotte.StepSubtaskID,
 // beside the parse that reads it back; this method only supplies the two segments.
 func (w *ACPWorkflowMeta) SubtaskID() string {
 	if w == nil || w.WorkflowID == "" {
 		return ""
 	}
-	return vibekit.StepSubtaskID(w.WorkflowID, runNodePath(w))
+	return marotte.StepSubtaskID(w.WorkflowID, runNodePath(w))
 }
 
 // ACPCheckpointMeta is the _meta.kiro.checkpoint object on a file-writing
 // tool_call_update. It arrives only on the update whose status is "completed", which is
 // why it is merged per field rather than set once, and every field is independently
-// optional — see vibekit.ToolCheckpoint for the create-has-no-pre-image case.
+// optional — see marotte.ToolCheckpoint for the create-has-no-pre-image case.
 type ACPCheckpointMeta struct {
 	Original string `json:"original"`
 	Modified string `json:"modified"`
@@ -229,7 +229,7 @@ type ACPCheckpointMeta struct {
 // ACPRefusalMeta is the _meta.kiro.refusal block on a refusal explanation
 // chunk. Explanation duplicates the chunk text (KAS falls back to a canned
 // message when absent), so only Category / RecommendedModel flow into the
-// domain vibekit.RefusalInfo.
+// domain marotte.RefusalInfo.
 type ACPRefusalMeta struct {
 	Category         string `json:"category"`
 	Explanation      string `json:"explanation"`
@@ -295,10 +295,10 @@ type ACPApprovalFile struct {
 type ACPToolCallWire struct {
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
-	Kind       vibekit.ToolKind          `json:"kind"`
-	Status     vibekit.ToolStatus        `json:"status"`
+	Kind       marotte.ToolKind          `json:"kind"`
+	Status     marotte.ToolStatus        `json:"status"`
 	RawInput   json.RawMessage           `json:"rawInput"`
-	Locations  []vibekit.ToolLocation    `json:"locations"`
+	Locations  []marotte.ToolLocation    `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
 	// Meta trails because ACPKiroBlock ends in a bool, and fieldalignment counts
 	// LEADING pointer bytes. Field order carries no other meaning here.
@@ -311,10 +311,10 @@ type ACPToolCallWire struct {
 type ACPToolCallUpdateWire struct {
 	ToolCallID string                    `json:"toolCallId"`
 	Title      string                    `json:"title"`
-	Kind       vibekit.ToolKind          `json:"kind"`
-	Status     vibekit.ToolStatus        `json:"status"`
+	Kind       marotte.ToolKind          `json:"kind"`
+	Status     marotte.ToolStatus        `json:"status"`
 	RawOutput  json.RawMessage           `json:"rawOutput"`
-	Locations  []vibekit.ToolLocation    `json:"locations"`
+	Locations  []marotte.ToolLocation    `json:"locations"`
 	Content    []ACPToolCallContentBlock `json:"content"`
 	// Meta trails because ACPKiroBlock ends in a bool, and fieldalignment counts
 	// LEADING pointer bytes. Field order carries no other meaning here.
@@ -427,7 +427,7 @@ func rawOutputFailureText(raw json.RawMessage) string {
 
 // ACPPlanWire is the wire shape for plan session updates.
 type ACPPlanWire struct {
-	Entries []vibekit.PlanEntry `json:"entries"`
+	Entries []marotte.PlanEntry `json:"entries"`
 }
 
 // ACPModeUpdateWire is the wire shape for the current_mode_update session/update
@@ -454,7 +454,7 @@ type ACPSessionUpdateEnvelope struct {
 // means "describes current state rather than history" — a rule rather than a list, since
 // the untagged set grows over releases, so do not replace it with "drop during a load".
 type ACPSessionUpdateBase struct {
-	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
+	Kind marotte.ACPUpdateKind `json:"sessionUpdate"`
 	Meta struct {
 		Kiro struct {
 			// Workflow is the discriminator the dispatcher classifies a step on.

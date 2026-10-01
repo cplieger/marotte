@@ -145,7 +145,7 @@ vi.mock("../notify.js", () => ({
   closeNotificationsFor: mockCloseNotificationsFor,
   setBadge: vi.fn(),
   isAgentFinishedEnabled: () => notifyGate.agentFinished,
-  NOTIFY_TITLE: "vibekit",
+  NOTIFY_TITLE: "marotte",
 }));
 
 const mockOpenSetting = vi.fn();
@@ -515,7 +515,7 @@ describe("turn_ended side effects", () => {
   });
 
   // ORIGIN 2: the reader pressed stop. KAS's `cancel()` drains its buffer and emits
-  // `steering_cleared` from inside the handler, and vibekit's `turn_ended` follows —
+  // `steering_cleared` from inside the handler, and marotte's `turn_ended` follows —
   // so the clear frame CAPTURES and this arm fires the same slot. ONE mechanism, and
   // this case is what proves the two do not double-send.
   it("sends it once when a manual stop cleared the buffer first", async () => {
@@ -1354,7 +1354,7 @@ describe("the permission-class asks always notify", () => {
   ])("%s notifies with no per-kind gate", (event, payload, body) => {
     fireSSE(event, "chat-1", payload);
     // No `run_id` on any of these payloads, so `askTarget` falls to the envelope chat.
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", body, {
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", body, {
       kind: "chat",
       chatID: "chat-1",
     });
@@ -1366,7 +1366,7 @@ describe("the permission-class asks always notify", () => {
       options: [],
       files: [{ path: "a.go", action_id: "act-1" }],
     });
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "Review this turn's changes", {
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "Review this turn's changes", {
       kind: "chat",
       chatID: "chat-1",
     });
@@ -1397,7 +1397,7 @@ describe("the agent-finished notification reads the severity", () => {
     ["failed", "seeded: The agent reported an error and the turn stopped."],
     ["interrupted", "seeded: The turn was interrupted before the agent finished."],
     ["refused", "seeded: The model declined to continue."],
-    // STOPPED. A cancel is what the reader asked for, and an end vibekit could not
+    // STOPPED. A cancel is what the reader asked for, and an end marotte could not
     // read reports nothing about success, so neither earns a notification.
     ["cancelled", ""],
     ["unknown", ""],
@@ -1422,7 +1422,7 @@ describe("the agent-finished notification reads the severity", () => {
         expect(mockNotifyIfHidden).not.toHaveBeenCalled();
         return;
       }
-      expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", want, {
+      expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", want, {
         kind: "chat",
         chatID,
       });
@@ -1535,7 +1535,7 @@ describe("the notification waits for the work, not just the turn", () => {
 
     fireSSE("turn_ended", "defer-none", { stop_reason: "end_turn", outcome: "completed" });
 
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished", {
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
       kind: "chat",
       chatID: "defer-none",
     });
@@ -1548,7 +1548,7 @@ describe("the notification waits for the work, not just the turn", () => {
 
     fireSSE("turn_ended", "defer-other", { stop_reason: "end_turn", outcome: "completed" });
 
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished", {
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
       kind: "chat",
       chatID: "defer-other",
     });
@@ -1562,7 +1562,7 @@ describe("the notification waits for the work, not just the turn", () => {
 
     fireSSE("turn_ended", "defer-parentless", { stop_reason: "end_turn", outcome: "completed" });
 
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished", {
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("marotte", "seeded: Agent finished", {
       kind: "chat",
       chatID: "defer-parentless",
     });

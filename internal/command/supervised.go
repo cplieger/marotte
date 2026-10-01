@@ -2,7 +2,7 @@ package command
 
 // Supervised mode on v3: a VALUE, not an enforcement.
 //
-// vibekit used to hold every agent write in memory, mirror it, broadcast it, and
+// marotte used to hold every agent write in memory, mirror it, broadcast it, and
 // wait for a per-file verdict before letting it reach disk. All of that is
 // deleted. KAS has a turn-approval gate — `autopilot: "off"` — and it reviews a
 // whole turn at once, so this command's entire job is now to set that option and
@@ -15,7 +15,7 @@ package command
 //
 // The trade is real and stated in the task: writes land BEFORE review, so a build
 // watcher or test runner sees rejected content for the duration of the review,
-// where vibekit's staged write never touched disk. Batching forces it — hold
+// where marotte's staged write never touched disk. Batching forces it — hold
 // writes in memory until turn-end review and an agent that writes then reads back
 // reads stale content.
 
@@ -25,7 +25,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // CmdSetSupervisedMode records the chat's supervised choice and applies it to a
@@ -36,11 +36,11 @@ import (
 // with until the next session, which is the kind of silent lag that makes a
 // safety toggle untrustworthy. On a chat with no bridge yet the persisted value
 // is enough — `spawnBridge` passes it at `session/new`.
-func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	var p vibekit.SetSupervisedModeCommand
+	var p marotte.SetSupervisedModeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -60,14 +60,14 @@ func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatS
 	// for the session door — the case the two-arm ERROR block was mis-reporting as a
 	// write-review failure on an ordinary first-boot click.
 	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_supervised_mode",
-		vibekit.MethodSetConfigOption, map[string]any{
-			"configId": vibekit.ConfigOptionAutopilot,
+		marotte.MethodSetConfigOption, map[string]any{
+			"configId": marotte.ConfigOptionAutopilot,
 			"value":    autopilotValue(p.Enabled),
 		}); err != nil {
 		return nil, err
 	}
 
-	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists || c.SupervisedMode == p.Enabled {
 			return false
 		}
@@ -93,7 +93,7 @@ func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatS
 // session door cannot disagree about the spelling.
 func autopilotValue(supervised bool) string {
 	if supervised {
-		return vibekit.ConfigValueAutopilotOff
+		return marotte.ConfigValueAutopilotOff
 	}
-	return vibekit.ConfigValueAutopilotOn
+	return marotte.ConfigValueAutopilotOn
 }

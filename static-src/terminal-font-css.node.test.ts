@@ -234,7 +234,7 @@ describe("the served cell is the cell the glyphs are drawn for", () => {
   // the cell the ARG-pinned overlay release publishes, so two independent
   // Renovate PRs decide whether they still agree. A bump on either side that
   // moves the cell reopens the row-gap defect this stack exists to fix, behind a
-  // green build. vibekit's own half is asserted above; this is the seam.
+  // green build. marotte's own half is asserted above; this is the seam.
   const CELL_JSON_RELEASE = "v1.1.0";
   const CELL = { fontSize: "14px", lineHeight: "17px" } as const;
 

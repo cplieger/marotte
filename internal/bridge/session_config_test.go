@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // configOptionFake writes a fake kiro-cli that logs every request line to
@@ -61,7 +61,7 @@ func TestNewSession_AppliesRequestedModelAndEffort(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Model: "claude-opus-5", Effort: "high"}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Model: "claude-opus-5", Effort: "high"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 		name  string
 		model string
 	}{
-		{"auto is not a model id", vibekit.ModelAuto},
+		{"auto is not a model id", marotte.ModelAuto},
 		{"already the session default", "engine-default"},
 		{"unset", ""},
 	}
@@ -110,7 +110,7 @@ func TestNewSession_SkipsRedundantModelConfigOption(t *testing.T) {
 
 			b := New(scriptPath, dir)
 			t.Cleanup(b.Stop)
-			if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Model: tc.model}); err != nil {
+			if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Model: tc.model}); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 
@@ -136,7 +136,7 @@ func TestNewSession_DropsMalformedEffort(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Effort: "Ultra!"}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Effort: "Ultra!"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestStart_RefusesInvalidModelIdentifier(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Model: "bad model; rm -rf /"})
+	err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Model: "bad model; rm -rf /"})
 	if err == nil {
 		t.Fatal("Start accepted an invalid model identifier, want an error")
 	}
@@ -169,7 +169,7 @@ func TestStart_RefusesInvalidModelIdentifier(t *testing.T) {
 
 // The context that bounds the startup handshake must NOT own the subprocess.
 //
-// This is the bug that made vibekit's bridges die after the first message.
+// This is the bug that made marotte's bridges die after the first message.
 // CmdPrompt runs a turn under a per-turn context and cancels it on handler
 // return; Start assigned that context to the subprocess, so exec's Cancel hook
 // closed the process's stdin and signalled its head the moment the FIRST prompt
@@ -194,7 +194,7 @@ func TestStart_HandshakeCtxDoesNotOwnTheSubprocess(t *testing.T) {
 	lifetime, cancelLifetime := context.WithCancel(context.Background())
 	t.Cleanup(cancelLifetime)
 
-	if err := b.Start(handshakeCtx, &vibekit.StartOpts{Lifetime: lifetime}); err != nil {
+	if err := b.Start(handshakeCtx, &marotte.StartOpts{Lifetime: lifetime}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -217,7 +217,7 @@ func TestStart_LifetimeCtxOwnsTheSubprocess(t *testing.T) {
 	t.Cleanup(b.Stop)
 
 	lifetime, cancelLifetime := context.WithCancel(context.Background())
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: lifetime}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: lifetime}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -252,7 +252,7 @@ func TestStart_RefusesNilLifetime(t *testing.T) {
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
 
-	err := b.Start(context.Background(), &vibekit.StartOpts{})
+	err := b.Start(context.Background(), &marotte.StartOpts{})
 	if err == nil {
 		t.Fatal("Start accepted a nil StartOpts.Lifetime; it must be refused rather than " +
 			"substituted with an uncancellable context at the point the subprocess is spawned")
@@ -276,7 +276,7 @@ func TestNewSession_AppliesRequestedMode(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background(), Mode: "spec"}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background(), Mode: "spec"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestNewSession_SkipsRedundantModeSwitch(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background()}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestNewSession_SuccessfulConfigCallsStayQuiet(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	opts := &vibekit.StartOpts{
+	opts := &marotte.StartOpts{
 		Lifetime: context.Background(),
 		Model:    "claude-opus-5",
 		Effort:   "high",

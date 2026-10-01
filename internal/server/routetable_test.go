@@ -10,8 +10,8 @@ import (
 
 // TestServeMuxMethodPatternCannotAnswer405UnderACatchAll is the measurement the
 // route table's shape rests on, and it is a fact about net/http rather than about
-// vibekit: ServeMux synthesises its 405 + Allow only when NO pattern matched at
-// all, so a "/" mount — which vibekit needs for History-API client routing —
+// marotte: ServeMux synthesises its 405 + Allow only when NO pattern matched at
+// all, so a "/" mount — which marotte needs for History-API client routing —
 // absorbs every method mismatch before that path is reached.
 //
 // Written as an A/B over the same patterns because the claim is a DIFFERENCE, not
@@ -19,7 +19,7 @@ import (
 // and without it the same request is a 405 naming Allow. Asserting only the first
 // half would pass equally if ServeMux had simply stopped emitting Allow.
 func TestServeMuxMethodPatternCannotAnswer405UnderACatchAll(t *testing.T) {
-	const catchAllStatus = 299 // a status no vibekit handler produces
+	const catchAllStatus = 299 // a status no marotte handler produces
 
 	build := func(withCatchAll bool) *http.ServeMux {
 		mux := http.NewServeMux()
@@ -139,7 +139,7 @@ func TestPlainPathRoutesRefuseTheWrongMethod(t *testing.T) {
 				t.Errorf("Allow = %q, want %q", got, tc.wantAllow)
 			}
 			if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"method not allowed"}` {
-				t.Errorf("body = %q, want vibekit's bare error envelope", got)
+				t.Errorf("body = %q, want marotte's bare error envelope", got)
 			}
 			if rescanned {
 				t.Error("the refused request still ran the rescan; the method gate is placed after the work")

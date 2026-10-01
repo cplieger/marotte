@@ -1,4 +1,4 @@
-# Adjudicated punused findings for vibekit.
+# Adjudicated punused findings for marotte.
 #
 # The go-ci punused step scans one directory at a time (a whole-module run
 # silently under-reports) and checks every finding line against this file.
@@ -17,7 +17,7 @@
 # One entry may report as "matches nothing" on a given run: punused caps a
 # single invocation at a 30s context deadline and drops the rest of the
 # shard silently (the masked error reads "file already closed", which the
-# gate filters), and internal/vibekit is over that budget. The policy.go entry
+# gate filters), and internal/marotte is over that budget. The policy.go entry
 # is the one that flickers. Entries here are the union of a complete
 # per-FILE scan, so this file stays a superset either way.
 
@@ -94,20 +94,20 @@ field ReadOnly is
 # ElicitationRequestSchema / PolicyRuleCore, PolicyRule, PolicyView,
 # PolicyExplainResult, PolicyErrorItem), so every field is generated into
 # types.gen.ts + decoders.gen.ts and filled by encoding/json. The
-# elicitation schemas are pass-through JSON-Schema: vibekit forwards the
+# elicitation schemas are pass-through JSON-Schema: marotte forwards the
 # MCP server's form definition to the client verbatim and never inspects a
 # property, which is exactly why no Go code reads these fields.
-internal/vibekit/elicitation.go
-internal/vibekit/policy.go
+internal/marotte/elicitation.go
+internal/marotte/policy.go
 
 # --- 3. Inbound envelopes decoded by encoding/json, deliberately not read.
-# internal/vibekit/commands.go holds the client -> server command payloads; the
+# internal/marotte/commands.go holds the client -> server command payloads; the
 # browser sends every field and json.Unmarshal fills it. Attachment.Name is
 # the only unread one: internal/command/prompt_attachments.go re-derives the
 # display name with filepath.Base(att.Path) rather than trusting a
 # client-supplied string that reaches log lines and agent-visible text.
 # Deleting it would erase the record of what the client actually sends.
-internal/vibekit/commands.go
+internal/marotte/commands.go
 # RPCResponse.JSONRPC is the inbound half of the ACP JSON-RPC envelope
 # (the outbound RPCRequest/RPCNotification/RPCResponseOut copies ARE set in
 # internal/bridge/bridge_rpc.go). The reader ignores the version field, but
@@ -120,7 +120,7 @@ field JSONRPC is
 # fields are decoded and deliberately unread: _meta.kiro.kind (the
 # "agent-subtask" discriminator — the translator keys off agentSubtaskId
 # instead) and _meta.kiro.refusal.explanation (duplicates the chunk text,
-# so only Category/RecommendedModel flow into vibekit.RefusalInfo). Both
+# so only Category/RecommendedModel flow into marotte.RefusalInfo). Both
 # document the wire contract at the only place it is expressed in code.
 internal/translate/wire.go
 
@@ -128,7 +128,7 @@ internal/translate/wire.go
 # discover String() by reflection at %s/%v sites, so no reference exists to
 # find. All four are string-kind types whose String() returns the
 # underlying string, giving the ID family one uniform conversion affordance
-# (vibekit.ChatID/SessionID/ModelID, mcp.ServerID).
+# (marotte.ChatID/SessionID/ModelID, mcp.ServerID).
 method (ChatID).String
 method (SessionID).String
 method (ModelID).String
@@ -136,7 +136,7 @@ method (ServerID).String
 
 # --- 6. error-interface machinery. Unwrap() is what makes errors.Is/As walk
 # the chain, so nothing calls it by name. Call sites:
-# internal/command/prompt.go errors.AsType[*vibekit.TransportError], and
+# internal/command/prompt.go errors.AsType[*marotte.TransportError], and
 # internal/forges/exec.go constructs &cmdError{Err: ...} as an error.
 # (*cmdError).Error needs no entry even though it sits beside Unwrap on the
 # same type: internal/forges/http.go calls err.Error() on that package's own
@@ -193,7 +193,7 @@ method (*sessionInfoKiroBlock).UnmarshalJSON
 #   var _ chatStoreUnion = (*RecordingChatStore)(nil)    (chatstore.go)
 #   var _ chatStoreUnion = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
 # chatStoreUnion is the union of what the real consumers declare, since
-# vibekit.ChatStore no longer exists; each consumer names 1 to 5 of the store's 9.
+# marotte.ChatStore no longer exists; each consumer names 1 to 5 of the store's 9.
 # Consumers: internal/agent (fakeChatStore = testsupport.RecordingChatStore),
 # internal/command, internal/translate and internal/agent (NewInMemoryChatStore).
 #
@@ -282,15 +282,15 @@ function WithChatFileCap
 method (*compressWriter).Unwrap
 method (*compressWriter).Flush
 
-# --- 19. The test-only control surface (-tags vibekit_test). internal/server's
-# testhooks_vibekittest.go declares two role interfaces the runtime and the push
+# --- 19. The test-only control surface (-tags marotte_test). internal/server's
+# testhooks_marottetest.go declares two role interfaces the runtime and the push
 # service satisfy — sseProbe {SSEClientCount, SSEConnects, CloseNextSSEAfter} and
 # pushProbe {PresenceRows, PresenceTransitions, Suppressed} — and calls every member
 # through them, so the methods are interface-reached AND their one caller sits behind
 # a build tag punused's default build never selects. The probes exist so a client
 # fixture (static-src/package.json names the tag as sseFixtureTags) can arm a
 # mid-stream cut and read the presence census against a real server; deleting them
-# empties GET /api/test/sse on a vibekit_test build.
+# empties GET /api/test/sse on a marotte_test build.
 # closeAfterWriter.Unwrap is section 18's shape on the cut connection's wrapper:
 # cplieger/sse's Serve unwraps `interface{ Unwrap() http.ResponseWriter }` to reach
 # the Flusher and the write deadline through it (sse/serve.go), so a missing Unwrap

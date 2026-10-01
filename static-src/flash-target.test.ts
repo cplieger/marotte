@@ -283,7 +283,7 @@ describe("the deep-link-flash rules as rendered", () => {
     list.className = "git-pr-list";
     const row = document.createElement("li");
     row.className = "git-pr-row";
-    row.setAttribute("data-pr", "github:github.com:cplieger/vibekit#42");
+    row.setAttribute("data-pr", "github:github.com:cplieger/marotte#42");
     list.appendChild(row);
     host.replaceChildren(list);
     return row;

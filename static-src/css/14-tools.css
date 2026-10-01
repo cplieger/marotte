@@ -87,7 +87,7 @@
    `--c-bg-primary` fill was the PAGE rung under a control sitting inside a
    `--c-bg-secondary` tool card, which in dark mode paints #0a0a14 in a #262636
    box — reported as a pitch-black box. `.refusal-btn` was the same defect and the
-   same conversion fixed it (vibekit-ui.md "Color system"). */
+   same conversion fixed it (marotte-ui.md "Color system"). */
 .tool-output-reveal {
   margin-block-start: var(--sp-1);
 }
@@ -652,7 +652,7 @@
   max-height: 18.75rem;
   overflow-y: auto;
 
-  /* A well; its step is the seam, so no rule (vibekit-ui.md "Seams"). */
+  /* A well; its step is the seam, so no rule (marotte-ui.md "Seams"). */
   background: var(--c-well);
   transition:
     height var(--dur-standard) var(--ease-standard),
@@ -1488,7 +1488,7 @@ a.subagent-header {
 /* THE NEUTRAL GHOST BUTTON, and the ONE place its box is declared.
  *
  * `.uip-ask-ok`/`.uip-ask-cancel` are in the list because `@cplieger/ui-primitives`
- * builds those two and vibekit cannot put a class on them in markup — 04-uip-skin.css
+ * builds those two and marotte cannot put a class on them in markup — 04-uip-skin.css
  * carried a hand copy of this rule for them instead, with a comment saying so, which
  * meant a declaration added here reached every other button in the app and not the
  * confirm dialog's. Naming them here is the same merge from the other side, and it
@@ -1883,7 +1883,7 @@ a.subagent-header {
  * broken, amber is modified. That is the vocabulary `.git-st-*` above uses per
  * file, and it is VS Code's (gitDecoration.deletedResourceForeground /
  * .modifiedResourceForeground). They are the STATE inks, never the
- * destructive-action palette --c-danger / --c-warning — see vibekit-ui.md
+ * destructive-action palette --c-danger / --c-warning — see marotte-ui.md
  * "Color system".
  *
  * There is no third hue, because behind-origin is not a state here and the

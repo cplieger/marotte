@@ -1,11 +1,11 @@
-// Package ids is vibekit's identifier vocabulary: it mints the ids the app
+// Package ids is marotte's identifier vocabulary: it mints the ids the app
 // owns and validates every id the app accepts.
 //
 // The two halves belong together because they are one rule read in two
 // directions. NewMessageID emits a UUIDv7 and ValidMessageID says what a
 // message id may be; a caller changing either without the other in view is
 // how a minted id becomes one its own boundary rejects. The validators cover
-// ids vibekit does NOT mint as well — an ACP session id, an agent or model
+// ids marotte does NOT mint as well — an ACP session id, an agent or model
 // identifier, a client-generated chat id — because the question they answer is
 // about the identifier, not about who made it.
 //
@@ -13,7 +13,7 @@
 // preferences: a chat id names the chat's own JSON file, and a session id is
 // concatenated into a path under $KIRO_HOME/sessions/.
 //
-// The validators used to live in internal/vibekit beside the wire and domain
+// The validators used to live in internal/marotte beside the wire and domain
 // types, which put a path-traversal gate inside the package the code generator
 // walks for the cross-language type contract.
 //
@@ -67,7 +67,7 @@ func New(byteLen int, enc Encoding) string {
 // calls included, because the stdlib packs a 12-bit fraction of the
 // millisecond beside the 48-bit timestamp.
 //
-// This is the one place vibekit decides which UUID version it mints, and it is
+// This is the one place marotte decides which UUID version it mints, and it is
 // the mint half of the rule ValidMessageID reads in the other direction.
 func NewMessageID() string {
 	return uuid.NewV7().String()

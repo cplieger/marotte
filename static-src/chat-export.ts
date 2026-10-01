@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Chat export: trigger a browser download of a chat's transcript.
 //
-// The server renders the persisted chat — vibekit's canonical chat store, no
+// The server renders the persisted chat — marotte's canonical chat store, no
 // live ACP bridge — to Markdown (default) or raw JSON at
 // GET /api/chats/{id}/export?format=md|json, setting Content-Disposition.
 //

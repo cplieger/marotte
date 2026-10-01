@@ -16,9 +16,9 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/errgroup"
 )
@@ -330,7 +330,7 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 		}
 		parts := strings.SplitN(line, "\t", 2)
 		// A refname comes back FROM git, so it is upstream text on this surface
-		// even though isValidGitRef screens what vibekit passes TO git: a remote
+		// even though isValidGitRef screens what marotte passes TO git: a remote
 		// publishes whatever it likes, and git's own check-ref-format forbids
 		// ASCII control characters and not Unicode format characters, so a
 		// remote-tracking name may legally carry bidi controls or zero-width

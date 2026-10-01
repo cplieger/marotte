@@ -55,7 +55,7 @@
      A full-width bar has no right edge to dodge, so the answer is a constant and
      the module is deleted. Declared rather than dropped because `.banner-stack`
      reads it with a fallback, and a fallback on an undefined token is how a
-     palette forks silently (vibekit-ui.md "No phantom tokens"). */
+     palette forks silently (marotte-ui.md "No phantom tokens"). */
   --chat-toolbar-w: 0px;
 }
 

@@ -14,11 +14,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // insertLiveBridge inserts a live bridge for chatID and returns its fake.
-func insertLiveBridge(t *testing.T, h *Runtime, chatID vibekit.ChatID) *fakeBridge {
+func insertLiveBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
 	t.Helper()
 	sb, _ := h.bridge.mgr.orInsert(chatID)
 	fb, ok := sb.bridge.(*fakeBridge)
@@ -175,8 +175,8 @@ func TestHandleMCPGetResource_OK(t *testing.T) {
 // captured at connect time surface in the /api/mcp/status snapshot.
 func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	prompts := []vibekit.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
-	resources := []vibekit.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
+	prompts := []marotte.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
+	resources := []marotte.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
 	h.mcpRegistry.RecordConnected(t.Context(), "everything", nil, prompts, resources)
 
 	snap := h.mcpRegistry.Snapshot()
@@ -265,8 +265,8 @@ func TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay(t *testing.T) {
 		},
 		{
 			name: "the caller's arguments travel unchanged",
-			args: map[string]any{"repo": "vibekit"},
-			want: `{"repo":"vibekit"}`,
+			args: map[string]any{"repo": "marotte"},
+			want: `{"repo":"marotte"}`,
 		},
 	}
 	for _, c := range cases {
@@ -295,7 +295,7 @@ func TestGetMCPPrompt_SendsAnArgumentsObjectEitherWay(t *testing.T) {
 // TestWriteMCPResult_AlwaysWritesADecodableObject pins the fallback's purpose and
 // its limit.
 //
-// The result is relayed VERBATIM because vibekit models no MCP payload shapes, which
+// The result is relayed VERBATIM because marotte models no MCP payload shapes, which
 // leaves one gap the client cannot handle: a server that answered with nothing
 // produces an empty body, and the client's decode fails on a reply that is not an
 // error either. The fallback covers exactly that case, and must not reach a result

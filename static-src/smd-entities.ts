@@ -25,7 +25,7 @@
 //   for f in HTMLlat1 HTMLsymbol HTMLspecial; do
 //     curl -sSo /tmp/$f.ent https://www.w3.org/TR/html4/$f.ent
 //   done
-//   node _scratch/vibekit-md-round4/gen-entities-html4.mjs \
+//   node _scratch/marotte-md-round4/gen-entities-html4.mjs \
 //     /tmp/HTMLlat1.ent /tmp/HTMLsymbol.ent /tmp/HTMLspecial.ent \
 //     static-src/smd-entities.ts
 //   npx prettier --write static-src/smd-entities.ts

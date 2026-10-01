@@ -166,7 +166,7 @@ describe("git badge paint", () => {
   });
 
   it("reaches for the state inks, never the destructive-action palette", () => {
-    // --c-danger / --c-warning are the delete-confirm palette (vibekit-ui.md
+    // --c-danger / --c-warning are the delete-confirm palette (marotte-ui.md
     // "Color system"); a status mark takes --c-red / --c-yellow.
     const offenders = badgeRules().filter(
       (r) => r.body.includes("--c-danger") || r.body.includes("--c-warning"),

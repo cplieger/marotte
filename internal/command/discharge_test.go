@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // commandTypeFloor stops a broken scan passing vacuously: the vocabulary is 24
@@ -22,7 +22,7 @@ const commandTypeFloor = 20
 // declaration, so the completeness check cannot drift from a second hand-written list.
 func declaredCommandTypes(t *testing.T) []string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "../vibekit/commands.go", nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "../marotte/commands.go", nil, 0)
 	if err != nil {
 		t.Fatalf("parse the command vocabulary: %v", err)
 	}
@@ -61,31 +61,31 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 	}
 	// Names, because the table is keyed by VALUE and a value cannot say which constant
 	// it came from.
-	byValue := map[vibekit.CommandType]string{
-		vibekit.CmdCreateChat:          "CmdCreateChat",
-		vibekit.CmdResumeSession:       "CmdResumeSession",
-		vibekit.CmdForkChat:            "CmdForkChat",
-		vibekit.CmdPrompt:              "CmdPrompt",
-		vibekit.CmdCancel:              "CmdCancel",
-		vibekit.CmdDeleteChat:          "CmdDeleteChat",
-		vibekit.CmdSwitchModel:         "CmdSwitchModel",
-		vibekit.CmdPermissionResponse:  "CmdPermissionResponse",
-		vibekit.CmdElicitationResponse: "CmdElicitationResponse",
-		vibekit.CmdUserInputResponse:   "CmdUserInputResponse",
-		vibekit.CmdRewindChat:          "CmdRewindChat",
-		vibekit.CmdCompact:             "CmdCompact",
-		vibekit.CmdSetEffort:           "CmdSetEffort",
-		vibekit.CmdSetDraft:            "CmdSetDraft",
-		vibekit.CmdSetAttachments:      "CmdSetAttachments",
-		vibekit.CmdSetMode:             "CmdSetMode",
-		vibekit.CmdCreateHook:          "CmdCreateHook",
-		vibekit.CmdSetSupervisedMode:   "CmdSetSupervisedMode",
-		vibekit.CmdSteer:               "CmdSteer",
-		vibekit.CmdSteerClear:          "CmdSteerClear",
-		vibekit.CmdOpenTab:             "CmdOpenTab",
-		vibekit.CmdCloseTab:            "CmdCloseTab",
-		vibekit.CmdReorderTabs:         "CmdReorderTabs",
-		vibekit.CmdPinTab:              "CmdPinTab",
+	byValue := map[marotte.CommandType]string{
+		marotte.CmdCreateChat:          "CmdCreateChat",
+		marotte.CmdResumeSession:       "CmdResumeSession",
+		marotte.CmdForkChat:            "CmdForkChat",
+		marotte.CmdPrompt:              "CmdPrompt",
+		marotte.CmdCancel:              "CmdCancel",
+		marotte.CmdDeleteChat:          "CmdDeleteChat",
+		marotte.CmdSwitchModel:         "CmdSwitchModel",
+		marotte.CmdPermissionResponse:  "CmdPermissionResponse",
+		marotte.CmdElicitationResponse: "CmdElicitationResponse",
+		marotte.CmdUserInputResponse:   "CmdUserInputResponse",
+		marotte.CmdRewindChat:          "CmdRewindChat",
+		marotte.CmdCompact:             "CmdCompact",
+		marotte.CmdSetEffort:           "CmdSetEffort",
+		marotte.CmdSetDraft:            "CmdSetDraft",
+		marotte.CmdSetAttachments:      "CmdSetAttachments",
+		marotte.CmdSetMode:             "CmdSetMode",
+		marotte.CmdCreateHook:          "CmdCreateHook",
+		marotte.CmdSetSupervisedMode:   "CmdSetSupervisedMode",
+		marotte.CmdSteer:               "CmdSteer",
+		marotte.CmdSteerClear:          "CmdSteerClear",
+		marotte.CmdOpenTab:             "CmdOpenTab",
+		marotte.CmdCloseTab:            "CmdCloseTab",
+		marotte.CmdReorderTabs:         "CmdReorderTabs",
+		marotte.CmdPinTab:              "CmdPinTab",
 	}
 	classified := make(map[string]bool, len(commandDischarges))
 	for value := range commandDischarges {
@@ -104,9 +104,9 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 }
 
 // fakeChatStatus records the chats a discharge reached.
-type fakeChatStatus struct{ discharged []vibekit.ChatID }
+type fakeChatStatus struct{ discharged []marotte.ChatID }
 
-func (f *fakeChatStatus) DischargeWaiting(_ context.Context, chatID vibekit.ChatID) {
+func (f *fakeChatStatus) DischargeWaiting(_ context.Context, chatID marotte.ChatID) {
 	f.discharged = append(f.discharged, chatID)
 }
 
@@ -121,25 +121,25 @@ func (f *fakeChatStatus) DischargeWaiting(_ context.Context, chatID vibekit.Chat
 func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 	cases := []struct {
 		name    string
-		cmdType vibekit.CommandType
+		cmdType marotte.CommandType
 		payload string
 		handler Handler
 		want    bool
 	}{
 		{
 			name:    "a steer is the user's own words to this agent",
-			cmdType: vibekit.CmdSteer,
+			cmdType: marotte.CmdSteer,
 			want:    true,
 		},
 		{
 			// The prompt path discharges at StartTurn, where the turn's SOURCE tells a
 			// prompt from a `!cmd`; a second discharge here would fire for both.
 			name:    "a prompt does not, because its turn source decides",
-			cmdType: vibekit.CmdPrompt,
+			cmdType: marotte.CmdPrompt,
 		},
 		{
 			name:    "an answer to the agent's own menu clears the claim",
-			cmdType: vibekit.CmdUserInputResponse,
+			cmdType: marotte.CmdUserInputResponse,
 			payload: `{"request_id":7,"action":"answered","answer":"blue"}`,
 			want:    true,
 		},
@@ -147,17 +147,17 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			// Dismissing advances the agent without the user answering, so whether they
 			// still owe one is the ambiguity that keeps the claim.
 			name:    "a dismissed question does not",
-			cmdType: vibekit.CmdUserInputResponse,
+			cmdType: marotte.CmdUserInputResponse,
 			payload: `{"request_id":7,"action":"dismissed"}`,
 		},
 		{
 			name:    "an answered action with no answer text does not",
-			cmdType: vibekit.CmdUserInputResponse,
+			cmdType: marotte.CmdUserInputResponse,
 			payload: `{"request_id":7,"action":"answered"}`,
 		},
 		{
 			name:    "a permission selection clears the claim",
-			cmdType: vibekit.CmdPermissionResponse,
+			cmdType: marotte.CmdPermissionResponse,
 			payload: `{"request_id":7,"option_id":"allow_once"}`,
 			want:    true,
 		},
@@ -165,52 +165,52 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			// The kind is on the REQUEST, so a reject is indistinguishable here — and it
 			// is the user deciding too, which is what ends the wait.
 			name:    "a permission reject clears it as well, because deciding is answering",
-			cmdType: vibekit.CmdPermissionResponse,
+			cmdType: marotte.CmdPermissionResponse,
 			payload: `{"request_id":7,"option_id":"reject_once"}`,
 			want:    true,
 		},
 		{
 			name:    "a permission reply naming no option does not",
-			cmdType: vibekit.CmdPermissionResponse,
+			cmdType: marotte.CmdPermissionResponse,
 			payload: `{"request_id":7}`,
 		},
 		{
 			name:    "an accepted MCP elicitation clears the claim",
-			cmdType: vibekit.CmdElicitationResponse,
+			cmdType: marotte.CmdElicitationResponse,
 			payload: `{"request_id":7,"action":"accept","content":{"colour":"blue"}}`,
 			want:    true,
 		},
 		{
 			// decline and cancel resolve the request having answered nothing it asked.
 			name:    "a declined elicitation does not",
-			cmdType: vibekit.CmdElicitationResponse,
+			cmdType: marotte.CmdElicitationResponse,
 			payload: `{"request_id":7,"action":"decline"}`,
 		},
 		{
 			name:    "a cancelled elicitation does not",
-			cmdType: vibekit.CmdElicitationResponse,
+			cmdType: marotte.CmdElicitationResponse,
 			payload: `{"request_id":7,"action":"cancel"}`,
 		},
 		{
 			// An action outside the channel's vocabulary is an unknown signal, and an
 			// unknown signal keeps the claim rather than guessing at it.
 			name:    "an elicitation action nobody declared does not",
-			cmdType: vibekit.CmdElicitationResponse,
+			cmdType: marotte.CmdElicitationResponse,
 			payload: `{"request_id":7,"action":"maybe"}`,
 		},
 		{
 			name:    "a structured answer with no payload at all does not",
-			cmdType: vibekit.CmdUserInputResponse,
+			cmdType: marotte.CmdUserInputResponse,
 		},
 		{
 			name:    "a structured answer whose payload does not parse does not",
-			cmdType: vibekit.CmdPermissionResponse,
+			cmdType: marotte.CmdPermissionResponse,
 			payload: `"not an object"`,
 		},
 		{
 			name:    "a steer whose handler failed answered nothing",
-			cmdType: vibekit.CmdSteer,
-			handler: func(context.Context, *vibekit.ClientCommand) (any, error) {
+			cmdType: marotte.CmdSteer,
+			handler: func(context.Context, *marotte.ClientCommand) (any, error) {
 				return nil, StatusError(http.StatusConflict, ErrMissingChatID)
 			},
 		},
@@ -218,9 +218,9 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			// Same rule on the widened channels: the discharge sits after the handler,
 			// so an answer the handler refused reaches no claim.
 			name:    "an answer whose handler failed does not",
-			cmdType: vibekit.CmdUserInputResponse,
+			cmdType: marotte.CmdUserInputResponse,
 			payload: `{"request_id":7,"action":"answered","answer":"blue"}`,
-			handler: func(context.Context, *vibekit.ClientCommand) (any, error) {
+			handler: func(context.Context, *marotte.ClientCommand) (any, error) {
 				return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 			},
 		},
@@ -232,7 +232,7 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			d.status = status
 			handler := tc.handler
 			if handler == nil {
-				handler = func(context.Context, *vibekit.ClientCommand) (any, error) { return nil, nil }
+				handler = func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil }
 			}
 			d.Register(tc.cmdType, handler)
 
@@ -264,7 +264,7 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 // the nil guard is load-bearing rather than defensive.
 func TestDispatch_NoStatusRoleIsSilent(t *testing.T) {
 	d := New()
-	d.Register(vibekit.CmdSteer, func(context.Context, *vibekit.ClientCommand) (any, error) { return nil, nil })
+	d.Register(marotte.CmdSteer, func(context.Context, *marotte.ClientCommand) (any, error) { return nil, nil })
 	req := httptest.NewRequest(http.MethodPost, "/api/command",
 		strings.NewReader(`{"type":"steer","chat_id":"c-abc123"}`))
 	w := httptest.NewRecorder()

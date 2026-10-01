@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // cloneChat returns a chat that shares nothing with c, which is what both fakes'
@@ -22,13 +22,13 @@ import (
 //
 // A marshal error is unreachable for a wire type (no channels, funcs, or
 // cycles), so the shallow copy is a safe fallback rather than a real path.
-func cloneChat(c *vibekit.Chat) *vibekit.Chat {
+func cloneChat(c *marotte.Chat) *marotte.Chat {
 	shallow := *c
 	data, err := json.Marshal(c)
 	if err != nil {
 		return &shallow
 	}
-	var out vibekit.Chat
+	var out marotte.Chat
 	if err := json.Unmarshal(data, &out); err != nil {
 		return &shallow
 	}
@@ -37,7 +37,7 @@ func cloneChat(c *vibekit.Chat) *vibekit.Chat {
 
 // broadcaster is the fan-out both fakes' Bus fields satisfy.
 type broadcaster interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
 // upsertTurnPlan is both fakes' UpsertTurnPlan body: overwrite this turn's plan
@@ -45,12 +45,12 @@ type broadcaster interface {
 // which one happened on bus. One body so the two fakes cannot drift from each
 // other on the turn-boundary rule.
 func upsertTurnPlan(
-	mutate func(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error),
-	bus broadcaster, chatID vibekit.ChatID, msg *vibekit.Message,
+	mutate func(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error),
+	bus broadcaster, chatID marotte.ChatID, msg *marotte.Message,
 ) error {
-	var updated *vibekit.Message
+	var updated *marotte.Message
 	var appended bool
-	version, err := mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := mutate(context.Background(), chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -68,9 +68,9 @@ func upsertTurnPlan(
 	}
 	switch {
 	case updated != nil:
-		bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
+		bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
 	case appended:
-		bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
+		bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
 	}
 	return nil
 }
@@ -80,11 +80,11 @@ func upsertTurnPlan(
 // Shared by both fakes so neither can drift from the other, and derived the same
 // way (*chat.Store).UpsertTurnPlan derives it: nothing remembers a plan message
 // id, so there is no state to leave stale when a turn ends.
-func turnPlanRow(msgs []vibekit.Message) (int, bool) {
-	// Index-only: a vibekit.Message is 256 bytes, so binding the value would copy
+func turnPlanRow(msgs []marotte.Message) (int, bool) {
+	// Index-only: a marotte.Message is 256 bytes, so binding the value would copy
 	// one per iteration for two field reads.
 	for i := range slices.Backward(msgs) {
-		if msgs[i].Role == vibekit.RoleUser {
+		if msgs[i].Role == marotte.RoleUser {
 			return 0, false // turn boundary: this turn carries no plan row yet
 		}
 		if len(msgs[i].Plan) > 0 {

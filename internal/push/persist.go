@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func (s *Service) keysPath() string { return filepath.Join(s.dir, "vapid-keys.json") }
@@ -121,7 +121,7 @@ func (s *Service) reportOrphanedSubs(stored int) {
 
 // readPersistedSubs decodes push-subs.json. A missing file is the first-boot
 // state, reported as no subscriptions and no error.
-func (s *Service) readPersistedSubs() ([]vibekit.PushSubscription, error) {
+func (s *Service) readPersistedSubs() ([]marotte.PushSubscription, error) {
 	data, err := os.ReadFile(s.subsPath())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -129,7 +129,7 @@ func (s *Service) readPersistedSubs() ([]vibekit.PushSubscription, error) {
 		}
 		return nil, err
 	}
-	var subs []vibekit.PushSubscription
+	var subs []marotte.PushSubscription
 	if err := json.Unmarshal(data, &subs); err != nil {
 		return nil, fmt.Errorf("parse %d bytes: %w", len(data), err)
 	}
@@ -171,7 +171,7 @@ func (s *Service) saveSubsAsync(ctx context.Context) {
 	}
 	// Snapshot current subs under mu, then send to the writer goroutine.
 	s.mu.Lock()
-	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
+	subs := make([]marotte.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -192,7 +192,7 @@ func (s *Service) saveSubs(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
+	subs := make([]marotte.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -221,7 +221,7 @@ func (s *Service) saveSubs(ctx context.Context) {
 func (s *Service) flushSaves() {
 	done := make(chan struct{})
 	s.mu.Lock()
-	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
+	subs := make([]marotte.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -244,7 +244,7 @@ func (s *Service) flushSaves() {
 }
 
 // writeSubsSnapshot marshals and persists a subscription snapshot to disk.
-func (s *Service) writeSubsSnapshot(subs []vibekit.PushSubscription) {
+func (s *Service) writeSubsSnapshot(subs []marotte.PushSubscription) {
 	data, err := json.MarshalIndent(subs, "", "  ")
 	if err != nil {
 		slog.Error("push: marshal subscriptions", "error", err)

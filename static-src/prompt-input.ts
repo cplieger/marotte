@@ -195,7 +195,7 @@ class PromptInputController {
    *      but still what several Android and Windows IMEs report for that final
    *      Enter, which is the reason the leg exists.
    *
-   *  Vibekit's shell terminal is deliberately out of scope: @cplieger/web-terminal-ui
+   *  Marotte's shell terminal is deliberately out of scope: @cplieger/web-terminal-ui
    *  owns everything above the raw stream, IME included. */
   private isComposing(e: KeyboardEvent): boolean {
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- keyCode 229 is the whole reason to port this guard: the IME's commit Enter reports it when isComposing is already false.

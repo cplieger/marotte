@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // withinBudget runs fn on its own goroutine and fails the test if it has not returned
@@ -30,12 +30,12 @@ func withinBudget(t *testing.T, budget time.Duration, fn func() error) error {
 }
 
 // mkfifoChat plants a FIFO at a chat id's file name and returns the id.
-func mkfifoChat(t *testing.T, dir string) vibekit.ChatID {
+func mkfifoChat(t *testing.T, dir string) marotte.ChatID {
 	t.Helper()
 	if _, err := os.Stat("/dev/null"); err != nil {
 		t.Skip("no unix device nodes")
 	}
-	id := vibekit.ChatID("m-fifo0000-aaaa")
+	id := marotte.ChatID("m-fifo0000-aaaa")
 	if !chatIDPattern(id) {
 		t.Fatalf("fixture id %q is not a valid chat id", id)
 	}
@@ -64,10 +64,10 @@ func TestGet_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	}
 }
 
-func withinBudgetGet(t *testing.T, s *Store, id vibekit.ChatID) (*vibekit.Chat, bool) {
+func withinBudgetGet(t *testing.T, s *Store, id marotte.ChatID) (*marotte.Chat, bool) {
 	t.Helper()
 	type res struct {
-		c  *vibekit.Chat
+		c  *marotte.Chat
 		ok bool
 	}
 	out := make(chan res, 1)
@@ -89,7 +89,7 @@ func withinBudgetGet(t *testing.T, s *Store, id vibekit.ChatID) (*vibekit.Chat, 
 // sweep fail closed over the file it could not read.
 func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(t.Context(), "good", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "good", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "readable"
 		return true
 	}); err != nil {
@@ -98,7 +98,7 @@ func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	mkfifoChat(t, s.dir)
 
 	type out struct {
-		headers  []vibekit.ChatHeader
+		headers  []marotte.ChatHeader
 		complete bool
 	}
 	ch := make(chan out, 1)

@@ -237,7 +237,7 @@ onBus(BUS_PAGE_RESUMED, () => {
 // The slash-command catalog is gone, server and client, and should not come
 // back as a palette: of 90 commands a session reports, only 13 skills have
 // no other door (agent names map to modes, workflows to the config browser,
-// steering to attachment) and none is invocable — see vibekit.md "Slash
+// steering to attachment) and none is invocable — see marotte.md "Slash
 // commands". Skills are discoverable instead, on the /docs Skills tab.
 
 // compaction_started is advisory only: `thinking` is already true (set by

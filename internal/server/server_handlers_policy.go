@@ -10,9 +10,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/policyfile"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -46,7 +46,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := r.URL.Query().Get("scope")
-	view := vibekit.PolicyView{
+	view := marotte.PolicyView{
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
 		// The relaxation set travels on BOTH branches: it is a fixed property of
 		// this build, not a projection of the live policy, so the switch stays
@@ -82,7 +82,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 // on kiro-cli 2.19.0: a workspace file holding exactly one rule
 // (`capability: all, effect: allow, match: ['*']`) came back as TEN byte-
 // identical entries carrying the same scope and the same source path, while
-// every other rule in the same reply appeared once. vibekit forwarded them
+// every other rule in the same reply appeared once. marotte forwarded them
 // verbatim, so Settings -> Permissions rendered the user's single rule ten
 // times, each with its own remove button.
 //
@@ -96,12 +96,12 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 // Done here rather than in the agent's PolicyList because this handler is the
 // one place BOTH the live and the file-fallback projections pass through, and
 // the fallback can produce a genuine cross-scope pair that must survive.
-func dedupePolicyRules(rules []vibekit.PolicyRule) []vibekit.PolicyRule {
+func dedupePolicyRules(rules []marotte.PolicyRule) []marotte.PolicyRule {
 	if len(rules) == 0 {
 		// Preserve the empty-not-null contract the wire field carries.
-		return []vibekit.PolicyRule{}
+		return []marotte.PolicyRule{}
 	}
-	out := make([]vibekit.PolicyRule, 0, len(rules))
+	out := make([]marotte.PolicyRule, 0, len(rules))
 	seen := make(map[string]struct{}, len(rules))
 	for _, r := range rules {
 		key := policyRuleKey(&r)
@@ -124,8 +124,8 @@ func dedupePolicyRules(rules []vibekit.PolicyRule) []vibekit.PolicyRule {
 // `match: ["a<sep>b"]` produce one key, and a glob is arbitrary user text that
 // can contain any separator a reader might pick. The order of a rule's globs is
 // significant here — two rules differing only in glob order are left as two
-// rows, because reordering is not vibekit's call to make on the user's file.
-func policyRuleKey(r *vibekit.PolicyRule) string {
+// rows, because reordering is not marotte's call to make on the user's file.
+func policyRuleKey(r *marotte.PolicyRule) string {
 	var b strings.Builder
 	for _, s := range []string{r.Capability, r.Effect, r.Scope, r.Source} {
 		fmt.Fprintf(&b, "%d:%s", len(s), s)
@@ -139,22 +139,22 @@ func policyRuleKey(r *vibekit.PolicyRule) string {
 	return b.String()
 }
 
-// pickerCapabilities is what the capability dropdowns offer: vibekit's suggested
+// pickerCapabilities is what the capability dropdowns offer: marotte's suggested
 // set UNION every capability the returned rules already use.
 //
 // The union is what keeps the picker from going stale. The suggested set is a
 // hand-copied snapshot of a list KAS does not expose, so it cannot learn about a
 // capability the agent server gains — but the rules KAS reports here CAN, and
 // they include every scope's baseline (kiro, administration, agent, session), not
-// just the two vibekit writes. So the day one rule anywhere uses a new
-// capability, it becomes selectable, with no vibekit release.
+// just the two marotte writes. So the day one rule anywhere uses a new
+// capability, it becomes selectable, with no marotte release.
 //
 // Deliberately not a filter on what may be WRITTEN: a capability absent from
 // both the snapshot and the current rules is still writable (see SanitizeRule),
 // it just is not suggested.
 //
 // Sorted as ONE list, not suggestions-then-extras: the dropdown is alphabetical,
-// and a reader looking for "hooks" should not have to know whether vibekit
+// and a reader looking for "hooks" should not have to know whether marotte
 // shipped knowing about it. slices.Sorted(maps.Keys(…)) (Go 1.23) is that in one
 // expression; the set is the only intermediate, which is what removes the
 // separate duplicate test and the `added` flag that existed solely to skip
@@ -164,7 +164,7 @@ func policyRuleKey(r *vibekit.PolicyRule) string {
 // `capabilities` wire field never degrades from [] to null.
 // TestPickerCapabilities_NoRulesIsTheSuggestedSet asserts that rather than
 // leaving it to the reader.
-func pickerCapabilities(rules []vibekit.PolicyRule) []string {
+func pickerCapabilities(rules []marotte.PolicyRule) []string {
 	suggested := policyfile.Capabilities()
 	seen := make(map[string]struct{}, len(suggested)+len(rules))
 	for _, c := range suggested {
@@ -179,14 +179,14 @@ func pickerCapabilities(rules []vibekit.PolicyRule) []string {
 }
 
 // policyRulesFromFiles reads the user + workspace permissions.yaml directly
-// and returns them as vibekit.PolicyRule with provenance. Used only as the
+// and returns them as marotte.PolicyRule with provenance. Used only as the
 // no-bridge fallback for the view.
-func (s *Server) policyRulesFromFiles(scope string) []vibekit.PolicyRule {
+func (s *Server) policyRulesFromFiles(scope string) []marotte.PolicyRule {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return []vibekit.PolicyRule{}
+		return []marotte.PolicyRule{}
 	}
-	out := []vibekit.PolicyRule{}
+	out := []marotte.PolicyRule{}
 	for _, sc := range []string{policyfile.ScopeUser, policyfile.ScopeWorkspace} {
 		if scope != "" && scope != sc {
 			continue
@@ -200,7 +200,7 @@ func (s *Server) policyRulesFromFiles(scope string) []vibekit.PolicyRule {
 			continue
 		}
 		for _, ru := range f.Rules {
-			out = append(out, vibekit.PolicyRule{
+			out = append(out, marotte.PolicyRule{
 				Capability: ru.Capability, Effect: ru.Effect,
 				Match: ru.Match, Exclude: ru.Exclude,
 				Scope: sc, Source: path,
@@ -221,7 +221,7 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("policy explain unavailable"))
 		return
 	}
-	var req vibekit.PolicyExplainRequest
+	var req marotte.PolicyExplainRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
@@ -327,14 +327,14 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	// vibekit does not own the capability vocabulary (see policyfile.SanitizeRule),
+	// marotte does not own the capability vocabulary (see policyfile.SanitizeRule),
 	// so an unrecognised name is written through for KAS to judge. KAS then SKIPS
 	// that one rule as non-fatal and says so on _kiro/policy/changed, which reaches
 	// the user in the permissions panel — but nothing on this side records having
 	// written it, so a rule that silently does nothing has no server-side trace to
 	// correlate against. One line closes that; the write still goes through.
 	if !slices.Contains(policyfile.Capabilities(), rule.Capability) {
-		slog.Warn("writing a policy rule naming a capability vibekit does not recognise; "+
+		slog.Warn("writing a policy rule naming a capability marotte does not recognise; "+
 			"kiro-cli decides whether it loads",
 			"capability", rule.Capability, "effect", rule.Effect, "scope", body.Scope)
 	}
@@ -379,7 +379,7 @@ func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *po
 			httpreply.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
 		return false
 	}
-	res, err := s.policy.PolicyExplain(r.Context(), vibekit.PolicyExplainRequest{
+	res, err := s.policy.PolicyExplain(r.Context(), marotte.PolicyExplainRequest{
 		Capability: rule.Capability, Resource: resource,
 	})
 	if err != nil {

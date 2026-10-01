@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // bridgeSpawnKey's fields are both validator-restricted today (ids.ValidChatID
@@ -16,7 +16,7 @@ func TestBridgeSpawnKey_ByteIdenticalForValidatedFields(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		chatID        vibekit.ChatID
+		chatID        marotte.ChatID
 		modelOverride string
 		want          string
 	}{
@@ -49,9 +49,9 @@ func TestBridgeSpawnKey_DistinctPairsNeverCollapse(t *testing.T) {
 
 	pairs := []struct {
 		name           string
-		aChat          vibekit.ChatID
+		aChat          marotte.ChatID
 		aModel         string
-		bChat          vibekit.ChatID
+		bChat          marotte.ChatID
 		bModel         string
 		naiveSeparator string
 	}{

@@ -362,7 +362,7 @@ function reveal(): { revealed: number; passes: number } {
 // --- control height --------------------------------------------------------
 
 /** Every form control whose height disagrees with the controls beside it
- *  (vibekit-ui.md "One control height per row"), and every control whose TARGET
+ *  (marotte-ui.md "One control height per row"), and every control whose TARGET
  *  is under the tier's hit floor.
  *
  *  A ROW is a flex or grid parent plus a vertical BAND, which is what makes this
@@ -468,7 +468,7 @@ function controlHeight(opts: { tol: number; floor?: number }): unknown {
     };
     // IS THIS CONTROL CLAIMING THE ROW'S HEIGHT AT ALL? A control painted under
     // the floor that grows its target with an expander has DECLARED itself
-    // visually small, which `vibekit-ui.md` states as its own rule — "a
+    // visually small, which `marotte-ui.md` states as its own rule — "a
     // control-height token belongs to a control that OWNS its row, and anything
     // riding inside a row already floored at one measures the ink beside it
     // instead" — so it is not in the one-height-per-row population and comparing
@@ -1044,7 +1044,7 @@ function colorTokenAt(el: Element, name: string): string | null {
 /** Every text-painting element against the surface it ACTUALLY paints on, with
  *  every ancestor opacity folded in, floored at WCAG 1.4.3.
  *
- *  WHY THIS EXISTS BESIDE THE STATIC GATES. `vibekit/scripts/css-contrast.py`
+ *  WHY THIS EXISTS BESIDE THE STATIC GATES. `marotte/scripts/css-contrast.py`
  *  audits the TOKEN GRAPH — a declared ink against a declared surface — and that is
  *  the right instrument for a palette. It cannot see three things this can: a
  *  surface that is several semi-transparent layers composited (`--c-hover` washes

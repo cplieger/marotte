@@ -67,8 +67,8 @@ describe("the URL a git-status read builds", () => {
   });
 
   it("names the paths it was given, comma-joined and encoded once", async () => {
-    expect(await read(["subflux/main.go", "vibekit/app.ts"])).toBe(
-      "/api/git/status-all?paths=subflux%2Fmain.go%2Cvibekit%2Fapp.ts",
+    expect(await read(["subflux/main.go", "marotte/app.ts"])).toBe(
+      "/api/git/status-all?paths=subflux%2Fmain.go%2Cmarotte%2Fapp.ts",
     );
   });
 
@@ -116,7 +116,7 @@ describe("the key a git-status read dedups under", () => {
   // exact defect scoping was added to fix, reintroduced on the client side.
   it("gives two different scopes two different keys", async () => {
     const a = await key(["subflux/main.go"]);
-    const b = await key(["vibekit/app.ts"]);
+    const b = await key(["marotte/app.ts"]);
     expect(a).not.toBe(b);
   });
 

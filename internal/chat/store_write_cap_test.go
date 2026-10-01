@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chatFileDigest is the on-disk chat file's content digest, so a test can say
@@ -33,9 +33,9 @@ func TestWriteChat_OverCapRefusalLeavesThePreviousFileIntact(t *testing.T) {
 	const capBytes = 4 << 10
 	s := newCappedTestStore(t, capBytes)
 
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "first"
-		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "hello", Ts: 1}}
+		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: "hello", Ts: 1}}
 		return true
 	}); err != nil {
 		t.Fatalf("Setup: first Mutate: %v", err)
@@ -44,9 +44,9 @@ func TestWriteChat_OverCapRefusalLeavesThePreviousFileIntact(t *testing.T) {
 
 	// One long assistant message, well past the cap. Content, not tool calls, so
 	// the persist bound cannot shrink it into fitting.
-	_, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Messages = append(c.Messages, vibekit.Message{
-			ID: "m2", Role: vibekit.RoleAssistant, Ts: 2,
+	_, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Messages = append(c.Messages, marotte.Message{
+			ID: "m2", Role: marotte.RoleAssistant, Ts: 2,
 			Content: strings.Repeat("x", capBytes*2),
 		})
 		return true
@@ -84,9 +84,9 @@ func TestWriteChat_UnlimitedMeansUnlimited(t *testing.T) {
 	}
 
 	body := strings.Repeat("u", minChatFileCap+1)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "big"
-		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: body, Ts: 1}}
+		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: body, Ts: 1}}
 		return true
 	}); err != nil {
 		t.Fatalf("Mutate under an unlimited cap = %v, want nil: the operator declined to bound this container", err)
@@ -128,7 +128,7 @@ func TestWriteChat_RefusalIsLoud(t *testing.T) {
 	logs := captureStoreSlog(t)
 	s := newCappedTestStore(t, capBytes)
 
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "small"
 		return true
 	}); err != nil {
@@ -138,9 +138,9 @@ func TestWriteChat_RefusalIsLoud(t *testing.T) {
 		t.Fatal("a write that fitted logged the refusal")
 	}
 
-	_, _ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Messages = []vibekit.Message{{
-			ID: "m1", Role: vibekit.RoleUser, Ts: 1, Content: strings.Repeat("x", capBytes*2),
+	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Messages = []marotte.Message{{
+			ID: "m1", Role: marotte.RoleUser, Ts: 1, Content: strings.Repeat("x", capBytes*2),
 		}}
 		return true
 	})
@@ -167,7 +167,7 @@ func TestWriteChat_NearTheCapWarnsWhileThereIsRoom(t *testing.T) {
 	logs := captureStoreSlog(t)
 	s := newCappedTestStore(t, capBytes)
 
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "roomy"
 		return true
 	}); err != nil {
@@ -179,8 +179,8 @@ func TestWriteChat_NearTheCapWarnsWhileThereIsRoom(t *testing.T) {
 
 	// Inside the last tenth: over 90% of the cap and under it.
 	body := strings.Repeat("y", capBytes-(capBytes/20))
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Ts: 1, Content: body}}
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Ts: 1, Content: body}}
 		return true
 	}); err != nil {
 		t.Fatalf("near-cap Mutate = %v, want it to succeed: this is a warning, not a refusal", err)
@@ -201,9 +201,9 @@ func TestWriteChat_NearTheCapWarnsWhileThereIsRoom(t *testing.T) {
 func TestWriteChat_UnlimitedLogsNeither(t *testing.T) {
 	logs := captureStoreSlog(t)
 	s := newCappedTestStore(t, 0)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Messages = []vibekit.Message{{
-			ID: "m1", Role: vibekit.RoleUser, Ts: 1, Content: strings.Repeat("z", minChatFileCap+1),
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Messages = []marotte.Message{{
+			ID: "m1", Role: marotte.RoleUser, Ts: 1, Content: strings.Repeat("z", minChatFileCap+1),
 		}}
 		return true
 	}); err != nil {

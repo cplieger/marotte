@@ -45,7 +45,7 @@
 // `vk-slide-up … backwards`, whose `from` keyframe is `translateY(6px)`, so its
 // RECT is 6px below its layout box until the animation has progressed — measured,
 // and it is why the divider's animation is stopped in the harness rather than
-// measured around (`vibekit-client.md` records the same 6px trap).
+// measured around (`marotte-client.md` records the same 6px trap).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";

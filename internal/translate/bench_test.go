@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // baseDeps is a composable Deps implementation for tests and benchmarks.
@@ -16,10 +16,10 @@ type baseDeps struct {
 	store       ChatRecords
 	bufStore    *turnBuffers
 	lineTracker *buffer.LineTracker
-	onBroadcast func(context.Context, vibekit.ServerEvent)
+	onBroadcast func(context.Context, marotte.ServerEvent)
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
 	// assert the runtime-side cache write (mirrors onBroadcast).
-	onSetGovernance func(vibekit.GovernanceStatePayload)
+	onSetGovernance func(marotte.GovernanceStatePayload)
 	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
@@ -34,7 +34,7 @@ type baseDeps struct {
 	// foldSources records the turn source every fold site stated, in order, so a
 	// test can assert a workflow step's frame would open the RUN's turn rather
 	// than the chat's.
-	foldSources []vibekit.TurnOpenSource
+	foldSources []marotte.TurnOpenSource
 	// compactionFailures records failed-compaction facts sent to the host.
 	compactionFailures []compactionFailure
 	// turnInterrupts records every InterruptTurn call, so a test can assert the
@@ -44,12 +44,12 @@ type baseDeps struct {
 	// catalogModels is the last model list SetModels was handed: the workspace
 	// catalog a config_option_update publishes, which used to be a field on the
 	// chat record.
-	catalogModels []vibekit.SessionModel
+	catalogModels []marotte.SessionModel
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
 	// asked records every BridgeRespond call, so a test can assert that a frame
-	// vibekit declined to process was still ANSWERED on its own id, with no
+	// marotte declined to process was still ANSWERED on its own id, with no
 	// bridge behind it. respondErr, when set, is what BridgeRespond reports.
 	asked      []askAnswer
 	respondErr error
@@ -63,23 +63,23 @@ type baseDeps struct {
 	// bracket a frame drove without a turn registry behind it.
 	brackets []turnBracket
 	// userSteers are the steer ids this double reports as the USER's, standing
-	// in for the host's ledger of what vibekit itself sent. Absent means the
+	// in for the host's ledger of what marotte itself sent. Absent means the
 	// agent's, which is the real ledger's answer too.
 	userSteers map[string]bool
 	// sealRefusals are the chats whose SealTurnSegment declines, standing in for
 	// the host refusing to split a turn holding an unsettled tool call.
-	sealRefusals map[vibekit.ChatID]bool
+	sealRefusals map[marotte.ChatID]bool
 	// waiting is the steers this double has been told are in KAS's buffer, per
 	// chat, standing in for the runtime's tracker. A map rather than a call log
 	// because what a test asserts is the SET a reconnect would replay, and the
 	// three arms of the cascade reach it as add / remove / remove-each.
-	waiting map[vibekit.ChatID][]vibekit.SteerQueuedPayload
+	waiting map[marotte.ChatID][]marotte.SteerQueuedPayload
 }
 
 // termRendered is one terminal's rendered output in the stub registry.
 type termRendered struct {
 	text  string
-	spans []vibekit.TextSpan
+	spans []marotte.TextSpan
 }
 
 func newBaseDeps() *baseDeps {
@@ -88,13 +88,13 @@ func newBaseDeps() *baseDeps {
 		bufStore:    newTurnBuffers(),
 		lineTracker: buffer.NewLineTracker(),
 		terminals:   map[string]termRendered{},
-		waiting:     map[vibekit.ChatID][]vibekit.SteerQueuedPayload{},
+		waiting:     map[marotte.ChatID][]marotte.SteerQueuedPayload{},
 	}
 }
 
 // SteerWaiting / SteerRead / SteerForgotten stand in for the runtime's steering
 // buffer tracker, holding what a reconnect would re-offer.
-func (d *baseDeps) SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload) {
+func (d *baseDeps) SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
 	for i, e := range d.waiting[chatID] {
 		if e.SteerID == p.SteerID {
 			d.waiting[chatID][i] = p
@@ -104,19 +104,19 @@ func (d *baseDeps) SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayl
 	d.waiting[chatID] = append(d.waiting[chatID], p)
 }
 
-func (d *baseDeps) SteerRead(chatID vibekit.ChatID, steerID string) {
+func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) {
 	d.SteerForgotten(chatID, []string{steerID})
 }
 
 // Returns the entries it HELD, like the real buffer: that subset is the steers
 // nothing read, and the only place their text survives once the cleared frame
 // (which carries ids alone) arrives.
-func (d *baseDeps) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
+func (d *baseDeps) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	gone := make(map[string]bool, len(steerIDs))
 	for _, id := range steerIDs {
 		gone[id] = true
 	}
-	var held []vibekit.SteerQueuedPayload
+	var held []marotte.SteerQueuedPayload
 	kept := d.waiting[chatID][:0]
 	for _, e := range d.waiting[chatID] {
 		if gone[e.SteerID] {
@@ -129,21 +129,21 @@ func (d *baseDeps) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vi
 	return held
 }
 
-func (d *baseDeps) Output(terminalID string) (string, []vibekit.TextSpan, bool) {
+func (d *baseDeps) Output(terminalID string) (string, []marotte.TextSpan, bool) {
 	t, ok := d.terminals[terminalID]
 	return t.text, t.spans, ok
 }
 
 // SteerOrigin stands in for the host's steer ledger. Absent from the set means
 // the agent's, matching command.SteerLedger, whose answer is total.
-func (d *baseDeps) SteerOrigin(_ vibekit.ChatID, steerID string) vibekit.SteerOrigin {
+func (d *baseDeps) SteerOrigin(_ marotte.ChatID, steerID string) marotte.SteerOrigin {
 	if d.userSteers[steerID] {
-		return vibekit.SteerOriginUser
+		return marotte.SteerOriginUser
 	}
-	return vibekit.SteerOriginAgent
+	return marotte.SteerOriginAgent
 }
 
-func (d *baseDeps) Broadcast(ctx context.Context, evt vibekit.ServerEvent) {
+func (d *baseDeps) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
 	if d.onBroadcast != nil {
 		d.onBroadcast(ctx, evt)
 	}
@@ -153,19 +153,19 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt vibekit.ServerEvent) {
 // LineTracker) are gone with the composites: Roles holds each interface
 // directly, so the double implements the methods instead of handing back a
 // narrower self.
-func (d *baseDeps) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+func (d *baseDeps) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
 	return d.store.Get(ctx, id)
 }
 
-func (d *baseDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
+func (d *baseDeps) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
 	return d.store.Mutate(ctx, id, fn)
 }
 
-func (d *baseDeps) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+func (d *baseDeps) AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
 	return d.store.AppendMessage(ctx, chatID, msg)
 }
 
-func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
 	return d.store.UpsertTurnPlan(ctx, chatID, msg)
 }
 
@@ -173,19 +173,19 @@ func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, ms
 // which kind of turn a frame would have opened. The buffer itself is per chat
 // here, which is what keeps the fold sites' own behaviour observable without a
 // turn registry.
-func (d *baseDeps) OpenTurnBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool) {
+func (d *baseDeps) OpenTurnBuffer(chatID marotte.ChatID) (*buffer.Buffer, bool) {
 	buf := d.bufStore.Get(chatID)
 	return buf, buf != nil
 }
 
-func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer {
+func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) *buffer.Buffer {
 	d.foldSources = append(d.foldSources, source)
 	return d.bufStore.GetOrInit(chatID)
 }
 
 // lastFoldSource is the source the most recent fold site stated, and whether any
 // fold happened at all.
-func (d *baseDeps) lastFoldSource() (vibekit.TurnOpenSource, bool) {
+func (d *baseDeps) lastFoldSource() (marotte.TurnOpenSource, bool) {
 	if len(d.foldSources) == 0 {
 		return 0, false
 	}
@@ -195,20 +195,20 @@ func (d *baseDeps) lastFoldSource() (vibekit.TurnOpenSource, bool) {
 // The three turn-bracket operations, recorded rather than performed: the host
 // owns the turn lifecycle, and what this package is responsible for is calling
 // the right one on the right frame.
-func (d *baseDeps) WireTurnStart(_ context.Context, chatID vibekit.ChatID) {
+func (d *baseDeps) WireTurnStart(_ context.Context, chatID marotte.ChatID) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "start"})
 }
 
 func (d *baseDeps) WireTurnEnd(
 	_ context.Context,
-	chatID vibekit.ChatID,
-	stop vibekit.StopReason,
+	chatID marotte.ChatID,
+	stop marotte.StopReason,
 	details string,
 ) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "end", stop: stop, details: details})
 }
 
-func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID vibekit.ChatID) {
+func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID marotte.ChatID) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "revise"})
 }
 
@@ -218,7 +218,7 @@ func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID vibekit.ChatID) {
 // the event that follows it. The host's own decline conditions are its to test;
 // here the double declines exactly when the buffer has nothing to seal, and
 // `sealRefusals` stages the in-flight-tool decline as an input.
-func (d *baseDeps) SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) bool {
+func (d *baseDeps) SealTurnSegment(ctx context.Context, chatID marotte.ChatID) bool {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "seal"})
 	if d.sealRefusals[chatID] {
 		return false
@@ -231,9 +231,9 @@ func (d *baseDeps) SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) b
 	if !snap.Started {
 		return false
 	}
-	msg := vibekit.Message{
+	msg := marotte.Message{
 		ID:        snap.MessageID,
-		Role:      vibekit.RoleAssistant,
+		Role:      marotte.RoleAssistant,
 		Content:   snap.Content,
 		Reasoning: snap.Reasoning,
 		ToolCalls: snap.ToolCalls,
@@ -245,9 +245,9 @@ func (d *baseDeps) SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) b
 
 // turnBracket is one recorded turn-lifecycle call.
 type turnBracket struct {
-	chat vibekit.ChatID
+	chat marotte.ChatID
 	kind string
-	stop vibekit.StopReason
+	stop marotte.StopReason
 	// details is the wire's own account of the stop, from turn_end's stopDetails.
 	// Recorded because it is the ONLY channel that can explain a `stopReason:
 	// "error"` turn, and it reached the closer as "" for as long as nobody decoded
@@ -262,14 +262,14 @@ type turnBracket struct {
 // way: a fold gets somewhere to land, and the same somewhere for the rest of the
 // turn.
 type turnBuffers struct {
-	bufs map[vibekit.ChatID]*buffer.Buffer
+	bufs map[marotte.ChatID]*buffer.Buffer
 }
 
 func newTurnBuffers() *turnBuffers {
-	return &turnBuffers{bufs: map[vibekit.ChatID]*buffer.Buffer{}}
+	return &turnBuffers{bufs: map[marotte.ChatID]*buffer.Buffer{}}
 }
 
-func (tb *turnBuffers) GetOrInit(chatID vibekit.ChatID) *buffer.Buffer {
+func (tb *turnBuffers) GetOrInit(chatID marotte.ChatID) *buffer.Buffer {
 	if b, ok := tb.bufs[chatID]; ok {
 		return b
 	}
@@ -278,14 +278,14 @@ func (tb *turnBuffers) GetOrInit(chatID vibekit.ChatID) *buffer.Buffer {
 	return b
 }
 
-func (tb *turnBuffers) Get(chatID vibekit.ChatID) *buffer.Buffer { return tb.bufs[chatID] }
+func (tb *turnBuffers) Get(chatID marotte.ChatID) *buffer.Buffer { return tb.bufs[chatID] }
 
-func (tb *turnBuffers) Delete(chatID vibekit.ChatID) { delete(tb.bufs, chatID) }
+func (tb *turnBuffers) Delete(chatID marotte.ChatID) { delete(tb.bufs, chatID) }
 
-func (d *baseDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
+func (d *baseDeps) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string) {
 	d.lineTracker.RecordFromDiffs(chatID, diffs, turn, kind)
 }
-func (d *baseDeps) ParentACPSession(vibekit.ChatID) string { return d.parent }
+func (d *baseDeps) ParentACPSession(marotte.ChatID) string { return d.parent }
 func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
@@ -306,21 +306,21 @@ func (d *baseDeps) RunMadeProgress(workflowID string) {
 }
 
 type compactionFailure struct {
-	chatID vibekit.ChatID
+	chatID marotte.ChatID
 	detail string
 }
 
-func (d *baseDeps) CompactionFailed(chatID vibekit.ChatID, detail string) {
+func (d *baseDeps) CompactionFailed(chatID marotte.ChatID, detail string) {
 	d.compactionFailures = append(d.compactionFailures, compactionFailure{chatID: chatID, detail: detail})
 }
 
 // turnInterrupt is one recorded InterruptTurn call.
 type turnInterrupt struct {
-	chatID vibekit.ChatID
+	chatID marotte.ChatID
 	reason string
 }
 
-func (d *baseDeps) InterruptTurn(chatID vibekit.ChatID, reason string) {
+func (d *baseDeps) InterruptTurn(chatID marotte.ChatID, reason string) {
 	d.turnInterrupts = append(d.turnInterrupts, turnInterrupt{chatID, reason})
 }
 
@@ -328,18 +328,18 @@ func (d *baseDeps) InterruptTurn(chatID vibekit.ChatID, reason string) {
 // per-turn accounting. The double writes the chat's usage directly, which is what
 // the host does for a frame that reaches it with no turn open — the only state a
 // translate fixture can be in, since the turn record lives on the host.
-func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID vibekit.ChatID, credits float64) {
+func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64) {
 	if credits <= 0 {
 		return
 	}
-	d.mutateUsage(ctx, chatID, func(u *vibekit.Usage) {
+	d.mutateUsage(ctx, chatID, func(u *marotte.Usage) {
 		u.Credits += credits
 		u.HasRealData = true
 	})
 }
 
-func (d *baseDeps) StageConversationTurnSummary(ctx context.Context, chatID vibekit.ChatID, elapsedMs float64) {
-	d.mutateUsage(ctx, chatID, func(u *vibekit.Usage) {
+func (d *baseDeps) StageConversationTurnSummary(ctx context.Context, chatID marotte.ChatID, elapsedMs float64) {
+	d.mutateUsage(ctx, chatID, func(u *marotte.Usage) {
 		u.TurnCount++
 		if elapsedMs > 0 {
 			u.LastTurnMs = elapsedMs
@@ -347,8 +347,8 @@ func (d *baseDeps) StageConversationTurnSummary(ctx context.Context, chatID vibe
 	})
 }
 
-func (d *baseDeps) mutateUsage(ctx context.Context, chatID vibekit.ChatID, apply func(*vibekit.Usage)) {
-	_, _ = d.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func (d *baseDeps) mutateUsage(ctx context.Context, chatID marotte.ChatID, apply func(*marotte.Usage)) {
+	_, _ = d.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -358,39 +358,39 @@ func (d *baseDeps) mutateUsage(ctx context.Context, chatID vibekit.ChatID, apply
 }
 
 func (d *baseDeps) WorkDir() string { return "/tmp" }
-func (d *baseDeps) BridgeNotify(context.Context, vibekit.ChatID, string, map[string]any) error {
+func (d *baseDeps) BridgeNotify(context.Context, marotte.ChatID, string, map[string]any) error {
 	return nil
 }
 
 // askAnswer is one recorded BridgeRespond call.
 type askAnswer struct {
-	chatID    vibekit.ChatID
+	chatID    marotte.ChatID
 	requestID int64
 	result    any
 	rpcErr    error
 }
 
 func (d *baseDeps) BridgeRespond(
-	_ context.Context, chatID vibekit.ChatID, requestID int64, result any, rpcErr error,
+	_ context.Context, chatID marotte.ChatID, requestID int64, result any, rpcErr error,
 ) error {
 	d.asked = append(d.asked, askAnswer{chatID, requestID, result, rpcErr})
 	return d.respondErr
 }
 func (d *baseDeps) MCPRecorder() MCPRecorder { return nopMCPRecorder{} }
-func (d *baseDeps) SetGovernance(g vibekit.GovernanceStatePayload) {
+func (d *baseDeps) SetGovernance(g marotte.GovernanceStatePayload) {
 	if d.onSetGovernance != nil {
 		d.onSetGovernance(g)
 	}
 }
-func (d *baseDeps) PendingPermsAdd(int64, vibekit.ServerEvent)                           {}
+func (d *baseDeps) PendingPermsAdd(int64, marotte.ServerEvent)                           {}
 func (d *baseDeps) PendingPermsRemove(int64)                                             {}
-func (d *baseDeps) NotifyPush(context.Context, string, vibekit.PushKind, vibekit.ChatID) {}
+func (d *baseDeps) NotifyPush(context.Context, string, marotte.PushKind, marotte.ChatID) {}
 func (d *baseDeps) IsHookStatusEnabled() bool                                            { return false }
 
 // SetModels stands in for the workspace catalog holder, recording what the
 // translator published so a test can assert on the list without an agent
 // runtime. Empty is ignored, matching the production holder's rule.
-func (d *baseDeps) SetModels(models []vibekit.SessionModel) bool {
+func (d *baseDeps) SetModels(models []marotte.SessionModel) bool {
 	if len(models) == 0 {
 		return false
 	}
@@ -403,7 +403,7 @@ var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 	tr := New(rolesOf(newBaseDeps()), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
-	chatID := vibekit.ChatID("bench-chat")
+	chatID := marotte.ChatID("bench-chat")
 
 	for b.Loop() {
 		tr.HandleToolCall(ctx, chatID, toolCallPayload, FrameAttribution{})
@@ -416,7 +416,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
-	chatID := vibekit.ChatID("bench-chunk")
+	chatID := marotte.ChatID("bench-chunk")
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
 
@@ -443,7 +443,7 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 	toolUpdatePL := json.RawMessage(`{"toolCallId":"tc-1","status":"completed","content":[{"type":"text","content":{"text":"done"}}]}`)
 
 	for b.Loop() {
-		chatID := vibekit.ChatID("bench-turn")
+		chatID := marotte.ChatID("bench-turn")
 		// Phase 1: initial streaming chunks
 		for range 50 {
 			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
@@ -464,11 +464,11 @@ func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
-	chatID := vibekit.ChatID("bench-usage")
+	chatID := marotte.ChatID("bench-usage")
 	raw := json.RawMessage(`{"size":100000,"used":42500}`)
 
 	// Pre-create a chat so Mutate finds it.
-	_, _ = deps.store.Mutate(ctx, chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
+	_, _ = deps.store.Mutate(ctx, chatID, func(_ *marotte.Chat, _ bool) bool { return true })
 
 	b.ReportAllocs()
 	for b.Loop() {

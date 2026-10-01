@@ -3,7 +3,7 @@
 //
 // `tools` joined the other two when KAS's config file became the source of
 // truth: the tool names are a discovery RESULT, and they used to be persisted
-// into vibekit's config record as `known_tools`.
+// into marotte's config record as `known_tools`.
 
 import { describe, it, expect } from "vitest";
 import { effect } from "@cplieger/reactive";

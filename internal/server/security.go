@@ -87,7 +87,7 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 // http.NewCrossOriginProtection (Go 1.25+ stdlib) for CSRF, a concern
 // webhttp does not ship so it stays app-side. SecurityHeaders sets
 // X-Content-Type-Options: nosniff, X-Frame-Options: DENY (aligned with
-// the CSP's frame-ancestors 'none'), Referrer-Policy pinned to vibekit's
+// the CSP's frame-ancestors 'none'), Referrer-Policy pinned to marotte's
 // existing same-origin, and the dynamic CSP passed through WithCSP. The
 // CSRF protection allows GET/HEAD/OPTIONS unconditionally and rejects
 // state-changing cross-origin requests with 403 Forbidden via the

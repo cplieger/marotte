@@ -7,7 +7,7 @@ import (
 	"unicode"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A DECISION SURFACE is a payload a human reads to make an approval choice:
@@ -91,7 +91,7 @@ func TestPermissionCard_NeutralizesADeceptiveTitleOnTheWire(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(9001)
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",
@@ -154,7 +154,7 @@ func TestPermissionCard_LeavesLegitimateTitlesByteIdentical(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		tr := New(rolesOf(deps))
 		id := int64(1)
-		tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+		tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 			ID: &id,
 			Params: mustJSON(t, map[string]any{
 				"sessionId": "s",
@@ -184,7 +184,7 @@ func TestPermissionCard_MixedScriptWithExplicitMarksIsTheWholeCost(t *testing.T)
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	id := int64(1)
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "s",
@@ -221,10 +221,10 @@ func TestUserInputCard_NeutralizesEveryLabelOnTheWire(t *testing.T) {
 		}},
 	}))
 
-	var got *vibekit.UserInputNeededPayload
+	var got *marotte.UserInputNeededPayload
 	for _, e := range *events {
-		if e.Type == vibekit.EventUserInputNeeded {
-			p := e.Payload.(vibekit.UserInputNeededPayload)
+		if e.Type == marotte.EventUserInputNeeded {
+			p := e.Payload.(marotte.UserInputNeededPayload)
 			got = &p
 		}
 	}
@@ -265,10 +265,10 @@ func TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules(t *testing.T) 
 		},
 	}))
 
-	var got *vibekit.UserInputNeededPayload
+	var got *marotte.UserInputNeededPayload
 	for _, e := range *events {
-		if e.Type == vibekit.EventUserInputNeeded {
-			p := e.Payload.(vibekit.UserInputNeededPayload)
+		if e.Type == marotte.EventUserInputNeeded {
+			p := e.Payload.(marotte.UserInputNeededPayload)
 			got = &p
 		}
 	}
@@ -299,7 +299,7 @@ func TestUserInputCard_TitleIsSanitizedBeforeTheDropAndDedupRules(t *testing.T) 
 }
 
 // TestElicitationForm_NeutralizesItsMessageOnTheWire covers the third surface.
-// An MCP server is further from vibekit's trust than the agent is, and accept /
+// An MCP server is further from marotte's trust than the agent is, and accept /
 // decline is an approval choice like any other.
 func TestElicitationForm_NeutralizesItsMessageOnTheWire(t *testing.T) {
 	base, events := newEventCaptureDeps()
@@ -307,7 +307,7 @@ func TestElicitationForm_NeutralizesItsMessageOnTheWire(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(77)
 
-	tr.HandleElicitationCreate(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandleElicitationCreate(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId":  "s",
@@ -319,10 +319,10 @@ func TestElicitationForm_NeutralizesItsMessageOnTheWire(t *testing.T) {
 		}),
 	})
 
-	var got *vibekit.ElicitationNeededPayload
+	var got *marotte.ElicitationNeededPayload
 	for _, e := range *events {
-		if e.Type == vibekit.EventElicitationNeeded {
-			p := e.Payload.(vibekit.ElicitationNeededPayload)
+		if e.Type == marotte.EventElicitationNeeded {
+			p := e.Payload.(marotte.ElicitationNeededPayload)
 			got = &p
 		}
 	}
@@ -358,18 +358,18 @@ func TestDisplayText_BoundsAnUnboundedUpstreamString(t *testing.T) {
 // `_meta.kiro.consent.persistableConsentReason` (kiro-cli 2.19.1). Shape rather
 // than verbatim text: what the assertion below turns on is the three properties
 // that made the string unfit to forward — it is long, it names a file the
-// vibekit user never hand-edits, and it carries a cmd.exe/PowerShell tail that
+// marotte user never hand-edits, and it carries a cmd.exe/PowerShell tail that
 // is unreachable inside this Linux container.
 const upstreamConsentReason = "Cannot save a rule for this command: the shell pattern would not match. " +
 	"Edit ~/.kiro/settings/permissions.yaml by hand, or on Windows run the equivalent from cmd.exe or PowerShell."
 
 // TestPermissionCard_DropsTheUpstreamConsentReason pins the DO-NOT-FORWARD half
-// of the persistability decision. KAS owns the verdict; vibekit owns the copy,
+// of the persistability decision. KAS owns the verdict; marotte owns the copy,
 // so the reason string is read at the seam and dropped there — never persisted,
 // never broadcast, not even as an unused field the client could start rendering.
 //
 // Without this test the field looks helpful and someone re-adds it, at which
-// point the card starts telling a vibekit user to hand-edit a permissions file
+// point the card starts telling a marotte user to hand-edit a permissions file
 // the Settings pane owns, with a Windows postscript for a shell this container
 // does not have.
 func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
@@ -377,7 +377,7 @@ func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(9101)
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",
@@ -404,10 +404,10 @@ func TestPermissionCard_DropsTheUpstreamConsentReason(t *testing.T) {
 	}
 	// The verdict must have ARRIVED, or every assertion below passes vacuously:
 	// a broken consent decode drops the reason too, for the wrong reason.
-	if got.AlwaysAllowBlocked != vibekit.AlwaysAllowBlockUnparseable {
+	if got.AlwaysAllowBlocked != marotte.AlwaysAllowBlockUnparseable {
 		t.Fatalf("AlwaysAllowBlocked = %q, want %q: the verdict did not decode, so the "+
 			"reason-is-absent checks below would prove nothing",
-			got.AlwaysAllowBlocked, vibekit.AlwaysAllowBlockUnparseable)
+			got.AlwaysAllowBlocked, marotte.AlwaysAllowBlockUnparseable)
 	}
 
 	wire, err := json.Marshal(got)

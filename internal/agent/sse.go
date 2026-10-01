@@ -8,9 +8,9 @@ import (
 	"net/http"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // wireHeader is the request header a v3 client sends; its absence marks a legacy
@@ -22,26 +22,26 @@ const wireHeader = "SSE-Wire"
 const clientTagHeader = "SSE-Client"
 
 // Broadcast publishes evt to every connected client.
-func (b *bus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (b *bus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.emit(evt)
 }
 
 // PendingPermsAdd registers an unanswered decision so a reconnecting client gets
 // it replayed.
-func (b *bus) PendingPermsAdd(requestID int64, evt vibekit.ServerEvent) {
+func (b *bus) PendingPermsAdd(requestID int64, evt marotte.ServerEvent) {
 	b.pendingPerms.Add(requestID, evt)
 }
 
 // emit is the single publish path for live frames. It touches evt.Subject in
 // exactly one case: a chat_status frame takes the stamp MergeStamped minted in the
 // same critical section as the payload it publishes.
-func (b *bus) emit(evt vibekit.ServerEvent) {
+func (b *bus) emit(evt marotte.ServerEvent) {
 	switch evt.Type {
-	case vibekit.EventChatStatus:
+	case marotte.EventChatStatus:
 		// A producer of this event may NOT hold chatLifecycle.mu: stageStatusDesc takes it
 		// and sync.Mutex is not reentrant, so that is a self-deadlock -race hangs on
 		// rather than reports.
-		if p, ok := evt.Payload.(vibekit.ChatStatusPayload); ok {
+		if p, ok := evt.Payload.(marotte.ChatStatusPayload); ok {
 			// The RAW description, before the merge: Turn.statusDesc is what the agent
 			// declared during THIS turn, and stageStatusDescription drops an empty one.
 			b.stageStatusDesc(evt.ChatID, p.Description)
@@ -50,7 +50,7 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 			// evt is a value, so this reaches the marshal below and no caller sees it.
 			evt.Payload, evt.Subject = b.chatStatus.MergeStamped(evt.ChatID, p)
 		}
-	case vibekit.EventTurnEnded:
+	case marotte.EventTurnEnded:
 		b.chatStatus.ClearAtTurnEnd(evt.ChatID)
 	}
 	data, err := json.Marshal(evt)
@@ -78,7 +78,7 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 	slog.Warn("emit: frame exceeds the hub's cap; publishing subject_changed instead",
 		"type", evt.Type, "chat_id", evt.ChatID, "bytes", len(data), "cap", sse.MaxFrameBytes,
 		"kind", evt.Subject.Kind, "ref", logsafe.Field(evt.Subject.Ref))
-	substitute := vibekit.NewEvent(vibekit.EventSubjectChanged, evt.ChatID, vibekit.SubjectChangedPayload{})
+	substitute := marotte.NewEvent(marotte.EventSubjectChanged, evt.ChatID, marotte.SubjectChangedPayload{})
 	substitute.Subject = evt.Subject
 	data, err = json.Marshal(substitute)
 	if err != nil {
@@ -92,7 +92,7 @@ func (b *bus) emit(evt vibekit.ServerEvent) {
 
 // handleSSE opens the /api/events stream. The sse library owns the transport
 // (headers, the hello, Last-Event-ID replay, keepalives, slow-client eviction);
-// vibekit owns the connected handshake and the initial state the client cannot
+// marotte owns the connected handshake and the initial state the client cannot
 // derive from the event log.
 func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	legacy := r.Header.Get(wireHeader) == ""
@@ -193,7 +193,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 			"cap", maxConnectLiveRuns, "count", len(liveRuns))
 		liveRuns = nil
 	}
-	connected := vibekit.ConnectedPayload{
+	connected := marotte.ConnectedPayload{
 		Workspace:      rt.lifecycle.workDir,
 		BusyChats:      busy,
 		LiveRuns:       liveRuns,
@@ -210,7 +210,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 		head := h.Head
 		connected.Floor, connected.Head = &floor, &head
 	}
-	writeEvent := func(evt vibekit.ServerEvent) error {
+	writeEvent := func(evt marotte.ServerEvent) error {
 		data, err := json.Marshal(evt)
 		if err != nil {
 			slog.Error("connect: marshal frame", "type", evt.Type, "error", err)
@@ -218,20 +218,20 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 		}
 		return sw.Event("", data)
 	}
-	if err := writeEvent(vibekit.NewEvent(vibekit.EventConnected, "", connected)); err != nil {
+	if err := writeEvent(marotte.NewEvent(marotte.EventConnected, "", connected)); err != nil {
 		return err
 	}
 	if legacy {
 		return rt.replayLegacyState(writeEvent)
 	}
 	pending, pendingStamp := rt.pendingSnapshotStamped()
-	pendingFrame := vibekit.NewEvent(vibekit.EventPendingSnapshot, "", pending)
+	pendingFrame := marotte.NewEvent(marotte.EventPendingSnapshot, "", pending)
 	pendingFrame.Subject = pendingStamp
 	if err := writeEvent(pendingFrame); err != nil {
 		return err
 	}
 	status, statusStamp := rt.bus.chatStatus.SnapshotStamped(rt.coord.turns.openTurns())
-	statusFrame := vibekit.NewEvent(vibekit.EventStatusSnapshot, "", status)
+	statusFrame := marotte.NewEvent(marotte.EventStatusSnapshot, "", status)
 	statusFrame.Subject = statusStamp
 	return writeEvent(statusFrame)
 }
@@ -239,7 +239,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 // replayLegacyState is the per-item replay a v2 bundle's decoders know: every
 // pending permission, run ask and steer, then every retained waiting status for a
 // chat that is not busy. Kept for the life of the last v2 bundle.
-func (rt *Runtime) replayLegacyState(writeEvent func(vibekit.ServerEvent) error) error {
+func (rt *Runtime) replayLegacyState(writeEvent func(marotte.ServerEvent) error) error {
 	if err := rt.replayPendingPermissions(writeEvent); err != nil {
 		return err
 	}
@@ -261,17 +261,17 @@ func (rt *Runtime) replayLegacyState(writeEvent func(vibekit.ServerEvent) error)
 // waiting on a person and whose turn is not running. Keyed on `open` because a
 // chat whose turn is running must still suppress a stale waiting_on_user.
 func (rt *Runtime) replayWaitingStatus(
-	writeFn func(vibekit.ServerEvent) error,
-	open map[vibekit.ChatID]openTurnFacts,
+	writeFn func(marotte.ServerEvent) error,
+	open map[marotte.ChatID]openTurnFacts,
 ) error {
 	for id, p := range rt.bus.chatStatus.Snapshot() {
 		if _, busy := open[id]; busy {
 			continue
 		}
-		if p.Status != vibekit.ChatStatusWaitingOnUser {
+		if p.Status != marotte.ChatStatusWaitingOnUser {
 			continue
 		}
-		if err := writeFn(vibekit.NewEvent(vibekit.EventChatStatus, id, p)); err != nil {
+		if err := writeFn(marotte.NewEvent(marotte.EventChatStatus, id, p)); err != nil {
 			return err
 		}
 	}
@@ -282,7 +282,7 @@ func (rt *Runtime) replayWaitingStatus(
 // connected client, so dialogs survive a reconnect that outlived the ring buffer.
 // EVERY unresolved request goes, however old: the agent server holds
 // session/request_permission open until answered, so an old card is a live question.
-func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error) error {
+func (rt *Runtime) replayPendingPermissions(writeFn func(marotte.ServerEvent) error) error {
 	for _, evt := range rt.bus.pendingPerms.List("") {
 		if err := writeFn(evt); err != nil {
 			return err
@@ -294,7 +294,7 @@ func (rt *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) er
 // replayPendingRunAsks sends every unanswered workflow-step question to a newly
 // connected client, so a reload, a second device and a transport gap converge on the
 // same set. The client's dock de-duplicates by ask id.
-func (rt *Runtime) replayPendingRunAsks(writeFn func(vibekit.ServerEvent) error) error {
+func (rt *Runtime) replayPendingRunAsks(writeFn func(marotte.ServerEvent) error) error {
 	for _, evt := range rt.runs.asks.List("") {
 		if err := writeFn(evt); err != nil {
 			return err

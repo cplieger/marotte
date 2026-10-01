@@ -30,8 +30,8 @@ describe("resolvePaths", () => {
     // what the file browser's rootless path space produced. An attachment path is
     // resolved against the workspace root server-side, so a bare name — and a
     // rootless directory — named a file that was never there.
-    expect(resolvePaths("/workspace/vibekit/static-src", ["a.png"])).toEqual([
-      "/workspace/vibekit/static-src/a.png",
+    expect(resolvePaths("/workspace/marotte/static-src", ["a.png"])).toEqual([
+      "/workspace/marotte/static-src/a.png",
     ]);
     expect(resolvePaths("/config", ["mcp.json"])).toEqual(["/config/mcp.json"]);
   });

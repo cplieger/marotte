@@ -7,7 +7,7 @@
 // modal's Install button, which is `.btn-small.list-row-enable` inside
 // `.list-row.tool-hit` (tools.ts `renderSearchHit`), as the button having "its
 // desktop touch mode height, not desktop mouse size" — the pointer tier is
-// correct and the token was wrong, which is the same call `vibekit-ui.md` "One
+// correct and the token was wrong, which is the same call `marotte-ui.md` "One
 // control height per row" already made for the PRs tab's Merge/Close.
 //
 // TWO claims, and they pull against each other, which is why both are here: a

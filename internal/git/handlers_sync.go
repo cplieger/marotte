@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +76,7 @@ func (h *Handler) handleStash(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git stash", "repo", body.Repo)
-	out, err := gitCmd(r.Context(), dir, "stash", "push", "-m", "vibekit auto-stash")
+	out, err := gitCmd(r.Context(), dir, "stash", "push", "-m", "marotte auto-stash")
 	writeCmdResult(w, out, err)
 }
 

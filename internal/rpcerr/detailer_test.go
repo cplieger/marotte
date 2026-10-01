@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// dataErr is a minimal detailer, standing in for *vibekit.RPCError (which this
+// dataErr is a minimal detailer, standing in for *marotte.RPCError (which this
 // package deliberately does not import — see the package doc).
 type dataErr struct {
 	msg  string

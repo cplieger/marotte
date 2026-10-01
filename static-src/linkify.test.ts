@@ -106,10 +106,10 @@ describe("linkifyPaths: absolute paths", () => {
   });
 
   it("captures a line number on an absolute path", () => {
-    const root = linkify("at /workspace/vibekit/main.go:174 now");
+    const root = linkify("at /workspace/marotte/main.go:174 now");
     const ls = links(root);
     expect(ls).toHaveLength(1);
-    expect(ls[0]!.title).toBe("/workspace/vibekit/main.go:174");
+    expect(ls[0]!.title).toBe("/workspace/marotte/main.go:174");
     expect(ls[0]!.textContent).toBe("main.go:174");
   });
 

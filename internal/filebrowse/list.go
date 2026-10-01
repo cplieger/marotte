@@ -11,8 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -130,7 +130,7 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 // isWritable probes write access by creating and removing a zero-byte probe
 // file through the mount's kernel-confined root handle. O_EXCL plus a random
 // suffix keeps concurrent probes collision-free. The probe prefix is named
-// so a future startup sweeper can scan for ".vibekit-probe-*" leftovers.
+// so a future startup sweeper can scan for ".marotte-probe-*" leftovers.
 func isWritable(l loc) bool {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
@@ -138,7 +138,7 @@ func isWritable(l loc) bool {
 		// impossible failure as "unknown", i.e. not writable.
 		return false
 	}
-	rel := l.relOf(filepath.Join(l.abs, fmt.Sprintf(".vibekit-probe-%x", suffix)))
+	rel := l.relOf(filepath.Join(l.abs, fmt.Sprintf(".marotte-probe-%x", suffix)))
 	f, err := l.m.root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return false

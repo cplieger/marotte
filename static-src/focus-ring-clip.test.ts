@@ -381,11 +381,11 @@ function gitRepoSection(): { clipper: HTMLElement; head: HTMLElement } {
   const head = node("button", "git-repo-section-header", { type: "button" });
   head.append(
     node("span", "disclosure-chevron git-repo-section-chevron", { "aria-hidden": "true" }),
-    span("git-repo-section-name", "vibekit"),
+    span("git-repo-section-name", "marotte"),
   );
   const body = node("div", "git-file-list");
   body.textContent = "one changed file";
-  const clipper = node("section", "git-repo-section", { "data-repo": "vibekit" });
+  const clipper = node("section", "git-repo-section", { "data-repo": "marotte" });
   clipper.append(head, body);
   return { clipper: mount(clipper), head };
 }
@@ -408,7 +408,7 @@ function gitRepoSectionPRs(): {
     node("span", "git-repo-section-forge-icon git-repo-section-forge-github", {
       "aria-hidden": "true",
     }),
-    span("git-repo-section-name", "cplieger/vibekit"),
+    span("git-repo-section-name", "cplieger/marotte"),
     span("git-repo-section-meta", "2 open"),
   );
   const newBtn = node("button", "btn-small btn-primary", { type: "button" });
@@ -416,7 +416,7 @@ function gitRepoSectionPRs(): {
   row.append(head, newBtn);
   const body = node("div", "git-repo-section-body");
   body.appendChild(node("div", "git-repo-section-body-inner")).textContent = "a pr row";
-  const clipper = node("section", "git-repo-section", { "data-repo": "cplieger/vibekit" });
+  const clipper = node("section", "git-repo-section", { "data-repo": "cplieger/marotte" });
   clipper.append(row, body);
   return { clipper: mount(clipper), head, newBtn };
 }
@@ -505,7 +505,7 @@ function gitFileList(): { clipper: HTMLElement; path: HTMLElement; discard: HTML
   inner.appendChild(clipper);
   const body = node("div", "git-repo-section-body uip-disclosure-region");
   body.appendChild(inner);
-  const section = node("section", "git-repo-section", { "data-repo": "vibekit" });
+  const section = node("section", "git-repo-section", { "data-repo": "marotte" });
   section.appendChild(body);
   mount(section);
   return { clipper, path, discard };
@@ -1153,7 +1153,7 @@ describe("the exclusion that is not a clearance: a row already on the inset toke
 function statusCard(): { clipper: HTMLElement; link: HTMLAnchorElement } {
   const clipper = node("span", "pill-expand-content pill-status-content is-open");
   clipper.append(
-    span("pill-detail", "connected to vibekit 1.2.3"),
+    span("pill-detail", "connected to marotte 1.2.3"),
     node("span", "pill-sep"),
     span("pill-detail", "kiro-cli 2.21.4"),
   );

@@ -8,7 +8,7 @@ package kascap
 // build its object around this constant for that reason.
 const enabledMember = "enabled"
 
-// enabled is the shape every _meta.kiro.settings entry vibekit SENDS takes. A
+// enabled is the shape every _meta.kiro.settings entry marotte SENDS takes. A
 // helper rather than inline literals because KAS reads each one through the same
 // absent-key-means-false resolver, so the shape is a contract shared by all of
 // them rather than a coincidence repeated at each row.
@@ -32,11 +32,11 @@ func hooksValue() map[string]any { return map[string]any{"enabled": true, "v2": 
 
 // envWorkflows is the operator off switch for the workflows row. Named after the
 // capability rather than the fix, because a variable an operator reads in a
-// compose file has to say what it controls; the VIBEKIT_ prefix is this app's
+// compose file has to say what it controls; the MAROTTE_ prefix is this app's
 // (WT_ is reserved for the two names web-terminal-kiro reads too).
-const envWorkflows = "VIBEKIT_AGENT_WORKFLOWS"
+const envWorkflows = "MAROTTE_AGENT_WORKFLOWS"
 
-// table is every capability key vibekit knows about, sent or withheld.
+// table is every capability key marotte knows about, sent or withheld.
 //
 // Row order is presentation only. Both builders emit maps, and encoding/json
 // sorts map keys, so no wire byte depends on this order.
@@ -69,7 +69,7 @@ effect there (verified on a live probe: no gate, getProperties returns []).
 It is required for the gate's statusChanged/propertiesChanged notifications
 to ever surface (translate/safety.go); on an enterprise account with the
 flag on, enforce mode can block infra-as-code writes remotely. Distinct
-from supervised mode, which is KAS's autopilot gate (vibekit-acp.md).`,
+from supervised mode, which is KAS's autopilot gate (marotte-acp.md).`,
 	},
 	{
 		key:      "userInput",
@@ -95,7 +95,7 @@ user_input_response command.`,
 		because: `_meta.kiro.backgroundProcesses opts into KAS's background-process tools
 (control_bash_process, list_processes, get_process_output). KAS serves
 them from its own ACPBackgroundProcessManager over standard
-terminal/create + terminal/output, which vibekit already implements
+terminal/create + terminal/output, which marotte already implements
 (agent/agent_terminal.go) — so the capability is the whole integration:
 without it the agent has no way to run a dev server or a watcher
 without blocking its turn on a foreground command.`,
@@ -113,11 +113,11 @@ without blocking its turn on a foreground command.`,
 		gate: func(s Spawn) (any, bool) { return s.Knowledge, true },
 		because: `_meta.kiro.knowledge gates getKnowledgeListing into the system prompt,
 i.e. it tells the agent WHICH knowledge bases are indexed (four lines
-per base, undefined when none). vibekit ships the knowledge UI, so the
+per base, undefined when none). marotte ships the knowledge UI, so the
 index exists and /knowledge works — the agent just could not see what
 was in it.
 
-GATED since 2026-08, on vibekit's own knowledge_enabled setting. The
+GATED since 2026-08, on marotte's own knowledge_enabled setting. The
 control used to write kiro-cli's chat.enableKnowledge, which measured as
 unable to reach a running chat at all (KAS's ACP path reads no kiro-cli
 setting — see the toolSearch row for the counts), so the switch in
@@ -209,10 +209,10 @@ isSettingEnabled(settings, "knowledge") treats an absent key as
 false, and that is the sole gate on KAS constructing its Knowledge
 TOOL. So before this key: chat.enableKnowledge made the index
 exist, _meta.kiro.knowledge told the agent WHAT was indexed, and
-no tool existed to read it. vibekit shipped the whole knowledge UI,
+no tool existed to read it. marotte shipped the whole knowledge UI,
 the REST surface, the progress polling and a system-prompt listing
 over a store the agent could not query, silently in both
-directions (no error, no -32601). vibekit.md says "both are
+directions (no error, no -32601). marotte.md says "both are
 needed"; there are three.
 
 GATED since 2026-08 on knowledge_enabled, together with the capability
@@ -246,11 +246,11 @@ measured on the stock 2.19.2 bundle that store is unreachable from KAS's ACP
 path: zero occurrences of cli.json, kiro-cli/settings, readSettingsFile and
 loadCliSettings, and each chat.* literal appearing exactly once, every one a
 "@see kiro-cli:" cross-reference inside the settings schema rather than a read.
-So the toggle wrote a real file, kiro-cli's TUI honoured it, and a vibekit chat
+So the toggle wrote a real file, kiro-cli's TUI honoured it, and a marotte chat
 never saw it. The key KAS does read is this one, through
 isSettingEnabled(settings, "toolSearch") plus a second isFeatureEnabled site.
 
-Gated on vibekit's tool_search_enabled setting, resolved per spawn
+Gated on marotte's tool_search_enabled setting, resolved per spawn
 (internal/agent's toolSearchEnabled), so a flip reaches the NEXT chat. It cannot
 reach an open one: KAS resolves the value at session creation and freezes it,
 which is what the setting's hint has to say.`,
@@ -266,7 +266,7 @@ which is what the setting's hint has to say.`,
 same way: resolveWorkflows resolves an absent key to false, which
 removes the whole workflowChatTools array (run_workflow,
 inspect_workflow, update_workflow, validate_workflow, send_message)
-plus the workflow steering doc. vibekit drives the workflow surface
+plus the workflow steering doc. marotte drives the workflow surface
 from the CLIENT side (POST /api/runs, GET /api/recipes, the
 /docs/workflows tab, a per-run bridge), so the run half worked while
 the agent had no way to reach a workflow itself.
@@ -304,7 +304,7 @@ pins the wire and the census pins the version it was read from.
 Carries an env override because it is the one row here that changes what
 the AGENT can do rather than what it can see, and it creates
 agent-origin workflow runs in a tier with no run supervisor. See the env
-column: VIBEKIT_AGENT_WORKFLOWS=false stops sending it.`,
+column: MAROTTE_AGENT_WORKFLOWS=false stops sending it.`,
 	},
 	{
 		key:      "goal",
@@ -336,7 +336,7 @@ that node on a clone, so launching the recipe by source instead bounds
 every goal at 200. Stop sending this key and that row goes back to
 reaching the model as prose.
 
-vibekit still does not decode available_commands_update and ships no
+marotte still does not decode available_commands_update and ships no
 palette, so the TYPED verb is discoverable only to a user who already
 knows it; the menu row is the discoverable door. Note the loop it starts
 is an ordinary workflow run parented on the calling session, so it lands
@@ -351,7 +351,7 @@ run tab.`,
 		value:    true,
 		send:     true,
 		because: `workspaceTrusted is the trust verdict every workspace-scoped read in
-KAS is gated on, and vibekit sends true because that is what it already
+KAS is gated on, and marotte sends true because that is what it already
 gets: the mount is the user's own repository tree, the container hands the
 agent a root shell over it, and nothing about that is safer for the agent
 reading the repo's own steering files.
@@ -372,9 +372,9 @@ CONSTRUCTOR option and BOTH entry points hardcode it to true, so no
 client key by this name is read anywhere in the bundle — resolveCapabilities
 does not map it and neither clientMeta nor kiroMeta is ever its receiver.
 The row's value is therefore the record, not the mechanism: it states
-which side of the gate vibekit means to be on, in the one place a reader
+which side of the gate marotte means to be on, in the one place a reader
 looks for that, so an upstream release that starts reading a client key
-finds vibekit's answer already written down instead of inheriting a
+finds marotte's answer already written down instead of inheriting a
 default nobody chose. It is also the same gate that widens the
 untrusted-repository surface in a filed security report, which is the
 reason to want the answer visible as a line a human can flip rather than
@@ -399,7 +399,7 @@ gives one-shot invoke_sub_agent, present gives
 orchestrate_subagent, which wraps the same invoke config and adds
 pipeline stages with depends_on and bounded loops. Same
 absent-means-false resolver as the two keys above, and kiro-cli's
-own TUI sends it, so withholding it diverged vibekit's agent from
+own TUI sends it, so withholding it diverged marotte's agent from
 the reference client's for no stated reason.
 
 The cost this does NOT remove, recorded because it is the reason to
@@ -439,7 +439,7 @@ bridge.
 
 So the feature is on because upstream RAMPED the experiment (FEATURES
 default false, in-source "Ships dark … until the experiment ramps"), not
-because vibekit asked, and the only lever vibekit holds over the producer
+because marotte asked, and the only lever marotte holds over the producer
 is KIRO_DISABLE_SESSION_TITLE_LLM=true in the child environment — tested
 first, so it beats both providers. The two levers over the RESULT are
 translate.TitleRefusal at the adoption door and that variable; nothing on
@@ -452,7 +452,7 @@ reach for exactly the row this replaces.
 
 What the feature buys, unchanged and now credited to upstream: GET
 /api/sessions reads each row's title straight off _kiro/session/list, which
-is KAS's OWN stored title and never vibekit's chat name, so a closed chat
+is KAS's OWN stored title and never marotte's chat name, so a closed chat
 whose agent never called update_session_information used to show
 deriveSessionTitle's 80-char truncation of the first prompt. It also renames
 the TAB, and that is not separable — the title arrives on the shared
@@ -467,7 +467,7 @@ And the cost, which is why the adoption door exists: a reply that passes
 titleIsPromptDerived is not thereby a title. Measured on the live volume —
 first prompt "test", so KAS asked its fast model to title a one-word
 conversation and the model correctly answered by asking for the message; the
-reply arrived 1.4s after the derivation and vibekit stored it as the chat's
+reply arrived 1.4s after the derivation and marotte stored it as the chat's
 name, where it stayed, because a name only moves UP the precedence.
 
 If upstream ever wires a client provider into featureConfig, this row
@@ -488,12 +488,12 @@ the session call's own settings, and when enabled createNewSessionState
 fires checkStorageBudget, which calls runSessionEviction to DELETE the
 least recently modified sessions until the tree is under budget.
 
-The reason to withhold it is not cost, it is authority. vibekit already
+The reason to withhold it is not cost, it is authority. marotte already
 owns retention end to end: chat_retention_days drives its own reaper, and
 kiro-cli's competing purge is pinned off (cleanup.periodDays=0) for
 exactly this reason. Turning this on would install a SECOND retention
 authority with a different key (bytes, not age), a different unit of
-deletion (a KAS session, not a vibekit chat) and no knowledge of the
+deletion (a KAS session, not a marotte chat) and no knowledge of the
 chain: a chat's acp_session_id plus its prior_acp_session_ids are one
 session chain, retention keys on the whole chain, and an LRU that walks
 sessions by mtime would happily evict an earlier segment of a LIVE chat's
@@ -501,7 +501,7 @@ chain. Nothing in this tier would notice, and the visible symptom would be
 a chat whose older turns stopped replaying.
 
 What a probe has to answer before this can flip: whether eviction
-respects a session vibekit still references, what the default budget is
+respects a session marotte still references, what the default budget is
 against a real /config volume, and whether the reaper and the budget can
 be expressed as one policy rather than two. Until then the disk is
 bounded by the reaper, which is the authority that knows about chains.`,
@@ -520,12 +520,12 @@ declared delegation set, and persists specPlanEnabled + specWorkflow onto
 the session record so the choice survives a reload.
 
 So it changes what the agent DOES on an ordinary prompt, and it points
-that behaviour at a spec surface vibekit does not have: /specs was
+that behaviour at a spec surface marotte does not have: /specs was
 deleted (the board's write side could not work, since every
 _kiro/spec/invoke verb drives a fire-and-forget turn with no ACP
 turn-end signal), and specs are documents on the /docs tab now. Sending
 this would make the agent produce and delegate against artifacts the UI
-can only browse, and it would do it two tiers before anything in vibekit
+can only browse, and it would do it two tiers before anything in marotte
 can drive a spec.
 
 What a probe has to answer before this can flip: which spec artifacts a
@@ -547,7 +547,7 @@ workflow-selection process and injects a "# Phase Checkpoints" section.
 
 It is a promise about the CLIENT, not a feature request: declaring it
 tells the agent to stop at phase boundaries and expect the client to
-carry the user across them. vibekit has no spec surface to stop at, so
+carry the user across them. marotte has no spec surface to stop at, so
 the checkpoints would land as prose in a chat transcript and the agent
 would wait for an affordance that does not exist.
 
@@ -567,8 +567,8 @@ clientMeta) and the same === true gate in the spec-mode prompt builder,
 where it turns on a requirements-analysis step ahead of the plan.
 
 Same reasoning and the same blocker: it reshapes what a spec-mode turn
-produces, for a spec surface vibekit does not ship. Withholding leaves
-the prompt on the arm vibekit can actually render.
+produces, for a spec surface marotte does not ship. Withholding leaves
+the prompt on the arm marotte can actually render.
 
 Both spec capabilities are cheap to flip once there is somewhere for
 their output to go, and neither is a security decision, which is why they
@@ -606,8 +606,8 @@ resolveAgentPermissions hands that agent-scope policy ONLY to KAS-shipped
 profiles: a user- or workspace-authored agent "stays fail-closed and contributes
 no agent-scope rules".
 
-vibekit is exactly the client that loses. It seeds ZERO Cedar rules by decision
-(vibekit.md, Settings/Permissions), and its mode pill offers every workspace
+marotte is exactly the client that loses. It seeds ZERO Cedar rules by decision
+(marotte.md, Settings/Permissions), and its mode pill offers every workspace
 custom agent as a one-click mode threaded to StartOpts.Mode. Measured in this
 workspace: 44 .kiro/agents/*.md, 22 declaring a permissions block, and ZERO
 declaring an fs_read rule of any effect — a declared block REPLACES the default
@@ -623,7 +623,7 @@ Why a preset and not a rule file: read-workspace resolves to
 [FS_READ_WORKSPACE_RULE], the same object a builtin mode already gets, so this
 grants NOTHING beyond the status quo for the default mode. It is session-scope,
 so precedence by restrictiveness means it can never override a user or workspace
-deny. And it needs no permissions.yaml, which keeps vibekit's seeds-zero-rules
+deny. And it needs no permissions.yaml, which keeps marotte's seeds-zero-rules
 posture intact — the alternative would have been writing a real allow rule to
 disk, which is a standing policy decision this row deliberately does not touch.
 
@@ -656,7 +656,7 @@ sessionSettings and initializeSettings while the census regex was anchored on
 parsed2; that regex is generalised now, so the key appears in the census as a
 declared row rather than as a finding.
 
-WHY NOT SEND IT. Its ON state contradicts a documented vibekit invariant. The
+WHY NOT SEND IT. Its ON state contradicts a documented marotte invariant. The
 composer is deliberately never disabled on a full context, and static-src's
 context-ui.ts records why: kiro-cli compacts on the next turn, so refusing the send
 told the user about a problem they could do nothing about. Disabling auto-compaction
@@ -691,7 +691,7 @@ declaration, and the object itself has zero reads in all three of KAS's reader
 shapes (isSettingEnabled, isFeatureEnabled, and a .data.<key> resolver).
 
 This row is here because the ABSENCE of a record is what let two Settings controls
-survive a capability audit. vibekit shipped "Keep last N exchanges" and "Context
+survive a capability audit. marotte shipped "Keep last N exchanges" and "Context
 buffer (%)" writing kiro-cli's compaction.excludeMessages and
 compaction.excludeContextWindowPercent, and the context ring drew its compaction
 threshold from the second one — a wedge positioned by a number that governs
@@ -702,7 +702,7 @@ record, and it keeps unclaimed.txt meaningful by claiming the key.
 Six sibling keys are in the same state and share this row's reasoning rather than
 getting one each: thinking, tangentMode, todoList, checkpoint, _subagent and
 _delegate are all declared in KAS's schema with zero readers. Two of them had
-vibekit toggles (chat.enableCheckpoint, chat.enableTodoList) and those toggles are
+marotte toggles (chat.enableCheckpoint, chat.enableTodoList) and those toggles are
 deleted; _subagent's live counterpart is subagentOrchestration, which this table
 already sends, so behaviour there is correct today.`,
 	},
@@ -717,7 +717,7 @@ already sends, so behaviour there is correct today.`,
 		gate: func(s Spawn) (any, bool) { return enabledIf(s.Memory), true },
 		send: true,
 		because: `THE VETO, and the one row here whose value is normally false. It
-refuses kiro-cli's memory subsystem for every session vibekit starts unless the
+refuses kiro-cli's memory subsystem for every session marotte starts unless the
 user has opted in through the memory_enabled setting.
 
 GATED, not ungated, since the setting exists — but the gate moves the VALUE and
@@ -742,7 +742,7 @@ never consult the external key and no value of the variable can reach the
 decision. Setting it to "false" would look like a kill switch and would not be
 one. This key is the only lever that vetoes BOTH arms, and the variable is the
 only lever that can turn memory ON, so the two are not redundant mechanism: each
-covers a case the other cannot, which is why one vibekit setting drives both.
+covers a case the other cannot, which is why one marotte setting drives both.
 
 THE VALUE MUST BE EXACTLY THIS SHAPE. KAS reads the key as a TRI-STATE — it tests
 hasOwnProperty(settings,"userMemoryOptIn") and only then calls isSettingEnabled —
@@ -753,10 +753,10 @@ guards against, and it is why the golden asserts these literal bytes rather than
 the key's presence.
 
 WHAT TURNING IT ON COSTS, recorded because the switch does not make these go
-away. The store is affirmatively unreachable through vibekit's file surface, since
+away. The store is affirmatively unreachable through marotte's file surface, since
 internal/filebrowse deny-lists the home tree as credentials, so the model writes
 entries no user can read or delete. Scoping collapses: residency is computed from
-ONE workspace path and vibekit sends a single cwd for every chat, so every repo
+ONE workspace path and marotte sends a single cwd for every chat, so every repo
 under /workspace shares one bucket and the feature's headline scope-resident
 injection does not function. And there is NO cleanup mechanism upstream, so the
 store grows without bound. The setting's hint says the first and the third.
@@ -779,7 +779,7 @@ every backend ramp, so the watch is now informational rather than urgent.`,
 		door:     doorConnection,
 		resolver: resolverSetting,
 		send:     false,
-		because: `WITHHELD, and unlike its sibling userMemoryOptIn — which vibekit now
+		because: `WITHHELD, and unlike its sibling userMemoryOptIn — which marotte now
 SENDS as a veto — this key must not be sent in either direction, because it is
 read at two sites and only one of them is about the memory gate.
 
@@ -812,10 +812,10 @@ reason is the wrong one, which is why this row spells it out.
 
 kiro-cli 2.19.1 added _kiro/tools/content_chunk, an A→C notification carrying
 live shell output while a command runs, gated on this capability. The guess a
-reader makes is that vibekit simply has not adopted it yet. The real gate is a
+reader makes is that marotte simply has not adopted it yet. The real gate is a
 SECOND one the capability does not open: the producer is ExecuteBash's
 StreamCoalescer fed by onOutputChunk, subscribed behind
-if (input.onOutputChunk && term.onOutputChunk). vibekit declares terminal:true
+if (input.onOutputChunk && term.onOutputChunk). marotte declares terminal:true
 with no sandbox, so KAS builds an ACPTerminal, whose entire method set is
 runCommand, readOutputLines, ensureCommandRunsInCwd, close and focus — no
 onOutputChunk — and whose runCommand awaits completion, so there is no mid-flight
@@ -826,7 +826,7 @@ REPLACES the mid-flight tool_call_update for kind === "execute" rather than
 adding to it — a real hazard, but for a client whose terminals KAS hosts
 in-process (DefaultTerminalManager), not for this one.
 
-And vibekit already ships the feature, better, because vibekit owns the pid:
+And marotte already ships the feature, better, because marotte owns the pid:
 pipe-rate 4 KiB reads against 32 ms coalescing, an explicit per-chunk UTF-16
 offset against arrival order with no sequence number, and a 64 KiB rolling ring
 that keeps the TAIL against a hard 256 KiB cap that keeps the head. That last
@@ -839,22 +839,22 @@ sanitizeOutput filters only invisible Unicode (tag characters, zero-width and
 bidi ranges); ESC is U+001B and is in none of its ranges, and the streaming
 redactor only replaces four named env-var VALUES that are unset here. So escapes
 reach the client intact either way. The confusion was a name collision with
-vibekit's own SanitizeOutput, which IS StripANSI composed with SanitizeUnicode —
+marotte's own SanitizeOutput, which IS StripANSI composed with SanitizeUnicode —
 agent_terminal.go documents having been burned by exactly that, measuring spans=0
 with it and spans=2 without.
 
 The ONE condition that reverses this: a sandbox. The sandbox && capabilities.terminal
 arm hands back DefaultTerminalManager, whose DefaultTerminal DOES implement
-onOutputChunk — at which point vibekit's own terminal handlers go silent and the
+onOutputChunk — at which point marotte's own terminal handlers go silent and the
 stream moves to this frame. No sandbox can start in this container because bwrap
 is not in the image, so KAS's bubblewrap backend fails isAvailable() and resolves
 to its no-op. Enabling one also needs an explicit session/set_config_option or
 _kiro/sandbox/applyConfig request with configId "sandbox" and value "enabled";
 both reach applySandboxConfigOption, whose absent config defaults to backend
-"auto" (bubblewrap on Linux), and vibekit sends neither request.
+"auto" (bubblewrap on Linux), and marotte sends neither request.
 
 If the premise ever flips, the order is: a content_chunk handler registered and
-green, THEN a toolCallId→card join (vibekit keys on terminal_id today), and only
+green, THEN a toolCallId→card join (marotte keys on terminal_id today), and only
 THEN this row's send. Never the flag first.`,
 	},
 	{
@@ -867,11 +867,11 @@ THEN this row's send. Never the flag first.`,
 one settings key KAS does not read through isSettingEnabled: its resolver
 is parsed2.data.semanticReview?.enabled ?? persistedDefault ?? true, so an
 absent key resolves TRUE where every other settings key resolves false.
-vibekit therefore gets the semantic-reviewer subagent in autonomous mode
+marotte therefore gets the semantic-reviewer subagent in autonomous mode
 today by saying nothing at all.
 
 This row exists because that was previously unrecordable. A map literal
-has no line for a key it omits, so the state vibekit relies on read as an
+has no line for a key it omits, so the state marotte relies on read as an
 oversight, and the obvious "fix" of adding semanticReview: {enabled: true}
 alongside the others would have looked like tightening a gap while
 changing nothing. The trap is the opposite direction: sending

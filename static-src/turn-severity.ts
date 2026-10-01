@@ -14,9 +14,9 @@
 // So a surface asks for a SEVERITY and never enumerates outcomes again. Nothing in
 // this app may re-derive the mapping: a second copy is what the disagreement was.
 //
-// CROSS-LANGUAGE CONTRACT. The identical table is `vibekit.SeverityOf` +
-// `vibekit.DefaultFailureReason` in `internal/vibekit/turns.go`, and both halves
-// are pinned against one shared fixture — `internal/vibekit/testdata/
+// CROSS-LANGUAGE CONTRACT. The identical table is `marotte.SeverityOf` +
+// `marotte.DefaultFailureReason` in `internal/marotte/turns.go`, and both halves
+// are pinned against one shared fixture — `internal/marotte/testdata/
 // turn_severity.json`, read by Go's TestTurnSeverityContract and by
 // `turn-severity.node.test.ts`. Change the rule in one language and the other
 // language's test fails, which is the only thing keeping the two honest.
@@ -157,7 +157,7 @@ export const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
  *  again — and those two are spelled out as cases rather than left to the default,
  *  so an eighth outcome is a compile error here too and cannot silently inherit "".
  *
- *  The strings are BYTE-IDENTICAL to `vibekit.DefaultFailureReason`'s and pinned
+ *  The strings are BYTE-IDENTICAL to `marotte.DefaultFailureReason`'s and pinned
  *  that way by the shared fixture. Two hand-written copies of one sentence is
  *  exactly the drift a shared fixture exists to make impossible, and the two
  *  populations are genuinely one thing — the server's sentence goes on disk for a
@@ -172,7 +172,7 @@ export function defaultFailureReason(outcome: TurnOutcome | undefined): string {
     case "refused":
       return "The model declined to continue.";
     case "unknown":
-      return "The turn ended for a reason vibekit could not read.";
+      return "The turn ended for a reason marotte could not read.";
     // `cancelled` says nothing: the footer's own outcome word already reads
     // "Cancelled" a row away, so a sentence here is one fact rendered twice.
     case "cancelled":

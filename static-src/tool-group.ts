@@ -83,7 +83,7 @@ const CLS_BARE = "tool-group-bare";
 
 // Per-group disclosure controllers for the .tool-group-body region. The
 // collapse STATE MACHINE (user latch, auto-collapse, the CLS_* classes) stays
-// vibekit's; the region-only disclosure (trigger: null) supplies the animated
+// marotte's; the region-only disclosure (trigger: null) supplies the animated
 // height 0↔auto plus aria-hidden + inert on the collapsed card region — which
 // the old display:none class flip provided only partially.
 //

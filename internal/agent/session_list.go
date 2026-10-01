@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -65,25 +65,25 @@ func (rt *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	// Chats and runs degrade INDEPENDENTLY: separate verbs on the same bridge, so a
 	// workflow-list failure must not blank the chat list, hence a verdict per list.
 	claimed := rt.claimedSessions(r.Context())
-	out := vibekit.SessionListResponse{SessionsState: vibekit.ReadReady, RunsState: vibekit.ReadReady}
+	out := marotte.SessionListResponse{SessionsState: marotte.ReadReady, RunsState: marotte.ReadReady}
 	rows, err := rt.resumableSessions(r.Context(), claimed)
 	if err != nil {
 		slog.Warn("session list failed", "error", err)
-		rows = []vibekit.ResumableSession{}
-		out.SessionsState = vibekit.ReadUnavailable
+		rows = []marotte.ResumableSession{}
+		out.SessionsState = marotte.ReadUnavailable
 	}
 	runs, rErr := rt.runs.list(r.Context(), claimed)
 	if rErr != nil {
 		slog.Warn("workflow run list failed", "error", rErr)
-		runs = []vibekit.WorkflowRun{}
-		out.RunsState = vibekit.ReadUnavailable
+		runs = []marotte.WorkflowRun{}
+		out.RunsState = marotte.ReadUnavailable
 	}
 	out.Sessions = rows
 	out.Runs = runs
 	webhttp.WriteJSON(w, out)
 }
 
-func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.ResumableSession, error) {
+func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.ResumableSession, error) {
 	u := rt.utility.get()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -91,7 +91,7 @@ func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]vib
 	// cwd scopes the answer to this workspace. Unscoped, the call returns every session
 	// on the box: 399 rows across 55 directories in the measurement, against 2 here.
 	// `sessionListScopes` also advertises "user", which IS that unscoped answer.
-	raw, err := u.session.rawCall(cctx, "session list call", vibekit.MethodSessionList,
+	raw, err := u.session.rawCall(cctx, "session list call", marotte.MethodSessionList,
 		callerParams(map[string]any{"cwd": rt.lifecycle.workDir}))
 	if err != nil {
 		return nil, err
@@ -103,28 +103,28 @@ func (rt *Runtime) resumableSessions(ctx context.Context, claimed map[string]vib
 	return toResumable(claimed, list.Sessions), nil
 }
 
-// claimedSessions maps every KAS session a vibekit chat owns to that chat, keyed on the
+// claimedSessions maps every KAS session a marotte chat owns to that chat, keyed on the
 // whole session CHAIN rather than the current id: a chat changes session on a failed
 // session/load, a model-switch fallback and empty-turn recovery, so its retired sessions
 // would otherwise look unowned.
-func (rt *Runtime) claimedSessions(ctx context.Context) map[string]vibekit.ChatID {
-	claimed := map[string]vibekit.ChatID{}
-	// Indexed: vibekit.ChatHeader is 304 bytes, which gocritic's rangeValCopy flags.
+func (rt *Runtime) claimedSessions(ctx context.Context) map[string]marotte.ChatID {
+	claimed := map[string]marotte.ChatID{}
+	// Indexed: marotte.ChatHeader is 304 bytes, which gocritic's rangeValCopy flags.
 	headers := rt.chatStore.List(ctx)
 	for i := range headers {
 		for _, sid := range headers[i].SessionChain() {
-			claimed[sid] = vibekit.ChatID(headers[i].ID)
+			claimed[sid] = marotte.ChatID(headers[i].ID)
 		}
 	}
 	return claimed
 }
 
 // toResumable filters the raw rows down to what belongs in a chat picker: a row survives
-// only when a vibekit chat claims its session. That drops workflow-step sessions,
-// vibekit's own utility session and subagent sessions. The chat store decides WHAT is
+// only when a marotte chat claims its session. That drops workflow-step sessions,
+// marotte's own utility session and subagent sessions. The chat store decides WHAT is
 // offered; session/list decides whether KAS can still resume it.
-func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibekit.ResumableSession {
-	out := make([]vibekit.ResumableSession, 0, len(rows))
+func toResumable(claimed map[string]marotte.ChatID, rows []kasSessionRow) []marotte.ResumableSession {
+	out := make([]marotte.ResumableSession, 0, len(rows))
 	for i := range rows {
 		row := &rows[i]
 		if row.SessionID == "" {
@@ -137,7 +137,7 @@ func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibe
 		if chatID == "" {
 			continue
 		}
-		out = append(out, vibekit.ResumableSession{
+		out = append(out, marotte.ResumableSession{
 			SessionID:   row.SessionID,
 			Title:       row.Title,
 			UpdatedAt:   parseKASTime(row.UpdatedAt),
@@ -150,7 +150,7 @@ func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibe
 	}
 	out = collapseClaimedByChat(out)
 	// Stable: ties must keep insertion order or the list reshuffles between polls.
-	slices.SortStableFunc(out, func(a, b vibekit.ResumableSession) int {
+	slices.SortStableFunc(out, func(a, b marotte.ResumableSession) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	return out
@@ -159,7 +159,7 @@ func toResumable(claimed map[string]vibekit.ChatID, rows []kasSessionRow) []vibe
 // collapseClaimedByChat keeps ONE row per owning chat, the most recently updated. A chat
 // with more than one chain member otherwise produces a row per member; newest wins
 // because UpdatedAt is what the row displays and sorts on.
-func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableSession {
+func collapseClaimedByChat(rows []marotte.ResumableSession) []marotte.ResumableSession {
 	newestFor := map[string]int{}
 	drop := map[int]bool{}
 	for i := range rows {
@@ -182,7 +182,7 @@ func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableS
 	if len(drop) == 0 {
 		return rows
 	}
-	kept := make([]vibekit.ResumableSession, 0, len(rows)-len(drop))
+	kept := make([]marotte.ResumableSession, 0, len(rows)-len(drop))
 	for i := range rows {
 		if !drop[i] {
 			kept = append(kept, rows[i])
@@ -195,7 +195,7 @@ func collapseClaimedByChat(rows []vibekit.ResumableSession) []vibekit.ResumableS
 // (UpdatedAt, CreatedAt, SessionID), all descending: an UpdatedAt tie is reachable
 // (parseKASTime sinks a bad timestamp to 0) and CreatedAt breaks it toward the
 // later-created session, with SessionID making the order total.
-func livelierThan(a, b *vibekit.ResumableSession) bool {
+func livelierThan(a, b *marotte.ResumableSession) bool {
 	return cmp.Or(
 		cmp.Compare(a.UpdatedAt, b.UpdatedAt),
 		cmp.Compare(a.CreatedAt, b.CreatedAt),
@@ -244,7 +244,7 @@ type kasWorkflowRun struct {
 }
 
 // list fetches the workspace's workflow runs, newest first.
-func (rs *Runs) list(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.WorkflowRun, error) {
+func (rs *Runs) list(ctx context.Context, claimed map[string]marotte.ChatID) ([]marotte.WorkflowRun, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -264,8 +264,8 @@ func (rs *Runs) list(ctx context.Context, claimed map[string]vibekit.ChatID) ([]
 
 // toWire maps the raw run inventory to the wire rows, dropping the ones that do not
 // belong in a history list. Split out of list because the filtering is what is testable.
-func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
-	out := make([]vibekit.WorkflowRun, 0, len(runs))
+func (rs *Runs) toWire(claimed map[string]marotte.ChatID, runs []kasWorkflowRun) []marotte.WorkflowRun {
+	out := make([]marotte.WorkflowRun, 0, len(runs))
 	for i := range runs {
 		r := &runs[i]
 		if r.WorkflowID == "" {
@@ -273,11 +273,11 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 		}
 		// Attributed through the chain, so a chat that has since changed session resolves.
 		parentChatID := string(claimed[r.ParentSessionID])
-		out = append(out, vibekit.WorkflowRun{
+		out = append(out, marotte.WorkflowRun{
 			WorkflowID:   r.WorkflowID,
 			Name:         r.Name,
 			WorkflowName: r.WorkflowName,
-			Status:       vibekit.RunStatus(r.Status),
+			Status:       marotte.RunStatus(r.Status),
 			CreatedAt:    parseKASTime(r.CreatedAt),
 			UpdatedAt:    parseKASTime(r.UpdatedAt),
 			StartedAt:    parseKASTime(r.StartedAt),
@@ -290,7 +290,7 @@ func (rs *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun)
 		})
 	}
 	// Stable: ties must keep insertion order or the run list reshuffles between polls.
-	slices.SortStableFunc(out, func(a, b vibekit.WorkflowRun) int {
+	slices.SortStableFunc(out, func(a, b marotte.WorkflowRun) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	return out

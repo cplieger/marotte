@@ -6,7 +6,7 @@
 import { OUTCOME_LABEL } from "./turn-severity.js";
 import type { Turn, TurnOutcome, TurnWindowBase } from "./turns.js";
 
-/** One row of the session-wide turn index. Mirrors vibekit.TurnSummary. */
+/** One row of the session-wide turn index. Mirrors marotte.TurnSummary. */
 export interface TurnSummary {
   id: string;
   first_line?: string;

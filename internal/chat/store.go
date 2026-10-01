@@ -16,22 +16,22 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/chat/archive"
-	"github.com/cplieger/vibekit/internal/filemode"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 	"golang.org/x/sync/singleflight"
 )
 
 // errInvalidUTF8 marks content that cannot round-trip through JSON, the storage format.
 var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 
-// errDraftTooLarge is returned when a composer draft exceeds vibekit.MaxDraftBytes.
+// errDraftTooLarge is returned when a composer draft exceeds marotte.MaxDraftBytes.
 var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
 
 // The two ways a staged attachment list is refused at the store: more entries than
-// vibekit.MaxAttachments, and a path empty, over the byte cap or not UTF-8.
+// marotte.MaxAttachments, and a path empty, over the byte cap or not UTF-8.
 var (
 	errTooManyAttachments = errors.New("chat: too many attachments")
 	errBadAttachmentPath  = errors.New("chat: attachment path is empty or too long")
@@ -40,7 +40,7 @@ var (
 // broadcaster is the SSE fan-out this store emits chat lifecycle and message
 // events through. *agent.Runtime satisfies it.
 type broadcaster interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
 // Compile-time assertion: Store satisfies archive.StoreAccess.
@@ -63,12 +63,12 @@ type Store struct {
 	versions    *subject.Versions
 	epoch       func() string
 	listSF      singleflight.Group
-	onPurge     func(chatID vibekit.ChatID, sessionChain []string)
-	isLive      func(chatID vibekit.ChatID) bool
-	hasOpenTab  func(chatID vibekit.ChatID) bool
-	turnOpen    func(chatID vibekit.ChatID) vibekit.TurnOpenState
-	liveTurn    func(chatID vibekit.ChatID) (vibekit.LiveTurn, bool)
-	tombstone   map[vibekit.ChatID]time.Time
+	onPurge     func(chatID marotte.ChatID, sessionChain []string)
+	isLive      func(chatID marotte.ChatID) bool
+	hasOpenTab  func(chatID marotte.ChatID) bool
+	turnOpen    func(chatID marotte.ChatID) marotte.TurnOpenState
+	liveTurn    func(chatID marotte.ChatID) (marotte.LiveTurn, bool)
+	tombstone   map[marotte.ChatID]time.Time
 	archive     *archive.Service
 	locks       sync.Map
 	dir         string
@@ -111,7 +111,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	s := &Store{
 		dir:       dir,
 		fileCap:   resolveChatFileCap(),
-		tombstone: make(map[vibekit.ChatID]time.Time),
+		tombstone: make(map[marotte.ChatID]time.Time),
 		versions:  &subject.Versions{},
 	}
 	// Options land AFTER the derivation so WithChatFileCap overrides it, and the
@@ -148,13 +148,13 @@ func WithEpoch(fn func() string) StoreOption {
 
 // WithLive registers the live-chat predicate purging exempts. See
 // archive.WithLiveChats.
-func WithLive(fn func(chatID vibekit.ChatID) bool) StoreOption {
+func WithLive(fn func(chatID marotte.ChatID) bool) StoreOption {
 	return func(s *Store) { s.isLive = fn }
 }
 
 // WithOpenTab registers retention's second exemption: a chat with an open TAB is
 // never purged, however old. See archive.WithOpenTabs for what that costs.
-func WithOpenTab(fn func(chatID vibekit.ChatID) bool) StoreOption {
+func WithOpenTab(fn func(chatID marotte.ChatID) bool) StoreOption {
 	return func(s *Store) { s.hasOpenTab = fn }
 }
 
@@ -162,7 +162,7 @@ func WithOpenTab(fn func(chatID vibekit.ChatID) bool) StoreOption {
 // HTTP surface can STATE whether a chat has a turn open — and whose it is — instead of
 // leaving a reader to infer either from an absent carrier. Injected post-construction
 // because the agent runtime needs the store, so the store cannot import it.
-func WithTurnOpen(fn func(chatID vibekit.ChatID) vibekit.TurnOpenState) StoreOption {
+func WithTurnOpen(fn func(chatID marotte.ChatID) marotte.TurnOpenState) StoreOption {
 	return func(s *Store) { s.turnOpen = fn }
 }
 
@@ -172,9 +172,9 @@ func WithTurnOpen(fn func(chatID vibekit.ChatID) vibekit.TurnOpenState) StoreOpt
 // NIL-TOLERANT so an unwired Store reads as it did before the predicate existed:
 // the record is taken as final. That is the safe direction — a client told "no turn
 // is open" derives the outcome the record supports rather than inventing one.
-func (s *Store) TurnOpen(chatID vibekit.ChatID) vibekit.TurnOpenState {
+func (s *Store) TurnOpen(chatID marotte.ChatID) marotte.TurnOpenState {
 	if s.turnOpen == nil {
-		return vibekit.TurnOpenState{}
+		return marotte.TurnOpenState{}
 	}
 	return s.turnOpen(chatID)
 }
@@ -186,9 +186,9 @@ func (s *Store) TurnOpen(chatID vibekit.ChatID) vibekit.TurnOpenState {
 // chat busy at connect renders the prompt over an empty body.
 //
 // Injected post-construction for WithTurnOpen's reason: the agent runtime needs the store,
-// so the store cannot import it. The signature carries only internal/vibekit types
+// so the store cannot import it. The signature carries only internal/marotte types
 // deliberately — internal/chat imports no internal/buffer and must not start.
-func WithLiveTurn(fn func(chatID vibekit.ChatID) (vibekit.LiveTurn, bool)) StoreOption {
+func WithLiveTurn(fn func(chatID marotte.ChatID) (marotte.LiveTurn, bool)) StoreOption {
 	return func(s *Store) { s.liveTurn = fn }
 }
 
@@ -196,9 +196,9 @@ func WithLiveTurn(fn func(chatID vibekit.ChatID) (vibekit.LiveTurn, bool)) Store
 // is open — or when no reader was injected, which is the same NIL-TOLERANCE TurnOpen
 // carries: an unwired Store serves exactly what it served before this field existed, so a
 // wiring mistake costs a missing carrier rather than a nil dereference.
-func (s *Store) LiveTurn(chatID vibekit.ChatID) (vibekit.LiveTurn, bool) {
+func (s *Store) LiveTurn(chatID marotte.ChatID) (marotte.LiveTurn, bool) {
 	if s.liveTurn == nil {
-		return vibekit.LiveTurn{}, false
+		return marotte.LiveTurn{}, false
 	}
 	return s.liveTurn(chatID)
 }
@@ -206,17 +206,17 @@ func (s *Store) LiveTurn(chatID vibekit.ChatID) (vibekit.LiveTurn, bool) {
 // WithOnPurge registers a callback fired after a retention purge removes a chat.
 // sessionChain carries every KAS session the chat ran on, captured before the chat
 // file was removed, so the purge can reap its own session directories.
-func WithOnPurge(fn func(chatID vibekit.ChatID, sessionChain []string)) StoreOption {
+func WithOnPurge(fn func(chatID marotte.ChatID, sessionChain []string)) StoreOption {
 	return func(s *Store) { s.onPurge = fn }
 }
 
 // chatIDPattern reports whether id is a valid chat identifier.
-func chatIDPattern(id vibekit.ChatID) bool {
+func chatIDPattern(id marotte.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 
 // Get returns the full chat at chatID, or false if it does not exist.
-func (s *Store) Get(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, bool) {
+func (s *Store) Get(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
 	c, _, ok := s.GetStamped(ctx, chatID)
 	return c, ok
 }
@@ -225,7 +225,7 @@ func (s *Store) Get(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, 
 // version read under the same per-chat mutex the load holds, so a Mutate or a
 // composer write cannot land between the record and the version that vouches
 // for it. A chat never mutated this process stamps subject.Unminted.
-func (s *Store) GetStamped(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, *vibekit.SubjectStamp, bool) {
+func (s *Store) GetStamped(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, *marotte.SubjectStamp, bool) {
 	if ctx.Err() != nil {
 		return nil, nil, false
 	}
@@ -244,8 +244,8 @@ func (s *Store) GetStamped(ctx context.Context, chatID vibekit.ChatID) (*vibekit
 }
 
 // restStamp builds a REST envelope's stamp: the version with the hub epoch.
-func (s *Store) restStamp(kind subject.Kind, ref, version string) *vibekit.SubjectStamp {
-	stamp := vibekit.NewSubjectStamp(string(kind), ref, version)
+func (s *Store) restStamp(kind subject.Kind, ref, version string) *marotte.SubjectStamp {
+	stamp := marotte.NewSubjectStamp(string(kind), ref, version)
 	if s.epoch != nil {
 		stamp.Epoch = s.epoch()
 	}
@@ -264,7 +264,7 @@ func (s *Store) restStamp(kind subject.Kind, ref, version string) *vibekit.Subje
 // The returned version is the `chat:<id>` version this save minted, bumped under
 // the per-chat mutex so the transcript frame the caller broadcasts next can carry
 // it. A mutator that declines returns "" and moves no counter.
-func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) (string, error) {
+func (s *Store) Mutate(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -286,7 +286,7 @@ func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c
 			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", chatID)
 			return "", ErrTombstoned
 		}
-		c = &vibekit.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
+		c = &marotte.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
 	originalCreatedAt := c.CreatedAt
 	if !mutate(c, exists) {
@@ -314,7 +314,7 @@ func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c
 // validateChatUTF8 returns errInvalidUTF8 when the chat name, the composer draft or
 // any message content is not valid UTF-8 — content that would not round-trip through
 // the JSON storage format.
-func validateChatUTF8(c *vibekit.Chat) error {
+func validateChatUTF8(c *marotte.Chat) error {
 	if !utf8.ValidString(c.Name) {
 		return errInvalidUTF8
 	}
@@ -335,17 +335,17 @@ func validateChatUTF8(c *vibekit.Chat) error {
 // saved Mutate (title, updated_at and sort order move on each), which is why every
 // save bumps `chats` and not only a create. The bump happens with or without a
 // broadcaster, so a digest never reads unchanged for a list that moved.
-func (s *Store) broadcastMutation(ctx context.Context, chatID vibekit.ChatID, c *vibekit.Chat, exists bool) {
+func (s *Store) broadcastMutation(ctx context.Context, chatID marotte.ChatID, c *marotte.Chat, exists bool) {
 	chatsVersion := s.versions.BumpCounter(subject.KindChats, "")
 	if s.broadcast == nil {
 		return
 	}
-	evt := vibekit.EventChatUpdated
+	evt := marotte.EventChatUpdated
 	if !exists {
-		evt = vibekit.EventChatCreated
+		evt = marotte.EventChatCreated
 	}
-	frame := vibekit.NewEvent(evt, chatID, c.Header())
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
+	frame := marotte.NewEvent(evt, chatID, c.Header())
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
 	s.broadcast.Broadcast(ctx, frame)
 }
 
@@ -356,19 +356,19 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID vibekit.ChatID, c 
 //
 // The returned state is nil when nothing was written and the chat's WHOLE composer
 // state otherwise, so the caller can broadcast draft_changed without a second read.
-func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string) (*vibekit.ComposerState, error) {
+func (s *Store) SetDraft(ctx context.Context, chatID marotte.ChatID, text string) (*marotte.ComposerState, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	// The command boundary already refuses both, but the store owns what reaches the
 	// file, and a draft that cannot round-trip through JSON is unloadable.
-	if len(text) > vibekit.MaxDraftBytes {
+	if len(text) > marotte.MaxDraftBytes {
 		return nil, errDraftTooLarge
 	}
 	if !utf8.ValidString(text) {
 		return nil, errInvalidUTF8
 	}
-	return s.setComposer(chatID, "chat draft", func(c *vibekit.Chat) bool {
+	return s.setComposer(chatID, "chat draft", func(c *marotte.Chat) bool {
 		if c.Draft == text {
 			return false
 		}
@@ -380,16 +380,16 @@ func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string
 // SetAttachments persists the paths staged beside the chat's draft, replacing
 // whatever was there. The draft's twin: no Mutate, so UpdatedAt is untouched, and no
 // record means no-op rather than a created chat. An empty slice clears the row.
-func (s *Store) SetAttachments(ctx context.Context, chatID vibekit.ChatID, paths []string) (*vibekit.ComposerState, error) {
+func (s *Store) SetAttachments(ctx context.Context, chatID marotte.ChatID, paths []string) (*marotte.ComposerState, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	// The store owns what reaches the file; see SetDraft.
-	if len(paths) > vibekit.MaxAttachments {
+	if len(paths) > marotte.MaxAttachments {
 		return nil, errTooManyAttachments
 	}
 	for _, p := range paths {
-		if p == "" || len(p) > vibekit.MaxAttachmentPathBytes {
+		if p == "" || len(p) > marotte.MaxAttachmentPathBytes {
 			return nil, errBadAttachmentPath
 		}
 		if !utf8.ValidString(p) {
@@ -401,7 +401,7 @@ func (s *Store) SetAttachments(ctx context.Context, chatID vibekit.ChatID, paths
 		// nil rather than empty: `omitempty` keeps the field out of the chat file.
 		next = nil
 	}
-	return s.setComposer(chatID, "chat attachments", func(c *vibekit.Chat) bool {
+	return s.setComposer(chatID, "chat attachments", func(c *marotte.Chat) bool {
 		if slices.Equal(c.Attachments, next) {
 			return false
 		}
@@ -413,7 +413,7 @@ func (s *Store) SetAttachments(ctx context.Context, chatID vibekit.ChatID, paths
 // setComposer is the shared body of the two composer writers: load under the chat's
 // own lock, apply, write only when something moved, and report the state that
 // landed. `what` names the caller in the mismatch log.
-func (s *Store) setComposer(chatID vibekit.ChatID, what string, apply func(*vibekit.Chat) bool) (*vibekit.ComposerState, error) {
+func (s *Store) setComposer(chatID marotte.ChatID, what string, apply func(*marotte.Chat) bool) (*marotte.ComposerState, error) {
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
@@ -448,7 +448,7 @@ func (s *Store) setComposer(chatID vibekit.ChatID, what string, apply func(*vibe
 
 // Delete removes the chat file and broadcasts chat_deleted. Records a
 // tombstone first so a concurrent Mutate cannot resurrect the id.
-func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
+func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -461,8 +461,8 @@ func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
 		return rmErr
 	}
 	if s.broadcast != nil {
-		frame := vibekit.NewEvent(vibekit.EventChatDeleted, chatID, vibekit.ChatDeletedPayload{ID: string(chatID)})
-		frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
+		frame := marotte.NewEvent(marotte.EventChatDeleted, chatID, marotte.ChatDeletedPayload{ID: string(chatID)})
+		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
 		s.broadcast.Broadcast(ctx, frame)
 	}
 	if missing {
@@ -480,9 +480,9 @@ func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
 // AppendMessage adds one message through Mutate, broadcasting message_appended in
 // addition to the usual chat_updated — after the save succeeds, so a failed write
 // emits no phantom event referencing content that was never persisted.
-func (s *Store) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+func (s *Store) AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
 	var appended bool
-	version, err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := s.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -496,8 +496,8 @@ func (s *Store) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *v
 	if err != nil || !appended || s.broadcast == nil {
 		return err
 	}
-	frame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg)
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+	frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 	s.broadcast.Broadcast(ctx, frame)
 	slog.Debug("chat append", "chat_id", chatID, "msg_id", msg.ID, "role", msg.Role)
 	return nil
@@ -511,10 +511,10 @@ func (s *Store) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *v
 // an append per frame persists N snapshots of one plan. "This turn" is the tail up to the
 // first PROMPT, matching projectTurns' rule that a prompt opens a turn while a steer joins
 // the one running. Ts is NOT restamped: it marks where the plan entered the chat.
-func (s *Store) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
-	var updated *vibekit.Message
+func (s *Store) UpsertTurnPlan(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
+	var updated *marotte.Message
 	var appended bool
-	version, err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := s.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -539,15 +539,15 @@ func (s *Store) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *
 	if err != nil || s.broadcast == nil {
 		return err
 	}
-	stamp := vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+	stamp := marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 	switch {
 	case updated != nil:
-		frame := vibekit.NewEvent(vibekit.EventMessageUpdated, chatID, updated)
+		frame := marotte.NewEvent(marotte.EventMessageUpdated, chatID, updated)
 		frame.Subject = stamp
 		s.broadcast.Broadcast(ctx, frame)
 		slog.Debug("chat plan update", "chat_id", chatID, "msg_id", updated.ID, "entries", len(updated.Plan))
 	case appended:
-		frame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg)
+		frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
 		frame.Subject = stamp
 		s.broadcast.Broadcast(ctx, frame)
 		slog.Debug("chat plan append", "chat_id", chatID, "msg_id", msg.ID, "entries", len(msg.Plan))
@@ -557,9 +557,9 @@ func (s *Store) UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *
 
 // UpdateMessage mutates an existing message by ID and broadcasts message_updated
 // after the save succeeds. No-op when the message is not found.
-func (s *Store) UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error {
-	var updated *vibekit.Message
-	version, err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func (s *Store) UpdateMessage(ctx context.Context, chatID marotte.ChatID, msgID string, mutate func(*marotte.Message)) error {
+	var updated *marotte.Message
+	version, err := s.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -575,8 +575,8 @@ func (s *Store) UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID 
 	if err != nil || updated == nil || s.broadcast == nil {
 		return err
 	}
-	frame := vibekit.NewEvent(vibekit.EventMessageUpdated, chatID, updated)
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+	frame := marotte.NewEvent(marotte.EventMessageUpdated, chatID, updated)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 	s.broadcast.Broadcast(ctx, frame)
 	slog.Debug("chat update_message", "chat_id", chatID, "msg_id", msgID)
 	return nil

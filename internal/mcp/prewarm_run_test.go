@@ -11,7 +11,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/mcp/prewarm"
+	"github.com/cplieger/marotte/internal/mcp/prewarm"
 )
 
 // TestEnabledServers_FeedsPrewarmLister pins the Store→prewarm contract:

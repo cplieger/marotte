@@ -34,7 +34,7 @@ import { renderSvgBlock } from "./svg-block.js";
 /** Incremental-write flush throttle while streaming: buffered deltas are
  *  fed to the append-only streaming parser at most once per interval.
  *  Nothing re-parses — previously rendered DOM stays untouched. 200ms is
- *  the sweet spot from vibekit-ui.md (Vercel ai-chatbot pattern). */
+ *  the sweet spot from marotte-ui.md (Vercel ai-chatbot pattern). */
 const FLUSH_INTERVAL_MS = 200;
 
 /** Maximum bytes parsed per task slice. Tuned so a single slice

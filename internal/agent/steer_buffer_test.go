@@ -16,22 +16,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func queued(id, text string) vibekit.SteerQueuedPayload {
-	return vibekit.SteerQueuedPayload{SteerID: id, Text: text, Origin: vibekit.SteerOriginUser}
+func queued(id, text string) marotte.SteerQueuedPayload {
+	return marotte.SteerQueuedPayload{SteerID: id, Text: text, Origin: marotte.SteerOriginUser}
 }
 
 // steerIDsOf reads the ids off a List result, which is the shape the replay writes.
-func steerIDsOf(t *testing.T, evts []vibekit.ServerEvent) []string {
+func steerIDsOf(t *testing.T, evts []marotte.ServerEvent) []string {
 	t.Helper()
 	out := make([]string, 0, len(evts))
 	for _, e := range evts {
-		if e.Type != vibekit.EventSteerQueued {
-			t.Fatalf("event type = %q, want %q", e.Type, vibekit.EventSteerQueued)
+		if e.Type != marotte.EventSteerQueued {
+			t.Fatalf("event type = %q, want %q", e.Type, marotte.EventSteerQueued)
 		}
-		p, ok := e.Payload.(vibekit.SteerQueuedPayload)
+		p, ok := e.Payload.(marotte.SteerQueuedPayload)
 		if !ok {
 			t.Fatalf("payload type = %T, want SteerQueuedPayload", e.Payload)
 		}
@@ -52,11 +52,11 @@ func TestSteerBuffer_ListsWhatIsStillWaiting(t *testing.T) {
 	// The PAYLOAD travels whole, not just the id: the replay must be
 	// indistinguishable from the live frame, so the text and the resolved origin
 	// have to survive the round trip.
-	p, ok := got[0].Payload.(vibekit.SteerQueuedPayload)
+	p, ok := got[0].Payload.(marotte.SteerQueuedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", got[0].Payload)
 	}
-	if p.Text != "use tabs" || p.Origin != vibekit.SteerOriginUser {
+	if p.Text != "use tabs" || p.Origin != marotte.SteerOriginUser {
 		t.Errorf("payload = %+v, want the text and the origin carried", p)
 	}
 	if got[0].ChatID != "c1" {
@@ -145,7 +145,7 @@ func TestSteerBuffer_WaitingIsIdempotentByID(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("entries = %d, want 1", len(got))
 	}
-	p, ok := got[0].Payload.(vibekit.SteerQueuedPayload)
+	p, ok := got[0].Payload.(marotte.SteerQueuedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", got[0].Payload)
 	}

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // mintPending bumps the workspace-wide `pending` counter for one of the three
@@ -32,7 +32,7 @@ func mintPending(versions **subject.Versions) {
 // connection loss. The live frame such a mutation publishes has an offset above
 // the connection's hello head and is applied after this snapshot, so the client
 // converges on it either way.
-func (rt *Runtime) pendingSnapshotStamped() (vibekit.PendingSnapshotPayload, *vibekit.SubjectStamp) {
+func (rt *Runtime) pendingSnapshotStamped() (marotte.PendingSnapshotPayload, *marotte.SubjectStamp) {
 	return rt.pendingSnapshot(nil)
 }
 
@@ -40,7 +40,7 @@ func (rt *Runtime) pendingSnapshotStamped() (vibekit.PendingSnapshotPayload, *vi
 // afterRead, when non-nil, runs after read n (0 the counter, then the three
 // stores), which is how the interleaving property drives a mutation into every
 // gap of the real procedure rather than a copy of it.
-func (rt *Runtime) pendingSnapshot(afterRead func(n int)) (vibekit.PendingSnapshotPayload, *vibekit.SubjectStamp) {
+func (rt *Runtime) pendingSnapshot(afterRead func(n int)) (marotte.PendingSnapshotPayload, *marotte.SubjectStamp) {
 	step := func(n int) {
 		if afterRead != nil {
 			afterRead(n)
@@ -63,5 +63,5 @@ func (rt *Runtime) pendingSnapshot(afterRead func(n int)) (vibekit.PendingSnapsh
 		}
 		items = append(items, data)
 	}
-	return vibekit.PendingSnapshotPayload{Items: items}, vibekit.NewSubjectStamp(string(subject.KindPending), "", version)
+	return marotte.PendingSnapshotPayload{Items: items}, marotte.NewSubjectStamp(string(subject.KindPending), "", version)
 }

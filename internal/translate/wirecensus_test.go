@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // resetCensus empties the ledger and un-latches it for one test, restoring
@@ -237,7 +237,7 @@ func TestCensusMeta_NeverBreaksADecode(t *testing.T) {
 }
 
 // TestCensusMeteringUnit_ReportsAnUnsummedUnit is the one place a VALUE is
-// reported, because there the label IS the discovery: `unit` is a field vibekit
+// reported, because there the label IS the discovery: `unit` is a field marotte
 // reads, so no field-name probe can see that KAS started billing in a new
 // dimension. An unrecognised unit is silently dropped from the spend total today.
 func TestCensusMeteringUnit_ReportsAnUnsummedUnit(t *testing.T) {
@@ -351,7 +351,7 @@ func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 
 	deps, _ := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	tr.HandleSessionInfoUpdate(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
+	tr.HandleSessionInfoUpdate(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 		"_meta": map[string]any{"kiro": map[string]any{
 			"kind": "turn_end", "brandNewBlock": map[string]any{"x": 1},
 		}},

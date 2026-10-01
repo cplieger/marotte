@@ -5,18 +5,18 @@ import (
 	"testing"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Merge is MergeStamped without the stamp, for a test that seeds the cache and
 // reads no version.
-func (c *chatStatusCache) Merge(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) vibekit.ChatStatusPayload {
+func (c *chatStatusCache) Merge(chatID marotte.ChatID, p marotte.ChatStatusPayload) marotte.ChatStatusPayload {
 	merged, _ := c.MergeStamped(chatID, p)
 	return merged
 }
 
 // Get returns a chat's last status; production reads the whole set through Snapshot.
-func (c *chatStatusCache) Get(chatID vibekit.ChatID) vibekit.ChatStatusPayload {
+func (c *chatStatusCache) Get(chatID marotte.ChatID) marotte.ChatStatusPayload {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.byChat[chatID]
@@ -33,14 +33,14 @@ func TestChatStatusCache(t *testing.T) {
 		t.Errorf("unknown chat returned %q, want the zero payload", got.Status)
 	}
 
-	c.Merge("c1", vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
+	c.Merge("c1", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
 	got := c.Get("c1")
 	if got.Status != "in_progress" || got.Description != "reading files" {
 		t.Errorf("got %+v, want in_progress/reading files", got)
 	}
 
 	// Newest wins: the agent re-declares as focus shifts.
-	c.Merge("c1", vibekit.ChatStatusPayload{Status: "waiting_on_user", Description: "needs a decision"})
+	c.Merge("c1", marotte.ChatStatusPayload{Status: "waiting_on_user", Description: "needs a decision"})
 	if got := c.Get("c1"); got.Status != "waiting_on_user" {
 		t.Errorf("got %q, want the latest status", got.Status)
 	}
@@ -65,14 +65,14 @@ func TestChatStatusCache(t *testing.T) {
 	// does and nothing used to invalidate the claim after one. The mid-turn declaration
 	// that survives a turn the agent finished by itself is a separate shape the wire
 	// carries no discriminator for, so retention still covers it deliberately.
-	c.Merge("c2", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser, Description: "needs a decision"})
+	c.Merge("c2", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "needs a decision"})
 	c.ClearAtTurnEnd("c2")
-	if got := c.Get("c2"); got.Status != vibekit.ChatStatusWaitingOnUser || got.Description != "needs a decision" {
+	if got := c.Get("c2"); got.Status != marotte.ChatStatusWaitingOnUser || got.Description != "needs a decision" {
 		t.Errorf("got %+v, want waiting_on_user retained whole past turn end", got)
 	}
 	// Every other status goes, which is what keeps a finished turn's label off a
 	// later connect.
-	c.Merge("c3", vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
+	c.Merge("c3", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
 	c.ClearAtTurnEnd("c3")
 	if got := c.Get("c3"); got.Status != "" {
 		t.Errorf("status %q survived turn end; only waiting_on_user is retained", got.Status)
@@ -80,7 +80,7 @@ func TestChatStatusCache(t *testing.T) {
 
 	// An empty chat id is ignored rather than creating a junk entry: global
 	// events carry no chat.
-	c.Merge("", vibekit.ChatStatusPayload{Status: "in_progress"})
+	c.Merge("", marotte.ChatStatusPayload{Status: "in_progress"})
 	if got := c.Get(""); got.Status != "" {
 		t.Error("an empty chat id was recorded")
 	}
@@ -91,13 +91,13 @@ func TestChatStatusCache(t *testing.T) {
 	// the zero payload), so Snapshot is the only discriminator. Hygiene rather than
 	// correctness — every consumer of a phantom is inert — so this is a pin, not a
 	// defect guard.
-	c.Merge("c4", vibekit.ChatStatusPayload{Status: "in_progress", Description: "x"})
-	c.Merge("c4", vibekit.ChatStatusPayload{})
+	c.Merge("c4", marotte.ChatStatusPayload{Status: "in_progress", Description: "x"})
+	c.Merge("c4", marotte.ChatStatusPayload{})
 	if _, ok := c.Snapshot()["c4"]; ok {
 		t.Error("a both-empty Merge left a phantom entry; Get cannot see one, so assert through Snapshot")
 	}
 	// A status with no description is a real declaration and stays.
-	c.Merge("c5", vibekit.ChatStatusPayload{Status: "in_progress"})
+	c.Merge("c5", marotte.ChatStatusPayload{Status: "in_progress"})
 	if got := c.Get("c5"); got.Status != "in_progress" {
 		t.Errorf("status-only Merge left %q, want in_progress", got.Status)
 	}
@@ -105,7 +105,7 @@ func TestChatStatusCache(t *testing.T) {
 	// ClearWaiting is NARROWER than Clear: it ends the retained claim and reports
 	// whether one went, so the discharge cannot delete a status the running turn
 	// declared.
-	c.Merge("c6", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser, Description: "needs a decision"})
+	c.Merge("c6", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "needs a decision"})
 	if !c.ClearWaiting("c6") {
 		t.Error("ClearWaiting reported no claim for a retained waiting_on_user entry")
 	}
@@ -117,7 +117,7 @@ func TestChatStatusCache(t *testing.T) {
 	}
 	// An in_progress entry belongs to its turn, so the discharge leaves it whole:
 	// clearing it would wipe the tab tooltip's "doing" half for the rest of the turn.
-	c.Merge("c7", vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading the parser"})
+	c.Merge("c7", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading the parser"})
 	if c.ClearWaiting("c7") {
 		t.Error("ClearWaiting reported a claim for an in_progress entry")
 	}
@@ -133,8 +133,8 @@ func TestChatStatusCache(t *testing.T) {
 func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 	t.Run("a retained claim is cleared and broadcast", func(t *testing.T) {
 		rt, _, _ := newTestHub()
-		rt.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{
-			Status:      vibekit.ChatStatusWaitingOnUser,
+		rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
+			Status:      marotte.ChatStatusWaitingOnUser,
 			Description: "waiting on the user to disposition both proposals",
 		})
 		head := rt.bus.fanout.Position().Head
@@ -166,7 +166,7 @@ func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 
 	t.Run("a live in_progress entry is left alone", func(t *testing.T) {
 		rt, _, _ := newTestHub()
-		live := vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading the parser"}
+		live := marotte.ChatStatusPayload{Status: "in_progress", Description: "reading the parser"}
 		rt.bus.chatStatus.Merge("c1", live)
 		head := rt.bus.fanout.Position().Head
 
@@ -188,7 +188,7 @@ func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 // over emptiness and blind to precedence.
 func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 	const (
-		prevStatus = vibekit.ChatStatusWaitingOnUser
+		prevStatus = marotte.ChatStatusWaitingOnUser
 		prevDesc   = "d1"
 		nextStatus = "idle"
 		nextDesc   = "d2"
@@ -224,7 +224,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 			// asserts against a prev it did not choose.
 			c := newChatStatusCache()
 			if tc.prevS || tc.prevD {
-				seed := vibekit.ChatStatusPayload{}
+				seed := marotte.ChatStatusPayload{}
 				if tc.prevS {
 					seed.Status = prevStatus
 				}
@@ -233,7 +233,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 				}
 				c.Merge("c1", seed)
 			}
-			next := vibekit.ChatStatusPayload{}
+			next := marotte.ChatStatusPayload{}
 			if tc.nextS {
 				next.Status = nextStatus
 			}
@@ -262,7 +262,7 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 
 	t.Run("an empty chat id publishes the declaration unchanged", func(t *testing.T) {
 		c := newChatStatusCache()
-		declared := vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading files"}
+		declared := marotte.ChatStatusPayload{Status: "in_progress", Description: "reading files"}
 
 		got := c.Merge("", declared)
 
@@ -280,23 +280,23 @@ func TestChatStatusMerge_OmitIsUnchanged(t *testing.T) {
 // frame assertion is separate from the cache one on purpose.
 func TestEmitChatStatus_PublishesTheMergedPayload(t *testing.T) {
 	rt, _, _ := newTestHub()
-	rt.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{
-		Status:      vibekit.ChatStatusWaitingOnUser,
+	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
+		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "d1",
 	})
 	head := rt.bus.fanout.Position().Head
 
-	rt.bus.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1",
-		vibekit.ChatStatusPayload{Description: "d2"}))
+	rt.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1",
+		marotte.ChatStatusPayload{Description: "d2"}))
 
-	if got := rt.bus.chatStatus.Get("c1"); got.Status != vibekit.ChatStatusWaitingOnUser || got.Description != "d2" {
+	if got := rt.bus.chatStatus.Get("c1"); got.Status != marotte.ChatStatusWaitingOnUser || got.Description != "d2" {
 		t.Errorf("entry = %+v, want {waiting_on_user d2}: the omitted status means unchanged", got)
 	}
 	frames := chatStatusFrames(t, bufferedSince(rt, head))
 	if len(frames) != 1 {
 		t.Fatalf("published %d chat_status frames, want 1: %+v", len(frames), frames)
 	}
-	if frames[0].Status != vibekit.ChatStatusWaitingOnUser || frames[0].Description != "d2" {
+	if frames[0].Status != marotte.ChatStatusWaitingOnUser || frames[0].Description != "d2" {
 		t.Errorf("frame = %+v, want {waiting_on_user d2}: setAgentStatus deletes agent_status on an empty status", frames[0])
 	}
 }
@@ -306,20 +306,20 @@ func TestEmitChatStatus_PublishesTheMergedPayload(t *testing.T) {
 // tabStatusFor's own input.
 func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
 	rt, _, _ := newTestHub()
-	rt.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{
-		Status:      vibekit.ChatStatusWaitingOnUser,
+	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
+		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "d1",
 	})
 	head := rt.bus.fanout.Position().Head
 
-	rt.bus.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1",
-		vibekit.ChatStatusPayload{Status: "idle"}))
+	rt.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1",
+		marotte.ChatStatusPayload{Status: "idle"}))
 
 	got := rt.bus.chatStatus.Get("c1")
 	if got.Status != "idle" || got.Description != "d1" {
 		t.Errorf("entry = %+v, want {idle d1}: the omitted description means unchanged", got)
 	}
-	if got.Status == vibekit.ChatStatusWaitingOnUser {
+	if got.Status == marotte.ChatStatusWaitingOnUser {
 		t.Error("the status stayed waiting_on_user, so the dot never discharges on a real declaration")
 	}
 	frames := chatStatusFrames(t, bufferedSince(rt, head))
@@ -337,17 +337,17 @@ func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
 // turn's push body.
 func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 	rt, _, _ := newTestHub()
-	rt.bus.chatStatus.Merge("c1", vibekit.ChatStatusPayload{
-		Status:      vibekit.ChatStatusWaitingOnUser,
+	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
+		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "d1",
 	})
 	// A source UserAnswered() excludes, so the retention survives the open.
-	if epoch := rt.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep); epoch == 0 {
+	if epoch := rt.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep); epoch == 0 {
 		t.Fatal("the fixture could not open a step turn")
 	}
 
-	rt.bus.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1",
-		vibekit.ChatStatusPayload{Status: "in_progress"}))
+	rt.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1",
+		marotte.ChatStatusPayload{Status: "in_progress"}))
 
 	// Read the field the way statusDescription does. Not through claimOpen/claimEpoch:
 	// both end in claimLocked, which moves the chat into turnFinalizing and changes the
@@ -366,18 +366,18 @@ func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
 }
 
 // chatStatusFrames decodes the chat_status payloads out of a replay slice.
-func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []vibekit.ChatStatusPayload {
+func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStatusPayload {
 	t.Helper()
-	var out []vibekit.ChatStatusPayload
+	var out []marotte.ChatStatusPayload
 	for _, e := range events {
 		var msg struct {
-			Type    vibekit.EventType         `json:"type"`
-			Payload vibekit.ChatStatusPayload `json:"payload"`
+			Type    marotte.EventType         `json:"type"`
+			Payload marotte.ChatStatusPayload `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		if msg.Type == vibekit.EventChatStatus {
+		if msg.Type == marotte.EventChatStatus {
 			out = append(out, msg.Payload)
 		}
 	}
@@ -389,8 +389,8 @@ func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []vibekit.ChatStat
 // something has to end that window or the amber dot describes a question the user
 // answered hours ago. A prompt IS that answer; a run's step turn is not.
 func TestStartTurn_DischargesTheWaitingRetention(t *testing.T) {
-	waiting := vibekit.ChatStatusPayload{
-		Status:      vibekit.ChatStatusWaitingOnUser,
+	waiting := marotte.ChatStatusPayload{
+		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "waiting on the user to disposition both proposals",
 	}
 
@@ -399,7 +399,7 @@ func TestStartTurn_DischargesTheWaitingRetention(t *testing.T) {
 		rt.bus.chatStatus.Merge("c1", waiting)
 		head := rt.bus.fanout.Position().Head
 
-		if epoch := rt.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt); epoch == 0 {
+		if epoch := rt.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt); epoch == 0 {
 			t.Fatal("the fixture could not open a prompt turn")
 		}
 		if got := rt.bus.chatStatus.Get("c1"); got.Status != "" {
@@ -415,12 +415,12 @@ func TestStartTurn_DischargesTheWaitingRetention(t *testing.T) {
 		rt, _, _ := newTestHub()
 		rt.bus.chatStatus.Merge("c1", waiting)
 
-		if epoch := rt.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep); epoch == 0 {
+		if epoch := rt.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep); epoch == 0 {
 			t.Fatal("the fixture could not open a step turn")
 		}
 		got := rt.bus.chatStatus.Get("c1")
-		if got.Status != vibekit.ChatStatusWaitingOnUser {
-			t.Errorf("status is %q, want %q: a run's step is not the user answering", got.Status, vibekit.ChatStatusWaitingOnUser)
+		if got.Status != marotte.ChatStatusWaitingOnUser {
+			t.Errorf("status is %q, want %q: a run's step is not the user answering", got.Status, marotte.ChatStatusWaitingOnUser)
 		}
 		if got.Description != waiting.Description {
 			t.Errorf("description is %q, want %q", got.Description, waiting.Description)

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestToolCallDelta_SendsEachOutputChunkOnce is the measurement this reshape
@@ -85,7 +85,7 @@ func TestToolCallDelta_SendsEachDiffOnce(t *testing.T) {
 // TestToolCallDelta_NeverCarriesTheInput is 1.49 MiB of the measured total. An
 // update cannot change the input, so it has no field for it.
 func TestToolCallDelta_NeverCarriesTheInput(t *testing.T) {
-	fields := reflect.VisibleFields(reflect.TypeFor[vibekit.ToolCallUpdatePayload]())
+	fields := reflect.VisibleFields(reflect.TypeFor[marotte.ToolCallUpdatePayload]())
 	for _, f := range fields {
 		if f.Name == "Input" {
 			t.Error("ToolCallUpdatePayload has an Input field; an update never changes it")
@@ -159,10 +159,10 @@ func TestToolCallDelta_AnUnchangedFieldIsAbsent(t *testing.T) {
 	// about 39 runs in 40 and made this test flaky from the day it was written.
 	// Whether a duration reaches the wire is TestToolCallDelta_SendsTheDuration's.
 	got.DurationMs = 0
-	want := vibekit.ToolCallUpdatePayload{
+	want := marotte.ToolCallUpdatePayload{
 		MessageID:  "tc-mid",
 		ToolCallID: "tc-1",
-		Status:     vibekit.ToolCompleted,
+		Status:     marotte.ToolCompleted,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("a status-only frame = %+v,\nwant exactly %+v", got, want)
@@ -173,9 +173,9 @@ func TestToolCallDelta_AnUnchangedFieldIsAbsent(t *testing.T) {
 // up, asserted where it can be: the completion fold computes a duration, so the
 // frame that completes a call must carry one.
 func TestToolCallDelta_SendsTheDuration(t *testing.T) {
-	before := vibekit.ToolCall{ID: "tc-1", Status: vibekit.ToolInProgress}
+	before := marotte.ToolCall{ID: "tc-1", Status: marotte.ToolInProgress}
 	after := before
-	after.Status = vibekit.ToolCompleted
+	after.Status = marotte.ToolCompleted
 	after.DurationMs = 1234
 
 	d := toolCallDelta("m1", &before, &after)
@@ -219,16 +219,16 @@ func TestOutputDelta(t *testing.T) {
 }
 
 // toolCallDeltas returns every tool_call_update payload in events, in order.
-func toolCallDeltas(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.ToolCallUpdatePayload {
+func toolCallDeltas(t *testing.T, events *[]marotte.ServerEvent) []marotte.ToolCallUpdatePayload {
 	t.Helper()
-	var out []vibekit.ToolCallUpdatePayload
+	var out []marotte.ToolCallUpdatePayload
 	for _, e := range *events {
-		if e.Type != vibekit.EventToolCallUpdate {
+		if e.Type != marotte.EventToolCallUpdate {
 			continue
 		}
-		p, ok := e.Payload.(vibekit.ToolCallUpdatePayload)
+		p, ok := e.Payload.(marotte.ToolCallUpdatePayload)
 		if !ok {
-			t.Fatalf("tool_call_update payload type = %T, want vibekit.ToolCallUpdatePayload", e.Payload)
+			t.Fatalf("tool_call_update payload type = %T, want marotte.ToolCallUpdatePayload", e.Payload)
 		}
 		out = append(out, p)
 	}

@@ -7,7 +7,7 @@
 // was that a request-controlled value — a file path, a query parameter, a JSON
 // body field, a ref, an error text interpolating one of those — carries a raw
 // newline through slog into Loki, where the reader cannot tell an injected line
-// from one the server wrote. That premise is FALSE for the handler vibekit
+// from one the server wrote. That premise is FALSE for the handler marotte
 // installs, so the value this package delivers is not the one it claimed.
 //
 // Measured on go1.27.1, one attribute per class:
@@ -17,7 +17,7 @@
 //   - JSONHandler escapes \n \t \r, ESC and C0, and U+2028/U+2029, and passes
 //     the C1 controls and the Bidi_Control runes through RAW.
 //
-// vibekit runs the TEXT handler (internal/logctl calls slogx.Setup with a zero
+// marotte runs the TEXT handler (internal/logctl calls slogx.Setup with a zero
 // Options, whose Format zero value is Text), so today no class in that list
 // reaches Loki unescaped through slog.
 //

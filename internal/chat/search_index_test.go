@@ -9,7 +9,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A filter that has filled up says yes to everything, which is the unindexed
@@ -125,14 +125,14 @@ func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 func TestSearchIndex_AWriteDropsTheEntryAndTheNextQueryFindsTheNewText(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []vibekit.Message{msg("m1", vibekit.RoleUser, "alpha bravo")})
+	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
 
 	s.SearchAll(t.Context(), "alpha")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
 
-	if err := s.AppendMessage(t.Context(), id, &vibekit.Message{ID: "m2", Role: vibekit.RoleUser, Content: "zetaword"}); err != nil {
+	if err := s.AppendMessage(t.Context(), id, &marotte.Message{ID: "m2", Role: marotte.RoleUser, Content: "zetaword"}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	if _, ok := s.index.lookup(id); ok {
@@ -149,7 +149,7 @@ func TestSearchIndex_AWriteDropsTheEntryAndTheNextQueryFindsTheNewText(t *testin
 func TestSearchIndex_ADeleteDropsTheEntry(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []vibekit.Message{msg("m1", vibekit.RoleUser, "alpha bravo")})
+	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
 	s.SearchAll(t.Context(), "alpha")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
@@ -182,7 +182,7 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	for _, id := range ids {
-		if _, ok := s.index.lookup(vibekit.ChatID(id)); ok {
+		if _, ok := s.index.lookup(marotte.ChatID(id)); ok {
 			t.Errorf("chat %s holds a filter before any query", id)
 		}
 	}
@@ -190,7 +190,7 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 	s.SearchAll(t.Context(), "unrelatedword")
 	first := make(map[string]*chatFilter, len(ids))
 	for _, id := range ids {
-		f, ok := s.index.lookup(vibekit.ChatID(id))
+		f, ok := s.index.lookup(marotte.ChatID(id))
 		if !ok {
 			t.Errorf("chat %s holds no filter after the first query", id)
 		}
@@ -199,7 +199,7 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 
 	s.SearchAll(t.Context(), "needle")
 	for _, id := range ids {
-		if f, _ := s.index.lookup(vibekit.ChatID(id)); f != first[id] {
+		if f, _ := s.index.lookup(marotte.ChatID(id)); f != first[id] {
 			t.Errorf("chat %s was re-indexed by a second query over an unchanged file", id)
 		}
 	}
@@ -213,7 +213,7 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []vibekit.Message{msg("m1", vibekit.RoleUser, "alpha bravo")})
+	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
 	s.SearchAll(t.Context(), "alpha")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
@@ -246,7 +246,7 @@ func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 func TestSearchAll_AsksTheIndexAboutTheFreeTextOnly(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []vibekit.Message{msg("m1", vibekit.RoleUser, "we moved the cache to redis today")})
+	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "we moved the cache to redis today")})
 	s.SearchAll(t.Context(), "unrelatedword")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
@@ -273,7 +273,7 @@ func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
 	s, _ := newTestStore(t)
 	ids := []string{"c-aaaaaaaa", "c-bbbbbbbb", "c-cccccccc"}
 	for _, id := range ids {
-		seedChat(t, s, id, "Notes", []vibekit.Message{msg("m1", vibekit.RoleUser, "alpha bravo")})
+		seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
 	}
 	s.SearchAll(t.Context(), "alpha")
 	s.index.mu.Lock()

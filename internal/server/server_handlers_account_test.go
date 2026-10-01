@@ -9,16 +9,16 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 type fakeAcctUsage struct {
-	ret   *vibekit.AccountUsage
+	ret   *marotte.AccountUsage
 	err   error
 	calls int
 }
 
-func (f *fakeAcctUsage) AccountUsage(_ context.Context) (*vibekit.AccountUsage, error) {
+func (f *fakeAcctUsage) AccountUsage(_ context.Context) (*marotte.AccountUsage, error) {
 	f.calls++
 	return f.ret, f.err
 }
@@ -31,10 +31,10 @@ func getUsage(t *testing.T, s *Server) *httptest.ResponseRecorder {
 	return rec
 }
 
-func sampleUsage() *vibekit.AccountUsage {
-	return &vibekit.AccountUsage{
+func sampleUsage() *marotte.AccountUsage {
+	return &marotte.AccountUsage{
 		PlanName:   "KIRO POWER",
-		Breakdowns: []vibekit.AccountUsageBreakdown{{ResourceType: "CREDIT", Used: 10, Limit: 100, Percentage: 10, HasLimit: true}},
+		Breakdowns: []marotte.AccountUsageBreakdown{{ResourceType: "CREDIT", Used: 10, Limit: 100, Percentage: 10, HasLimit: true}},
 	}
 }
 
@@ -53,7 +53,7 @@ func TestHandleAccountUsageSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var got vibekit.AccountUsage
+	var got marotte.AccountUsage
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestHandleAccountUsageStaleFallback(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var got vibekit.AccountUsage
+	var got marotte.AccountUsage
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

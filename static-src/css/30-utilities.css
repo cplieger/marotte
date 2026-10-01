@@ -233,7 +233,7 @@
    one is `diff-pane.ts`, whose classes are `.diff-pane*`, `.diff-col*`,
    `.diff-row*`, `.diff-none` and `.diff-more`, styled in 60-mcp.css and
    20-editor.css. There is no `.diff-hunk*` class in either half now: the pane's
-   per-hunk toolbar was deleted in 2026-09 (vibekit-ui.md "Diff viewer and
+   per-hunk toolbar was deleted in 2026-09 (marotte-ui.md "Diff viewer and
    conflict resolution"), so a `diff-hunk` hit anywhere is dead.
 
    Seven of the eight had no emitter at all. `.diff-gutter` did, and 60-mcp.css

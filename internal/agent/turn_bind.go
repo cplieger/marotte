@@ -7,15 +7,15 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // bindPending binds an unacknowledged wire turn_start to this chat's single pending
 // pre-open, reporting whether one took it and, when it did not, the epoch of a
 // DIFFERENT turn the caller must close first. The pre-open leaves the pending set and
 // BECOMES the folding turn, so clearing pending alone would orphan that record.
-func (r *turnRegistry) bindPending(chatID vibekit.ChatID) (bound bool, displaced vibekit.TurnEpoch) {
+func (r *turnRegistry) bindPending(chatID marotte.ChatID) (bound bool, displaced marotte.TurnEpoch) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -41,7 +41,7 @@ func (r *turnRegistry) bindPending(chatID vibekit.ChatID) (bound bool, displaced
 // to every client. A workflow step's turn is the ordinary case rather than an edge — a
 // chat-parented run's steps fold onto the launching chat for minutes after the
 // launching turn ended.
-func (r *turnRegistry) displaceableEngineTurn(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+func (r *turnRegistry) displaceableEngineTurn(chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -57,7 +57,7 @@ func (r *turnRegistry) displaceableEngineTurn(chatID vibekit.ChatID) (vibekit.Tu
 // foldTarget is the open turn's buffer, or false when the chat has none. False also for
 // a chat mid-finalize, so the caller falls through to openWire rather than folding into
 // a turn whose closer already took its content.
-func (r *turnRegistry) foldTarget(chatID vibekit.ChatID) (*buffer.Buffer, bool) {
+func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*buffer.Buffer, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -71,7 +71,7 @@ func (r *turnRegistry) foldTarget(chatID vibekit.ChatID) (*buffer.Buffer, bool) 
 // nobody releases retains the record for the life of the process. The source is the
 // caller's: a fold carrying a workflow step's own marker opens the RUN's turn, and
 // everything else opens this chat's.
-func (r *turnRegistry) openWire(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource, model string, credits CreditBaseline) *Turn {
+func (r *turnRegistry) openWire(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, model string, credits CreditBaseline) *Turn {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return nil
@@ -88,7 +88,7 @@ func (r *turnRegistry) openWire(ctx context.Context, chatID vibekit.ChatID, sour
 // reclassify undoes a provisional binding on the evidence that the started turn was the
 // AGENT's. The started turn keeps the buffer the frames were folded into; the pre-open
 // drops back to pending with a fresh one, and the agent's turn takes a LATER epoch.
-func (r *turnRegistry) reclassify(ctx context.Context, chatID vibekit.ChatID) bool {
+func (r *turnRegistry) reclassify(ctx context.Context, chatID marotte.ChatID) bool {
 	lc := r.lifecycleFor(chatID)
 	if !lc.awaitNotFinalizing(ctx) {
 		return false
@@ -99,7 +99,7 @@ func (r *turnRegistry) reclassify(ctx context.Context, chatID vibekit.ChatID) bo
 		return false
 	}
 	// The agent's OWN turn, never a step's: a step's marker routes it elsewhere.
-	agentTurn := lc.openLocked(chatID, vibekit.TurnSourceWireTurnStart, pre.Model, pre.Credits)
+	agentTurn := lc.openLocked(chatID, marotte.TurnSourceWireTurnStart, pre.Model, pre.Credits)
 	agentTurn.acked = true
 	// Opened moves with the buffer: the agent's turn began when those frames did.
 	agentTurn.Buf = pre.Buf

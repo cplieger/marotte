@@ -16,7 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeSource counts how often it was asked, which is what makes "no forge work"
@@ -34,8 +34,8 @@ func (f *fakeSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
 
 type sentPush struct {
 	body    string
-	kind    vibekit.PushKind
-	subject vibekit.PushSubject
+	kind    marotte.PushKind
+	subject marotte.PushSubject
 }
 
 // fakeNotifier records every Send and reports a configurable subscriber state.
@@ -50,7 +50,7 @@ func (f *fakeNotifier) HasSubscribers() bool {
 	return f.subscribers
 }
 
-func (f *fakeNotifier) Send(_ context.Context, _, body string, kind vibekit.PushKind, subject vibekit.PushSubject) {
+func (f *fakeNotifier) Send(_ context.Context, _, body string, kind marotte.PushKind, subject marotte.PushSubject) {
 	f.sent = append(f.sent, sentPush{body: body, kind: kind, subject: subject})
 }
 
@@ -65,7 +65,7 @@ func newTestPoller(src PRSource, n PRNotifier) *PRStatusPoller {
 func pr(number int, check string) WatchedPR {
 	return WatchedPR{
 		ForgeID: "github:github.com",
-		Repo:    "cplieger/vibekit",
+		Repo:    "cplieger/marotte",
 		Number:  number,
 		Title:   "A change",
 		Check:   check,
@@ -160,8 +160,8 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 					len(n.sent), tc.from, tc.to, n.sent)
 			}
 			got := n.sent[0]
-			if got.kind != vibekit.PushKindPRStatus {
-				t.Errorf("kind = %q, want %q", got.kind, vibekit.PushKindPRStatus)
+			if got.kind != marotte.PushKindPRStatus {
+				t.Errorf("kind = %q, want %q", got.kind, marotte.PushKindPRStatus)
 			}
 			if !strings.Contains(got.body, tc.wantBody) {
 				t.Errorf("body %q does not say %q", got.body, tc.wantBody)
@@ -235,7 +235,7 @@ func TestPoller_SubjectIsPerPR(t *testing.T) {
 			n.sent[0].subject.Key)
 	}
 	for _, s := range n.sent {
-		if !strings.HasPrefix(s.subject.Key, vibekit.PRSubjectPrefix) {
+		if !strings.HasPrefix(s.subject.Key, marotte.PRSubjectPrefix) {
 			t.Errorf("subject %q lacks the PR prefix the client routes on", s.subject.Key)
 		}
 		if s.subject.ChatID != "" {
@@ -477,8 +477,8 @@ func TestPoller_RunDoesNotSweepOnEntry(t *testing.T) {
 // TestPRStatusBody covers the wording without a poller: the notice has to name the
 // repo, the number and the verdict, because a tray banner is all the reader gets.
 func TestPRStatusBody(t *testing.T) {
-	got := prStatusBody(WatchedPR{Repo: "cplieger/vibekit", Number: 12, Title: "Fix the thing", Check: checkPassing})
-	for _, want := range []string{"cplieger/vibekit", "#12", "checks passed", "Fix the thing"} {
+	got := prStatusBody(WatchedPR{Repo: "cplieger/marotte", Number: 12, Title: "Fix the thing", Check: checkPassing})
+	for _, want := range []string{"cplieger/marotte", "#12", "checks passed", "Fix the thing"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("body %q missing %q", got, want)
 		}

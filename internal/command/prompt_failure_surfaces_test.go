@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // surfaceDeps records the two durable surfaces a failure can reach — the error
@@ -24,8 +24,8 @@ import (
 type surfaceDeps struct {
 	*benchDeps
 	mu       sync.Mutex
-	errors   []vibekit.ErrorPayload
-	appended []vibekit.Message
+	errors   []marotte.ErrorPayload
+	appended []marotte.Message
 	// spawnErr, when set, is what OpenBridge answers: the respawn-failure path.
 	spawnErr error
 	// slotHeld makes TryAcquireForPrompt refuse, which is the held-bridge-slot path.
@@ -40,8 +40,8 @@ func newSurfaceDeps() *surfaceDeps {
 	return &surfaceDeps{benchDeps: newBenchDeps()}
 }
 
-func (d *surfaceDeps) Broadcast(_ context.Context, e vibekit.ServerEvent) {
-	p, ok := e.Payload.(vibekit.ErrorPayload)
+func (d *surfaceDeps) Broadcast(_ context.Context, e marotte.ServerEvent) {
+	p, ok := e.Payload.(marotte.ErrorPayload)
 	if !ok {
 		return
 	}
@@ -50,42 +50,42 @@ func (d *surfaceDeps) Broadcast(_ context.Context, e vibekit.ServerEvent) {
 	d.errors = append(d.errors, p)
 }
 
-func (d *surfaceDeps) AppendMessage(_ context.Context, _ vibekit.ChatID, m *vibekit.Message) error {
+func (d *surfaceDeps) AppendMessage(_ context.Context, _ marotte.ChatID, m *marotte.Message) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.appended = append(d.appended, *m)
 	return nil
 }
 
-func (d *surfaceDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (d *surfaceDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	if d.spawnErr != nil {
 		return nil, d.spawnErr
 	}
 	return &surfaceBridge{deps: d}, nil
 }
 
-func (d *surfaceDeps) StartTurn(context.Context, vibekit.ChatID, vibekit.TurnOpenSource) vibekit.TurnEpoch {
+func (d *surfaceDeps) StartTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource) marotte.TurnEpoch {
 	if d.deadEpoch {
 		return 0
 	}
 	return 7
 }
 
-func (d *surfaceDeps) ReserveTurnForPrompt(context.Context, vibekit.ChatID, time.Duration) AdmissionOutcome {
+func (d *surfaceDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired
 }
 
-func (d *surfaceDeps) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource) bool { return true }
+func (d *surfaceDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
 
-func (d *surfaceDeps) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool { return false }
+func (d *surfaceDeps) TurnOpenedAfter(marotte.ChatID, marotte.TurnEpoch) bool { return false }
 
-func (d *surfaceDeps) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) (vibekit.TurnResult, error) {
-	return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
+func (d *surfaceDeps) AwaitTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) (marotte.TurnResult, error) {
+	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
 }
 
 // onlyError fails when the run produced other than one error frame: a second frame
 // would mean two surfaces claiming one failure, which is what this file is about.
-func (d *surfaceDeps) onlyError(t *testing.T) vibekit.ErrorPayload {
+func (d *surfaceDeps) onlyError(t *testing.T) marotte.ErrorPayload {
 	t.Helper()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -98,17 +98,17 @@ func (d *surfaceDeps) onlyError(t *testing.T) vibekit.ErrorPayload {
 // surfaceBridge answers a prompt the way the deps dictate.
 type surfaceBridge struct{ deps *surfaceDeps }
 
-func (b *surfaceBridge) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
-	return &vibekit.RPCResponse{}, b.deps.callErr
+func (b *surfaceBridge) Call(context.Context, string, any) (*marotte.RPCResponse, error) {
+	return &marotte.RPCResponse{}, b.deps.callErr
 }
 
-func (b *surfaceBridge) CallAt(context.Context, string, any) (*vibekit.RPCResponse, uint64, error) {
-	return &vibekit.RPCResponse{}, 0, b.deps.callErr
+func (b *surfaceBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
+	return &marotte.RPCResponse{}, 0, b.deps.callErr
 }
 
 func (*surfaceBridge) Notify(context.Context, string, any) error        { return nil }
 func (*surfaceBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (*surfaceBridge) SessionID() vibekit.SessionID                     { return "s1" }
+func (*surfaceBridge) SessionID() marotte.SessionID                     { return "s1" }
 func (b *surfaceBridge) TryAcquireForPrompt() bool                      { return !b.deps.slotHeld }
 func (*surfaceBridge) ReleaseAfterPrompt()                              {}
 func (*surfaceBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
@@ -123,8 +123,8 @@ func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
 		errors.New("connection reset"), time.Second, false)
 
 	got := deps.onlyError(t)
-	if got.Code != vibekit.ErrCodePromptFailed {
-		t.Errorf("code = %q, want %q", got.Code, vibekit.ErrCodePromptFailed)
+	if got.Code != marotte.ErrCodePromptFailed {
+		t.Errorf("code = %q, want %q", got.Code, marotte.ErrCodePromptFailed)
 	}
 	if !got.TurnScoped {
 		t.Error("TurnScoped = false, want true: AbandonInFlightTurn stamps this same " +
@@ -138,20 +138,20 @@ func TestReportPromptFailure_MarksTheFrameTurnScoped(t *testing.T) {
 func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 	cases := []struct {
 		name string
-		want vibekit.ErrorCode
+		want marotte.ErrorCode
 		// arrange puts the double on the path that produces the emitter's failure.
 		arrange func(*surfaceDeps)
 		// run drives the production path.
-		run func(context.Context, *promptRoles, *vibekit.PromptCommand)
+		run func(context.Context, *promptRoles, *marotte.PromptCommand)
 	}{
 		{
 			// A held slot despite an owned reservation is a programming error rather
 			// than a fault, but the prompt is persisted and the POST acked, so it
 			// still has to report.
 			name:    "the bridge slot was held despite the reservation",
-			want:    vibekit.ErrCodePromptFailed,
+			want:    marotte.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.slotHeld = true },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				runPromptTurn(ctx, func() {}, roles, "c1", p)
 			},
 		},
@@ -159,9 +159,9 @@ func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 			// The most reachable of the three: a cancel in the spawn / prime / MCP
 			// window is ordinary, and a zero epoch means no ACP call and no finalize.
 			name:    "the turn was cancelled before an epoch was minted",
-			want:    vibekit.ErrCodePromptFailed,
+			want:    marotte.ErrCodePromptFailed,
 			arrange: func(d *surfaceDeps) { d.deadEpoch = true },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				runPromptTurn(ctx, func() {}, roles, "c1", p)
 			},
 		},
@@ -169,9 +169,9 @@ func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 			// The turn being replaced was already finalized and the retry's epoch is
 			// never opened, so this failure finalizes nothing either.
 			name:    "empty-turn recovery could not respawn the session",
-			want:    vibekit.ErrCodeRecoveryFailed,
+			want:    marotte.ErrCodeRecoveryFailed,
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				retryEmptyTurnPrompt(ctx, roles.bridges, roles.chats, roles.bus,
 					roles.turnOutcome, "c1", p, map[string]any{})
 			},
@@ -181,7 +181,7 @@ func TestPromptFailure_NoTurnEmittersAreNotTurnScoped(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := newSurfaceDeps()
 			tc.arrange(deps)
-			tc.run(t.Context(), promptRolesOf(deps), &vibekit.PromptCommand{Text: "hi", MessageID: "m1"})
+			tc.run(t.Context(), promptRolesOf(deps), &marotte.PromptCommand{Text: "hi", MessageID: "m1"})
 
 			got := deps.onlyError(t)
 			if got.Code != tc.want {
@@ -207,12 +207,12 @@ func TestRetryEmptyTurnPrompt_MarksTheRetryFailureTurnScoped(t *testing.T) {
 	roles := promptRolesOf(deps)
 
 	retryEmptyTurnPrompt(t.Context(), roles.bridges, roles.chats, roles.bus,
-		roles.turnOutcome, "c1", &vibekit.PromptCommand{Text: "hi", MessageID: "m1"},
+		roles.turnOutcome, "c1", &marotte.PromptCommand{Text: "hi", MessageID: "m1"},
 		map[string]any{})
 
 	got := deps.onlyError(t)
-	if got.Code != vibekit.ErrCodeRecoveryFailed {
-		t.Errorf("code = %q, want %q", got.Code, vibekit.ErrCodeRecoveryFailed)
+	if got.Code != marotte.ErrCodeRecoveryFailed {
+		t.Errorf("code = %q, want %q", got.Code, marotte.ErrCodeRecoveryFailed)
 	}
 	if !got.TurnScoped {
 		t.Error("TurnScoped = false, want true: the retry was a turn of its own and the " +
@@ -237,7 +237,7 @@ func TestRetryEmptyTurnPrompt_WithholdsTheFrameOnAnUnackedCancel(t *testing.T) {
 	cancel(ErrCancelGraceExpired)
 
 	retryEmptyTurnPrompt(ctx, roles.bridges, roles.chats, roles.bus,
-		roles.turnOutcome, "c1", &vibekit.PromptCommand{Text: "hi", MessageID: "m1"},
+		roles.turnOutcome, "c1", &marotte.PromptCommand{Text: "hi", MessageID: "m1"},
 		map[string]any{})
 
 	deps.mu.Lock()
@@ -259,7 +259,7 @@ func TestRetryEmptyTurnPrompt_RespawnFailureCorrectsTheRetryingDivider(t *testin
 	roles := promptRolesOf(deps)
 
 	retryEmptyTurnPrompt(t.Context(), roles.bridges, roles.chats, roles.bus,
-		roles.turnOutcome, "c1", &vibekit.PromptCommand{Text: "hi", MessageID: "m1"},
+		roles.turnOutcome, "c1", &marotte.PromptCommand{Text: "hi", MessageID: "m1"},
 		map[string]any{})
 
 	deps.mu.Lock()
@@ -270,12 +270,12 @@ func TestRetryEmptyTurnPrompt_RespawnFailureCorrectsTheRetryingDivider(t *testin
 		t.Fatalf("appended %d messages, want exactly 1: %+v", len(appended), appended)
 	}
 	got := appended[0]
-	if got.Role != vibekit.RoleEvent {
-		t.Errorf("role = %q, want %q: a divider, not a bubble", got.Role, vibekit.RoleEvent)
+	if got.Role != marotte.RoleEvent {
+		t.Errorf("role = %q, want %q: a divider, not a bubble", got.Role, marotte.RoleEvent)
 	}
-	if got.EventKind != vibekit.EventInterrupted {
+	if got.EventKind != marotte.EventInterrupted {
 		t.Errorf("event_kind = %q, want %q: `interrupted` is what renders as a boundary "+
-			"divider and grades the turn broken", got.EventKind, vibekit.EventInterrupted)
+			"divider and grades the turn broken", got.EventKind, marotte.EventInterrupted)
 	}
 	if !strings.Contains(got.Content, "Session refresh failed") {
 		t.Errorf("content = %q, want it to name the failed refresh: this row is the newest "+
@@ -300,7 +300,7 @@ func TestRetryEmptyTurnPrompt_RespawnFailureCorrectsTheRetryingDivider(t *testin
 // on disk by the time any of these exits is reached — and an exit that appends
 // nothing leaves a turn with a trigger and no body at all. The transcript projection
 // reads an absent carrier as "nothing closed this turn" and renders it as an end
-// vibekit could not read, seconds after the prompt was refused. The carrier grades
+// marotte could not read, seconds after the prompt was refused. The carrier grades
 // the turn from the stop that ended it and carries the real reason instead: an
 // `interrupted` divider for every exit that broke, and a bare `cancelled` marker for
 // the one that did not.
@@ -310,15 +310,15 @@ func TestPromptExits_AppendATurnStopCarrier(t *testing.T) {
 		// arrange puts the double on the path that produces this exit.
 		arrange func(*surfaceDeps)
 		// run drives the production path.
-		run func(context.Context, *promptRoles, *vibekit.PromptCommand)
+		run func(context.Context, *promptRoles, *marotte.PromptCommand)
 		// want is a substring of the row's content: the cause a reader can act on. Empty
 		// means the row carries NO prose at all, which is what a cancel says.
 		want string
 		// kind is the marker the row must carry, DERIVED server-side from the stop.
-		kind vibekit.EventKind
+		kind marotte.EventKind
 		// outcome is the verdict stamped on the row, so both projections read it rather
 		// than inferring one from the event kind.
-		outcome vibekit.TurnOutcome
+		outcome marotte.TurnOutcome
 		// frame is whether this exit also broadcasts an error, in which case the two
 		// surfaces must read one sentence. Asserted in BOTH directions: false demands
 		// zero error payloads.
@@ -327,34 +327,34 @@ func TestPromptExits_AppendATurnStopCarrier(t *testing.T) {
 		{
 			name:    "the bridge could not be opened",
 			arrange: func(d *surfaceDeps) { d.spawnErr = errors.New("no such binary") },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				runPromptTurn(ctx, func() {}, roles, "c1", p)
 			},
 			want:    "no such binary",
-			kind:    vibekit.EventInterrupted,
-			outcome: vibekit.TurnOutcomeInterrupted,
+			kind:    marotte.EventInterrupted,
+			outcome: marotte.TurnOutcomeInterrupted,
 			frame:   true,
 		},
 		{
 			name:    "the bridge slot was held despite the reservation",
 			arrange: func(d *surfaceDeps) { d.slotHeld = true },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				runPromptTurn(ctx, func() {}, roles, "c1", p)
 			},
 			want:    "The prompt could not start",
-			kind:    vibekit.EventInterrupted,
-			outcome: vibekit.TurnOutcomeInterrupted,
+			kind:    marotte.EventInterrupted,
+			outcome: marotte.TurnOutcomeInterrupted,
 			frame:   true,
 		},
 		{
 			name:    "the turn was cancelled before an epoch was minted",
 			arrange: func(d *surfaceDeps) { d.deadEpoch = true },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				runPromptTurn(ctx, func() {}, roles, "c1", p)
 			},
 			want:    "cancelled before the agent answered",
-			kind:    vibekit.EventInterrupted,
-			outcome: vibekit.TurnOutcomeInterrupted,
+			kind:    marotte.EventInterrupted,
+			outcome: marotte.TurnOutcomeInterrupted,
 			frame:   true,
 		},
 		{
@@ -362,13 +362,13 @@ func TestPromptExits_AppendATurnStopCarrier(t *testing.T) {
 			// row is the whole of what a reader ever learns about it.
 			name:    "the empty-turn retry's own epoch never opened",
 			arrange: func(d *surfaceDeps) { d.deadEpoch = true },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				retryEmptyTurnPrompt(ctx, roles.bridges, roles.chats, roles.bus,
 					roles.turnOutcome, "c1", p, map[string]any{})
 			},
 			want:    "cancelled before the agent answered",
-			kind:    vibekit.EventInterrupted,
-			outcome: vibekit.TurnOutcomeInterrupted,
+			kind:    marotte.EventInterrupted,
+			outcome: marotte.TurnOutcomeInterrupted,
 		},
 		{
 			// The reader pressed Stop and KAS never acked it, so the grace budget killed
@@ -377,21 +377,21 @@ func TestPromptExits_AppendATurnStopCarrier(t *testing.T) {
 			// here would outrank the cancel in deriveTurnOutcome and paint the turn red.
 			name:    "an unacked cancel killed the context before an epoch was minted",
 			arrange: func(d *surfaceDeps) { d.deadEpoch = true },
-			run: func(ctx context.Context, roles *promptRoles, p *vibekit.PromptCommand) {
+			run: func(ctx context.Context, roles *promptRoles, p *marotte.PromptCommand) {
 				ctx, cancel := context.WithCancelCause(ctx)
 				defer cancel(nil)
 				cancel(ErrCancelGraceExpired)
 				runPromptTurn(ctx, func() {}, roles, "c1", p)
 			},
-			kind:    vibekit.EventCancelled,
-			outcome: vibekit.TurnOutcomeCancelled,
+			kind:    marotte.EventCancelled,
+			outcome: marotte.TurnOutcomeCancelled,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := newSurfaceDeps()
 			tc.arrange(deps)
-			tc.run(t.Context(), promptRolesOf(deps), &vibekit.PromptCommand{Text: "hi", MessageID: "m1"})
+			tc.run(t.Context(), promptRolesOf(deps), &marotte.PromptCommand{Text: "hi", MessageID: "m1"})
 
 			deps.mu.Lock()
 			appended := deps.appended
@@ -402,8 +402,8 @@ func TestPromptExits_AppendATurnStopCarrier(t *testing.T) {
 				t.Fatalf("appended %d messages, want exactly 1: %+v", len(appended), appended)
 			}
 			got := appended[0]
-			if got.Role != vibekit.RoleEvent {
-				t.Errorf("role = %q, want %q: a divider, not a bubble", got.Role, vibekit.RoleEvent)
+			if got.Role != marotte.RoleEvent {
+				t.Errorf("role = %q, want %q: a divider, not a bubble", got.Role, marotte.RoleEvent)
 			}
 			if got.EventKind != tc.kind {
 				t.Errorf("event_kind = %q, want %q: the kind is what grades the turn and "+

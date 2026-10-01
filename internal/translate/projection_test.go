@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // seqIDs returns a deterministic id generator so projected transcripts can be
@@ -23,7 +23,7 @@ func seqIDs() func() string {
 
 // replayFrame builds one session/update `update` object. sub is the
 // _meta.kiro.kind for a session_info_update; extra merges into _meta.kiro.
-func replayFrame(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) (vibekit.ACPUpdateKind, json.RawMessage) {
+func replayFrame(t *testing.T, kind marotte.ACPUpdateKind, text, sub string, extra map[string]any) (marotte.ACPUpdateKind, json.RawMessage) {
 	t.Helper()
 	kiro := map[string]any{"replay": true}
 	if sub != "" {
@@ -42,14 +42,14 @@ func replayFrame(t *testing.T, kind vibekit.ACPUpdateKind, text, sub string, ext
 
 // pair packs replayFrame's two returns into the shape ingestAll takes, so a
 // frame list reads as one line per frame.
-func pair(kind vibekit.ACPUpdateKind, raw json.RawMessage) [2]any {
+func pair(kind marotte.ACPUpdateKind, raw json.RawMessage) [2]any {
 	return [2]any{kind, raw}
 }
 
 // ingestAll feeds a sequence of (kind, raw) pairs into a fresh Projection.
 func ingestAll(p *Projection, frames [][2]any) {
 	for _, f := range frames {
-		p.Ingest(f[0].(vibekit.ACPUpdateKind), f[1].(json.RawMessage))
+		p.Ingest(f[0].(marotte.ACPUpdateKind), f[1].(json.RawMessage))
 	}
 }
 
@@ -61,7 +61,7 @@ func ingestAll(p *Projection, frames [][2]any) {
 // replay-tagged frames are routed here.
 func measuredCompactedReplay(t *testing.T) [][2]any {
 	t.Helper()
-	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind marotte.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
@@ -78,19 +78,19 @@ func measuredCompactedReplay(t *testing.T) [][2]any {
 	}
 	return [][2]any{
 		f(replayUserChunkKind, "Reply with exactly: ONE", "", nil),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		f(vibekit.ACPUpdateAgentChunk, "ONE", "", nil),
-		f(vibekit.ACPUpdateSessionInfo, "", "context_usage", nil),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_completion", completion),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", turnEnd),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		f(marotte.ACPUpdateAgentChunk, "ONE", "", nil),
+		f(marotte.ACPUpdateSessionInfo, "", "context_usage", nil),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_completion", completion),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_end", turnEnd),
 		f(replayUserChunkKind, "Reply with exactly: TWO", "", nil),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		f(vibekit.ACPUpdateAgentChunk, "TWO", "", nil),
-		f(vibekit.ACPUpdateSessionInfo, "", "context_usage", nil),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_completion", completion),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", turnEnd),
-		f(vibekit.ACPUpdateSessionInfo, "", "summarization_separator", map[string]any{"summarizationSeparator": true}),
-		f(vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+		f(marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		f(marotte.ACPUpdateAgentChunk, "TWO", "", nil),
+		f(marotte.ACPUpdateSessionInfo, "", "context_usage", nil),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_completion", completion),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_end", turnEnd),
+		f(marotte.ACPUpdateSessionInfo, "", "summarization_separator", map[string]any{"summarizationSeparator": true}),
+		f(marotte.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
 			"summaryMessage": map[string]any{"content": "## Goal\nRespond exactly."},
 		}),
 	}
@@ -116,17 +116,17 @@ func TestProjection_MeasuredCompactedReplay(t *testing.T) {
 	got := p.Messages()
 
 	type want struct {
-		role    vibekit.Role
+		role    marotte.Role
 		content string
-		kind    vibekit.EventKind
-		outcome vibekit.TurnOutcome
+		kind    marotte.EventKind
+		outcome marotte.TurnOutcome
 	}
 	expect := []want{
-		{role: vibekit.RoleUser, content: "Reply with exactly: ONE"},
-		{role: vibekit.RoleAssistant, content: "ONE", outcome: vibekit.TurnOutcomeCompleted},
-		{role: vibekit.RoleUser, content: "Reply with exactly: TWO"},
-		{role: vibekit.RoleAssistant, content: "TWO", outcome: vibekit.TurnOutcomeCompleted},
-		{role: vibekit.RoleEvent, content: "## Goal\nRespond exactly.", kind: vibekit.EventCompacted},
+		{role: marotte.RoleUser, content: "Reply with exactly: ONE"},
+		{role: marotte.RoleAssistant, content: "ONE", outcome: marotte.TurnOutcomeCompleted},
+		{role: marotte.RoleUser, content: "Reply with exactly: TWO"},
+		{role: marotte.RoleAssistant, content: "TWO", outcome: marotte.TurnOutcomeCompleted},
+		{role: marotte.RoleEvent, content: "## Goal\nRespond exactly.", kind: marotte.EventCompacted},
 	}
 	if len(got) != len(expect) {
 		t.Fatalf("projected %d messages, want %d:\n%s", len(got), len(expect), dumpMessages(got))
@@ -169,9 +169,9 @@ func TestProjection_TurnBracketsSeparateTurns(t *testing.T) {
 	ingestAll(p, measuredCompactedReplay(t))
 	got := p.Messages()
 
-	var assistants []vibekit.Message
+	var assistants []marotte.Message
 	for _, m := range got {
-		if m.Role == vibekit.RoleAssistant {
+		if m.Role == marotte.RoleAssistant {
 			assistants = append(assistants, m)
 		}
 	}
@@ -199,7 +199,7 @@ func TestProjection_UserMessagePrecedesTheBracket(t *testing.T) {
 	if len(got) < 2 {
 		t.Fatalf("projected %d messages, want at least 2", len(got))
 	}
-	if got[0].Role != vibekit.RoleUser || got[1].Role != vibekit.RoleAssistant {
+	if got[0].Role != marotte.RoleUser || got[1].Role != marotte.RoleAssistant {
 		t.Errorf("first two roles = %s, %s; want user then assistant", got[0].Role, got[1].Role)
 	}
 }
@@ -221,7 +221,7 @@ func TestProjection_CompactionKeepsTheOriginals(t *testing.T) {
 	joined := strings.Join(texts, "|")
 	for _, pre := range []string{"ONE", "TWO"} {
 		if !strings.Contains(joined, pre) {
-			t.Errorf("pre-compaction turn %q was dropped; vibekit's model is a watermark, not a deletion.\n%s",
+			t.Errorf("pre-compaction turn %q was dropped; marotte's model is a watermark, not a deletion.\n%s",
 				pre, dumpMessages(got))
 		}
 	}
@@ -237,31 +237,31 @@ func TestProjection_CompactionKeepsTheOriginals(t *testing.T) {
 func TestProjection_MidTurnSeparatorSplitsTheTurn(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
 	ingestAll(p, [][2]any{
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
-		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "before", "", map[string]any{
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
+		pair(replayFrame(t, marotte.ACPUpdateAgentChunk, "before", "", map[string]any{
 			"messageId": "m-pre", "timestamp": "2026-08-02T10:00:00.000Z",
 		})),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 			map[string]any{"summarizationSeparator": true})),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
 			"summaryMessage": map[string]any{"content": "the summary"},
 		})),
-		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "after", "", map[string]any{
+		pair(replayFrame(t, marotte.ACPUpdateAgentChunk, "after", "", map[string]any{
 			"messageId": "m-post", "timestamp": "2026-08-02T10:00:05.000Z",
 		})),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end", nil)),
 	})
 	got := p.Messages()
 
 	type want struct {
-		role    vibekit.Role
+		role    marotte.Role
 		content string
-		kind    vibekit.EventKind
+		kind    marotte.EventKind
 	}
 	expect := []want{
-		{role: vibekit.RoleAssistant, content: "before"},
-		{role: vibekit.RoleEvent, content: "the summary", kind: vibekit.EventCompacted},
-		{role: vibekit.RoleAssistant, content: "after"},
+		{role: marotte.RoleAssistant, content: "before"},
+		{role: marotte.RoleEvent, content: "the summary", kind: marotte.EventCompacted},
+		{role: marotte.RoleAssistant, content: "after"},
 	}
 	if len(got) != len(expect) {
 		t.Fatalf("projected %d messages, want %d:\n%s", len(got), len(expect), dumpMessages(got))
@@ -290,17 +290,17 @@ func TestProjection_MidTurnSeparatorSplitsTheTurn(t *testing.T) {
 func TestProjection_TailSeparatorLeavesTheTurnWhole(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
 	ingestAll(p, [][2]any{
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
-		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "before", "", map[string]any{
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
+		pair(replayFrame(t, marotte.ACPUpdateAgentChunk, "before", "", map[string]any{
 			"messageId": "m-say", "timestamp": "2026-08-02T10:00:00.000Z",
 		})),
-		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, " and after", "", map[string]any{
+		pair(replayFrame(t, marotte.ACPUpdateAgentChunk, " and after", "", map[string]any{
 			"messageId": "m-say", "timestamp": "2026-08-02T10:00:05.000Z",
 		})),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end", nil)),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 			map[string]any{"summarizationSeparator": true})),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
 			"summaryMessage": map[string]any{"content": "the summary"},
 		})),
 	})
@@ -310,11 +310,11 @@ func TestProjection_TailSeparatorLeavesTheTurnWhole(t *testing.T) {
 		t.Fatalf("projected %d messages, want 2 (one whole turn, then the event):\n%s",
 			len(got), dumpMessages(got))
 	}
-	if got[0].Role != vibekit.RoleAssistant || got[0].Content != "before and after" {
+	if got[0].Role != marotte.RoleAssistant || got[0].Content != "before and after" {
 		t.Errorf("message 0 = {role:%s content:%q}, want the whole reply in one assistant message",
 			got[0].Role, got[0].Content)
 	}
-	if got[1].Role != vibekit.RoleEvent || got[1].EventKind != vibekit.EventCompacted {
+	if got[1].Role != marotte.RoleEvent || got[1].EventKind != marotte.EventCompacted {
 		t.Errorf("message 1 = {role:%s kind:%s}, want the compaction event",
 			got[1].Role, got[1].EventKind)
 	}
@@ -332,19 +332,19 @@ func TestProjection_TailSeparatorLeavesTheTurnWhole(t *testing.T) {
 // permanently-spinning card in every restored transcript.
 func TestProjection_ToolCallLandsComplete(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
 
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-1",
 		"title":         "Read File",
 		"kind":          "read",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-1",
 		"status":        "completed",
 		"content": []map[string]any{
@@ -361,9 +361,9 @@ func TestProjection_ToolCallLandsComplete(t *testing.T) {
 		t.Fatalf("got %d tool calls, want 1", len(got[0].ToolCalls))
 	}
 	tc := got[0].ToolCalls[0]
-	if tc.Status != vibekit.ToolCompleted {
+	if tc.Status != marotte.ToolCompleted {
 		t.Errorf("tool status = %q, want %q (the update's terminal status must be folded in)",
-			tc.Status, vibekit.ToolCompleted)
+			tc.Status, marotte.ToolCompleted)
 	}
 	if !strings.Contains(tc.Output, "file body") {
 		t.Errorf("tool output = %q, want the update's content", tc.Output)
@@ -372,7 +372,7 @@ func TestProjection_ToolCallLandsComplete(t *testing.T) {
 	// rather than dropping it.
 	var sawToolBlock bool
 	for _, b := range got[0].Blocks {
-		if b.Type == vibekit.BlockToolUse && b.ToolCallID == "tc-1" {
+		if b.Type == marotte.BlockToolUse && b.ToolCallID == "tc-1" {
 			sawToolBlock = true
 		}
 	}
@@ -387,10 +387,10 @@ func TestProjection_ToolCallLandsComplete(t *testing.T) {
 // a restored conversation's content.
 func TestProjection_ReasoningBecomesAThinkingBlock(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	_, th := replayFrame(t, vibekit.ACPUpdateThoughtChunk, "weighing options", "", nil)
-	p.Ingest(vibekit.ACPUpdateThoughtChunk, th)
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	_, th := replayFrame(t, marotte.ACPUpdateThoughtChunk, "weighing options", "", nil)
+	p.Ingest(marotte.ACPUpdateThoughtChunk, th)
 
 	got := p.Messages()
 	if len(got) != 1 {
@@ -401,7 +401,7 @@ func TestProjection_ReasoningBecomesAThinkingBlock(t *testing.T) {
 	}
 	var sawThinking bool
 	for _, b := range got[0].Blocks {
-		if b.Type == vibekit.BlockThinking && b.Thinking == "weighing options" {
+		if b.Type == marotte.BlockThinking && b.Thinking == "weighing options" {
 			sawThinking = true
 		}
 	}
@@ -417,8 +417,8 @@ func TestProjection_ReasoningBecomesAThinkingBlock(t *testing.T) {
 func TestProjection_EmptyTurnIsDropped(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
 	for _, sub := range []string{"turn_start", "turn_end"} {
-		_, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", sub, nil)
-		p.Ingest(vibekit.ACPUpdateSessionInfo, raw)
+		_, raw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", sub, nil)
+		p.Ingest(marotte.ACPUpdateSessionInfo, raw)
 	}
 	if got := p.Messages(); len(got) != 0 {
 		t.Errorf("projected %d messages from an empty turn, want 0:\n%s", len(got), dumpMessages(got))
@@ -431,10 +431,10 @@ func TestProjection_EmptyTurnIsDropped(t *testing.T) {
 // arbitrary place.
 func TestProjection_SummaryWithoutSeparatorIsIgnored(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+	_, raw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
 		"summaryMessage": map[string]any{"content": "orphan summary"},
 	})
-	p.Ingest(vibekit.ACPUpdateSessionInfo, raw)
+	p.Ingest(marotte.ACPUpdateSessionInfo, raw)
 
 	if got := p.Messages(); len(got) != 0 {
 		t.Errorf("projected %d messages, want 0:\n%s", len(got), dumpMessages(got))
@@ -444,7 +444,7 @@ func TestProjection_SummaryWithoutSeparatorIsIgnored(t *testing.T) {
 	}
 }
 
-func dumpMessages(ms []vibekit.Message) string {
+func dumpMessages(ms []marotte.Message) string {
 	var b strings.Builder
 	for i, m := range ms {
 		fmt.Fprintf(&b, "  [%d] role=%s kind=%s id=%s content=%q tools=%d\n",
@@ -463,12 +463,12 @@ func dumpMessages(ms []vibekit.Message) string {
 // id would not exercise that.
 func probe23Turn(t *testing.T) [][2]any {
 	t.Helper()
-	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind marotte.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
 	toolCall := mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tooluse_bNV19vGaS2y5nx7WcVCyFx",
 		"title":         "Write File",
 		"kind":          "edit",
@@ -484,13 +484,13 @@ func probe23Turn(t *testing.T) [][2]any {
 			"messageId": "ca4b4050-d45b-44d9-8a99-f72e79cc2767",
 			"timestamp": "2026-08-01T00:33:12.051Z",
 		}),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		{vibekit.ACPUpdateToolCall, toolCall},
-		f(vibekit.ACPUpdateAgentChunk, "Done.", "", map[string]any{
+		f(marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		{marotte.ACPUpdateToolCall, toolCall},
+		f(marotte.ACPUpdateAgentChunk, "Done.", "", map[string]any{
 			"messageId": "2f5d57c4-152e-4825-8dcf-fda9668b4693-say",
 			"timestamp": "2026-08-01T00:33:17.880Z",
 		}),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", nil),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_end", nil),
 	}
 }
 
@@ -509,7 +509,7 @@ func TestProjection_AdoptsWireIdentity(t *testing.T) {
 	}
 
 	// The user message keeps the id KAS echoed back — which for a real prompt
-	// is the id vibekit itself generated and sent on session/prompt.
+	// is the id marotte itself generated and sent on session/prompt.
 	if got[0].ID != "ca4b4050-d45b-44d9-8a99-f72e79cc2767" {
 		t.Errorf("user id = %q, want the wire's messageId", got[0].ID)
 	}
@@ -542,7 +542,7 @@ func TestProjection_AdoptsWireIdentity(t *testing.T) {
 // This is what makes the projection safe to swap into a chat record. A second
 // resume must not renumber the transcript, or every reconnecting client sees a
 // wholly new set of messages and the client store's upsert-by-id merge (see
-// vibekit.md "ingestMessage") duplicates the entire history.
+// marotte.md "ingestMessage") duplicates the entire history.
 func TestProjection_IsDeterministicAcrossLoads(t *testing.T) {
 	// The two loads get DISTINGUISHABLE generators on purpose. Production's
 	// generator is time+random based, so a fabricated id differs between
@@ -588,12 +588,12 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 	ingestAll(p, probe23Turn(t))
 	ingestAll(p, [][2]any{
 		func() [2]any {
-			k, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+			k, raw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 				map[string]any{"summarizationSeparator": true})
 			return [2]any{k, raw}
 		}(),
 		func() [2]any {
-			k, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message",
+			k, raw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summary_message",
 				map[string]any{"summaryMessage": map[string]any{"content": "## Goal\nMANGO."}})
 			return [2]any{k, raw}
 		}(),
@@ -601,8 +601,8 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 	got := p.Messages()
 
 	last := got[len(got)-1]
-	if last.EventKind != vibekit.EventCompacted {
-		t.Fatalf("last message event kind = %q, want %q", last.EventKind, vibekit.EventCompacted)
+	if last.EventKind != marotte.EventCompacted {
+		t.Fatalf("last message event kind = %q, want %q", last.EventKind, marotte.EventCompacted)
 	}
 	// The assistant turn it follows is stamped 1785544395522.
 	if last.Ts != 1785544395522 {
@@ -621,7 +621,7 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 // subsumes the first summary and the whole transcript becomes one paragraph — and compaction
 // fires automatically at 80% context, so a long-lived chat would collapse on every resume.
 func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
-	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind marotte.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
@@ -631,19 +631,19 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 				"messageId": fmt.Sprintf("user-%d", n),
 				"timestamp": fmt.Sprintf("2026-08-02T20:0%d:00.000Z", n),
 			}),
-			f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-			f(vibekit.ACPUpdateAgentChunk, reply, "", map[string]any{
+			f(marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+			f(marotte.ACPUpdateAgentChunk, reply, "", map[string]any{
 				"messageId": fmt.Sprintf("agent-%d-say", n),
 				"timestamp": fmt.Sprintf("2026-08-02T20:0%d:30.000Z", n),
 			}),
-			f(vibekit.ACPUpdateSessionInfo, "", "turn_end", nil),
+			f(marotte.ACPUpdateSessionInfo, "", "turn_end", nil),
 		}
 	}
 	compaction := func(summary string) [][2]any {
 		return [][2]any{
-			f(vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+			f(marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 				map[string]any{"summarizationSeparator": true}),
-			f(vibekit.ACPUpdateSessionInfo, "", "summary_message",
+			f(marotte.ACPUpdateSessionInfo, "", "summary_message",
 				map[string]any{"summaryMessage": map[string]any{"content": summary}}),
 		}
 	}
@@ -676,7 +676,7 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 	for _, wantText := range []string{"ONE", "TWO", "THREE", "FOUR"} {
 		found := false
 		for _, m := range got {
-			if m.Role == vibekit.RoleAssistant && m.Content == wantText {
+			if m.Role == marotte.RoleAssistant && m.Content == wantText {
 				found = true
 				break
 			}
@@ -689,7 +689,7 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 	// Both compaction events are present, in order, at their separators.
 	var events []int
 	for i, m := range got {
-		if m.EventKind == vibekit.EventCompacted {
+		if m.EventKind == marotte.EventCompacted {
 			events = append(events, i)
 		}
 	}
@@ -816,18 +816,18 @@ func TestProjection_StepNoticeIsNotUserProse(t *testing.T) {
 			if len(got) != 2 {
 				t.Fatalf("got %d messages, want 2 (the step's note and the real prompt)", len(got))
 			}
-			if got[0].Role != vibekit.RoleEvent {
-				t.Errorf("the step's note has role %q, want %q", got[0].Role, vibekit.RoleEvent)
+			if got[0].Role != marotte.RoleEvent {
+				t.Errorf("the step's note has role %q, want %q", got[0].Role, marotte.RoleEvent)
 			}
-			if got[0].EventKind != vibekit.EventStepNotice {
-				t.Errorf("event_kind = %q, want %q", got[0].EventKind, vibekit.EventStepNotice)
+			if got[0].EventKind != marotte.EventStepNotice {
+				t.Errorf("event_kind = %q, want %q", got[0].EventKind, marotte.EventStepNotice)
 			}
 			if got[0].Content != question {
 				t.Errorf("content = %q, want the question verbatim", got[0].Content)
 			}
 			// The real prompt is untouched: a note arriving mid-accumulation must
 			// not splice itself into a user message's text.
-			if got[1].Role != vibekit.RoleUser || got[1].Content != "a real question" {
+			if got[1].Role != marotte.RoleUser || got[1].Content != "a real question" {
 				t.Errorf("second message = %q/%q, want a user prompt", got[1].Role, got[1].Content)
 			}
 		})
@@ -842,10 +842,10 @@ func TestProjection_StepNoticeIsNotUserProse(t *testing.T) {
 // nothing to reach.
 func TestProjection_CompactionAtTheStartOfTheTranscript(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	sep, sepRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+	sep, sepRaw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 		map[string]any{"summarizationSeparator": true})
 	p.Ingest(sep, sepRaw)
-	sum, sumRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message",
+	sum, sumRaw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summary_message",
 		map[string]any{"summaryMessage": map[string]any{"content": "## Goal\nPLUM."}})
 	p.Ingest(sum, sumRaw)
 
@@ -853,8 +853,8 @@ func TestProjection_CompactionAtTheStartOfTheTranscript(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("projected %d messages, want 1 compaction event:\n%s", len(got), dumpMessages(got))
 	}
-	if got[0].EventKind != vibekit.EventCompacted {
-		t.Errorf("message 0 kind = %q, want %q", got[0].EventKind, vibekit.EventCompacted)
+	if got[0].EventKind != marotte.EventCompacted {
+		t.Errorf("message 0 kind = %q, want %q", got[0].EventKind, marotte.EventCompacted)
 	}
 	if got[0].Content != "## Goal\nPLUM." {
 		t.Errorf("message 0 content = %q, want the summary text", got[0].Content)
@@ -868,18 +868,18 @@ func TestProjection_CompactionAtTheStartOfTheTranscript(t *testing.T) {
 func TestProjection_SecondSummaryWithoutItsOwnSeparatorIsDropped(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
 	ingestAll(p, probe23Turn(t))
-	sep, sepRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+	sep, sepRaw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 		map[string]any{"summarizationSeparator": true})
 	p.Ingest(sep, sepRaw)
 	for _, text := range []string{"## Goal\nFIRST.", "## Goal\nSECOND."} {
-		sum, sumRaw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message",
+		sum, sumRaw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summary_message",
 			map[string]any{"summaryMessage": map[string]any{"content": text}})
 		p.Ingest(sum, sumRaw)
 	}
 
 	compactions := 0
 	for _, m := range p.Messages() {
-		if m.EventKind == vibekit.EventCompacted {
+		if m.EventKind == marotte.EventCompacted {
 			compactions++
 		}
 	}
@@ -897,31 +897,31 @@ func TestProjection_ToolUpdateAppliesPresentFieldsAndKeepsAbsentOnes(t *testing.
 		name          string
 		update        map[string]any
 		wantTitle     string
-		wantKind      vibekit.ToolKind
+		wantKind      marotte.ToolKind
 		wantLocations int
 	}{
 		{
 			name:          "the_update_refines_every_field",
 			update:        map[string]any{"title": "Read config.yaml", "kind": "edit", "locations": []map[string]any{{"path": "b.go"}, {"path": "c.go"}}},
 			wantTitle:     "Read config.yaml",
-			wantKind:      vibekit.ToolKind("edit"),
+			wantKind:      marotte.ToolKind("edit"),
 			wantLocations: 2,
 		},
 		{
 			name:          "the_update_carries_only_a_status",
 			update:        map[string]any{},
 			wantTitle:     "Read File",
-			wantKind:      vibekit.ToolKind("read"),
+			wantKind:      marotte.ToolKind("read"),
 			wantLocations: 1,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			p := NewProjection(seqIDs(), "")
-			_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-			p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-			p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-				"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+			_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+			p.Ingest(marotte.ACPUpdateSessionInfo, start)
+			p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+				"sessionUpdate": string(marotte.ACPUpdateToolCall),
 				"toolCallId":    "tc-1",
 				"title":         "Read File",
 				"kind":          "read",
@@ -930,13 +930,13 @@ func TestProjection_ToolUpdateAppliesPresentFieldsAndKeepsAbsentOnes(t *testing.
 				"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 			}))
 			update := map[string]any{
-				"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+				"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 				"toolCallId":    "tc-1",
 				"status":        "completed",
 				"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 			}
 			maps.Copy(update, tc.update)
-			p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, update))
+			p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, update))
 
 			got := p.Messages()
 			if len(got) != 1 || len(got[0].ToolCalls) != 1 {
@@ -978,16 +978,16 @@ func TestProjection_ToolCallCarriesItsOwnTimestamp(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			p := NewProjection(seqIDs(), "")
-			_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-			p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+			_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+			p.Ingest(marotte.ACPUpdateSessionInfo, start)
 			// The turn's own start comes from its FIRST content frame, so the
 			// say below is what makes the tool frame's stamp a distinguishable
 			// second value rather than the same one.
-			_, say := replayFrame(t, vibekit.ACPUpdateAgentChunk, "working", "",
+			_, say := replayFrame(t, marotte.ACPUpdateAgentChunk, "working", "",
 				map[string]any{"timestamp": turnStamp})
-			p.Ingest(vibekit.ACPUpdateAgentChunk, say)
-			p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-				"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+			p.Ingest(marotte.ACPUpdateAgentChunk, say)
+			p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+				"sessionUpdate": string(marotte.ACPUpdateToolCall),
 				"toolCallId":    "tc-1",
 				"title":         "Read File",
 				"kind":          "read",
@@ -1021,31 +1021,31 @@ func TestProjection_ToolCallCarriesItsOwnTimestamp(t *testing.T) {
 // Flushing the pending user text BEFORE closing gets it wrong the other way: the orphaned
 // reply lands after the next prompt's user message, attributing it to the turn that follows.
 func TestProjection_SecondTurnStartClosesTheFirstTurn(t *testing.T) {
-	f := func(kind vibekit.ACPUpdateKind, text, sub string) [2]any {
+	f := func(kind marotte.ACPUpdateKind, text, sub string) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, nil)
 		return [2]any{k, raw}
 	}
 	p := NewProjection(seqIDs(), "")
 	ingestAll(p, [][2]any{
 		f(replayUserChunkKind, "first prompt", ""),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_start"),
-		f(vibekit.ACPUpdateAgentChunk, "ONE", ""),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_start"),
+		f(marotte.ACPUpdateAgentChunk, "ONE", ""),
 		// No turn_end: the first turn's bracket never closed.
 		f(replayUserChunkKind, "second prompt", ""),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_start"),
-		f(vibekit.ACPUpdateAgentChunk, "TWO", ""),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_end"),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_start"),
+		f(marotte.ACPUpdateAgentChunk, "TWO", ""),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_end"),
 	})
 	got := p.Messages()
 
 	want := []struct {
-		role    vibekit.Role
+		role    marotte.Role
 		content string
 	}{
-		{vibekit.RoleUser, "first prompt"},
-		{vibekit.RoleAssistant, "ONE"},
-		{vibekit.RoleUser, "second prompt"},
-		{vibekit.RoleAssistant, "TWO"},
+		{marotte.RoleUser, "first prompt"},
+		{marotte.RoleAssistant, "ONE"},
+		{marotte.RoleUser, "second prompt"},
+		{marotte.RoleAssistant, "TWO"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("projected %d messages, want %d:\n%s", len(got), len(want), dumpMessages(got))
@@ -1064,26 +1064,26 @@ func TestProjection_SecondTurnStartClosesTheFirstTurn(t *testing.T) {
 // live stream dropped — stuck at whatever status the log recorded.
 func TestProjection_InternalToolIsDropped(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
 
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "cc-1",
 		"title":         "Fetching your cloud config",
 		"kind":          "other",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true, "toolId": "fetch_cloud_config"}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "cc-1",
 		"status":        "completed",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
 	// The real reply follows, so the turn itself still projects.
-	_, chunk := replayFrame(t, vibekit.ACPUpdateAgentChunk, "hello", "", nil)
-	p.Ingest(vibekit.ACPUpdateAgentChunk, chunk)
+	_, chunk := replayFrame(t, marotte.ACPUpdateAgentChunk, "hello", "", nil)
+	p.Ingest(marotte.ACPUpdateAgentChunk, chunk)
 
 	got := p.Messages()
 	if len(got) != 1 {
@@ -1093,7 +1093,7 @@ func TestProjection_InternalToolIsDropped(t *testing.T) {
 		t.Errorf("projected %d tool calls, want 0 (internal tool must not survive a replay)", n)
 	}
 	for _, b := range got[0].Blocks {
-		if b.Type == vibekit.BlockToolUse {
+		if b.Type == marotte.BlockToolUse {
 			t.Errorf("a tool_use block anchors the suppressed internal tool; blocks = %+v", got[0].Blocks)
 		}
 	}
@@ -1101,7 +1101,7 @@ func TestProjection_InternalToolIsDropped(t *testing.T) {
 
 // replaySteerFrame builds a replayed user_message_chunk on KAS's steering channel: the
 // `source` discriminator sits at `_meta.kiro.source`, never on the update object.
-func replaySteerFrame(t *testing.T, id, text string) (vibekit.ACPUpdateKind, json.RawMessage) {
+func replaySteerFrame(t *testing.T, id, text string) (marotte.ACPUpdateKind, json.RawMessage) {
 	t.Helper()
 	return replayFrame(t, replayUserChunkKind, text, "", map[string]any{
 		"messageId": id,
@@ -1123,11 +1123,11 @@ func TestProjection_SteerJoinsTheTurnItWasReadIn(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("projected %d messages, want 1:\n%s", len(got), dumpMessages(got))
 	}
-	if got[0].Role != vibekit.RoleUser {
-		t.Errorf("role = %q, want %q", got[0].Role, vibekit.RoleUser)
+	if got[0].Role != marotte.RoleUser {
+		t.Errorf("role = %q, want %q", got[0].Role, marotte.RoleUser)
 	}
-	if got[0].UserKind != vibekit.UserKindSteer {
-		t.Errorf("user_kind = %q, want %q", got[0].UserKind, vibekit.UserKindSteer)
+	if got[0].UserKind != marotte.UserKindSteer {
+		t.Errorf("user_kind = %q, want %q", got[0].UserKind, marotte.UserKindSteer)
 	}
 	if got[0].Content != "use tabs" {
 		t.Errorf("content = %q, want the steer verbatim", got[0].Content)
@@ -1197,8 +1197,8 @@ func TestProjection_TwoSteersWithDifferentIDsAreTwoMessages(t *testing.T) {
 		if got[i].Content != want.text {
 			t.Errorf("message %d content = %q, want %q", i, got[i].Content, want.text)
 		}
-		if got[i].UserKind != vibekit.UserKindSteer {
-			t.Errorf("message %d user_kind = %q, want %q", i, got[i].UserKind, vibekit.UserKindSteer)
+		if got[i].UserKind != marotte.UserKindSteer {
+			t.Errorf("message %d user_kind = %q, want %q", i, got[i].UserKind, marotte.UserKindSteer)
 		}
 	}
 }
@@ -1227,12 +1227,12 @@ func (r replayUserRow) frame(t *testing.T) [2]any {
 
 func turnStartFrame(t *testing.T) [2]any {
 	t.Helper()
-	return pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}))
+	return pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}))
 }
 
 func turnEndFrame(t *testing.T, stop string) [2]any {
 	t.Helper()
-	return pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
+	return pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
 		"turnEnd":    map[string]any{"stopReason": stop},
 		"stopReason": stop,
 	}))
@@ -1240,7 +1240,7 @@ func turnEndFrame(t *testing.T, stop string) [2]any {
 
 func agentChunkFrame(t *testing.T, text string) [2]any {
 	t.Helper()
-	return pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, text, "", nil))
+	return pair(replayFrame(t, marotte.ACPUpdateAgentChunk, text, "", nil))
 }
 
 // The specimen resend, record indices 2087-2095 of sess_0fd788b2: the reader typed into a
@@ -1284,8 +1284,8 @@ func TestProjection_AResentSteerIsMarkedNotDelivered(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("projected %d messages, want 2 (the steer and the prompt):\n%s", len(got), dumpMessages(got))
 	}
-	if got[0].SteerState != vibekit.SteerStateDropped {
-		t.Errorf("steer row steer_state = %q, want %q", got[0].SteerState, vibekit.SteerStateDropped)
+	if got[0].SteerState != marotte.SteerStateDropped {
+		t.Errorf("steer row steer_state = %q, want %q", got[0].SteerState, marotte.SteerStateDropped)
 	}
 	if got[1].SteerState != "" || got[1].UserKind != "" {
 		t.Errorf("prompt row = {steer_state:%q, user_kind:%q}, want both empty — the prompt is not a steer",
@@ -1312,9 +1312,9 @@ func TestProjection_TwoIdenticalSteersAreBothMarked(t *testing.T) {
 		t.Fatalf("projected %d messages, want 3:\n%s", len(got), dumpMessages(got))
 	}
 	for i := range 2 {
-		if got[i].SteerState != vibekit.SteerStateDropped {
+		if got[i].SteerState != marotte.SteerStateDropped {
 			t.Errorf("steer row %d (%s) steer_state = %q, want %q — a single pairing leaves one behind",
-				i, got[i].ID, got[i].SteerState, vibekit.SteerStateDropped)
+				i, got[i].ID, got[i].SteerState, marotte.SteerStateDropped)
 		}
 	}
 }
@@ -1381,9 +1381,9 @@ func TestProjection_AnAckAfterThePromptDoesNotUnmark(t *testing.T) {
 	})
 
 	got := p.Messages()
-	if got[0].SteerState != vibekit.SteerStateDropped {
+	if got[0].SteerState != marotte.SteerStateDropped {
 		t.Errorf("steer row steer_state = %q, want %q — an ack arriving after the prompt cannot unmark it",
-			got[0].SteerState, vibekit.SteerStateDropped)
+			got[0].SteerState, marotte.SteerStateDropped)
 	}
 }
 
@@ -1450,13 +1450,13 @@ func TestProjection_AMarkedSteerKeepsItsIDAndContent(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("projected %d messages, want 2:\n%s", len(got), dumpMessages(got))
 	}
-	want := vibekit.Message{
+	want := marotte.Message{
 		ID:           specimenSteerID,
-		Role:         vibekit.RoleUser,
-		UserKind:     vibekit.UserKindSteer,
+		Role:         marotte.RoleUser,
+		UserKind:     marotte.UserKindSteer,
 		KASMessageID: specimenSteerID,
 		Content:      specimenSteerText,
-		SteerState:   vibekit.SteerStateDropped,
+		SteerState:   marotte.SteerStateDropped,
 		Ts:           replayTS(specimenSteerTs),
 	}
 	if !reflect.DeepEqual(got[0], want) {
@@ -1477,11 +1477,11 @@ func TestProjection_UnsettledToolCallIsAborted(t *testing.T) {
 	for _, status := range []string{"in_progress", "pending"} {
 		t.Run(status, func(t *testing.T) {
 			p := NewProjection(seqIDs(), "")
-			_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-			p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+			_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+			p.Ingest(marotte.ACPUpdateSessionInfo, start)
 
-			p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-				"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+			p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+				"sessionUpdate": string(marotte.ACPUpdateToolCall),
 				"toolCallId":    "tc-dead",
 				"title":         "Invoke Sub-agent",
 				"kind":          "other",
@@ -1494,9 +1494,9 @@ func TestProjection_UnsettledToolCallIsAborted(t *testing.T) {
 				t.Fatalf("projected %d messages, want 1 turn carrying 1 tool call:\n%s",
 					len(got), dumpMessages(got))
 			}
-			if tc := got[0].ToolCalls[0]; tc.Status != vibekit.ToolAborted {
+			if tc := got[0].ToolCalls[0]; tc.Status != marotte.ToolAborted {
 				t.Errorf("tool status = %q, want %q: nothing can still settle a replayed call",
-					tc.Status, vibekit.ToolAborted)
+					tc.Status, marotte.ToolAborted)
 			}
 		})
 	}
@@ -1535,19 +1535,19 @@ func TestProjection_TurnFactsFromTheWire(t *testing.T) {
 	cases := []struct {
 		name        string
 		stopReason  string
-		wantOutcome vibekit.TurnOutcome
+		wantOutcome marotte.TurnOutcome
 		wantTrunc   bool
 	}{
 		{
 			name: "error is a failed turn", stopReason: "error",
-			wantOutcome: vibekit.TurnOutcomeFailed,
+			wantOutcome: marotte.TurnOutcomeFailed,
 		},
 		{
 			// The one mapping a reader would guess wrong: the model finished the work it
 			// was ALLOWED to do, so the turn completed with its answer cut off. Grading
 			// it failed would report a bounded turn as broken.
 			name: "max_tokens completes and is truncated", stopReason: "max_tokens",
-			wantOutcome: vibekit.TurnOutcomeCompleted, wantTrunc: true,
+			wantOutcome: marotte.TurnOutcomeCompleted, wantTrunc: true,
 		},
 	}
 	for _, tc := range cases {
@@ -1586,21 +1586,21 @@ func TestProjection_TurnFactsFromTheWire(t *testing.T) {
 // facts until the close the only shape that works.
 func oneMeteredTurn(t *testing.T, stopReason string) [][2]any {
 	t.Helper()
-	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind marotte.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
 	return [][2]any{
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		f(vibekit.ACPUpdateAgentChunk, "answered", "", nil),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_completion", map[string]any{
+		f(marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		f(marotte.ACPUpdateAgentChunk, "answered", "", nil),
+		f(marotte.ACPUpdateSessionInfo, "", "turn_completion", map[string]any{
 			"promptTurnSummaries": []map[string]any{
 				{"unit": "credit", "unitPlural": "credits", "usage": 0.115},
 			},
 			"elapsedTime": 1683,
 			"status":      "success",
 		}),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
+		f(marotte.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
 			"turnEnd":    map[string]any{"stopReason": stopReason},
 			"stopReason": stopReason,
 		}),
@@ -1619,12 +1619,12 @@ func TestProjection_TurnEndStopDetailsBecomeTheFailureReason(t *testing.T) {
 	const want = "the model provider refused the request"
 	p := NewProjection(seqIDs(), "")
 	f := func(sub string, extra map[string]any) {
-		k, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", sub, extra)
+		k, raw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", sub, extra)
 		p.Ingest(k, raw)
 	}
 	f("turn_start", map[string]any{"turnStart": true})
-	_, chunk := replayFrame(t, vibekit.ACPUpdateAgentChunk, "partial answer", "", nil)
-	p.Ingest(vibekit.ACPUpdateAgentChunk, chunk)
+	_, chunk := replayFrame(t, marotte.ACPUpdateAgentChunk, "partial answer", "", nil)
+	p.Ingest(marotte.ACPUpdateAgentChunk, chunk)
 	f("turn_end", map[string]any{"turnEnd": map[string]any{
 		"stopReason":  "error",
 		"stopDetails": map[string]any{"message": want},
@@ -1639,9 +1639,9 @@ func TestProjection_TurnEndStopDetailsBecomeTheFailureReason(t *testing.T) {
 		t.Errorf("TurnFailureReason = %q, want %q from turn_end.stopDetails.message",
 			m.TurnFailureReason, want)
 	}
-	if m.TurnOutcome != vibekit.TurnOutcomeFailed {
+	if m.TurnOutcome != marotte.TurnOutcomeFailed {
 		t.Errorf("TurnOutcome = %q, want %q for stopReason error",
-			m.TurnOutcome, vibekit.TurnOutcomeFailed)
+			m.TurnOutcome, marotte.TurnOutcomeFailed)
 	}
 	if string(m.TurnStopReasonRaw) != "error" {
 		t.Errorf("TurnStopReasonRaw = %q, want the wire's own %q", m.TurnStopReasonRaw, "error")
@@ -1660,15 +1660,15 @@ func TestProjection_TurnEndStopDetailsBecomeTheFailureReason(t *testing.T) {
 func TestProjection_PayloadlessTurnEndStillClosesTheTurn(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
 	f := func(sub string, extra map[string]any) {
-		k, raw := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", sub, extra)
+		k, raw := replayFrame(t, marotte.ACPUpdateSessionInfo, "", sub, extra)
 		p.Ingest(k, raw)
 	}
 	f("turn_start", map[string]any{"turnStart": true})
-	_, chunk := replayFrame(t, vibekit.ACPUpdateAgentChunk, "one", "", nil)
-	p.Ingest(vibekit.ACPUpdateAgentChunk, chunk)
+	_, chunk := replayFrame(t, marotte.ACPUpdateAgentChunk, "one", "", nil)
+	p.Ingest(marotte.ACPUpdateAgentChunk, chunk)
 	f("turn_end", nil)
-	_, chunk2 := replayFrame(t, vibekit.ACPUpdateAgentChunk, "two", "", nil)
-	p.Ingest(vibekit.ACPUpdateAgentChunk, chunk2)
+	_, chunk2 := replayFrame(t, marotte.ACPUpdateAgentChunk, "two", "", nil)
+	p.Ingest(marotte.ACPUpdateAgentChunk, chunk2)
 
 	got := p.Messages()
 	if len(got) != 2 {
@@ -1685,13 +1685,13 @@ func TestProjection_PayloadlessTurnEndStillClosesTheTurn(t *testing.T) {
 func TestProjection_TurnFactsDoNotLeakToTheNextTurn(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
 	ingestAll(p, oneMeteredTurn(t, "end_turn"))
-	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) {
+	f := func(kind marotte.ACPUpdateKind, text, sub string, extra map[string]any) {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		p.Ingest(k, raw)
 	}
-	f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})
-	f(vibekit.ACPUpdateAgentChunk, "second", "", nil)
-	f(vibekit.ACPUpdateSessionInfo, "", "turn_end", nil)
+	f(marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})
+	f(marotte.ACPUpdateAgentChunk, "second", "", nil)
+	f(marotte.ACPUpdateSessionInfo, "", "turn_end", nil)
 
 	got := p.Messages()
 	if len(got) != 2 {
@@ -1715,18 +1715,18 @@ func TestProjection_TurnFactsDoNotLeakToTheNextTurn(t *testing.T) {
 // read gone and only the rawOutput read left, it goes red.
 func TestProjection_ToolCallCarriesItsWorkflowID(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-run",
 		"title":         "Run Workflow",
 		"kind":          "other",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-run",
 		"status":        "completed",
 		"rawOutput": "Workflow 'wf_e873501773f0da94' started successfully. Status: running. " +
@@ -1753,16 +1753,16 @@ func TestProjection_ToolCallCarriesItsWorkflowID(t *testing.T) {
 // that puts the object back on a replayed update should be decoded too.
 func TestProjection_WorkflowIDAlsoComesFromRawOutputObject(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-run2",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-run2",
 		"status":        "completed",
 		"rawOutput":     map[string]any{"workflowId": "wf_fromrawoutput"},
@@ -1788,10 +1788,10 @@ func TestProjection_WorkflowIDAlsoComesFromRawOutputObject(t *testing.T) {
 func TestProjection_ToolCallContentBlocks(t *testing.T) {
 	const workDir = "/workspace"
 	p := NewProjection(seqIDs(), workDir)
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-edit",
 		"title":         "Replace in File",
 		"kind":          "edit",
@@ -1804,8 +1804,8 @@ func TestProjection_ToolCallContentBlocks(t *testing.T) {
 			},
 		}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-edit",
 		"status":        "completed",
 		"content": []map[string]any{
@@ -1848,16 +1848,16 @@ func TestProjection_ToolCallContentBlocks(t *testing.T) {
 // the create. Its own case because the fold site is different from the disclosure's.
 func TestProjection_ToolCallCarriesItsPolicyDenial(t *testing.T) {
 	p := NewProjection(seqIDs(), "/workspace")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-denied",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-denied",
 		"status":        "failed",
 		"_meta": map[string]any{"kiro": map[string]any{
@@ -1896,13 +1896,13 @@ func TestProjection_ToolCallCarriesItsPolicyDenial(t *testing.T) {
 // the block. The decode still closes the gap and the thinking case below pins the gate.
 func TestProjection_RefusalSurvivesAReplay(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	_, chunk := replayFrame(t, vibekit.ACPUpdateAgentChunk, "I cannot continue.", "",
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	_, chunk := replayFrame(t, marotte.ACPUpdateAgentChunk, "I cannot continue.", "",
 		map[string]any{"refusal": map[string]any{
 			"category": "harmful_content", "recommendedModel": "claude-sonnet-5",
 		}})
-	p.Ingest(vibekit.ACPUpdateAgentChunk, chunk)
+	p.Ingest(marotte.ACPUpdateAgentChunk, chunk)
 
 	got := p.Messages()
 	if len(got) != 1 {
@@ -1924,11 +1924,11 @@ func TestProjection_RefusalSurvivesAReplay(t *testing.T) {
 // mirrored, so a stray tagged thought cannot make a normal turn render a refusal.
 func TestProjection_ARefusalTaggedThoughtDoesNotMarkTheTurn(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	_, th := replayFrame(t, vibekit.ACPUpdateThoughtChunk, "weighing a refusal", "",
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	_, th := replayFrame(t, marotte.ACPUpdateThoughtChunk, "weighing a refusal", "",
 		map[string]any{"refusal": map[string]any{"category": "harmful_content"}})
-	p.Ingest(vibekit.ACPUpdateThoughtChunk, th)
+	p.Ingest(marotte.ACPUpdateThoughtChunk, th)
 
 	got := p.Messages()
 	if len(got) != 1 {
@@ -1948,17 +1948,17 @@ func TestProjection_ARefusalTaggedThoughtDoesNotMarkTheTurn(t *testing.T) {
 func TestProjection_ChangedFilesReachTheTurn(t *testing.T) {
 	const workDir = "/workspace"
 	p := NewProjection(seqIDs(), workDir)
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-w",
 		"kind":          "edit",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-w",
 		"status":        "completed",
 		"content": []map[string]any{
@@ -1994,17 +1994,17 @@ func TestProjection_ChangedFilesReachTheTurn(t *testing.T) {
 func TestProjection_AFailedWriteDoesNotEnterTheLedger(t *testing.T) {
 	const workDir = "/workspace"
 	p := NewProjection(seqIDs(), workDir)
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-fail",
 		"kind":          "edit",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-fail",
 		"status":        "failed",
 		"content": []map[string]any{
@@ -2068,18 +2068,18 @@ func TestProjection_ToolDurationFromFrameTimestamps(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := NewProjection(seqIDs(), "")
-			_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-			p.Ingest(vibekit.ACPUpdateSessionInfo, start)
-			p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-				"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+			_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+			p.Ingest(marotte.ACPUpdateSessionInfo, start)
+			p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+				"sessionUpdate": string(marotte.ACPUpdateToolCall),
 				"toolCallId":    "tc-t",
 				"status":        "in_progress",
 				"_meta": map[string]any{"kiro": map[string]any{
 					"replay": true, "timestamp": tc.start,
 				}},
 			}))
-			p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-				"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+			p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+				"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 				"toolCallId":    "tc-t",
 				"status":        "completed",
 				"_meta": map[string]any{"kiro": map[string]any{
@@ -2109,21 +2109,21 @@ func TestProjection_ToolDurationFromFrameTimestamps(t *testing.T) {
 // name. Reading the create's raw timestamp instead is what separates the two.
 func TestProjection_ToolDurationSkipsACreateCarryingNoTimestamp(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
-	_, start := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", nil)
-	p.Ingest(vibekit.ACPUpdateSessionInfo, start)
+	_, start := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", nil)
+	p.Ingest(marotte.ACPUpdateSessionInfo, start)
 
 	// A text chunk first, so turnStart is a real instant this tool call did not supply.
-	p.Ingest(replayFrame(t, vibekit.ACPUpdateAgentChunk, "thinking", "", map[string]any{
+	p.Ingest(replayFrame(t, marotte.ACPUpdateAgentChunk, "thinking", "", map[string]any{
 		"timestamp": "2026-09-12T10:00:00.000Z", "messageId": "m-1",
 	}))
-	p.Ingest(vibekit.ACPUpdateToolCall, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolCall),
+	p.Ingest(marotte.ACPUpdateToolCall, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolCall),
 		"toolCallId":    "tc-nots",
 		"status":        "in_progress",
 		"_meta":         map[string]any{"kiro": map[string]any{"replay": true}},
 	}))
-	p.Ingest(vibekit.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
-		"sessionUpdate": string(vibekit.ACPUpdateToolUpdate),
+	p.Ingest(marotte.ACPUpdateToolUpdate, mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateToolUpdate),
 		"toolCallId":    "tc-nots",
 		"status":        "completed",
 		"_meta": map[string]any{"kiro": map[string]any{
@@ -2169,7 +2169,7 @@ func TestProjection_CompactionIDIsDerived(t *testing.T) {
 	}
 	var sawCompaction bool
 	for i := range a {
-		if a[i].EventKind != vibekit.EventCompacted {
+		if a[i].EventKind != marotte.EventCompacted {
 			continue
 		}
 		sawCompaction = true
@@ -2195,7 +2195,7 @@ func TestProjection_CompactionIDIsDerived(t *testing.T) {
 // own messageId on every content frame — the shape production always sends.
 func compactedTurnWithWireIDs(t *testing.T) [][2]any {
 	t.Helper()
-	f := func(kind vibekit.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+	f := func(kind marotte.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
 		k, raw := replayFrame(t, kind, text, sub, extra)
 		return [2]any{k, raw}
 	}
@@ -2204,17 +2204,17 @@ func compactedTurnWithWireIDs(t *testing.T) [][2]any {
 			"messageId": "ca4b4050-d45b-44d9-8a99-f72e79cc2767",
 			"timestamp": "2026-09-12T10:00:00.000Z",
 		}),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
-		f(vibekit.ACPUpdateAgentChunk, "done", "", map[string]any{
+		f(marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		f(marotte.ACPUpdateAgentChunk, "done", "", map[string]any{
 			"messageId": "2f5d57c4-152e-4825-8dcf-fda9668b4693-say",
 			"timestamp": "2026-09-12T10:00:02.000Z",
 		}),
-		f(vibekit.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
+		f(marotte.ACPUpdateSessionInfo, "", "turn_end", map[string]any{
 			"turnEnd": map[string]any{"stopReason": "end_turn"},
 		}),
-		f(vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+		f(marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 			map[string]any{"summarizationSeparator": true}),
-		f(vibekit.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
+		f(marotte.ACPUpdateSessionInfo, "", "summary_message", map[string]any{
 			"summaryMessage": map[string]any{"content": "## Goal\nSummarised."},
 		}),
 	}
@@ -2227,12 +2227,12 @@ func TestProjection_CompactionAtPositionZeroIsStillDeterministic(t *testing.T) {
 	build := func() *Projection {
 		p := NewProjection(seqIDs(), "")
 		for range 2 {
-			_, sep := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summarization_separator",
+			_, sep := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summarization_separator",
 				map[string]any{"summarizationSeparator": true})
-			p.Ingest(vibekit.ACPUpdateSessionInfo, sep)
-			_, sum := replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "summary_message",
+			p.Ingest(marotte.ACPUpdateSessionInfo, sep)
+			_, sum := replayFrame(t, marotte.ACPUpdateSessionInfo, "", "summary_message",
 				map[string]any{"summaryMessage": map[string]any{"content": "s"}})
-			p.Ingest(vibekit.ACPUpdateSessionInfo, sum)
+			p.Ingest(marotte.ACPUpdateSessionInfo, sum)
 		}
 		return p
 	}
@@ -2262,10 +2262,10 @@ func TestAgentSideID_TheLiveLatchAndTheReplayKeyAreOneID(t *testing.T) {
 	const wantID = "3f9c1e7a-say"
 
 	deps, _ := newEventCaptureDeps()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "live-1" }))
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-		"content": map[string]any{"type": vibekit.ContentTypeText, "text": "ONE"},
+		"content": map[string]any{"type": marotte.ContentTypeText, "text": "ONE"},
 		"_meta":   map[string]any{"kiro": map[string]any{"replayId": wantID}},
 	}), false)
 
@@ -2277,15 +2277,15 @@ func TestAgentSideID_TheLiveLatchAndTheReplayKeyAreOneID(t *testing.T) {
 	p := NewProjection(seqIDs(), "")
 	ingestAll(p, [][2]any{
 		pair(replayFrame(t, replayUserChunkKind, "Reply with exactly: ONE", "", nil)),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
-		pair(replayFrame(t, vibekit.ACPUpdateAgentChunk, "ONE", "", map[string]any{"messageId": wantID})),
-		pair(replayFrame(t, vibekit.ACPUpdateSessionInfo, "", "turn_end",
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true})),
+		pair(replayFrame(t, marotte.ACPUpdateAgentChunk, "ONE", "", map[string]any{"messageId": wantID})),
+		pair(replayFrame(t, marotte.ACPUpdateSessionInfo, "", "turn_end",
 			map[string]any{"turnEnd": map[string]any{"stopReason": "end_turn"}})),
 	})
 	got := p.Messages()
 	idx := -1
 	for i := range got {
-		if got[i].Role == vibekit.RoleAssistant {
+		if got[i].Role == marotte.RoleAssistant {
 			idx = i
 		}
 	}
@@ -2302,10 +2302,10 @@ func TestAgentSideID_TheLiveLatchAndTheReplayKeyAreOneID(t *testing.T) {
 // and a row keyed on it would be permanently unpairable.
 func TestAgentSideID_AWorkflowStepFrameLatchesNothing(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "live-1" }))
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-		"content": map[string]any{"type": vibekit.ContentTypeText, "text": "step prose"},
+		"content": map[string]any{"type": marotte.ContentTypeText, "text": "step prose"},
 		"_meta": map[string]any{"kiro": map[string]any{
 			"replayId": "step-say",
 			"workflow": map[string]any{

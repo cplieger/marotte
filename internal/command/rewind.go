@@ -14,20 +14,20 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint
-// machinery, then truncates vibekit's record to match. The truncation is not
+// machinery, then truncates marotte's record to match. The truncation is not
 // redundant: mergeProjection preserves anything newer than a replay's last
 // message, because an absent tail is normally a durability gap, and a revert is
 // the one case where it is intended. Mid-turn is KAS's refusal, forwarded.
-func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
+func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	var p vibekit.RewindChatCommand
+	var p marotte.RewindChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.MessageID == "" {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -57,7 +57,7 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 	// Cut at idx, not idx+1: the addressed message is discarded with its
 	// successors (KAS slices from the target inclusive), so the prompt at
 	// that turn is gone and has to be retyped.
-	if _, mErr := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if _, mErr := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -84,7 +84,7 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 // lives in and whose replay has already been adopted — the two conditions under
 // which truncating is safe. `want` is read BEFORE the resume, because a failed
 // session/load falls through to session/new and retires that id.
-func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID vibekit.ChatID, want string) (Bridge, error) {
+func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID marotte.ChatID, want string) (Bridge, error) {
 	if want == "" {
 		return nil, StatusError(http.StatusConflict, errRewindNoSession)
 	}
@@ -93,7 +93,7 @@ func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID vibekit.C
 	// can never silently change which model the chat runs.
 	bridge, err := bridges.OpenBridge(ctx, chatID, "")
 	if err != nil || bridge == nil {
-		// The spawn's own error is logged, not forwarded: it names vibekit's
+		// The spawn's own error is logged, not forwarded: it names marotte's
 		// internals, and the client renders the reason verbatim to the user.
 		slog.Warn("rewind: no bridge to revert on", "chat", chatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, errRewindNoBridge)
@@ -131,10 +131,10 @@ type revertResult struct {
 // revertToMessage performs the KAS round trip and normalises its two failure
 // channels into one error plus the status to report: a transport failure comes
 // back as an error, a refusal KAS can explain as `success:false` with a reason,
-// forwarded verbatim since it is more specific than anything vibekit can infer.
+// forwarded verbatim since it is more specific than anything marotte can infer.
 func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string) (revertResult, int, error) {
 	var result revertResult
-	resp, err := bridge.Call(ctx, vibekit.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, marotte.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
 		"messageId": messageID,
 	}))
 	if err != nil {
@@ -149,15 +149,15 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 	return result, http.StatusOK, nil
 }
 
-// explainRevertRefusal adds vibekit's own account of an unaddressable turn to a refusal
+// explainRevertRefusal adds marotte's own account of an unaddressable turn to a refusal
 // KAS could not have explained. It keys on the fallback having been taken rather than on
-// the reason, because the reply carries no code and KAS's prose is not vibekit's to
+// the reason, because the reply carries no code and KAS's prose is not marotte's to
 // match — so on a legacy row the sentence is appended whatever the refusal was, mid-turn
 // included, where it names something that is not the cause. No test pins that case.
 // It APPENDS rather than replaces, so a more specific reason survives. Exact in the other
 // direction: Chat.RecordSession drops a stamp at a retirement, so an empty field is every
-// row vibekit holds no reachable id for rather than only the ones predating the stamp.
-func explainRevertRefusal(m *vibekit.Message, err error) error {
+// row marotte holds no reachable id for rather than only the ones predating the stamp.
+func explainRevertRefusal(m *marotte.Message, err error) error {
 	if m.KASMessageID != "" {
 		return err
 	}
@@ -166,9 +166,9 @@ func explainRevertRefusal(m *vibekit.Message, err error) error {
 
 // userMessageIndex locates the revert target, returning -1 when absent. User-only
 // because KAS requires it: the verb refuses an id naming any other record type.
-func userMessageIndex(messages []vibekit.Message, id string) int {
+func userMessageIndex(messages []marotte.Message, id string) int {
 	for i := range messages {
-		if messages[i].ID == id && messages[i].Role == vibekit.RoleUser {
+		if messages[i].ID == id && messages[i].Role == marotte.RoleUser {
 			return i
 		}
 	}
@@ -191,12 +191,12 @@ func CmdSetEffort(
 	chats ChatStore,
 	bus Broadcaster,
 	ws Workspace,
-	cmd *vibekit.ClientCommand,
+	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	var p vibekit.SetEffortCommand
+	var p marotte.SetEffortCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !p.Level.Valid() {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -205,8 +205,8 @@ func CmdSetEffort(
 	// reported rather than persisted as a level the session never took. A cold-spawning
 	// bridge is not a refusal — see applySessionConfig.
 	if err := applySessionConfig(ctx, bridges, cmd.ChatID, "set_effort",
-		vibekit.MethodSetConfigOption, map[string]any{
-			"configId": vibekit.ConfigOptionEffort,
+		marotte.MethodSetConfigOption, map[string]any{
+			"configId": marotte.ConfigOptionEffort,
 			"value":    string(p.Level),
 		}); err != nil {
 		return nil, err
@@ -214,10 +214,10 @@ func CmdSetEffort(
 
 	// The model comes off the record rather than the payload, which carries none.
 	var model string
-	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
 		model = c.Model
 		if !exists {
-			c.Name = vibekit.DefaultChatName
+			c.Name = marotte.DefaultChatName
 			c.Effort = string(p.Level)
 			return true
 		}
@@ -242,7 +242,7 @@ func CmdSetEffort(
 //
 // A chat with no model yet is skipped rather than seeded under an empty key, which
 // is a key no reader resolves.
-func recordEffortSeed(ctx context.Context, bus Broadcaster, configDir, model string, level vibekit.EffortLevel) {
+func recordEffortSeed(ctx context.Context, bus Broadcaster, configDir, model string, level marotte.EffortLevel) {
 	if configDir == "" || model == "" {
 		return
 	}
@@ -267,5 +267,5 @@ func recordEffortSeed(ctx context.Context, bus Broadcaster, configDir, model str
 		slog.Warn("effort seed not recorded", "model", model, "level", level, keyError, err)
 		return
 	}
-	bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
+	bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 }

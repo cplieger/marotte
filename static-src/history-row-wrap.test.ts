@@ -17,7 +17,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
-const LONG_TITLE = "Rebuild vibekit timeline rail and its outcome vocabulary";
+const LONG_TITLE = "Rebuild marotte timeline rail and its outcome vocabulary";
 const STAMP = "10/09/2026, 18:36:21";
 
 let style: HTMLStyleElement;

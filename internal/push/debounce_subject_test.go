@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // countingTransport accepts every delivery and counts it.
@@ -62,7 +62,7 @@ func newCountingService(t *testing.T) (*Service, *countingTransport) {
 	rt := &countingTransport{}
 	s.client = &http.Client{Transport: rt, Timeout: 5 * time.Second}
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/debounce"))
-	s.SetPreferences(map[vibekit.PushKind]bool{vibekit.PushKindPRStatus: true})
+	s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindPRStatus: true})
 	return s, rt
 }
 
@@ -72,11 +72,11 @@ func newCountingService(t *testing.T) (*Service, *countingTransport) {
 func TestSend_TwoSubjectsInOneWindowBothDeliver(t *testing.T) {
 	s, rt := newCountingService(t)
 
-	first := vibekit.PRSubject("github:github.com", "cplieger/vibekit", 1)
-	second := vibekit.PRSubject("github:github.com", "cplieger/vibekit", 2)
+	first := marotte.PRSubject("github:github.com", "cplieger/marotte", 1)
+	second := marotte.PRSubject("github:github.com", "cplieger/marotte", 2)
 
-	s.Send(t.Context(), DefaultTitle, "#1 checks passed", vibekit.PushKindPRStatus, first)
-	s.Send(t.Context(), DefaultTitle, "#2 checks failed", vibekit.PushKindPRStatus, second)
+	s.Send(t.Context(), DefaultTitle, "#1 checks passed", marotte.PushKindPRStatus, first)
+	s.Send(t.Context(), DefaultTitle, "#2 checks failed", marotte.PushKindPRStatus, second)
 
 	if got := rt.count(); got != 2 {
 		t.Errorf("deliveries = %d, want 2: a second pull request settling inside the "+
@@ -89,10 +89,10 @@ func TestSend_TwoSubjectsInOneWindowBothDeliver(t *testing.T) {
 // is exactly what it exists to suppress.
 func TestSend_RepeatsOfOneSubjectStillCoalesce(t *testing.T) {
 	s, rt := newCountingService(t)
-	subject := vibekit.PRSubject("github:github.com", "cplieger/vibekit", 7)
+	subject := marotte.PRSubject("github:github.com", "cplieger/marotte", 7)
 
 	for range 3 {
-		s.Send(t.Context(), DefaultTitle, "#7 checks passed", vibekit.PushKindPRStatus, subject)
+		s.Send(t.Context(), DefaultTitle, "#7 checks passed", marotte.PushKindPRStatus, subject)
 	}
 
 	if got := rt.count(); got != 1 {
@@ -105,10 +105,10 @@ func TestSend_RepeatsOfOneSubjectStillCoalesce(t *testing.T) {
 // other.
 func TestSend_SubjectWindowsAreKindScoped(t *testing.T) {
 	s, rt := newCountingService(t)
-	chat := vibekit.ChatSubject("c-abc")
+	chat := marotte.ChatSubject("c-abc")
 
-	s.Send(t.Context(), DefaultTitle, "finished", vibekit.PushKindAgentFinished, chat)
-	s.Send(t.Context(), DefaultTitle, "may I", vibekit.PushKindPermission, chat)
+	s.Send(t.Context(), DefaultTitle, "finished", marotte.PushKindAgentFinished, chat)
+	s.Send(t.Context(), DefaultTitle, "may I", marotte.PushKindPermission, chat)
 
 	if got := rt.count(); got != 2 {
 		t.Errorf("deliveries = %d, want 2: one kind's window suppressed another's on the same chat", got)
@@ -119,13 +119,13 @@ func TestSend_SubjectWindowsAreKindScoped(t *testing.T) {
 // member of the key space rather than a zero value nothing names, and pins that it
 // cannot be collided with by a real subject.
 func TestDebounceKey_GlobalSubjectIsExplicit(t *testing.T) {
-	global := debounceKey(vibekit.PushKindAgentFinished, vibekit.PushSubject{})
+	global := debounceKey(marotte.PushKindAgentFinished, marotte.PushSubject{})
 	if global.subject != pushSubjectGlobal {
 		t.Errorf("empty subject keyed as %q, want the named global slot %q",
 			global.subject, pushSubjectGlobal)
 	}
-	chat := debounceKey(vibekit.PushKindAgentFinished, vibekit.ChatSubject("c-abc"))
-	pull := debounceKey(vibekit.PushKindPRStatus, vibekit.PRSubject("github:github.com", "a/b", 1))
+	chat := debounceKey(marotte.PushKindAgentFinished, marotte.ChatSubject("c-abc"))
+	pull := debounceKey(marotte.PushKindPRStatus, marotte.PRSubject("github:github.com", "a/b", 1))
 	for _, k := range []pushDebounceKey{chat, pull} {
 		if k.subject == pushSubjectGlobal {
 			t.Errorf("a real subject (%+v) landed in the workspace-global slot", k)
@@ -142,11 +142,11 @@ func TestPruneDebounce_DropsOnlyExpiredEntries(t *testing.T) {
 	s := New(t.Context(), t.TempDir(), "mailto:test@example.com")
 	defer s.Close()
 
-	live := debounceKey(vibekit.PushKindPRStatus, vibekit.PRSubject("github:github.com", "a/b", 999))
+	live := debounceKey(marotte.PushKindPRStatus, marotte.PRSubject("github:github.com", "a/b", 999))
 	s.mu.Lock()
 	for i := range debounceHighWater + 8 {
-		s.lastPush[debounceKey(vibekit.PushKindPRStatus,
-			vibekit.PRSubject("github:github.com", "a/b", i))] = time.Now().Add(-2 * pushDebounce)
+		s.lastPush[debounceKey(marotte.PushKindPRStatus,
+			marotte.PRSubject("github:github.com", "a/b", i))] = time.Now().Add(-2 * pushDebounce)
 	}
 	s.lastPush[live] = time.Now()
 	before := len(s.lastPush)
@@ -177,8 +177,8 @@ func TestPruneDebounce_EngagesAtTheHighWaterMark(t *testing.T) {
 
 	s.mu.Lock()
 	for i := range debounceHighWater {
-		s.lastPush[debounceKey(vibekit.PushKindPRStatus,
-			vibekit.PRSubject("github:github.com", "a/b", i))] = time.Now().Add(-2 * pushDebounce)
+		s.lastPush[debounceKey(marotte.PushKindPRStatus,
+			marotte.PRSubject("github:github.com", "a/b", i))] = time.Now().Add(-2 * pushDebounce)
 	}
 	seeded := len(s.lastPush)
 	s.pruneDebounceLocked()

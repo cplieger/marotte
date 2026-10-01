@@ -3,11 +3,11 @@ package agent
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/modeltext"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/modeltext"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const modelAuto = vibekit.ModelAuto
+const modelAuto = marotte.ModelAuto
 
 // cheapestModel returns the cheapest reliable model id from the current
 // catalog, or "" if nothing is live. Filters out:
@@ -19,7 +19,7 @@ const modelAuto = vibekit.ModelAuto
 // Selects by lowest RateMultiplier among eligible models. If no model
 // has a rate (all zero, e.g. session/new doesn't send it), falls back
 // to the first eligible entry.
-func cheapestModel(_ context.Context, catalog []vibekit.SessionModel) string {
+func cheapestModel(_ context.Context, catalog []marotte.SessionModel) string {
 	var bestID string
 	var bestRate float64
 	for _, m := range catalog {

@@ -1,6 +1,6 @@
 # Roadmap
 
-Vibekit is **alpha** (currently `v0.x`). The core feature set is in place; the
+Marotte is **alpha** (currently `v0.x`). The core feature set is in place; the
 focus now is hardening and polish, not new scope. This document supersedes the
 [default shared roadmap](https://github.com/cplieger/.github/blob/main/ROADMAP.md)
 for this repository.
@@ -9,7 +9,7 @@ for this repository.
 
 - **Testing.** Broaden coverage of the chat/streaming pipeline, checkpoints,
   subagent rendering, and MCP integration; raise confidence before a stable
-  release. (Vibekit already has an extensive Go + property/fuzz suite; the
+  release. (Marotte already has an extensive Go + property/fuzz suite; the
   work is closing the remaining gaps.)
 - **UI.** Continued refinement of the client surfaces: editor/diff/conflict
   modes, the permissions and MCP panels, the git views, and the streaming

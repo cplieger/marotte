@@ -1,9 +1,9 @@
-// Package kascap declares which capability keys vibekit puts on the kiro-cli
+// Package kascap declares which capability keys marotte puts on the kiro-cli
 // (KAS) ACP wire, on which call, why, and how KAS resolves each one.
 //
 // It exists because four things a reader needs had nowhere to live. The
 // initialize handshake used to build its _meta.kiro block as a hand-written map
-// literal in internal/bridge, and a literal can express only the keys vibekit
+// literal in internal/bridge, and a literal can express only the keys marotte
 // DOES send:
 //
 //   - Which CALL carries a key. Both doors are live: most keys ride initialize,
@@ -12,7 +12,7 @@
 //   - How KAS RESOLVES it. A client capability compared against true is not a
 //     settings entry read through isSettingEnabled, and treating one as the
 //     other costs a whole subsystem with nothing in any log to say so.
-//   - Whether an ABSENT key resolves TRUE. semanticReview does, so vibekit
+//   - Whether an ABSENT key resolves TRUE. semanticReview does, so marotte
 //     gets it by not sending it, and a literal has no way to write that down.
 //   - That a key is deliberately WITHHELD. A literal has no row for a key it
 //     omits, so a decision is indistinguishable from an oversight.
@@ -133,7 +133,7 @@ type Spawn struct {
 	Memory bool
 }
 
-// decl is one capability key vibekit can put on the wire, with everything a
+// decl is one capability key marotte can put on the wire, with everything a
 // reader needs to judge it in one place.
 type decl struct {
 	// key is the wire key, unqualified. A resolverSetting row's key is its
@@ -141,7 +141,7 @@ type decl struct {
 	// resolver already says which container it lands in.
 	key string
 
-	// because is why vibekit sends this key, or why it withholds it. MANDATORY
+	// because is why marotte sends this key, or why it withholds it. MANDATORY
 	// and non-empty, enforced by TestEveryDeclHasABecause.
 	//
 	// This is the most valuable column and the reason the package exists. Each
@@ -152,7 +152,7 @@ type decl struct {
 	because string
 
 	// env optionally names an environment variable an operator can set to stop
-	// vibekit sending this key, so a capability that misbehaves in a deployment
+	// marotte sending this key, so a capability that misbehaves in a deployment
 	// can be switched off without waiting for a release.
 	//
 	// Read by buildDoor through envx.Bool, which means the fallback is this
@@ -199,9 +199,9 @@ type decl struct {
 	// turns it off. semanticReview is the instance.
 	absentTrue bool
 
-	// send is whether vibekit puts this key on the wire at all.
+	// send is whether marotte puts this key on the wire at all.
 	//
-	// A send:false row is a DECLARATION that vibekit deliberately withholds a
+	// A send:false row is a DECLARATION that marotte deliberately withholds a
 	// key, which is exactly what a map literal cannot express: a literal has no
 	// row for a key it omits. Such a row must say why in because, which
 	// TestNoSendWithoutReason enforces.
