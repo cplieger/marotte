@@ -481,15 +481,12 @@
      * tab dot's own glow, its ripple and the workflow mark's breath all read it.
      * Do not retune one side alone.
      *
-     * It was 2.4s until 2026-09 — chosen as ambient, on the reasoning that a dot
-     * stays on screen for as long as the work runs — and the sibling app had been
-     * on 1.2s the whole time, so the two strips beat at different rates for one
-     * state. 1.2s is still comfortably slower than --spin-dur below, which is the
-     * relation that carries the meaning; what changed is the ratio, 4:1 to 2:1. */
+     * Slower than --spin-dur below, which is the relation that carries the
+     * meaning: a dot is ambient, a spinner is the thing the reader waits on. */
     --dot-size: 0.5rem;
     --dot-size-sm: 0.375rem;
     --dot-radius-square: calc(var(--dot-size) / 4);
-    --dot-beat-dur: 1.2s;
+    --dot-beat-dur: 1.6s;
     /* ---- Spinners -------------------------------------------------------- *
      * ONE period for every rotating ring — a literal here let two rings of one
      * size sit side by side visibly drifting. Faster than a dot's ambient period:
@@ -504,7 +501,7 @@
      * A token rather than a literal, for --spin-dur's own reason: a second
      * consumer written with a literal drifts silently, and
      * `skeleton-period.test.ts` sweeps every stylesheet for one. */
-    --skeleton-dur: 1.5s;
+    --skeleton-dur: 2s;
     --icon-stroke-inline: 1;
     --icon-stroke-ui: 1;
     --icon-stroke-lg: 2;

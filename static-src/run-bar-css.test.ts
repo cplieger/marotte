@@ -239,8 +239,8 @@ describe("the run bar's state column", () => {
   it("beats the working mark and holds the waiting one still", () => {
     // The IN-FLIGHT AXIS, restated for the mark: motion means work is moving, and
     // `waiting` is the same ring standing still. What CHANGED is the motion itself —
-    // it was a conic arc spinning at `--spin-dur`, and it is now the activity dot's
-    // own glow beat on a masked overlay at `--dot-beat-dur`, because the bar's glyph
+    // it was a conic arc spinning at `--spin-dur`, and it is now the square marks'
+    // closing beat at the dots' own `--dot-beat-dur`, because the bar's glyph
     // shares 12-tabs.css's rules rather than carrying a look of its own. Asserted at
     // the KEYFRAME name and the shared period, so a beat retuned in that block moves
     // the token and this stays true, while a second period declared here fails.
@@ -249,17 +249,21 @@ describe("the run bar's state column", () => {
     const glyph = (row: HTMLElement | undefined): Element | null =>
       row?.querySelector(".run-bar-glyph") ?? null;
 
-    // `{ subtree: true }` because the animation is on the ::before overlay, which is
-    // the only way a ring can beat without its bright core filling its own hole.
+    // `{ subtree: true }` because the animation is on the ::before overlay that
+    // closes the ring's hole.
     const beating = glyph(running)?.getAnimations({ subtree: true }) ?? [];
-    expect(beating.length, "the working mark beats").toBe(1);
-    const anim = beating[0];
-    expect(anim === undefined ? "" : (anim as CSSAnimation).animationName).toBe("vk-dot-beat");
+    const names = beating.map((a) => (a as CSSAnimation).animationName).sort();
+    expect(names, "the working mark closes its hole and seals it").toEqual([
+      "vk-mark-close",
+      "vk-mark-seal",
+    ]);
     const seconds = Number.parseFloat(
       getComputedStyle(document.documentElement).getPropertyValue("--dot-beat-dur"),
     );
     expect(seconds, "--dot-beat-dur resolves").toBeGreaterThan(0);
-    expect(anim?.effect?.getComputedTiming().duration).toBe(seconds * 1000);
+    for (const anim of beating) {
+      expect(anim.effect?.getComputedTiming().duration).toBe(seconds * 1000);
+    }
 
     expect(glyph(waiting)?.getAnimations({ subtree: true }).length).toBe(0);
     host.remove();

@@ -8,7 +8,7 @@ import { initBeatPhase, resetBeatPhaseForTest } from "./beat-phase.js";
  *  apps. Declared here because the token stylesheet is not loaded in a unit test,
  *  and the module reads the token off the document rather than restating it — so
  *  this IS the input under test. */
-const PERIOD = 1200;
+const PERIOD = 1600;
 
 /** The animation NAME is the contract with the stylesheet. That the CSS still spells
  *  it this way is pinned separately, by `tab-dot.test.ts` against `03-base.css`. */
@@ -146,6 +146,27 @@ describe("beat phase", () => {
     document.documentElement.style.removeProperty("--dot-beat-dur");
     const el = await beatingDot();
     expect(phaseOf(el)).toBe("");
+  });
+
+  it("stamps the square marks' closing beat on the same grid", async () => {
+    // The marks close their hole with `vk-mark-close` rather than fading, so a module
+    // that knew only `vk-dot-beat` would leave every mark beating out of step.
+    const mark = document.createElement("style");
+    mark.textContent = `@keyframes vk-mark-close { 50% { transform: scale(0.1) } }
+      .mark-probe { animation: vk-mark-close ${String(PERIOD)}ms linear var(--beat-phase, 0ms) infinite }`;
+    document.head.append(mark);
+    const el = document.createElement("div");
+    el.className = "mark-probe";
+    document.body.append(el);
+    made.push(el);
+    await new Promise<void>((res) => {
+      el.addEventListener("animationstart", () => res(), { once: true });
+    });
+    mark.remove();
+
+    const phase = Number.parseFloat(phaseOf(el));
+    expect(phase).toBeLessThanOrEqual(0);
+    expect(phase).toBeGreaterThan(-PERIOD);
   });
 
   it("ignores an animation that is not the beat", async () => {
