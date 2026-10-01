@@ -173,11 +173,11 @@ type file struct {
 // The ZERO VALUE IS NOT USABLE — it would persist to the empty path; construct
 // with NewStore.
 type Store struct {
+	specs map[string]map[string]record // guarded by stateMu
 	// path is immutable after construction, so it is read without a lock.
 	path    string
-	specs   map[string]map[string]record // guarded by stateMu
-	stateMu sync.Mutex                   // guards specs; held briefly, NEVER across I/O
-	writeMu sync.Mutex                   // serialises merge-and-persist; the I/O lock
+	stateMu sync.Mutex // guards specs; held briefly, NEVER across I/O
+	writeMu sync.Mutex // serialises merge-and-persist; the I/O lock
 }
 
 // NewStore opens (or starts) the store at <dir>/spec-approvals.json.

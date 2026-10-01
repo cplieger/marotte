@@ -18,20 +18,20 @@ const (
 // Spec is the answer to GET /api/specs/{dir}: one spec directory and its
 // markdown documents in display order.
 type Spec struct {
-	// Dir is the workspace-relative directory, ".kiro/specs/<name>" or
-	// "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
-	Dir string `json:"dir"`
-	// Name is the directory's last segment.
-	Name string `json:"name"`
 	// UpdatedAt is the newest mtime across the documents.
 	UpdatedAt time.Time `json:"updated_at"`
-	// Docs is an ordered list, never a fixed trio.
-	Docs []SpecDoc `json:"docs"`
 	// Approvals is the human sign-off per phase, keyed by SpecDocRole. Absent
 	// for a phase nobody approved; a MAP rather than a slice because a phase is
 	// a key and every reader looks one up by it — the ETag digests the entries
 	// in a fixed order and the client indexes by the segment's role.
 	Approvals map[string]SpecApproval `json:"approvals,omitempty"`
+	// Dir is the workspace-relative directory, ".kiro/specs/<name>" or
+	// "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
+	Dir string `json:"dir"`
+	// Name is the directory's last segment.
+	Name string `json:"name"`
+	// Docs is an ordered list, never a fixed trio.
+	Docs []SpecDoc `json:"docs"`
 }
 
 // SpecApproval records that a human approved one phase of a spec, against the
@@ -84,8 +84,10 @@ type SpecDoc struct {
 
 // SpecTaskNode is one task line of tasks.md as Kiro's own parser reads it.
 type SpecTaskNode struct {
-	// ID is "L<line>", the node's address within the document.
-	ID string `json:"id"`
+	// Wave is the parallel batch the tasks document's dependency graph puts
+	// this task in, nil when it names none. A POINTER because 0 is a real
+	// wave id: an absent wave must not read as the first one.
+	Wave *int `json:"wave,omitempty"`
 	// Number is the dotted task number, empty when the line carries none.
 	Number string `json:"number"`
 	// Text is the task text verbatim; it is the id Kiro resolves a task by.
@@ -96,12 +98,10 @@ type SpecTaskNode struct {
 	Hash string `json:"hash"`
 	// Detail is the task's content lines, de-indented and cut at the first heading.
 	Detail string `json:"detail"`
+	// ID is "L<line>", the node's address within the document.
+	ID string `json:"id"`
 	// Children is always present on the wire, empty for a leaf.
 	Children []SpecTaskNode `json:"children"`
-	// Wave is the parallel batch the tasks document's dependency graph puts
-	// this task in, nil when it names none. A POINTER because 0 is a real
-	// wave id: an absent wave must not read as the first one.
-	Wave *int `json:"wave,omitempty"`
 	// Line is the 1-based line number of the task line.
 	Line int `json:"line"`
 	// Indent is the raw character count of the line's leading whitespace.

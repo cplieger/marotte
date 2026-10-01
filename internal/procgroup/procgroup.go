@@ -110,11 +110,11 @@ func statPgrpState(pid int) (pgrp int, state byte, ok bool) {
 		// the commonest outcome during a teardown sweep.
 		return 0, 0, false
 	}
-	cut := bytes.LastIndexByte(raw, ')')
-	if cut < 0 {
+	_, rest, found := bytes.CutLast(raw, []byte(")"))
+	if !found {
 		return 0, 0, false
 	}
-	f := strings.Fields(string(raw[cut+1:]))
+	f := strings.Fields(string(rest))
 	if len(f) < 3 || f[0] == "" {
 		return 0, 0, false
 	}

@@ -1699,9 +1699,9 @@ export const decodeSessionModel: Decoder<SessionModel> = (v) => {
 export const decodeSpec: Decoder<Spec> = (v) => {
   const o = asObject(v, "$.spec");
   const out: Spec = {
+    updated_at: reqStr(o, "updated_at", "$.spec"),
     dir: reqStr(o, "dir", "$.spec"),
     name: reqStr(o, "name", "$.spec"),
-    updated_at: reqStr(o, "updated_at", "$.spec"),
     docs: o["docs"] === null ? [] : decodeArray(o["docs"], decodeSpecDoc, "$.spec.docs"),
   };
   if (o["approvals"] !== undefined && o["approvals"] !== null) out.approvals = decodeRecord(o["approvals"], decodeSpecApproval, "$.spec.approvals");
@@ -1768,12 +1768,12 @@ export const decodeSpecProgress: Decoder<SpecProgress> = (v) => {
 export const decodeSpecTaskNode: Decoder<SpecTaskNode> = (v) => {
   const o = asObject(v, "$.spec_task_node");
   const out: SpecTaskNode = {
-    id: reqStr(o, "id", "$.spec_task_node"),
     number: reqStr(o, "number", "$.spec_task_node"),
     text: reqStr(o, "text", "$.spec_task_node"),
     status: reqOneOf(o, "status", PLAN_STATUSS, "$.spec_task_node"),
     hash: reqStr(o, "hash", "$.spec_task_node"),
     detail: reqStr(o, "detail", "$.spec_task_node"),
+    id: reqStr(o, "id", "$.spec_task_node"),
     children: o["children"] === null ? [] : decodeArray(o["children"], decodeSpecTaskNode, "$.spec_task_node.children"),
     line: reqNum(o, "line", "$.spec_task_node"),
     indent: reqNum(o, "indent", "$.spec_task_node"),

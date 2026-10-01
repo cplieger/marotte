@@ -2605,13 +2605,6 @@ func swapDefaultLogger(tb testing.TB, h slog.Handler) {
 	slog.SetDefault(slog.New(h))
 }
 
-// quietLogs silences the default handler for a benchmark whose subject logs once
-// per iteration: at a real -benchtime that is millions of lines of package output.
-func quietLogs(b *testing.B) {
-	b.Helper()
-	swapDefaultLogger(b, slog.DiscardHandler)
-}
-
 // A writability probe that works says nothing. Every directory listing runs one,
 // so a probe that logged on the success path would put a line per listing into
 // the operator's log — and its cleanup warning, the one that means a probe file
