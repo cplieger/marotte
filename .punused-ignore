@@ -317,3 +317,10 @@ method (*EntryLog).Close
 method (*EntryLog).Counters
 method (*EntryLog).TurnRange
 
+
+
+# internal/turnlog. Closed is the locked read of whether a turn's turn_close is
+# on disk. translate's tests and benchmarks drive turns from outside the package
+# and assert a turn closed (or stayed open) through it; production decides
+# closure inside turnlog and never needs to ask.
+method (*Turn).Closed

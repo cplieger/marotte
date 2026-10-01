@@ -389,6 +389,7 @@ func fingerprintFonts() error {
 		}
 		return ref
 	})
+	//nolint:gosec // G703: cssPath is this bundler's own output under static/, never request input
 	if err := os.WriteFile(cssPath, []byte(rewritten), 0o600); err != nil {
 		return fmt.Errorf("font fingerprint: rewrite bundle: %w", err)
 	}
@@ -475,7 +476,7 @@ func fontSource(dir, name string) (string, error) {
 // hashFile returns the first 8 hex digits of the file's SHA-256, streamed so a 9 MB face
 // is not held in memory beside the bundle.
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec // a name the bundle's own CSS declared, checked as a plain filename
+	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("font fingerprint: %w", err)
 	}

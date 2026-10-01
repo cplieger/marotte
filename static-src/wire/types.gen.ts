@@ -2371,17 +2371,8 @@ export interface SessionModel {
  * markdown documents in display order.
  */
 export interface Spec {
-  /**
- * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
- * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
- */
-  dir: string;
-  /** Name is the directory's last segment. */
-  name: string;
   /** UpdatedAt is the newest mtime across the documents. */
   updated_at: string;
-  /** Docs is an ordered list, never a fixed trio. */
-  docs: SpecDoc[];
   /**
  * Approvals is the human sign-off per phase, keyed by SpecDocRole. Absent
  * for a phase nobody approved; a MAP rather than a slice because a phase is
@@ -2389,6 +2380,15 @@ export interface Spec {
  * in a fixed order and the client indexes by the segment's role.
  */
   approvals?: Record<string, SpecApproval>;
+  /**
+ * Dir is the workspace-relative directory, ".kiro/specs/<name>" or
+ * "<repo>/.kiro/specs/<name>", and is the spec tab's Ref.
+ */
+  dir: string;
+  /** Name is the directory's last segment. */
+  name: string;
+  /** Docs is an ordered list, never a fixed trio. */
+  docs: SpecDoc[];
 }
 
 /**
@@ -2480,8 +2480,12 @@ export interface SpecProgress {
 
 /** SpecTaskNode is one task line of tasks.md as Kiro's own parser reads it. */
 export interface SpecTaskNode {
-  /** ID is "L<line>", the node's address within the document. */
-  id: string;
+  /**
+ * Wave is the parallel batch the tasks document's dependency graph puts
+ * this task in, nil when it names none. A POINTER because 0 is a real
+ * wave id: an absent wave must not read as the first one.
+ */
+  wave?: number;
   /** Number is the dotted task number, empty when the line carries none. */
   number: string;
   /** Text is the task text verbatim; it is the id Kiro resolves a task by. */
@@ -2492,14 +2496,10 @@ export interface SpecTaskNode {
   hash: string;
   /** Detail is the task's content lines, de-indented and cut at the first heading. */
   detail: string;
+  /** ID is "L<line>", the node's address within the document. */
+  id: string;
   /** Children is always present on the wire, empty for a leaf. */
   children: SpecTaskNode[];
-  /**
- * Wave is the parallel batch the tasks document's dependency graph puts
- * this task in, nil when it names none. A POINTER because 0 is a real
- * wave id: an absent wave must not read as the first one.
- */
-  wave?: number;
   /** Line is the 1-based line number of the task line. */
   line: number;
   /** Indent is the raw character count of the line's leading whitespace. */

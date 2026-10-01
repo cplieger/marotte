@@ -224,8 +224,8 @@ func TestScanKiroDocs_SpecsGroupAndOrder(t *testing.T) {
 }
 
 func pathBase(p string) string {
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[i+1:]
+	if _, base, found := strings.CutLast(p, "/"); found {
+		return base
 	}
 	return p
 }
