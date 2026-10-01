@@ -11,7 +11,7 @@ export default [
   // 1. Ignore generated/build outputs and configs that don't need linting.
   {
     ignores: [
-      // Dependencies (any depth — vibekit's web/static-src/node_modules nests deep)
+      // Dependencies (any depth — marotte's web/static-src/node_modules nests deep)
       "**/node_modules/**",
       // Build output / generated bundles (TS->JS, CSS bundles, etc.)
       "**/static/**",
@@ -26,9 +26,11 @@ export default [
       "**/*.gen.ts",
       "**/*.gen.js",
       "**/wire/*.gen.ts",
-      // Test fixtures that aren't real code
+      // Test fixtures that aren't real code, including fixture trees that are
+      // dead or unreachable by construction (a dead-code analyzer's inputs)
       "**/test-stubs/**",
       "**/__mocks__/**",
+      "**/fixtures/**",
     ],
   },
   // 2. Strictest official preset combination (typed linting required).
