@@ -4,18 +4,10 @@ import "context"
 
 // --- Persistence ---
 
-// There is no ChatStore interface here. *chat.Store offers 11 methods and no
-// consumer wants more than 6 of them:
-//
-//	internal/server        1   RegisterRoutes — the chat router owns its own HTTP surface
-//	internal/translate     4   Get, Mutate, AppendMessage, UpsertTurnPlan
-//	internal/agent's coord   4   Get, Mutate, AppendMessage, BuildHistory
-//	internal/command       6   Get, Mutate, AppendMessage, SetDraft, SetAttachments, Delete
-//	internal/agent's field   9   the union it passes on, not what it calls
-//
-// One member is reached through no interface at all: UpdateMessage, called by
-// nothing in production. RegisterRoutes is reached only through
-// internal/server's own routeHandler, never through a chat-store interface.
+// There is no ChatStore interface here. Each consumer (internal/translate,
+// internal/agent, internal/command) declares the narrow interface it needs of
+// *chat.Store, and RegisterRoutes is reached only through internal/server's own
+// routeHandler, never through a chat-store interface.
 
 // --- Communication ---
 
@@ -73,6 +65,32 @@ type StartOpts struct {
 	Effort      string
 	AgentEngine string
 	Mode        string
+	// IgnoreFiles RESOLVES the ignore-file basenames KAS enforces for this
+	// connection, sent as MethodPolicyIgnoreFilesChanged once initialize has
+	// succeeded and before the first session verb. That notification is the only
+	// door: there is no `_meta.kiro` key and no session key for the list, and the
+	// value is CONNECTION-scope in KAS, so it is per bridge rather than per session.
+	//
+	// A RESOLVER rather than a slice, because the two are minutes apart. Start
+	// registers the bridge before it runs, so a settings save landing between the
+	// two fans out to a bridge that then sends its own captured list over the top —
+	// permanently, since there is one send and no repair. Reading at send time
+	// leaves one settings read between the resolve and the frame write, which is the
+	// same order the fan-out's own read-then-write already takes.
+	//
+	// The list carries settings.AgentIgnoreFloor first whatever the user's own
+	// entries hold, so `.kiroignore` is always enforced.
+	//
+	// NIL or an EMPTY list means SEND NOTHING, and that is the fail mode rather
+	// than a default: `{files: []}` CLEARS the list in KAS, so a bridge whose
+	// settings could not be read leaves KAS enforcing whatever it was last told. A
+	// bridge spawning fresh gets the floor alone, because a list assembled from a
+	// document that could not be read is a guess.
+	//
+	// It sits AHEAD of the two []string fields deliberately: a func value is one
+	// pointer word, and leaving the narrowest pointer field last extends StartOpts'
+	// leading pointer data by 16 bytes (govet fieldalignment).
+	IgnoreFiles func(context.Context) []string
 	// Presets are the KAS policy-preset ids this session opens with, resolved
 	// from the active security profile (policyfile.Profile). They ride
 	// _meta.kiro.policyPreset on BOTH session/new and session/load, because KAS

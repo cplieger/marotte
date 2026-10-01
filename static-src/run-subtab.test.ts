@@ -114,6 +114,20 @@ vi.mock("./run-store.js", () => ({
   // The pause-detail phrase, imported by the same two consumers — here for the
   // ESM-linking reason above, not because this suite paints a pause.
   pauseDetailPhrase: vi.fn(() => undefined),
+  // The RUN's own entry log, which a step's rows come out of now. The step
+  // transcript in this graph appends into it; no case here paints a step, so these
+  // are inert — and they have to EXIST, because a browser-mode mock is linked as
+  // real ESM.
+  appendRunEntry: vi.fn(),
+  openRunTurn: vi.fn(),
+  openRunEntry: vi.fn(),
+  // The open tails a whole-turn read REPLACES, reached by the step GET in this graph.
+  adoptRunOpenEntries: vi.fn(),
+  clearRunHole: vi.fn(),
+  // The log's two READERS, which the run view asks for the selected step's rows.
+  // Empty answers, which is what a run nobody has painted holds.
+  runTurns: vi.fn(() => []),
+  runTurnHoles: vi.fn(() => []),
 }));
 
 vi.mock("./run-dots.js", () => ({ refreshRunDots: vi.fn(), trackRun: vi.fn() }));

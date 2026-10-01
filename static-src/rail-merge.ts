@@ -4,7 +4,7 @@
 // like `turns.ts` beside it.
 
 import { OUTCOME_LABEL } from "./turn-severity.js";
-import type { Turn, TurnOutcome, TurnWindowBase } from "./turns.js";
+import type { Turn, TurnOutcome } from "./turns.js";
 
 /** One row of the session-wide turn index. Mirrors marotte.TurnSummary. */
 export interface TurnSummary {
@@ -128,31 +128,21 @@ function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
   }
 }
 
-/** Merge the resident window into the fetched index, BY `n` and never by id: the ids
- *  diverge for one turn — the window's first, when it is a fragment whose opening
- *  message was paged out — so keying on id counts that turn twice.
+/** Merge the resident window into the fetched index, BY `n`: that is the POSITION the
+ *  rail renders, and the appender assigns it at open and stores it (section 8.10), so
+ *  both sides name a turn by the same number and no turn can take two slots.
  *
- *  Resident wins per field, because it sees the running turn. ONE exemption, that
- *  same fragment: with no trigger it has no label, derives `agent_initiated` wrongly,
- *  times itself mid-turn and reads its outcome off a partial body, so the index wins
- *  on those four and resident wins on `outcome` only while it is `running`. */
+ *  Resident wins per field with no exemption, because it sees the turn running now and
+ *  a window never holds part of a turn (section 6.3). */
 export function mergeTurnSets(
   resident: readonly Turn[],
   indexed: readonly TurnSummary[],
-  base: TurnWindowBase,
 ): MergedTurns {
   const byN = new Map<number, TurnSummary>();
   for (const row of indexed) {
     byN.set(row.n, row);
   }
-  const firstResident = resident[0];
   for (const t of resident) {
-    const indexRow = byN.get(t.n);
-    const fragment = t === firstResident && base.offset > 0 && t.trigger === undefined;
-    if (fragment && indexRow !== undefined) {
-      byN.set(t.n, t.outcome === "running" ? { ...indexRow, outcome: "running" } : indexRow);
-      continue;
-    }
     byN.set(t.n, residentRow(t));
   }
   const turns = [...byN.values()].sort((a, b) => a.n - b.n);
@@ -171,7 +161,7 @@ function residentRow(t: Turn): TurnSummary {
     outcome: t.outcome,
     agent_initiated: t.trigger === undefined,
   };
-  const line = firstLine(t.trigger?.content ?? "");
+  const line = firstLine(t.trigger?.text ?? "");
   if (line !== "") {
     out.first_line = line;
   }

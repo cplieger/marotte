@@ -53,6 +53,20 @@ export function turnTop(offsets: TurnOffsets, id: string): number | null {
   return i < 0 ? null : (offsets.tops[i] ?? null);
 }
 
+/** The index of the shown marker that carries the mark for turn `n` when `n` itself
+ *  has none: the last entry at or below `n`, `0` when every entry is above it, `-1`
+ *  for an empty set. A downsampled rail has a marker for one turn in two or three, so
+ *  the reading line spends most of its time in a turn with no marker of its own. */
+export function markerSlotFor(shown: readonly { readonly n: number }[], n: number): number {
+  let slot = -1;
+  for (let i = 0; i < shown.length; i++) {
+    if ((shown[i]?.n ?? Number.POSITIVE_INFINITY) <= n) {
+      slot = i;
+    }
+  }
+  return slot >= 0 ? slot : shown.length === 0 ? -1 : 0;
+}
+
 /** The turn the reading line is in, or `KEEP` when there is no answer. Pure and
  *  total: it holds no state, so it cannot drift and cannot skip.
  *

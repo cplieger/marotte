@@ -22,11 +22,12 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 	return requireWired(&translate.Roles{
 		Bus:   rt.bus,
 		Chats: rt.chatStore,
-		// The coordinator, not a buffer store: a frame folds into the OPEN TURN's
-		// buffer, and a fold with no turn open has to open one.
-		Buffers: rt.coord,
-		Turns:   rt.coord,
-		Lines:   rt.lines,
+		// The coordinator, not the store: a chat frame folds into the open turn's
+		// accumulator, and a fold with no turn open has to open one.
+		Turns: rt.coord,
+		// The run surface: a step frame folds into the run record's open turn.
+		Runs:  rt.runs,
+		Lines: rt.lines,
 		// The ledger of steers this server sent — the discriminator between the
 		// user's own words and a workflow reporting into the same buffer.
 		Steers: rt.steerLedger,
@@ -52,6 +53,7 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		// in-flight prompt cancel, which are the coordinator's to reach.
 		TurnInterrupt: rt.coord,
 		Metering:      rt.coord,
+		Bracket:       rt.coord,
 	})
 }
 

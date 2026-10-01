@@ -1,0 +1,84 @@
+{
+  "input_file": "attack2-mode-flip-digit-leading-child.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "",
+      "text": "Audit the exporters",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "77c160c84e521409126a8f371ad86cf3aaac37b92d3d5515bf37c3884438051b",
+      "detail": "",
+      "children": [
+        {
+          "id": "L2",
+          "line": 2,
+          "indent": 2,
+          "number": "",
+          "text": "Read the metrics registry",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "7fa3c13f9cd6b1dc4ea122b4db33732d35f42207db7a46d6a9a20ef1a9980f8b",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 2,
+          "number": "12",
+          "text": "12 label pairs exceed the budget, trim them",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "bdd96639cf57c499242a2903729c362634da50001412d5e4ac8604d26cbdceba",
+          "detail": "",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "L4",
+      "line": 4,
+      "indent": 0,
+      "number": "",
+      "text": "Ship the dashboard",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "1047c9a15b76ca5a8be499435f54d09caab2be377f72afde9d5dc695e2708a18",
+      "detail": "",
+      "children": [
+        {
+          "id": "L5",
+          "line": 5,
+          "indent": 2,
+          "number": "",
+          "text": "Wire the datasource",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "d43309c8696a5dafe39e17fc9e6e1de879d126c6da63600c87b3e87d225f727a",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

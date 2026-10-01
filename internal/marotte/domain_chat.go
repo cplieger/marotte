@@ -1,67 +1,11 @@
 package marotte
 
 // Chat domain types: the persisted and over-the-wire shapes for session state,
-// messages, tool calls, plans, usage and session modes/models.
+// tool calls, plans, usage and session modes/models.
 
 import (
-	"cmp"
 	"encoding/json"
 	"slices"
-)
-
-// Role identifies the speaker of a message.
-type Role string
-
-// RoleUser and the following constants define the valid Role values for a chat message.
-const (
-	RoleUser      Role = "user"
-	RoleAssistant Role = "assistant"
-	RoleEvent     Role = "event" // system / ui events rendered inline
-)
-
-// EventKind identifies subtypes of RoleEvent messages.
-type EventKind string
-
-// EventInterrupted and the following constants define the valid EventKind values for inline event messages.
-const (
-	EventInterrupted   EventKind = "interrupted"
-	EventCancelled     EventKind = "cancelled"
-	EventModelSwitched EventKind = "model_switched" // fresh ACP session with a new model
-	EventCompacted     EventKind = "compacted"      // kiro-cli's native /compact, carries summary
-	EventCompactFailed EventKind = "compaction_failed"
-	// EventInfraSafetyBlocked marks an ENFORCE-mode Infrastructure-Safety refusal:
-	// KAS blocked the tool call upstream, so nothing was written. Persisted rather
-	// than bannered so the refusal is part of the transcript; Content carries the
-	// violated safety properties.
-	EventInfraSafetyBlocked EventKind = "infra_safety_blocked"
-	// EventTurnOutcome is the CARRIER for a turn that emitted nothing: with no
-	// assistant message there is nowhere else to stamp TurnOutcome, so a failed or
-	// refused empty turn would read `completed` on reload. Persisted only when no
-	// other marker carries the outcome and only when it is not `completed`, since a
-	// row that changes no reading is one the transcript does not need.
-	EventTurnOutcome EventKind = "turn_outcome"
-	// EventStepNotice is a message a workflow STEP sent into its launching chat.
-	// KAS keeps it as `{type:"user", source:"steer"}`, which without this kind
-	// replays as a user bubble — the transcript then claims the reader typed the
-	// step's own question. Not dropped like a workflow-progress row: that row is
-	// machine state, this is the only durable copy of the question.
-	EventStepNotice EventKind = "step_notice"
-)
-
-// UserKind separates the two kinds of user row: a PROMPT, which opens a turn, and a
-// STEER, which joins the turn already running.
-//
-// ABSENT means prompt — the whole legacy population, and the safe direction, since an
-// unreadable kind opens a turn rather than folding one away. A steer row carries NO
-// TurnOutcome, or opensHeaderlessTurn would let one open a headerless turn. A third
-// member is a coordinated wire change: the generated client decoder THROWS on an
-// unknown value.
-type UserKind string
-
-// UserKindPrompt and UserKindSteer are the valid UserKind values for a user message.
-const (
-	UserKindPrompt UserKind = "prompt"
-	UserKindSteer  UserKind = "steer"
 )
 
 // ToolKind identifies the category of a tool invocation, assigned by kiro-cli and
@@ -114,12 +58,6 @@ func (s ToolStatus) Terminal() bool {
 	return s == ToolCompleted || s == ToolFailed || s == ToolAborted
 }
 
-// IsOutcome reports whether s is the TOOL's own account of what it did.
-// ToolAborted is excluded for the reason its own constant above states.
-func (s ToolStatus) IsOutcome() bool {
-	return s == ToolCompleted || s == ToolFailed
-}
-
 // ACPUpdateKind identifies the subtype of an ACP session/update notification.
 type ACPUpdateKind string
 
@@ -142,44 +80,6 @@ const (
 	ACPUpdateUsage        ACPUpdateKind = "usage_update"
 )
 
-// BlockType discriminates content blocks in an assistant message's chronological
-// content array, mirroring Anthropic's `content_block.type` so text, tool calls and
-// thinking traces render inline as the agent emits them.
-type BlockType string
-
-const (
-	// BlockText is a markdown text segment from the agent.
-	BlockText BlockType = "text"
-	// BlockToolUse is a tool invocation. Only the ToolCallID is here; the full
-	// ToolCall lives in Message.ToolCalls, so a status update touches no block.
-	BlockToolUse BlockType = "tool_use"
-	// BlockThinking is an extended-thinking trace segment.
-	BlockThinking BlockType = "thinking"
-)
-
-// Block is one entry in an assistant message's chronological content array. Within
-// ONE agent's stream, position IS emission order, so the client renders inline.
-//
-// ACROSS streams it is NOT a global chronology: a parent and its delegates share
-// one array and internal/buffer extends the newest block of the delta's OWN
-// subtask, so a parent delta can land BEHIND a delegate's block. Order is per
-// AgentSubtaskID; Content carries arrival order. Nil on a message persisted
-// before the field existed, where a renderer falls back to Content + ToolCalls.
-type Block struct {
-	// Type is the discriminator: text | tool_use | thinking.
-	Type BlockType `json:"type"`
-	// Text is the markdown for Type=BlockText, accumulated across the
-	// MessageChunkPayload events targeting this block index.
-	Text string `json:"text,omitempty"`
-	// Thinking carries the reasoning text for Type=BlockThinking.
-	Thinking string `json:"thinking,omitempty"`
-	// ToolCallID references a Message.ToolCalls entry for Type=BlockToolUse.
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	// AgentSubtaskID is the subtask id of the agent that produced this block, ""
-	// for the top-level one. It is what lets the client nest a subagent's blocks.
-	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
-}
-
 // ToolCall is a tool invocation inside an assistant message. Each can be updated
 // in place as status changes (pending → in_progress → completed/failed/aborted).
 type ToolCall struct {
@@ -188,8 +88,6 @@ type ToolCall struct {
 	Kind   ToolKind   `json:"kind"`
 	Status ToolStatus `json:"status"`
 	Output string     `json:"output,omitempty"`
-	// SubSessionID is the v2 subagent-session attribution (inert on v3).
-	SubSessionID string `json:"sub_session_id,omitempty"`
 	// AgentSubtaskID is set from a tool call's _meta.kiro.agentSubtaskId. On v3 a
 	// subagent surfaces as an ordinary tool_call with _meta.kiro.kind agent-subtask;
 	// this id links the card to its nested deltas, which carry the same id.
@@ -243,8 +141,8 @@ type ToolCall struct {
 	//
 	// A field rather than a sixth ToolStatus member, following Denial's precedent for
 	// the same reason: a status member lands wrong at eleven predicates that ask only
-	// whether a call is over (`isToolDone`, buffer.ToolsSettled, the ToolFailed reason
-	// gates), and a refusal IS over. The REASON is not duplicated here — it is the
+	// whether a call is over (`isToolDone`, the ToolFailed reason gates), and a refusal
+	// IS over. The REASON is not duplicated here — it is the
 	// tool's own output and already on Output, which a declined card auto-expands.
 	Declined bool `json:"declined,omitempty"`
 }
@@ -377,11 +275,18 @@ type CodeReference struct {
 }
 
 // RefusalInfo is the refusal metadata KAS attaches when the model declines to
-// continue a conversation, and the turn then ends with stopReason "refusal". The
-// explanation streams as ordinary assistant content, so only the classification is
-// kept here; persisted so the callout survives reload.
+// continue a conversation, and the turn then ends with stopReason "refusal".
+//
+// Explanation is the SERVICE's own sentence about why, which KAS also streams as
+// an ordinary text chunk. It belongs here rather than in the assistant bubble:
+// folded into the open text entry it renders as prose, appended to the end of a
+// real reply with no separator, where no error surface can reach it. Keeping it on
+// the record is what lets the refusal callout own the words; empty when the wire
+// supplied none, and the callout keeps its own wording then. Persisted with the
+// classification so the callout survives a reload.
 type RefusalInfo struct {
 	Category         string `json:"category,omitempty"`
+	Explanation      string `json:"explanation,omitempty"`
 	RecommendedModel string `json:"recommended_model,omitempty"`
 }
 
@@ -402,110 +307,6 @@ type PlanEntry struct {
 	Status   PlanStatus `json:"status"`
 }
 
-// Message is one entry in a chat transcript. Tool calls are embedded in assistant
-// messages, not standalone; an event message carries an EventKind.
-type Message struct {
-	// ChangedFiles is part of the per-turn footer summary, set on the final assistant
-	// message at turn_ended so the footer survives reload. Field order in this struct
-	// is govet-fieldalignment-optimal, not logical.
-	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
-	Role         Role                   `json:"role"`
-	Content      string                 `json:"content,omitempty"`
-	// Reasoning is the agent's thinking trace, a parallel stream alongside Content.
-	// On the same message so the one-message-per-turn invariant holds.
-	Reasoning string    `json:"reasoning,omitempty"`
-	EventKind EventKind `json:"event_kind,omitempty"`
-	// UserKind is which kind of user row this is, absent on every kind but a steer.
-	// See UserKind for what absent means and why a steer carries no TurnOutcome.
-	UserKind UserKind `json:"user_kind,omitempty"`
-	// SteerState is whether the model READ this steer, present only on a steer row.
-	// Absent means not known — see SteerState, which owns what that means and how it
-	// renders. It is what makes a reload able to say "the agent never saw this".
-	SteerState SteerState `json:"steer_state,omitempty"`
-	// SteerOrigin is whose words a steer row carries, present only on a steer row.
-	// On the ROW as well as on the live frames because the note's TITLE comes from
-	// it, and the durable row REPLACES the live mark once it is resident (store.ts
-	// resolveAnchors). Without it a workflow's report would read as something the
-	// reader typed after every reload — the defect SteerOrigin exists to prevent.
-	// Absent means the user's, matching what the renderer has always assumed.
-	SteerOrigin SteerOrigin `json:"steer_origin,omitempty"`
-	ID          string      `json:"id"`
-	// KASMessageID is the id the agent's own session log holds this message under,
-	// and the ONLY id `_kiro/checkpoint/revertMultiple` accepts — it matches
-	// `record.id` in that log, while ID is a different space the agent never sees
-	// (`session/prompt` carries no field a client can mint a record id through).
-	// Valid only for the session that minted it, so RecordSession drops every one
-	// at a retirement. Present on a prompt-class user row, a steer row and an
-	// assistant row, live or `session/load`-projected. On an assistant row it is
-	// the replay merge's pairing key and never a revert target, since
-	// userMessageIndex requires RoleUser. No client reads it: the client keeps
-	// sending its own `message_id` on `rewind_chat` and the server maps.
-	KASMessageID string `json:"kas_message_id,omitempty"`
-	// TurnOutcome is how this turn ENDED, stamped on the message that finalized
-	// it: the durable half of a fact otherwise carried only by the live
-	// turn_ended SSE. Its presence also CLOSES a turn for both projections, so an
-	// older message never closes one.
-	TurnOutcome TurnOutcome `json:"turn_outcome,omitempty"`
-	// TurnStopReasonRaw is the wire's stop reason verbatim, kept because the enum is
-	// OPEN: an unmeasured value stays recoverable rather than flattened to `unknown`.
-	// No consumer may branch on it; TurnOutcome is what they read.
-	TurnStopReasonRaw StopReason `json:"turn_stop_reason_raw,omitempty"`
-	// TurnFailureReason is WHY the turn ended badly, stamped by the same code that
-	// stamps TurnOutcome so exactly one persisted message per turn carries both.
-	//
-	// Sanitized and byte-capped at the write, because its usual source is the
-	// agent's own text. Absent on older records, so the client keeps a per-outcome
-	// default.
-	TurnFailureReason string `json:"turn_failure_reason,omitempty"`
-	// TurnModel is the model that answered this turn. It belongs on the MESSAGE and
-	// not only on the Chat, whose Model is the CURRENT one: rendering that would
-	// relabel every historical turn the moment the user switched models.
-	TurnModel string     `json:"turn_model,omitempty"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	// Blocks is the canonical render model, in emission order. The client normalizes
-	// legacy Content/ToolCalls into Blocks on replay so there is a single render path.
-	Blocks []Block `json:"blocks,omitempty"`
-	// CodeReferences carries licensed-code attributions the agent flagged during
-	// this turn. Turn-scoped: the wire carries no span.
-	CodeReferences []CodeReference `json:"code_references,omitempty"`
-	// Refusal marks this assistant turn as a model refusal (kiro-cli 2.13 contract):
-	// the message content IS the refusal explanation, and this carries the category
-	// and recommended model the client's refusal callout renders.
-	Refusal *RefusalInfo `json:"refusal,omitempty"`
-	Plan    []PlanEntry  `json:"plan,omitempty"`
-	// Attachments are the files attached to THIS prompt, on the user message so a sent
-	// turn renders them as header pills. It must live on the record: each one is folded
-	// into a content block on the way OUT, so a turn read back has nothing to recover
-	// the list from. Absent on older records, and on a steer, which takes a plain string.
-	Attachments []Attachment `json:"attachments,omitempty"`
-	// TurnCredits / TurnElapsedMs complete the turn footer alongside ChangedFiles.
-	// omitempty drops the zero cases: a read-only turn has none.
-	TurnCredits   float64 `json:"turn_credits,omitempty"`
-	TurnElapsedMs float64 `json:"turn_elapsed_ms,omitempty"`
-	Ts            int64   `json:"ts"`
-	// TurnTruncated marks a turn the model stopped at a bound: it completed and
-	// its answer is cut off. Stored though derivable from the raw stop reason, so
-	// the Go and TypeScript projections do not each re-implement the mapping.
-	TurnTruncated bool `json:"turn_truncated,omitempty"`
-}
-
-// IsPrompt reports whether m is a user PROMPT rather than a steer.
-//
-// Here rather than in either reader because both turn projections and the
-// KASMessageID stamp read it, and a turn boundary they could disagree about is the
-// drift this prevents. The TypeScript twin is static-src/turns.ts.
-func (m *Message) IsPrompt() bool {
-	return m.Role == RoleUser && m.UserKind != UserKindSteer
-}
-
-// AgentSideID is m's id in the agent's own session log: KASMessageID when this
-// process recorded one, ID when the row came from a replay, whose projected ID
-// already IS that id. On the type because the revert verb and the replay merge
-// both ask it.
-func (m *Message) AgentSideID() string {
-	return cmp.Or(m.KASMessageID, m.ID)
-}
-
 // Usage is a chat's last-known context and billing snapshot, plus the percentages at
 // which the SESSION summarizes and truncates its own context. Both thresholds are
 // omitempty because 0 means UNKNOWN — a chat that has never resumed receives neither,
@@ -517,7 +318,6 @@ type Usage struct {
 	TruncationThresholdPct    float64        `json:"truncation_threshold_pct,omitempty"`
 	ContextSize               int            `json:"context_size"`
 	Credits                   float64        `json:"credits"`
-	TurnCount                 int            `json:"turn_count"`
 	LastTurnMs                float64        `json:"last_turn_ms"`
 	HasRealData               bool           `json:"has_real_data"`
 }
@@ -663,7 +463,8 @@ type ConfigTemplateResponse struct {
 	EffortLevels []SessionEffortLevel `json:"effort_levels"`
 }
 
-// Chat is the full persisted chat. Serialized as <dir>/<id>.json.
+// Chat is the persisted chat header, <dir>/<id>/chat.json; the transcript is the
+// entry log beside it.
 type Chat struct {
 	Name          string `json:"name"`
 	Model         string `json:"model,omitempty"`
@@ -712,8 +513,13 @@ type Chat struct {
 	// EffortActive is the level the session is RUNNING at, from that option's
 	// `currentValue`. Distinct from Effort, which is what this chat CHOSE: a chat
 	// that never picked has an empty Effort and still runs at a level.
-	EffortActive string    `json:"effort_active,omitempty"`
-	Messages     []Message `json:"messages"`
+	EffortActive string `json:"effort_active,omitempty"`
+	// LastTurnOutcome is how the newest finished turn ended, written by the closer
+	// that appends a turn_close in the same header rewrite as TurnCount.
+	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
+	// PendingModel is a model pick awaiting its apply between turns; empty when
+	// none is pending.
+	PendingModel string `json:"pending_model,omitempty"`
 	// PriorACPSessionIDs are the KAS sessions this chat USED to run on, oldest
 	// first, and a chat routinely changes session: a failed session/load blanks it,
 	// a model switch fallback recreates it. Each of those sessions still holds that
@@ -724,7 +530,10 @@ type Chat struct {
 	Usage              Usage    `json:"usage"`
 	CreatedAt          int64    `json:"created_at"`
 	UpdatedAt          int64    `json:"updated_at"`
-	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
+	// TurnCount is the count of turns in the log: the newest turn_open's n, and
+	// the one counter a window's n and has_more are read against.
+	TurnCount      int  `json:"turn_count"`
+	SupervisedMode bool `json:"supervised_mode,omitempty"`
 }
 
 // SessionChain returns every KAS session id this chat has run on, current one
@@ -787,35 +596,10 @@ func (c *Chat) RecordSession(id string) {
 	if id != "" {
 		c.PriorACPSessionIDs = slices.DeleteFunc(c.PriorACPSessionIDs, func(s string) bool { return s == id })
 	}
-	// A stamp is valid only for the session that minted it, and a rewind never crosses a
-	// session boundary, so one surviving a retirement names a record the revert cannot
-	// reach while still reading as addressable. Dropping it is what makes an empty field
-	// mean "no usable agent-side id", which is the answer the refusal explains.
-	for i := range c.Messages {
-		c.Messages[i].KASMessageID = ""
-	}
 }
 
-// lastTurnOutcome returns the newest persisted turn outcome in msgs — the
-// TurnOutcome of the last message carrying one — or "" when none does.
-//
-// Walks BACKWARDS and stops at the first hit, because the newest outcome is the
-// only one that describes how this chat's LAST turn ended, and rows persisted
-// after the carrier (a plan row, a compaction event) carry none of their own and
-// so must not hide it.
-func lastTurnOutcome(msgs []Message) TurnOutcome {
-	// Index-only range: Message is far past gocritic's rangeValCopy threshold, so
-	// binding the element would copy a whole transcript row per iteration.
-	for i := range slices.Backward(msgs) {
-		if o := msgs[i].TurnOutcome; o != "" {
-			return o
-		}
-	}
-	return ""
-}
-
-// Header returns the chat's metadata without messages. Used for list
-// endpoints and SSE broadcasts when messages are not needed.
+// Header returns the chat's metadata: the list endpoints' row and the
+// chat_updated payload.
 func (c *Chat) Header() ChatHeader {
 	return ChatHeader{
 		ID:                  c.ID,
@@ -825,13 +609,14 @@ func (c *Chat) Header() ChatHeader {
 		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
 		Effort:              c.Effort,
-		LastTurnOutcome:     lastTurnOutcome(c.Messages),
+		LastTurnOutcome:     c.LastTurnOutcome,
 		EffortLevels:        c.EffortLevels,
 		EffortActive:        c.EffortActive,
 		Usage:               c.Usage,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
-		MessageCount:        len(c.Messages),
+		TurnCount:           c.TurnCount,
+		PendingModel:        c.PendingModel,
 		SupervisedMode:      c.SupervisedMode,
 		CompactionWatermark: c.CompactionWatermark,
 	}
@@ -848,17 +633,16 @@ type ChatHeader struct {
 	// level and an empty chat never fetches its full record, so the header is the
 	// only path that reaches every chat. Chat.Draft is deliberately NOT mirrored.
 	Effort string `json:"effort,omitempty"`
-	// LastTurnOutcome is how this chat's NEWEST finished turn ended, DERIVED on
-	// every read from the last message carrying a TurnOutcome — a second copy
-	// would be a second thing that can be wrong. Here because the header is the
+	// LastTurnOutcome is how this chat's NEWEST finished turn ended, the stored
+	// header field the turn_close writer keeps. Here because the header is the
 	// only projection reaching every chat, which is what the tab dot needs.
-	//
-	// Empty for a chat with no finished turn and for older records (invariant 5
-	// forbids the backfill). Never `running`.
+	// Empty for a chat with no finished turn. Never `running`.
 	LastTurnOutcome TurnOutcome `json:"last_turn_outcome,omitempty"`
 	// EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
 	// the control renders from the ACTIVE chat's header.
-	EffortActive string               `json:"effort_active,omitempty"`
+	EffortActive string `json:"effort_active,omitempty"`
+	// PendingModel mirrors Chat's: the model badge reads it off the header.
+	PendingModel string               `json:"pending_model,omitempty"`
 	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
 	// The model and mode vocabulary is a WORKSPACE fact served once by
 	// agent.Catalog, never mirrored per header.
@@ -870,7 +654,7 @@ type ChatHeader struct {
 	Usage              Usage    `json:"usage"`
 	CreatedAt          int64    `json:"created_at"`
 	UpdatedAt          int64    `json:"updated_at"`
-	MessageCount       int      `json:"message_count"`
+	TurnCount          int      `json:"turn_count"`
 	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
 }
 
@@ -948,7 +732,7 @@ type WorkflowRun struct {
 	// launching session's chain. Empty for a run with no marotte parent.
 	ParentChatID string `json:"parent_chat_id,omitempty"`
 	// EndReason says why something OTHER than the run stopped it: "overran" (a
-	// slot, the idle window or the backstop) or "step_cap". Every bound cancels
+	// slot or the backstop), "stalled" (the idle window) or "orphaned". Every bound cancels
 	// through the verb the Cancel button reaches, so KAS reports `cancelled`
 	// either way and only this separates a bound from a person; a user cancel
 	// records nothing. In-memory for the runs THIS process stopped, so one

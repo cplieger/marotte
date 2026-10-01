@@ -1,38 +1,37 @@
 // ---------------------------------------------------------------------------
-// The resume control counts blocks the reader can REACH.
+// The resume control counts entries the reader can REACH.
 //
-// A delegate's blocks are members of the PARENT assistant message's `blocks`
-// array, so the naive sum over `m.blocks.length` counts them whether or not
-// anything on the page renders them. It does not: a delegate card collapses to
-// `block-size: 0` with `overflow: hidden`, so while it is shut its members
-// contribute zero document height. A count that includes them makes the control
-// promise a distance that does not exist — the reader resumes expecting N new
-// blocks and lands on the view they parked at.
+// `messages.ts entryCount` is a walk over each turn's body asking
+// `entryRenders(e, "", firstPlan)` — the renderer's OWN predicate rather than a second
+// reading of it. Two populations answer false there, and a count including either
+// would promise a distance that does not exist: an entry in another LANE (delegate
+// content, which `placeEntry` drops in this view) and the kinds that render at no
+// position of their own (`turn_open` as the header, `turn_close` as the footer, a
+// `tool_result` on its call's card, a `turn_bind` nowhere). The reader resumes
+// expecting N new blocks and lands where they parked.
 //
-// Both directions are asserted for the one container kind that has them:
-//   - a COLLAPSED delegate's blocks are not counted; expanding its card counts
-//     the same blocks.
+// The label's own word is still "block", which is production's wording and not this
+// file's to change.
 //
-// A WORKFLOW STEP is the other half and it has no directions at all: its blocks
-// are DROPPED by the dispatcher, so nothing renders them and folding the run card
-// either way changes nothing. That used to be a four-case describe about needing
-// BOTH containers open (the card and the step row inside it); it is one case now,
-// asserting the count does not move.
+// ONE ORACLE DROPPED OUT LOUD. A describe here asserted that a WORKFLOW STEP's blocks
+// are never reachable, over a `wf:<runID>:<node>` subtask id inside the launching
+// chat's own message. That is now unrepresentable rather than merely unused: a step's
+// entries are appended to the RUN's log (`runs/<workflowId>/entries.jsonl`), never to
+// a chat's, so no `wf:` lane exists in the input this walk reads and the dispatcher
+// needs no rule to filter one back out. Its surviving half — content this view does
+// not draw is not counted — is the delegate case below, over lanes.
 //
-// Reachability is the renderer's open-container registry now (messages-blocks
-// maintains it where the disclosures toggle), so the containers here are the
-// REAL views: the store lands the message, the paint mounts the delegate boxes
-// and run cards, and the tests open them by clicking the same headers a reader
-// clicks. The count recomputes on FULL passes only, so each flow is production's
-// own order — park (baseline), message arrives (shape paint counts the mount
-// state), a disclosure click plus the next shape paint counts the change.
-// The label is read through the scroll mock's `setResumeLabel`, and the count is
-// driven through the reading-state callback `initFollowModel` registers — the
-// same path the real scroller drives.
+// The flows are production's own order: park (baseline), the turn's entries land
+// through the store's own `openTurn`/`appendEntry`, and each of those bumps a `shape`
+// pass, which is where the count recomputes. The label is read through the scroll
+// mock's `setResumeLabel`, and the baseline is driven through the reading-state
+// callback `initFollowModel` registers — the same path the real scroller drives.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Block, Message, Session } from "./types.js";
+import { makeSession } from "./__test-helpers__/model.js";
+import type { Session } from "./types.js";
+import type { Entry } from "./wire/types.gen.js";
 import type { ReadingState } from "./scroll.js";
 
 // messages.ts's graph reads the shared DOM registry at module scope / mount,
@@ -78,49 +77,60 @@ messages.mountChatView();
   onReading = call[0] as (s: ReadingState) => void;
 }
 
-const messagesEl = document.getElementById("messages")!;
-
-/** One text block, optionally attributed to a delegate or a workflow step. */
-function block(text: string, subtask?: string): Block {
-  return (
-    subtask === undefined
-      ? { type: "text", text }
-      : { type: "text", text, agent_subtask_id: subtask }
-  ) as Block;
+function sealed(
+  turnID: string,
+  at: number,
+  kind: Entry["kind"],
+  payload: unknown,
+  lane?: string,
+): Entry {
+  return {
+    id: `${turnID}-e${String(at)}`,
+    turn: turnID,
+    kind,
+    seq: at,
+    ts: at + 1,
+    ...(lane === undefined ? {} : { lane }),
+    payload,
+  } as Entry;
 }
 
-/** Chat ids are minted per flow so every mount is a fresh chat switch; message
- *  ids ride them because the reconcile is keyed by message id across chats. */
+/** One sealed `text` entry, optionally in a DELEGATE's lane. A lane is what replaced
+ *  the per-block `agent_subtask_id`: position is intrinsic, so a delegate's entries sit
+ *  in the same `seq` space and are told apart by lane alone. */
+function text(turnID: string, at: number, body: string, lane?: string): Entry {
+  return sealed(turnID, at, "text", { text: body }, lane);
+}
+
+/** Chat ids are minted per flow so every mount is a fresh chat switch. */
 let chatSeq = 0;
 
 function session(id: string): Session {
-  return {
-    id,
-    name: id,
-    messages: [],
-    message_count: 0,
-    has_more: false,
-    thinking: false,
-    working_label: "",
-  } as unknown as Session;
+  return makeSession({ id, name: id });
 }
 
-/** Park the reader on an empty chat (zero baseline), then land one assistant
- *  message carrying `blocks` — the shape paint mounts its REAL containers and
- *  recounts. Returns the chat id for follow-up toggles. */
-function parkThenLand(blocks: Block[]): string {
+/** Park the reader on an empty chat (zero baseline), then land ONE turn whose body is
+ *  `body` — through the store's own operations, so the entries arrive exactly as a
+ *  frame lands them and each append recounts on its own `shape` pass. Returns the
+ *  chat id. */
+function parkThenLand(body: (turnID: string) => Entry[]): string {
   const chat = `c-${String(++chatSeq)}`;
+  const turnID = `t-${String(chatSeq)}`;
   store.setSessions([session(chat)]);
   store.setActive(chat);
   scrollMock.readingState.mockReturnValue("reading");
   onReading("reading"); // baseline: nothing reachable yet
-  store.appendMessage(chat, {
-    id: `m-${String(chatSeq)}`,
-    role: "assistant",
-    ts: 2,
-    content: "",
-    blocks,
-  } as Message);
+  store.openTurn(
+    chat,
+    sealed(turnID, 0, "turn_open", {
+      prompt: { id: `${turnID}-p`, text: "go" },
+      source: "prompt",
+      n: 1,
+    }),
+  );
+  for (const e of body(turnID)) {
+    store.appendEntry(chat, e);
+  }
   return chat;
 }
 
@@ -130,95 +140,51 @@ function lastLabel(): string {
   return call === undefined ? "<no label>" : (call[0] as string);
 }
 
-/** Click a real disclosure header, then repaint (a toggle bumps no version of
- *  its own, and the count recomputes on full passes only). */
-function toggleAndRepaint(chat: string, selector: string): void {
-  const header = messagesEl.querySelector<HTMLElement>(selector);
-  if (header === null) {
-    throw new Error(`no disclosure header for ${selector}`);
-  }
-  header.click();
-  store.bumpMessages(chat);
-}
-
 beforeEach(() => {
   scrollMock.setResumeLabel.mockClear();
 });
 
-describe("the resume label counts only blocks the reader can reach", () => {
-  const delegateBlocks = (): Block[] => [
-    block("parent one"),
-    block("parent two"),
-    block("delegate a", "sa-1"),
-    block("delegate b", "sa-1"),
-    block("delegate c", "sa-1"),
-  ];
-
-  it("does NOT count a delegate's blocks", () => {
-    parkThenLand(delegateBlocks());
-    // The transcript renders none of the three, in any fold state, so the reader's
-    // distance is the two parent blocks.
+describe("the resume label counts only entries the reader can reach", () => {
+  it("does NOT count a delegate's entries", () => {
+    parkThenLand((t) => [
+      text(t, 1, "parent one"),
+      text(t, 2, "parent two"),
+      text(t, 3, "delegate a", "sa-1"),
+      text(t, 4, "delegate b", "sa-1"),
+      text(t, 5, "delegate c", "sa-1"),
+    ]);
+    // The transcript renders none of the three: `placeEntry` drops an entry whose lane
+    // is not the view's root, in any fold state — a delegate's card carries no body at
+    // all now, and its content is its own page's. So the reader's distance is the two
+    // parent entries, against the five a naive body count would promise.
     expect(lastLabel()).toBe("2 new blocks");
   });
 
-  // The expand/collapse pair was here, and both halves are unreachable: a card is not a
-  // disclosure, so there is no toggle to change this count. Their point — that the count
-  // follows what is REACHABLE rather than what is present — is now the single case above,
-  // because a delegate's blocks are never reachable in the transcript at all.
-
-  it("counts parent-stream blocks whatever is collapsed around them", () => {
-    parkThenLand([block("only parent"), block("delegate", "sa-1")]);
+  it("counts parent-lane entries whatever else the turn carries", () => {
+    parkThenLand((t) => [text(t, 1, "only parent"), text(t, 2, "delegate", "sa-1")]);
+    // Also the singular, which is a different branch of the label.
     expect(lastLabel()).toBe("1 new block");
   });
-});
 
-describe("a workflow step's blocks are never reachable", () => {
-  const STEP = "wf:wf_1:wf_1/build";
-  // The launch, so the card exists to fold: it is the card's only creator now.
-  const launch = {
-    id: "t1",
-    title: "Run Workflow",
-    kind: "other",
-    status: "completed",
-    workflow_id: "wf_1",
-  };
-  const stepBlocks = (): Block[] => [
-    block("parent"),
-    { type: "tool_use", tool_call_id: "t1" } as Block,
-    block("step out", STEP),
-    block("step err", STEP),
-  ];
-  const cardHead = '.run-card[data-run="wf_1"] > .run-head';
-
-  /** Park, then land a message whose card is the launch and whose step blocks are
-   *  dropped. Same flow as `parkThenLand`, plus the tool call the card needs. */
-  function landWithLaunch(): string {
-    const chat = `c-wf-${String(Date.now())}${String(Math.random()).slice(2, 8)}`;
-    store.setSessions([session(chat)]);
-    store.setActive(chat);
-    scrollMock.readingState.mockReturnValue("reading");
-    onReading("reading");
-    store.appendMessage(chat, {
-      id: `m-wf-${String(Math.random()).slice(2, 8)}`,
-      role: "assistant",
-      ts: 2,
-      content: "",
-      blocks: stepBlocks(),
-      tool_calls: [launch],
-    } as unknown as Message);
-    return chat;
-  }
-
-  // ONE case, both card states, because the count no longer depends on either: a
-  // step's blocks are DROPPED by the dispatcher, so nothing on the page renders them
-  // and no disclosure can make them reachable. The parent block and the tool_use
-  // block that became the card are the two the reader can reach.
-  it("counts neither with the card open nor with it closed", () => {
-    const chat = landWithLaunch();
-    expect(lastLabel()).toBe("2 new blocks");
-    toggleAndRepaint(chat, cardHead); // the card mounts open, so this closes it
-    expect(lastLabel()).toBe("2 new blocks");
-    toggleAndRepaint(chat, cardHead); // and open again
+  // The OTHER population `entryRenders` answers false for, which the lane cases cannot
+  // reach: a kind that renders at no position of its own. A settled tool call is ONE
+  // reachable entry — the card — and its `tool_result` folds onto that same card by id,
+  // so counting the pair would promise a row that does not exist. `turn_open` and
+  // `turn_close` are in the same population and are asserted here by their absence from
+  // the total: the turn carries both and neither is counted.
+  it("counts a settled tool call once, not once per entry", () => {
+    parkThenLand((t) => [
+      text(t, 1, "prose"),
+      sealed(t, 2, "tool_call", {
+        id: `${t}-tc`,
+        title: "Run Command",
+        kind: "execute",
+        status: "completed",
+        ts: 2,
+      }),
+      sealed(t, 3, "tool_result", { id: `${t}-tc:result`, status: "completed", output: "ok" }),
+      sealed(t, 4, "turn_close", { outcome: "completed" }),
+    ]);
     expect(lastLabel()).toBe("2 new blocks");
   });
 });

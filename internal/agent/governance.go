@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/webhttp/v3"
 )
 

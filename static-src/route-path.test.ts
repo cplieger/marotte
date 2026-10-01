@@ -99,6 +99,26 @@ describe("parseRoute (table-driven)", () => {
     },
     { name: "/history", pathname: "/history", hash: "", expected: { kind: "history" } },
     {
+      name: "/history/runs",
+      pathname: "/history/runs",
+      hash: "",
+      expected: { kind: "history", tab: "runs" },
+    },
+    {
+      // The canonical pane omits its segment, so the explicit spelling folds to the
+      // same object the bare path parses to.
+      name: "/history/chats (explicit) → chats",
+      pathname: "/history/chats",
+      hash: "",
+      expected: { kind: "history" },
+    },
+    {
+      name: "/history/unknown → chats",
+      pathname: "/history/bogus",
+      hash: "",
+      expected: { kind: "history" },
+    },
+    {
       // The spec board is deleted outright — no shim, no redirect. A saved
       // /specs bookmark is just an unknown path now.
       name: "/specs (retired route) → default chat",
@@ -357,8 +377,13 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
         tab: "prs",
         pr: `${forge}:${repo}#${String(n)}`,
       })),
-    // history
-    fc.constant<Route>({ kind: "history" }),
+    // history: the bare spelling, and both panes stated. "chats" omits the
+    // segment (/history) and folds back to the bare object; "runs" carries it.
+    fc.constantFrom<Route>(
+      { kind: "history" },
+      { kind: "history", tab: "chats" },
+      { kind: "history", tab: "runs" },
+    ),
     arbFilesRoute,
     // file without line
     fc
@@ -470,6 +495,10 @@ function canonicalize(route: Route): Route {
         return { kind: "git", tab: route.tab };
       }
       return route;
+    case "history":
+      // The canonical pane is the ABSENT field: buildPath omits its segment and
+      // parseRoute never produces `tab: "chats"`.
+      return route.tab === "runs" ? route : { kind: "history" };
     default:
       return route;
   }
@@ -512,6 +541,28 @@ describe("parseRoute adversarial inputs (no-throw)", () => {
       { numRuns: 300 },
     );
     expect(result.failed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spec route: one encoded segment holding a whole directory.
+//
+// `parseRoute` splits on `/` BEFORE it decodes, so the directory's own slashes have
+// to arrive encoded, and an unencoded spelling is not a spec route at all.
+// ---------------------------------------------------------------------------
+
+describe("the spec route", () => {
+  it.each([".kiro/specs/x", "repo/.kiro/specs/feature-x"])("round-trips %s", (dir) => {
+    const path = buildPath({ kind: "spec", dir });
+    expect(path).toBe(`/spec/${encodeURIComponent(dir)}`);
+    expect(path.split("/")).toHaveLength(3);
+    expect(parseRoute(path, "")).toEqual({ kind: "spec", dir });
+  });
+
+  it("refuses an unencoded directory and an empty one", () => {
+    expect(parseRoute("/spec/.kiro/specs/x", "")).toEqual({ kind: "chat", id: "" });
+    expect(parseRoute("/spec/", "")).toEqual({ kind: "chat", id: "" });
+    expect(parseRoute("/spec", "")).toEqual({ kind: "chat", id: "" });
   });
 });
 

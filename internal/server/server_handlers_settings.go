@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,14 +12,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logctl"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -26,7 +29,7 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	path := s.steering.CustomPath()
 	switch r.Method {
 	case http.MethodGet:
-		handleSteeringGet(w, path)
+		handleSteeringGet(w, r, path)
 	case http.MethodPut:
 		handleSteeringPut(w, r, path)
 	default:
@@ -34,13 +37,143 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleSteeringGet(w http.ResponseWriter, path string) {
-	data, err := os.ReadFile(path)
+// maxSteeringBytes caps the custom.md read so a runaway file cannot pin memory.
+const maxSteeringBytes = 1 << 20 // 1 MiB
+
+// msgSteeringUnreadable is what a steering read answers when a file stands at
+// custom.md and could not be read. It states both halves the reader needs: the
+// file could not be read, and nothing was written over it.
+const msgSteeringUnreadable = "custom.md could not be read; your instructions were not overwritten"
+
+// msgSteeringConflict is the 409, answered with the fresh token and the document
+// beside it so the reader's box can be re-seeded from the refusal itself.
+const msgSteeringConflict = "custom.md changed since you loaded it; your text was not saved"
+
+// msgSteeringIfMatchRequired is the 428: no validator token was offered, so this
+// write cannot be told from one that would overwrite a newer document.
+const msgSteeringIfMatchRequired = "If-Match is required to save custom.md"
+
+const (
+	headerETag    = "ETag"
+	headerIfMatch = "If-Match"
+)
+
+// steeringAbsentETag is the token for "no file stands at custom.md", which is a
+// real state rather than a missing one: an empty document is stored as an absent
+// file, so the first save of a fresh volume needs a token to send.
+const steeringAbsentETag = `"absent"`
+
+// steeringConflictBody is the 409 payload: marotte's error envelope plus the two
+// values the client needs to recover without a second round trip.
+type steeringConflictBody struct {
+	Error   string `json:"error"`
+	ETag    string `json:"etag"`
+	Content string `json:"content"`
+}
+
+// steeringSaveBody is the 200 payload for a PUT: the acknowledgement plus the
+// validator for what the write just left on disk. The ETag header carries the
+// same value; the body carries it too because the client's action framework
+// decodes a body and cannot reach a response header.
+//
+// No omitempty: the field is always present, and an empty string is the explicit
+// "no token could be read", which a caller answers by keeping whatever it had
+// rather than adopting one that names nothing.
+type steeringSaveBody struct {
+	ETag string `json:"etag"`
+	OK   bool   `json:"ok"`
+}
+
+// steeringDoc reads custom.md and derives its validator token. An ABSENT file
+// yields an empty document and a nil error: "no custom instructions" is expressed
+// as no file.
+//
+// It does NOT fail open, because a save PUTs the whole textarea as the whole
+// document, so answering empty for a file that exists and could not be read is
+// what lets the first keystroke replace it. OpenRegular refuses the symlink the
+// write path refuses, and cannot block in open(2) on a FIFO.
+func steeringDoc(ctx context.Context, path string) (content, etag string, err error) {
+	// Absolute because OpenRegular requires it; a relative path resolved against the
+	// process cwd means the same thing either way.
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		webhttp.WriteJSON(w, map[string]string{"content": ""})
+		return "", "", err
+	}
+	f, info, err := atomicfile.OpenRegular(abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", steeringAbsentETag, nil
+		}
+		return "", "", err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := atomicfile.ReadBoundedFile(ctx, f, maxSteeringBytes)
+	if err != nil {
+		return "", "", err
+	}
+	return string(data), steeringETag(info), nil
+}
+
+// steeringETag renders the token for a present file from its mtime and size.
+// Two writes inside one filesystem timestamp tick that leave the same length
+// share a token, which fails toward accepting the second write — the direction a
+// validator over metadata cannot avoid without hashing the content.
+func steeringETag(info fs.FileInfo) string {
+	return fmt.Sprintf("%q", strconv.FormatInt(info.ModTime().UnixNano(), 10)+"-"+strconv.FormatInt(info.Size(), 10))
+}
+
+func handleSteeringGet(w http.ResponseWriter, r *http.Request, path string) {
+	content, etag, err := steeringDoc(r.Context(), path)
+	if err != nil {
+		httpreply.ServerError(w, msgSteeringUnreadable, err)
 		return
 	}
-	webhttp.WriteJSON(w, map[string]string{"content": string(data)})
+	w.Header().Set(headerETag, etag)
+	webhttp.WriteJSON(w, map[string]string{"content": content})
+}
+
+// steeringWriteAllowed gates a save on the caller's If-Match token, which is the
+// whole of the concurrency control on this document. A second device or an agent
+// editing custom.md — which the generated environment.md tells it to do — would
+// otherwise be overwritten by a stale panel's next keystroke.
+func steeringWriteAllowed(w http.ResponseWriter, r *http.Request, path string) bool {
+	offered := strings.TrimSpace(r.Header.Get(headerIfMatch))
+	if offered == "" {
+		webhttp.WriteJSONStatus(w, http.StatusPreconditionRequired,
+			webhttp.ErrorResponse{Error: msgSteeringIfMatchRequired})
+		return false
+	}
+	content, etag, err := steeringDoc(r.Context(), path)
+	if err != nil {
+		httpreply.ServerError(w, msgSteeringUnreadable, err)
+		return false
+	}
+	if offered == etag {
+		return true
+	}
+	w.Header().Set(headerETag, etag)
+	webhttp.WriteJSONStatus(w, http.StatusConflict, steeringConflictBody{
+		Error:   msgSteeringConflict,
+		ETag:    etag,
+		Content: content,
+	})
+	return false
+}
+
+// publishSteeringETag hands back the token for what the write just left on disk,
+// so a debounced save can keep writing without a GET between keystrokes. It sets
+// the header and RETURNS the token for the response body, because those are the
+// same fact for two readers. A token that cannot be read leaves the header unset
+// and answers "" rather than guessing at one.
+func publishSteeringETag(w http.ResponseWriter, r *http.Request, path string) string {
+	_, etag, err := steeringDoc(r.Context(), path)
+	if err != nil {
+		slog.Warn("steering: saved, but the validator token could not be read back",
+			"path", path, "error", err)
+		return ""
+	}
+	w.Header().Set(headerETag, etag)
+	return etag
 }
 
 func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
@@ -52,6 +185,9 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 		httpreply.BadRequest(w, "bad request")
 		return
 	}
+	if !steeringWriteAllowed(w, r, path) {
+		return
+	}
 	// Empty content (whitespace only) means "no custom instructions":
 	// remove the file instead of writing an empty one. Otherwise
 	// kiro-cli would include the empty file on every agent load.
@@ -60,7 +196,8 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 			httpreply.InternalError(w, err)
 			return
 		}
-		webhttp.Ok(w)
+		w.Header().Set(headerETag, steeringAbsentETag)
+		webhttp.WriteJSON(w, steeringSaveBody{OK: true, ETag: steeringAbsentETag})
 		return
 	}
 	if r.Context().Err() != nil {
@@ -68,15 +205,15 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	// Atomic write via temp+fsync+rename+dir-fsync. WithMkdirMode
 	// auto-creates the parent dir (replacing the old SaveBytes
-	// behavior); WithMode keeps the 0o644 perm. Replaces a bare
-	// os.WriteFile that could leave a truncated file on a crash
-	// mid-write. A non-nil error means the content did NOT land —
-	// surface it as 500. A nil error with res.Durable==false means
-	// the content is on disk but the parent-dir fsync was
-	// unconfirmed; log and proceed (the library already logged the
-	// fsync failure at Warn).
+	// behavior); WithMode keeps the 0o600 perm its sibling
+	// environment.md already carries. Replaces a bare os.WriteFile
+	// that could leave a truncated file on a crash mid-write. A
+	// non-nil error means the content did NOT land — surface it as
+	// 500. A nil error with res.Durable==false means the content is
+	// on disk but the parent-dir fsync was unconfirmed; log and
+	// proceed (the library already logged the fsync failure at Warn).
 	res, err := atomicfile.WriteFile(r.Context(), path, []byte(body.Content),
-		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o755))
 	if err != nil {
 		httpreply.InternalError(w, err)
 		return
@@ -85,7 +222,10 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 		slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	webhttp.Ok(w)
+	// Separate statement, not an argument: publishSteeringETag sets a header, so
+	// it has to run before WriteJSON commits the status.
+	etag := publishSteeringETag(w, r, path)
+	webhttp.WriteJSON(w, steeringSaveBody{OK: true, ETag: etag})
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -93,10 +233,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		handleSettingsGet(w, path)
-	case http.MethodPut, http.MethodPatch:
+	case http.MethodPatch:
 		s.handleSettingsWrite(w, r)
 	default:
-		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPatch)
 	}
 }
 
@@ -116,7 +256,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 // hand, so a surface that shows defaults and says the file is bad gives them more
 // to work with than one that shows nothing. The data is protected by the other
 // half of the asymmetry — the write path REFUSES the same file (see
-// mergeSettingsPatch), so a user who edits something after this warning gets a
+// handleSettingsWrite's ErrUnreadable arm), so a user who edits after this gets a
 // visible save failure instead of an overwrite that destroys what it could not
 // read. Read open, write closed.
 //
@@ -209,31 +349,13 @@ func readStoredSettings(path string) (map[string]json.RawMessage, error) {
 	return existing, nil
 }
 
-// mergeSettingsPatch resolves the request body against the document on disk,
-// as the merge step of one settings.Update.
-//
-// PATCH merges the incoming keys over the stored document. Every other method
-// REPLACES it, but must not silently wipe a key written by another flow
-// (settings.ServerManagedKeys): a managed key the body omits is carried over, so
-// a full-object PUT stays non-destructive of them.
-func mergeSettingsPatch(method string, patch map[string]json.RawMessage) func(map[string]json.RawMessage) error {
+// mergeSettingsPatch merges the request body's keys over the document on disk, as
+// the merge step of one settings.Update. There is no replacing arm: handleSettings
+// answers 405 to every method but GET and PATCH, which is cheaper to keep correct
+// than a list of keys a replace would have to carry over.
+func mergeSettingsPatch(patch map[string]json.RawMessage) func(map[string]json.RawMessage) error {
 	return func(doc map[string]json.RawMessage) error {
-		if method == http.MethodPatch {
-			maps.Copy(doc, patch)
-			return nil
-		}
-		carried := map[string]json.RawMessage{}
-		for _, k := range settings.ServerManagedKeys() {
-			if _, inBody := patch[k]; inBody {
-				continue
-			}
-			if v, ok := doc[k]; ok {
-				carried[k] = v
-			}
-		}
-		clear(doc)
 		maps.Copy(doc, patch)
-		maps.Copy(doc, carried)
 		return nil
 	}
 }
@@ -255,10 +377,18 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 		patchKeys = append(patchKeys, k)
 	}
 	_ = settings.WarnUnknownKeys(patchKeys, r.Method+" "+r.URL.Path)
+	// Refuse an ignore-file entry kiro-cli would refuse, so the panel cannot claim
+	// a name is enforced while kiro-cli skips it. Before the write: this is the one
+	// value in the document whose validation rule belongs to a foreign system, and
+	// persisting one it rejects makes config.json disagree with what is enforced.
+	if msg, ok := agentIgnorePatchRefusal(patch); !ok {
+		httpreply.BadRequest(w, msg)
+		return
+	}
 	if r.Context().Err() != nil {
 		return
 	}
-	merged, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(r.Method, patch))
+	merged, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(patch))
 	if err != nil {
 		// Two 500s with different bodies: an unreadable document is the user's own
 		// file and says so, where a failed write is this server's fault.
@@ -273,6 +403,55 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(merged)
 	syncDebugLogs(merged)
+	if _, touched := patch[settings.KeyAgentIgnoreFiles]; touched {
+		// durable.Context because the write has already landed: a reader closing the
+		// tab mid-PATCH would otherwise leave every live bridge enforcing the
+		// previous list with nothing to correct it before its next spawn.
+		s.agent.PushAgentIgnoreFiles(durable.Context(r.Context()))
+	}
+	if raw, touched := patch[settings.KeySecurityProfile]; touched {
+		// This route is the SECOND writer of the rung, and the picker's own endpoint
+		// is where the re-render was wired. Without this arm the panel resolves the
+		// posture live on every GET /api/mcp and says suspended while KAS's mcp.json
+		// still carries autoApprove for that server — the wider grant standing under
+		// copy that denies it. durable.Context for the reason stated just above.
+		s.renderMCPForProfile(durable.Context(r.Context()), securityProfileAttribution(raw))
+	}
+}
+
+// securityProfileAttribution is the profile id the re-render names in its failure
+// log, empty when the patched value is not a string. Attribution only: the
+// renderer resolves the rung by reading the setting itself.
+func securityProfileAttribution(raw json.RawMessage) string {
+	var id string
+	if json.Unmarshal(raw, &id) != nil {
+		return ""
+	}
+	return id
+}
+
+// agentIgnorePatchRefusal reports whether a settings patch's agent_ignore_files
+// value is one kiro-cli will enforce, and the message to answer with when it is
+// not. A patch that does not carry the key passes.
+//
+// It refuses a malformed VALUE as well as an invalid entry: the GET resolves a
+// wrongly-typed stored value to the default, so accepting one here would answer
+// 200 to a write whose effect is to empty the list.
+func agentIgnorePatchRefusal(patch map[string]json.RawMessage) (msg string, ok bool) {
+	raw, touched := patch[settings.KeyAgentIgnoreFiles]
+	if !touched {
+		return "", true
+	}
+	var entries []string
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return settings.KeyAgentIgnoreFiles + " must be a list of ignore file names", false
+	}
+	for _, entry := range entries {
+		if err := settings.ValidAgentIgnoreEntry(entry); err != nil {
+			return err.Error(), false
+		}
+	}
+	return "", true
 }
 
 // syncPushPreferences reads notification preference toggles from the settings

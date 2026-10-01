@@ -1,26 +1,13 @@
 package chat
 
 import (
-	"bufio"
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/jsoncap/v2"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/marotte/internal/marotte"
 )
-
-// keyMessages is marotte.Chat's JSON name for the transcript array, the one key
-// the header scan must recognise rather than capture.
-const keyMessages = "messages"
 
 // openChatFile opens path for reading, with the FileInfo the open produced. OpenRegular and NOT
 // os.Open: os.Open on a FIFO blocks in open(2) with no deadline able to rescue it (go1.27.0),
@@ -35,160 +22,8 @@ func openChatFile(path, label string) (*os.File, os.FileInfo, error) {
 	return atomicfile.OpenRegular(clean)
 }
 
-// readCappedFile reads a whole file at path under fileCap, plus the TOCTOU grow-during-read
-// guard. Whole-file is correct HERE and only here: readChatFile runs one chat at a time under
-// that chat's own lock, while the header path carries an 8x multiplier and streams instead.
-func readCappedFile(path, label string, fileCap chatFileCap) ([]byte, error) {
-	f, info, err := openChatFile(path, label)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	// ReadBoundedFile is the size cap AND the grow-during-read guard: it stats the descriptor,
-	// refuses over the bound, and refuses again if the file grew past it while being read.
-	// context.Background() because no read path here carries one.
-	data, err := atomicfile.ReadBoundedFile(context.Background(), f, fileCap.readBound(info.Size()))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", label, err)
-	}
-	return data, nil
-}
-
-// readChatFile reads a chat JSON file at path, enforcing fileCap and the
-// TOCTOU grow-during-read guard.
-func readChatFile(path, label string, fileCap chatFileCap) (*marotte.Chat, error) {
-	data, err := readCappedFile(path, label, fileCap)
-	if err != nil {
-		return nil, err
-	}
-	var c marotte.Chat
-	if err := json.Unmarshal(data, &c); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	return &c, nil
-}
-
-// chatHeaderOnDisk is the header projection's decode target. Embedding ChatHeader means a new
-// header field flows through with no mapping step; the two facts the messages array carries
-// are derived by the walk instead.
-type chatHeaderOnDisk struct {
-	marotte.ChatHeader
-}
-
-// readChatHeader STREAMS a chat file and returns only its header fields, because
-// readHeadersParallel runs this at 8 workers per chat. Two independent gates: maxHeaderScanBytes
-// bounds the scan even when fileCap is unlimited, and fileCap refuses what the full read would
-// refuse anyway, so the sidebar and the transcript agree about which chats exist.
-func readChatHeader(path, label string, fileCap chatFileCap) (*marotte.ChatHeader, error) {
-	f, info, err := openChatFile(path, label)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	if info.Size() > maxHeaderScanBytes {
-		return nil, errFileTooLarge(label, info.Size(), maxHeaderScanBytes)
-	}
-	if !fileCap.unlimited() && info.Size() > int64(fileCap) {
-		return nil, errFileTooLarge(label, info.Size(), int64(fileCap))
-	}
-	h, err := decodeChatHeader(bufio.NewReader(io.LimitReader(f, maxHeaderScanBytes)))
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", label, err)
-	}
-	return h, nil
-}
-
-// decodeChatHeader is the projection itself, over any reader, so the parsing contract is testable
-// without a file. Every member except `messages` is captured RAW and handed to encoding/json in
-// one object, which keeps chatHeaderOnDisk's field mapping automatic; `messages` is walked at the
-// token level for the message count and the newest turn outcome.
-func decodeChatHeader(r io.Reader) (*marotte.ChatHeader, error) {
-	head := make(map[string]json.RawMessage)
-	var (
-		count int
-		last  marotte.TurnOutcome
-	)
-	dec := jsoncap.NewDecoder(r, 0)
-	err := dec.Object(func(key string) error {
-		// EqualFold because encoding/json matches a field tag case-insensitively and is the OTHER
-		// reader of this same file, so a chat carrying "Messages" must not be captured whole.
-		if strings.EqualFold(key, keyMessages) {
-			n, l, cerr := scanStreamedMessages(dec)
-			count, last = n, l
-			return cerr
-		}
-		var raw json.RawMessage
-		if derr := dec.Decode(&raw); derr != nil {
-			return derr
-		}
-		head[key] = raw
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	reassembled, err := json.Marshal(head)
-	if err != nil {
-		return nil, err
-	}
-	var h chatHeaderOnDisk
-	if err := json.Unmarshal(reassembled, &h); err != nil {
-		return nil, err
-	}
-	h.MessageCount, h.LastTurnOutcome = count, last
-	return &h.ChatHeader, nil
-}
-
-// outcomeProbe is the ONE field the messages walk reads off a message; encoding/json
-// discards every other key without allocating.
-type outcomeProbe struct {
-	TurnOutcome marotte.TurnOutcome `json:"turn_outcome"`
-}
-
-// scanMessagesArray answers both header facts for a caller that already holds the raw messages
-// array, over the same walk the streaming header path uses. Returns (0, "") for nil, empty or
-// invalid input, and stays usable on a decode failure.
-func scanMessagesArray(raw json.RawMessage) (count int, last marotte.TurnOutcome) {
-	if len(raw) == 0 {
-		return 0, ""
-	}
-	count, last, _ = scanStreamedMessages(jsoncap.NewDecoder(bytes.NewReader(raw), 0))
-	return count, last
-}
-
-// scanStreamedMessages consumes one JSON array from dec and answers both header facts the
-// messages array carries: how many top-level elements it holds, and the NEWEST turn outcome any
-// of them stamped. A JSON null counts 0; any other non-array value is an error, which agrees
-// with readChatFile — a `messages` member that is not an array fails Unmarshal into
-// marotte.Chat, so tolerating it here listed a chat in the sidebar that could not be opened.
-//
-// Decode rather than jsoncap's Skip, because the outcome is a field of the element: Decode
-// advances past a complete value, so a non-object element is a TYPE error the walk absorbs with
-// the stream left on the next element and the count intact. A syntax error stops the walk.
-func scanStreamedMessages(dec *jsoncap.Decoder) (int, marotte.TurnOutcome, error) {
-	ok, err := dec.Open('[')
-	if err != nil || !ok {
-		return 0, "", err
-	}
-	var (
-		count int
-		last  marotte.TurnOutcome
-	)
-	for dec.More() {
-		var probe outcomeProbe
-		derr := dec.Decode(&probe)
-		var typeErr *json.UnmarshalTypeError
-		switch {
-		case derr == nil:
-			if probe.TurnOutcome != "" {
-				last = probe.TurnOutcome
-			}
-		case errors.As(derr, &typeErr):
-			// A non-object element: skipped past, so the count stays correct.
-		default:
-			return count, last, derr
-		}
-		count++
-	}
-	return count, last, dec.Close()
-}
+// writeHeadroomFraction is how close to the cap a SUCCESSFUL append may land before
+// it is reported. A tenth gives an operator the last 10% of a chat's budget to act
+// in, and the alarm rides the write it describes rather than a poll nothing
+// schedules.
+const writeHeadroomFraction = 10

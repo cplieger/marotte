@@ -24,7 +24,10 @@ import (
 // yet (empty chat, first prompt not sent) there is nothing to switch
 // live — the mode is persisted and applied when the bridge's session/new
 // completes (spawnBridge threads chat.CurrentModeID into StartOpts.Mode).
-func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, cmd *marotte.ClientCommand) (any, error) {
+func CmdSetMode(
+	ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster,
+	recorder ModeRecorder, cmd *marotte.ClientCommand,
+) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -41,8 +44,12 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 	}
 
 	// Whether anything changed, and nothing more: a refused write is reported by
-	// Mutate's error, not by this flag.
-	var changed bool
+	// Mutate's error, not by this flag. from is the mode being left, empty on a chat
+	// whose mode was never recorded.
+	var (
+		changed bool
+		from    string
+	)
 	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			// New chat whose first prompt hasn't been sent — auto-create
@@ -57,6 +64,7 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 		if c.CurrentModeID == p.ModeID {
 			return false
 		}
+		from = c.CurrentModeID
 		c.CurrentModeID = p.ModeID
 		changed = true
 		return true
@@ -69,8 +77,13 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 		}
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
+	// Only a mode this chat did not already hold leaves a record and an event: a
+	// repeat pick changed nothing, and a refusal never reaches here.
 	if changed {
 		bus.Broadcast(ctx, marotte.NewEvent(marotte.EventModeChanged, cmd.ChatID, marotte.ModeChangedPayload(p)))
+		recorder.PersistModeSwitch(ctx, cmd.ChatID, marotte.EntryModeSwitched{
+			From: from, To: p.ModeID, Source: marotte.ModeSwitchSourceUser,
+		})
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
 	return responseWith(map[string]any{"mode_id": p.ModeID}), nil

@@ -70,12 +70,12 @@ function makeSession(id: string): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: 0,
-    messages: [],
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     turn_open: false,
@@ -110,7 +110,7 @@ describe("a settled chat raises immediately", () => {
     expect(cue.hasDeferredCue("c1")).toBe(false);
   });
 
-  // The dedup window is what an SSE reconnect's replayed `turn_ended` burst needs; it
+  // The dedup window is what an SSE reconnect's replayed `turn_closed` burst needs; it
   // moved here from `handlers/turn.ts` so the immediate and deferred raises share ONE
   // map and cannot disagree about whether a chat has already been told.
   it("keeps the dedup window across a replayed burst", () => {
@@ -195,7 +195,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
     expect(notify.raised).toEqual(["Agent finished"]);
   });
 
-  // A `transport:gap` rebuild replaces the inventory wholesale, and a run that ended
+  // A `BUS_RECONCILE` rebuild replaces the inventory wholesale, and a run that ended
   // during the outage simply is not in the new one. The release is an effect over the
   // inventory's version, so a rebuild that drops the run releases the cue with no
   // lifecycle frame at all.
@@ -211,11 +211,11 @@ describe("a chat with a live run defers, then fires on settle", () => {
   });
 
   it("still fires when the chat's own turn state is what was outstanding", () => {
-    store.setThinking("c1", true);
+    store.setTurnOpen("c1", true);
     cue.noteAgentFinished("c1", "Agent finished");
     expect(cue.hasDeferredCue("c1")).toBe(true);
 
-    store.setThinking("c1", false);
+    store.setTurnOpen("c1", false);
     expect(notify.raised).toEqual(["Agent finished"]);
   });
 
@@ -244,7 +244,7 @@ describe("a chat with a live run defers, then fires on settle", () => {
 });
 
 describe("the deferral cannot double-fire or fire wrongly", () => {
-  // A replayed `turn_ended` parks by KEY, so a burst arriving while a run is live
+  // A replayed `turn_closed` parks by KEY, so a burst arriving while a run is live
   // cannot produce two cues for one turn.
   it("a repeated park is one cue", () => {
     runStore.noteRunLive("wf-a", "c1", true);

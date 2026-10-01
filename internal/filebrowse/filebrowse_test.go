@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -19,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cplieger/atomicfile/v3"
 )
 
 func testDir(t *testing.T) (h *Handler, dir, prefix string) {
@@ -280,6 +283,14 @@ func TestIsSensitive(t *testing.T) {
 		{"unrelated_file", "/workspace/repo/main.go", false},
 		{"chats_dir_deep", "/config/chats/deep/nested.json", true},
 		{"exact_push_subs", "/config/push-subs.json", true},
+		// Settings -> Tools' Advanced-configuration links open these two in the
+		// editor, so an entry added here for either one leaves both links
+		// opening a tab that 403s, with nothing else in the suite red. Absence
+		// from the deny list is HALF of what makes those doors work; the other
+		// half is /config being a granted browse root, pinned in
+		// internal/composition, which this package cannot see.
+		{"tools_manifest_not_denied", "/config/tools.json", false},
+		{"app_settings_not_denied", "/config/config.json", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -421,7 +432,7 @@ func TestReadFile_IsDirectory(t *testing.T) {
 
 func TestReadFile_TooLarge(t *testing.T) {
 	h, dir, prefix := testDir(t)
-	big := bytes.Repeat([]byte("a"), maxFileSize+1)
+	big := bytes.Repeat([]byte("a"), MaxFileSize+1)
 	if err := os.WriteFile(filepath.Join(dir, "big.txt"), big, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -662,26 +673,6 @@ func TestActionDelete_RefusesASwappedAncestor(t *testing.T) {
 	}
 }
 
-// TestActionMove_RefusesASwappedAncestor is actionDelete's case on the source
-// side of a move, which cannot leave the mount but can carry the protected tree
-// out from under its own guard.
-func TestActionMove_RefusesASwappedAncestor(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	victim, l := swappedAncestor(t, h, dir)
-
-	body := fileAction{Action: "move", Dest: prefix + "/stolen.txt"}
-	err := actionMove(context.Background(), httptest.NewRecorder(), body, l, h)
-	if err == nil {
-		t.Error("move through a symlinked ancestor was accepted, want a refusal")
-	}
-	if _, statErr := os.Lstat(victim); statErr != nil {
-		t.Errorf("the protected file was moved through the symlinked ancestor: %v", statErr)
-	}
-	if _, statErr := os.Lstat(filepath.Join(dir, "stolen.txt")); statErr == nil {
-		t.Error("the move landed, want nothing at the destination")
-	}
-}
-
 // S3 regression: shallow-path guard.
 // TestAction_SecurityRejections consolidates all action-rejection tests
 // that verify 403 responses for sensitive/protected/blacklisted paths.
@@ -706,157 +697,6 @@ func TestAction_SecurityRejections(t *testing.T) {
 	}
 
 	cases := []secCase{
-		{
-			// "/" is not a mount; every action on it dies at resolve.
-			name:       "delete/root",
-			action:     "delete",
-			pathSuffix: "/",
-		},
-		{
-			// Ungranted top-level segments are outside the allow-list.
-			name:       "delete/ungranted_segment",
-			action:     "delete",
-			pathSuffix: "workspace2",
-		},
-		{
-			name:       "mkdir/ungranted_segment",
-			action:     "mkdir",
-			pathSuffix: "newdir",
-		},
-		{
-			name:       "touch/ungranted_segment",
-			action:     "touch",
-			pathSuffix: "new.txt",
-		},
-		{
-			// The granted root itself is boot-time configuration: no
-			// action may delete, shadow, or recreate it.
-			name:             "delete/mount_point",
-			action:           "delete",
-			useTempDir:       true,
-			pathSuffix:       ".",
-			wantBodyContains: "granted root",
-		},
-		{
-			name:             "mkdir/mount_point",
-			action:           "mkdir",
-			useTempDir:       true,
-			pathSuffix:       ".",
-			wantBodyContains: "granted root",
-		},
-		{
-			name:             "touch/mount_point",
-			action:           "touch",
-			useTempDir:       true,
-			pathSuffix:       ".",
-			wantBodyContains: "granted root",
-		},
-		{
-			name:             "rename/mount_point",
-			action:           "rename",
-			useTempDir:       true,
-			pathSuffix:       ".",
-			renameName:       "stolen",
-			wantBodyContains: "granted root",
-		},
-		{
-			name:             "move/mount_point",
-			action:           "move",
-			useTempDir:       true,
-			pathSuffix:       ".",
-			dest:             "stolen",
-			wantBodyContains: "granted root",
-		},
-		{
-			// isProtectedDir on delete: the container of a sensitive
-			// tree is not deletable even though IsSensitive only
-			// matches its contents.
-			name:              "delete/protected_dir",
-			action:            "delete",
-			useTempDir:        true,
-			pathSuffix:        "chats",
-			sensitivePrefix:   "chats/", // directory prefix
-			setupDir:          "chats",
-			checkSourceExists: "chats",
-		},
-		{
-			name:              "rename/sensitive_dest",
-			action:            "rename",
-			useTempDir:        true,
-			pathSuffix:        "attacker.txt",
-			renameName:        "locked.md",
-			sensitivePrefix:   "locked.md", // exact file
-			setupFile:         "attacker.txt",
-			checkSourceExists: "attacker.txt",
-			checkDestAbsent:   "locked.md",
-		},
-		{
-			name:              "move/protected_dir_source",
-			action:            "move",
-			useTempDir:        true,
-			pathSuffix:        "chats",
-			dest:              "stolen",
-			sensitivePrefix:   "chats/", // directory prefix
-			setupDir:          "chats",
-			checkSourceExists: "chats",
-		},
-		{
-			name:              "rename/protected_dir_source",
-			action:            "rename",
-			useTempDir:        true,
-			pathSuffix:        "chats",
-			renameName:        "junk",
-			sensitivePrefix:   "chats/", // directory prefix
-			setupDir:          "chats",
-			checkSourceExists: "chats",
-			checkDestAbsent:   "junk",
-		},
-		{
-			name:               "copy/sensitive_dest",
-			action:             "copy",
-			useTempDir:         true,
-			pathSuffix:         "attacker.json",
-			dest:               "locked.json",
-			sensitivePrefix:    "locked.json", // exact file
-			setupFile:          "attacker.json",
-			checkSourceExists:  "attacker.json",
-			checkDestAbsent:    "locked.json",
-			checkNoTempOrphans: true,
-			wantBodyContains:   "protected",
-		},
-		{
-			name:             "copy/protected_dir_dest",
-			action:           "copy",
-			useTempDir:       true,
-			pathSuffix:       "src.json",
-			dest:             "chats",
-			sensitivePrefix:  "chats/", // directory prefix
-			setupFile:        "src.json",
-			wantBodyContains: "copy target is protected",
-		},
-		{
-			name:              "move/sensitive_dest",
-			action:            "move",
-			useTempDir:        true,
-			pathSuffix:        "attacker.json",
-			dest:              "locked.json",
-			sensitivePrefix:   "locked.json", // exact file
-			setupFile:         "attacker.json",
-			checkSourceExists: "attacker.json",
-			checkDestAbsent:   "locked.json",
-			wantBodyContains:  "protected",
-		},
-		{
-			name:              "move/protected_dir_dest",
-			action:            "move",
-			useTempDir:        true,
-			pathSuffix:        "src.json",
-			dest:              "chats",
-			sensitivePrefix:   "chats/", // directory prefix
-			setupFile:         "src.json",
-			checkSourceExists: "src.json",
-			wantBodyContains:  "move target is protected",
-		},
 		{
 			name:            "mkdir/protected_dir",
 			action:          "mkdir",
@@ -1050,170 +890,15 @@ func TestAction_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestAction_Copy_MissingDest(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rec := postReq(t, h, "/api/files/action",
-		`{"action":"copy","path":"`+prefix+`/src.txt"}`)
-	if rec.Code != 400 {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-func TestAction_Copy_DestOutsideRoots(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rec := postReq(t, h, "/api/files/action",
-		`{"action":"copy","path":"`+prefix+`/src.txt","dest":"etc/evil"}`)
-	if rec.Code != 403 {
-		t.Errorf("status = %d, want 403", rec.Code)
-	}
-}
-
-func TestAction_Copy(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("payload"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	body := `{"action":"copy","path":"` + prefix + `/src.txt","dest":"` + prefix + `/dst.txt"}`
-	rec := postReq(t, h, "/api/files/action", body)
-	if rec.Code != 200 {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
-	}
-	src, _ := os.ReadFile(filepath.Join(dir, "src.txt"))
-	dst, err := os.ReadFile(filepath.Join(dir, "dst.txt"))
-	if err != nil {
-		t.Fatalf("dst missing: %v", err)
-	}
-	if string(src) != "payload" || string(dst) != "payload" {
-		t.Errorf("src=%q dst=%q, want both %q", string(src), string(dst), "payload")
-	}
-}
-
-func TestAction_Copy_SourceMissing(t *testing.T) {
-	h, _, prefix := testDir(t)
-	body := `{"action":"copy","path":"` + prefix + `/missing.txt","dest":"` + prefix + `/dst.txt"}`
-	rec := postReq(t, h, "/api/files/action", body)
-	if rec.Code != 500 {
-		t.Errorf("status = %d, want 500 (source open fails)", rec.Code)
-	}
-}
-
-// FH-C2-01 regression: the stat-based pre-check in actionCopy rejects
-// oversize sources with 413 before opening the destination. Uses
-// os.Truncate so the 100 MiB source is a sparse file (no tmpfs
-// pressure, <10 ms). Before this guard the LimitReader tail check
-// still catches oversize but only after burning destination
-// allocation + partial IO, which is the bug the fix set out to
-// prevent.
-func TestAction_Copy_SourceTooLarge(t *testing.T) {
-	h, dir, prefix := testDir(t)
-
-	srcPath := filepath.Join(dir, "huge.bin")
-	f, err := os.Create(srcPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Truncate(srcPath, maxCopySize+1); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-
-	body := `{"action":"copy","path":"` + prefix + `/huge.bin","dest":"` + prefix + `/dst.bin"}`
-	rec := postReq(t, h, "/api/files/action", body)
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413; body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "source file too large to copy") {
-		t.Errorf("body = %s, want \"source file too large to copy\"", rec.Body.String())
-	}
-	// Destination must NOT exist — the whole point of the pre-stat
-	// guard is to reject before CreateTemp on the dest side.
-	if _, err := os.Stat(filepath.Join(dir, "dst.bin")); err == nil {
-		t.Error("destination file created despite 413 reject")
-	}
-}
-
-// F2 / S7 / ops #1 regression: actionCopy now streams into a
-// `.copy-*` sibling and renames into place. A mid-copy failure must
-// leave the pre-existing destination intact (the old behaviour was
-// O_TRUNC then partial-write, destroying the user's file even on
-// failure). Drive the failure via an oversize cap trip and assert
-// the dest is either untouched (existing content preserved) or never
-// created (fresh copy).
-func TestAction_Copy_FailurePreservesExistingDest(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	// Pre-existing destination must survive a failed copy.
-	original := []byte("ORIGINAL CONTENT THAT MUST SURVIVE A FAILED COPY")
-	dst := filepath.Join(dir, "dst.txt")
-	if err := os.WriteFile(dst, original, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Oversize source via sparse file (no actual allocation).
-	src := filepath.Join(dir, "src.bin")
-	f, err := os.Create(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = f.Close()
-	if err := os.Truncate(src, maxCopySize+1); err != nil {
-		t.Fatal(err)
-	}
-
-	body := `{"action":"copy","path":"` + prefix + `/src.bin","dest":"` + prefix + `/dst.txt"}`
-	rec := postReq(t, h, "/api/files/action", body)
-	if rec.Code == 200 {
-		t.Fatalf("unexpected 200 on oversize copy; body=%s", rec.Body.String())
-	}
-
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("dst missing after failed copy: %v", err)
-	}
-	if !bytes.Equal(got, original) {
-		t.Errorf("dst corrupted by failed copy: got %d bytes, want original %d bytes",
-			len(got), len(original))
-	}
-	// No `.copy-*` orphan left behind on the failure path.
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if strings.Contains(e.Name(), ".copy-") {
-			t.Errorf("leftover copy temp file %q", e.Name())
-		}
-	}
-}
-
-// S6 regression: actionMove must refuse to relocate a protected
-// directory as its source. Simulated via an injected sensitive
-// prefix pointing inside the temp dir — without the source guard,
-// mv /<tmp>/chats /<tmp>/stolen would succeed and detach the
-// (simulated) chat store from its expected location.
-func TestAction_Move(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("payload"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	body := `{"action":"move","path":"` + prefix + `/src.txt","dest":"` + prefix + `/moved.txt"}`
-	rec := postReq(t, h, "/api/files/action", body)
-	if rec.Code != 200 {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "src.txt")); err == nil {
-		t.Error("source still exists after move")
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "moved.txt"))
-	if err != nil || string(data) != "payload" {
-		t.Errorf("moved file missing or wrong: err=%v data=%q", err, string(data))
-	}
+// stubAvailableBytes drives the copy and upload free-space prechecks from a
+// test without filling a real filesystem: the seam exists precisely so the
+// refusal path is reachable at a few bytes instead of a few gigabytes. It
+// replaces a package-level var, so its callers must not run in parallel.
+func stubAvailableBytes(t *testing.T, avail int64, err error) {
+	t.Helper()
+	orig := availableBytes
+	t.Cleanup(func() { availableBytes = orig })
+	availableBytes = func(string) (int64, error) { return avail, err }
 }
 
 // --- handleDownload tests ---
@@ -1810,10 +1495,35 @@ func TestHandleUpload_TooLargeReturns413(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	// Build a body that exceeds maxUploadSize. MaxBytesReader should
-	// trigger the 413 branch before ParseMultipartForm completes.
-	huge := bytes.Repeat([]byte("a"), maxUploadSize+1024)
-	req := multipartUpload(t, prefix, map[string][]byte{"big.bin": huge})
+	// The body is STREAMED rather than built: materializing maxUploadSize bytes
+	// made this test the whole package's memory peak, and it grew with every
+	// raise of the cap. MaxBytesReader counts bytes off the wire, so it trips
+	// mid-body whatever produced the framing.
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pr.Close() })
+	mw := multipart.NewWriter(pw)
+	go func() {
+		if err := mw.WriteField("dir", prefix); err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		part, err := mw.CreateFormFile("files", "big.bin")
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		// The copy fails as soon as MaxBytesReader refuses the body. That is
+		// this goroutine's expected end, not a fixture failure.
+		if _, err := io.CopyN(part, filler{}, maxUploadSize+1024); err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		_ = mw.Close()
+		_ = pw.Close()
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/file/upload", pr)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge {
@@ -1821,13 +1531,17 @@ func TestHandleUpload_TooLargeReturns413(t *testing.T) {
 	}
 }
 
-// FH-C3-01 (S5): actionCopy must refuse a sensitive destination even
-// when the source is a benign file. Parallels the rename-dest guard
-// (TestAction_Rename_RejectsSensitiveDest). Without this the copy
-// action would let `cp attacker.json /config/push-subs.json` slip
-// through because the source resolve layer doesn't know the dest is
-// sensitive and actionCopy's dest-guard is the only line between the
-// attacker and the protected file.
+// filler is an unbounded byte source, so an oversize request body costs a
+// buffer rather than its own length in memory.
+type filler struct{}
+
+func (filler) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'a'
+	}
+	return len(p), nil
+}
+
 // Q1 (S1 deeper): a symlinked ancestor + two-or-more nonexistent
 // trailing components must not bypass the allow-list. The earlier S1
 // tests only pinned the single-missing-leaf case where
@@ -1883,8 +1597,8 @@ func TestAction_Mkdir_ThroughSymlinkedAncestor_Rejected(t *testing.T) {
 
 // --- ctxReader tests (direct unit coverage of the cancellation guard) ---
 //
-// The cancellation branch is only exercised indirectly by actionCopy,
-// where a successful copy masks a regression of the `ctx.Err()` guard.
+// The cancellation branch is only exercised indirectly by writeUploads,
+// where a successful upload masks a regression of the `ctx.Err()` guard.
 // A mutation that removes the guard must be caught here.
 
 // errReader always returns its configured error on Read.
@@ -2042,66 +1756,6 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Errorf("expected empty dir, got %d entries", len(entries))
-	}
-}
-
-// g78: actionCopy context cancellation mid-stream cleans up the temp
-// file. Uses a pre-cancelled context so the ctxReader returns
-// context.Canceled on the first Read, triggering the defer cleanup
-// that removes the .copy-* temp file.
-func TestAction_Copy_ContextCancelled_CleansUpTemp(t *testing.T) {
-	h, dir, prefix := testDir(t)
-
-	// Create a source file with enough content to exercise the copy path.
-	src := filepath.Join(dir, "cancel-src.txt")
-	if err := os.WriteFile(src, []byte("some content to copy"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Build the request with a pre-cancelled context so the copy
-	// aborts on the first ctxReader.Read call.
-	body := `{"action":"copy","path":"` + prefix + `/cancel-src.txt","dest":"` + prefix + `/cancel-dst.txt"}`
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/files/action", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel() // cancel before the copy starts
-	req = req.WithContext(ctx)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	// The handler should return 500 because actionCopy returns the
-	// context error and handleFilesAction wraps it as a generic failure.
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500; body = %s", rec.Code, rec.Body.String())
-	}
-
-	// The destination file must not exist.
-	if _, err := os.Stat(filepath.Join(dir, "cancel-dst.txt")); err == nil {
-		t.Error("destination file should not exist after cancelled copy")
-	}
-
-	// No .copy-* temp files should remain in the directory.
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if strings.Contains(e.Name(), ".copy-") {
-			t.Errorf("temp file %q not cleaned up after cancelled copy", e.Name())
-		}
-	}
-
-	// Source must be untouched.
-	got, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatalf("source read failed: %v", err)
-	}
-	if string(got) != "some content to copy" {
-		t.Errorf("source content = %q, want %q", string(got), "some content to copy")
 	}
 }
 
@@ -2296,66 +1950,16 @@ func FuzzIsSensitive(f *testing.F) {
 	})
 }
 
-// --- BenchmarkFileAction_Copy (IO-intensive copy path) ---
-
-func BenchmarkFileAction_Copy(b *testing.B) {
-	quietLogs(b)
-	sizes := []struct {
-		name string
-		size int
-	}{
-		{"1KiB", 1 << 10},
-		{"1MiB", 1 << 20},
-		{"10MiB", 10 << 20},
-	}
-
-	for _, sz := range sizes {
-		b.Run(sz.name, func(b *testing.B) {
-			dir := b.TempDir()
-			prefix := strings.TrimPrefix(dir, "/")
-
-			srcPath := filepath.Join(dir, "src.bin")
-			if err := os.WriteFile(srcPath, bytes.Repeat([]byte("x"), sz.size), 0o644); err != nil {
-				b.Fatal(err)
-			}
-
-			h, err := New(dir)
-			if err != nil {
-				b.Fatal(err)
-			}
-			mux := http.NewServeMux()
-			h.RegisterRoutes(mux)
-
-			body := `{"action":"copy","path":"` + prefix + `/src.bin","dest":"` + prefix + `/dst.bin"}`
-
-			b.SetBytes(int64(sz.size))
-			b.ReportAllocs()
-
-			for b.Loop() {
-				req := httptest.NewRequest(http.MethodPost, "/api/files/action", strings.NewReader(body))
-				req.Header.Set("Content-Type", "application/json")
-				rec := httptest.NewRecorder()
-				mux.ServeHTTP(rec, req)
-				if rec.Code != 200 {
-					b.Fatalf("status %d: %s", rec.Code, rec.Body.String())
-				}
-				// Remove dest for next iteration.
-				os.Remove(filepath.Join(dir, "dst.bin"))
-			}
-		})
-	}
-}
-
 // --- Boundary and error-propagation tests -----------------------------
 //
 // These pin observable outcomes at size boundaries (mkdir/touch/delete
-// depth guards, streamCopy/readFile/download size caps) and on error
+// depth guards, the readFile size cap) and on error
 // paths (action functions must propagate the raw OS error, never
 // swallow it or return errHandled).
 
 // discardStatusRecorder captures the HTTP status code without buffering
-// the response body, so the maxCopySize download-boundary test never
-// allocates the served payload.
+// the response body, so the large-file download tests never allocate the
+// served payload.
 type discardStatusRecorder struct {
 	hdr     http.Header
 	code    int
@@ -2498,70 +2102,6 @@ func TestAction_Rename_PropagatesError(t *testing.T) {
 	}
 }
 
-// actionMove surfaces the raw Rename error for a missing source, same
-// shape as rename.
-func TestAction_Move_PropagatesError(t *testing.T) {
-	h, dir, _ := testDir(t)
-	l := locAt(h, filepath.Join(dir, "ghost.txt")) // source does not exist
-	err := actionMove(t.Context(), httptest.NewRecorder(),
-		fileAction{Dest: filepath.Join(dir, "moved.txt")}, l, h)
-	if err == nil {
-		t.Fatalf("actionMove(%q) = nil, want non-nil (moving a missing source must error)", l.abs)
-	}
-	if errors.Is(err, errHandled) {
-		t.Fatalf("actionMove returned errHandled; expected the raw Rename error")
-	}
-}
-
-// streamCopy copies a file whose size exactly equals the size limit
-// without an oversize error or truncation: the oversize guard and the
-// post-copy length check are both strictly-greater-than, and the
-// LimitReader reads limit+1 bytes.
-func TestStreamCopy_AtExactCap(t *testing.T) {
-	h, dir, _ := testDir(t)
-	src := []byte("0123456789") // size passed as the per-call limit below
-	if err := os.WriteFile(filepath.Join(dir, "in"), src, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	srcLoc := locAt(h, filepath.Join(dir, "in"))
-	destLoc := locAt(h, filepath.Join(dir, "out"))
-
-	n, err := streamCopy(t.Context(), srcLoc, destLoc, int64(len(src)))
-	if err != nil {
-		t.Fatalf("streamCopy(size == cap) error = %v, want nil (a file exactly at the cap is not oversize)", err)
-	}
-	if n != int64(len(src)) {
-		t.Fatalf("streamCopy(size == cap) n = %d, want %d (the full file must be copied)", n, len(src))
-	}
-	got, readErr := os.ReadFile(destLoc.abs)
-	if readErr != nil {
-		t.Fatalf("reading copied dest: %v", readErr)
-	}
-	if !bytes.Equal(got, src) {
-		t.Errorf("streamCopy dest = %q, want %q (content must not be truncated)", got, src)
-	}
-}
-
-// streamCopy returns the rename error when the temp file cannot replace
-// the destination (renaming a file over a non-empty directory fails).
-func TestStreamCopy_PropagatesRenameError(t *testing.T) {
-	h, dir, _ := testDir(t)
-	if err := os.WriteFile(filepath.Join(dir, "src"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "destdir"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "destdir", "keep"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	n, err := streamCopy(t.Context(),
-		locAt(h, filepath.Join(dir, "src")), locAt(h, filepath.Join(dir, "destdir")), maxCopySize)
-	if err == nil {
-		t.Fatalf("streamCopy(dest is a non-empty dir) = (n=%d, nil), want non-nil error (rename over a directory must fail)", n)
-	}
-}
-
 // listEntries keeps dotfiles (the synthetic mount listing replaced the
 // old real-root special case) and hides sensitive paths.
 func TestListEntries_KeepsDotfiles_HidesSensitive(t *testing.T) {
@@ -2594,18 +2134,18 @@ func TestListEntries_KeepsDotfiles_HidesSensitive(t *testing.T) {
 	}
 }
 
-// Reading a file whose size exactly equals maxFileSize returns 200 with
+// Reading a file whose size exactly equals MaxFileSize returns 200 with
 // the full content: the size guard and the post-read length check are
-// both strictly-greater-than, and the LimitReader reads maxFileSize+1.
+// both strictly-greater-than, and the LimitReader reads MaxFileSize+1.
 func TestReadFile_AtExactMaxSize(t *testing.T) {
 	h, dir, prefix := testDir(t)
-	content := bytes.Repeat([]byte("a"), maxFileSize) // exactly the cap; not binary
+	content := bytes.Repeat([]byte("a"), MaxFileSize) // exactly the cap; not binary
 	if err := os.WriteFile(filepath.Join(dir, "big.txt"), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rec := getReq(t, h, "/api/file?path="+prefix+"/big.txt")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET big.txt (size == maxFileSize) status = %d, want 200 (a file exactly at the cap is readable)", rec.Code)
+		t.Fatalf("GET big.txt (size == MaxFileSize) status = %d, want 200 (a file exactly at the cap is readable)", rec.Code)
 	}
 	var resp struct {
 		Content string `json:"content"`
@@ -2614,33 +2154,113 @@ func TestReadFile_AtExactMaxSize(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal read response: %v", err)
 	}
-	if len(resp.Content) != maxFileSize {
+	if len(resp.Content) != MaxFileSize {
 		t.Errorf("read content length = %d, want %d (the full file must be returned, not truncated)",
-			len(resp.Content), maxFileSize)
+			len(resp.Content), MaxFileSize)
 	}
 }
 
-// Downloading a file whose size exactly equals maxCopySize returns 200;
-// the download size guard is strictly-greater-than. A sparse file + a
-// discarding ResponseWriter keep this cheap.
-func TestHandleDownload_AtExactMaxCopySize(t *testing.T) {
-	h, dir, prefix := testDir(t)
-	f, err := os.Create(filepath.Join(dir, "big.bin"))
+// hugeDownloadSize is ten times the 100 MB guard handleDownload used to carry,
+// so a file of this size is unambiguously past the deleted boundary.
+const hugeDownloadSize = 1 << 30
+
+// writeSparseFile creates a file of the requested size without allocating it,
+// which is what makes the large-download tests below cost milliseconds.
+func writeSparseFile(t *testing.T, path string, size int64) {
+	t.Helper()
+	f, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Truncate(maxCopySize); err != nil {
+	if err := f.Truncate(size); err != nil {
 		_ = f.Close()
 		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// countingRecorder captures a response's status, headers and byte COUNT while
+// keeping at most keep bytes of the body. The Range tests run against a file
+// larger than this process should ever hold, so a full ResponseRecorder is not
+// an option: a regression that served the whole file has to fail an assertion
+// rather than the machine.
+type countingRecorder struct {
+	hdr     http.Header
+	code    int
+	written bool
+	n       int64
+	body    []byte
+	keep    int
+}
+
+func (c *countingRecorder) Header() http.Header {
+	if c.hdr == nil {
+		c.hdr = http.Header{}
+	}
+	return c.hdr
+}
+
+func (c *countingRecorder) WriteHeader(code int) {
+	if !c.written {
+		c.code = code
+		c.written = true
+	}
+}
+
+func (c *countingRecorder) Write(p []byte) (int, error) {
+	if !c.written {
+		c.code = http.StatusOK
+		c.written = true
+	}
+	c.n += int64(len(p))
+	if room := c.keep - len(c.body); room > 0 {
+		c.body = append(c.body, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+// The download path is deliberately UNCAPPED: handleDownload hands the open fd
+// to http.ServeContent, which streams through a constant-size buffer, so peak
+// memory is the same for a 1 MB file and a 10 GB one and a download consumes no
+// disk. A file well past the deleted 100 MB guard must answer 200.
+func TestHandleDownload_LargeFileIsNotCapped(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	writeSparseFile(t, filepath.Join(dir, "big.bin"), hugeDownloadSize)
+
 	req := httptest.NewRequest(http.MethodGet, "/api/file/download?path="+prefix+"/big.bin", nil)
 	sw := &discardStatusRecorder{}
 	h.handleDownload(sw, req)
 	if sw.code != http.StatusOK {
-		t.Fatalf("download (size == maxCopySize) status = %d, want 200 (a file exactly at the cap is downloadable)", sw.code)
+		t.Fatalf("download of a %d-byte file status = %d, want 200 (this path is deliberately uncapped)",
+			int64(hugeDownloadSize), sw.code)
+	}
+}
+
+// The concrete argument for deleting that guard: it ran BEFORE ServeContent saw
+// the Range header, so the cheapest request there is — the first bytes of a
+// huge file — was answered 413. A Range request must come back 206 carrying
+// only the bytes asked for.
+func TestHandleDownload_RangeOnLargeFileServesOnlyTheRequestedBytes(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	writeSparseFile(t, filepath.Join(dir, "big.bin"), hugeDownloadSize)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/file/download?path="+prefix+"/big.bin", nil)
+	req.Header.Set("Range", "bytes=0-15")
+	rec := &countingRecorder{keep: 64}
+	h.handleDownload(rec, req)
+
+	if rec.code != http.StatusPartialContent {
+		t.Fatalf("Range request on a %d-byte file status = %d, want 206",
+			int64(hugeDownloadSize), rec.code)
+	}
+	if rec.n != 16 {
+		t.Errorf("Range request wrote %d bytes, want 16 (only the requested range may be served)", rec.n)
+	}
+	wantRange := fmt.Sprintf("bytes 0-15/%d", int64(hugeDownloadSize))
+	if got := rec.Header().Get("Content-Range"); got != wantRange {
+		t.Errorf("Content-Range = %q, want %q", got, wantRange)
 	}
 }
 
@@ -3113,5 +2733,88 @@ func TestHandleDownloadZip_WriterWithoutFlushSupport(t *testing.T) {
 	}
 	if len(zr.File) != 1 || zr.File[0].Name != "a.txt" {
 		t.Fatalf("zip entries = %+v, want just a.txt", zr.File)
+	}
+}
+
+// --- 507 mapping ------------------------------------------------------
+//
+// A full volume is the one write failure this surface can name a remedy for, so
+// it answers 507 rather than a generic 500. ENOSPC cannot be induced without
+// mounting a filesystem, which this container cannot do, so the mapping is
+// tested at its decision point: the errno has to be reachable through the exact
+// wrapping the production write paths hand it.
+
+func TestIsOutOfSpace_MatchesThroughAtomicfileWrapping(t *testing.T) {
+	// The shape atomicfile actually produces: a *WriteError over the
+	// *os.PathError os.File.Write returns, whose Err is the raw errno.
+	wrapped := func(errno syscall.Errno) error {
+		return &atomicfile.WriteError{
+			Phase: atomicfile.PhaseTempWrite,
+			Err:   &os.PathError{Op: "write", Path: "/mount/.atomicfile-1.tmp", Err: errno},
+		}
+	}
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"bare ENOSPC", syscall.ENOSPC, true},
+		{"bare EDQUOT", syscall.EDQUOT, true},
+		{"PathError over ENOSPC", &os.PathError{Op: "write", Path: "/x", Err: syscall.ENOSPC}, true},
+		{"PathError over EDQUOT", &os.PathError{Op: "write", Path: "/x", Err: syscall.EDQUOT}, true},
+		{"atomicfile WriteError over ENOSPC", wrapped(syscall.ENOSPC), true},
+		{"atomicfile WriteError over EDQUOT", wrapped(syscall.EDQUOT), true},
+		{"fmt-wrapped ENOSPC", fmt.Errorf("copy failed: %w", wrapped(syscall.ENOSPC)), true},
+		{"another errno", &os.PathError{Op: "write", Path: "/x", Err: syscall.EACCES}, false},
+		{"atomicfile size refusal", atomicfile.ErrFileTooLarge, false},
+		{"plain error", errors.New("something else"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isOutOfSpace(tc.err); got != tc.want {
+				t.Errorf("isOutOfSpace(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// writeFileError is the /api/file write path's whole mapping, so driving it
+// directly is what pins the 507 without a filesystem that can run out of space.
+func TestWriteFileError_Statuses(t *testing.T) {
+	h, dir, _ := testDir(t)
+	l := locAt(h, filepath.Join(dir, "f.txt"))
+	enospc := &atomicfile.WriteError{
+		Phase: atomicfile.PhaseTempWrite,
+		Err:   &os.PathError{Op: "write", Path: l.abs, Err: syscall.ENOSPC},
+	}
+	edquot := &atomicfile.WriteError{
+		Phase: atomicfile.PhaseTempWrite,
+		Err:   &os.PathError{Op: "write", Path: l.abs, Err: syscall.EDQUOT},
+	}
+	cases := []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{"symlink target", atomicfile.ErrSymlinkTarget, http.StatusBadRequest, "not a regular file"},
+		{"not regular", atomicfile.ErrNotRegular, http.StatusBadRequest, "not a regular file"},
+		{"volume full", enospc, http.StatusInsufficientStorage, errNoSpaceLeft},
+		{"quota exhausted", edquot, http.StatusInsufficientStorage, errNoSpaceLeft},
+		{"anything else", errors.New("disk on fire"), http.StatusInternalServerError, "write failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writeFileError(rec, l, tc.err)
+			if rec.Code != tc.wantCode {
+				t.Errorf("writeFileError(%v) status = %d, want %d", tc.err, rec.Code, tc.wantCode)
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Errorf("writeFileError(%v) body = %s, want it to contain %q",
+					tc.err, rec.Body.String(), tc.wantBody)
+			}
+		})
 	}
 }

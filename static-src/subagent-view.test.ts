@@ -1,11 +1,19 @@
 // ---------------------------------------------------------------------------
-// The subagent page: the eviction exemption its tab earns, and the repaint its
-// prose depends on.
+// The subagent page: the eviction exemption its tab earns, the demand that ends its
+// lifetime, and the navigation between the stages of one pipeline.
+//
+// Everything here is projected out of the launching chat's ENTRY LOG: a delegate is a
+// LANE, its invocation is a `tool_call` in the issuer's lane, and the page mounts one
+// detached render per member the reader opened. So the release properties are asked of
+// `messages-blocks.ts`'s own render registry rather than of a repaint gate: a render
+// left registered under a key nothing disposes outlives its DOM.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { signal, touch } from "@cplieger/reactive";
-import type { Message, Session } from "./types.js";
+import type { Session } from "./types.js";
+import type { Entry, EntryToolCall } from "./wire/types.gen.js";
+import { makeToolCall } from "./__test-helpers__/model.js";
 
 // tabs.ts's real graph reads the shared DOM registry at module scope, and
 // `byId` throws on a missing element — so the hosts exist before any import.
@@ -19,7 +27,7 @@ for (const id of [
   "prompt-input",
   "tab-strip",
   // The page's own host: `paint` bails silently without it, which would make the
-  // streaming case below pass on an empty document.
+  // repaint case below pass on an empty document.
   "subagent-body",
 ]) {
   const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
@@ -39,7 +47,6 @@ vi.mock("./subagent-slice.js", { spy: true });
 // stay real for the graph behind subagent-view; the one case that drives it stubs
 // the implementation, because the real refresh reaches the loader.
 vi.mock("./chat.js", { spy: true });
-
 const store = await import("./store.js");
 const { hasTab, openSubagentRefs } = await import("./tabs.js");
 const { subagentRef } = await import("./tab-materialize.js");
@@ -48,19 +55,31 @@ const { openSubagentTab } = await import("./tabs.js");
 const { subagentTabProjectsChat, showSubagent, refreshSubagent, openSubagentView } =
   await import("./subagent-view.js");
 const { refreshChatView } = await import("./chat.js");
-const { blockKey, blockTextSigs } = await import("./store-signals.js");
+const { clearAllEntrySigs } = await import("./store-signals.js");
 const { mountedWindow } = await import("./messages-blocks.js");
 const mockHasTab = vi.mocked(hasTab);
+
+/** The key `messages-blocks.ts` files a DETACHED render under — its own `renderIDFor`,
+ *  which is not exported. Mirrored here because the release properties below can only be
+ *  asked of the registry: the chat's transcript version bumps for a laned entry too, so
+ *  "nothing repainted" is no longer an observable a released render can be told by. */
+function detachedRenderID(turnID: string, lane: string): string {
+  return `${turnID}#${lane}`;
+}
+
+/** Whether the page still holds a mounted render for one member's lane. */
+function memberIsMounted(turnID: string, lane: string): boolean {
+  return mountedWindow(detachedRenderID(turnID, lane)) !== undefined;
+}
 
 // --- The page's DEMAND input ---
 //
 // `openSubagentRefs` is what the page's lifetime hangs on: the demand effect drops the
 // mounted page once no open subagent tab names a member of the group it projects. Under
 // `{ spy: true }` it is the REAL reader answering `[]` from a projection no case here
-// ever mutates, so every scenario below would be mounting a page nothing wants — the
-// 13 cases that predate this passed only because that projection never bumped, so the
-// effect never re-ran. A controllable fake instead, TRACKED like production's so
-// stating a different demand re-runs the effect.
+// ever mutates, so every scenario below would be mounting a page nothing wants. A
+// controllable fake instead, TRACKED like production's so stating a different demand
+// re-runs the effect.
 let refs: readonly string[] = [];
 const refsVersion = signal(0);
 
@@ -84,29 +103,152 @@ function closeSubagentTabs(): void {
   setSubagentTabs([]);
 }
 
-function session(id: string, messages: Message[]): Session {
+// --- The entry-log fixture ---
+
+function makeSession(chatID: string): Session {
   return {
-    id,
-    name: id,
-    messages,
-    message_count: messages.length,
+    id: chatID,
+    name: chatID,
+    model: "",
+    acp_session_id: "",
+    current_mode_id: "",
+    supervised_mode: false,
+    usage: store.defaultUsage(),
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
-    working_label: "",
-  } as unknown as Session;
+    working_label: "Thinking",
+  };
 }
 
-function delegateMsg(id: string, subtask: string): Message {
+/** The `turn_open` of `turnID`, which is always `seq` 0. Reader-prompted, so the turn
+ *  draws. */
+function turnOpen(turnID: string): Entry {
   return {
-    id,
-    role: "assistant",
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
     ts: 1,
-    content: "",
-    blocks: [
-      { type: "text", text: "parent prose" },
-      { type: "text", text: "delegate work", agent_subtask_id: subtask },
-    ],
-  } as Message;
+    payload: { source: "prompt", n: 1, prompt: { id: `m-${turnID}`, text: "delegate this" } },
+  };
+}
+
+/** The next `seq` for a turn. `appendEntry` REFUSES an entry whose `seq` is not exactly
+ *  `entries.length`, so the fixture cannot hand-number them and stay valid as a case
+ *  appends more. */
+const seqOf = new Map<string, number>();
+function nextSeq(turnID: string): number {
+  const n = (seqOf.get(turnID) ?? 0) + 1;
+  seqOf.set(turnID, n);
+  return n;
+}
+
+/** Seed one turn per chat, through the store's own operations: a fixture assembled by
+ *  hand could hold a `seq` the store refuses. */
+function seedChats(...chats: readonly { readonly chat: string; readonly turn: string }[]): void {
+  store.setSessions(chats.map((c) => makeSession(c.chat)));
+  for (const c of chats) {
+    seqOf.delete(c.turn);
+    store.openTurn(c.chat, turnOpen(c.turn));
+  }
+}
+
+/** Append one sealed entry. `lane` absent is the chat's own lane. */
+function push(
+  chat: string,
+  turn: string,
+  kind: Entry["kind"],
+  payload: unknown,
+  opts: { readonly id?: string; readonly lane?: string } = {},
+): void {
+  const seq = nextSeq(turn);
+  const base: Entry = {
+    id: opts.id ?? `${turn}-e${String(seq)}`,
+    turn,
+    kind,
+    seq,
+    ts: seq + 1,
+    payload,
+  };
+  store.appendEntry(
+    chat,
+    opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane }),
+  );
+}
+
+/** A later entry arriving in `lane`. Ends on a paragraph break, so the incremental
+ *  markdown parser has no trailing token to hold and the whole text is on screen or none
+ *  of it is — without it every assertion below is one character short. */
+function laneText(chat: string, turn: string, lane: string, text: string): void {
+  push(chat, turn, "text", { text: `${text}\n\n` }, { lane });
+}
+
+function invocation(
+  id: string,
+  subtask: string,
+  status: EntryToolCall["status"] = "completed",
+): EntryToolCall {
+  return makeToolCall({
+    id,
+    title: "Sub-agent: reviewer",
+    kind: "other",
+    status,
+    agent_subtask_id: subtask,
+    input: { name: "reviewer" },
+  });
+}
+
+/** ONE plain delegate: the chat's own prose, the invocation in the ISSUER's lane, and the
+ *  delegate's own prose in its lane. The call id is deliberately NOT stage-shaped, so
+ *  nothing resolves it into a pipeline. */
+function delegate(chat: string, turn: string, lane: string, body = "delegate work"): void {
+  push(chat, turn, "text", { text: "parent prose" });
+  push(chat, turn, "tool_call", invocation(`tc-${lane}`, lane), { id: `tc-${lane}` });
+  push(chat, turn, "text", { text: body }, { lane });
+}
+
+const DRIVER = "orc_1";
+const PLAN_CALL = `invoke_subagent_${DRIVER}_stage_plan`;
+const REVIEW_CALL = `invoke_subagent_${DRIVER}_stage_review`;
+const PLAN = "st-plan";
+const REVIEW = "st-review";
+
+/** One `orchestrate_subagent` pipeline of two stages in one turn: the driver and both
+ *  invocations in the chat's lane, each stage's own prose in its lane. This is the shape
+ *  that produces the left-hand list — two selectable rows, only one of which the tab
+ *  names — and the stage ids carry the driver, which is the whole pipeline join. */
+function pipeline(
+  chat: string,
+  turn: string,
+  opts: { readonly reviewStatus?: EntryToolCall["status"]; readonly reviewText?: string } = {},
+): void {
+  push(chat, turn, "text", { text: "parent prose" });
+  push(
+    chat,
+    turn,
+    "tool_call",
+    {
+      id: DRIVER,
+      title: "Orchestrate Sub-agent",
+      kind: "other",
+      status: "in_progress",
+      ts: 0,
+      input: { task: "review the diff", stages: [{ name: "plan" }, { name: "review" }] },
+    },
+    { id: DRIVER },
+  );
+  push(chat, turn, "tool_call", invocation(PLAN_CALL, PLAN), { id: PLAN_CALL });
+  push(chat, turn, "text", { text: "the plan stage report" }, { lane: PLAN });
+  push(chat, turn, "tool_call", invocation(REVIEW_CALL, REVIEW, opts.reviewStatus ?? "completed"), {
+    id: REVIEW_CALL,
+  });
+  const reviewText = opts.reviewText ?? "the review stage report";
+  if (reviewText !== "") {
+    push(chat, turn, "text", { text: reviewText }, { lane: REVIEW });
+  }
 }
 
 /** The page's own host, and the note the detail pane shows for a node with nothing
@@ -126,64 +268,8 @@ function clickRow(path: string): void {
   row?.click();
 }
 
-const DRIVER = "d-1";
-const PLAN_CALL = `invoke_subagent_${DRIVER}_stage_plan`;
-const REVIEW_CALL = `invoke_subagent_${DRIVER}_stage_review`;
-const PLAN = "st-plan";
-const REVIEW = "st-review";
-
-/** One `orchestrate_subagent` pipeline of two stages, in one assistant message: the
- *  driver, an invocation per stage, and each stage's own prose. This is the shape that
- *  produces the left-hand list — two selectable rows, only one of which the tab names. */
-function pipelineSession(
-  chatID: string,
-  msgID: string,
-  opts: { reviewStatus?: string; reviewText?: string } = {},
-): Session {
-  const call = (id: string, subtask: string, status: string) => ({
-    id,
-    title: "Sub-agent: reviewer",
-    status,
-    kind: "other",
-    ts: 1,
-    agent_subtask_id: subtask,
-    input: { name: "reviewer" },
-  });
-  const blocks: Record<string, unknown>[] = [
-    { type: "text", text: "parent prose" },
-    { type: "tool_use", tool_call_id: DRIVER },
-    { type: "tool_use", tool_call_id: PLAN_CALL, agent_subtask_id: PLAN },
-    { type: "text", text: "the plan stage report", agent_subtask_id: PLAN },
-    { type: "tool_use", tool_call_id: REVIEW_CALL, agent_subtask_id: REVIEW },
-  ];
-  const reviewText = opts.reviewText ?? "the review stage report";
-  if (reviewText !== "") {
-    blocks.push({ type: "text", text: reviewText, agent_subtask_id: REVIEW });
-  }
-  return session(chatID, [
-    {
-      id: msgID,
-      role: "assistant",
-      ts: 1,
-      content: "",
-      blocks,
-      tool_calls: [
-        {
-          id: DRIVER,
-          title: "Orchestrate Sub-agent",
-          status: "in_progress",
-          kind: "other",
-          ts: 1,
-          input: { task: "review the diff", stages: [{ name: "plan" }, { name: "review" }] },
-        },
-        call(PLAN_CALL, PLAN, "completed"),
-        call(REVIEW_CALL, REVIEW, opts.reviewStatus ?? "completed"),
-      ],
-    } as unknown as Message,
-  ]);
-}
-
 beforeEach(() => {
+  clearAllEntrySigs();
   mockHasTab.mockReset();
   mockHasTab.mockReturnValue(false);
   // Re-installed per test: the root config sets `mockReset: true`, which restores a
@@ -197,12 +283,13 @@ beforeEach(() => {
 
 // An open subagent tab projects its chat's transcript, so evicting that chat would
 // blank a surface someone deliberately opened. The predicate is answered from the
-// RESIDENT blocks — the subtask ids reachable from this chat are the ones on its
-// blocks, and a tab for a delegate whose turn is not resident was already rendering
-// the not-resident notice, so eviction changes nothing it was showing.
+// RESIDENT lanes — the delegates reachable from this chat are the lanes its entries
+// name — and a tab for a delegate whose turn is not resident was already rendering the
+// not-resident notice, so eviction changes nothing it was showing.
 describe("subagentTabProjectsChat", () => {
   it("exempts a chat with an open subagent tab for one of its delegates", () => {
-    store.setSessions([session("c1", [delegateMsg("m1", "st-1")])]);
+    seedChats({ chat: "c1", turn: "t1" });
+    delegate("c1", "t1", "st-1");
     mockHasTab.mockImplementation((kind, ref) => kind === "subagent" && ref === "c1/st-1");
 
     expect(subagentTabProjectsChat("c1")).toBe(true);
@@ -210,18 +297,35 @@ describe("subagentTabProjectsChat", () => {
     expect(mockHasTab).toHaveBeenCalledWith("subagent", "c1/st-1");
   });
 
+  // An OPEN entry never reaches the log, so a delegate whose first words are still
+  // arriving has no sealed entry at all — and it is exactly the one whose window must
+  // not be evicted.
+  it("exempts a chat whose delegate lane holds only an open entry", () => {
+    seedChats({ chat: "c1", turn: "t1" });
+    push("c1", "t1", "text", { text: "parent prose" });
+    store.openEntry("c1", {
+      turn: "t1",
+      id: "t1-live",
+      lane: "st-live",
+      kind: "text",
+      text: "first words",
+      n: 1,
+    });
+    mockHasTab.mockImplementation((kind, ref) => kind === "subagent" && ref === "c1/st-live");
+
+    expect(subagentTabProjectsChat("c1")).toBe(true);
+  });
+
   it("exempts nothing when no subagent tab is open", () => {
-    store.setSessions([session("c1", [delegateMsg("m1", "st-1")])]);
+    seedChats({ chat: "c1", turn: "t1" });
+    delegate("c1", "t1", "st-1");
     expect(subagentTabProjectsChat("c1")).toBe(false);
   });
 
-  it("exempts nothing for a chat whose blocks carry no delegate", () => {
-    store.setSessions([
-      session("c1", [
-        { id: "m1", role: "assistant", ts: 1, content: "", blocks: [{ type: "text", text: "x" }] },
-      ] as Message[]),
-    ]);
-    mockHasTab.mockReturnValue(true); // even with tabs open, no subtask to ask about
+  it("exempts nothing for a chat whose entries carry no delegate lane", () => {
+    seedChats({ chat: "c1", turn: "t1" });
+    push("c1", "t1", "text", { text: "no delegate here" });
+    mockHasTab.mockReturnValue(true); // even with tabs open, no lane to ask about
     expect(subagentTabProjectsChat("c1")).toBe(false);
     expect(mockHasTab).not.toHaveBeenCalled();
   });
@@ -232,10 +336,9 @@ describe("subagentTabProjectsChat", () => {
   });
 
   it("does not cross chats: the ref carries the asking chat's id", () => {
-    store.setSessions([
-      session("c1", [delegateMsg("m1", "st-1")]),
-      session("c2", [delegateMsg("m2", "st-1")]),
-    ]);
+    seedChats({ chat: "c1", turn: "t1" }, { chat: "c2", turn: "t2" });
+    delegate("c1", "t1", "st-1");
+    delegate("c2", "t2", "st-1");
     // A tab open for c2's delegate must not exempt c1, subtask id collision or
     // not — the ref is chat-scoped.
     mockHasTab.mockImplementation((kind, ref) => kind === "subagent" && ref === "c2/st-1");
@@ -244,69 +347,47 @@ describe("subagentTabProjectsChat", () => {
   });
 });
 
-// The page's ONE structural input. A text delta writes a per-block signal instead of
-// bumping the chat's version, and this page reads those signals with `get` rather
-// than `ensure` so it never silences the transcript's own repaint — which leaves it
-// depending on the store's signal-absent fallback to bump the version for it. That
-// fallback asks whether the block is MOUNTED, and this page files its sinks under a
-// synthetic id over a re-indexed slice, so the question is a union over surfaces.
-describe("a delegate's prose while the transcript holds no sink", () => {
-  it("repaints on a delta to a block only this page has mounted", async () => {
+// The page's live input is the LANE, not the transcript. Nothing here ever builds a
+// transcript view, so the launching chat has no other surface at all: what puts a
+// delegate's later words on screen is this page's own subscription plus its per-member
+// refresh.
+describe("a delegate's prose with no transcript view anywhere", () => {
+  it("renders an entry that arrives in the delegate's lane after the mount", async () => {
     const chat = "c-stream";
-    const msgID = "m-stream";
-    store.setSessions([session(chat, [delegateMsg(msgID, "st-1")])]);
-    const host = document.getElementById("subagent-body") as HTMLElement;
+    const turn = "t-stream";
+    seedChats({ chat, turn });
+    delegate(chat, turn, "st-1");
 
     show(chat, "st-1");
     await vi.waitFor(() => {
-      expect(host.textContent).toContain("delegate work");
+      expect(body().textContent).toContain("delegate work");
     });
+    // The page holds the delegate's LANE and nothing else: the chat's own prose is not
+    // this render's, which is what makes the routing claim below have content.
+    expect(body().textContent).not.toContain("parent prose");
 
-    // The three premises that let the assertion below fail. No transcript view was
-    // ever built here, so nothing files a sink under the store's own message id —
-    // the background-chat shape. No per-block signal exists, so the page's own
-    // subscription cannot carry the delta and the version bump is its only input.
-    // And the page holds the delegate's block ALONE, so its own index for it is 0
-    // where the store's is 1: a probe asking this render the store's index answers
-    // "not mounted" over a block that is on screen.
-    expect(mountedWindow(msgID)).toBeUndefined();
-    expect(blockTextSigs.get(blockKey(msgID, 1))).toBeUndefined();
-    expect(host.textContent).not.toContain("parent prose");
-
-    // Ends on a paragraph break, so the incremental markdown parser has no
-    // trailing token to hold and the whole delta is on screen or none of it is.
-    store.appendChunk(chat, msgID, " and then more\n\n", false, 1, "st-1");
+    laneText(chat, turn, "st-1", "and then more");
 
     await vi.waitFor(() => {
-      expect(host.textContent).toContain("and then more");
+      expect(body().textContent).toContain("and then more");
     });
   });
 });
 
 // A switch drops the previous delegate's page. It has to drop that page's RENDER with
-// it, or the render outlives its DOM with its text sinks intact and the repaint gate
-// keeps answering "still mounted" for blocks nobody can see — one full transcript pass
-// per delta, which is the exact cost the gate exists to remove.
+// it, or the render outlives its DOM: `messages-blocks.ts` answers its repaint gate as a
+// union over every registered render, so one left behind keeps claiming "still mounted"
+// for DOM nobody can see.
 describe("switching delegates releases the page's render", () => {
-  it("stops answering the repaint gate for the delegate the reader left", async () => {
+  it("unregisters the outgoing delegate's render and keeps the incoming one", async () => {
     const chat = "c-switch";
-    const msgID = "m-switch";
-    store.setSessions([
-      session(chat, [
-        {
-          id: msgID,
-          role: "assistant",
-          ts: 1,
-          content: "",
-          blocks: [
-            { type: "text", text: "parent prose" },
-            { type: "text", text: "first delegate", agent_subtask_id: "sw-A" },
-            { type: "text", text: "second delegate", agent_subtask_id: "sw-B" },
-          ],
-        } as Message,
-      ]),
-    ]);
-    const host = document.getElementById("subagent-body") as HTMLElement;
+    const turn = "t-switch";
+    seedChats({ chat, turn });
+    push(chat, turn, "text", { text: "parent prose" });
+    push(chat, turn, "tool_call", invocation("tc-A", "sw-A"), { id: "tc-A" });
+    push(chat, turn, "text", { text: "first delegate" }, { lane: "sw-A" });
+    push(chat, turn, "tool_call", invocation("tc-B", "sw-B"), { id: "tc-B" });
+    push(chat, turn, "text", { text: "second delegate" }, { lane: "sw-B" });
 
     // BOTH tabs stay open across the switch, because that is what a tab switch is —
     // and it is what keeps this a SUPERSEDE test. With only the incoming tab open the
@@ -315,31 +396,21 @@ describe("switching delegates releases the page's render", () => {
     setSubagentTabs([subagentRef(chat, "sw-A"), subagentRef(chat, "sw-B")]);
     showSubagent(chat, "sw-A");
     await vi.waitFor(() => {
-      expect(host.textContent).toContain("first delegate");
+      expect(body().textContent).toContain("first delegate");
     });
+    expect(memberIsMounted(turn, "sw-A")).toBe(true);
 
     // The SWITCH is the property. One delegate cannot express it: the release only asks
-    // for the wrong pair where the page's own key and the visible subtask disagree,
-    // which is true for exactly one paint after a switch.
+    // for the wrong pair where the page's own key and the visible lane disagree, which
+    // is true for exactly one paint after a switch.
     showSubagent(chat, "sw-B");
     await vi.waitFor(() => {
-      expect(host.textContent).toContain("second delegate");
+      expect(body().textContent).toContain("second delegate");
     });
-    expect(host.textContent).not.toContain("first delegate");
+    expect(body().textContent).not.toContain("first delegate");
 
-    // Two premises, or the assertion below passes for someone else's reason. No
-    // transcript view exists here, so nothing files a sink under the store's own message
-    // id; and A's block has no per-block signal, so the gate is the only thing left that
-    // can schedule a pass for it.
-    expect(mountedWindow(msgID)).toBeUndefined();
-    expect(blockTextSigs.get(blockKey(msgID, 1))).toBeUndefined();
-
-    const version = store.messagesVersionOf(chat);
-    const before = version.peek();
-    store.appendChunk(chat, msgID, " more from A", false, 1, "sw-A");
-    await Promise.resolve();
-
-    expect(version.peek()).toBe(before);
+    expect(memberIsMounted(turn, "sw-A")).toBe(false);
+    expect(memberIsMounted(turn, "sw-B")).toBe(true);
   });
 });
 
@@ -351,7 +422,9 @@ describe("switching delegates releases the page's render", () => {
 describe("selecting a sibling stage in the tree", () => {
   it("renders that stage's transcript in the same sub-tab", async () => {
     const chat = "c-nav";
-    store.setSessions([pipelineSession(chat, "m-nav")]);
+    const turn = "t-nav";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -360,7 +433,7 @@ describe("selecting a sibling stage in the tree", () => {
 
     clickRow(REVIEW);
 
-    // Both hosts stay in the DOM — a delegate's blocks are persisted but a mounted
+    // Both hosts stay in the DOM — a delegate's entries are persisted but a mounted
     // render is not free to rebuild — so which one is SHOWN is the observable.
     const review = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`);
     const plan = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${PLAN}"]`);
@@ -375,7 +448,9 @@ describe("selecting a sibling stage in the tree", () => {
 
   it("keeps the delegate the tab names mounted, so going back costs no rebuild", async () => {
     const chat = "c-back";
-    store.setSessions([pipelineSession(chat, "m-back")]);
+    const turn = "t-back";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -401,9 +476,9 @@ describe("selecting a sibling stage in the tree", () => {
       ["in_progress", "Waiting for this delegate to produce output\u2026"],
     ] as const) {
       const chat = `c-empty-${status}`;
-      store.setSessions([
-        pipelineSession(chat, `m-empty-${status}`, { reviewText: "", reviewStatus: status }),
-      ]);
+      const turn = `t-empty-${status}`;
+      seedChats({ chat, turn });
+      pipeline(chat, turn, { reviewText: "", reviewStatus: status });
 
       show(chat, PLAN);
       await vi.waitFor(() => {
@@ -414,19 +489,17 @@ describe("selecting a sibling stage in the tree", () => {
       expect(emptyNoteText()).toBe(sentence);
       // Nothing is mounted for it, which is what leaves the note on screen.
       expect(body().querySelector(`.ev-d-body[data-path="${REVIEW}"]`)).toBeNull();
+      expect(memberIsMounted(turn, REVIEW)).toBe(false);
     }
   });
 
-  // The routing property: a delta lands in the render of the member whose block it
-  // names. The fixture's stages are SETTLED deliberately — `text-bubble.ts` builds a
-  // reveal cursor only for a LIVE bubble, and that cursor is rAF-driven, so asserting
-  // rendered text over one measures `reveal.ts`'s cadence under load rather than this
-  // page's routing (measured: it times out cold under full-suite load, and passes warm).
-  // The cadence has its own suite; what this needs is a synchronous write.
-  it("applies a delta to the selected sibling's own render", async () => {
+  // The routing property: an entry lands in the render of the member whose LANE it
+  // names, and in no other.
+  it("routes a later entry to the selected sibling's own render", async () => {
     const chat = "c-nav-stream";
-    const msgID = "m-nav-stream";
-    store.setSessions([pipelineSession(chat, msgID)]);
+    const turn = "t-nav-stream";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -436,14 +509,11 @@ describe("selecting a sibling stage in the tree", () => {
     const review = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`);
     expect(review?.textContent).toContain("the review stage report");
 
-    // The review stage's text block is index 5 of the message. Ends on a paragraph
-    // break, so the markdown parser has no trailing token to hold.
-    store.appendChunk(chat, msgID, " and one more finding\n\n", false, 5, REVIEW);
-    // One microtask: the store coalesces per-delta bumps onto it, and the paint it
-    // drives writes synchronously from there.
-    await Promise.resolve();
+    laneText(chat, turn, REVIEW, "and one more finding");
 
-    expect(review?.textContent).toContain("and one more finding");
+    await vi.waitFor(() => {
+      expect(review?.textContent).toContain("and one more finding");
+    });
     // And into the sibling's render, not the tab's own.
     expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)?.textContent).not.toContain(
       "and one more finding",
@@ -456,8 +526,9 @@ describe("selecting a sibling stage in the tree", () => {
   // show a stale snapshot until the next rebuild.
   it("keeps a mounted-but-hidden stage up to date", async () => {
     const chat = "c-bg";
-    const msgID = "m-bg";
-    store.setSessions([pipelineSession(chat, msgID)]);
+    const turn = "t-bg";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -469,22 +540,21 @@ describe("selecting a sibling stage in the tree", () => {
     const review = body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`);
     expect(review?.hidden).toBe(true);
 
-    store.appendChunk(chat, msgID, " a late finding\n\n", false, 5, REVIEW);
-    await Promise.resolve();
+    laneText(chat, turn, REVIEW, "a late finding");
 
-    expect(review?.textContent).toContain("a late finding");
+    await vi.waitFor(() => {
+      expect(review?.textContent).toContain("a late finding");
+    });
   });
 
   // The release property, extended to the multi-body map: a switch to another chat
-  // disposes EVERY member's render, not just the one the old tab named. A render left
-  // registered keeps answering the store's repaint gate for DOM that is gone.
+  // disposes EVERY member's render, not just the one the old tab named.
   it("releases every mounted stage when the reader switches chat", async () => {
     const chat = "c-nav-drop";
-    const msgID = "m-nav-drop";
-    store.setSessions([
-      pipelineSession(chat, msgID),
-      session("c-other", [delegateMsg("m-other", "st-other")]),
-    ]);
+    const turn = "t-nav-drop";
+    seedChats({ chat, turn }, { chat: "c-other", turn: "t-other" });
+    pipeline(chat, turn);
+    delegate("c-other", "t-other", "st-other");
 
     // Both tabs open across the switch, for the reason the delegate-switch case above
     // states: leaving only the incoming tab open would have the demand effect drop the
@@ -495,64 +565,37 @@ describe("selecting a sibling stage in the tree", () => {
       expect(body().querySelector(`.ev-d-body[data-path="${PLAN}"]`)).not.toBeNull();
     });
     clickRow(REVIEW);
-    expect(body().querySelector(`.ev-d-body[data-path="${REVIEW}"]`)).not.toBeNull();
+    expect(memberIsMounted(turn, PLAN)).toBe(true);
+    expect(memberIsMounted(turn, REVIEW)).toBe(true);
 
     showSubagent("c-other", "st-other");
     await vi.waitFor(() => {
       expect(body().textContent).toContain("delegate work");
     });
 
-    // Two premises, or the assertion below passes for someone else's reason: no
-    // transcript view exists here, so nothing files a sink under the store's own
-    // message id, and neither stage's block has a per-block signal, so the mounted-block
-    // gate is the only thing left that could schedule a pass for one.
-    expect(mountedWindow(msgID)).toBeUndefined();
-    expect(blockTextSigs.get(blockKey(msgID, 5))).toBeUndefined();
-
-    const version = store.messagesVersionOf(chat);
-    const before = version.peek();
-    store.appendChunk(chat, msgID, " more review", false, 5, REVIEW);
-    await Promise.resolve();
-
-    expect(version.peek()).toBe(before);
+    expect(memberIsMounted(turn, PLAN)).toBe(false);
+    expect(memberIsMounted(turn, REVIEW)).toBe(false);
   });
 });
 
 // DEMAND IS AN INPUT. The page's lifetime used to end only when another subagent tab
 // mounted over it, so closing the last one left the whole page and one detached render
-// per member the reader had opened registered in `messages-blocks.ts` — where the
-// repaint gate answers as a UNION over every registered render, so each of them kept
-// claiming "still mounted" for DOM that is gone and bought a full transcript pass per
-// delta. A second effect over the open-tab set closes it, and the membership test is
-// what makes the shared-group case structural rather than a special case.
+// per member the reader had opened registered in `messages-blocks.ts`. A second effect
+// over the open-tab set closes it, and the membership test is what makes the
+// shared-group case structural rather than a special case.
 describe("demand for the mounted page", () => {
-  /** The two premises every gate assertion below needs, or it passes for someone
-   *  else's reason: no transcript view exists in this file, so nothing files a sink
-   *  under the store's own message id, and neither stage's text block has a per-block
-   *  signal, so the mounted-block gate is the only thing left that could schedule a
-   *  pass for one. */
-  function gateIsTheOnlyInput(msgID: string): void {
-    expect(mountedWindow(msgID)).toBeUndefined();
-    expect(blockTextSigs.get(blockKey(msgID, 3))).toBeUndefined();
-    expect(blockTextSigs.get(blockKey(msgID, 5))).toBeUndefined();
-  }
-
-  /** Block 3 is PLAN's own prose and block 5 is REVIEW's, so this asks the store about
-   *  BOTH members of the pipeline: a release that reached one render and not the other
-   *  is exactly the shape a hand-written reset produces. */
-  async function gateIsSilentForBothStages(chat: string, msgID: string): Promise<void> {
-    const version = store.messagesVersionOf(chat);
-    const before = version.peek();
-    store.appendChunk(chat, msgID, " more plan", false, 3, PLAN);
-    store.appendChunk(chat, msgID, " more review", false, 5, REVIEW);
-    await Promise.resolve();
-    expect(version.peek()).toBe(before);
+  /** Both members of the pipeline, because a release that reached one render and not the
+   *  other is exactly the shape a hand-written reset produces. */
+  function neitherStageIsMounted(turn: string): void {
+    expect(memberIsMounted(turn, PLAN)).toBe(false);
+    expect(memberIsMounted(turn, REVIEW)).toBe(false);
   }
 
   it("drops the page and every body it mounted when the last subagent tab closes", async () => {
     const chat = "c-close";
-    const msgID = "m-close";
-    store.setSessions([pipelineSession(chat, msgID)]);
+    const turn = "t-close";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -560,14 +603,14 @@ describe("demand for the mounted page", () => {
     });
     // TWO bodies mounted, which is what makes "every body" a claim with content.
     clickRow(REVIEW);
-    expect(body().querySelector(`.ev-d-body[data-path="${REVIEW}"]`)).not.toBeNull();
+    expect(memberIsMounted(turn, PLAN)).toBe(true);
+    expect(memberIsMounted(turn, REVIEW)).toBe(true);
 
     closeSubagentTabs();
 
     // The page LEFT the host, so "no page mounted" and "the host holds no page" agree.
     expect(body().querySelector(".ev-page")).toBeNull();
-    gateIsTheOnlyInput(msgID);
-    await gateIsSilentForBothStages(chat, msgID);
+    neitherStageIsMounted(turn);
   });
 
   // The case the retired deferral named as its blocker: two stage tabs of one pipeline
@@ -576,8 +619,9 @@ describe("demand for the mounted page", () => {
   // the page's own projection — so nothing has to be tracked per tab.
   it("keeps the page when one of two stage tabs sharing its group closes", async () => {
     const chat = "c-sibling";
-    const msgID = "m-sibling";
-    store.setSessions([pipelineSession(chat, msgID)]);
+    const turn = "t-sibling";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     setSubagentTabs([subagentRef(chat, PLAN), subagentRef(chat, REVIEW)]);
     showSubagent(chat, PLAN);
@@ -594,13 +638,14 @@ describe("demand for the mounted page", () => {
     // The SAME element, not a rebuilt one: the page was never dropped, so the bodies
     // mounted into it are still the reader's.
     expect(body().querySelector(".ev-page")).toBe(page);
-    // And the gate still answers for a member whose OWN tab is the one that closed:
-    // the page is the unit of demand, not the tab.
-    const version = store.messagesVersionOf(chat);
-    const before = version.peek();
-    store.appendChunk(chat, msgID, " still here\n\n", false, 3, PLAN);
+    // And a member whose OWN tab is the one that closed is still rendered and still
+    // refreshed: the page is the unit of demand, not the tab.
+    expect(memberIsMounted(turn, PLAN)).toBe(true);
+    laneText(chat, turn, PLAN, "still here");
     await vi.waitFor(() => {
-      expect(version.peek()).not.toBe(before);
+      expect(
+        body().querySelector<HTMLElement>(`.ev-d-body[data-path="${PLAN}"]`)?.textContent,
+      ).toContain("still here");
     });
   });
 
@@ -611,17 +656,18 @@ describe("demand for the mounted page", () => {
     {
       what: "a tab for the same subtask id in a different chat",
       chat: "c-outside-chat",
-      msgID: "m-outside-chat",
+      turn: "t-outside-chat",
       ref: subagentRef("c-elsewhere", PLAN),
     },
     {
       what: "a tab for a non-member subtask of the same chat",
       chat: "c-outside-member",
-      msgID: "m-outside-member",
+      turn: "t-outside-member",
       ref: subagentRef("c-outside-member", "st-not-a-member"),
     },
-  ])("does not count $what as demand", async ({ chat, msgID, ref }) => {
-    store.setSessions([pipelineSession(chat, msgID)]);
+  ])("does not count $what as demand", async ({ chat, turn, ref }) => {
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -632,8 +678,7 @@ describe("demand for the mounted page", () => {
     setSubagentTabs([ref]);
 
     expect(body().querySelector(".ev-page")).toBeNull();
-    gateIsTheOnlyInput(msgID);
-    await gateIsSilentForBothStages(chat, msgID);
+    neitherStageIsMounted(turn);
   });
 
   // Superseding is still the OTHER release path, and demand holding is not a keep rule:
@@ -642,11 +687,10 @@ describe("demand for the mounted page", () => {
   // and `mountPage`'s own release is what is under test.
   it("still supersedes: mounting another group's page releases the previous one", async () => {
     const chat = "c-supersede";
-    const msgID = "m-supersede";
-    store.setSessions([
-      pipelineSession(chat, msgID),
-      session("c-super-other", [delegateMsg("m-super-other", "st-other")]),
-    ]);
+    const turn = "t-supersede";
+    seedChats({ chat, turn }, { chat: "c-super-other", turn: "t-super-other" });
+    pipeline(chat, turn);
+    delegate("c-super-other", "t-super-other", "st-other");
 
     setSubagentTabs([
       subagentRef(chat, PLAN),
@@ -666,20 +710,20 @@ describe("demand for the mounted page", () => {
     });
 
     expect(body().querySelector(".ev-page")).not.toBe(page);
-    gateIsTheOnlyInput(msgID);
-    await gateIsSilentForBothStages(chat, msgID);
+    neitherStageIsMounted(turn);
   });
 
   // Why the drop writes `shown` rather than calling the release directly. The paint
   // effect's dependencies are `shown` and the launching chat's version, so a drop that
   // cleared only the mounted page leaves `shown` naming the closed delegate — and that
-  // chat's next transcript delta re-runs the paint effect, re-projects, and mounts the
+  // chat's next transcript entry re-runs the paint effect, re-projects, and mounts the
   // page again for a tab that no longer exists. The demand effect cannot notice,
   // because the tab set did not move.
-  it("does not re-mount the page on the launching chat's next transcript delta", async () => {
+  it("does not re-mount the page on the launching chat's next entry", async () => {
     const chat = "c-resurrect";
-    const msgID = "m-resurrect";
-    store.setSessions([pipelineSession(chat, msgID)]);
+    const turn = "t-resurrect";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -689,21 +733,15 @@ describe("demand for the mounted page", () => {
     closeSubagentTabs();
     expect(body().querySelector(".ev-page")).toBeNull();
 
-    // A REAL transcript event for the launching chat, and its bump is asserted as the
-    // PREMISE: without it this test cannot fail.
+    // A REAL entry for the launching chat, in its OWN lane so the cause is structural,
+    // and its version bump is asserted as the PREMISE: without it this test cannot fail.
     const version = store.messagesVersionOf(chat);
     const before = version.peek();
-    store.upsertToolCall(
-      chat,
-      "m-resurrect-later",
-      { id: "tc-later", title: "Read File", kind: "read", status: "completed", ts: 2 },
-      0,
-    );
+    push(chat, turn, "text", { text: "the parent carries on" });
     expect(version.peek()).not.toBe(before);
 
     expect(body().querySelector(".ev-page")).toBeNull();
-    gateIsTheOnlyInput(msgID);
-    await gateIsSilentForBothStages(chat, msgID);
+    neitherStageIsMounted(turn);
   });
 
   // Why demand is a SECOND effect rather than a read added to the paint effect: the
@@ -712,8 +750,9 @@ describe("demand for the mounted page", () => {
   // anywhere in the app.
   it("does not re-project the group on a tab-set change that leaves the demand alone", async () => {
     const chat = "c-churn";
-    const msgID = "m-churn";
-    store.setSessions([pipelineSession(chat, msgID)]);
+    const turn = "t-churn";
+    seedChats({ chat, turn });
+    pipeline(chat, turn);
 
     show(chat, PLAN);
     await vi.waitFor(() => {
@@ -735,7 +774,7 @@ describe("demand for the mounted page", () => {
 
 // ---------------------------------------------------------------------------
 // The subagent kind's refresh. The page is a projection of the launching chat's
-// blocks, so the chat's window is the only thing that can make it current.
+// entries, so the chat's window is the only thing that can make it current.
 // ---------------------------------------------------------------------------
 
 describe("refreshSubagent delegates to the launching chat", () => {

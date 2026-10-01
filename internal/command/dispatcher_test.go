@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
 func TestDispatcher_MethodNotAllowed(t *testing.T) {

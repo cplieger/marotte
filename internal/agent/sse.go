@@ -7,10 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/sse"
-	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/sse"
 )
 
 // wireHeader is the request header a v3 client sends; its absence marks a legacy
@@ -50,7 +49,7 @@ func (b *bus) emit(evt marotte.ServerEvent) {
 			// evt is a value, so this reaches the marshal below and no caller sees it.
 			evt.Payload, evt.Subject = b.chatStatus.MergeStamped(evt.ChatID, p)
 		}
-	case marotte.EventTurnEnded:
+	case marotte.EventTurnClosed:
 		b.chatStatus.ClearAtTurnEnd(evt.ChatID)
 	}
 	data, err := json.Marshal(evt)
@@ -140,36 +139,6 @@ const (
 	maxConnectLiveRuns = 128
 )
 
-// liveTurnGETCaps bounds the in-flight turn the transcript GET carries, and every
-// dimension is sized ABOVE the measured maximum so the ordinary turn is not cut at all.
-//
-// The reader's need on THIS channel is the WHOLE turn, not its tail. This is the one
-// channel that carries the newest turn while it is in flight, and the newest turn is
-// served whole unconditionally — so a cap that keeps a tail is a cap that withholds the
-// reply a reader came for.
-//
-// Measured maxima over the live chat volume, one per dimension, so the sizing is
-// checkable rather than asserted. What survives is a RUNAWAY ceiling of 10,616,832 bytes
-// of text (the two flat fields, the block share and the tool-output aggregate summed;
-// live_turn_caps_test.go pins it): past it the turn is cut and `truncated` says so.
-// ToolOutputTotalBytes is what makes that number statable — the per-call cap stays at the
-// terminal ring buffer's own 64 KiB bound, so a single call is never cut, and the
-// aggregate bounds the product the per-call cap cannot.
-//
-// Deliberately NOT narrowed by a remaining budget: that GET serves ONE chat, so there is
-// no fanout to divide. Its cost is not charged against the caller's own ?max_bytes=
-// either (internal/chat's serveChatMessages): that budget bounds the WINDOW, and this cap
-// bounds the live turn, as two independent bounds on one response.
-var liveTurnGETCaps = buffer.SnapshotCaps{
-	ReasoningBytes:       1 << 20,   // > max 774,867
-	ContentBytes:         128 << 10, // > max 71,191
-	BlockTextBytes:       1 << 20,   // > max 804,520
-	Blocks:               8192,      // > max 3,548
-	ToolCalls:            4096,      // > max 2,804
-	ToolOutputBytes:      64 << 10,  // == the terminal ring buffer's own bound
-	ToolOutputTotalBytes: 8 << 20,   // > max sum 3,467,593
-}
-
 // streamInitialState is the OnConnect body: the connected handshake, then the
 // workspace-wide state a client cannot derive from the event log. A v3 connect gets
 // two aggregate frames, pending_snapshot and status_snapshot, each the WHOLE set
@@ -230,7 +199,7 @@ func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool)
 	if err := writeEvent(pendingFrame); err != nil {
 		return err
 	}
-	status, statusStamp := rt.bus.chatStatus.SnapshotStamped(rt.coord.turns.openTurns())
+	status, statusStamp := rt.bus.chatStatus.SnapshotStamped(rt.coord.turns.ownTurns())
 	statusFrame := marotte.NewEvent(marotte.EventStatusSnapshot, "", status)
 	statusFrame.Subject = statusStamp
 	return writeEvent(statusFrame)
@@ -254,7 +223,7 @@ func (rt *Runtime) replayLegacyState(writeEvent func(marotte.ServerEvent) error)
 	if err := rt.replayPendingSteers(writeEvent); err != nil {
 		return err
 	}
-	return rt.replayWaitingStatus(writeEvent, rt.coord.turns.openTurns())
+	return rt.replayWaitingStatus(writeEvent, rt.coord.turns.ownTurns())
 }
 
 // replayWaitingStatus emits a chat_status event for every chat the agent left
@@ -262,7 +231,7 @@ func (rt *Runtime) replayLegacyState(writeEvent func(marotte.ServerEvent) error)
 // chat whose turn is running must still suppress a stale waiting_on_user.
 func (rt *Runtime) replayWaitingStatus(
 	writeFn func(marotte.ServerEvent) error,
-	open map[marotte.ChatID]openTurnFacts,
+	open map[marotte.ChatID]*Turn,
 ) error {
 	for id, p := range rt.bus.chatStatus.Snapshot() {
 		if _, busy := open[id]; busy {

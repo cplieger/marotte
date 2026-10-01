@@ -1,129 +1,97 @@
 // ---------------------------------------------------------------------------
-// What a range of ordinals is worth in PIXELS: the height unmounted space holds, so the
-// document's height cannot depend on the window. Measured at the DROP, which suffices:
+// What a range of a turn's entries is worth in PIXELS: the height unmounted space holds, so
+// the document's height cannot depend on the window. Measured at the DROP, which suffices:
 // everything ABOVE the reader has been mounted and dropped once.
 // ---------------------------------------------------------------------------
 
 import {
-  isDroppedBlock,
+  effectiveRunID,
+  entryAt,
+  entryRenders,
+  firstPlanSeq,
+  runResults,
   sliceTurn,
-  turnCost,
-  type BlockRange,
-  type TurnRange,
+  turnSpan,
+  type EntryRange,
+  type RunResults,
 } from "./block-window.js";
-import { isSubagentInvocation } from "./tool-schema.js";
 // The stage-to-driver join, off the stage's own tool-call id. Imported rather than
-// re-derived: that id format already has two owners (`messages-blocks.ts`
-// `stagePipelineID` and this one), and `subagent-slice.ts` is a leaf whose own comment
-// records the duplication as deliberate — so reading it here adds no third owner and no
-// DOM to this module's graph.
+// re-derived, because that id format has two owners already and this leaf adds no DOM.
 import { pipelineOf } from "./subagent-slice.js";
-import type { Message, ToolCall } from "./types.js";
-import type { Turn } from "./turns.js";
+import type { Entry, EntryToolCall } from "./types.js";
+import { payloadOf, type Turn } from "./turns.js";
 // Type-only, so this costs no import edge at runtime: `tierNow` below reads the
 // attribute rather than calling `pointer-tier.ts`, and this is only the vocabulary.
 import type { PointerTier } from "./device-view.js";
 
-/** What one block is worth before it has ever been measured, keyed on what it
- *  MOUNTS AS rather than on `block.type`, because one type mounts four shapes — a
- *  `tool_use` block resolves to a run card, a delegate card, a pipeline's container or
- *  a tool row, and to NOTHING at all when its own tool-call id names a pipeline DRIVER.
- *  That zero is every stage, not only the ones inside a container: a PROMOTED single
- *  stage renders its card at the TOP LEVEL and is priced 0 there too, with the driver's
- *  block carrying the price.
+/** What one entry is worth before it has ever been measured, keyed on what it MOUNTS AS
+ *  rather than on its kind, because one kind mounts four shapes. A PROSE RUN is one row
+ *  whatever its entry count, so `text` prices the run's first entry and the rest nothing.
  *
- *  EACH VALUE IS THE RENDERED BOX the element resolves to while its contents are
- *  skipped, NOT its declared `contain-intrinsic-size`. That claim was the unit error
- *  this table carried: the property states the CONTENT box, and the box model then
- *  adds padding, border and `min-height` on top — so a value written as the declaration
- *  under-states every element that has any of the three. `text`/`row` never exposed it
- *  because `.msg-row` has no padding, border or `min-height`, so its content box IS its
- *  border box. The unit has to be the border box for a second reason: what an estimate
- *  substitutes for is a MEASUREMENT (`recordBlockHeight` / `recordRowHeight` are fed
- *  `offsetHeight`), and `rangeHeight` sums the two interchangeably.
- *
- *  TIER-KEYED because four of the seven entries move on the pointer tier, by 8, 8, 19
- *  and 28px per block, so a single-tier table is measurably wrong on the other tier.
- *  Measured against the assembled stylesheet in Chromium 151, and held to it by
- *  `block-heights-css.test.ts`, which is what makes these literals a SHADOW of the CSS
- *  rather than a second source of truth for it. The reserves themselves cannot be read
- *  here: `getPropertyValue` on an unregistered custom property answers the substituted
- *  token stream (`--btn-h` is `2.25rem`, `--run-card-content` the whole `calc()`), and
- *  resolving either to px needs a probe element plus layout, which a pure pricing
- *  module cannot take.
- *
- *  Which rule each entry shadows:
- *    text        13-messages.css `.msg-row`            — `auto 3rem`, no padding/border
- *    emptyText   13-messages.css `.msg-row.is-empty`   — `display: none`
- *    thinking    NONE — see below
- *    toolCard    14-tools.css `.tool-call`             — `auto var(--btn-h)` + 2px
- *    runCard     27-run-card.css `.run-card`           — `auto var(--run-card-content)` + 2px
- *    subagentCard 14-tools.css `.subagent-block`       — `auto var(--subagent-content)` + 2px,
- *                                                        one rule serving a delegate's
- *                                                        CARD and a pipeline's CONTAINER
- *    row         13-messages.css `.msg-row`            — a blockless message is one row
- *
- *  `thinking` IS THE ONE ENTRY WITH NO CSS COUNTERPART: `.reasoning-block` declares no
- *  `content-visibility`, so there is no reserve to shadow. The value is the REAL
- *  collapsed height of a sealed trace — its `<summary>` row — measured at 25px on the
- *  fine tier and 44px on the coarse one, tier-dependent because 61-mcp-tools.css's
- *  universal hit floor includes `summary`. The 40 it replaced traced to nothing and was
- *  wrong on both tiers, in opposite directions. The FINE value is that row's own line
- *  box rather than the floor, so it moves with the font stack (24px on a CI runner) —
- *  hence the one pixel of slack its guard allows. */
-export const BLOCK_ESTIMATE_PX: Readonly<Record<PointerTier, BlockEstimates>> = {
+ *  EACH VALUE IS THE RENDERED BORDER BOX, never the declared `contain-intrinsic-size`,
+ *  which states the CONTENT box alone: an estimate and a measurement are summed
+ *  interchangeably. The rule each value shadows is named at it, and the two with no reserve
+ *  to shadow are heights measured on the assembled stylesheet at both tiers. */
+export const ENTRY_ESTIMATE_PX: Readonly<Record<PointerTier, EntryEstimates>> = {
   fine: {
-    text: 48,
-    emptyText: 0,
-    thinking: 25,
-    runCard: 71,
-    toolCard: 38,
-    subagentCard: 71,
-    row: 48,
+    text: 48, // 13-messages.css `.msg-row` — `auto 3rem`, no padding or border
+    emptyText: 0, // `.msg-row.is-empty` — `display: none`
+    thinking: 25, // NO reserve: a sealed trace's own `<summary>` row
+    runCard: 71, // 27-run-card.css `.run-card` — `auto var(--run-card-content)` + 2px
+    toolCard: 38, // 14-tools.css `.tool-call` — `auto var(--btn-h)` + 2px
+    subagentCard: 71, // `.subagent-block` — a delegate's card AND a pipeline's container
+    planCard: 70, // `.plan-message` — `auto 2.75rem` + `--sp-3` twice + 2px
+    steerNote: 62, // NO reserve: a one-line note, head + one text line + padding
+    row: 48, // 13-messages.css `.msg-row` — an event row
   },
   coarse: {
     text: 48,
     emptyText: 0,
+    // Tier-dependent because 61-mcp-tools.css's universal hit floor includes `summary`;
+    // the fine value is that row's own line box, so it moves with the font stack.
     thinking: 44,
     runCard: 91,
     toolCard: 46,
     subagentCard: 91,
+    // Tier-INVARIANT: the reserve is two line boxes plus a spacing token, and the card
+    // reads no control-height token (14-tools.css `.plan-message`).
+    planCard: 70,
+    // The head is `--btn-h`, which tiers; the text line and the body's padding do not.
+    steerNote: 70,
     row: 48,
   },
 } as const;
 
 /** One tier's prices. */
-export interface BlockEstimates {
+export interface EntryEstimates {
   readonly text: number;
   readonly emptyText: number;
   readonly thinking: number;
   readonly runCard: number;
   readonly toolCard: number;
   readonly subagentCard: number;
+  readonly planCard: number;
+  readonly steerNote: number;
   readonly row: number;
 }
 
-/** The flex `gap` (`--sp-3`) that `.turn-body` puts between rows and `.msg-wrap`
- *  puts between one row's blocks — one value for both levels (css/13-messages.css
- *  `.msg-wrap`, css/29-turns.css `.turn-body`), which is itself an assertion, and
- *  `block-heights-css.test.ts` is what holds it. Tier-invariant: `--sp-3` reads no
- *  pointer query.
+/** The flex `gap` (`--sp-3`) `.turn-body` puts between the entries it holds
+ *  (css/29-turns.css `.turn-body`), which is itself an assertion about that rule.
+ *  Tier-invariant: `--sp-3` reads no pointer query.
  *
- *  The PARENT adds it and no child's own height includes it, so a run of K replaced
- *  children carries K−1 of them, its own box replacing the one that preceded the
- *  run. */
+ *  The PARENT adds it and no child's own height includes it, so K replaced children
+ *  carry K−1 of them between themselves. The spacer standing in for them is a SIBLING
+ *  of `.turn-body` under `.turn`, which declares no `gap`, so it carries the boundary
+ *  one too — `spacerHeight` adds both terms. */
 export const ROW_GAP_PX = 12;
 
-/** Which tier the document is laid out for, READ off the attribute rather than
- *  imported from `pointer-tier.ts`: `currentTier()` is this same one-property read
- *  behind a module whose import chain reaches `device-view.ts` and `localStorage`,
- *  and this module has to keep answering with no DOM at all — both of its suites are
- *  in the node project, where the absent-`document` arm resolves to `fine`.
+/** Which tier the document is laid out for, READ off the attribute rather than through
+ *  `pointer-tier.ts`, whose import chain reaches `device-view.ts` and `localStorage` where
+ *  this module has to keep answering with no DOM at all.
  *
  *  The absent-attribute arm MIRRORS THE CASCADE rather than guessing: `01-tokens.css`
- *  carries a no-JS fallback (`:root:not([data-pointer="fine"])` under
- *  `@media (width <= 48rem)`), so an unset attribute takes the coarse values exactly
- *  when that query matches. Both reads are one property access and no layout. */
+ *  carries a no-JS fallback under `@media (width <= 48rem)`, so an unset attribute takes
+ *  the coarse values exactly when that query matches. */
 function tierNow(): PointerTier {
   // A NULLABLE view of the global, not the DOM lib's: read through that type,
   // `no-unnecessary-condition` proves these guards dead and offers to cut them.
@@ -138,151 +106,80 @@ function tierNow(): PointerTier {
   return (g.matchMedia?.("(width <= 48rem)").matches ?? false) ? "coarse" : "fine";
 }
 
-/** message id → block index → the height that block's element measured. */
-const blockHeights = new Map<string, Map<number, number>>();
+/** turn id → `seq` → the height that entry's element measured. */
+const entryHeights = new Map<string, Map<number, number>>();
 
-/** message id → the range a whole-row measurement covered and what it measured.
- *  Range-keyed because a row dropped under a PARTIAL window measured that slice
- *  only, and answering the whole row with it prices the rest at zero. */
-const rowHeights = new Map<string, { range: BlockRange; px: number }>();
+/** turn id → a prose run's first `seq` → the range that row measured and what it
+ *  measured. Range-keyed because a row dropped under a PARTIAL window measured that
+ *  slice only, and answering the whole run with it prices the rest at zero. */
+const rowHeights = new Map<string, Map<number, { range: EntryRange; px: number }>>();
 
-/** The tool call that OPENS a subagent-orchestration pipeline, whose block mounts the
- *  pipeline's BOX rather than a tool row. Deliberately absent from
- *  `isSubagentInvocation`, because one title with two owners makes a classification
- *  unpredictable.
+/** The tool call that OPENS a subagent-orchestration pipeline, whose entry mounts the
+ *  pipeline's BOX rather than a tool row. Deliberately absent from `isSubagentInvocation`:
+ *  one title with two owners makes a classification unpredictable.
  *
- *  LOCAL rather than imported, and the reason is mechanical rather than stylistic:
- *  `messages-blocks.ts` owns `isPipelineInvocation` and already imports
- *  `recordBlockHeight` from here, so reading it back closes a cycle — and MEASURED, the
- *  import fails outright rather than merely offending a rule, because that module's
- *  graph reaches `router.ts`, which registers a `window` listener at module load, while
- *  both of this module's suites run in the node project (`ReferenceError: window is not
- *  defined` at router.ts:416). `subagent-slice.ts` carries the same literal as its own
- *  unexported `PIPELINE_TITLE` for its own version of that reason, so this is the third
- *  copy; the shape that removes all three is the predicate living in `tool-schema.ts`
- *  beside `isSubagentInvocation`, whose comment already names this title as another
- *  owner's. NOTHING cross-checks the three in the meantime, this file's own suites
- *  included: `block-heights-css.test.ts` builds its subject with
- *  `buildSubagentContainer` directly and pins the 71 / 99 VALUE against the CSS,
- *  evaluating no title at all, and `block-heights.node.test.ts`'s fixtures hard-code the
- *  same string as the module under test. So changing the literal in
- *  `messages-blocks.ts` alone stops the renderer building a box while this arm keeps
- *  charging a card for it, with every suite green. */
-function isPipelineDriver(tc: ToolCall): boolean {
-  return tc.title === "Orchestrate Sub-agent";
+ *  LOCAL rather than imported, and MEASURED: `messages-blocks.ts` owns the twin and imports
+ *  from here, and its graph reaches `router.ts`, which registers a `window` listener at
+ *  module load while both of this module's suites run in the node project. The shape that
+ *  removes all three copies is the predicate living in `tool-schema.ts`. */
+function isPipelineDriver(call: EntryToolCall): boolean {
+  return call.title === "Orchestrate Sub-agent";
 }
 
-function estimateOf(m: Message, i: number, est: BlockEstimates): number {
-  const block = (m.blocks ?? [])[i];
-  if (block === undefined) {
-    return est.row;
+/** What one `tool_call` entry mounts as, in pixels. `results` is the turn's own index, so
+ *  the run test costs one lookup rather than a walk over the body per call. */
+function callEstimate(
+  e: Entry,
+  call: EntryToolCall,
+  est: EntryEstimates,
+  results: RunResults,
+): number {
+  // The run test stays FIRST: a launch carries no subtask id, so the arms are disjoint, but
+  // ordering them makes that independent of the titles.
+  if (effectiveRunID(e, results) !== "") {
+    return est.runCard;
   }
-  // A block the transcript mounts nowhere is never measured, so a price here is
-  // reserved forever. Measured over the 104 chats on one live volume: 45,104 workflow
-  // step blocks and 21,326 delegate blocks, together 79.3% of all 83,749, and 863,176px
-  // of the phantom height was the delegate half alone.
-  if (isDroppedBlock(block, m.tool_calls ?? [])) {
-    return 0;
+  // A PIPELINE IS WORTH ONE CARD however many stages it has, priced at its DRIVER's entry: a
+  // collapsed `.subagent-body` is `content-visibility: hidden` at inline height 0, so a stage
+  // inside contributes nothing. A PROMOTED single stage swaps the two prices, which costs one
+  // card only when a window edge falls between them.
+  if (isPipelineDriver(call)) {
+    return est.subagentCard;
   }
-  switch (block.type) {
+  if ((call.agent_subtask_id ?? "") !== "") {
+    return pipelineOf(call.id) === "" ? est.subagentCard : 0;
+  }
+  return est.toolCard;
+}
+
+/** What one entry mounts as, in pixels, for an entry this view draws. A `text` entry is
+ *  priced as its RUN's row, so the caller charges it once per run. */
+function estimateOf(e: Entry, est: EntryEstimates, results: RunResults): number {
+  switch (e.kind) {
     case "text":
-      // A `padBlocks` pad mounts an `is-empty` row, which is zero-height.
-      return (block.text ?? "") === "" ? est.emptyText : est.text;
+      // An empty text entry (a released steer carry) mounts an `is-empty` row, which is
+      // `display: none`.
+      return (payloadOf(e, "text")?.text ?? "") === "" ? est.emptyText : est.text;
     case "thinking":
       return est.thinking;
-    case "tool_use": {
-      const tc = m.tool_calls?.find((c) => c.id === block.tool_call_id);
-      // The `workflow_id` test stays FIRST: a launch carries no subtask id, so the two
-      // arms are disjoint, but ordering them makes that independent of the titles.
-      if ((tc?.workflow_id ?? "") !== "") {
-        return est.runCard;
-      }
-      if (tc === undefined) {
-        return est.toolCard;
-      }
-      // A PIPELINE IS WORTH ONE CARD however many stages it has, and its DRIVER's block
-      // is where that price sits. Measured over 120 collapsed containers per shape
-      // (`block-heights-css.test.ts`, Chromium 151): a container holding 1, 3 or 8
-      // settled stage cards renders at 71px on the fine tier and 99 on the coarse one —
-      // the same as a bare card, to the pixel — because
-      // `.subagent-block.collapsed > .subagent-body` is `content-visibility: hidden` at
-      // the disclosure controller's inline height 0, so a stage inside one contributes
-      // nothing to the box it sits in.
-      if (isPipelineDriver(tc)) {
-        return est.subagentCard;
-      }
-      // A DELEGATE INVOCATION mounts a `.subagent-block`, not a `.tool-call`, and
-      // `isDroppedBlock` keeps exactly one of a delegate's blocks — this one — so the
-      // card's height is reserved here or nowhere. Pricing a card that RENDERS as a tool
-      // row is 33 / 53px short, which is `subagentCard` less `toolCard` on each tier.
-      //
-      // A STAGE names its driver in its own id, and the driver above holds its price:
-      // inside a container the stage's card renders at 0, and where the pipeline
-      // PROMOTES its single stage the DRIVER's block is the one that renders nothing
-      // (`messages-blocks.ts` `driverNeedsBox` refuses a box at a count of 1). So for a
-      // pipeline whose driver and stages sit in ONE MESSAGE the total is exact in both
-      // shapes, and in the promoted one the two blocks' prices are swapped — which costs
-      // one card, and only where a window edge falls between a driver and its promoted
-      // stage.
-      //
-      // SPLIT ACROSS TWO MESSAGES it is UNDER by one card, because the renderer's join
-      // is per message as well: `indexPipelines` reads `m.tool_calls`, so a message
-      // holding stage blocks whose driver's call is elsewhere counts only the stages IT
-      // sees, builds a container of its own through `stageHostFor`, and prices every one
-      // of them 0 with no block left to pay for that box — plus the ROW gap that box
-      // would have carried, since `rangeHeight` charges gaps only between the boxes it
-      // priced. Measured at BLOCK level over the 111 chat files on one live volume: 8 of
-      // 374 stage blocks sit in a message their driver's call is absent from, in two
-      // fragments of four stages each, and both fragments hold other priced blocks, so
-      // each is 71 + 12 fine / 99 + 12 coarse short. Charging the fragment's FIRST stage
-      // is the exact rule and needs a scan of the earlier blocks per block, which is the
-      // O(n²) shape that alternative was rejected on.
-      //
-      // KEYED ON THE ID, NOT THE TITLE, because the two disagree on real data. Measured
-      // over the 111 chat files on one live volume (a different question from the
-      // title-keyed census at the CSS rule, so a separate reading rather than a restated
-      // one): of `isSubagentInvocation`'s 393 matches, 392 carry the `Sub-agent:` title
-      // prefix while only 369 carry the `_stage_` id shape. The other 23 are
-      // `invoke_subagent_<driver>-sub-agent-start`, a second KAS shape naming no stage —
-      // `stagePipelineID` answers "" for it too, so the renderer seats those cards at the
-      // TOP LEVEL where they cost a full card, and their driver keeps a box of its own
-      // for having dispatched no stage it could see. A title-keyed test would price all
-      // 23 at zero against boxes that render. The 393rd match is a plain
-      // `Sub-agent execution` delegate, which names no driver either.
-      if (isSubagentInvocation(tc)) {
-        return pipelineOf(tc.id) === "" ? est.subagentCard : 0;
-      }
-      return est.toolCard;
+    case "tool_call": {
+      const call = payloadOf(e, "tool_call");
+      return call === undefined ? est.toolCard : callEstimate(e, call, est, results);
     }
+    case "plan":
+      // The turn's plan CARD: only its first `plan` entry renders, and `entryRenders` is
+      // what keeps the later ones out of this walk.
+      return est.planCard;
+    case "steer":
+      return est.steerNote;
+    case "steer_ack":
+      // Agent content at its own position, so a prose row rather than an event badge.
+      return est.text;
     default:
+      // The five event kinds — a compaction, a failed one, a safety block, a model
+      // switch, a mode switch.
       return est.row;
   }
-}
-
-/** What `range` of `m`'s own blocks is worth, the gaps BETWEEN those blocks included — so a
- *  caller adds only the gaps between whole rows. The row number is preferred where a
- *  measurement covered exactly this range: a reconcile drops a row and measures it once, while
- *  a boundary row's drop measures each block it removes. */
-function rangeHeight(m: Message, range: BlockRange, est: BlockEstimates): number {
-  const row = rowHeights.get(m.id);
-  if (row?.range.from === range.from && row.range.to === range.to) {
-    return row.px;
-  }
-  const blocks = m.blocks ?? [];
-  if (blocks.length === 0) {
-    return est.row;
-  }
-  const per = blockHeights.get(m.id);
-  let px = 0;
-  let boxes = 0;
-  for (let i = range.from; i < range.to; i++) {
-    const h = per?.get(i) ?? estimateOf(m, i, est);
-    px += h;
-    if (h > 0) {
-      boxes++;
-    }
-  }
-  return px + gapsBetween(boxes);
 }
 
 /** The gaps a run of `n` boxes carries. Zero-height ones are excluded by the caller:
@@ -292,64 +189,100 @@ function gapsBetween(n: number): number {
   return Math.max(0, n - 1) * ROW_GAP_PX;
 }
 
-/** Record what one block's element measured, at the moment it is dropped. */
-export function recordBlockHeight(messageID: string, blockIndex: number, px: number): void {
-  let per = blockHeights.get(messageID);
+/** Record what one entry's element measured, at the moment it is dropped. */
+export function recordEntryHeight(turnID: string, seq: number, px: number): void {
+  let per = entryHeights.get(turnID);
   if (per === undefined) {
     per = new Map<number, number>();
-    blockHeights.set(messageID, per);
+    entryHeights.set(turnID, per);
   }
-  per.set(blockIndex, px);
+  per.set(seq, px);
 }
 
-/** Record what a whole row measured, at the moment it is dropped. `range` is what
- *  the row HELD: its height answers for those ordinals and no others. */
-export function recordRowHeight(messageID: string, range: BlockRange, px: number): void {
-  rowHeights.set(messageID, { range, px });
+/** Record what one prose RUN's row measured, at the moment it is dropped, against the run's
+ *  first `seq`. `range` is what the row HELD: its height answers for those entries and no
+ *  others. */
+export function recordRowHeight(turnID: string, range: EntryRange, px: number): void {
+  let per = rowHeights.get(turnID);
+  if (per === undefined) {
+    per = new Map<number, { range: EntryRange; px: number }>();
+    rowHeights.set(turnID, per);
+  }
+  per.set(range.from, { range, px });
 }
 
-/** The pixel height of the ordinals one spacer stands in for: everything on
- *  `side` of `range` — the turn's MOUNTED range — plus the ROW gaps the rows it
- *  replaces contributed. Measured where measured, the per-outcome estimate where not.
+/** The pixel height of the entries one spacer stands in for: everything on `side` of
+ *  `range` — the turn's MOUNTED range — plus the gaps the rows it replaces contributed.
+ *  Measured where measured, the per-outcome estimate where not.
  *
- *  Every covered message counts as one row-level unit, a partial slice included: that
- *  row stays in place, so K units replace K−1 gaps and the spacer's box replaces the
- *  K-th. Takes a TURN range and slices it here, so no caller converts between the
- *  ordinal space and the renderer's message-local one. */
-export function spacerHeight(t: Turn, range: TurnRange, side: "head" | "tail"): number {
-  const span = turnCost(t).blocks;
-  const stood: TurnRange =
+ *  `lane` is the VIEW's root and carries NO default: the price and the budget have to answer
+ *  `entryRenders` identically, and a silent `""` here is that divergence. A prose run is one
+ *  box, its first entry carrying the row, which is why the walk tracks the previous kind. */
+export function spacerHeight(
+  t: Turn,
+  range: EntryRange,
+  side: "head" | "tail",
+  lane: string,
+): number {
+  const span = turnSpan(t);
+  const stood: EntryRange =
     side === "head"
       ? { from: 0, to: Math.min(Math.max(range.from, 0), span) }
       : { from: Math.min(Math.max(range.to, 0), span), to: span };
   if (stood.from >= stood.to) {
     return 0;
   }
-  const slices = sliceTurn(t, stood);
-  // Resolved ONCE per call, not per block: the answer cannot change inside one
-  // spacer's arithmetic, and a per-block read would put an attribute lookup in a loop
-  // that runs over every ordinal the spacer stands in for.
-  const est = BLOCK_ESTIMATE_PX[tierNow()];
+  // Both resolved ONCE per call, not per entry: neither answer can change inside one
+  // spacer's arithmetic, and a per-entry read would put an attribute lookup and a walk
+  // over the turn's body in a loop.
+  const est = ENTRY_ESTIMATE_PX[tierNow()];
+  const results = runResults(t);
+  const firstPlan = firstPlanSeq(t, lane);
+  const per = entryHeights.get(t.id);
+  const rows = rowHeights.get(t.id);
   let px = 0;
-  let rows = 0;
-  for (const m of t.body) {
-    const covered = slices.get(m.id);
-    if (covered === undefined) {
+  let boxes = 0;
+  let inRun = false;
+  for (let seq = stood.from; seq < stood.to; seq++) {
+    const e = entryAt(t, seq);
+    if (e === undefined || !entryRenders(e, lane, firstPlan)) {
       continue;
     }
-    const own = rangeHeight(m, covered, est);
+    if (e.kind === "text") {
+      if (inRun) {
+        continue;
+      }
+      inRun = true;
+      const run = sliceTurn(t, { from: seq, to: seq + 1 }, lane, firstPlan);
+      const measured = rows?.get(seq);
+      const own =
+        measured?.range.from === run.from && measured.range.to === run.to
+          ? measured.px
+          : estimateOf(e, est, results);
+      px += own;
+      if (own > 0) {
+        boxes++;
+      }
+      continue;
+    }
+    inRun = false;
+    const own = per?.get(seq) ?? estimateOf(e, est, results);
     px += own;
     if (own > 0) {
-      rows++;
+      boxes++;
     }
   }
-  return px + gapsBetween(rows);
+  // TWO gap terms, and the boundary one is what the parent no longer supplies: the spacer
+  // sits under `.turn`, which declares no `gap`, where the boxes it replaces sat inside
+  // `.turn-body`'s gapped column — so the gap between the last replaced box and the first
+  // mounted row has to come from here. A spacer standing for no box replaces no gap either.
+  return boxes === 0 ? px : px + gapsBetween(boxes) + ROW_GAP_PX;
 }
 
-/** Drop a chat's cache (view dispose, chat delete). */
-export function forgetHeights(messageIDs: Iterable<string>): void {
-  for (const id of messageIDs) {
-    blockHeights.delete(id);
+/** Drop a turn's cache (view dispose, chat delete). */
+export function forgetHeights(turnIDs: Iterable<string>): void {
+  for (const id of turnIDs) {
+    entryHeights.delete(id);
     rowHeights.delete(id);
   }
 }

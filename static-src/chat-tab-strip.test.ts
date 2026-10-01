@@ -102,6 +102,16 @@ vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel:
 vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
 vi.mock("./dom.js", () => ({
   $: { messages: document.createElement("div"), promptInput: { focus: () => undefined } },
+  // The real `paintPlaceholder` comes through the `./skeleton.js` mock's
+  // `importOriginal` and marks its host busy through this module. Browser Mode links
+  // for real, so an absent export fails COLLECTION before any case runs.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_ACTIVATE_CHAT: "activate-chat" }));
@@ -113,7 +123,7 @@ vi.mock("./actions/chat.js", () => ({
 }));
 
 import { installStoreSubscribers } from "./chat.js";
-import { setSessions, setActive, setThinking, setName, setTurnDone } from "./store.js";
+import { setSessions, setActive, setThinking, setTurnOpen, setName } from "./store.js";
 import type { Session } from "./types.js";
 
 /** The fixture's `ChatHeader.updated_at`, which the row effect forwards to
@@ -132,12 +142,12 @@ function session(id: string, over: Partial<Session> = {}): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    messages: [],
-    message_count: 0,
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -175,7 +185,10 @@ describe("per-row effects write only their own row", () => {
     installStoreSubscribers();
     clearStripSpies();
 
-    setThinking("a", true);
+    // The flip is a LIVENESS statement, not `thinking`: the dot derives `working`
+    // from an open turn (`turnLive`), and `thinking` is deliberately not an input to
+    // that derivation, so setting it would churn the signal and paint `idle`.
+    setTurnOpen("a", true);
 
     expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
     expect(h.renameTab.mock.calls).toEqual([["tb_a", "Chat a"]]);
@@ -216,14 +229,14 @@ describe("per-row effects write only their own row", () => {
   // run's ask is filed under the LAUNCHING chat's key, so this row is the one that
   // was reported stuck on `input` after the run's own sub-tab had recovered.
   it("writes the recovered state when a background chat's ask is cleared", () => {
-    setSessions([session("a"), session("b")]);
+    // The launching turn ended when the run was created, so `done` is what a is
+    // waiting to go back to — carried by the HEADER's own `last_turn_outcome`, which
+    // is the dot's one verdict source now, rather than by a client-held latch.
+    setSessions([session("a", { last_turn_outcome: "completed" }), session("b")]);
     setActive("b");
     h.openRefs.value = ["a", "b"];
     h.pendingAsks.add("a");
     installStoreSubscribers();
-    // The launching turn ended when the run was created, so `done` is what a is
-    // waiting to go back to.
-    setTurnDone("a");
     clearStripSpies();
 
     h.pendingAsks.delete("a");
@@ -238,7 +251,7 @@ describe("per-row effects write only their own row", () => {
 
 describe("row-effect lifecycle follows the tab projection", () => {
   it("paints a newly opened tab's row from the current store state", () => {
-    setSessions([session("a", { thinking: true })]);
+    setSessions([session("a", { turn_open: true })]);
     h.openRefs.value = [];
     installStoreSubscribers();
     clearStripSpies();
@@ -282,7 +295,7 @@ describe("row-effect lifecycle follows the tab projection", () => {
     installStoreSubscribers();
     clearStripSpies();
 
-    setThinking("a", true);
+    setTurnOpen("a", true);
 
     expect(h.setTabStatus.mock.calls).toEqual([["tb_a", "working", UPDATED_AT]]);
   });

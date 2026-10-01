@@ -53,38 +53,90 @@ var persistBudget = toolBudget{
 	inputTotal:  2 * previewBudget.inputTotal,
 }
 
-// storeChat returns chat bounded to persistBudget, copy-on-write all the way down: the common
-// chat is written with no clone at all, and a caller holding its own Message never sees the cut.
-func storeChat(chat *marotte.Chat) *marotte.Chat {
-	var bounded []marotte.Message
-	for i := range chat.Messages {
-		m, cut := boundMessage(&chat.Messages[i], storeToolCall)
-		if !cut {
-			continue
+// persistBoundEntry bounds a tool_call or tool_result entry's payload to
+// persistBudget IN PLACE, recording what it dropped in Truncated, and leaves every
+// other kind untouched. It runs on the one write path so the record and the
+// entry_appended frame agree, and must stay idempotent: a merge rewrite hands an
+// already-bounded entry back. A payload that does not decode is written as it
+// came; the per-entry line cap still bounds it.
+func persistBoundEntry(e *marotte.Entry) {
+	switch e.Kind {
+	case marotte.EntryKindToolCall:
+		var call marotte.EntryToolCall
+		if json.Unmarshal(e.Payload, &call) != nil {
+			return
 		}
-		if bounded == nil {
-			bounded = slices.Clone(chat.Messages)
+		out, cut := boundToolCall(&call, persistBudget)
+		if cut == (marotte.ToolTruncation{}) {
+			return
 		}
-		bounded[i] = m
+		out.Truncated = mergeTruncation(call.Truncated, cut)
+		e.Payload = marshalBounded(e.Payload, out)
+	case marotte.EntryKindToolResult:
+		var res marotte.EntryToolResult
+		if json.Unmarshal(e.Payload, &res) != nil {
+			return
+		}
+		out, cut := boundToolResult(&res, persistBudget)
+		if cut == (marotte.ToolTruncation{}) {
+			return
+		}
+		out.Truncated = mergeTruncation(res.Truncated, cut)
+		e.Payload = marshalBounded(e.Payload, out)
+	default:
 	}
-	if bounded == nil {
-		return chat
-	}
-	out := *chat
-	out.Messages = bounded
-	return &out
 }
 
-// storeToolCall returns tc bounded to persistBudget with its Truncated record set, and whether
-// anything was cut. It must stay idempotent: every mutation loads the persisted chat and writes
-// it back, so an already-bounded call arrives here again.
-func storeToolCall(tc *marotte.ToolCall) (marotte.ToolCall, bool) {
-	out, cut := boundToolCall(tc, persistBudget)
-	if cut == (marotte.ToolTruncation{}) {
-		return out, false
+// previewEntry bounds a tool_call or tool_result payload to previewBudget in place,
+// marking HasFull when anything was cut, and leaves every other entry alone: the
+// shape the transcript GET serves, where the whole is one bulk fetch away.
+func previewEntry(e *marotte.Entry) {
+	switch e.Kind {
+	case marotte.EntryKindToolCall:
+		var call marotte.EntryToolCall
+		if json.Unmarshal(e.Payload, &call) != nil {
+			return
+		}
+		out, cut := boundToolCall(&call, previewBudget)
+		if cut == (marotte.ToolTruncation{}) {
+			return
+		}
+		out.OutputBytes = cut.OutputBytes
+		out.HasFull = true
+		e.Payload = marshalBounded(e.Payload, out)
+	case marotte.EntryKindToolResult:
+		var res marotte.EntryToolResult
+		if json.Unmarshal(e.Payload, &res) != nil {
+			return
+		}
+		out, cut := boundToolResult(&res, previewBudget)
+		if cut == (marotte.ToolTruncation{}) {
+			return
+		}
+		out.OutputBytes = cut.OutputBytes
+		out.HasFull = true
+		e.Payload = marshalBounded(e.Payload, out)
+	default:
 	}
-	out.Truncated = mergeTruncation(tc.Truncated, cut)
-	return out, true
+}
+
+// previewEntries is previewEntry over a page, in place.
+func previewEntries(entries []marotte.Entry) []marotte.Entry {
+	for i := range entries {
+		previewEntry(&entries[i])
+	}
+	return entries
+}
+
+// marshalBounded encodes a bounded payload, answering the original bytes when the
+// encode fails: unreachable for a value just decoded, and the unbounded payload is
+// the honest fallback where the bounded one cannot be written.
+func marshalBounded(orig json.RawMessage, v any) json.RawMessage {
+	out, err := json.Marshal(v)
+	if err != nil {
+		return orig
+	}
+	return out
 }
 
 // mergeTruncation keeps whichever measurement is larger per field, so the
@@ -101,32 +153,11 @@ func mergeTruncation(prior *marotte.ToolTruncation, cut marotte.ToolTruncation) 
 	return &merged
 }
 
-// boundMessage returns m with every tool call bound by f, or m unchanged when nothing needed
-// cutting: copy-on-write, so a message with nothing over budget costs one pass and no allocation.
-func boundMessage(m *marotte.Message, f func(*marotte.ToolCall) (marotte.ToolCall, bool)) (marotte.Message, bool) {
-	var bounded []marotte.ToolCall
-	for i := range m.ToolCalls {
-		tc, cut := f(&m.ToolCalls[i])
-		if !cut {
-			continue
-		}
-		if bounded == nil {
-			bounded = slices.Clone(m.ToolCalls)
-		}
-		bounded[i] = tc
-	}
-	if bounded == nil {
-		return *m, false
-	}
-	out := *m
-	out.ToolCalls = bounded
-	return out, true
-}
-
-// boundToolCall returns a copy of tc bounded to b, and what it cut: a zero ToolTruncation means
-// nothing was over budget. It sets no marker of its own, because the two callers publish
-// different ones — the bytes are fetchable for one of them and gone for the other.
-func boundToolCall(tc *marotte.ToolCall, b toolBudget) (marotte.ToolCall, marotte.ToolTruncation) {
+// boundToolCall returns a copy of the create payload bounded to b, and what it cut: a
+// zero ToolTruncation means nothing was over budget. It sets no marker of its own,
+// because the two callers publish different ones — the bytes are fetchable for one
+// of them and gone for the other.
+func boundToolCall(tc *marotte.EntryToolCall, b toolBudget) (marotte.EntryToolCall, marotte.ToolTruncation) {
 	out := *tc
 	var cut marotte.ToolTruncation
 	if text, ok := boundOutput(tc.Output, b); ok {
@@ -143,6 +174,24 @@ func boundToolCall(tc *marotte.ToolCall, b toolBudget) (marotte.ToolCall, marott
 	if input, ok := boundInput(tc.Input, b); ok {
 		out.Input = input
 		cut.InputBytes = len(tc.Input)
+	}
+	return out, cut
+}
+
+// boundToolResult is boundToolCall for the settled payload, which carries the
+// output and the diffs and no input.
+func boundToolResult(res *marotte.EntryToolResult, b toolBudget) (marotte.EntryToolResult, marotte.ToolTruncation) {
+	out := *res
+	var cut marotte.ToolTruncation
+	if text, ok := boundOutput(res.Output, b); ok {
+		out.Output = text
+		out.OutputSpans = nil
+		cut.OutputBytes = len(res.Output)
+	}
+	if diffs, ok := boundDiffs(res.Diffs, b); ok {
+		out.Diffs = diffs
+		cut.DiffCount = len(res.Diffs)
+		cut.DiffBytes = diffsBytes(res.Diffs)
 	}
 	return out, cut
 }

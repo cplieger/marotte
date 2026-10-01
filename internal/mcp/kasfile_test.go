@@ -252,7 +252,7 @@ func TestRenderKASServers_SkipsUnknownTransport(t *testing.T) {
 		{Name: "fine", Transport: TransportStdio, Command: "npx", Enabled: true},
 		nil,
 		{Name: "", Transport: TransportStdio, Command: "npx", Enabled: true},
-	})
+	}, true)
 	if _, ok := got["weird"]; ok {
 		t.Errorf("unknown transport was rendered: %v", got["weird"])
 	}

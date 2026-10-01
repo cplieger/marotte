@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cplieger/marotte/internal/parallel"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/parallel"
 )
 
-// chatEntry is a chat file's (id, full path) pair gathered during a
+// chatEntry is a chat directory's (id, full path) pair gathered during a
 // directory scan, handed off to the parallel header reader.
 type chatEntry struct {
 	id   string
@@ -20,12 +20,11 @@ type chatEntry struct {
 // readHeadersParallel reads chat headers for each entry concurrently (bounded at
 // 8 workers) and returns the successfully-read headers.
 //
-// No per-chat lock is needed: readChatHeader is read-only and writes go through
+// No per-chat lock is needed: the header read is read-only and writes go through
 // atomic temp+rename.
 func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
-	fileCap chatFileCap,
 ) (headersOut []marotte.ChatHeader, complete bool) {
 	if len(valid) == 0 {
 		return nil, true
@@ -40,7 +39,7 @@ func readHeadersParallel(
 	results := make([]result, len(valid))
 
 	ran := parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
-		h, err := readChatHeader(ce.path, "chat "+ce.id, fileCap)
+		c, err := NewEntryHeader(ce.path).Read(ctx)
 		if err != nil {
 			// ENOENT is a concurrent delete: genuinely gone. Anything else leaves an
 			// existing chat missing, which a keep-list caller must not read as whole.
@@ -51,7 +50,7 @@ func readHeadersParallel(
 			}
 			return
 		}
-		results[idx] = result{header: *h, ok: true}
+		results[idx] = result{header: c.Header(), ok: true}
 	})
 
 	headers := make([]marotte.ChatHeader, 0, len(valid))

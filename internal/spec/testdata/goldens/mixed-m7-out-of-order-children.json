@@ -1,0 +1,70 @@
+{
+  "input_file": "mixed-m7-out-of-order-children.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L2",
+      "line": 2,
+      "indent": 0,
+      "number": "1",
+      "text": "1 parent",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "aea116985d4d82011a260916fc3dff6f44b2cfc6bd1f9e864716d28b3431f553",
+      "detail": "",
+      "children": [
+        {
+          "id": "L5",
+          "line": 5,
+          "indent": 0,
+          "number": "1.2",
+          "text": "1.2 second",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "9615c47182edffe0dc7c2ea14afcfea38dc599e26c55a3f7e36645dc2f033dc3",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L4",
+          "line": 4,
+          "indent": 0,
+          "number": "1.9",
+          "text": "1.9 ninth",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "f039ac883467170289786a40a8a4c3caa6803d693fc8c90f1aff5c5972748b88",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 0,
+          "number": "1.10",
+          "text": "1.10 tenth",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "a4519403965c70f4974028133f8a0bee24b50269cf84e2fafea0adeb43f93fae",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

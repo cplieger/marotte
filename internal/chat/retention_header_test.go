@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -24,16 +23,11 @@ func TestLoadRetentionHeader_ReadsWhatTheStoreWrote(t *testing.T) {
 		c.Name = "projected"
 		c.RecordSession("sess_old")
 		c.RecordSession("sess_new")
-		c.Messages = append(c.Messages, marotte.Message{
-			ID:      "m1",
-			Role:    marotte.RoleAssistant,
-			Content: strings.Repeat("tool output nobody reads to decide retention ", 500),
-		})
 		return true
 	}); err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
-	full, err := s.load("c1")
+	full, err := s.load(t.Context(), "c1")
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -105,8 +99,8 @@ func TestLoadRetentionHeader_DraftingRoundTripsTheComposer(t *testing.T) {
 // work in progress would make every chat that ever had one permanent.
 func TestLoadRetentionHeader_AnExplicitEmptyDraftDefendsNothing(t *testing.T) {
 	s, _ := newTestStore(t)
-	path := filepath.Join(s.dir, "c1"+chatFileSuffix)
-	if err := os.WriteFile(path, []byte(`{"id":"c1","draft":"","messages":[]}`), 0o600); err != nil {
+	path := filepath.Join(s.dir, "c1", headerFileName)
+	if err := writeRawHeader(path, []byte(`{"id":"c1","draft":"","messages":[]}`), 0o600); err != nil {
 		t.Fatalf("write chat: %v", err)
 	}
 
@@ -160,8 +154,8 @@ func TestLoadRetentionHeader_MatchesKeysTheWayEncodingJSONDoes(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			path := filepath.Join(s.dir, "c1"+chatFileSuffix)
-			if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
+			path := filepath.Join(s.dir, "c1", headerFileName)
+			if err := writeRawHeader(path, []byte(c.body), 0o600); err != nil {
 				t.Fatalf("Setup: write chat: %v", err)
 			}
 			h, err := s.LoadRetentionHeader("c1")
@@ -201,52 +195,13 @@ func TestUnmarshalFoldsAChatsFieldNames(t *testing.T) {
 	}
 }
 
-// The messages array is SKIPPED, not decoded: replace the projection with a full
-// load and this test goes red. Operationally it is what keeps a chat file a newer
-// build wrote retention-managed instead of falling back to its mtime forever.
-func TestLoadRetentionHeader_SkipsMessagesRatherThanDecodingThem(t *testing.T) {
-	s, _ := newTestStore(t)
-	path := filepath.Join(s.dir, "c1"+chatFileSuffix)
-	// Valid JSON, invalid marotte.Message: role is a number, block field mistyped.
-	body := `{
-  "id": "c1",
-  "name": "odd",
-  "acp_session_id": "sess_new",
-  "draft": "unsent",
-  "messages": [{"id": "m1", "role": 7, "blocks": [{"kind": {"nested": true}}]}],
-  "prior_acp_session_ids": ["sess_old"],
-  "updated_at": 1730000000000
-}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatalf("write chat: %v", err)
-	}
-	if _, err := s.load("c1"); err == nil {
-		t.Fatal("the full load accepted this fixture, so it cannot distinguish a " +
-			"projection from a decode; make the messages array less decodable")
-	}
-
-	h, err := s.LoadRetentionHeader("c1")
-	if err != nil {
-		t.Fatalf("LoadRetentionHeader over an undecodable messages array: %v", err)
-	}
-	if h.UpdatedAt != 1730000000000 {
-		t.Errorf("UpdatedAt = %d, want 1730000000000", h.UpdatedAt)
-	}
-	if want := []string{"sess_old", "sess_new"}; !slices.Equal(h.SessionChain, want) {
-		t.Errorf("SessionChain = %v, want %v", h.SessionChain, want)
-	}
-	if !h.Drafting {
-		t.Error("Drafting = false, want true: the draft precedes the messages array")
-	}
-}
-
 // A chat with no activity stamp reports zero, which is what makes purgeOne fall
 // back to the file mtime. An invented stamp would date the chat to the epoch; an
 // error would make it unpurgeable.
 func TestLoadRetentionHeader_AbsentFieldsAreZero(t *testing.T) {
 	s, _ := newTestStore(t)
-	path := filepath.Join(s.dir, "c1"+chatFileSuffix)
-	if err := os.WriteFile(path, []byte(`{"id":"c1","messages":[]}`), 0o600); err != nil {
+	path := filepath.Join(s.dir, "c1", headerFileName)
+	if err := writeRawHeader(path, []byte(`{"id":"c1","messages":[]}`), 0o600); err != nil {
 		t.Fatalf("write chat: %v", err)
 	}
 
@@ -266,12 +221,14 @@ func TestLoadRetentionHeader_RejectsMalformedJSON(t *testing.T) {
 		"truncated object": `{"id":"c1","updated_at":`,
 		"a JSON array":     `[{"id":"c1"}]`,
 		"not JSON at all":  "\x00\x01binary",
+		"trailing brace":   `{"id":"c1","messages":[]}}`,
+		"a second object":  `{"id":"c1"}{"id":"c2"}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			path := filepath.Join(s.dir, "c1"+chatFileSuffix)
-			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			path := filepath.Join(s.dir, "c1", headerFileName)
+			if err := writeRawHeader(path, []byte(body), 0o600); err != nil {
 				t.Fatalf("write chat: %v", err)
 			}
 			if h, err := s.LoadRetentionHeader("c1"); err == nil {
@@ -295,4 +252,13 @@ func TestLoadRetentionHeader_RefusesAFifoInsteadOfBlockingForever(t *testing.T) 
 	if !errors.Is(err, atomicfile.ErrNotRegular) {
 		t.Errorf("LoadRetentionHeader over a FIFO = %v, want atomicfile.ErrNotRegular", err)
 	}
+}
+
+// writeRawHeader writes hand-built header bytes at path, creating the chat's
+// directory first as the store would have.
+func writeRawHeader(path string, body []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, mode)
 }

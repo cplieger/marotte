@@ -231,12 +231,10 @@ export function buildRunCard(
   // --- head -----------------------------------------------------------------
   const icon = el("span", { className: "run-icon", "aria-hidden": "true" }, iconEl(ICON_TAB_RUN));
   const nameEl = el("span", { className: "run-name" }, name);
-  // `run-state`, not `run-status`: `.run-status` in 18-pages.css was the
-  // `/run/{id}` page's before this card started rendering that page's own
-  // content — the collision is historical and renaming would buy nothing.
-  const statusEl = el("span", { className: "run-state" }, runWord(undefined));
+  // The step counter is the only fact this row carries besides the name: the status
+  // word and the elapsed clock are `.run-foot`'s, which states both 44px below and
+  // outside the disclosure, so a second rendering here was one fact with two owners.
   const countEl = el("span", { className: "run-count" });
-  const clockEl = el("span", { className: "run-clock" });
   // A span, not a button: the head is `role="button"`, so a nested `<button>`
   // is axe's `nested-interactive` regardless of aria-hidden/tabindex="-1".
   const chevron = el("span", { className: "run-toggle", "aria-hidden": "true" }, chevronEl());
@@ -251,7 +249,7 @@ export function buildRunCard(
     chevron,
     icon,
     nameEl,
-    el("span", { className: "run-head-meta" }, statusEl, countEl, clockEl),
+    countEl,
   );
 
   // --- alert ------------------------------------------------------------
@@ -673,7 +671,9 @@ export function buildRunCard(
     } else {
       delete root.dataset["asking"];
     }
-    statusEl.textContent = asks.count > 0 ? "needs input" : runWord(state?.status);
+    // An ask outranks the run's own word: the run genuinely IS running while a step's
+    // ask blocks it, so `data-status` keeps the status and this says what is wanted.
+    const word = asks.count > 0 ? "needs input" : runWord(state?.status);
 
     const c = runCounters(state);
     countEl.textContent =
@@ -684,14 +684,14 @@ export function buildRunCard(
           : `${String(c.done)} of ${String(c.total)}`;
 
     liveClock = runIsLive(state);
-    const ms = runElapsedMs(state);
-    clockEl.textContent = ms > 0 ? formatElapsed(ms) : "";
 
     renderAlert(state, asks);
     renderSteps(state, asks);
     renderOutputs(state);
     renderFoot(state);
-    head.setAttribute("aria-label", `Workflow run ${nameEl.textContent}, ${statusEl.textContent}`);
+    // The head's one statement of the run's state, since the row itself shows the
+    // name and the counter; the foot carries the word visibly.
+    head.setAttribute("aria-label", `Workflow run ${nameEl.textContent}, ${word}`);
     // Every state change re-asks the fold: a run that settled clean is now foldable,
     // and one that failed re-opens.
     applyAutoCollapse();
@@ -703,22 +703,15 @@ export function buildRunCard(
     }
     // Re-derive from the rows' own timestamps rather than re-fetch — the one
     // thing the client can advance honestly on its own.
-    let first = Number.POSITIVE_INFINITY;
     for (const row of rows.values()) {
       const rowMs = elapsedMs(row.startedAt, row.endedAt);
       if (rowMs > 0) {
         row.dur.textContent = formatElapsed(rowMs);
       }
-      if (row.startedAt !== undefined && row.startedAt !== "") {
-        const t = Date.parse(row.startedAt);
-        if (!Number.isNaN(t)) {
-          first = Math.min(first, t);
-        }
-      }
     }
-    if (Number.isFinite(first)) {
-      clockEl.textContent = formatElapsed(Math.max(0, Date.now() - first));
-    }
+    // The run's own elapsed is the FOOT's, and `runElapsedMs` reads `Date.now()`
+    // while a leaf is running, so re-rendering the ledger IS the tick.
+    renderFoot(lastState);
   }
 
   render(undefined);

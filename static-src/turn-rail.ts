@@ -1,6 +1,6 @@
 // The transcript's turn rail: one marker per turn on a vertical axis in the chat
-// gutter. Position is a function of the turn's own NUMBER and of the session's size,
-// and the active turn is a function of scroll offset — `rail-select.ts` and
+// gutter. Position is a function of the marker's SLOT in the shown set, and the
+// active turn is a function of scroll offset — `rail-select.ts` and
 // `rail-activation.ts` own both arithmetics. This module is the DOM, the click flow
 // and the caches around them.
 
@@ -22,14 +22,14 @@ import {
 import { markerLabel, railLabel } from "./rail-labels.js";
 import { formatElapsed, isoDuration } from "./strings.js";
 import { severityOf } from "./turn-severity.js";
-import { projectTurns, turnLedger, WHOLE_SESSION } from "./turns.js";
+import { projectTurns, turnLedger } from "./turns.js";
 import { join } from "@cplieger/keyenc";
 import { searchHitTurns } from "./chat-search.js";
-import { get, turnBaseOf, turnLive } from "./store.js";
+import { get } from "./store.js";
 import { mergeTurnSets, validateTurnIndex } from "./rail-merge.js";
 import type { TurnSummary } from "./rail-merge.js";
 import { railAt, railMetrics, railSpan, selectMarkers } from "./rail-select.js";
-import { activeTurnAt, buildOffsets } from "./rail-activation.js";
+import { activeTurnAt, buildOffsets, markerSlotFor } from "./rail-activation.js";
 import type { CardTop, TurnOffsets } from "./rail-activation.js";
 
 /** One row of the session-wide turn index. Declared by the module that MERGES the
@@ -79,8 +79,16 @@ let summaries: TurnSummary[] = [];
 /** `summaries` indexed by the turn's opening-message id, rebuilt wherever the set is
  *  assigned, so the id-keyed lookups are never a linear scan. */
 let summaryByID = new Map<string, TurnSummary>();
-/** The session's turn count, which is what `railAt` divides by. */
+/** The session's turn count, which `railLabel` reports and the merge derives. */
 let total = 0;
+/** Each resident turn's number by its card key, so a held id resolves to a number
+ *  even for the window's first turn when it is a fragment whose opening message paged
+ *  out: `mergeTurnSets` keeps the INDEX's id for that row, so `summaryByID` never
+ *  holds the card's key. */
+let residentN = new Map<string, number>();
+/** The last turn number a held id resolved to. An id the store window no longer holds
+ *  must move the mark, never clear it, so the mark is latched here. */
+let heldN: number | undefined;
 /** The turn the scroll offset names. A turn ID rather than a number, because the id
  *  is the turn's identity and the number is a value the index can restate. */
 let activeID = "";
@@ -93,7 +101,7 @@ let selectedID: string | undefined;
 /** Turn IDs whose jump is waiting on a fetch, so the marker can say so. */
 const pending = new Set<string>();
 
-/** One chat's fetched index plus the chat's message count when the request went out,
+/** One chat's fetched index plus the chat's turn count when the request went out,
  *  captured BEFORE the fetch (the same discipline as loadMessages' `knownBefore` — an
  *  answer that raced an append must not claim currency over it). */
 interface RailRecord {
@@ -107,17 +115,17 @@ interface RailRecord {
  *  `invalidateTurnRails` drops them all. */
 const records = new Map<string, RailRecord>();
 
-/** Whether `id`'s record can stand in for a fetch: present and from the chat's current
- *  message count. The count is the cheap proxy for "a turn started or ended since" —
- *  background SSE ingest moves it while the rail is pointed elsewhere. The index's GET
- *  carries no digest stamp, so a whole-projection reconcile drops the records by hand
- *  through `invalidateTurnRails` instead. */
+/** Whether `id`'s record can stand in for a fetch: present and from the chat's current turn
+ *  count. That count witnesses a turn STARTED and never one that ended — ingest opens turns
+ *  while the rail is elsewhere — so a close is covered instead by `mergeTurnSets` letting a
+ *  resident row overwrite the indexed one, until it leaves the window. The GET carries no
+ *  digest stamp, so a whole-projection reconcile drops the records via `invalidateTurnRails`. */
 function recordCurrent(id: string): boolean {
   const r = records.get(id);
   if (r === undefined) {
     return false;
   }
-  return r.atCount === get(id)?.message_count;
+  return r.atCount === get(id)?.turn_count;
 }
 
 /** Forget every held index: the reconcile body's call, because nothing certifies a
@@ -160,15 +168,12 @@ let renderedSig = "";
  *  against that set, because this is the moment the mapping moves. */
 function setTurns(): void {
   const session = get(chatID);
-  const resident =
-    session === undefined
-      ? []
-      : projectTurns(session.messages, turnLive(session), turnBaseOf(session));
-  const base = session === undefined ? WHOLE_SESSION : turnBaseOf(session);
-  const merged = mergeTurnSets(resident, indexed, base);
+  const resident = session === undefined ? [] : projectTurns(session);
+  const merged = mergeTurnSets(resident, indexed);
   summaries = merged.turns;
   total = merged.total;
   summaryByID = new Map(summaries.map((s) => [s.id, s]));
+  residentN = new Map(resident.map((t) => [t.id, t.n]));
   if (selectedID !== undefined && !summaryByID.has(selectedID)) {
     selectedID = undefined;
   }
@@ -223,6 +228,8 @@ export function pointTurnRail(id: string): void {
   chatID = id;
   indexed = records.get(id)?.summaries ?? [];
   activeID = "";
+  heldN = undefined;
+  residentN = new Map();
   residentCards = [];
   invalidateOffsets();
   setTurns();
@@ -247,7 +254,7 @@ export async function refreshTurnRail(id: string): Promise<void> {
   }
   // Captured BEFORE the request — see RailRecord. A count the store does not know
   // records nothing: there is no session left to activate against.
-  const countAtStart = get(id)?.message_count;
+  const countAtStart = get(id)?.turn_count;
   const d = await apiGet<{ turns?: unknown }>(`/api/chats/${encodeURIComponent(id)}/turns`);
   if (d === null) {
     // A failed fetch, already logged centrally. Keep what the rail is showing and
@@ -275,8 +282,10 @@ export function resetTurnRail(): void {
   indexed = [];
   summaries = [];
   summaryByID = new Map();
+  residentN = new Map();
   total = 0;
   activeID = "";
+  heldN = undefined;
   selectedID = undefined;
   renderedNavigable = false;
   pending.clear();
@@ -437,37 +446,41 @@ function render(): void {
   const { markerPx, pitchPx } = railMetrics(root);
   const shown = selectMarkers(summaries, root.clientHeight, pitchPx, searchHitTurns());
   // ONE span for the whole render, so two markers cannot disagree about how far down
-  // the track the session reaches.
-  const span = railSpan(total, root.clientHeight, markerPx);
+  // the track the set reaches.
+  const span = railSpan(shown.length, root.clientHeight, markerPx);
   // Once per render, not once per marker: the walk is over the whole resident window.
   const elapsed = residentElapsed();
   // Written unconditionally: it is one attribute on the container rather than a node the
   // reader can hold, so it costs nothing and cannot go stale behind the guard below.
   root.setAttribute("aria-label", railLabel(shown.length, total));
-  const sig = renderSignature(shown, elapsed, span);
+  const n = markedN();
+  const sig = renderSignature(shown, elapsed, span, n);
   if (sig === renderedSig) {
     return;
   }
   renderedSig = sig;
 
+  const marked = n === undefined ? -1 : markerSlotFor(shown, n);
   const nodes: HTMLElement[] = [];
-  for (const s of shown) {
-    nodes.push(markerNode(s, elapsed, span));
-  }
+  shown.forEach((s, i) => {
+    nodes.push(markerNode(s, i, shown.length, i === marked, elapsed, span));
+  });
   root.replaceChildren(...nodes);
 }
 
 /** Every value the rendered nodes read, in one string. See `renderedSig`.
  *
  *  `markerNode` is the whole of it: `s.id`, `s.n`, `s.outcome`, `s.agent_initiated`, the
- *  search-hit and pending flags, its elapsed value, and the three module-level marks
- *  (`selectedID`, `activeID`, `markedID()`) that decide which single marker is filled;
- *  `railAt` folds `total` and `span`. Joined through `keyenc`, not a separator: a turn id
- *  is server-minted text and a collision here is a rail that stops updating. */
+ *  search-hit and pending flags, its elapsed value, and the three marks (`selectedID`,
+ *  `activeID`, the resolved `markedN`) that decide which single marker is filled;
+ *  `railAt` folds the slot count and `span`, and the id order covers the slots. Joined
+ *  through `keyenc`, not a separator: a turn id is server-minted text and a collision
+ *  here is a rail that stops updating. */
 function renderSignature(
   shown: readonly TurnSummary[],
   elapsed: ReadonlyMap<string, number>,
   span: number,
+  marked: number | undefined,
 ): string {
   const hits = searchHitTurns();
   const parts: string[] = [
@@ -476,7 +489,7 @@ function renderSignature(
     String(shown.length),
     selectedID ?? "",
     activeID,
-    markedID(),
+    String(marked ?? -1),
   ];
   for (const s of shown) {
     parts.push(
@@ -497,7 +510,14 @@ function renderSignature(
  *  The SINGLE writer of `data-current` / `data-selected`, and exactly one of the two
  *  is written per render: both take the same filled treatment, so writing both would
  *  claim two positions. */
-function markerNode(s: TurnSummary, elapsed: Map<string, number>, span: number): HTMLElement {
+function markerNode(
+  s: TurnSummary,
+  slot: number,
+  slots: number,
+  marked: boolean,
+  elapsed: Map<string, number>,
+  span: number,
+): HTMLElement {
   const hit = searchHitTurns().has(s.n);
   const isPending = pending.has(s.id);
   const elapsedMs = elapsed.get(s.id);
@@ -518,18 +538,12 @@ function markerNode(s: TurnSummary, elapsed: Map<string, number>, span: number):
     },
     String(s.n),
   );
-  btn.style.setProperty("--rail-at", String(railAt(s.n, total, span)));
+  btn.style.setProperty("--rail-at", String(railAt(slot, slots, span)));
   btn.dataset["outcome"] = s.outcome;
   btn.dataset["severity"] = severityOf(s.outcome);
-  if (selectedID === undefined) {
-    if (s.id === activeID) {
-      btn.dataset["current"] = "";
-    }
-  } else if (s.id === selectedID) {
-    btn.dataset["selected"] = "";
-  }
-  // One element carries it, and it names the turn the rail is CLAIMING.
-  if (s.id === markedID()) {
+  // One element carries the mark, and it names the turn the rail is CLAIMING.
+  if (marked) {
+    btn.dataset[selectedID === undefined ? "current" : "selected"] = "";
     btn.setAttribute("aria-current", "true");
   }
   if (s.agent_initiated === true) {
@@ -567,10 +581,16 @@ function markerNode(s: TurnSummary, elapsed: Map<string, number>, span: number):
   return btn;
 }
 
-/** The turn the rail claims the reader is at: their own pick while they hold one,
- *  the scroll-derived turn otherwise. */
-function markedID(): string {
-  return selectedID ?? activeID;
+/** The NUMBER of the turn the rail claims the reader is at: their own pick while they
+ *  hold one, the scroll-derived turn otherwise, resolved through the resident
+ *  projection first and the index second, and latched. */
+function markedN(): number | undefined {
+  const id = selectedID ?? activeID;
+  const n = residentN.get(id) ?? summaryByID.get(id)?.n;
+  if (n !== undefined) {
+    heldN = n;
+  }
+  return heldN;
 }
 
 /** Drop the reader's pick and repaint, if there was one to drop. */
@@ -583,19 +603,16 @@ function clearSelection(): void {
   render();
 }
 
-/** Per-turn durations for the turns the STORE holds, keyed by the turn's opening
- *  message id. THE RAIL'S OWN FEED CANNOT ANSWER THIS: the turns index carries no
- *  duration, so the answer is bounded by the paginated window and a turn outside it
- *  gets no slot. */
+/** Per-turn durations for the turns the STORE holds, keyed by turn id. THE RAIL'S OWN
+ *  FEED CANNOT ANSWER THIS: the turns index carries no duration, so the answer is
+ *  bounded by the paginated window and a turn outside it gets no slot. */
 function residentElapsed(): Map<string, number> {
   const out = new Map<string, number>();
-  const messages = get(chatID)?.messages;
-  if (messages === undefined) {
+  const session = get(chatID);
+  if (session === undefined) {
     return out;
   }
-  // Default base, deliberately: this map is keyed by the turn's opening message id
-  // and never reads `n`, so the window's own offset would change nothing here.
-  for (const t of projectTurns(messages, false)) {
+  for (const t of projectTurns(session)) {
     const ms = turnLedger(t).elapsedMs;
     if (ms > 0) {
       out.set(t.id, ms);
@@ -738,9 +755,10 @@ async function pageIn(s: TurnSummary): Promise<boolean> {
   return loadUntilResident(s, Date.now() + PAGE_BUDGET_MS);
 }
 
-/** Page backwards until the target turn's opening message is in the store. Two
- *  termination conditions and a wall-clock bound: the store reports no more history,
- *  a page made no progress, or the budget is spent. */
+/** Page backwards until the target turn is in the store. Two termination conditions and
+ *  a wall-clock bound: the store reports no more history, a page made no progress, or
+ *  the budget is spent. `?before=<turn_id>` pages by whole turns, so the oldest resident
+ *  turn id is both the residency test and the next page's cursor. */
 async function loadUntilResident(s: TurnSummary, deadline: number): Promise<boolean> {
   const [{ getActive }, { loadMessages }] = await Promise.all([
     import("./store.js"),
@@ -751,7 +769,7 @@ async function loadUntilResident(s: TurnSummary, deadline: number): Promise<bool
     if (session?.id !== chatID) {
       return false;
     }
-    if (session.messages.some((m) => m.id === s.id)) {
+    if (session.turns.has(s.id)) {
       return true;
     }
     if (!session.has_more) {
@@ -763,13 +781,13 @@ async function loadUntilResident(s: TurnSummary, deadline: number): Promise<bool
       console.warn("turn rail: paging budget spent before the turn became resident", s.n);
       return false;
     }
-    const oldest = session.messages[0];
+    const oldest = session.turn_order[0];
     if (oldest === undefined) {
       return false;
     }
-    await loadMessages(chatID, oldest.id);
+    await loadMessages(chatID, oldest);
     const after = getActive();
-    if (after === undefined || after.messages[0]?.id === oldest.id) {
+    if (after === undefined || after.turn_order[0] === oldest) {
       return false;
     }
   }

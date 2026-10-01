@@ -124,13 +124,15 @@ These rules exist because breaking them caused real bugs. Preserve them.
   is persisted, and is echoed via SSE. The client renders nothing the server has
   not confirmed.
 - **No optimistic local rendering of server state.** The client waits for the
-  server's `message_appended` echo before showing a user bubble. This is what
+  server's `turn_opened` echo before showing a user bubble. This is what
   eliminates multi-device drift and the "vanishing message" class of bugs.
   (Action-level optimistic UI for local affordances is fine; inventing canonical
   chat state on the client is not.)
-- **One JSON file per chat. No second store.** The directory listing is the
-  index; there is no `index.json`, `sessions.json`, or migration layer. If
-  state drifts, the answer is always "read the chat file."
+- **One DIRECTORY per chat, plus one per workflow run.** A chat is `chat.json`
+  (the header) and `entries.jsonl` (the turn log); a run's own log lives under
+  `runs/<workflow id>/`. Those two roots are the whole set. The directory
+  listing is the index; there is no `index.json`, `sessions.json`, or migration
+  layer. If state drifts, the answer is always "read the log."
 - **Only `cmdDeleteChat` deletes a chat file.** Bridge exits, model switches,
   and restarts never delete. A live bridge always implies a live chat record.
 - **Translate ACP events to domain events.** Never emit raw ACP to clients; do

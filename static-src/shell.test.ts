@@ -2,22 +2,23 @@
 // shell.ts wiring tests.
 //
 // shell.ts is a thin panel controller over @cplieger/web-terminal-ui's
-// createTerminal: it builds the terminal lazily on first open, wires the
-// header Reset button to the engine's local-buffer reset + a Ctrl+L redraw,
-// and routes the code-block "run in shell" action through the kernel's send
-// funnel (captured by a host-bridge feature). These tests lock that contract
-// in with the UI package, the engine, and the sibling modules mocked — the
-// terminal internals (canvas measurement, the WebSocket) are the UI package's
-// concern and are not exercised here.
+// createTerminal, so these tests pin its wiring with the UI package, the engine
+// and the sibling modules mocked; the terminal internals (canvas measurement,
+// the WebSocket) are the UI package's concern.
 //
 // Each test re-imports shell.ts fresh (vi.resetModules) so its module-level
-// singletons (initialized flag, terminal handle, captured send funnel) reset.
-// createTerminal is mocked to invoke the host-bridge feature's setup with a
-// send spy, so we can assert the Reset button and run-in-shell drive it.
+// singletons reset. createTerminal is mocked to return a handle carrying a send
+// spy and to run each feature's setup against a fake context whose `wire:screen`
+// bus the harness can fire.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { CreateTerminalOptions, TerminalHandle } from "@cplieger/web-terminal-ui";
+import type {
+  CreateTerminalOptions,
+  TerminalContext,
+  TerminalFeature,
+  TerminalHandle,
+} from "@cplieger/web-terminal-ui";
 import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import type * as Shell from "./shell.js";
 
@@ -135,6 +136,17 @@ interface Harness {
   getRunCb: () => ((cmd: string) => void) | null;
   /** Report the definitive process-exited close, as the kernel does. */
   endSession: () => void;
+  /** Deliver a screen frame on the feature bus, as the kernel does on every
+   *  frame it renders; `rows` is the row count the frame carries. */
+  screenFrame: (rows: number) => void;
+}
+
+/** The mock features are a string and a bare `{ setup: vi.fn() }`, so the
+ *  guard reads the shape rather than trusting the declared type. */
+function hasSetup(f: unknown): f is TerminalFeature<unknown> {
+  return (
+    typeof f === "object" && f !== null && typeof (f as { setup?: unknown }).setup === "function"
+  );
 }
 
 /** Back the three pointer-capture methods with a Set so the
@@ -200,13 +212,32 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   // captures it. Without that the reattach path would only be reachable through
   // the Restart button, and the `exit` half of the same defect would go untested.
   let endedCb: (() => void) | null = null;
+  // The feature bus, reduced to the one event the panel's own feature listens
+  // for. The kernel runs every feature's setup with the real context; here the
+  // fake records the `wire:screen` listeners so a test can deliver a frame.
+  let screenListeners: ((msg: unknown) => void)[] = [];
+  const fakeCtx = {
+    on: (event: string, fn: (msg: unknown) => void): (() => void) => {
+      if (event === "wire:screen") {
+        screenListeners.push(fn);
+      }
+      return () => {
+        screenListeners = screenListeners.filter((f) => f !== fn);
+      };
+    },
+  } as unknown as TerminalContext;
   const createTerminal = vi.fn(
     (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
       endedCb = opts.onSessionEnded ?? null;
       // The kernel resolves the features thunk inside its own try, and the panel
       // mints its key-grid feature there, so a mock that never calls it leaves
       // that feature unbuilt and every trigger assertion vacuous.
-      opts.features?.();
+      const features: readonly unknown[] = opts.features?.() ?? [];
+      for (const f of features) {
+        if (hasSetup(f)) {
+          void f.setup(fakeCtx);
+        }
+      }
       return {
         focus: termFocus,
         send: sendSpy,
@@ -307,6 +338,15 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
         throw new Error("no onSessionEnded handler; open the panel first");
       }
       endedCb();
+    },
+    screenFrame: (rows: number) => {
+      // A frame carries every visible row, so a row count is what separates a
+      // drawn screen from the rows-less signal frame; a row is a run list and an
+      // empty one is still a row.
+      const msg = { rows: Array.from({ length: rows }, () => []) };
+      for (const fn of [...screenListeners]) {
+        fn(msg);
+      }
     },
   };
 }
@@ -492,22 +532,81 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.reattachSpy).toHaveBeenCalledTimes(1);
   });
 
-  // The command lands at the prompt and WAITS. No trailing newline anywhere on
-  // this path: send() writes raw bytes, so one would be Enter and the click
-  // would execute rather than type. Pressing Enter is the user's confirmation.
-  it("types the command with NO trailing newline, so it waits at the prompt", async () => {
+  // Enter on a PTY is CR (0x0d), the byte the engine's keyboard module sends for
+  // the key, so LF must not appear.
+  it("runs the command: the text followed by one CR, in a single send", async () => {
     const h = await setup();
     h.mod.initShellPanel(); // registers the run callback
     h.shellBtn.click(); // open so the terminal (and its handle) exists
+    h.screenFrame(24);
 
     const runCb = h.getRunCb();
     expect(runCb).not.toBeNull();
     runCb?.("echo hi");
+    await Promise.resolve();
 
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi"));
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\r"));
     const sent = h.sendSpy.mock.calls[0]?.[0] as Uint8Array;
-    expect(sent.at(-1)).not.toBe(0x0a);
-    expect(sent.at(-1)).not.toBe(0x0d);
+    expect(sent.at(-1)).toBe(0x0d);
+    expect(sent.includes(0x0a)).toBe(false);
+  });
+
+  // The reader is in the transcript, so the open must not take focus. The first
+  // open is also what connects, which is what `firstFrameGate` has to wait for.
+  it("opens a closed panel without focusing it and sends once the first frame lands", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    expect(h.createTerminal).not.toHaveBeenCalled();
+
+    h.getRunCb()?.("echo hi");
+    await Promise.resolve();
+
+    expect(h.createTerminal).toHaveBeenCalledTimes(1);
+    expect(h.shellPanel.classList.contains("shell-closed")).toBe(false);
+    expect(h.recordShellOpen).toHaveBeenCalledWith(true);
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    h.screenFrame(24);
+    await Promise.resolve();
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\r"));
+
+    await nextFrame();
+    expect(h.termFocus).not.toHaveBeenCalled();
+  });
+
+  // A rows-less frame is the pre-ack ED3 forward, which `firstFrameGate` excludes.
+  it("does not release the command on a rows-less signal frame", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+
+    h.getRunCb()?.("echo hi");
+    h.screenFrame(0);
+    await Promise.resolve();
+    expect(h.sendSpy).not.toHaveBeenCalled();
+
+    h.screenFrame(24);
+    await Promise.resolve();
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // Reopening reuses the terminal, which has already drawn, so nothing waits.
+  it("reopens a closed panel whose terminal already exists and sends at once", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click(); // open (creates terminal)
+    h.screenFrame(24);
+    h.shellToggleBtn.click(); // close
+    expect(h.shellPanel.classList.contains("shell-closed")).toBe(true);
+
+    h.getRunCb()?.("echo hi");
+    await Promise.resolve();
+
+    expect(h.createTerminal).toHaveBeenCalledTimes(1);
+    expect(h.shellPanel.classList.contains("shell-closed")).toBe(false);
+    expect(h.sendSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\r"));
   });
 });
 

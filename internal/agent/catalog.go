@@ -4,8 +4,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // Catalog is the workspace's mode and model catalog: what KAS says this

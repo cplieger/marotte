@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/runlease"
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 

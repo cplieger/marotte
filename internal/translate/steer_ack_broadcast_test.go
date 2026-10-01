@@ -1,24 +1,26 @@
 package translate
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// steerAcksFrom pulls the ack-bearing steer_injected frames out of a capture.
-// The read frame KAS sends carries no Ack, so filtering on that field is what
-// separates the two halves of the event rather than counting frames.
-func steerAcksFrom(events []marotte.ServerEvent) []marotte.SteerInjectedPayload {
-	var out []marotte.SteerInjectedPayload
-	for _, e := range events {
-		if e.Type != marotte.EventSteerInjected {
+// steerAcksOf decodes every steer_ack entry in entries, in seal order.
+func steerAcksOf(t *testing.T, entries []marotte.Entry) []marotte.EntrySteerAck {
+	t.Helper()
+	var out []marotte.EntrySteerAck
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindSteerAck {
 			continue
 		}
-		p, ok := e.Payload.(marotte.SteerInjectedPayload)
-		if ok && p.Ack != "" {
-			out = append(out, p)
+		var a marotte.EntrySteerAck
+		if err := json.Unmarshal(entries[i].Payload, &a); err != nil {
+			t.Fatalf("decode steer_ack %q: %v", entries[i].ID, err)
 		}
+		out = append(out, a)
 	}
 	return out
 }
@@ -26,158 +28,229 @@ func steerAcksFrom(events []marotte.ServerEvent) []marotte.SteerInjectedPayload 
 // feedChunk streams one text delta through the live handler.
 func feedChunk(t *testing.T, tr *Translator, chatID marotte.ChatID, text string) {
 	t.Helper()
-	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-		"content": map[string]any{"type": "text", "text": text},
-	}), false)
+	feedLaneChunk(t, tr, chatID, "", text)
 }
 
-// The whole point of P26: the agent's own statement reaches the client instead of
-// being discarded with the marker.
-func TestHandleAssistantChunk_BroadcastsTheAgentsAcknowledgement(t *testing.T) {
+// feedLaneChunk streams one text delta attributed to lane, a delegate's subtask
+// id; an empty lane is the agent's own stream.
+func feedLaneChunk(t *testing.T, tr *Translator, chatID marotte.ChatID, lane, text string) {
+	t.Helper()
+	body := map[string]any{
+		"content": map[string]any{"type": "text", "text": text},
+	}
+	if lane != "" {
+		body["_meta"] = map[string]any{"kiro": map[string]any{"agentSubtaskId": lane}}
+	}
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, body), false, FrameAttribution{})
+}
+
+// The agent's own statement about a steer reaches the record instead of being
+// discarded with the marker: a steer_ack entry naming the steer, carrying the
+// sentence and nothing of the reader's words, announced as entry_appended.
+func TestHandleAssistantChunk_RecordsTheAgentsAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "Done. [STEERING steer-abc: rebased onto main instead]")
 
-	acks := steerAcksFrom(*events)
+	acks := steerAcksOf(t, deps.chatEntries(chatID))
 	if len(acks) != 1 {
-		t.Fatalf("got %d ack frames, want 1: %v", len(acks), eventTypes(*events))
+		t.Fatalf("got %d steer_ack entries, want 1: %v", len(acks), eventTypes(*events))
 	}
-	if acks[0].SteerID != "steer-abc" {
-		t.Errorf("SteerID = %q, want steer-abc", acks[0].SteerID)
+	want := marotte.EntrySteerAck{SteerID: "steer-abc", Text: "rebased onto main instead"}
+	if acks[0] != want {
+		t.Errorf("steer_ack = %+v, want %+v", acks[0], want)
 	}
-	if acks[0].Ack != "rebased onto main instead" {
-		t.Errorf("Ack = %q, want the agent's sentence", acks[0].Ack)
+	if !hasEntryAppended(events, marotte.EntryKindSteerAck) {
+		t.Errorf("no entry_appended{steer_ack} frame: got %v", eventTypes(*events))
 	}
-	// Text is empty deliberately: the steer's own text lives in KAS's buffer,
-	// not in this layer, and the client merges by id rather than replacing.
-	if acks[0].Text != "" {
-		t.Errorf("Text = %q, want empty on the ack frame", acks[0].Text)
+	if id := marotte.SteerAckID("steer-abc"); !hasEntryID(deps.chatEntries(chatID), id) {
+		t.Errorf("steer_ack entry id is not %q: %v", id, entryIDs(deps.chatEntries(chatID)))
 	}
 }
 
 // The marker closing a response usually arrives as its OWN delta, and that delta
-// emits no text — so the handler returns early. This is the case a broadcast
-// placed after that return would silently never serve, which makes it the case
-// worth pinning.
+// emits no text — so the handler returns early. This is the case an append placed
+// after that return would silently never serve. The ack seals the text it
+// followed, so the record reads text then steer_ack, and the marker itself
+// reaches neither.
 func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "All set.")
 	feedChunk(t, tr, chatID, "[STEERING steer-solo: switched to the new API]")
 
-	acks := steerAcksFrom(*events)
-	if len(acks) != 1 {
-		t.Fatalf("got %d ack frames from a marker-only delta, want 1: %v", len(acks), eventTypes(*events))
+	entries := deps.chatEntries(chatID)
+	kinds := entryKinds(entries)
+	if want := []marotte.EntryKind{marotte.EntryKindText, marotte.EntryKindSteerAck}; !equalKinds(kinds, want) {
+		t.Fatalf("sealed kinds = %v, want %v (events %v)", kinds, want, eventTypes(*events))
 	}
-	if acks[0].Ack != "switched to the new API" {
-		t.Errorf("Ack = %q", acks[0].Ack)
+	if got := textOf(t, entries[0]); got != "All set." {
+		t.Errorf("sealed text = %q, want %q with the marker stripped", got, "All set.")
 	}
-	// And the marker still does not reach the transcript.
-	buf := deps.bufStore.GetOrInit(chatID)
-	if got := buf.Content.String(); got != "All set." {
-		t.Errorf("persisted content = %q, want the marker stripped", got)
+	if acks := steerAcksOf(t, entries); acks[0].Text != "switched to the new API" {
+		t.Errorf("ack text = %q", acks[0].Text)
+	}
+	if open := deps.turns.chats[chatID].OpenEntries(); len(open) != 0 {
+		t.Errorf("open entries after the ack = %+v, want none", open)
 	}
 }
 
-// Split across chunk boundaries the ack must fire exactly once, on the delta
-// that closes the marker. Firing per chunk would put a truncated sentence on the
-// chip and then correct it.
-func TestHandleAssistantChunk_AcknowledgementFiresOnceWhenSplit(t *testing.T) {
-	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+// Split across chunk boundaries the ack lands exactly once, on the delta that
+// closes the marker, and the prose on either side of it stays prose: the text
+// before it is sealed by the ack, the text after it opens a new entry.
+func TestHandleAssistantChunk_AcknowledgementLandsOnceWhenSplit(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
 	for _, part := range []string{"ok ", "[STEERING ste", "er-split: kept the ", "existing shape]", " bye"} {
 		feedChunk(t, tr, chatID, part)
 	}
 
-	acks := steerAcksFrom(*events)
+	entries := deps.chatEntries(chatID)
+	acks := steerAcksOf(t, entries)
 	if len(acks) != 1 {
-		t.Fatalf("got %d ack frames, want exactly 1: %+v", len(acks), acks)
+		t.Fatalf("got %d steer_ack entries, want exactly 1: %+v", len(acks), acks)
 	}
-	if acks[0].SteerID != "steer-split" || acks[0].Ack != "kept the existing shape" {
-		t.Errorf("ack = %+v", acks[0])
+	want := marotte.EntrySteerAck{SteerID: "steer-split", Text: "kept the existing shape"}
+	if acks[0] != want {
+		t.Errorf("steer_ack = %+v, want %+v", acks[0], want)
 	}
+	if kinds := entryKinds(entries); !equalKinds(kinds, []marotte.EntryKind{marotte.EntryKindText, marotte.EntryKindSteerAck}) {
+		t.Errorf("sealed kinds = %v, want [text steer_ack]", kinds)
+	}
+	if got := textOf(t, entries[0]); got != "ok " {
+		t.Errorf("text before the ack = %q, want %q", got, "ok ")
+	}
+	open := deps.turns.chats[chatID].OpenEntries()
+	if len(open) != 1 || open[0].Kind != marotte.EntryKindText || open[0].Text != " bye" {
+		t.Errorf("open after the ack = %+v, want one text entry %q", open, " bye")
+	}
+}
+
+// A delegate's chunk keeps its lane, so the ack sits in the delegate's own stream
+// and the entry_appended frame names that lane: the client positions it inside
+// the reply it interrupted, not the agent's.
+func TestHandleAssistantChunk_AcknowledgementKeepsTheDelegatesLane(t *testing.T) {
+	deps, events := newEventCaptureDeps()
+	tr := New(rolesOf(deps))
+	chatID := marotte.ChatID("c1")
+
+	feedLaneChunk(t, tr, chatID, "sub-1", "on it [STEERING steer-d: reran the suite]")
+
+	entries := deps.chatEntries(chatID)
+	var ack *marotte.Entry
+	for i := range entries {
+		if entries[i].Kind == marotte.EntryKindSteerAck {
+			ack = &entries[i]
+		}
+	}
+	if ack == nil {
+		t.Fatalf("no steer_ack entry: %v", entryKinds(entries))
+	}
+	if ack.Lane != "sub-1" {
+		t.Errorf("steer_ack lane = %q, want sub-1", ack.Lane)
+	}
+	for _, e := range *events {
+		p, ok := e.Payload.(marotte.EntryAppendedPayload)
+		if !ok || p.Entry.Kind != marotte.EntryKindSteerAck {
+			continue
+		}
+		if p.Entry.Lane != "sub-1" {
+			t.Errorf("entry_appended lane = %q, want sub-1", p.Entry.Lane)
+		}
+		return
+	}
+	t.Errorf("no entry_appended{steer_ack} frame: %v", eventTypes(*events))
 }
 
 // Reasoning is not screened for markers at all (KAS's own recordSteeringAcks
 // reads text entries only), so a marker-shaped string in a thought must not
-// broadcast an ack for a steer nothing answered.
+// record an ack for a steer nothing answered, and the thought keeps its bytes.
 func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
+	const thought = "[STEERING steer-x: a thought]"
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-		"content": map[string]any{"type": "text", "text": "[STEERING steer-x: a thought]"},
-	}), true)
+		"content": map[string]any{"type": "text", "text": thought},
+	}), true, FrameAttribution{})
 
-	if acks := steerAcksFrom(*events); len(acks) != 0 {
-		t.Errorf("got %d ack frames from reasoning, want none: %+v", len(acks), acks)
+	if acks := steerAcksOf(t, deps.chatEntries(chatID)); len(acks) != 0 {
+		t.Errorf("got %d steer_ack entries from reasoning, want none: %+v", len(acks), acks)
+	}
+	if hasEntryAppended(events, marotte.EntryKindSteerAck) {
+		t.Errorf("an entry_appended{steer_ack} frame left a reasoning chunk: %v", eventTypes(*events))
+	}
+	open := deps.turns.chats[chatID].OpenEntries()
+	if len(open) != 1 || open[0].Kind != marotte.EntryKindThinking || open[0].Text != thought {
+		t.Errorf("open after the thought = %+v, want one thinking entry holding %q verbatim", open, thought)
 	}
 }
 
 // An empty body is not an answer. The marker `[STEERING steer-1: ]` cannot match
 // the pattern at all (it requires at least one body character), but a body of
-// pure whitespace trims to nothing, and a chip reading "read:" with nothing after
-// it is worse than a chip reading "read".
-func TestHandleAssistantChunk_EmptyAcknowledgementIsNotBroadcast(t *testing.T) {
+// pure whitespace trims to nothing, and a steer_ack with no text is a row that
+// says the agent said nothing.
+func TestHandleAssistantChunk_EmptyAcknowledgementIsNotRecorded(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "done [STEERING steer-blank:    ]")
 
-	if acks := steerAcksFrom(*events); len(acks) != 0 {
-		t.Errorf("got %d ack frames for a whitespace body, want none: %+v", len(acks), acks)
+	if acks := steerAcksOf(t, deps.chatEntries(chatID)); len(acks) != 0 {
+		t.Errorf("got %d steer_ack entries for a whitespace body, want none: %+v", len(acks), acks)
+	}
+	if hasEntryAppended(events, marotte.EntryKindSteerAck) {
+		t.Errorf("an entry_appended{steer_ack} frame for a whitespace body: %v", eventTypes(*events))
+	}
+	open := deps.turns.chats[chatID].OpenEntries()
+	if len(open) != 1 || strings.TrimSpace(open[0].Text) != "done" {
+		t.Errorf("open after the stripped marker = %+v, want the one text entry %q", open, "done")
 	}
 }
 
-// The client reads this field with reqOneOf against user|agent and RETHROWS on a
-// miss, and decodeArray rethrows in turn — so an ack carrying the zero value loses
-// the whole frame rather than degrading, and the agent's sentence never arrives.
-// steerOrigin is total, so a real value is always available to send; what this pins
-// is that the ack path actually sends one.
-func TestHandleAssistantChunk_AcknowledgementCarriesAnOrigin(t *testing.T) {
-	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := marotte.ChatID("c1")
-
-	// An id the ledger does not know, which is the ORDINARY case for an ack: the
-	// steer was sent before this process started, or its TTL has expired.
-	feedChunk(t, tr, chatID, "done [STEERING steer-unknown: kept the existing shape]")
-
-	acks := steerAcksFrom(*events)
-	if len(acks) != 1 {
-		t.Fatalf("got %d ack frames, want 1: %v", len(acks), eventTypes(*events))
+// textOf decodes the text of one sealed text entry.
+func textOf(t *testing.T, e marotte.Entry) string {
+	t.Helper()
+	var p marotte.EntryText
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		t.Fatalf("decode text %q: %v", e.ID, err)
 	}
-	if got := acks[0].Origin; got != marotte.SteerOriginUser && got != marotte.SteerOriginAgent {
-		t.Errorf("Origin = %q, want %q or %q — the client rejects anything else and drops the frame",
-			got, marotte.SteerOriginUser, marotte.SteerOriginAgent)
-	}
+	return p.Text
 }
 
-// And the origin is the LEDGER's answer rather than a constant: a steer this server
-// sent on the user's behalf must not come back labelled the agent's, or the chip
-// reports the reader's own correction as a workflow's note.
-func TestHandleAssistantChunk_AcknowledgementCarriesTheLedgersOrigin(t *testing.T) {
-	deps, events := newEventCaptureDeps()
-	deps.userSteers = map[string]bool{"steer-mine": true}
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := marotte.ChatID("c1")
-
-	feedChunk(t, tr, chatID, "done [STEERING steer-mine: rebased onto main instead]")
-
-	acks := steerAcksFrom(*events)
-	if len(acks) != 1 {
-		t.Fatalf("got %d ack frames, want 1: %v", len(acks), eventTypes(*events))
+func hasEntryID(entries []marotte.Entry, id string) bool {
+	for i := range entries {
+		if entries[i].ID == id {
+			return true
+		}
 	}
-	if got := acks[0].Origin; got != marotte.SteerOriginUser {
-		t.Errorf("Origin = %q, want %q for a steer the ledger records as the user's",
-			got, marotte.SteerOriginUser)
+	return false
+}
+
+func entryIDs(entries []marotte.Entry) []string {
+	out := make([]string, 0, len(entries))
+	for i := range entries {
+		out = append(out, entries[i].ID)
 	}
+	return out
+}
+
+func equalKinds(got, want []marotte.EntryKind) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

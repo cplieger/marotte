@@ -11,6 +11,7 @@ package agent
 // Shared fixtures live in shared_test.go.
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -164,15 +165,28 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
+	// Between turns on an empty log, the compaction opens the event turn it joins.
+	entries := logOf(t, cs, "c1")
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want 2 (an event turn_open, then the compaction): %+v", len(entries), entries)
+	}
+	if opens := opensOf(t, entries); len(opens) != 1 || opens[0].Source != marotte.TurnOpenNameEvent {
+		t.Errorf("turn_opens = %+v, want one event turn", opens)
+	}
+	compaction := entries[1]
+	if compaction.Kind != marotte.EntryKindCompaction {
+		t.Fatalf("kind = %q, want %q", compaction.Kind, marotte.EntryKindCompaction)
+	}
+	var c marotte.EntryCompaction
+	if err := json.Unmarshal(compaction.Payload, &c); err != nil {
+		t.Fatalf("decode compaction: %v", err)
+	}
+	if c.Summary != summary {
+		t.Errorf("summary = %q, want %q", c.Summary, summary)
+	}
 	chat, _ := cs.Get(t.Context(), "c1")
-	if len(chat.Messages) != 1 {
-		t.Fatalf("messages = %d, want 1", len(chat.Messages))
-	}
-	if chat.Messages[0].EventKind != marotte.EventCompacted {
-		t.Errorf("event_kind = %q", chat.Messages[0].EventKind)
-	}
-	if chat.Messages[0].Content != summary {
-		t.Errorf("content = %q", chat.Messages[0].Content)
+	if chat.CompactionWatermark != compaction.ID {
+		t.Errorf("watermark = %q, want the compaction entry's id %q", chat.CompactionWatermark, compaction.ID)
 	}
 }
 

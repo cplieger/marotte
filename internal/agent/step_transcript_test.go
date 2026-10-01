@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // stepInspect is one run's inspect reply, trimmed to what this path decodes: a
@@ -50,6 +50,25 @@ const stepInspect = `{
     }
   }
 }`
+
+// promptTextsOf returns the prompt text of every prompt-class turn_open in entries.
+func promptTextsOf(t *testing.T, entries []marotte.Entry) []string {
+	t.Helper()
+	var out []string
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindTurnOpen {
+			continue
+		}
+		var open marotte.EntryTurnOpen
+		if err := json.Unmarshal(entries[i].Payload, &open); err != nil {
+			t.Fatalf("decode turn_open %q: %v", entries[i].ID, err)
+		}
+		if open.Prompt != nil {
+			out = append(out, open.Prompt.Text)
+		}
+	}
+	return out
+}
 
 // armStepInspect makes the utility bridge answer `_kiro/workflow/inspect` with the
 // fixture above.
@@ -101,19 +120,10 @@ func TestStepTranscript_AStepsFramesProject(t *testing.T) {
 	if got.State != marotte.RunStepTranscriptReady {
 		t.Fatalf("state = %q, want ready", got.State)
 	}
-	if len(got.Messages) != 1 {
-		t.Fatalf("got %d messages, want 1: %+v", len(got.Messages), got.Messages)
+	if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{"first half second half"}) {
+		t.Errorf("projected texts = %q, want the two deltas coalesced into one entry", texts)
 	}
-	m := got.Messages[0]
-	if m.Role != marotte.RoleAssistant {
-		t.Errorf("role = %q, want assistant", m.Role)
-	}
-	if m.Content != "first half second half" {
-		t.Errorf("content = %q, want %q", m.Content, "first half second half")
-	}
-	if len(m.Blocks) == 0 {
-		t.Error("the projected message carries no blocks, so nothing would render")
-	}
+
 	if got.WorkflowID != "wf_1" || got.NodePath != "wf_1/loop/iter-0/build" {
 		t.Errorf("echoed identity = %q/%q, want wf_1/wf_1/loop/iter-0/build",
 			got.WorkflowID, got.NodePath)
@@ -144,8 +154,8 @@ func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
 		if got.State != marotte.RunStepTranscriptReady {
 			t.Fatalf("%s: state = %q, want ready", tc.path, got.State)
 		}
-		if len(got.Messages) != 1 || got.Messages[0].Content != tc.want {
-			t.Errorf("%s projected %+v, want one message %q", tc.path, got.Messages, tc.want)
+		if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{tc.want}) {
+			t.Errorf("%s projected texts %q, want one %q", tc.path, texts, tc.want)
 		}
 		// The session actually loaded is the other half of the claim: a path
 		// resolving to the right CONTENT off the wrong session id would only be
@@ -171,8 +181,8 @@ func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
 	if got.State != marotte.RunStepTranscriptGone {
 		t.Errorf("state = %q, want gone", got.State)
 	}
-	if len(got.Messages) != 0 {
-		t.Errorf("messages = %+v, want none", got.Messages)
+	if len(got.Entries) != 0 {
+		t.Errorf("entries = %+v, want none", got.Entries)
 	}
 	// And nothing was loaded: a step with no session must not put a session/load
 	// on the wire at all.
@@ -226,8 +236,8 @@ func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	if got.State != marotte.RunStepTranscriptUnavailable {
 		t.Errorf("state = %q, want unavailable", got.State)
 	}
-	if len(got.Messages) != 0 {
-		t.Errorf("messages = %+v, want none", got.Messages)
+	if len(got.Entries) != 0 {
+		t.Errorf("entries = %+v, want none", got.Entries)
 	}
 }
 
@@ -347,8 +357,8 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	if got.State != marotte.RunStepTranscriptReady {
 		t.Fatalf("retry state = %q, want ready — the first read left a replay open", got.State)
 	}
-	if len(got.Messages) != 1 || got.Messages[0].Content != "second time" {
-		t.Errorf("retry projected %+v, want one message %q", got.Messages, "second time")
+	if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{"second time"}) {
+		t.Errorf("retry projected texts %q, want one %q", texts, "second time")
 	}
 }
 
@@ -386,25 +396,27 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
-	if len(got.Messages) != 3 {
-		t.Fatalf("StepTranscript messages = %d, want 3: %+v", len(got.Messages), got.Messages)
+	// The reader's answer opens a turn of its own as an ordinary prompt, between the
+	// question and the reply that followed it, beside the step's own instruction rows.
+	if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{"Which target?", "Using main."}) {
+		t.Errorf("StepTranscript texts = %q, want the question and the reply after the answer", texts)
 	}
-	want := []struct {
-		role    marotte.Role
-		content string
-	}{
-		{role: marotte.RoleAssistant, content: "Which target?"},
-		{role: marotte.RoleUser, content: "main"},
-		{role: marotte.RoleAssistant, content: "Using main."},
-	}
-	for i := range want {
-		if got.Messages[i].Role != want[i].role || got.Messages[i].Content != want[i].content {
-			t.Errorf("StepTranscript message %d = {%s %q}, want {%s %q}",
-				i, got.Messages[i].Role, got.Messages[i].Content, want[i].role, want[i].content)
+	question, answer, reply := -1, -1, -1
+	for i := range got.Entries {
+		switch e := got.Entries[i]; {
+		case e.Kind == marotte.EntryKindText && question < 0:
+			question = i
+		case e.Kind == marotte.EntryKindText:
+			reply = i
+		case e.Kind == marotte.EntryKindTurnOpen && slices.Contains(promptTextsOf(t, []marotte.Entry{e}), "main"):
+			answer = i
 		}
 	}
-	if got.Messages[1].UserKind != "" {
-		t.Errorf("reader answer user_kind = %q, want empty ordinary user row", got.Messages[1].UserKind)
+	if answer < 0 {
+		t.Fatalf("StepTranscript prompt turn_opens = %q, want the reader's answer among them", promptTextsOf(t, got.Entries))
+	}
+	if question >= answer || answer >= reply {
+		t.Errorf("StepTranscript order: question at %d, answer at %d, reply at %d; want the answer's turn_open between the two texts", question, answer, reply)
 	}
 }
 
@@ -470,8 +482,8 @@ func TestHandleStepTranscript_HTTP(t *testing.T) {
 	if out.State != marotte.RunStepTranscriptReady {
 		t.Errorf("state = %q, want ready", out.State)
 	}
-	if len(out.Messages) != 1 || out.Messages[0].Content != "served" {
-		t.Errorf("messages = %+v, want one %q", out.Messages, "served")
+	if texts := textsOf(t, out.Entries); !slices.Equal(texts, []string{"served"}) {
+		t.Errorf("texts = %q, want one %q", texts, "served")
 	}
 	// The verdict must be PRESENT on the wire, not omitted. A `state` a client can
 	// find absent is a client inventing "assume ready".
@@ -591,8 +603,8 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 	if out.State != marotte.RunStepTranscriptReady {
 		t.Fatalf("state = %q, want ready", out.State)
 	}
-	if len(out.Messages) != 1 || out.Messages[0].Content != "odd id" {
-		t.Errorf("messages = %+v, want one %q", out.Messages, "odd id")
+	if texts := textsOf(t, out.Entries); !slices.Equal(texts, []string{"odd id"}) {
+		t.Errorf("texts = %q, want one %q", texts, "odd id")
 	}
 }
 
@@ -604,7 +616,7 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 // that result on the wire and the notification channel is buffered.
 func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
+	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
 	}
 	if closedNow(sr.barrier("sess_a")) {
@@ -638,7 +650,7 @@ func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 // transcript that existed and was fully projected.
 func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
+	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
 	}
 	// The drain loop folded every replayed frame while the RPC was still in flight.
@@ -663,7 +675,7 @@ func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 // session's, because each read loop restarts its sequence at zero.
 func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
+	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
 	}
 	const live = testFwdGen + 1
@@ -715,10 +727,10 @@ func TestStepReplays_NoReplayOpenAnswersImmediately(t *testing.T) {
 // joined — and the refusal must not disturb the first.
 func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
+	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Fatal("the first open was refused")
 	}
-	if sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
+	if sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Error("a second open of the same session was accepted")
 	}
 	sr.markLoadedAt("sess_a", atLoad())
@@ -728,7 +740,7 @@ func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 	}
 	// Once taken, the session is open for a new read again.
 	_ = sr.take("sess_a")
-	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
+	if !sr.open("sess_a", translate.NewEntryProjection(newMessageID, "")) {
 		t.Error("a session cannot be read again after its replay was taken")
 	}
 }
@@ -738,7 +750,7 @@ func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 // else will and survive being called twice.
 func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
 	var sr stepReplays
-	sr.open("sess_a", translate.NewProjection(newMessageID, ""))
+	sr.open("sess_a", translate.NewEntryProjection(newMessageID, ""))
 	b := sr.barrier("sess_a")
 	_ = sr.take("sess_a") // the abandoned path: never settled
 	if !closedNow(b) {
@@ -760,16 +772,19 @@ func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 	if sr.ingest("sess_a", marotte.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest claimed a frame with no replay open")
 	}
-	sr.open("sess_a", translate.NewProjection(newMessageID, ""))
+	sr.open("sess_a", translate.NewEntryProjection(newMessageID, ""))
 	if !sr.ingest("sess_a", marotte.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest dropped a frame for an open replay")
 	}
 	if sr.ingest("sess_b", marotte.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest claimed a frame for a session nobody is reading")
 	}
-	msgs := sr.take("sess_a")
-	if len(msgs) != 1 || msgs[0].Content != "x" {
-		t.Errorf("projected %+v, want one message %q", msgs, "x")
+	turns := sr.take("sess_a")
+	if len(turns) != 1 {
+		t.Fatalf("projected %d turns, want one", len(turns))
+	}
+	if texts := textsOf(t, turns[0].Entries); !slices.Equal(texts, []string{"x"}) {
+		t.Errorf("projected texts %q, want one %q", texts, "x")
 	}
 }
 
@@ -793,8 +808,8 @@ func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
 		t.Fatalf("state = %q, want ready — the replay did not settle inside a 50ms "+
 			"budget, so the read is waiting out its clock rather than the drain", got.State)
 	}
-	if len(got.Messages) != 1 || got.Messages[0].Content != "settled in time" {
-		t.Errorf("messages = %+v, want one %q", got.Messages, "settled in time")
+	if texts := textsOf(t, got.Entries); !slices.Equal(texts, []string{"settled in time"}) {
+		t.Errorf("texts = %q, want one %q", texts, "settled in time")
 	}
 }
 

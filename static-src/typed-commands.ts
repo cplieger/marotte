@@ -55,7 +55,7 @@ const HANDLERS: Record<string, TypedHandler> = {
  *
  * Not a break of "server state is canonical": `thinking` is client/stream-owned
  * (store.ts says so, and it is seeded false at chat creation), and the app
- * already performs this exact transition unattended — the `transport:gap`
+ * already performs this exact transition unattended — the `BUS_RECONCILE`
  * handler clears it on EVERY chat as its safe default. This is the
  * user-triggered, single-chat version of that.
  *

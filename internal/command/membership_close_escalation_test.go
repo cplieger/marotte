@@ -19,10 +19,10 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // escalationHost is everything a close-escalation case reads back: the
@@ -224,6 +224,8 @@ func (f *fixedTabs) Close(context.Context, string) ([]marotte.TabSubject, uint64
 func (f *fixedTabs) Reorder(context.Context, []string) (uint64, error) { return 0, nil }
 
 func (f *fixedTabs) SetPinned(context.Context, string, bool) (uint64, error) { return 0, nil }
+
+func (f *fixedTabs) Reparent(context.Context, string, string) (uint64, error) { return 0, nil }
 
 func (f *fixedTabs) List() ([]marotte.TabSubject, uint64) { return f.open, 2 }
 

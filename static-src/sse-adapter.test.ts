@@ -1,14 +1,11 @@
-// ---------------------------------------------------------------------------
-// The SSE adapter: marotte's half of the wake path. The stream, the cursor, the
-// hold-and-drain and the single-flight rule are the library's and are tested there;
-// what THIS file owns is the seam — which frames reach the bus and when their
-// stamps are observed, what the `revalidate` body does with a digest answer, and
-// which loaders it drives with the run's signal.
+// The SSE adapter's SEAM: which frames reach the bus and when their stamps are observed,
+// what the `revalidate` body does with a digest answer, and which reads it drives with the
+// run's signal. The stream, the cursor, the hold-and-drain and the single-flight rule are
+// the library's and are tested there.
 //
-// The loaders are mocked at the module boundary: each is a network read whose own
-// observe-on-commit is store-load.test.ts's (and its siblings') subject, so the
-// contract pinned here is the call and the signal it carries.
-// ---------------------------------------------------------------------------
+// The reads are mocked at the module boundary: each is a network call whose own
+// observe-on-commit belongs to `store-load.test.ts` and its siblings, so what is pinned
+// here is the call and the signal it carries.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -41,6 +38,8 @@ import {
   _resetForTest as resetVersions,
 } from "./subject-versions.js";
 import type { ServerEvent, Session } from "./types.js";
+import { makeServerEvent } from "./__test-helpers__/model.js";
+import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 import {
   EPOCH_A,
   EPOCH_B,
@@ -53,26 +52,41 @@ import {
 const {
   mockLoadList,
   mockLoadMessages,
+  mockRequestTurnRange,
   mockListTabs,
   mockRebuildLiveRuns,
   mockInvalidate,
+  mockRunTurnHeldSeq,
+  mockRequestRunTurnRange,
+  mockPeekRunState,
   mockFetchCatalog,
 } = vi.hoisted(() => ({
   mockLoadList: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
   mockLoadMessages: vi.fn((_id: string, _before?: string, _signal?: AbortSignal) =>
     Promise.resolve(true),
   ),
+  mockRequestTurnRange: vi.fn((_chatID: string, _turnID: string) => undefined),
   mockListTabs: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
   mockRebuildLiveRuns: vi.fn((_cause?: string, _signal?: AbortSignal) => Promise.resolve()),
   mockInvalidate: vi.fn(),
+  mockRunTurnHeldSeq: vi.fn((_id: string, _turn: string): number | undefined => undefined),
+  mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
+  mockPeekRunState: vi.fn((_id: string): unknown => undefined),
   mockFetchCatalog: vi.fn((_opts?: { signal?: AbortSignal }) => Promise.resolve()),
 }));
-vi.mock("./store-load.js", () => ({ loadList: mockLoadList, loadMessages: mockLoadMessages }));
+vi.mock("./store-load.js", () => ({
+  loadList: mockLoadList,
+  loadMessages: mockLoadMessages,
+  requestTurnRange: mockRequestTurnRange,
+}));
 vi.mock("./tabs-sync.js", () => ({ listTabs: mockListTabs }));
 vi.mock("./run-store.js", () => ({
   rebuildLiveRuns: mockRebuildLiveRuns,
   invalidateCachedRuns: mockInvalidate,
+  peekRunState: mockPeekRunState,
+  runTurnHeldSeq: mockRunTurnHeldSeq,
 }));
+vi.mock("./run-turn-range.js", () => ({ requestRunTurnRange: mockRequestRunTurnRange }));
 vi.mock("./session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
 vi.mock("./send-state.js", () => ({ setSSEStatus: vi.fn() }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
@@ -88,17 +102,39 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    messages: [],
-    message_count: 0,
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
     ...over,
   };
+}
+
+/** A chat whose resident window holds `turnID`, which is what `chatHoldingTurn` answers a
+ *  `live_turn` ref with — the ref is a TURN id, and the range read needs its chat. */
+/** A chat holding one turn with three entries seated. The COUNT is load-bearing: the range
+ *  read asks past the newest `seq` this client holds, so a turn seated empty would let a read
+ *  asking for the whole turn pass. */
+function sessionHoldingTurn(id: string, turnID: string): Session {
+  const entries = [0, 1, 2].map((seq) => ({
+    id: `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind: "text" as const,
+    seq,
+    ts: seq + 1,
+    payload: { text: "x" },
+  }));
+  return makeSession(id, {
+    residency: "loaded",
+    turn_order: [turnID],
+    turns: new Map([[turnID, { entries, openEntries: new Map() }]]),
+    turn_count: 1,
+  });
 }
 
 function ctx(over: Partial<RevalidateContext> = {}): RevalidateContext {
@@ -135,6 +171,11 @@ function digestAnswer(
   };
 }
 
+// The wire's own decoders, so a frame in this file is refused exactly where production
+// refuses it. Without them `decodeEnvelope` passes every payload through untyped and a
+// retired-shape fixture would be IGNORED rather than refused.
+registerAllSSEDecoders();
+
 let scripted: ScriptedFetch;
 let seen: ServerEvent[];
 /** The in-page worker host a hosted case attached this tab to, closed after it. */
@@ -152,8 +193,13 @@ beforeEach(() => {
   localStorage.removeItem(PROFILE_TAG_KEY);
   mockLoadList.mockResolvedValue(true);
   mockLoadMessages.mockResolvedValue(true);
+  mockRequestTurnRange.mockReturnValue(undefined);
   mockListTabs.mockResolvedValue(true);
   mockRebuildLiveRuns.mockResolvedValue(undefined);
+  mockRequestRunTurnRange.mockReturnValue(undefined);
+  mockRunTurnHeldSeq.mockReturnValue(undefined);
+  // No run held unless a case says so, which is what makes a `run_turn` stamp unheld.
+  mockPeekRunState.mockReturnValue(undefined);
   mockFetchCatalog.mockResolvedValue(undefined);
 });
 
@@ -276,15 +322,17 @@ describe("frames", () => {
     markHydrated();
     conn?.frame(
       {
-        type: "message_appended",
+        type: "entry_appended",
         chat_id: "c1",
-        payload: { id: "m1", role: "user", ts: 1, content: "hi" },
+        payload: {
+          entry: { id: "e1", turn: "t1", kind: "text", seq: 1, ts: 1, payload: { text: "hi" } },
+        },
         subject: { kind: "chat", ref: "c1", version: "4" },
       },
       `${EPOCH_A}:1`,
     );
     await until(() => seen.length === 1);
-    expect(seen[0]?.type).toBe("message_appended");
+    expect(seen[0]?.type).toBe("entry_appended");
     // Not yet held while the handlers ran: the version certifies APPLIED state.
     expect(heldAtDispatch).toBe(false);
     expect(versionMap().snapshot().held).toEqual([{ kind: "chat", ref: "c1", version: "4" }]);
@@ -296,7 +344,23 @@ describe("frames", () => {
     conn?.frame({
       type: "chat_updated",
       chat_id: "c9",
-      payload: { id: "c9", name: "n", message_count: 0, updated_at: 1 },
+      // A whole ChatHeader, because the wire's own decoder runs here: the retired
+      // `message_count` is `turn_count`, and `usage` / `created_at` are required
+      // rather than optional.
+      payload: {
+        id: "c9",
+        name: "n",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        created_at: 1,
+        updated_at: 1,
+        turn_count: 0,
+      },
       subject: { kind: "chats", ref: "", version: "12" },
     });
     await until(() => seen.length === 1);
@@ -310,9 +374,11 @@ describe("frames", () => {
     const conn = await connect();
     markHydrated();
     conn?.frame({
-      type: "message_appended",
+      type: "entry_appended",
       chat_id: "c1",
-      payload: { id: "m1", role: "user", ts: 1, content: "hi" },
+      payload: {
+        entry: { id: "e1", turn: "t1", kind: "text", seq: 1, ts: 1, payload: { text: "hi" } },
+      },
       subject: { kind: "chat", ref: "c1", version: "4" },
     });
     await until(() => seen.length === 1);
@@ -344,10 +410,52 @@ describe("frames", () => {
     registerSSEDecoder("working_label", (v) => v as SSEPayloads["working_label"]);
   });
 
+  it("refuses an entry_appended frame carrying the retired message shape", async () => {
+    // The wire's own decoder is what makes a retired-shape payload unrenderable rather
+    // than merely ignored: `decodeEntryAppendedPayload` requires `entry`, so a
+    // `{id, role, ts, content}` message body throws and the frame reaches no handler.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const conn = await connect();
+    markHydrated();
+    conn?.frame(
+      makeServerEvent({
+        type: "entry_appended",
+        chat_id: "c1",
+        payload: { id: "m1", role: "assistant", ts: 1, content: "hi" },
+      }),
+    );
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+    expect(seen).toEqual([]);
+    expect(errors).toHaveBeenCalled();
+    // It names no turn, so there is nothing to salvage by a range read.
+    expect(mockRequestTurnRange).not.toHaveBeenCalled();
+    expect(warns).toHaveBeenCalled();
+    // The in-fence control: the live entry shape goes through the SAME decoder and
+    // lands, so the refusal above cannot be a frame the adapter dropped for another
+    // reason.
+    conn?.frame({
+      type: "entry_appended",
+      chat_id: "c1",
+      payload: {
+        entry: { id: "e1", turn: "t1", kind: "text", seq: 1, ts: 1, payload: { text: "hi" } },
+      },
+    });
+    await until(() => seen.length === 1);
+    expect(seen[0]?.type).toBe("entry_appended");
+  });
+
   it("holds frames until markHydrated and releases them in arrival order", async () => {
     const conn = await connect();
     conn?.frame({ type: "connected", payload: { busy_stated: false, live_runs_stated: false } });
-    conn?.frame({ type: "permission_needed", chat_id: "c1", payload: { request_id: 1 } });
+    // `options` is required by the wire's own decoder, which runs here.
+    conn?.frame({
+      type: "permission_needed",
+      chat_id: "c1",
+      payload: { request_id: 1, options: [] },
+    });
     // Let the bytes cross the stream: nothing may reach the bus yet.
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 20);
@@ -376,7 +484,7 @@ describe("frames", () => {
     // EMPTY — what a chat whose first newest-page load answered zero messages holds.
     // Nothing else heals it: the header frame ahead of the swap writes neither the
     // residency nor the version, and the activation gate reads the window as fresh.
-    setSessions([makeSession("c1", { message_count: 2, messages: [], residency: "loaded" })]);
+    setSessions([makeSession("c1", { turn_count: 2, turns: new Map(), residency: "loaded" })]);
     observeStamp({ kind: "chat", ref: "c1", version: "5" });
     // Something is held, so the fresh hello digests; let that settle first, or the
     // frame below sits behind a revalidation nobody answers.
@@ -390,6 +498,95 @@ describe("frames", () => {
     expect(mockLoadMessages).toHaveBeenCalledWith("c1", undefined, undefined);
     // The refetch's own commit is what moves the version; the frame's stamp is not it.
     expect(versionMap().snapshot().held).toEqual([{ kind: "chat", ref: "c1", version: "5" }]);
+  });
+});
+
+describe("a run's step turn is a subject of its own", () => {
+  /** A run-scoped entry frame: an EMPTY chat id, `workflow_id` beside the entry, and a
+   *  `run_turn` stamp whose ref the server spells `<workflowID>/<turn>`. */
+  function runFrame(turn: string, version: string): ServerEvent {
+    return {
+      type: "entry_appended",
+      chat_id: "",
+      payload: {
+        workflow_id: "wf-1",
+        entry: { id: "e1", turn, kind: "text", seq: 1, ts: 1, payload: { text: "step" } },
+      },
+      subject: { kind: "run_turn", ref: `wf-1/${turn}`, version },
+    };
+  }
+
+  it("observes the stamp while the run store holds that run", async () => {
+    mockPeekRunState.mockReturnValue({ id: "wf-1" });
+    const conn = await connect();
+    markHydrated();
+    conn?.frame(runFrame("t-1", "5"));
+    await until(() => seen.length === 1);
+    expect(hasSubject("run_turn", "wf-1/t-1")).toBe(true);
+    // The WORKFLOW half is what the residency question is asked about, not the whole ref.
+    expect(mockPeekRunState).toHaveBeenCalledWith("wf-1");
+  });
+
+  it("observes nothing for a run this client is not holding", async () => {
+    // Same rule as an evicted chat's window: the frame was applied to nothing, so recording
+    // its version would make the digest name a projection nobody holds.
+    const conn = await connect();
+    markHydrated();
+    conn?.frame(runFrame("t-1", "5"));
+    await until(() => seen.length === 1);
+    expect(hasSubject("run_turn", "wf-1/t-1")).toBe(false);
+  });
+
+  it("answers a moved step turn with THAT turn's range read, past the seq it holds", async () => {
+    // The ref names one turn of one run, so the repair is that turn's range read and not the
+    // run's own state: `<workflowID>/<turn>` splits on the FIRST separator, and the `after`
+    // is what this client holds rather than a version off the digest.
+    mockRunTurnHeldSeq.mockReturnValue(4);
+    observeStamp({ kind: "run_turn", ref: "wf-1/t-1", version: "5" });
+    scripted.respond(
+      "/api/sync",
+      digestAnswer([{ kind: "run_turn", ref: "wf-1/t-1", version: "6" }]),
+    );
+
+    await _revalidateForTest(ctx());
+
+    expect(mockRequestRunTurnRange).toHaveBeenCalledWith("wf-1", "t-1", 4);
+    expect(mockLoadMessages).not.toHaveBeenCalled();
+    expect(mockRequestTurnRange).not.toHaveBeenCalled();
+  });
+
+  it("asks for the WHOLE turn when it holds none of it", async () => {
+    // The lost-`turn_opened` case: `after` omitted, which is what the route answers a whole
+    // turn for. A held seq of 0 is a real position and must not collapse to this.
+    mockRunTurnHeldSeq.mockReturnValue(undefined);
+    observeStamp({ kind: "run_turn", ref: "wf-1/t-9", version: "3" });
+    scripted.respond(
+      "/api/sync",
+      digestAnswer([{ kind: "run_turn", ref: "wf-1/t-9", version: "4" }]),
+    );
+
+    await _revalidateForTest(ctx());
+
+    expect(mockRequestRunTurnRange).toHaveBeenCalledWith("wf-1", "t-9", undefined);
+  });
+
+  it("reads the tail of a step turn that CLOSED while this client was away", async () => {
+    // Design 13 property 8 arm 2: a `gone` verdict runs the SAME range read as a mismatch,
+    // which is what brings in the tail and the `turn_close` — and that entry is what stops a
+    // step whose turn closed during a gap reading as live for the tab's life. Never a window
+    // read: a step's entries are the run's, not any chat's.
+    mockRunTurnHeldSeq.mockReturnValue(2);
+    observeStamp({ kind: "run_turn", ref: "wf-1/t-1", version: "5" });
+    scripted.respond(
+      "/api/sync",
+      digestAnswer([], [{ kind: "run_turn", ref: "wf-1/t-1", reason: "gone" }]),
+    );
+
+    await _revalidateForTest(ctx());
+
+    expect(hasSubject("run_turn", "wf-1/t-1")).toBe(false);
+    expect(mockRequestRunTurnRange).toHaveBeenCalledWith("wf-1", "t-1", 2);
+    expect(mockLoadMessages).not.toHaveBeenCalled();
   });
 });
 
@@ -482,13 +679,16 @@ describe("revalidate", () => {
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal: controller.signal });
   });
 
-  it("issues one GET for a chat named by both its chat and live_turn subjects", async () => {
-    observeStamp({ kind: "chat", ref: "X", version: "3" });
+  it("answers a chat and a live_turn with a window GET and a RANGE read, one each", async () => {
+    // The two kinds do not collapse onto each other: a `chat` is the window, a
+    // `live_turn` is one turn's entries past the newest `seq` this client holds.
+    setSessions([sessionHoldingTurn("c1", "X")]);
+    observeStamp({ kind: "chat", ref: "c1", version: "3" });
     observeStamp({ kind: "live_turn", ref: "X", version: "7:2" });
     scripted.respond(
       "/api/sync",
       digestAnswer([
-        { kind: "chat", ref: "X", version: "4" },
+        { kind: "chat", ref: "c1", version: "4" },
         { kind: "live_turn", ref: "X", version: "7:3" },
       ]),
     );
@@ -496,6 +696,10 @@ describe("revalidate", () => {
     await _revalidateForTest(ctx());
 
     expect(mockLoadMessages).toHaveBeenCalledTimes(1);
+    expect(mockLoadMessages).toHaveBeenCalledWith("c1", undefined, expect.any(AbortSignal));
+    // Past the newest `seq` the turn holds, which is what stops the read re-serving entries
+    // the store already has.
+    expect(mockRequestTurnRange.mock.calls).toEqual([["c1", "X", 2]]);
   });
 
   it("forgets a removed chat and runs its local drop through the frame door", async () => {
@@ -513,7 +717,10 @@ describe("revalidate", () => {
     expect(mockLoadMessages).not.toHaveBeenCalled();
   });
 
-  it("refetches a chat whose live turn is gone, so the GET settles its live markers", async () => {
+  it("reads the RANGE of a live turn that is gone, which is what brings its turn_close in", async () => {
+    // The stamp is forgotten and the turn is re-read: the `turn_close` entry is what every
+    // settled surface reads, and a window GET is not what carries it.
+    setSessions([sessionHoldingTurn("c1", "X")]);
     observeStamp({ kind: "live_turn", ref: "X", version: "7:2" });
     scripted.respond(
       "/api/sync",
@@ -523,7 +730,20 @@ describe("revalidate", () => {
     await _revalidateForTest(ctx());
 
     expect(hasSubject("live_turn", "X")).toBe(false);
-    expect(mockLoadMessages).toHaveBeenCalledWith("X", undefined, expect.any(AbortSignal));
+    expect(mockRequestTurnRange.mock.calls).toEqual([["c1", "X", 2]]);
+    expect(mockLoadMessages).not.toHaveBeenCalled();
+  });
+
+  it("leaves a live_turn whose chat this client does not hold with no read at all", async () => {
+    // `chatHoldingTurn` answers "" — the frame was applied to nothing, so there is no
+    // window to read a range out of.
+    observeStamp({ kind: "live_turn", ref: "X", version: "7:2" });
+    scripted.respond("/api/sync", digestAnswer([{ kind: "live_turn", ref: "X", version: "7:3" }]));
+
+    await _revalidateForTest(ctx());
+
+    expect(mockRequestTurnRange).not.toHaveBeenCalled();
+    expect(mockLoadMessages).not.toHaveBeenCalled();
   });
 
   it("completes every GET, then reconnects once when pending moved", async () => {
@@ -810,9 +1030,11 @@ describe("attached to a worker host", () => {
     markHydrated();
     conn?.frame(
       {
-        type: "message_appended",
+        type: "entry_appended",
         chat_id: "c1",
-        payload: { id: "m1", role: "user", ts: 1, content: "hi" },
+        payload: {
+          entry: { id: "e1", turn: "t1", kind: "text", seq: 1, ts: 1, payload: { text: "hi" } },
+        },
         subject: { kind: "chat", ref: "c1", version: "4" },
       },
       `${EPOCH_A}:1`,

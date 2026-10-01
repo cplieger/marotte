@@ -27,15 +27,15 @@ func hookUpdateFrame(t *testing.T, name, status string) map[string]any {
 }
 
 // hookCardCase drives one hook_update through the translator and returns the events it
-// broadcast and the calls it buffered.
-func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAttribution) (*[]marotte.ServerEvent, []marotte.ToolCall) {
+// broadcast and the tool_call entries the chat's turn sealed.
+func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAttribution) (*[]marotte.ServerEvent, []marotte.EntryToolCall) {
 	t.Helper()
 	base, events := newEventCaptureDeps()
 	deps := &hookStatusDeps{baseDeps: base, enabled: enabled}
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 	tr.HandleSessionInfoUpdate(t.Context(), chatID, mustJSON(t, frame), attr)
-	return events, base.bufStore.GetOrInit(chatID).ToolCalls
+	return events, toolCallsOf(t, base.chatEntries(chatID))
 }
 
 // TestHandleSessionInfoUpdate_HookUpdateCard pins the `Hook fired` card: one settled
@@ -44,8 +44,8 @@ func hookCardCase(t *testing.T, enabled bool, frame map[string]any, attr FrameAt
 func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 	t.Run("ShownWhenEnabled", func(t *testing.T) {
 		events, calls := hookCardCase(t, true, hookUpdateFrame(t, "probe-save", hookStatusCompleted), FrameAttribution{})
-		if !hasToolCallEvent(events) {
-			t.Fatal("hook_update broadcast no tool_call event; want one Hook fired card")
+		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
+			t.Fatal("hook_update broadcast no entry_appended{tool_call}; want one Hook fired card")
 		}
 		if len(calls) != 1 {
 			t.Fatalf("buffered tool calls = %d, want 1", len(calls))
@@ -89,7 +89,7 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 
 	t.Run("NothingWhenDisabled", func(t *testing.T) {
 		events, calls := hookCardCase(t, false, hookUpdateFrame(t, "probe-save", hookStatusCompleted), FrameAttribution{})
-		if hasToolCallEvent(events) {
+		if hasEntryAppended(events, marotte.EntryKindToolCall) {
 			t.Error("hook_update broadcast a tool_call event with hooks.showStatus off; want nothing")
 		}
 		if len(calls) != 0 {
@@ -120,9 +120,9 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 		for name, frame := range frames {
 			t.Run(name, func(t *testing.T) {
 				events, calls := hookCardCase(t, true, frame, FrameAttribution{})
-				if hasToolCallEvent(events) || len(calls) != 0 {
+				if hasEntryAppended(events, marotte.EntryKindToolCall) || len(calls) != 0 {
 					t.Errorf("a hook block outside update._meta.kiro produced events=%v calls=%d; want nothing",
-						hasToolCallEvent(events), len(calls))
+						hasEntryAppended(events, marotte.EntryKindToolCall), len(calls))
 				}
 			})
 		}
@@ -150,8 +150,8 @@ func TestHandleSessionInfoUpdate_HookUpdateCard(t *testing.T) {
 	t.Run("DroppedForSubagentAndStep", func(t *testing.T) {
 		for _, attr := range []FrameAttribution{{SubSessionID: "sub"}, {Step: true}} {
 			events, calls := hookCardCase(t, true, hookUpdateFrame(t, "probe", hookStatusCompleted), attr)
-			if hasToolCallEvent(events) || len(calls) != 0 {
-				t.Errorf("attribution %+v produced events=%v calls=%d; want nothing", attr, hasToolCallEvent(events), len(calls))
+			if hasEntryAppended(events, marotte.EntryKindToolCall) || len(calls) != 0 {
+				t.Errorf("attribution %+v produced events=%v calls=%d; want nothing", attr, hasEntryAppended(events, marotte.EntryKindToolCall), len(calls))
 			}
 		}
 	})

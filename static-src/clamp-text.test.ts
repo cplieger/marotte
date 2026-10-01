@@ -10,7 +10,9 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { attachClamp, releaseClamp, releaseClampsIn, clampObservationCount } from "./clamp-text.js";
 import clampSource from "./clamp-text.ts?raw";
 import messagesCSS from "./css/13-messages.css?raw";
-import type { Message, Session } from "./types.js";
+import type { TurnState } from "./types.js";
+import type { Entry } from "./wire/types.gen.js";
+import { makeSession } from "./__test-helpers__/model.js";
 
 // The transcript's own fixture, for the `disposeChatView` case below. Built at
 // module scope and BEFORE `messages.js` is imported, because `scroll.ts`
@@ -35,6 +37,55 @@ scrollerEl.appendChild(transcriptEl);
 
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { mountChatView, disposeChatView } = await import("./messages.js");
+
+/** One sealed entry of `turnID`, at `seq`. */
+function sealed(turnID: string, seq: number, kind: Entry["kind"], payload: unknown): Entry {
+  return {
+    id: `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    lane: "",
+    kind,
+    seq,
+    ts: seq + 1,
+    payload,
+  } as Entry;
+}
+
+/** A prompt-opened turn whose body carries one steer note: the `turn_open` the appender
+ *  stamped, the `steer` entry the correction landed at, a reply, and the close. A steer
+ *  JOINS the turn its prompt opened, so it renders as body content at its own `seq`. */
+function turnWithSteer(id: string, n: number, request: string, correction: string): Entry[] {
+  return [
+    sealed(id, 0, "turn_open", { prompt: { id: `${id}-p`, text: request }, source: "prompt", n }),
+    sealed(id, 1, "steer", { text: correction, origin: "user", state: "read" }),
+    sealed(id, 2, "text", { text: "reply" }),
+    sealed(id, 3, "turn_close", { outcome: "completed" }),
+  ];
+}
+
+/** Paint `turnRows` as `chat`'s resident window and activate it. */
+function paintTurns(chat: string, turnRows: Entry[][]): void {
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const entries of turnRows) {
+    const first = entries[0];
+    if (first === undefined) {
+      continue;
+    }
+    turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+    order.push(first.turn);
+  }
+  setSessions([
+    {
+      ...makeSession({ id: chat, name: "c" }),
+      turns,
+      turn_order: order,
+      turn_count: order.length,
+    },
+  ]);
+  setActive(chat);
+  bumpMessages(chat, "load");
+}
 
 const CSS = `
   .ct-text { font: 16px/20px monospace; overflow-wrap: anywhere; }
@@ -344,44 +395,18 @@ describe("releasing", () => {
     const before = clampObservationCount();
     mountChatView();
     const chat = "c-clamp-dispose";
-    const messages: Message[] = [];
+    const turnRows: Entry[][] = [];
     for (let t = 0; t < 4; t++) {
-      messages.push({
-        id: `t${String(t)}`,
-        role: "user",
-        ts: 1,
-        content: `a request, number ${String(t)}`,
-      } as Message);
-      // A steer JOINS the turn its prompt opened, so it renders as body content.
-      messages.push({
-        id: `t${String(t)}-s`,
-        role: "user",
-        ts: 2,
-        content: `a correction long enough to be worth clamping, number ${String(t)}`,
-        user_kind: "steer",
-        steer_state: "read",
-      } as unknown as Message);
-      messages.push({
-        id: `t${String(t)}-a`,
-        role: "assistant",
-        ts: 3,
-        content: "",
-        blocks: [{ type: "text", text: "reply" }],
-      } as unknown as Message);
+      turnRows.push(
+        turnWithSteer(
+          `t${String(t)}`,
+          t + 1,
+          `a request, number ${String(t)}`,
+          `a correction long enough to be worth clamping, number ${String(t)}`,
+        ),
+      );
     }
-    setSessions([
-      {
-        id: chat,
-        name: "c",
-        messages,
-        message_count: messages.length,
-        has_more: false,
-        thinking: false,
-        working_label: "",
-      },
-    ] as unknown as Session[]);
-    setActive(chat);
-    bumpMessages(chat);
+    paintTurns(chat, turnRows);
     // One clamp per steer note, or the assertion below cannot fail.
     expect(clampObservationCount() - before, "one per steer note").toBe(4);
 
@@ -446,36 +471,7 @@ describe("inside the transcript's own observer set", () => {
       // Over four lines at 320px and inside four at 1000px, so the verdict flips in
       // both directions.
       const body = "the quick brown fox jumps over the lazy dog while ".repeat(5);
-      setSessions([
-        {
-          id: chat,
-          name: "c",
-          messages: [
-            { id: "u1", role: "user", ts: 1, content: "a request" },
-            {
-              id: "s1",
-              role: "user",
-              ts: 2,
-              content: body,
-              user_kind: "steer",
-              steer_state: "read",
-            },
-            {
-              id: "a1",
-              role: "assistant",
-              ts: 3,
-              content: "",
-              blocks: [{ type: "text", text: "reply" }],
-            },
-          ],
-          message_count: 3,
-          has_more: false,
-          thinking: false,
-          working_label: "",
-        },
-      ] as unknown as Session[]);
-      setActive(chat);
-      bumpMessages(chat);
+      paintTurns(chat, [turnWithSteer("u1", 1, "a request", body)]);
 
       const text = document.querySelector<HTMLElement>(".steer-note-text");
       const more = document.querySelector<HTMLButtonElement>(".steer-note-more");

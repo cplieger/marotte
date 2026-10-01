@@ -20,7 +20,10 @@ vi.mock("./store.js", { spy: true });
 vi.mock("./store-load.js", { spy: true });
 vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
 vi.mock("./subagent-view.js", () => ({ openSubagentView: vi.fn() }));
-vi.mock("./messages-blocks.js", () => ({ blockElement: vi.fn() }));
+vi.mock("./messages-blocks.js", () => ({
+  blockElement: vi.fn(),
+  runOffsetOf: vi.fn(() => undefined),
+}));
 
 let styleEl: HTMLStyleElement;
 let host: HTMLElement;
@@ -39,12 +42,15 @@ afterAll(() => {
   host?.remove();
 });
 
-/** One assistant message as `buildBody` seats it: the boxless block region, a row
- *  inside it, the prose bubble inside that. */
+/** A turn body holding a BOXLESS wrapper, a row inside it, the prose bubble inside
+ *  that. The boxless level is declared inline rather than by class: the shipped one
+ *  was `.assistant-blocks { display: contents }` (`git show HEAD:static-src/css/14-tools.css`),
+ *  deleted with the per-message block region, and the walker's exception for a
+ *  boxless element is what survives it (`find-engine.ts` `rendersWithoutBox`). */
 function assistantReply(text: string): HTMLElement {
   host.innerHTML =
-    `<div class="msg-wrap msg-wrap-assistant">` +
-    `<div class="assistant-blocks">` +
+    `<div class="turn-body">` +
+    `<div style="display:contents">` +
     `<div class="msg-row"><div class="message assistant">${text}</div></div>` +
     `</div></div>`;
   return host.firstElementChild as HTMLElement;
@@ -64,10 +70,10 @@ function rendered(): Promise<void> {
 }
 
 describe("the walker under the shipped stylesheet", () => {
-  it("marks prose inside the boxless assistant block region", async () => {
-    // The defect: `.assistant-blocks { display: contents }` answers
-    // checkVisibility FALSE, the walker pruned the whole subtree at it, and search
-    // could select a block and say why but never place a <mark> in a reply.
+  it("marks prose inside a boxless region", async () => {
+    // The defect: a `display: contents` element answers checkVisibility FALSE, the
+    // walker pruned the whole subtree at it, and search could select a block and say
+    // why but never place a <mark> in a reply.
     const wrap = assistantReply("the retry backoff is documented TODO here");
     await rendered();
     expect(new FindEngine(wrap).search("TODO")).toBe(1);
@@ -81,12 +87,12 @@ describe("the walker under the shipped stylesheet", () => {
     expect(mark?.parentElement?.className).toBe("message assistant");
   });
 
-  // The fixture's own premise, so a stylesheet change that quietly gives the
-  // region a box turns the test above into one that cannot fail rather than
-  // leaving it green for the wrong reason.
+  // The fixture's own premise, so a fixture that quietly gives the region a box
+  // turns the test above into one that cannot fail rather than leaving it green
+  // for the wrong reason.
   it("is measuring a region Chromium reports as invisible", () => {
     const wrap = assistantReply("prose");
-    const blocks = wrap.querySelector(".assistant-blocks") as HTMLElement;
+    const blocks = wrap.querySelector("[style]") as HTMLElement;
     expect({
       display: getComputedStyle(blocks).display,
       // find-engine.ts's own option set.
@@ -103,7 +109,7 @@ describe("the walker under the shipped stylesheet", () => {
     // an implementation keyed on the absence of a box rather than on the computed
     // `display` passes the cases above and fails this one.
     host.innerHTML =
-      `<div class="assistant-blocks">` +
+      `<div class="turn-body">` +
       `<div style="display:none"><div class="message">display TODO</div></div>` +
       `<div style="content-visibility:hidden"><div class="message">skipped TODO</div></div>` +
       `<div class="msg-row"><div class="message">shown TODO</div></div>` +
@@ -117,7 +123,7 @@ describe("the walker under the shipped stylesheet", () => {
     // walker must stay out of every card below the fold, and a skipped row is
     // boxless to `checkVisibility` exactly as the region above it is.
     host.innerHTML =
-      `<div class="assistant-blocks">` +
+      `<div class="turn-body">` +
       `<div class="msg-row"><div class="message">shown TODO</div></div>` +
       `<div style="block-size:2400px"></div>` +
       `<div class="msg-row"><div class="message">skipped TODO</div></div>` +

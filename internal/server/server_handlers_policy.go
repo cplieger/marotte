@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/webhttp/v3"
 )
 

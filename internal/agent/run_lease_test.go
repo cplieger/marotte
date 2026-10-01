@@ -4,11 +4,15 @@ package agent
 // frame releases, and what survives a restart.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 )
@@ -264,6 +268,107 @@ func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 				t.Errorf("lease held = %v after status %q, want %v", held, tc.status, tc.stillHeld)
 			}
 		})
+	}
+}
+
+// heldRun hosts a run under run:<id> on the fake bridge with a disk-backed lease, so a
+// cancel lands on br and the lease is what CancelRun waits on.
+func heldRun(t *testing.T, id, recipe string) (*Runtime, *fakeBridge) {
+	t.Helper()
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	st, err := runlease.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	h.runs.leases = st
+	h.runs.grantLease(t.Context(), id, recipe, manualLaunch())
+	return h, br
+}
+
+func rewindCancelWaitOf(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := rewindCancelWait
+	rewindCancelWait = d
+	t.Cleanup(func() { rewindCancelWait = prev })
+}
+
+func cancelsIssued(br *fakeBridge) int {
+	n := 0
+	for _, m := range br.callLog() {
+		if m == methodKiroWorkflowCancel {
+			n++
+		}
+	}
+	return n
+}
+
+// The terminal transition a rewind waits for is the lease RELEASE: a run's own
+// run_complete (or the reconcile a landed cancel runs) arriving while CancelRun polls
+// answers nil, with the cancel issued once.
+func TestCancelRun_ReturnsOnceTheLeaseIsReleasedInsideTheWait(t *testing.T) {
+	rewindCancelWaitOf(t, 5*time.Second)
+	h, br := heldRun(t, "wf_1", "app-review")
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for cancelsIssued(br) == 0 {
+			if time.Now().After(deadline) {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		// The node boundary KAS stops at, a few polls after the cancel landed.
+		time.Sleep(6 * rewindCancelPoll)
+		h.runs.releaseLease(t.Context(), "wf_1")
+	}()
+
+	if err := h.runs.CancelRun(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("CancelRun(wf_1) = %v, want nil once the lease is released", err)
+	}
+	if n := cancelsIssued(br); n != 1 {
+		t.Errorf("cancels issued = %d, want 1: the wait re-reads the lease, never re-cancels", n)
+	}
+}
+
+func TestCancelRun_AHeldLeasePastTheWaitIsStillLive(t *testing.T) {
+	rewindCancelWaitOf(t, 100*time.Millisecond)
+	h, br := heldRun(t, "wf_1", "app-review")
+
+	err := h.runs.CancelRun(t.Context(), "wf_1")
+	if !errors.Is(err, command.ErrRunStillLive) {
+		t.Fatalf("CancelRun(wf_1) = %v, want command.ErrRunStillLive with the lease still held", err)
+	}
+	if _, held := h.runs.lease("wf_1"); !held {
+		t.Errorf("the lease was released, so the wait had nothing to run out on")
+	}
+	if n := cancelsIssued(br); n != 1 {
+		t.Errorf("cancels issued = %d, want 1: the wait re-reads the lease, never re-cancels", n)
+	}
+}
+
+func TestCancelRun_ACancelledContextEndsTheWait(t *testing.T) {
+	rewindCancelWaitOf(t, 5*time.Second)
+	h, _ := heldRun(t, "wf_1", "app-review")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := h.runs.CancelRun(ctx, "wf_1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CancelRun(dead ctx) = %v, want context.Canceled", err)
+	}
+}
+
+// LiveRuns answers the runs still holding a lease, labelled by recipe; a released or
+// unknown id is not live.
+func TestLiveRuns_NamesTheHeldLeasesByRecipe(t *testing.T) {
+	h, _ := heldRun(t, "wf_held", "app-review")
+	h.runs.grantLease(t.Context(), "wf_released", "publish", manualLaunch())
+	h.runs.releaseLease(t.Context(), "wf_released")
+
+	got := h.runs.LiveRuns([]string{"wf_held", "wf_released", "wf_unknown"})
+	want := []command.LiveRunRef{{ID: "wf_held", Label: "app-review"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("LiveRuns([held released unknown]) = %+v, want %+v", got, want)
 	}
 }
 

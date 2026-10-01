@@ -9,24 +9,13 @@
 //   - launching with declared inputs collects them inline (no modal)
 //   - a launch opens the run tab that OWNS the run
 //
-// The row's LAYOUT, which this suite deliberately did not cover before and
-// which is what let a regression ship. `.docs-row` became a horizontal flex
-// container (a delete button had to sit beside the activation surface) and the
-// five document tabs moved their stack onto a `.docs-row-surface` column. This
-// tab was not migrated, so its four blocks — top line, schedule summary,
-// description, inputs note — were authored to stack and were laid side by side
-// instead, each block's left edge being the running sum of the text widths
-// before it.
-//
-// The layout cases are a DOM half and a SOURCE half, and they need each other.
-// The test page loads no app stylesheet, so "these blocks share a left
-// edge" is not observable at runtime; it is the conjunction of two facts that
-// are — the blocks are siblings of one container, and that container is a
-// stretch column whose members carry no inline-start offset.
+// The row's SHAPE: a recipe row is the shared `.entry` builder's output like
+// every other row on the page, and its input form is the `.entry-detail` region
+// under it rather than a block inside it.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { loadCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
+import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 /** Every authored client source file plus the shipped page, inlined as text.
  *  `import.meta.glob` replaces the directory walk this used to do with `readdir`:
@@ -121,7 +110,7 @@ async function render(filter = ""): Promise<HTMLElement> {
 }
 
 function names(panel: HTMLElement): string[] {
-  return [...panel.querySelectorAll(".list-row-name")].map((e) => e.textContent ?? "");
+  return [...panel.querySelectorAll(".entry-title")].map((e) => e.textContent ?? "");
 }
 
 function buttonFor(panel: HTMLElement, source: string): HTMLButtonElement | null {
@@ -216,9 +205,7 @@ describe("the Run ⇄ Cancel row", () => {
   });
 });
 
-describe("the recipe row stacks", () => {
-  const docs = loadCSS("28-docs.css");
-
+describe("the recipe row on the shared builder", () => {
   function rowFor(panel: HTMLElement, source: string): HTMLElement {
     const row = panel.querySelector<HTMLElement>(`[data-recipe="${source}"]`);
     if (row === null) {
@@ -233,81 +220,50 @@ describe("the recipe row stacks", () => {
   // previous case's recipe survive into this one and be asserted against the new
   // one's fields. A unique key per case is what forces a fresh mount.
 
-  it("hosts every block on the surface and nothing beside it", async () => {
-    // The DOM half of "the blocks share a left edge". A block appended to the
-    // ROW is a flex item on the row's horizontal main axis; a block appended to
-    // the surface is a member of its column. So the assertion is membership: the
-    // row has exactly ONE child, and all four blocks are inside it.
-    recipesReply = { recipes: [recipe("stack-all", { prompt: "prompt" })] };
+  it("is an inert entry whose two lines are the description and the schedule", async () => {
+    // Not a door: a recipe row's one destination is the run its button launches,
+    // and that run opens its own tab.
+    recipesReply = { recipes: [{ ...recipe("shape", { prompt: "prompt" }), built_in: true }] };
     const panel = await render();
-    const row = rowFor(panel, "bundled://stack-all");
+    const row = rowFor(panel, "bundled://shape");
 
-    expect(row.children.length).toBe(1);
-    const surface = row.children[0];
-    expect(surface?.className).toBe("docs-row-surface");
-
-    const blocks = [...(surface?.children ?? [])].map((c) => c.className);
-    expect(blocks).toEqual([
-      "docs-row-top",
-      "recipe-sched-summary",
-      "docs-row-sub",
-      "recipe-inputs-note",
-    ]);
-  });
-
-  it("declares the surface a stretch column, with no per-block inset", () => {
-    // The SOURCE half. Siblings in a stretch column each span the container's
-    // content box, so their left edges are equal — unless one carries its own
-    // inline-start offset, which the schedule summary did: 4px of
-    // padding-inline-start, the exact residual left over once the stack was
-    // restored, and the only remaining reason the three lines disagreed.
-    const surface = ruleBody(docs, ".docs-row-surface");
-    expect(/flex-direction:\s*column/.test(surface)).toBe(true);
-    expect(/align-items:\s*stretch/.test(surface)).toBe(true);
-
-    for (const block of [".recipe-sched-summary", ".recipe-inputs-note", ".docs-row-sub"]) {
-      const body = ruleBody(docs, block);
-      expect(/padding-inline-start|padding-left|margin-inline-start|margin-left/.test(body)).toBe(
-        false,
-      );
-    }
-  });
-
-  it("keeps the badge beside the title rather than at the far edge", async () => {
-    // Adjacency in the DOM is necessary but not sufficient: the badge was
-    // already the name's next sibling while it rendered at the row's right
-    // edge, because `.list-row-name { flex: 1 }` ate the free space between
-    // them. Both facts, therefore.
-    recipesReply = { recipes: [{ ...recipe("badge-beside"), built_in: true }] };
-    const panel = await render();
-    const top = rowFor(panel, "bundled://badge-beside").querySelector(".docs-row-top");
-
-    expect(top?.children[0]?.className).toBe("list-row-name");
-    expect(top?.children[1]?.className).toContain("docs-row-meta");
-    expect(top?.children[1]?.textContent).toBe("bundled");
-
-    const name = ruleContaining(docs, ".recipe-row .list-row-name", "top");
-    expect(/flex:\s*0 1 auto/.test(name.body)).toBe(true);
-  });
-
-  it("stacks the badge under the title on a phone, from THIS stylesheet", () => {
-    // The cascade trap. 28-docs.css is unlayered and 50-mobile.css sits inside
-    // `@layer mobile`, so an unlayered rule wins whatever the media query says
-    // — a copy of this block over there would never apply, which is why
-    // 50-mobile.css's own .page-content padding override is already dead.
-    const mobile = ruleContaining(docs, ".recipe-row .list-row-name", "40rem");
-    expect(/flex-basis:\s*100%/.test(mobile.body)).toBe(true);
+    expect(row.classList.contains("entry")).toBe(true);
+    expect(row.querySelector(".entry-open")).toBeNull();
+    expect(row.querySelector(".entry-body")?.tagName).toBe("DIV");
+    expect(row.querySelector(".entry-title")?.textContent).toBe("shape");
     expect(
-      /flex-wrap:\s*wrap/.test(ruleContaining(docs, ".recipe-row .docs-row-top", "40rem").body),
-    ).toBe(true);
-
-    expect(loadCSS("50-mobile.css")).not.toMatch(/recipe/);
+      [...(row.querySelector(".entry-badges")?.children ?? [])].map((b) => b.textContent),
+    ).toEqual(["bundled"]);
+    expect(
+      [...(row.querySelector(".entry-lines")?.children ?? [])].map((l) => l.textContent),
+    ).toEqual(["shape desc", "Not scheduled · Inputs: prompt"]);
   });
 
-  it("hosts the inputs form off the row's main line", async () => {
-    // Two 14rem inputs cannot fit a ~750px line, and the panel's `overflow-y:
-    // auto` computes `overflow-x` to `auto` with it, so a two-input recipe could
-    // put a horizontal scrollbar on the whole page.
+  it("puts Schedule then Run in the actions slot as text buttons", async () => {
+    recipesReply = { recipes: [recipe("actions")] };
+    const panel = await render();
+    const actions = [
+      ...(rowFor(panel, "bundled://actions").querySelector(".entry-actions")?.children ?? []),
+    ];
+    expect(actions.map((a) => a.className)).toEqual([
+      "btn-small recipe-sched-btn",
+      "btn-small recipe-run-btn",
+    ]);
+    expect(actions.map((a) => a.textContent)).toEqual(["Schedule", "Run"]);
+  });
+
+  it("keeps the second line for the schedule when a recipe declares no inputs", async () => {
+    recipesReply = { recipes: [recipe("plain")] };
+    const panel = await render();
+    const lines = [
+      ...(rowFor(panel, "bundled://plain").querySelector(".entry-lines")?.children ?? []),
+    ];
+    expect(lines.map((l) => l.textContent)).toEqual(["plain desc", "Not scheduled"]);
+  });
+
+  it("mounts the input form as a detail region UNDER the row, never inside it", async () => {
+    // The row's height is the list's tier and never grows; the only thing that
+    // may grow is a sibling region below it.
     recipesReply = {
       recipes: [recipe("form-host", { prompt: "prompt", max_iterations: "string" })],
     };
@@ -315,44 +271,47 @@ describe("the recipe row stacks", () => {
     const row = rowFor(panel, "bundled://form-host");
     buttonFor(panel, "bundled://form-host")?.click();
 
-    const form = row.querySelector(".recipe-input-form");
-    expect(form).not.toBeNull();
-    expect(form?.parentElement?.className).toBe("docs-row-surface");
-    // Nothing joined the row's own axis on the way.
-    expect(row.children.length).toBe(1);
+    const detail = row.nextElementSibling;
+    expect(detail?.classList.contains("entry-detail")).toBe(true);
+    expect(detail?.getAttribute("role")).toBe("listitem");
+    expect(detail?.classList.contains("open")).toBe(true);
+    expect(detail?.querySelector(".recipe-input-form")).not.toBeNull();
+    expect(row.querySelector(".recipe-input-form")).toBeNull();
+    expect(detail?.parentElement).toBe(row.parentElement);
+    // A second press closes it.
+    buttonFor(panel, "bundled://form-host")?.click();
+    expect(panel.querySelector(".entry-detail")).toBeNull();
   });
 
-  it("declares .recipe-run-btn exactly once", () => {
-    // It was declared twice at equal specificity with conflicting
-    // margin-inline-start, so which one won was a source-order accident.
-    // ruleContaining requires exactly one match and reports the count it found.
-    const rule = ruleContaining(docs, ".recipe-run-btn", "top");
-    expect(/margin-inline-start:\s*0/.test(rule.body)).toBe(true);
+  it("keeps what the reader typed across a repaint", async () => {
+    // The panel repaints on its own schedule — the run poll, the schedules
+    // fetch — so a form that was rebuilt on each one would lose its values.
+    recipesReply = { recipes: [recipe("typing", { prompt: "prompt" })] };
+    const panel = await render();
+    buttonFor(panel, "bundled://typing")?.click();
+    const form = panel.querySelector<HTMLFormElement>(".recipe-input-form");
+    const field = form?.querySelector<HTMLInputElement>("input");
+    if (field !== null && field !== undefined) {
+      field.value = "half typed";
+    }
+
+    renderRecipesPanel(panel);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(panel.querySelector(".recipe-input-form")).toBe(form);
+    expect(panel.querySelector<HTMLInputElement>(".recipe-input")?.value).toBe("half typed");
   });
 
-  it("gives the pointer only to a surface that actually activates", () => {
-    // `.docs-row { cursor: pointer }` reached every row on all six tabs. A
-    // recipe row has no click handler (this stylesheet says so itself) and an
-    // inert document row — a global hook — cannot be opened either, so both
-    // offered a pointer and then did nothing. docs.ts sets role=button exactly
-    // when it wires the open, which makes the attribute the honest condition.
-    expect(/cursor/.test(ruleBody(docs, ".docs-row"))).toBe(false);
-    const surface = ruleContaining(docs, '.docs-row-surface[role="button"]', "top");
-    expect(/cursor:\s*pointer/.test(surface.body)).toBe(true);
-  });
-
-  it("carries the row name's weight, not a size, and on all six tabs", () => {
-    // The title is byte-identical to the five sibling tabs, History and Tools:
-    // `.list-row-name`, mono, --fs-sm, weight 400. So it is not small, it is
-    // light — and a size bump on this tab alone would make Workflows disagree
-    // with the five tabs it shares a tab bar with. `.docs-row` is exactly those
-    // six, and --fw-medium at the same size is what .mcp-row-name already does.
-    const rule = ruleContaining(docs, ".docs-row .list-row-name", "top");
-    expect(/font-weight:\s*var\(--fw-medium\)/.test(rule.body)).toBe(true);
-    expect(/font-size/.test(rule.body)).toBe(false);
-    expect(
-      /font-weight:\s*var\(--fw-medium\)/.test(ruleBody(loadCSS("60-mcp.css"), ".mcp-row-name")),
-    ).toBe(true);
+  it("closes the form when it launches", async () => {
+    recipesReply = { recipes: [recipe("launcher", { prompt: "prompt" })] };
+    const panel = await render();
+    buttonFor(panel, "bundled://launcher")?.click();
+    const form = panel.querySelector<HTMLFormElement>(".recipe-input-form");
+    form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(panel.querySelector(".entry-detail")).toBeNull();
+    expect(vi.mocked(launchRun.dispatch)).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -362,10 +321,9 @@ describe("the muted classes are gone rather than defined", () => {
   // and outshouted the `.is-scheduled` accent meant to distinguish it. They were
   // REPLACED rather than defined: the utilities layer ranks below every
   // unlayered feature slice, so a `.text-muted` there would have lost to the
-  // component rules at some of those very sites (`.recipe-inputs-note` already
-  // sets colour unlayered) and won at others — a class that works in some places
-  // is worse than one that works nowhere. Each site takes its ink from its own
-  // component rule instead.
+  // component rules at some of those very sites and won at others — a class that
+  // works in some places is worse than one that works nowhere. Each site takes
+  // its ink from its own component rule instead.
 
   it("names neither class anywhere in authored source", () => {
     const offenders: string[] = [];
@@ -381,15 +339,14 @@ describe("the muted classes are gone rather than defined", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("mutes the dormant schedule line and lets a live one take the accent", () => {
+  it("lets a live schedule take the accent on the shared subtitle line", () => {
+    // The dormant line is the builder's own `.entry-sub` and carries no rule of
+    // its own here; only the live state earns one.
     const docs = loadCSS("28-docs.css");
-    expect(/color:\s*var\(--c-text-tertiary\)/.test(ruleBody(docs, ".recipe-sched-summary"))).toBe(
-      true,
-    );
-    // Higher specificity, so the accent still wins for a live schedule.
     expect(
-      /color:\s*var\(--c-accent\)/.test(ruleBody(docs, ".recipe-sched-summary.is-scheduled")),
+      /color:\s*var\(--c-accent\)/.test(ruleBody(docs, ".docs-panel .entry-sub.is-scheduled")),
     ).toBe(true);
+    expect(docs).not.toMatch(/recipe-sched-summary/);
   });
 
   it("gives every former use site a component rule that carries its ink", () => {

@@ -6,93 +6,164 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/buffer"
-	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// Tests for the translate*.go family: ACP notification → domain-event
-// + chat-store translation. Shared fixtures + helpers live in shared_test.go.
+// Tests for the translate*.go family: ACP notification → entry log + broadcast.
+// Shared fixtures + helpers live in shared_test.go.
 
+// toolCallsOf decodes every tool_call entry in entries, in file order.
+func toolCallsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolCall {
+	t.Helper()
+	var out []marotte.EntryToolCall
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindToolCall {
+			continue
+		}
+		var c marotte.EntryToolCall
+		if err := json.Unmarshal(entries[i].Payload, &c); err != nil {
+			t.Fatalf("decode tool_call %q: %v", entries[i].ID, err)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// toolResultsOf decodes every tool_result entry in entries, in file order.
+func toolResultsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolResult {
+	t.Helper()
+	var out []marotte.EntryToolResult
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindToolResult {
+			continue
+		}
+		var r marotte.EntryToolResult
+		if err := json.Unmarshal(entries[i].Payload, &r); err != nil {
+			t.Fatalf("decode tool_result %q: %v", entries[i].ID, err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// openTextEntry is the chat's one open text entry, failing when the turn holds
+// none or more than one.
+func openTextEntry(t *testing.T, h *Runtime, chatID marotte.ChatID) marotte.OpenEntry {
+	t.Helper()
+	turn := h.liveTurn(chatID)
+	if turn == nil {
+		t.Fatalf("liveTurn(%q) = nil, want an open turn", chatID)
+	}
+	open := turn.OpenEntries()
+	if len(open) != 1 || open[0].Kind != marotte.EntryKindText {
+		t.Fatalf("OpenEntries(%q) = %+v, want one open text entry", chatID, open)
+	}
+	return open[0]
+}
+
+// The first chunk of a turn marotte never prompted opens a wire turn and a text
+// entry in one frame each.
 func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	before := h.bus.fanout.Position().Head
-	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello "}}`)
-	msg := &marotte.RPCResponse{
-		Method: "session/update",
-		Params: mustJSON(t, map[string]any{"update": raw}),
-	}
-	h.translateACPEvent("c1", msg)
+	h.translateACPEvent("c1", newChunkMsg("hello "))
 
 	gotTypes := extractTypes(t, bufferedSince(h, before))
-	if missing := missingEvents(gotTypes, "message_created", "message_chunk"); len(missing) > 0 {
+	if missing := missingEvents(gotTypes, "turn_opened", "entry_opened"); len(missing) > 0 {
 		t.Errorf("missing events %v; got %v", missing, gotTypes)
 	}
 
-	buf := h.stageTurnBuffer(t, "c1")
-	if !buf.Started || buf.Content.String() != "hello " {
-		t.Errorf("buffer = %+v content=%q", buf.Started, buf.Content.String())
+	open := openTextEntry(t, h, "c1")
+	if open.Text != "hello " || open.N != 1 {
+		t.Errorf("open text entry = %+v, want text %q at n=1", open, "hello ")
 	}
 }
 
-func TestTranslateACPEvent_SecondChunkReusesMessageID(t *testing.T) {
+// A second chunk extends the open entry rather than opening another: same id, the
+// text coalesced, and the frame is entry_delta, never a second entry_opened.
+func TestTranslateACPEvent_ASecondChunkExtendsTheOpenEntry(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent("c1", newChunkMsg("one"))
-	firstID := h.stageTurnBuffer(t, "c1").MessageID
+	first := openTextEntry(t, h, "c1")
 
+	before := h.bus.fanout.Position().Head
 	h.translateACPEvent("c1", newChunkMsg("two"))
-	secondID := h.stageTurnBuffer(t, "c1").MessageID
+	second := openTextEntry(t, h, "c1")
 
-	if firstID != secondID {
-		t.Errorf("message_id changed between chunks: %q → %q", firstID, secondID)
+	if first.ID != second.ID {
+		t.Errorf("entry id changed between chunks: %q → %q", first.ID, second.ID)
 	}
-	if h.stageTurnBuffer(t, "c1").Content.String() != "onetwo" {
-		t.Errorf("buffer content = %q, want 'onetwo'", h.stageTurnBuffer(t, "c1").Content.String())
+	if second.Text != "onetwo" || second.N != 2 {
+		t.Errorf("open text entry = %+v, want text %q at n=2", second, "onetwo")
+	}
+	types := extractTypes(t, bufferedSince(h, before))
+	if missing := missingEvents(types, "entry_delta"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
+	for _, typ := range types {
+		if typ == "entry_opened" {
+			t.Errorf("a second chunk re-opened the entry; got %v", types)
+		}
 	}
 }
 
+// A tool_call frame is a tool_call entry held open on the turn until its terminal
+// update seals the tool_result; the create's locations and diffs ride the entry
+// and the update's ride the result.
 func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 	cases := []struct {
-		setup  func(*Runtime)
-		assert func(*testing.T, *buffer.Buffer)
+		assert func(*testing.T, []marotte.Entry, *turnlog.Turn)
 		name   string
 		events []json.RawMessage
 	}{
 		{
-			name: "tool_call_added_to_buffer",
+			name: "tool_call_is_held_open_until_its_result",
 			events: []json.RawMessage{
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"readFile","kind":"read","status":"pending"}`),
 			},
-			assert: func(t *testing.T, buf *buffer.Buffer) {
-				if len(buf.ToolCalls) != 1 || buf.ToolCalls[0].ID != "tc-1" || buf.ToolCalls[0].Status != marotte.ToolPending {
-					t.Errorf("buffer tool_calls = %+v", buf.ToolCalls)
+			assert: func(t *testing.T, entries []marotte.Entry, turn *turnlog.Turn) {
+				calls := toolCallsOf(t, entries)
+				if len(calls) != 1 || calls[0].ID != "tc-1" || calls[0].Status != marotte.ToolPending {
+					t.Errorf("tool_call entries = %+v, want one pending tc-1", calls)
+				}
+				if results := toolResultsOf(t, entries); len(results) != 0 {
+					t.Errorf("tool_result entries = %+v, want none before the update", results)
+				}
+				if _, open := turn.OpenCallFor("tc-1"); !open {
+					t.Error("OpenCallFor(tc-1) = settled, want unsettled until the terminal update")
 				}
 			},
 		},
 		{
-			name: "tool_call_update_mutates_existing",
+			name: "terminal_update_seals_the_result_and_settles_the_call",
 			events: []json.RawMessage{
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"readFile","kind":"read","status":"pending"}`),
 				json.RawMessage(`{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":[{"type":"content","content":{"text":"file contents"}}]}`),
 			},
-			assert: func(t *testing.T, buf *buffer.Buffer) {
-				if len(buf.ToolCalls) != 1 {
-					t.Fatalf("tool_calls = %+v", buf.ToolCalls)
+			assert: func(t *testing.T, entries []marotte.Entry, turn *turnlog.Turn) {
+				results := toolResultsOf(t, entries)
+				if len(results) != 1 {
+					t.Fatalf("tool_result entries = %+v, want one", results)
 				}
-				tc := buf.ToolCalls[0]
-				if tc.Status != marotte.ToolCompleted {
-					t.Errorf("status = %q, want completed", tc.Status)
+				if results[0].Status != marotte.ToolCompleted {
+					t.Errorf("status = %q, want completed", results[0].Status)
 				}
-				if !strings.Contains(tc.Output, "file contents") {
-					t.Errorf("output = %q", tc.Output)
+				if !strings.Contains(results[0].Output, "file contents") {
+					t.Errorf("output = %q, want the update's content", results[0].Output)
+				}
+				if _, open := turn.OpenCallFor("tc-1"); open {
+					t.Error("OpenCallFor(tc-1) = unsettled after its terminal update")
 				}
 			},
 		},
@@ -103,9 +174,10 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 			events: []json.RawMessage{
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-noise","title":"Summarizing","kind":"read","status":"pending"}`),
 			},
-			assert: func(t *testing.T, buf *buffer.Buffer) {
-				if len(buf.ToolCalls) != 1 || buf.ToolCalls[0].ID != "tc-noise" {
-					t.Errorf("tool call not passed through: %+v", buf.ToolCalls)
+			assert: func(t *testing.T, entries []marotte.Entry, _ *turnlog.Turn) {
+				calls := toolCallsOf(t, entries)
+				if len(calls) != 1 || calls[0].ID != "tc-noise" {
+					t.Errorf("tool call not passed through: %+v", calls)
 				}
 			},
 		},
@@ -114,13 +186,13 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 			events: []json.RawMessage{
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-loc","title":"Reading main.go","kind":"read","status":"pending","locations":[{"path":"main.go","line":42}]}`),
 			},
-			assert: func(t *testing.T, buf *buffer.Buffer) {
-				if len(buf.ToolCalls) != 1 {
-					t.Fatalf("tool_calls = %+v", buf.ToolCalls)
+			assert: func(t *testing.T, entries []marotte.Entry, _ *turnlog.Turn) {
+				calls := toolCallsOf(t, entries)
+				if len(calls) != 1 {
+					t.Fatalf("tool_call entries = %+v, want one", calls)
 				}
-				tc := buf.ToolCalls[0]
-				if len(tc.Locations) != 1 || tc.Locations[0].Path != "main.go" || tc.Locations[0].Line != 42 {
-					t.Errorf("locations = %+v", tc.Locations)
+				if loc := calls[0].Locations; len(loc) != 1 || loc[0].Path != "main.go" || loc[0].Line != 42 {
+					t.Errorf("locations = %+v, want main.go:42", loc)
 				}
 			},
 		},
@@ -129,13 +201,13 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 			events: []json.RawMessage{
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-diff","title":"Editing main.go","kind":"edit","status":"pending","locations":[{"path":"main.go","line":1}],"content":[{"type":"diff","path":"/abs/main.go","oldText":"hello","newText":"world"}]}`),
 			},
-			assert: func(t *testing.T, buf *buffer.Buffer) {
-				if len(buf.ToolCalls) != 1 {
-					t.Fatalf("tool_calls = %+v", buf.ToolCalls)
+			assert: func(t *testing.T, entries []marotte.Entry, _ *turnlog.Turn) {
+				calls := toolCallsOf(t, entries)
+				if len(calls) != 1 {
+					t.Fatalf("tool_call entries = %+v, want one", calls)
 				}
-				tc := buf.ToolCalls[0]
-				if len(tc.Diffs) != 1 || tc.Diffs[0].OldText != "hello" || tc.Diffs[0].NewText != "world" {
-					t.Errorf("diffs = %+v", tc.Diffs)
+				if d := calls[0].Diffs; len(d) != 1 || d[0].OldText != "hello" || d[0].NewText != "world" {
+					t.Errorf("diffs = %+v, want hello→world", d)
 				}
 			},
 		},
@@ -145,10 +217,13 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"readFile","kind":"read","status":"pending"}`),
 				json.RawMessage(`{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","locations":[{"path":"config.go"}]}`),
 			},
-			assert: func(t *testing.T, buf *buffer.Buffer) {
-				tc := buf.ToolCalls[0]
-				if len(tc.Locations) != 1 || tc.Locations[0].Path != "config.go" {
-					t.Errorf("locations = %+v", tc.Locations)
+			assert: func(t *testing.T, entries []marotte.Entry, _ *turnlog.Turn) {
+				results := toolResultsOf(t, entries)
+				if len(results) != 1 {
+					t.Fatalf("tool_result entries = %+v, want one", results)
+				}
+				if loc := results[0].Locations; len(loc) != 1 || loc[0].Path != "config.go" {
+					t.Errorf("locations = %+v, want config.go", loc)
 				}
 			},
 		},
@@ -158,10 +233,13 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"editFile","kind":"edit","status":"pending"}`),
 				json.RawMessage(`{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":[{"type":"diff","path":"/abs/file.go","oldText":"old","newText":"new"}]}`),
 			},
-			assert: func(t *testing.T, buf *buffer.Buffer) {
-				tc := buf.ToolCalls[0]
-				if len(tc.Diffs) != 1 || tc.Diffs[0].Path != "/abs/file.go" {
-					t.Errorf("diffs = %+v", tc.Diffs)
+			assert: func(t *testing.T, entries []marotte.Entry, _ *turnlog.Turn) {
+				results := toolResultsOf(t, entries)
+				if len(results) != 1 {
+					t.Fatalf("tool_result entries = %+v, want one", results)
+				}
+				if d := results[0].Diffs; len(d) != 1 || d[0].Path != "/abs/file.go" {
+					t.Errorf("diffs = %+v, want /abs/file.go", d)
 				}
 			},
 		},
@@ -171,22 +249,23 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-			if tc.setup != nil {
-				tc.setup(h)
-			}
 			for _, raw := range tc.events {
 				h.translateACPEvent("c1", &marotte.RPCResponse{
 					Method: "session/update",
 					Params: mustJSON(t, map[string]any{"update": raw}),
 				})
 			}
-			buf := h.stageTurnBuffer(t, "c1")
-			tc.assert(t, buf)
+			turn := h.liveTurn("c1")
+			if turn == nil {
+				t.Fatal("liveTurn(c1) = nil, want the wire turn the tool_call opened")
+			}
+			tc.assert(t, logOf(t, cs, "c1"), turn)
 		})
 	}
 }
 
-func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
+// A plan frame is one plan entry in the turn it arrived in.
+func TestTranslateACPEvent_PlanIsOneEntry(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -196,13 +275,15 @@ func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
 
-	c, _ := cs.Get(t.Context(), "c1")
-	if len(c.Messages) != 1 {
-		t.Fatalf("messages = %+v", c.Messages)
+	turns, plans := plansOf(t, logOf(t, cs, "c1"))
+	if len(plans) != 1 {
+		t.Fatalf("plan entries = %+v, want one", plans)
 	}
-	m := c.Messages[0]
-	if m.Role != marotte.RoleAssistant || len(m.Plan) != 1 || m.Plan[0].Content != "step 1" {
-		t.Errorf("plan message mismatch: %+v", m)
+	if len(plans[0].Entries) != 1 || plans[0].Entries[0].Content != "step 1" {
+		t.Errorf("plan = %+v, want the frame's one entry", plans[0])
+	}
+	if turn := h.liveTurn("c1"); turn == nil || turns[0] != turn.ID() {
+		t.Errorf("plan landed in turn %q, want the open turn", turns[0])
 	}
 }
 
@@ -295,13 +376,14 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 				c.Name = "bench"
 				return true
 			})
-			// Pre-seed a tool call for tool_call_update to find.
+			// Pre-seed an unsettled call for tool_call_update to fold into; a
+			// terminal update settles it, so the loop's later frames fold nothing.
 			if p.name == "tool_call_update" {
-				buf := h.stageTurnBuffer(b, "bench")
-				buf.Started = true
-				buf.MessageID = "msg-bench"
-				buf.ToolCalls = append(buf.ToolCalls, marotte.ToolCall{ID: "tc-bench-1", Status: marotte.ToolPending})
-				buf.RecordToolStart("tc-bench-1")
+				_, turn := h.stagePromptTurn(b, "bench")
+				call := marotte.EntryToolCall{ID: "tc-bench-1", Status: marotte.ToolPending}
+				if _, err := turn.ToolCall(b.Context(), "", &call); err != nil {
+					b.Fatalf("pre-seed tool_call: %v", err)
+				}
 			}
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -621,16 +703,51 @@ func TestHandleSessionUpdate_StepFrameIsAttributedWithoutAMetaBlock(t *testing.T
 	h, _, _ := newTestHub()
 	defer shutdownHub(t, h)
 	registerParentSession(t, h, chatID, "parent-A")
-	h.translator.RecordStepSession(stepSID, "wf_1", "build")
+	h.translator.RecordStepSession(stepSID, "wf_1", "build", "wf_1/build")
 
 	got, called := captureAttribution(t, h, chatID, stepSID)
 	if !called {
 		t.Fatal("handleSessionUpdate did not invoke the sub-handler (sub-dispatch returned early)")
 	}
-	want := translate.FrameAttribution{Step: true}
+	want := translate.FrameAttribution{SessionID: stepSID, RunID: "wf_1", NodePath: "wf_1/build", Step: true}
 	if got != want {
 		t.Errorf("handleSessionUpdate(step session %q, no _meta.kiro.workflow) attribution = %+v, want %+v",
 			stepSID, got, want)
+	}
+}
+
+// A step's config_option_update reaches the translator WITH its attribution through
+// the real dispatch table: the frame arrives under the launching chat's id, and a
+// wrapper discarding the attribution there is how the step's model became the chat's.
+func TestHandleSessionUpdate_AStepsConfigFrameLeavesTheChatsModelAlone(t *testing.T) {
+	const (
+		chatID  = marotte.ChatID("chat-step")
+		stepSID = "step-session-1"
+	)
+	h, cs, _ := newTestHub()
+	defer shutdownHub(t, h)
+	registerParentSession(t, h, chatID, "parent-A")
+	h.translator.RecordStepSession(stepSID, "wf_1", "build", "wf_1/build")
+	cs.seed(t, chatID, func(c *marotte.Chat) { c.Model = "opus" })
+
+	update := mustJSON(t, map[string]any{
+		"sessionUpdate": string(marotte.ACPUpdateConfigOption),
+		"configOptions": []map[string]any{{
+			"id":           "model",
+			"type":         "select",
+			"currentValue": "fable",
+			"options":      []map[string]any{{"value": "opus", "name": "Opus"}, {"value": "fable", "name": "Fable"}},
+		}},
+	})
+	params := mustJSON(t, map[string]any{"sessionId": stepSID, "update": update})
+	h.handleSessionUpdate(t.Context(), chatID, &marotte.RPCResponse{Params: params})
+
+	c, _ := cs.Get(t.Context(), chatID)
+	if c.Model != "opus" {
+		t.Errorf("after a step's config frame Model = %q, want opus", c.Model)
+	}
+	if !slices.Equal(c.ServedModelIDs, []string{"opus", "fable"}) {
+		t.Errorf("ServedModelIDs = %v, want [opus fable] (the catalog half still applies)", c.ServedModelIDs)
 	}
 }
 
@@ -663,10 +780,9 @@ func dispatchUpdate(t *testing.T, h *Runtime, kind marotte.ACPUpdateKind, extra 
 // kiro-cli 2.16.0: a load of a one-turn session returns 9 frames, 6 of them
 // tagged `_meta.kiro.replay: true`.
 //
-// Ungated, the replayed agent_message_chunk reaches HandleAssistantChunk,
-// which opens a PHANTOM turn: a fresh message id whose message_created and
-// message_chunk events re-stream history to every connected client as though
-// the agent were typing it now.
+// Ungated, the replayed agent_message_chunk reaches HandleAssistantChunk, which
+// opens a PHANTOM turn whose entry frames re-stream history to every connected
+// client as though the agent were typing it now.
 //
 // The nesting is the trap this pins. The flag rides `update._meta.kiro.replay`,
 // NOT `params._meta` — reading it a level up yields false for every frame,

@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // resumeReqOp and forkReqOp are the op-carrying envelopes these tests need: the

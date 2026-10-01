@@ -1,0 +1,56 @@
+{
+  "input_file": "attack-5-checkbox-shaped-detail.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Real task",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "99f8da5828e33a97c60f254acfcb6b5a51f30027020323345d63f0a59948412c",
+      "detail": "- Verify: the row reads `- [x] 1.1 done` after the tick\n- Verify: `[ ]` and `[~]` both render",
+      "children": []
+    },
+    {
+      "id": "L4",
+      "line": 4,
+      "indent": 2,
+      "number": "",
+      "text": "Verify the thing (a checkbox-shaped note, NOT numbered)",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "9d660993ca962a7d10100ef1fd3206cdb32dc3354017aa7d5212c19cc8e37140",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L6",
+      "line": 6,
+      "indent": 0,
+      "number": "2",
+      "text": "2. Second real task",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "f1cd0d7079fe05e131e40dd953c811384eae6460c187b6c5514d0a94e7ab51af",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

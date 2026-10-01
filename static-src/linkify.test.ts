@@ -7,24 +7,31 @@
 // emitted <button class="inline-file-link"> elements — so any change to the
 // real pattern, extension list, or DOM walk is caught.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import fc from "fast-check";
 
-// openFile pulls in the whole editor subsystem and is only invoked on click;
-// stub it so we can both keep the import light and assert the click wiring.
-vi.mock("./editor-openers.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  openFileGitDiff: undefined,
-  openFileDiff: undefined,
-  openFile: vi.fn(),
-}));
-
-import { linkifyPaths } from "./linkify.js";
-import { openFile } from "./editor-openers.js";
+import { linkifyPaths, initLinkifyCallbacks } from "./linkify.js";
 import { FILE_EXTS } from "./file-extensions.js";
+
+// The opener is INJECTED, so the click wiring is asserted against the handler the
+// app supplies rather than through the editor subsystem behind it. That also keeps
+// this graph light: linkify no longer imports `navigate.js`, which is what closed
+// the editor↔markdown ring, so the `editor-openers.js` mock this file used to carry
+// named a module it can no longer reach.
+//
+// Re-injected per test rather than once, and a plain closure rather than `vi.fn()`,
+// because `mockReset: true` resets implementations between tests — the same shape
+// `attachment-pill.test.ts` uses for this exact callback.
+const opened: [string, number | undefined][] = [];
+
+beforeEach(() => {
+  opened.length = 0;
+  initLinkifyCallbacks({
+    open: (path, line) => {
+      opened.push([path, line]);
+    },
+  });
+});
 
 /** Render text into a fresh detached <div> and linkify it. */
 function linkify(text: string): HTMLDivElement {
@@ -135,7 +142,7 @@ describe("linkifyPaths: absolute paths", () => {
   it("clicking an absolute path opens it unchanged", () => {
     const root = linkify("open /workspace/out/shot.png now");
     links(root)[0]!.click();
-    expect(openFile).toHaveBeenCalledWith("/workspace/out/shot.png", undefined);
+    expect(opened).toEqual([["/workspace/out/shot.png", undefined]]);
   });
 });
 
@@ -163,19 +170,54 @@ describe("linkifyPaths: skip zones", () => {
     expect(ls).toHaveLength(1);
     expect(ls[0]!.title).toBe("src/foo.ts");
   });
+
+  it("leaves a path inside an <a> untouched", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `<a href="#">src/foo.ts</a>`;
+    linkifyPaths(root);
+    expect(links(root)).toHaveLength(0);
+  });
+
+  it("leaves a path inside a <button> untouched", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `<button>src/foo.ts</button>`;
+    linkifyPaths(root);
+    expect(links(root)).toHaveLength(0);
+  });
+
+  // The two ROOT cases have a killing mutation the descendant cases above do
+  // not: a rewrite that walks the ancestors STRICTLY ABOVE the root — the
+  // obvious shape of a "the root itself is not tested" change — turns both red,
+  // because the filter tests the text node's immediate parent and for a direct
+  // child of the root that parent IS the root.
+  it("skips a <pre> ROOT, not only a <pre> descendant", () => {
+    const pre = document.createElement("pre");
+    pre.textContent = "src/foo.ts";
+    linkifyPaths(pre);
+    expect(links(pre)).toHaveLength(0);
+    expect(pre.textContent).toBe("src/foo.ts");
+  });
+
+  it("skips a <code> ROOT, not only a <code> descendant", () => {
+    const code = document.createElement("code");
+    code.textContent = "src/foo.ts";
+    linkifyPaths(code);
+    expect(links(code)).toHaveLength(0);
+    expect(code.textContent).toBe("src/foo.ts");
+  });
 });
 
 describe("linkifyPaths: click wiring", () => {
   it("clicking a link opens the file at its line", () => {
     const root = linkify("open src/app.ts:42 now");
     links(root)[0]!.click();
-    expect(openFile).toHaveBeenCalledWith("src/app.ts", 42);
+    expect(opened).toEqual([["src/app.ts", 42]]);
   });
 
   it("clicking a path without a line opens with no line argument", () => {
     const root = linkify("open src/app.ts now");
     links(root)[0]!.click();
-    expect(openFile).toHaveBeenCalledWith("src/app.ts", undefined);
+    expect(opened).toEqual([["src/app.ts", undefined]]);
   });
 });
 

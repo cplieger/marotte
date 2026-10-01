@@ -24,9 +24,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // supervisedConfigDir writes doc as the settings file in a fresh temp dir. An

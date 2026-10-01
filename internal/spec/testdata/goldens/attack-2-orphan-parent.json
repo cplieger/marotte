@@ -1,0 +1,83 @@
+{
+  "input_file": "attack-2-orphan-parent.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Present parent",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "0379232224036d8205fa369dc6adbd683b0289a3a855fb5ab1556b26e93f718b",
+      "detail": "",
+      "children": [
+        {
+          "id": "L2",
+          "line": 2,
+          "indent": 2,
+          "number": "1.1",
+          "text": "1.1 A child",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "23a99e1d458b1357a4bf6df3d5fd8fc2968265474698de08193b94fc444eccc6",
+          "detail": "",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 2,
+      "number": "2.1",
+      "text": "2.1 An orphan",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "c82aa2780366b6ce4005ad3ae0910e0f4ac120be5181290e653278de808b368a",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L4",
+      "line": 4,
+      "indent": 2,
+      "number": "2.2",
+      "text": "2.2 Another orphan",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "4a926d1b72fdc00173030507e134ac999082c5030bc2eef19579f30a42959f83",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 2,
+      "number": "3.1.1",
+      "text": "3.1.1 A deep orphan",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "a7b01a944117eee452cf048b466c4f0a0a61312bd3e62f32091fbb1af2412afa",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 4,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 4
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

@@ -6,17 +6,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fitTabBar } from "./tab-bar-fit.js";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
-const ICONS = "tab-bar-icons";
+const ICONS = "seg-bar-icons";
 
 function buildBar(width: string, labels: readonly string[]): HTMLElement {
   const host = document.createElement("div");
   host.style.width = width;
   const bar = document.createElement("nav");
-  bar.className = "settings-tab-bar";
+  bar.className = "seg-bar";
   bar.style.display = "flex";
   for (const label of labels) {
     const btn = document.createElement("button");
-    btn.className = "settings-tab";
+    btn.className = "seg";
     // The production rules that make overflow show as truncation rather
     // than wrapping or growth; the stylesheet is not loaded in the runner,
     // so the load-bearing declarations are inlined.
@@ -25,7 +25,7 @@ function buildBar(width: string, labels: readonly string[]): HTMLElement {
     btn.style.overflow = "hidden";
     btn.style.whiteSpace = "nowrap";
     const span = document.createElement("span");
-    span.className = "settings-tab-label";
+    span.className = "seg-label";
     span.textContent = label;
     btn.appendChild(span);
     bar.appendChild(btn);
@@ -74,7 +74,7 @@ describe("fitTabBar", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
     // mode first. Simulate the CSS effect: hide labels whenever the class is
     // present, via a scoped style element.
     const style = document.createElement("style");
-    style.textContent = `.${ICONS} .settings-tab-label { display: none; }`;
+    style.textContent = `.${ICONS} .seg-label { display: none; }`;
     document.head.appendChild(style);
     try {
       const bar = buildBar("120px", ["General", "Tools", "Permissions"]);
@@ -107,7 +107,7 @@ describe("fitTabBar", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, () => {
     // already in icons mode measures its hidden labels (zero width, no
     // overflow) and falls back to labels at a width where they cannot fit.
     const style = document.createElement("style");
-    style.textContent = `.${ICONS} .settings-tab-label { display: none; }`;
+    style.textContent = `.${ICONS} .seg-label { display: none; }`;
     document.head.appendChild(style);
     try {
       const bar = buildBar("120px", ["General", "Tools", "Permissions"]);

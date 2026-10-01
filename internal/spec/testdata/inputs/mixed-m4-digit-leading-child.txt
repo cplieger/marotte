@@ -1,0 +1,6 @@
+
+- [ ] Set up the harness
+  - [ ] wire the fixture
+  - [ ] 12 label pairs exceed the budget, trim them
+- [ ] Second root
+  - [ ] child C

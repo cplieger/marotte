@@ -53,8 +53,8 @@ func TestSetAttachments(t *testing.T) {
 			t.Fatal("chat vanished")
 		}
 		c.UpdatedAt = aged
-		if err := s.writeChat("c1", c); err != nil {
-			t.Fatalf("writeChat: %v", err)
+		if err := s.writeHeader(t.Context(), "c1", c); err != nil {
+			t.Fatalf("writeHeader: %v", err)
 		}
 
 		if _, err := s.SetAttachments(t.Context(), "c1", []string{"docs/spec.pdf"}); err != nil {

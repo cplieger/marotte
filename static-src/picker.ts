@@ -12,7 +12,7 @@
 //
 // The condition is "this chat has nothing in it AND nothing is on its way":
 // `isEmptyChat` alone would hold the picker up for the round trip between Send
-// and the server's `message_appended` echo, and `thinking` is set synchronously
+// and the server's `turn_opened` echo, and `thinking` is set synchronously
 // by the send action, so it is the signal that closes that window without any
 // optimistic rendering.
 //

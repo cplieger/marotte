@@ -83,21 +83,25 @@ const m = vi.hoisted(() => ({
    *  was given. Together they are the no-orphan-host rule's observable. */
   projected: [] as string[],
   hosted: [] as HTMLElement[],
-  /** Which ROUTE each painted path came from (`RunStepPaint.source.kind`). The
-   *  slice-wins rule's whole observable: both routes render identical blocks into
-   *  the same host, so the source is the only thing that separates them. */
-  sources: [] as string[],
+  /** The LAST paint per node path: how many turns were painted for it and each
+   *  turn's `live` flag (its own `turn_close` absence). Per path rather than a flat
+   *  list, because the module's one view effect legitimately paints the PREVIOUS
+   *  case's plan on its first pass of the next one, and a cumulative list would carry
+   *  that. */
+  paint: new Map<string, { turns: number; live: boolean[] }>(),
   /** `<kind>:<ref>` for every open tab, as `hasTab` sees it. */
   tabsOpen: new Set<string>(),
-  /** The KAS-route read this client holds per node path, and the slice it projects.
-   *  Two maps rather than one, because they are two different answers: a `ready`
-   *  read with no blocks is a real state (`stepRead` returns it, `stepSliceFor`
-   *  withholds it) and it is exactly the case one note arm exists for. */
+  /** The step read's VERDICT per node path, which is all a read carries now: its
+   *  entries are adopted into the run store, so there is no second copy of the
+   *  content for this suite to hold. A `ready` verdict with no turn in the log is a
+   *  real state and is exactly the case one note arm exists for. */
   reads: new Map<string, { state: string }>(),
-  kasSlices: new Map<string, { blocks: unknown[]; toolCalls: unknown[] }>(),
-  /** Every path a read was ARMED for, in order. `armStepRead`'s four gates are all
-   *  about what must NOT reach here, so the observable is this list staying empty. */
+  /** Every path a read was ARMED for, in order. `armStepRead`'s gates are all about
+   *  what must NOT reach here, so the observable is this list staying empty. */
   requested: [] as string[],
+  /** Every path a settled-looking turn was RE-READ for. The second arm: a turn with
+   *  no `turn_close` is a client that missed the close, and re-reading is the repair. */
+  reread: [] as string[],
   /** How many times the page dropped every read. */
   cleared: { count: 0 },
 }));
@@ -226,22 +230,35 @@ vi.mock("./actions/runs.js", () => {
 // the chat, slice it, load lazily, hand out the right host per path); the render
 // lifecycle is `run-chat-steps.test.ts`'s subject.
 vi.mock("./run-chat-steps.js", () => ({
-  createRunChatStepStream: vi.fn((hostFor: (path: string) => HTMLElement) => ({
-    // One PAINT per path now, not one slice: the stream is fed the blocks AND the
-    // route they came from, because a chat step's blocks carry live per-block
-    // signals and a delegate deep link while a KAS read's carry neither.
+  createRunStepStream: vi.fn((hostFor: (path: string) => HTMLElement) => ({
+    // A LIST of paints per path, not one: a healed step re-opens the same node path
+    // as a NEW turn, so a run's log carries one closed turn per attempt and the pane
+    // renders every one of them. Each paint is the projected TURN plus whether more
+    // may still arrive in it (`RunStepPaint`), which is the whole shape now that
+    // there is one source rather than two routes to tell apart.
     apply: (
-      paints: ReadonlyMap<string, { slice: { blocks: unknown[] }; source: { kind: string } }>,
+      paints: ReadonlyMap<
+        string,
+        readonly { turn: { id: string; body: unknown[] }; live: boolean }[]
+      >,
     ) => {
-      for (const [path, paint] of paints) {
+      for (const [path, list] of paints) {
         m.projected.push(path);
-        m.sources.push(paint.source.kind);
+        m.paint.set(path, {
+          turns: list.length,
+          live: list.map((p) => p.live),
+        });
         const host = hostFor(path);
         m.hosted.push(host);
         const marker = document.createElement("p");
         marker.className = "step-marker";
-        marker.textContent = `${path}:${String(paint.slice.blocks.length)}`;
-        host.appendChild(marker);
+        // `turns:bodyEntries` — the number of TURNS painted for this path and the
+        // entries under them. A healed step is several turns at one path, so both
+        // halves are worth reading.
+        marker.textContent = `${path}:${String(list.length)}:${String(
+          list.reduce((n, p) => n + p.turn.body.length, 0),
+        )}`;
+        host.replaceChildren(marker);
       }
     },
     dispose: vi.fn(),
@@ -263,9 +280,11 @@ vi.mock("./run-step-transcript.js", async () => {
   return {
     stepTranscriptVersion: signal(0),
     stepRead: vi.fn((_workflowID: string, nodePath: string) => m.reads.get(nodePath)),
-    stepSliceFor: vi.fn((_workflowID: string, nodePath: string) => m.kasSlices.get(nodePath)),
     requestStepTranscript: vi.fn((_workflowID: string, nodePath: string) => {
       m.requested.push(nodePath);
+    }),
+    rereadStepTranscript: vi.fn((_workflowID: string, nodePath: string) => {
+      m.reread.push(nodePath);
     }),
     clearStepTranscripts: vi.fn(() => {
       m.cleared.count += 1;
@@ -277,8 +296,7 @@ vi.mock("./run-step-transcript.js", async () => {
 // (registered by the composition root), so it is the seam this suite paints
 // through — a door no longer carries an `onShow` of its own.
 import { openRunTab } from "./tabs.js";
-import { openRunView, refreshRun, runTabProjectsChat, showRun } from "./run-view.js";
-import { refreshChatView } from "./chat.js";
+import { openRunView, refreshRun, showRun } from "./run-view.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
 // The MOCK's signal, which is the one the view effect subscribes to. Imported so a
 // case can drive the "a read resolved" half of `fetchStep`'s `finally` directly.
@@ -286,14 +304,16 @@ import { stepTranscriptVersion } from "./run-step-transcript.js";
 // The REAL invalidation (the run-store mock overrides only its launching-chat
 // memory), so a case can drive a second fetch of the SAME run: that is how a step
 // settling under the reader's cursor reaches the page in production.
-import { invalidateRun, invalidateRunControls } from "./run-store.js";
-import { appendChunk, setSessions } from "./store.js";
-import { clearAllBlockSigs, ensureBlockTextSig } from "./store-signals.js";
+// The RUN's own log, which is where a step's entries live now: `appendRunEntry` and
+// `openRunTurn` are the store operations `handlers/run.ts` calls for the run-scoped
+// entry events, so a case that wants a step's transcript writes it the way the wire
+// would rather than reaching past the store.
+import { appendRunEntry, invalidateRun, invalidateRunControls, openRunTurn } from "./run-store.js";
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the
 // PARSER rather than a literal is what makes the fragment case below cover the
 // whole URL → focus chain instead of just the opener's fourth argument.
 import { parseRoute } from "./route-path.js";
-import type { Message, Session } from "./types.js";
+import type { Entry } from "./types.js";
 
 /** The row a status used to imply, now stated as a server answer.
  *
@@ -392,41 +412,37 @@ async function paint(
   return { labels, refusals, tab, body };
 }
 
-/** A resident chat window, so the slice has something to project out of. */
-function chatSession(id: string, messages: Message[], thinking = false): Session {
-  return {
-    id,
-    name: "the conversation",
-    model: "claude-opus",
-    acp_session_id: "",
-    current_mode_id: "",
-    usage: {
-      context_pct: 0,
-      context_size: 0,
-      credits: 0,
-      turn_count: 0,
-      last_turn_ms: 0,
-      has_real_data: false,
-    },
-    message_count: messages.length,
-    messages,
-    has_more: false,
-    thinking,
-    working_label: "Thinking",
-  };
-}
-
-/** One assistant message carrying a step's block, stamped the way the server
- *  stamps it (`wf:<workflowId>:<nodePath>`). */
-function stepMessage(id: string, nodePath: string, text: string, workflowID = "wf_1"): Message {
-  return {
-    id,
-    role: "assistant",
+/** One step turn in a RUN's own log, written the way the run-scoped entry events
+ *  write it: a `turn_open` carrying the step's `node_path` (the only join available,
+ *  since `TurnState` carries no path of its own), one `text` entry, and a
+ *  `turn_close` unless the turn is still open.
+ *
+ *  The turn id carries the run and the path so two runs of one recipe cannot collide
+ *  on a shared node path, which is the ordinary case rather than an edge. */
+function logStep(
+  workflowID: string,
+  nodePath: string,
+  text: string,
+  opts: { live?: boolean; attempt?: number } = {},
+): void {
+  const turn = `t-${workflowID}-${nodePath}-${String(opts.attempt ?? 1)}`;
+  const entry = (seq: number, kind: Entry["kind"], payload: unknown): Entry => ({
+    id: `${turn}-${String(seq)}`,
+    turn,
+    lane: "",
+    kind,
+    payload,
+    seq,
     ts: 0,
-    content: "",
-    blocks: [{ type: "text", text, agent_subtask_id: `wf:${workflowID}:${nodePath}` }],
-    tool_calls: [],
-  };
+  });
+  openRunTurn(
+    workflowID,
+    entry(0, "turn_open", { source: "workflow_step", node_path: nodePath, n: 1 }),
+  );
+  appendRunEntry(workflowID, entry(1, "text", { text }));
+  if (opts.live !== true) {
+    appendRunEntry(workflowID, entry(2, "turn_close", { outcome: "completed" }));
+  }
 }
 
 /** Let a clamp's ResizeObserver deliver its post-layout verdict. A callback is
@@ -464,20 +480,18 @@ beforeEach(() => {
   m.tabbed.length = 0;
   m.projected.length = 0;
   m.hosted.length = 0;
-  m.sources.length = 0;
+  m.paint.clear();
   m.parentChat.current = "";
   m.runChat.current = "";
   m.tabsOpen.clear();
   m.reads.clear();
-  m.kasSlices.clear();
   m.requested.length = 0;
+  m.reread.length = 0;
   m.cleared.count = 0;
-  // The REAL chat store is linked here (only api-client, tabs, decision-dock,
-  // run-chat-steps and actions/runs are mocked), so the launching chat's window is
-  // real state that has to be cleared between cases. The block signals go with it:
-  // one left mounted silences `appendChunk`'s signal-absent arm for the next case.
-  setSessions([]);
-  clearAllBlockSigs();
+  // The chat STORE is no longer part of this suite's state: a step's entries are the
+  // RUN's, in `runs/<workflowId>/entries.jsonl`, so nothing here writes a chat window
+  // and there is none to clear. Each case that wants a step transcript writes the
+  // run's own log under its own run id instead (`logStep`).
   m.controls.current = undefined;
   vi.mocked(apiGetOrError).mockImplementation(() =>
     Promise.resolve(
@@ -1584,170 +1598,102 @@ describe("run view empty step notes", () => {
     expect(text).not.toContain("no longer stored");
   });
 
-  // The WAITING string is now shared by both routes, which it was not before.
-  it("says a live parentless step has not spoken yet", async () => {
-    expect(await note("running")).toContain("Waiting for this step");
+  // IN FLIGHT is answered IN FULL and identically for both run populations, which is
+  // the collapse itself: a live step's entries arrive on the RUN's own log, so there
+  // is no residency question left to key a second sentence on and nothing about this
+  // pane is route-dependent.
+  it("says a live step has not spoken yet, whoever launched it", async () => {
+    for (const parentless of [true, false]) {
+      expect(await note("running", { parentless })).toContain("Waiting for this step");
+    }
   });
 
-  it("shares the waiting string with a live chat-parented step whose chat is here", async () => {
-    setSessions([chatSession("c-1", [])]);
-    m.parentChat.current = "c-1";
-    expect(await note("running", { parentless: false })).toContain("Waiting for this step");
-  });
-
-  // ...and withholds it when this client holds nothing for that chat, because there it
-  // would promise output nothing can deliver. What it must NOT fall through to is the
-  // loading sentence: `armStepRead`'s third gate refuses a live step, so no read
-  // exists and none is armed until the step settles, and claiming a load would be the
-  // same lie the residency gate was added for. The arm states that bound instead, and
-  // the door beside it offers the conversation.
-  it("names the bound, not a load, for a live chat-parented step with no resident chat", async () => {
-    const text = await note("running", { parentless: false });
-    expect(text).not.toContain("Waiting");
-    expect(text).not.toContain("Loading");
-    expect(text).toContain("cannot be read here until it finishes");
-  });
-
-  // The same arm for the other IN-FLIGHT state, because `inFlight` spans three: a
+  // The same answer for the other IN-FLIGHT state, because `inFlight` spans three: a
   // PAUSED step is not producing output either, and the answer may not read as a
   // verdict about its transcript.
-  it("names the bound for a paused chat-parented step with no resident chat", async () => {
-    const text = await note("running", { parentless: false, root: oneLeaf("paused") });
-    expect(text).toContain("cannot be read here until it finishes");
+  it("says the same for a paused step, never a verdict about its transcript", async () => {
+    const text = await note("running", { root: oneLeaf("paused") });
+    expect(text).toContain("Waiting for this step");
     expect(text).not.toContain("Loading");
+    expect(text).not.toContain("no longer stored");
   });
 
-  // THE FOURTH ARM, on the route that made the missing one visible: a `pending` leaf
-  // of a chat-parented run reached state 3's sentence, so the pane asserted the step
-  // ran and that its transcript is in the conversation, two rows under its own state
-  // word reading "not started". The launching chat is resident here, so the waiting
-  // string is available and must not be taken either: this step is not working, it
-  // has not begun.
-  it("says a pending chat-parented step has not started, never that it ran", async () => {
-    setSessions([chatSession("c-1", [])]);
-    m.parentChat.current = "c-1";
-    const text = await note("running", { parentless: false, root: oneLeaf("pending") });
+  // The FIRST question, asked ahead of every verdict because no read can change its
+  // answer: a `pending` step opened no turn, so the pane may not claim it is working
+  // and may not claim a load is in flight either. It has not begun.
+  it("says a pending step has not started, never that it ran", async () => {
+    const text = await note("running", { root: oneLeaf("pending") });
     expect(text).toContain("has not started");
-    expect(text).not.toContain("ran inside");
-    expect(text).not.toContain("Nothing from it is loaded here");
     expect(text).not.toContain("Waiting");
+    expect(text).not.toContain("Loading");
+    // And no capture hint: that sentence belongs to a step whose transcript is gone,
+    // not to one that never produced one.
+    expect(text).not.toContain("captureOutput");
   });
 
   // The other not-run state, and the one no wording can promise a future for: a
   // branch that did not run never will.
-  it("says a skipped chat-parented step produced nothing, never that it ran", async () => {
-    setSessions([chatSession("c-1", [])]);
-    m.parentChat.current = "c-1";
-    const text = await note("completed", { parentless: false, root: oneLeaf("skipped") });
+  it("says a skipped step produced nothing, never that it ran", async () => {
+    const text = await note("completed", { root: oneLeaf("skipped") });
     expect(text).toContain("was skipped");
-    expect(text).not.toContain("ran inside");
     expect(text).not.toContain("yet");
-  });
-
-  // The arm is ROUTE-INDEPENDENT, which is the shape of the fix rather than a bonus.
-  // State 2's sentence is about a step whose output was streamed and dropped — "once
-  // the step has finished", and a capture it would have declared — so it answers for
-  // a parentless leaf that has not run no better than state 3 did.
-  it("answers a parentless step that has not run without the capture hint", async () => {
-    const text = await note("running", { root: oneLeaf("pending") });
-    expect(text).toContain("has not started");
     expect(text).not.toContain("captureOutput");
-    expect(text).not.toContain("never stored");
   });
 });
 
-// STATE 1, and the wiring behind it: resolve the launching chat, slice its messages
-// by this run's step ids, and hand each step's slice the host the detail pane minted
-// for that node path.
-describe("run view chat-route steps", () => {
-  const twoSteps = {
+// ---------------------------------------------------------------------------
+// A STEP'S TRANSCRIPT, FROM THE RUN'S OWN LOG. ONE source, so there is no route to
+// choose and no preference rule to state: a step's entries are appended to
+// `runs/<workflowId>/entries.jsonl` by the same store code that writes a chat's log,
+// for a chat-parented and a parentless run alike, and the step GET ADOPTS into that
+// same store rather than holding a second copy.
+//
+// TWO groups of cases replaced by these: the launching chat's `wf:` lane as a source
+// (a chat's log cannot hold a step's entries at all now) and the KAS read as a SECOND
+// source with a slice-wins rule (a read carries a VERDICT and nothing else). What the
+// pane still owns is the WIRING — project every leaf the log holds a turn for, hand
+// each one the host the detail pane minted for its path, load the renderer lazily —
+// and WHEN a read is armed.
+//
+// Every case here shares the DEFAULT run id and separates itself by NODE PATH, and
+// that is a property of the module rather than a convenience: `installViewEffect`
+// installs ONE effect for the module's life and reads `shownRun` as a plain variable,
+// so the effect re-runs only when a signal it read on its LAST pass changes. A case
+// naming its own run id paints once and never again, because the fetch writes that
+// run's cell and the effect is not subscribed to it. Sharing the run is safe because
+// the pane drops a turn whose path this plan does not name, which is the rule the
+// third case pins — so an earlier case's turn cannot reach a later case's pane.
+// ---------------------------------------------------------------------------
+
+describe("run view step transcripts", () => {
+  /** A two-leaf plan naming this case's OWN leaves. TWO because the page hides its
+   *  tree pane for a single row, and because the second one is the unstarted step the
+   *  no-orphan-host rule is measured against. */
+  const steps = (first: string, second: string): unknown => ({
     nodeId: "wf_1",
     type: "sequence",
     status: "running",
     children: [
-      { nodeId: "coder", type: "step", status: "running", children: [] },
-      { nodeId: "verify", type: "step", status: "pending", children: [] },
+      { nodeId: first, type: "step", status: "running", children: [] },
+      { nodeId: second, type: "step", status: "pending", children: [] },
     ],
-  };
+  });
 
-  /** Let the lazy `import("./run-chat-steps.js")` resolve and its follow-up paint
-   *  run. A module load is not a microtask chain, so this POLLS rather than draining
-   *  a fixed count — a fixed count is what makes such a case pass on one machine and
-   *  hang on another. */
-  async function loaded(): Promise<void> {
-    for (let i = 0; i < 200 && m.projected.length === 0; i++) {
+  /** Let the lazy `import("./run-chat-steps.js")` resolve and this case's OWN path
+   *  reach the pane. A module load is not a microtask chain, so this POLLS rather than
+   *  draining a fixed count — and it polls for the PATH rather than for any paint at
+   *  all, because the module's one view effect legitimately paints the previous case's
+   *  plan first, which would satisfy a count and prove nothing about this one. */
+  async function painted(path: string): Promise<void> {
+    for (let i = 0; i < 200 && !m.paint.has(path); i++) {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 1);
       });
     }
   }
 
-  it("renders the launching chat's blocks in the step's own body", async () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiling")])]);
-    m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", {
-      parentless: false,
-      root: twoSteps,
-    });
-    await loaded();
-
-    const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/coder"]');
-    expect(host?.childElementCount).toBeGreaterThan(0);
-    expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1/coder:1");
-    // And the note is retired for the node on screen, because the host has content:
-    // no copy string can claim anything about a transcript that is rendered.
-    expect(body.querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
-  });
-
-  // The no-orphan-host rule: a step with no slice gets no host minted for it, or the
-  // pane would carry an empty region per unstarted step.
-  it("mints a host only for a step the slice has content for", async () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiling")])]);
-    m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", {
-      parentless: false,
-      root: twoSteps,
-    });
-    await loaded();
-
-    expect(m.projected).toEqual(["wf_1/coder"]);
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/verify"]')).toBeNull();
-  });
-
-  // Another run's step at the same node path must not reach this pane. Two runs of
-  // one recipe share every path, so this is the ordinary case rather than an edge.
-  it("ignores another run's step blocks", async () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "theirs", "wf_2")])]);
-    m.parentChat.current = "c-1";
-    await paint(openRunView, "running", { parentless: false, root: twoSteps });
-    // A fixed short settle rather than the poll above: nothing will ever arrive here,
-    // so a poll would spend its whole budget proving it.
-    for (let i = 0; i < 20; i++) {
-      await Promise.resolve();
-    }
-    expect(m.projected).toEqual([]);
-  });
-
-  // The RUN store knows nothing about a finished run's chat (its lease is released),
-  // so the tab's own persisted parent is the only answer left — and this is the
-  // post-reload population the whole item exists for.
-  it("finds the launching chat through the run tab's own parent", async () => {
-    setSessions([chatSession("c-9", [stepMessage("m1", "wf_1/coder", "compiling")])]);
-    m.parentChat.current = "c-9";
-    await paint(openRunView, "completed", {
-      parentless: false,
-      root: {
-        ...twoSteps,
-        status: "completed",
-        children: [{ nodeId: "coder", type: "step", status: "completed", children: [] }],
-      },
-    });
-    await loaded();
-    expect(m.projected).toEqual(["wf_1/coder"]);
-  });
-
-  /** Poll until the pane has re-projected. A store delta reaches this effect through
-   *  a `queueMicrotask` coalescer, so the wait is for a real flush rather than a
+  /** Poll until the pane has re-projected. A store append reaches this effect through
+   *  the run log's own version signal, so the wait is for a real flush rather than a
    *  fixed number of drained microtasks. */
   async function reprojected(was: number): Promise<void> {
     for (let i = 0; i < 200 && m.projected.length === was; i++) {
@@ -1757,71 +1703,159 @@ describe("run view chat-route steps", () => {
     }
   }
 
-  // A step's prose GROWS after the first paint, and the pane has to follow it or
-  // state 1 is only correct for content that arrived before the tab was opened.
-  // Nothing here mounts a block signal, so this is the version-bump route on its
-  // own: `appendChunk`'s signal-absent arm schedules the launching chat's version,
-  // and `installViewEffect`'s read of it is what re-runs the projection.
-  it("re-projects a step when a delta grows its block", async () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compil")])]);
-    m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", {
-      parentless: false,
-      root: twoSteps,
-    });
-    await loaded();
-    const first = m.projected.length;
+  it("renders a step's own entries in its own body", async () => {
+    logStep("wf_1", "wf_1/build", "compiling");
+    const { body } = await paint(openRunView, "running", { root: steps("build", "verify") });
+    await painted("wf_1/build");
 
-    appendChunk("c-1", "m1", "ing", false, 0, "wf:wf_1:wf_1/coder");
-    await reprojected(first);
-
-    expect(m.projected.length).toBeGreaterThan(first);
-    const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/coder"]');
-    expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1/coder:1");
+    const host = body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/build"]');
+    expect(host?.childElementCount).toBeGreaterThan(0);
+    // One turn, two body entries (the text and the close). The `turn_open` is the
+    // turn's identity rather than a row, which is why it is not among them.
+    expect(host?.querySelector(".step-marker")?.textContent).toBe("wf_1/build:1:2");
+    // And the note is retired for the node on screen, because the host has content:
+    // no copy string may claim anything about a transcript that is rendered.
+    expect(body.querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
   });
 
-  // The same delta with the TRANSCRIPT also holding that block, which is the
-  // ordinary case: `appendChunk` takes its mounted-block arm instead, writing the
-  // per-block signal `subscribeToDeltas` reads and coalescing a version bump behind
-  // it. Either route has to reach the pane, so the outcome is the same assertion.
-  it("re-projects a step whose block the transcript has mounted too", async () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compil")])]);
-    m.parentChat.current = "c-1";
-    ensureBlockTextSig("m1", 0, "compil");
-    const { body } = await paint(openRunView, "running", {
-      parentless: false,
-      root: twoSteps,
+  // The no-orphan-host rule: a step the log holds no turn for gets no host minted for
+  // it, or the pane would carry an empty region per unstarted step.
+  it("mints a host only for a step the log holds a turn for", async () => {
+    logStep("wf_1", "wf_1/lint", "linting");
+    const { body } = await paint(openRunView, "running", { root: steps("lint", "unstarted") });
+    await painted("wf_1/lint");
+
+    expect(m.paint.has("wf_1/lint")).toBe(true);
+    expect(m.paint.has("wf_1/unstarted")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1/unstarted"]')).toBeNull();
+  });
+
+  // A turn whose path names no node of THIS plan is dropped, so no orphan host is
+  // minted for it. Two runs of one recipe share every path, so a log carrying a path
+  // this plan does not have is the ordinary case rather than an edge.
+  it("drops a turn whose node path this plan does not name", async () => {
+    logStep("wf_1", "wf_1/mine", "mine");
+    logStep("wf_1", "wf_1/absent", "not in this plan");
+    const { body } = await paint(openRunView, "running", { root: steps("mine", "other") });
+    await painted("wf_1/mine");
+
+    expect(m.paint.has("wf_1/mine")).toBe(true);
+    expect(m.paint.has("wf_1/absent")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1/absent"]')).toBeNull();
+  });
+
+  // A CONTAINER hosts nothing (`transcript !== true`), so it is out by construction
+  // rather than by a filter — and a host minted for one would be a region the pane
+  // can never fill.
+  it("mints no host for a container", async () => {
+    logStep("wf_1", "wf_1/loop", "container work");
+    logStep("wf_1", "wf_1/loop/inner", "leaf work");
+    const { body } = await paint(openRunView, "completed", {
+      root: {
+        nodeId: "wf_1",
+        type: "sequence",
+        status: "completed",
+        children: [
+          {
+            nodeId: "loop",
+            type: "repeat",
+            status: "completed",
+            children: [{ nodeId: "inner", type: "step", status: "completed", children: [] }],
+          },
+        ],
+      },
     });
-    await loaded();
+    await painted("wf_1/loop/inner");
+
+    expect(m.paint.has("wf_1/loop/inner")).toBe(true);
+    expect(m.paint.has("wf_1/loop")).toBe(false);
+    expect(body.querySelector('.ev-d-body[data-path="wf_1/loop"]')).toBeNull();
+  });
+
+  // SEVERAL turns at one path is the normal answer for a healed step rather than an
+  // edge case: a resume after a restart re-opens the same path as a NEW turn, so the
+  // log carries one closed turn per attempt and the pane renders every one.
+  it("paints every attempt of a healed step, not just the newest", async () => {
+    logStep("wf_1", "wf_1/heal", "first attempt", { attempt: 1 });
+    logStep("wf_1", "wf_1/heal", "second attempt", { attempt: 2 });
+    const { body } = await paint(openRunView, "running", { root: steps("heal", "after") });
+    await painted("wf_1/heal");
+
+    expect(m.paint.get("wf_1/heal")?.turns).toBe(2);
+    expect(
+      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/heal"] .step-marker')
+        ?.textContent,
+    ).toBe("wf_1/heal:2:4");
+  });
+
+  // `live` is each turn's OWN `turn_close` absence and never the run's status, so one
+  // node's caret says nothing about its siblings': a `parallel` node holds several
+  // open turns in one log, and a settled step inside a running run is settled.
+  it("marks a turn live from its own close, not from the run's status", async () => {
+    logStep("wf_1", "wf_1/open", "still going", { live: true });
+    await paint(openRunView, "running", { root: steps("open", "after") });
+    await painted("wf_1/open");
+    expect(m.paint.get("wf_1/open")?.live).toEqual([true]);
+
+    // The SAME running run, with a step whose own turn is closed: `live` follows the
+    // turn's `turn_close` and not the run's status, which is what makes a settled step
+    // inside a running run render settled.
+    m.paint.clear();
+    m.projected.length = 0;
+    logStep("wf_1", "wf_1/closed", "finished");
+    await paint(openRunView, "running", { root: steps("closed", "after") });
+    await painted("wf_1/closed");
+    expect(m.paint.get("wf_1/closed")?.live).toEqual([false]);
+  });
+
+  // A step's prose GROWS after the first paint, and the pane has to follow it or the
+  // transcript is only correct for entries that arrived before the tab was opened.
+  // The run log's own version signal is what `installViewEffect` reads, so an append
+  // is the whole trigger.
+  it("re-projects a step when an entry lands in its turn", async () => {
+    logStep("wf_1", "wf_1/grow", "compiling", { live: true });
+    const { body } = await paint(openRunView, "running", { root: steps("grow", "after") });
+    await painted("wf_1/grow");
     const first = m.projected.length;
 
-    appendChunk("c-1", "m1", "ing", false, 0, "wf:wf_1:wf_1/coder");
+    appendRunEntry("wf_1", {
+      id: "t-wf_1-wf_1/grow-1-2",
+      turn: "t-wf_1-wf_1/grow-1",
+      lane: "",
+      kind: "text",
+      payload: { text: "linking" },
+      seq: 2,
+      ts: 0,
+    });
     await reprojected(first);
 
     expect(m.projected.length).toBeGreaterThan(first);
     expect(
-      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/coder"] .step-marker')
+      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/grow"] .step-marker')
         ?.textContent,
-    ).toBe("wf_1/coder:1");
+    ).toBe("wf_1/grow:1:2");
   });
 });
 
 // ---------------------------------------------------------------------------
-// THE KAS ROUTE: `GET /api/runs/{id}/steps/{path...}`, the third and last way a step's
-// transcript reaches this pane, and the one that works whatever happened before — it
-// does not care which route launched the run or what window this client holds.
-//
-// Two halves, and they are separate subjects: WHEN a read is armed (four gates, all
-// about what must not reach the endpoint) and WHICH route paints when both have
-// content (the chat slice wins).
+// THE STEP READ: `GET /api/runs/{id}/steps/{path...}`, the fallback for a step whose
+// turn the run's log does not hold — a step that opened and closed entirely inside a
+// connection gap, or a client that missed its close. It ADOPTS into the same log, so
+// what this pane owns is WHEN it is armed and WHICH sentence each verdict produces,
+// never a second copy of the content.
 // ---------------------------------------------------------------------------
 
-describe("run view KAS-route step reads", () => {
-  const oneStep = (status: string): unknown => ({
+describe("run view step reads", () => {
+  const oneStep = (status: string): unknown => oneNamedStep("coder", status);
+
+  /** One leaf under the run's own root, named by the case so a log written for one
+   *  case cannot reach another's pane (the transcripts group above states why every
+   *  case shares the run id). */
+  const oneNamedStep = (nodeId: string, status: string): unknown => ({
     nodeId: "wf_1",
     type: "sequence",
     status,
-    children: [{ nodeId: "coder", type: "step", status, children: [] }],
+    children: [{ nodeId, type: "step", status, children: [] }],
   });
 
   /** A two-leaf plan: `first` is the step the reader watches, `second` the one that
@@ -1839,30 +1873,18 @@ describe("run view KAS-route step reads", () => {
     ],
   });
 
-  /** Let the lazy `import("./run-chat-steps.js")` resolve. Same poll as the chat
-   *  route's, because the KAS route feeds the same stream. */
-  async function loaded(): Promise<void> {
-    for (let i = 0; i < 200 && m.projected.length === 0; i++) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 1);
-      });
-    }
-  }
-
-  /** A KAS read holding one block, as `stepSliceFor` projects it. */
-  function kasSlice(): { blocks: unknown[]; toolCalls: unknown[] } {
-    return { blocks: [{ type: "text", text: "from the endpoint" }], toolCalls: [] };
-  }
-
-  // The ARM, and the case every gate below is measured against: a settled leaf whose
-  // slice is empty is exactly what the read exists for.
-  it("arms a read for a settled step with no chat slice", async () => {
+  // THE ARM, and the case every gate below is measured against: a settled leaf the
+  // log holds NO turn for is exactly what the read exists for. It is also where a
+  // hole recorded for a turn this client never SAW converges, since such an id
+  // belongs to no `TurnState` and can be attributed to no node path.
+  it("arms a read for a settled step with no turn in the log", async () => {
     await paint(openRunView, "completed", { root: oneStep("completed") });
     expect(m.requested).toEqual(["wf_1/coder"]);
+    expect(m.reread).toEqual([]);
   });
 
-  // GATE 2. A step with no session has nothing to load, so the round trip would be
-  // spent being told what the note already answers locally.
+  // GATE 1. A step with no execution behind it has nothing to load, so the round trip
+  // would be spent being told what the note already answers locally.
   it("arms no read for a step that never ran", async () => {
     for (const status of ["pending", "skipped"]) {
       m.requested.length = 0;
@@ -1871,8 +1893,8 @@ describe("run view KAS-route step reads", () => {
     }
   });
 
-  // GATE 3. A busy session cannot be `session/load`ed, so a live step's read is
-  // refused by construction — and its content reaches the pane by its own route
+  // GATE 2. A busy session cannot be `session/load`ed, so a live step's read is
+  // refused by construction — and its entries reach the pane on the run's own log
   // meanwhile.
   it("arms no read for a step still in flight", async () => {
     for (const status of ["running", "paused"]) {
@@ -1882,7 +1904,7 @@ describe("run view KAS-route step reads", () => {
     }
   });
 
-  // ...and gate 3 is a DEFERRAL, not a refusal, which is the half a path-keyed guard
+  // ...and gate 2 is a DEFERRAL, not a refusal, which is the half a path-keyed guard
   // loses. A reader who clicks a running step pins the selection (`select()` sets
   // `userPicked`), so the shown path never moves again for the rest of that run's
   // viewing — and the step they are looking at is then the one node never read. The
@@ -1917,35 +1939,32 @@ describe("run view KAS-route step reads", () => {
     expect(m.requested).toEqual(["wf_1/coder"]);
   });
 
-  // GATE 4, and the one that makes "preferred when the slice is empty" a gate rather
-  // than a preference: the chat route's blocks are the same content and are already
-  // rendered, so asking would fetch a second copy of what is on screen.
-  it("arms no read when the launching chat already holds the step's blocks", async () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiled")])]);
-    m.parentChat.current = "c-1";
-    await paint(openRunView, "completed", {
-      parentless: false,
-      root: oneStep("completed"),
-    });
+  // GATE 3, and the one that makes the log the SOURCE rather than a preference: the
+  // turn is already held and settled, so asking would fetch a second copy of what is
+  // on screen. Neither verb fires — not the request, and not the re-read either.
+  it("arms nothing when the log already holds the step's settled turn", async () => {
+    logStep("wf_1", "wf_1/held", "compiled");
+    await paint(openRunView, "completed", { root: oneNamedStep("held", "completed") });
+    expect(m.requested).toEqual([]);
+    expect(m.reread).toEqual([]);
+  });
+
+  // THE SECOND ARM: a turn the log holds with NO `turn_close` while `inspect` reports
+  // the node settled is a client that missed the close, and it would otherwise read
+  // live for the tab's life. That is a RE-READ rather than a first request, because
+  // the turn exists and only its tail is missing; the `gone` verdict on the same
+  // turn's stamp repairs it from the digest's side and cannot disagree, since both
+  // read this log.
+  it("re-reads a settled step whose turn is missing its close", async () => {
+    logStep("wf_1", "wf_1/reopen", "no close arrived", { live: true });
+    await paint(openRunView, "completed", { root: oneNamedStep("reopen", "completed") });
+    expect(m.reread).toEqual(["wf_1/reopen"]);
     expect(m.requested).toEqual([]);
   });
 
-  // ...and the inverse, which is the population the read was built for: the chat is
-  // resident but its window has paged the run's turn out, so the slice is present and
-  // EMPTY. A gate keyed on residency rather than on content would refuse here.
-  it("arms a read when the launching chat is resident but holds no blocks", async () => {
-    setSessions([chatSession("c-1", [])]);
-    m.parentChat.current = "c-1";
-    await paint(openRunView, "completed", {
-      parentless: false,
-      root: oneStep("completed"),
-    });
-    expect(m.requested).toEqual(["wf_1/coder"]);
-  });
-
-  // GATE 1. A container hosts no transcript, so there is nothing to read for it —
-  // and it must not be asked about, because the endpoint answers 404 for a path that
-  // names no STEP.
+  // GATE 4. A container hosts no transcript, so there is nothing to read for it — and
+  // it must not be asked about, because the endpoint answers 404 for a path that names
+  // no STEP.
   //
   // It has to SELECT the container to reach the gate at all: `onShowNode` fires for
   // the shown node, and the pane auto-selects a LEAF, so a case that only paints
@@ -1979,85 +1998,31 @@ describe("run view KAS-route step reads", () => {
     expect(m.requested).toEqual([]);
   });
 
-  // The read's blocks RENDER, through the same stream and into the same host the chat
-  // route uses — which is the point of the whole item: the pane stops caring which
-  // route a step's transcript came from.
-  it("renders a KAS read's blocks in the step's own body", async () => {
+  // A RESOLVED read has to repaint the pane, and its VERDICT is what this signal
+  // carries: the entries the same answer adopted bump the run log's own version, so
+  // the two halves reach the page on two channels. Without the verdict channel a
+  // `ready`-with-nothing answer would leave the loading sentence on screen for the
+  // rest of the tab's life.
+  it("repaints when a read's verdict resolves after the first paint", async () => {
+    const { body } = await paint(openRunView, "completed", { root: oneStep("completed") });
+    expect(body.querySelector<HTMLElement>(".ev-d-empty")?.textContent).toContain(
+      "Loading this step",
+    );
+
     m.reads.set("wf_1/coder", { state: "ready" });
-    m.kasSlices.set("wf_1/coder", kasSlice());
-    const { body } = await paint(openRunView, "completed", {
-      root: oneStep("completed"),
-    });
-    await loaded();
-
-    // On the SET of paths and the routes, not on the call count: a repaint applies
-    // again with the same content by design, so a count would pin the number of
-    // effect runs rather than what reached the pane.
-    expect(new Set(m.projected)).toEqual(new Set(["wf_1/coder"]));
-    expect(new Set(m.sources)).toEqual(new Set(["kas"]));
-    expect(
-      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/coder"] .step-marker')
-        ?.textContent,
-    ).toBe("wf_1/coder:1");
-    // And no note stands beside rendered content.
-    expect(body.querySelector<HTMLElement>(".ev-d-empty")?.hidden).toBe(true);
-  });
-
-  // THE SLICE WINS when it has blocks, and the SOURCE is the only observable that
-  // separates the two routes: both render identical blocks into the same host. It
-  // matters because the chat route's blocks are live and carry per-block signals plus
-  // a delegate deep link, where the read's are a settled snapshot with neither.
-  it("paints the chat slice rather than the read when both have content", async () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "from the chat")])]);
-    m.parentChat.current = "c-1";
-    m.reads.set("wf_1/coder", { state: "ready" });
-    m.kasSlices.set("wf_1/coder", kasSlice());
-    await paint(openRunView, "completed", {
-      parentless: false,
-      root: oneStep("completed"),
-    });
-    await loaded();
-
-    expect(new Set(m.projected)).toEqual(new Set(["wf_1/coder"]));
-    // The whole assertion: the read had content too, and no paint took it.
-    expect(m.sources).not.toContain("kas");
-    expect(new Set(m.sources)).toEqual(new Set(["chat"]));
-  });
-
-  // A RESOLVED read has to repaint the pane, and nothing else can carry it: the run
-  // store's own cell has not changed, the launching chat's version has not moved, and
-  // on a parentless run there is no chat to move. So the read's version signal is the
-  // page's only subscription to its own answer arriving — without it a step's
-  // transcript lands in the cache and stays off screen until some unrelated frame
-  // happens to repaint.
-  it("repaints when a read resolves after the first paint", async () => {
-    const { body } = await paint(openRunView, "completed", {
-      root: oneStep("completed"),
-    });
-    await loaded();
-    expect(body.querySelector('.ev-d-body[data-path="wf_1/coder"]')).toBeNull();
-
-    // The answer lands in the cache, then the module bumps its version — the two
-    // halves `fetchStep` performs in its `finally`.
-    m.reads.set("wf_1/coder", { state: "ready" });
-    m.kasSlices.set("wf_1/coder", kasSlice());
     stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
-
-    for (let i = 0; i < 200 && m.projected.length === 0; i++) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 1);
-      });
+    for (let i = 0; i < 20; i++) {
+      await Promise.resolve();
     }
-    expect(new Set(m.sources)).toEqual(new Set(["kas"]));
-    expect(
-      body.querySelector<HTMLElement>('.ev-d-body[data-path="wf_1/coder"] .step-marker')
-        ?.textContent,
-    ).toBe("wf_1/coder:1");
+
+    expect(body.querySelector<HTMLElement>(".ev-d-empty")?.textContent).toContain(
+      "without producing a transcript",
+    );
   });
 
-  // Every read is dropped when the page mounts. The cache is keyed by (run, path) and
-  // its whole bound is this call: a run tab retargeting or closing is the one moment
-  // an entry stops being wanted.
+  // Every read is dropped when the page mounts. The on-demand reads go with the page,
+  // which is the cache's whole bound: a run tab retargeting or closing is the one
+  // moment a step's answer stops being wanted.
   it("drops every read on mount", async () => {
     await paint(openRunView, "completed", { root: oneStep("completed") });
     expect(m.cleared.count).toBeGreaterThan(0);
@@ -2106,26 +2071,6 @@ describe("run view empty step action", () => {
     m.parentChat.current = "";
     const { body } = await paint(openRunView, "completed", { root });
     expect(body.querySelector(".ev-d-link")).toBeNull();
-  });
-
-  // THE PAIR HAS TO AGREE. The note no longer claims a step that never ran has a
-  // transcript in the launching chat, and this link's only subject is that
-  // transcript — so a door to it beside "produced no output" is the same over-claim
-  // one element along. The chat is KNOWN here, so the step's state is the only thing
-  // withholding the link.
-  it("offers no link for a step that never ran, with the chat known", async () => {
-    m.parentChat.current = "c-1";
-    const { body } = await paint(openRunView, "running", {
-      parentless: false,
-      root: {
-        ...root,
-        status: "running",
-        children: [{ nodeId: "verify", type: "step", status: "skipped", children: [] }],
-      },
-    });
-    expect(body.querySelector(".ev-d-link")).toBeNull();
-    expect(body.querySelector<HTMLElement>(".ev-d-empty-action")?.hidden).toBe(true);
-    expect(body.querySelector(".ev-d-empty")?.textContent).toContain("was skipped");
   });
 
   /** Click the link and report whether the APP's own handler cancelled the event,
@@ -2209,65 +2154,6 @@ describe("run view empty step action", () => {
   });
 });
 
-// The eviction sweep's third exemption. It exists because `hasExecutingRunForChat`
-// covers a run that is still EXECUTING only, so a reader who opens a finished (or
-// parked) chat-parented run's sub-tab and then works elsewhere would have the
-// chat's window swept out from under the slice — state 1 degrading to state 3 while
-// they watch.
-describe("run tab eviction exemption", () => {
-  it("exempts a chat whose resident blocks belong to an OPEN run tab", () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiling")])]);
-    m.tabsOpen.add("run:wf_1");
-    expect(runTabProjectsChat("c-1")).toBe(true);
-  });
-
-  it("exempts nothing when that run's tab is closed", () => {
-    setSessions([chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiling")])]);
-    expect(runTabProjectsChat("c-1")).toBe(false);
-  });
-
-  // A different chat's window holds nothing this run tab is projecting, so it stays
-  // evictable — the exemption has to be per chat or it would pin the whole store.
-  it("exempts only the chat whose blocks the run tab reads", () => {
-    setSessions([
-      chatSession("c-1", [stepMessage("m1", "wf_1/coder", "compiling")]),
-      chatSession("c-2", []),
-    ]);
-    m.tabsOpen.add("run:wf_1");
-    expect(runTabProjectsChat("c-2")).toBe(false);
-  });
-
-  it("exempts nothing for a chat with no resident window", () => {
-    m.tabsOpen.add("run:wf_1");
-    expect(runTabProjectsChat("c-absent")).toBe(false);
-  });
-
-  // A SUBAGENT's blocks carry a bare uuid, not a `wf:` id, so they never name a run
-  // tab. The two exemptions are separate predicates for that reason.
-  it("ignores a delegate's blocks", () => {
-    setSessions([
-      chatSession("c-1", [
-        {
-          id: "m1",
-          role: "assistant",
-          ts: 0,
-          content: "",
-          blocks: [
-            {
-              type: "text",
-              text: "delegate work",
-              agent_subtask_id: "8f2c1f2e-0000-4000-8000-000000000000",
-            },
-          ],
-          tool_calls: [],
-        },
-      ]),
-    ]);
-    m.tabsOpen.add("run:wf_1");
-    expect(runTabProjectsChat("c-1")).toBe(false);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // The activation half and the fetch half. Leaving the two `invalidate*` calls in
 // `showRun` would double-fetch on every run activation, since the dispatcher now
@@ -2290,27 +2176,5 @@ describe("showRun and refreshRun", () => {
     const runOrder = vi.mocked(invalidateRun).mock.invocationCallOrder[0] ?? 0;
     const controlsOrder = vi.mocked(invalidateRunControls).mock.invocationCallOrder[0] ?? 0;
     expect(runOrder).toBeLessThan(controlsOrder);
-  });
-
-  it("refreshes the launching chat's window, which is where a step transcript comes from", async () => {
-    m.runChat.current = "c-launcher";
-
-    refreshRun("wf_parented");
-    // The delegation is behind a dynamic import, which settles over several
-    // microtasks rather than one.
-    await vi.waitFor(() => {
-      expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
-    });
-  });
-
-  it("refreshes no chat for a parentless run", async () => {
-    m.runChat.current = "";
-
-    refreshRun("wf_parentless");
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
-
-    expect(refreshChatView).not.toHaveBeenCalled();
   });
 });

@@ -15,11 +15,10 @@
     "matches": [
       {
         "best": {
-          "message_id": "m1",
-          "turn_message_id": "m1",
+          "turn_id": "chat-001-t1",
+          "entry_id": "chat-001-t1",
           "excerpt": "we moved the cache to redis today",
-          "role": "user",
-          "segment_kind": "content",
+          "segment_kind": "prompt",
           "turn": 1,
           "offset": 22,
           "segment_len": 33

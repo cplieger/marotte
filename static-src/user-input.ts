@@ -14,17 +14,11 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { attachClamp } from "./clamp-text.js";
+import { askActions, askEditor, askHead } from "./dock-ask.js";
 import type { UserInputNeededPayload, UserInputOption } from "./types.js";
 
 type UserInputAction = "answered" | "dismissed";
 type SubmitFn = (action: UserInputAction, answer?: string) => void;
-
-/** Lines the question shows before its opener. FOUR, matching the run-input card
- *  and the steer row: the dock is a region of the bar, and the bar grows UPWARD
- *  into the transcript the question is about. The stylesheet clamps to this same
- *  count (`clamp-line-count.test.ts` holds the two together). */
-const CLAMP_LINES = 4;
 
 /** Build the dock card for one agent question.
  *
@@ -39,52 +33,38 @@ export function buildUserInputCard(
   payload: UserInputNeededPayload,
   onSubmit: SubmitFn,
 ): HTMLElement {
-  const text = el(
-    "strong",
-    { className: "user-input-question" },
-    payload.question !== "" ? payload.question : "The agent has a question",
-  );
-  // A SIBLING of the clamped element, or the clamp would hide its own opener.
-  const more = el("button", {
-    className: "user-input-more",
-    type: "button",
-  }) as HTMLButtonElement;
-  const body = el("div", { className: "user-input-body" }, text, more);
-  attachClamp(text, more, { lines: CLAMP_LINES });
+  const { body } = askHead(payload.question !== "" ? payload.question : "The agent has a question");
 
+  // All three regions exist whatever the stage renders, so a stage switch is a
+  // `replaceChildren` in place rather than a re-parent. An EMPTY one collapses in
+  // CSS (`:empty`), so a free-form question's options region and the sub-option
+  // stage's answer box cost no gap.
   const optionsEl = el("div", { className: "user-input-options" });
-  const freeformEl = el("div", { className: "user-input-freeform" });
-  const actions = el("div", { className: "user-input-actions" });
+  const editorEl = el("div", { className: "dock-ask-editor" });
+  const actions = askActions();
 
-  renderOptionsStage(optionsEl, freeformEl, actions, payload.options ?? [], onSubmit);
+  renderOptionsStage(optionsEl, editorEl, actions, payload.options ?? [], onSubmit);
 
-  return el(
-    "div",
-    { className: "dock-card dock-user-input" },
-    body,
-    optionsEl,
-    freeformEl,
-    actions,
-  );
+  return el("div", { className: "dock-card dock-user-input" }, body, optionsEl, editorEl, actions);
 }
 
 /** Stage 1: the choice cards (or the free-form editor when no options). */
 function renderOptionsStage(
   optionsEl: HTMLElement,
-  freeformEl: HTMLElement,
+  editorEl: HTMLElement,
   actions: HTMLElement,
   options: readonly UserInputOption[],
   submit: SubmitFn,
 ): void {
   optionsEl.replaceChildren();
-  freeformEl.replaceChildren();
+  editorEl.replaceChildren();
   actions.replaceChildren();
 
   for (const opt of options) {
     optionsEl.appendChild(
       optionCard(opt, () => {
         if ((opt.sub_options ?? []).length > 0) {
-          renderSubOptionsStage(optionsEl, freeformEl, actions, opt, options, submit);
+          renderSubOptionsStage(optionsEl, editorEl, actions, opt, options, submit);
         } else {
           submit("answered", opt.title);
         }
@@ -92,7 +72,9 @@ function renderOptionsStage(
     );
   }
 
-  renderFreeform(freeformEl, options.length > 0, submit);
+  // Send goes into `actions` BEFORE Skip, so the row reads primary-then-secondary
+  // exactly as the run-input card's does.
+  renderEditor(editorEl, actions, options.length > 0, submit);
   actions.appendChild(dismissButton(submit));
 }
 
@@ -129,14 +111,14 @@ function optionCard(opt: UserInputOption, onPick: () => void): HTMLElement {
  *  returns to the options stage. */
 function renderSubOptionsStage(
   optionsEl: HTMLElement,
-  freeformEl: HTMLElement,
+  editorEl: HTMLElement,
   actions: HTMLElement,
   opt: UserInputOption,
   all: readonly UserInputOption[],
   submit: SubmitFn,
 ): void {
   optionsEl.replaceChildren();
-  freeformEl.replaceChildren();
+  editorEl.replaceChildren();
   actions.replaceChildren();
 
   optionsEl.appendChild(
@@ -175,20 +157,31 @@ function renderSubOptionsStage(
     "Back",
   ) as HTMLButtonElement;
   back.addEventListener("click", () => {
-    renderOptionsStage(optionsEl, freeformEl, actions, all, submit);
+    renderOptionsStage(optionsEl, editorEl, actions, all, submit);
   });
   actions.append(confirm, back, dismissButton(submit));
 }
 
 /** The typed-answer editor. Primary (textarea) for a free-form question;
- *  compact alternative under the cards when options exist. */
-function renderFreeform(freeformEl: HTMLElement, hasOptions: boolean, submit: SubmitFn): void {
-  const input = el("textarea", {
-    className: "user-input-text",
+ *  compact alternative under the cards when options exist.
+ *
+ *  The box goes in `editorEl` and Send goes in `actions`, which is the shared ask
+ *  card's shape rather than a preference: one right-aligned wrapping row holds every
+ *  button, so the sub-option stage's Confirm/Back/Skip and this stage's Send/Skip
+ *  are one row and not two. Send beside the box also made that row the editor's own,
+ *  which cost the textarea 62px of width and put the card's two controls on two
+ *  right-aligned lines. */
+function renderEditor(
+  editorEl: HTMLElement,
+  actions: HTMLElement,
+  hasOptions: boolean,
+  submit: SubmitFn,
+): void {
+  const { input } = askEditor({
     rows: hasOptions ? "1" : "3",
     placeholder: hasOptions ? "Or type your own answer\u2026" : "Type your answer\u2026",
-    "aria-label": "Your answer",
-  }) as HTMLTextAreaElement;
+    label: "Your answer",
+  });
   const send = el(
     "button",
     { type: "button", className: "btn-small confirm-allow" },
@@ -208,7 +201,8 @@ function renderFreeform(freeformEl: HTMLElement, hasOptions: boolean, submit: Su
       send.click();
     }
   });
-  freeformEl.append(input, send);
+  editorEl.appendChild(input);
+  actions.appendChild(send);
 }
 
 function dismissButton(submit: SubmitFn): HTMLButtonElement {

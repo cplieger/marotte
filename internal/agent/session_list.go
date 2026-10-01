@@ -13,9 +13,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/webhttp/v3"
 )
 

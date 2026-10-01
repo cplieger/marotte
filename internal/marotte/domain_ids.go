@@ -59,8 +59,8 @@ const MaxChatNameBytes = 512
 // time: it minted a second chat as a side effect of reverting the one you were
 // in, with nothing awaiting a response, so the new id reached no caller. A
 // create that RETURNS its chat has no such problem — create_chat, fork_chat and
-// resume_session each hand the minted chat back in their response, which is what
-// closes the window Session.ghost used to mark and what makes minting here
+// resume_session each hand the minted chat back in their response, which closes
+// the window a client-minted id used to leave open and makes minting here
 // correct rather than a regression.
 //
 // The shape satisfies ids.ValidChatID, and so does the c-<ts>-<rand> the client

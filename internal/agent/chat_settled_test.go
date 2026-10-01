@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // chatHoldsLiveRun is the server's half of "is everything this chat started actually

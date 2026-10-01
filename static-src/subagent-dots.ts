@@ -16,11 +16,11 @@
 //     failed delegate is reportable rather than collapsing into one settled state.
 //   - It is PERSISTED with its `agent_subtask_id`, so it survives replay and a
 //     delegate that finished weeks ago still resolves.
-//   - Its frames are ingested with NO active-chat gate (`handlers/messages.ts`
-//     answers `tool_call` / `tool_call_update` for any chat with a store row, and
-//     every branch of `upsertToolCall` bumps that chat's transcript version), which
-//     is what makes the dot correct for a delegate the reader is not looking at —
-//     the whole reason the strip carries state.
+//   - Its frames are ingested with NO active-chat gate (`handlers/entries.ts`
+//     answers `entry_appended` for any chat with a store row, and `appendEntry`
+//     publishes that chat's transcript version), which is what makes the dot
+//     correct for a delegate the reader is not looking at — the whole reason the
+//     strip carries state.
 //
 // THE DOT DESCRIBES THE LEAF THE TAB NAMES, never a pipeline roll-up. The row's
 // LABEL comes from that same invocation (`tab-materialize.ts` `subagentTabName`),
@@ -55,7 +55,7 @@
 
 import { effect, touch } from "@cplieger/reactive";
 import { openSubagentRefs, setTabStatus, tabIdFor } from "./tabs.js";
-import { get, messagesVersionOf, subagentStatusFor } from "./store.js";
+import { get, messagesVersionOf, subagentStatusFor, turnLive } from "./store.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
 import { parseSubagentRef } from "./tab-materialize.js";
 
@@ -80,8 +80,17 @@ function repaint(): void {
     // `setTabStatus` is a no-op for an unknown id in any case, which is why there
     // is no branch here for a state that cannot arrive.
     const id = tabIdFor("subagent", ref);
-    const invocation = findSubagentInvocation(get(chatID)?.messages ?? [], subtaskID);
-    setTabStatus(id, subagentStatusFor(invocation?.status));
+    const session = get(chatID);
+    const invocation =
+      session === undefined ? undefined : findSubagentInvocation(session, subtaskID);
+    // The delegate's SECOND input: its chat's own turn liveness, which is what tells a
+    // stale spinner from a delegate that is working (`store.ts` `delegateStatusFor`). An
+    // absent session answers nothing rather than claiming the turn is over, and the row
+    // then paints `""` anyway, because no invocation resolved either.
+    setTabStatus(
+      id,
+      subagentStatusFor(invocation?.status, session === undefined || turnLive(session)),
+    );
   }
 }
 

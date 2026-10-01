@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
-import { ensureToolCallSig, clearToolCallSig, toolCallSigKey } from "./store-signals.js";
+import { ensureToolCallSig, toolCallSigs, toolCallSigKey } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 
 import { maybeCollapseGroup } from "./tool-group.js";
@@ -27,11 +27,14 @@ import {
   expandToolDetails,
   applyOutcome,
   refreshToolDisclosure,
+  syncSilenceMarker,
 } from "./tool-card.js";
+import { clearToolSilence, forgetToolSilence } from "./tool-silence.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
+import { iconEl } from "./icon-el.js";
+import { ICON_SPARKLE } from "./icons.js";
 import { windowOutput, windowSpans, humanName } from "./strings.js";
 import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
-import { linkifyPaths } from "./linkify.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { bindLoadingState } from "./actions/index.js";
 
@@ -88,7 +91,7 @@ function removeSlot(chatID: string, toolID: string, card: HTMLDivElement): void 
     return;
   }
   toolSlots.delete(key);
-  clearToolCallSig(chatID, toolID);
+  toolCallSigs.clear(toolCallSigKey(chatID, toolID));
   for (const [termID, link] of [...termToTool]) {
     if (link.chatID === chatID && link.toolID === toolID) {
       termToTool.delete(termID);
@@ -226,13 +229,14 @@ export function disposeAllToolEffects(): void {
   for (const slots of toolSlots.values()) {
     for (const slot of slots) {
       slot.cleanup?.();
-      clearToolCallSig(slot.chatID, slot.toolID);
+      toolCallSigs.clear(toolCallSigKey(slot.chatID, slot.toolID));
     }
   }
   toolSlots.clear();
   termToTool.clear();
   pendingChunks.clear();
   parkedTermBuffers.clear();
+  clearToolSilence();
 }
 
 /** Dispose one render's slot for a tool call, by card identity. Each surface
@@ -422,7 +426,6 @@ function writeChunkToCard(
   }
   appendOutputChunk(pre, text, spans, base);
   trimToLiveCap(pre);
-  linkifyPaths(pre, { insidePre: true });
   refreshToolDisclosure(card);
 }
 
@@ -545,6 +548,10 @@ export function mountToolCallCard(
   let lastApplied = tc;
   slot.cleanup = effect(() => {
     const next = sig.value;
+    // AHEAD OF THE EARLY RETURN and unconditional: this reads the silence ticker, so
+    // the effect subscribes to it here and the marker can appear on a call that has
+    // gone quiet — which is precisely the call sending no frame to move `sig`.
+    syncSilenceMarker(card, chatID, tc.id);
     if (next === lastApplied) {
       return;
     }
@@ -594,6 +601,12 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): 
   }
   if (tc.status !== undefined) {
     applyStatusUpdate(el, tc.status, tc.id);
+    if (isToolDone(tc.status)) {
+      // A settle is the one event saying no further frame is coming, so the silence
+      // stamp is dropped here rather than at the card's disposal: a card unmounting
+      // says nothing about the call, and another surface may still hold one.
+      forgetToolSilence(chatID, tc.id);
+    }
   }
 }
 
@@ -644,10 +657,27 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus, toolId: str
     if (card.querySelector(".tool-explain-btn") === null) {
       const output = card.querySelector(".tool-output")?.textContent ?? "";
       if (output.trim() !== "") {
+        // ICON-ONLY, so the name and the hover text are the whole of what this
+        // control says, from ONE local so they cannot drift. `data-tooltip` rather
+        // than a native `title`: it is the app's styled delegated tooltip and the
+        // only form that publishes `aria-describedby`, where a `title` is a UA
+        // tooltip reaching mouse users alone. The duplication is accepted rather
+        // than invented around — for an icon-only control the tooltip is a pointer
+        // reader's one discovery channel.
+        const label = "Explain this error";
         const btn = el(
           "button",
-          { type: "button", className: "tool-explain-btn", [CHROME_ATTR]: "" },
-          "Explain this error",
+          {
+            type: "button",
+            className: "tool-explain-btn",
+            "aria-label": label,
+            "data-tooltip": label,
+            [CHROME_ATTR]: "",
+          },
+          // The SPARKLE every button that asks a model to do something carries (the
+          // commit box's message button, the branch popover's suggestion). Its export
+          // records why the mark is a path rather than an emoji.
+          iconEl(ICON_SPARKLE),
         ) as HTMLButtonElement;
         _pushBind(
           toolId,
@@ -658,6 +688,12 @@ function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus, toolId: str
             if (explanation !== "") {
               btn.textContent = explanation;
               btn.className = "tool-explain-result";
+              // The name must not outlive the trigger: ONE element becomes the
+              // result, and `aria-label` wins over content, so one left standing
+              // would announce "Explain this error" INSTEAD of the explanation the
+              // element now holds. The tooltip would describe a control that is gone.
+              btn.removeAttribute("aria-label");
+              btn.removeAttribute("data-tooltip");
             }
           });
         });
@@ -719,7 +755,6 @@ export function applyOutputUpdate(
   const pre = existingPre ?? el("pre");
   const paint = (text: string, s: readonly TextSpan[]): void => {
     renderOutput(pre, text, s);
-    linkifyPaths(pre, { insidePre: true });
   };
   paint(shown.text, windowSpans(spans, shown.kept));
   if (existingPre === null) {

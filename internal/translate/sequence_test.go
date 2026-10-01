@@ -23,105 +23,141 @@ func newEventCaptureDeps() (*baseDeps, *[]marotte.ServerEvent) {
 
 // --- Event sequence tests ---
 
-func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
+// The first delta of a stream OPENS an entry and every later one is a delta onto
+// it: one frame each, so a client that missed neither holds exactly what the turn
+// holds.
+func TestSequence_AssistantChunk_OpensAnEntryThenDeltas(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
-	// First chunk: should create message + emit chunk
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "Hello"},
-	}), false)
+	}), false, FrameAttribution{})
 
-	if len(*events) < 2 {
-		t.Fatalf("expected at least 2 events (message_created + message_chunk), got %d: %v",
-			len(*events), eventTypes(*events))
+	if len(*events) != 1 || (*events)[0].Type != marotte.EventEntryOpened {
+		t.Fatalf("first chunk: events = %v, want one entry_opened", eventTypes(*events))
 	}
-	if (*events)[0].Type != marotte.EventMessageCreated {
-		t.Errorf("event[0].Type = %q, want message_created", (*events)[0].Type)
+	opened, ok := (*events)[0].Payload.(marotte.EntryOpenedPayload)
+	if !ok {
+		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
-	if (*events)[1].Type != marotte.EventMessageChunk {
-		t.Errorf("event[1].Type = %q, want message_chunk", (*events)[1].Type)
+	if opened.Open.Kind != marotte.EntryKindText || opened.Open.Text != "Hello" || opened.Open.N != 1 {
+		t.Errorf("entry_opened = %+v, want a text entry holding %q at n=1", opened.Open, "Hello")
 	}
 
-	// Second chunk: should only emit chunk (no duplicate message_created)
 	*events = nil
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": " world"},
-	}), false)
+	}), false, FrameAttribution{})
 
-	if len(*events) != 1 {
-		t.Fatalf("expected 1 event (message_chunk only), got %d: %v",
-			len(*events), eventTypes(*events))
+	if len(*events) != 1 || (*events)[0].Type != marotte.EventEntryDelta {
+		t.Fatalf("second chunk: events = %v, want one entry_delta", eventTypes(*events))
 	}
-	if (*events)[0].Type != marotte.EventMessageChunk {
-		t.Errorf("event[0].Type = %q, want message_chunk", (*events)[0].Type)
+	delta, ok := (*events)[0].Payload.(marotte.EntryDeltaPayload)
+	if !ok {
+		t.Fatalf("payload type = %T", (*events)[0].Payload)
+	}
+	if delta.EntryID != opened.Open.ID || delta.Delta != " world" || delta.N != 2 {
+		t.Errorf("entry_delta = %+v, want %q at n=2 onto entry %q", delta, " world", opened.Open.ID)
+	}
+	open := deps.turns.chats[chatID].OpenEntries()
+	if len(open) != 1 || open[0].Text != "Hello world" {
+		t.Errorf("open after two deltas = %+v, want the one text entry %q", open, "Hello world")
 	}
 }
 
-func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
+// A tool call is born sealed in the lane of the text it interrupts: the open text
+// seals first, then the call lands as its own entry, and both reach the wire in
+// that order.
+func TestSequence_ToolCall_SealsTheTextThenAppendsTheCall(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
-	// Start a streaming turn first (tool calls require an active buffer)
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "Let me check..."},
-	}), false)
+	}), false, FrameAttribution{})
 	*events = nil
 
-	// Tool call
 	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
-		"tool_call_id": "tc1",
-		"title":        "readFile",
-		"kind":         "read",
-		"status":       "in_progress",
+		"toolCallId": "tc1",
+		"title":      "readFile",
+		"kind":       "read",
+		"status":     "in_progress",
 	}), FrameAttribution{})
 
-	found := false
-	for _, evt := range *events {
-		if evt.Type == marotte.EventToolCall {
-			found = true
-			break
-		}
+	types := eventTypes(*events)
+	if len(types) < 2 || types[0] != string(marotte.EventEntrySealed) || types[1] != string(marotte.EventEntryAppended) {
+		t.Fatalf("events = %v, want entry_sealed then entry_appended", types)
 	}
-	if !found {
-		t.Errorf("no tool_call event emitted; got events: %v", eventTypes(*events))
+	sealed, ok := (*events)[0].Payload.(marotte.EntrySealedPayload)
+	if !ok || sealed.N != 1 {
+		t.Errorf("entry_sealed = %+v (%T), want the one-delta text entry sealed", (*events)[0].Payload, (*events)[0].Payload)
+	}
+	entries := deps.chatEntries(chatID)
+	if kinds := entryKinds(entries); !equalKinds(kinds, []marotte.EntryKind{marotte.EntryKindText, marotte.EntryKindToolCall}) {
+		t.Fatalf("sealed kinds = %v, want [text tool_call]", kinds)
+	}
+	calls := toolCallsOf(t, entries)
+	if len(calls) != 1 || calls[0].ID != "tc1" || calls[0].Title != "readFile" {
+		t.Errorf("tool_call entries = %+v, want tc1 readFile", calls)
+	}
+	if open := deps.turns.chats[chatID].OpenEntries(); len(open) != 0 {
+		t.Errorf("open after the call = %+v, want none", open)
 	}
 }
 
-func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
+// A non-terminal update is a tool_progress delta onto the call the turn still
+// holds; the terminal one settles it as a tool_result entry and the turn lets the
+// call go.
+func TestSequence_ToolCallUpdate_ProgressThenResult(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
-	// Start turn + add tool call
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "x"},
-	}), false)
+	}), false, FrameAttribution{})
 	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
-		"tool_call_id": "tc1",
-		"title":        "readFile",
-		"kind":         "read",
-		"status":       "in_progress",
+		"toolCallId": "tc1",
+		"title":      "readFile",
+		"kind":       "read",
+		"status":     "pending",
 	}), FrameAttribution{})
 	*events = nil
 
-	// Update tool call status
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-		"tool_call_id": "tc1",
-		"status":       "completed",
+		"toolCallId": "tc1",
+		"status":     "in_progress",
 	}), FrameAttribution{})
 
-	found := false
-	for _, evt := range *events {
-		if evt.Type == marotte.EventToolCallUpdate {
-			found = true
-			break
-		}
+	if len(*events) != 1 || (*events)[0].Type != marotte.EventToolProgress {
+		t.Fatalf("in_progress update: events = %v, want one tool_progress", eventTypes(*events))
 	}
-	if !found {
-		t.Errorf("no tool_call_update event emitted; got events: %v", eventTypes(*events))
+	progress, ok := (*events)[0].Payload.(marotte.ToolProgressPayload)
+	if !ok || progress.ToolCallID != "tc1" || progress.Status != marotte.ToolInProgress {
+		t.Errorf("tool_progress = %+v (%T), want tc1 in_progress", (*events)[0].Payload, (*events)[0].Payload)
+	}
+	if _, held := deps.turns.chats[chatID].OpenCallFor("tc1"); !held {
+		t.Errorf("the turn let tc1 go on a non-terminal update")
+	}
+
+	*events = nil
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
+		"toolCallId": "tc1",
+		"status":     "completed",
+	}), FrameAttribution{})
+
+	if !hasEntryAppended(events, marotte.EntryKindToolResult) || hasEventType(*events, marotte.EventToolProgress) {
+		t.Fatalf("completed update: events = %v, want entry_appended{tool_result} and no tool_progress", eventTypes(*events))
+	}
+	results := toolResultsOf(t, deps.chatEntries(chatID))
+	if len(results) != 1 || results[0].Status != marotte.ToolCompleted {
+		t.Errorf("tool_result entries = %+v, want tc1 completed", results)
+	}
+	if _, held := deps.turns.chats[chatID].OpenCallFor("tc1"); held {
+		t.Errorf("the turn still holds tc1 after its terminal update")
 	}
 }
 
@@ -238,13 +274,21 @@ type mcpCaptureDeps struct {
 	prompts   *[]marotte.MCPPromptInfo
 	resources *[]marotte.MCPResourceInfo
 	disabled  *[]string
+	failures  *[]mcpFailure
 }
 
 func (d *mcpCaptureDeps) MCPRecorder() MCPRecorder {
 	return &captureMCPRecorder{
 		connected: d.connected, tools: d.tools, prompts: d.prompts,
-		resources: d.resources, disabled: d.disabled,
+		resources: d.resources, disabled: d.disabled, failures: d.failures,
 	}
+}
+
+// mcpFailure is one RecordInitFailure call, so a test can read the reason the
+// handler chose rather than only that a failure was recorded.
+type mcpFailure struct {
+	name   string
+	reason string
 }
 
 type captureMCPRecorder struct {
@@ -253,6 +297,7 @@ type captureMCPRecorder struct {
 	prompts   *[]marotte.MCPPromptInfo
 	resources *[]marotte.MCPResourceInfo
 	disabled  *[]string
+	failures  *[]mcpFailure
 }
 
 func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo) {
@@ -269,9 +314,14 @@ func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, too
 		*r.resources = resources
 	}
 }
-func (*captureMCPRecorder) RecordOAuth(context.Context, string, string)       {}
-func (*captureMCPRecorder) RecordInitFailure(context.Context, string, string) {}
-func (*captureMCPRecorder) SignalReady()                                      {}
+func (*captureMCPRecorder) RecordOAuth(context.Context, string, string) {}
+func (*captureMCPRecorder) SignalReady()                                {}
+
+func (r *captureMCPRecorder) RecordInitFailure(_ context.Context, name, reason string) {
+	if r.failures != nil {
+		*r.failures = append(*r.failures, mcpFailure{name: name, reason: reason})
+	}
+}
 
 func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string) {
 	if r.disabled != nil {
@@ -281,46 +331,47 @@ func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string) {
 
 func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c-reason")
 
 	// Send a reasoning chunk (isReasoning=true)
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "thinking..."},
-	}), true)
+	}), true, FrameAttribution{})
 
-	// Verify buffer has reasoning content but no regular content
-	buf := deps.bufStore.GetOrInit(chatID)
-	if buf.Reasoning.String() != "thinking..." {
-		t.Errorf("Reasoning = %q, want %q", buf.Reasoning.String(), "thinking...")
+	// The turn holds one open THINKING entry and nothing of kind text.
+	open := deps.turns.chats[chatID].OpenEntries()
+	if len(open) != 1 || open[0].Kind != marotte.EntryKindThinking || open[0].Text != "thinking..." {
+		t.Errorf("open entries = %+v, want one thinking entry %q", open, "thinking...")
 	}
-	if buf.Content.Len() != 0 {
-		t.Errorf("Content should be empty, got %q", buf.Content.String())
-	}
-
-	// Verify the chunk event has IsReasoning=true
-	var found bool
-	for _, evt := range *events {
-		if evt.Type == "message_chunk" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("no message_chunk event emitted")
+	if !hasEventType(*events, marotte.EventEntryOpened) {
+		t.Fatal("no entry_opened event emitted")
 	}
 
-	// Send a regular text chunk (isReasoning=false)
+	// Send a regular text chunk (isReasoning=false): the kind change seals the
+	// thinking and opens a text entry in the same lane.
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "answer"},
-	}), false)
+	}), false, FrameAttribution{})
 
-	if buf.Content.String() != "answer" {
-		t.Errorf("Content = %q, want %q", buf.Content.String(), "answer")
+	open = deps.turns.chats[chatID].OpenEntries()
+	if len(open) != 1 || open[0].Kind != marotte.EntryKindText || open[0].Text != "answer" {
+		t.Errorf("open entries = %+v, want one text entry %q", open, "answer")
 	}
-	if buf.Reasoning.String() != "thinking..." {
-		t.Errorf("Reasoning changed unexpectedly: %q", buf.Reasoning.String())
+	sealed := deps.chatEntries(chatID)
+	if len(sealed) != 1 || sealed[0].Kind != marotte.EntryKindThinking {
+		t.Errorf("sealed entries = %+v, want the thinking sealed by the kind change", sealed)
 	}
+}
+
+// hasEventType reports whether events carries a frame of type et.
+func hasEventType(events []marotte.ServerEvent, et marotte.EventType) bool {
+	for _, e := range events {
+		if e.Type == et {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Helpers ---

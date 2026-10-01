@@ -75,6 +75,22 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "no files")
 		return
 	}
+	// Refuse the WHOLE batch before writing any of it: the batch is not atomic,
+	// so a full volume otherwise leaves the earlier files on disk and answers
+	// "3 of 5 uploaded". The transfer is already spent here, so this buys a
+	// clean refusal, not a saved upload. Not checked against os.TempDir() where
+	// the spill lands: that is the container overlay, not the quota'd volume.
+	var batchBytes int64
+	for _, fh := range formFiles {
+		batchBytes += fh.Size
+	}
+	if err := refuseIfCannotFit(batchBytes, dirLoc); err != nil {
+		slog.Warn("filebrowse: upload refused, not enough space",
+			"dir", dirLoc.abs, "batch_bytes", batchBytes, "error", err)
+		webhttp.WriteJSONStatus(w, http.StatusInsufficientStorage,
+			uploadErrorJSON(errNoSpaceLeft, nil))
+		return
+	}
 	uploaded, totalBytes, err := writeUploads(r.Context(), dirLoc, formFiles)
 	if err != nil {
 		respondUploadError(w, dirLoc.abs, uploaded, err)
@@ -87,8 +103,9 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 // respondUploadError maps a writeUploads failure to its HTTP response: an
 // invalid filename is the client's fault (400); a single file crossing the
-// per-file cap is rejected loudly with a 413, never silently truncated;
-// anything else is a 500.
+// per-file cap is rejected loudly with a 413, never silently truncated; a full
+// volume is a 507 naming the space rather than a generic failure; anything else
+// is a 500.
 //
 // Every body carries the names that DID land, because a partially-failed
 // batch is not rolled back: each file is whole or absent, but the batch is
@@ -107,6 +124,13 @@ func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, er
 			"limit", maxUploadSize, "uploaded", len(uploaded), "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			uploadErrorJSON("upload too large", uploaded))
+		return
+	}
+	if isOutOfSpace(err) {
+		slog.Warn("filebrowse: upload failed, out of space",
+			"dir", dir, "uploaded", len(uploaded), "error", logsafe.Field(err.Error()))
+		webhttp.WriteJSONStatus(w, http.StatusInsufficientStorage,
+			uploadErrorJSON(errNoSpaceLeft, uploaded))
 		return
 	}
 	slog.Warn("filebrowse: upload write failed",

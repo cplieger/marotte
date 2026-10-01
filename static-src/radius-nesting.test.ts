@@ -3,13 +3,11 @@ import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 // ---------------------------------------------------------------------------
-// Nested corners: a child sitting against its container's corner is concentric
-// only at `inner = outer - outer-border - inset` (web.md "A nested rounded
-// corner"). These are the pairs where getting it wrong is visible, pinned
+// Nested corners: a child against its container's corner is concentric only at
+// `inner = outer - outer-border - inset` (web.md "A nested rounded corner"). Pinned
 // because the arithmetic lives in a `calc()` on a custom property and a missing
-// declaration fails SILENTLY — `var(--menu-radius)` with no declaration resolves
-// to an invalid value and the corner renders SQUARE, which is what one of these
-// three shipped as for a few minutes while it was being written.
+// declaration fails SILENTLY: `var(--menu-radius)` with nothing behind it is an
+// invalid value and the corner renders SQUARE.
 // ---------------------------------------------------------------------------
 
 const host = document.createElement("div");
@@ -77,20 +75,48 @@ describe("a 24px icon button takes the ladder's small rung", () => {
   // The ladder reserves --r-sm for a 16-24px box. Each of these shipped --r
   // (6px), and for `.tab-close` that was its own container's radius, so the
   // button's arc was identical to the tab holding it.
+  // A circle shipped on `.attachment-close` for one build, to dodge a nesting the
+  // composer's row height makes unsatisfiable, and it was reported: it was the app's
+  // only circular control, and one × that is not the shape of every other × is the
+  // worse defect. The rung is the answer for all five (15-input.css records the
+  // residual), so this list is a CONSISTENCY claim across the family rather than five
+  // independent facts — a member leaving it is what the report was.
   it.each([
     "tab-close",
     "shell-header-btn",
     "turn-action-btn",
     "native-rule-remove",
-    // Joined the population when it moved onto `icon-btn`: the shared class declares
-    // `--r` for its own 28px box and this one repads to the floor's 24px, so the rung
-    // has to be stated locally. It shipped one build wearing 6px.
     "attachment-close",
   ])("%s is 4px, not 6px", (cls) => {
     const b = document.createElement("button");
     b.className = cls;
     host.appendChild(b);
     expect(radiusOf(b)).toBeCloseTo(4, 1);
+  });
+
+  // The SHAPE half of the same claim, which the 4px assertion alone cannot make: a
+  // percentage radius resolves against the box, so `parseFloat` on "50%" yields 50 and
+  // every pixel comparison above passes for a circle too. Read the way
+  // `radius-audit.mjs` reads it, and assert the corner is not a circle by its own test.
+  it("keeps the attachment pill's remove control a rounded square, never a circle", () => {
+    const pill = document.createElement("li");
+    pill.className = "attachment-pill";
+    const b = document.createElement("button");
+    b.className = "icon-btn attachment-close";
+    pill.appendChild(b);
+    host.appendChild(pill);
+
+    const box = b.getBoundingClientRect();
+    expect(box.width, "the 24px box every other close button paints").toBeCloseTo(24, 1);
+
+    const raw = getComputedStyle(b).borderTopLeftRadius.trim();
+    const shorter = Math.min(box.width, box.height);
+    const corner = raw.endsWith("%")
+      ? (Number.parseFloat(raw) / 100) * shorter
+      : Number.parseFloat(raw);
+    expect(corner, "a radius at or past half the shorter side is a circle").toBeLessThan(
+      shorter / 2,
+    );
   });
 });
 
@@ -118,6 +144,51 @@ describe("an inner box is never rounder than the box holding it", () => {
     form.appendChild(input);
     host.appendChild(form);
     expect(radiusOf(input)).toBeLessThanOrEqual(radiusOf(form) + 0.5);
+  });
+});
+
+describe("the footer's ledger keeps ONE radius on every corner", () => {
+  // BOTH cards that mount this footer, because the one rule serves both and the
+  // delegate's ledger is also a member of 40-a11y.css's inset focus-ring list.
+  it.each([
+    ["turn", (card: HTMLElement, footer: HTMLElement) => card.appendChild(footer)],
+    [
+      "subagent-block",
+      (card: HTMLElement, footer: HTMLElement) => {
+        const foot = document.createElement("div");
+        foot.className = "subagent-foot";
+        foot.appendChild(footer);
+        card.appendChild(foot);
+        footer.classList.add("subagent-footer");
+      },
+    ],
+  ] as const)("gives the ledger the ladder's rung inside a %s", (cls, nest) => {
+    // It used to take the CARD's arc on the one corner it shared with it. It shares none
+    // now: the control paints a box centred in the band rather than filling it
+    // (29-turns.css), so the concentric rule has no single answer — an inset of 4px on
+    // one edge and 0 on the other is unsatisfiable at any radius (`web.md`) — and one
+    // rung is the whole vocabulary, the same 4px its siblings at the row's other end
+    // paint.
+    const card = document.createElement("div");
+    card.className = cls;
+    const footer = document.createElement("div");
+    footer.className = "turn-footer";
+    const ledger = document.createElement("button");
+    ledger.type = "button";
+    ledger.className = "turn-ledger-summary";
+    footer.appendChild(ledger);
+    nest(card, footer);
+    host.appendChild(card);
+
+    const s = getComputedStyle(ledger);
+    for (const [corner, value] of Object.entries({
+      "top-left": s.borderTopLeftRadius,
+      "top-right": s.borderTopRightRadius,
+      "bottom-right": s.borderBottomRightRadius,
+      "bottom-left": s.borderBottomLeftRadius,
+    })) {
+      expect(parseFloat(value), `ledger ${corner} takes the small rung`).toBeCloseTo(4, 1);
+    }
   });
 });
 

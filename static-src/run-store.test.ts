@@ -749,29 +749,36 @@ describe("runLabelOf", () => {
   });
 });
 
+/** Whether any live row this chat launched still reports EXECUTING. The store's own
+ *  predicate for that question went with the eviction exemption it served; the FLAG
+ *  survives, because the chat row's workflow mark reads it as its floor. */
+function executingForChat(chatID: string): boolean {
+  return store.liveRunsForChat(chatID).some((r) => r.executing);
+}
+
 describe("the live-runs inventory", () => {
   it("answers by chat for runs the lifecycle events fed in", () => {
     store.noteRunLive("wf-live-1", "chat-a", true);
-    expect(store.hasExecutingRunForChat("chat-a")).toBe(true);
-    expect(store.hasExecutingRunForChat("chat-b")).toBe(false);
+    expect(executingForChat("chat-a")).toBe(true);
+    expect(executingForChat("chat-b")).toBe(false);
 
     store.noteRunSettled("wf-live-1");
-    expect(store.hasExecutingRunForChat("chat-a")).toBe(false);
+    expect(executingForChat("chat-a")).toBe(false);
   });
 
   // The narrowing Stage 2 exists for, and it is the whole reason the row carries
   // two facts. A needInput park can sit for hours writing nothing into the
-  // transcript, so the eviction exemption must lapse — while the run stays in the
-  // inventory, because the dot painter and the tab-parent resolver still need it.
-  it("stops exempting a chat whose run parked, and keeps the run in the inventory", () => {
+  // transcript, so `executing` must lapse — while the run stays in the inventory,
+  // because the dot painter and the tab-parent resolver still need it.
+  it("clears executing for a chat whose run parked, and keeps the run in the inventory", () => {
     store.noteRunLive("wf-parked", "chat-parked", true);
-    expect(store.hasExecutingRunForChat("chat-parked")).toBe(true);
+    expect(executingForChat("chat-parked")).toBe(true);
 
     store.noteRunLive("wf-parked", "chat-parked", false);
 
     expect(
-      store.hasExecutingRunForChat("chat-parked"),
-      "a parked run writes nothing into its chat, so it must not pin that window",
+      executingForChat("chat-parked"),
+      "a parked run writes nothing into its chat, so nothing may claim it is moving",
     ).toBe(false);
     expect(
       store.hasLiveRunForChat("chat-parked"),
@@ -781,9 +788,9 @@ describe("the live-runs inventory", () => {
     expect(store.hasLiveRunForChat("chat-parked")).toBe(false);
   });
 
-  it("exempts no chat for a parentless run, and never answers for the empty chat", () => {
+  it("reports no executing chat for a parentless run, and never answers for the empty chat", () => {
     store.noteRunLive("wf-parentless", "", true);
-    expect(store.hasExecutingRunForChat("")).toBe(false);
+    expect(executingForChat("")).toBe(false);
     expect(store.hasLiveRunForChat("")).toBe(false);
     store.noteRunSettled("wf-parentless");
   });
@@ -828,12 +835,11 @@ describe("the live-runs inventory", () => {
 
   it("survives the render cache dropping the run's card (forgetRun)", () => {
     // The disposed-run-card case: forgetRun is the CACHE's bound (last card
-    // unmounted), and a run does not stop being live because nothing renders
-    // it — the exemption must hold for a chat nobody is looking at, which is
-    // exactly the chat eviction considers.
+    // unmounted), and a run does not stop being live because nothing renders it —
+    // the row must survive for a chat nobody is looking at.
     store.noteRunLive("wf-carded", "chat-carded", true);
     store.forgetRun("wf-carded");
-    expect(store.hasExecutingRunForChat("chat-carded")).toBe(true);
+    expect(executingForChat("chat-carded")).toBe(true);
     store.noteRunSettled("wf-carded");
   });
 
@@ -851,8 +857,8 @@ describe("the live-runs inventory", () => {
     await store.rebuildLiveRuns();
 
     expect(fetches).toContain("/api/runs/live");
-    expect(store.hasExecutingRunForChat("chat-missed")).toBe(true);
-    expect(store.hasExecutingRunForChat("chat-stale")).toBe(false);
+    expect(executingForChat("chat-missed")).toBe(true);
+    expect(executingForChat("chat-stale")).toBe(false);
     store.noteRunSettled("wf-missed");
     store.noteRunSettled("wf-parentless");
   });
@@ -860,14 +866,14 @@ describe("the live-runs inventory", () => {
   // The endpoint's own answer for a parked run, which is the case a boot lands in:
   // a run paused across a reload emits no frames at all, so the rebuild is the only
   // thing that can say whether its chat is still being written to.
-  it("adopts the endpoint's executing verdict, exempting no chat for a parked run", async () => {
+  it("adopts the endpoint's executing verdict, clearing it for a parked run", async () => {
     liveRunsReply = {
       runs: [{ workflow_id: "wf-boot-parked", chat_id: "chat-boot", executing: false }],
     };
 
     await store.rebuildLiveRuns();
 
-    expect(store.hasExecutingRunForChat("chat-boot")).toBe(false);
+    expect(executingForChat("chat-boot")).toBe(false);
     expect(
       store.hasLiveRunForChat("chat-boot"),
       "the run is still live, so the ask sweep must still see it",
@@ -938,14 +944,14 @@ describe("the live-runs inventory", () => {
 
     await store.rebuildLiveRuns();
     expect(
-      store.hasExecutingRunForChat("chat-kept"),
+      executingForChat("chat-kept"),
       "a failed rebuild must never clear to empty — degrade toward keeping",
     ).toBe(true);
 
     // The next rebuild (gap or boot) applies the server's answer.
     liveRunsReply = { runs: [] };
     await store.rebuildLiveRuns();
-    expect(store.hasExecutingRunForChat("chat-kept")).toBe(false);
+    expect(executingForChat("chat-kept")).toBe(false);
   });
 });
 

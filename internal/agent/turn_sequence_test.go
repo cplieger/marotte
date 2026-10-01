@@ -14,7 +14,29 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/sse"
 )
+
+// entriesOfBroadcasts returns the turn_close entry of every turn_closed frame in events.
+func entriesOfBroadcasts(t *testing.T, events []sse.ReplayEvent) []marotte.Entry {
+	t.Helper()
+	var out []marotte.Entry
+	for _, p := range payloadsOfType[marotte.TurnClosedPayload](t, events, marotte.EventTurnClosed) {
+		out = append(out, p.Entry)
+	}
+	return out
+}
+
+// closedStops returns the raw stop of every turn_closed frame broadcast so far.
+func closedStops(t *testing.T, h *Runtime) []marotte.StopReason {
+	t.Helper()
+	var out []marotte.StopReason
+	for _, c := range closedBroadcasts(t, h) {
+		out = append(out, marotte.StopReason(c.StopReasonRaw))
+	}
+	return out
+}
 
 // The headline ordering property, and the fault it closes: a settle taken on the
 // response alone decides the wire never closed the turn while the wire's own
@@ -30,7 +52,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
+	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	// The pipe: the wire has already delivered the bracket and the reply, and the
@@ -55,13 +77,13 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	}
 	<-settled
 
-	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded)
+	ends := closesOf(t, entriesOfBroadcasts(t, bufferedSince(h, before)))
 	if len(ends) != 1 {
-		t.Fatalf("turn_ended count = %d, want exactly 1 complete turn", len(ends))
+		t.Fatalf("turn_closed count = %d, want exactly 1 complete turn", len(ends))
 	}
-	if ends[0].StopReason != "refusal" {
+	if ends[0].StopReasonRaw != string(marotte.StopReasonRefusal) {
 		t.Errorf("stop reason = %q, want the WIRE's %q: the local settle ran on the "+
-			"response while turn_end was still queued", ends[0].StopReason, "refusal")
+			"response while turn_end was still queued", ends[0].StopReasonRaw, marotte.StopReasonRefusal)
 	}
 	result, err := h.AwaitTurn(ctx, chatID, epoch)
 	if err != nil {
@@ -73,9 +95,8 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	if result.EmittedNothing {
 		t.Error("the turn reports EmittedNothing, so the settle measured it before the reply was folded")
 	}
-	c, _ := cs.Get(ctx, chatID)
-	if !hasAssistantContent(c, "the whole reply") {
-		t.Errorf("the persisted turn does not carry the reply that arrived behind the response; messages = %+v", c.Messages)
+	if !cs.hasText(t, chatID, "the whole reply") {
+		t.Error("the persisted turn does not carry the reply that arrived behind the response")
 	}
 }
 
@@ -91,7 +112,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
+	epoch, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	// No turn_end: this is the fault path where the bracket never comes, and the
@@ -115,9 +136,9 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	}
 	<-settled
 
-	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded)
+	ends := payloadsOfType[marotte.TurnClosedPayload](t, bufferedSince(h, before), marotte.EventTurnClosed)
 	if len(ends) != 1 {
-		t.Fatalf("turn_ended count = %d, want 1: the settle parked behind a frame that folds nothing", len(ends))
+		t.Fatalf("turn_closed count = %d, want 1: the settle parked behind a frame that folds nothing", len(ends))
 	}
 	result, err := h.AwaitTurn(ctx, chatID, epoch)
 	if err != nil {
@@ -140,22 +161,22 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	first := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
+	first, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, first)
 	h.SettleTurnOnResponse(ctx, chatID, first, 0,
 		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
-	second := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
+	second, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, second)
 
 	before := h.bus.fanout.Position().Head
 	h.SettleTurnOnResponse(ctx, chatID, first, 0,
 		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})})
 
-	if ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded); len(ends) != 0 {
-		t.Errorf("a closer armed for turn %d announced an end after turn %d opened: %+v", first, second, ends)
+	if ends := payloadsOfType[marotte.TurnClosedPayload](t, bufferedSince(h, before), marotte.EventTurnClosed); len(ends) != 0 {
+		t.Errorf("a closer armed for turn %q announced an end after turn %q opened: %+v", first, second, ends)
 	}
-	if _, open := h.coord.turns.openEpoch(chatID); !open {
+	if _, open := ownID(h, chatID); !open {
 		t.Error("the second turn is no longer open, so the stale closer took it")
 	}
 }
@@ -173,8 +194,7 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	// A turn mid-stream: content folded, no bracket yet, which is what "dying
 	// mid-prompt" looks like from the turn's side.
-	startedTurnOn(t, h, cs, chatID, "half an answer")
-	epoch, _ := h.coord.turns.openEpoch(chatID)
+	epoch, _ := streamingPromptTurn(t, h, chatID, "half an answer")
 	sb, _ := h.bridge.mgr.orInsert(chatID)
 	sb.bridge = br
 
@@ -197,16 +217,16 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	<-forwardDone
 	<-settled
 
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonInterrupted)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one interrupted: the parked settle "+
+	if got := closedStops(t, h); !slices.Equal(got, []marotte.StopReason{marotte.StopReasonInterrupted}) {
+		t.Errorf("turn_closed stops = %v, want exactly one interrupted: the parked settle "+
 			"either beat the death closer or announced a second end", got)
 	}
 	result, err := h.AwaitTurn(ctx, chatID, epoch)
 	if err != nil {
 		t.Fatalf("AwaitTurn: %v", err)
 	}
-	if result.Interrupt == "" {
-		t.Error("the turn records no interrupt cause, so nothing durable says the agent process went away")
+	if closes := closesOf(t, logOf(t, cs, chatID)); len(closes) != 1 || closes[0].FailureReason != deathInterruptCause {
+		t.Errorf("turn_close entries = %+v, want one carrying the death cause: nothing durable says the agent process went away", closes)
 	}
 	if result.WireEnded {
 		t.Error("a turn no bracket closed reports WireEnded true, which arms the empty-turn recovery on a dead bridge")
@@ -229,20 +249,20 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
 	gen := r.attachForward(chatID)
 
-	turn := r.open(ctx, chatID, marotte.TurnSourcePrompt, "", 0)
-	if turn == nil {
-		t.Fatal("open returned no turn")
-	}
-	// Close it the way the wire's own bracket does, while the caller still holds its
-	// handle — so the record is retained and its done channel is closed.
-	claimed, won := r.claimOpen(ctx, chatID)
+	// Opened at the registry alone: the store append OpenTurn performs is not the
+	// subject, so the record is placed directly under the lifecycle mutex.
+	lc := r.lifecycleFor(chatID)
+	lc.mu.Lock()
+	turn := lc.openLocked(chatID, &marotte.Entry{ID: "t-1"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-1", nil))
+	lc.mu.Unlock()
+	claimed, won := r.claimOwn(ctx, chatID)
 	if !won {
-		t.Fatal("claimOpen lost the claim on a freshly opened turn")
+		t.Fatal("claimOwn lost the claim on a freshly opened turn")
 	}
 	r.finish(claimed, marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
 
 	reached := make(chan bool, 1)
-	go func() { reached <- r.awaitPosition(ctx, chatID, turn.Epoch, 5) }()
+	go func() { reached <- r.awaitPosition(ctx, chatID, turn.ID, 5) }()
 
 	select {
 	case got := <-reached:
@@ -272,7 +292,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	preOpen := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
+	preOpen, _ := h.stagePromptTurn(t, chatID)
 	defer h.ReleaseTurn(chatID, preOpen)
 
 	// The auto-wake's bracket pair mis-binds and closes the pre-open; the prompted

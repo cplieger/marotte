@@ -40,19 +40,20 @@ func TestAgentFinishedBodyFrom(t *testing.T) {
 	}
 }
 
-// The ordering: emit() CLEARS the chat's status as the turn_ended event goes out, so a
+// The ordering: emit() CLEARS the chat's status as the turn_closed frame goes out, so a
 // read taken at the push site finds the entry gone and falls back to the literal —
 // silently, and indistinguishably from an agent that never declared anything.
-func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
-	cs := newFakeChatStore()
+func TestPushTurnOutcome_PushBodyCarriesAgentText(t *testing.T) {
+	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(context.Background(), "/tmp/push-desc", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+	id, log := h.stagePromptTurn(t, "c1")
+	sayText(t, log)
 	// Broadcast the way translate/focus.go's chat_status path does it: MID-turn, on a
 	// session_info_update, through the production write. Only that path stages the
 	// description on the open TURN, which is what the push body reads.
@@ -61,7 +62,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 		Description: "Wiring the PR status poller",
 	}))
 	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
+	h.SettleTurnOnResponse(ctx, "c1", id, 0, resp)
 
 	select {
 	case body := <-fp.sends:
@@ -73,7 +74,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	}
 
 	// Still cleared afterwards, or a later connect reports a finished turn's label as current.
-	if got := h.bus.chatStatus.Get("c1"); got.Description != "" {
+	if got := h.bus.chatStatus.Snapshot()["c1"]; got.Description != "" {
 		t.Errorf("the chat status survived turn end: %+v", got)
 	}
 }
@@ -83,11 +84,12 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 // for work that did not land. The bodies are hardcoded rather than read back through
 // DefaultFailureReason, because an expectation computed by the code under test passes for
 // any mapping.
-func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
+func TestPushTurnOutcome_PushReadsTheSeverity(t *testing.T) {
 	cases := []struct {
-		name string
-		stop marotte.StopReason
-		want string // "" means no push at all
+		name   string
+		stop   marotte.StopReason
+		silent bool   // the turn seals nothing, so end_turn grades empty
+		want   string // "" means no push at all
 	}{
 		{name: "clean", stop: marotte.StopReasonEndTurn, want: "Wiring the PR status poller"},
 		{name: "failed", stop: marotte.StopReasonError, want: "The agent reported an error and the turn stopped."},
@@ -95,23 +97,28 @@ func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
 		// STOPPED: the reader asked for the cancel, and an unreadable end claims nothing.
 		{name: "cancelled", stop: marotte.StopReasonCancelled, want: ""},
 		{name: "unknown", stop: marotte.StopReasonUnknown, want: ""},
+		// STOPPED too: the push reads the narrowed conclusion, so a silent end_turn is `empty`.
+		{name: "empty", stop: marotte.StopReasonEndTurn, silent: true, want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs := newFakeChatStore()
+			cs := newTestChatStore()
 			fp := &recordingPush{sends: make(chan string, 4)}
 			h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-			cs.Bus = h
+			cs.wire(h)
 			h.mcpRegistry.SignalReady()
 			ctx := t.Context()
 			_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-			epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+			id, log := h.stagePromptTurn(t, "c1")
+			if !tc.silent {
+				sayText(t, log)
+			}
 			// Present for every case, so an arm leaking it fails visibly rather than absently.
 			// Broadcast mid-turn, where the real frame lands: see the sibling test above.
 			h.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
 				Status: "in_progress", Description: "Wiring the PR status poller",
 			}))
-			h.SettleTurnOnResponse(ctx, "c1", epoch, 0,
+			h.SettleTurnOnResponse(ctx, "c1", id, 0,
 				&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": string(tc.stop)})})
 
 			if tc.want == "" {
@@ -139,24 +146,19 @@ func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
 // its turn on purpose — so a chat's copy cannot answer for one turn without handing the
 // next turn the previous turn's words.
 //
-// Turn N+1 opens with TurnSourceWireTurnStart deliberately. A prompt-class source would
-// discharge the retention first, emptying the cache, so a cache-reading implementation
-// would also produce the default and the case could never go red.
+// Turn N+1 is a WIRE-started turn deliberately. A prompt-class source would discharge
+// the retention first, emptying the cache, so a cache-reading implementation would also
+// produce the default and the case could never go red.
 func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 	newFixture := func(t *testing.T) (*Runtime, *recordingPush) {
 		t.Helper()
-		cs := newFakeChatStore()
+		cs := newTestChatStore()
 		fp := &recordingPush{sends: make(chan string, 4)}
 		h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-		cs.Bus = h
+		cs.wire(h)
 		h.mcpRegistry.SignalReady()
 		_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 		return h, fp
-	}
-	endTurn := func(t *testing.T, h *Runtime, epoch marotte.TurnEpoch) {
-		t.Helper()
-		h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0,
-			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 	}
 	awaitBody := func(t *testing.T, fp *recordingPush) string {
 		t.Helper()
@@ -171,12 +173,13 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 
 	t.Run("the declaring turn gets its own words", func(t *testing.T) {
 		h, fp := newFixture(t)
-		epoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
+		id, log := h.stagePromptTurn(t, "c1")
+		sayText(t, log)
 		h.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
 			Status:      marotte.ChatStatusWaitingOnUser,
 			Description: "waiting on the user to disposition both proposals",
 		}))
-		endTurn(t, h, epoch)
+		endTurn(t, h, "c1", id)
 
 		if got := awaitBody(t, fp); got != "waiting on the user to disposition both proposals" {
 			t.Errorf("push body = %q, want the description this turn declared", got)
@@ -185,24 +188,26 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 
 	t.Run("the next turn does not inherit it", func(t *testing.T) {
 		h, fp := newFixture(t)
-		nEpoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
+		id, log := h.stagePromptTurn(t, "c1")
+		sayText(t, log)
 		h.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1", marotte.ChatStatusPayload{
 			Status:      marotte.ChatStatusWaitingOnUser,
 			Description: "waiting on the user to disposition both proposals",
 		}))
-		endTurn(t, h, nEpoch)
+		endTurn(t, h, "c1", id)
 		_ = awaitBody(t, fp)
 		// The claim is RETAINED past turn end; that is the feature. So the cache still
 		// holds a description turn N+1 never declared.
-		if got := h.bus.chatStatus.Get("c1"); got.Status != marotte.ChatStatusWaitingOnUser {
+		if got := h.bus.chatStatus.Snapshot()["c1"]; got.Status != marotte.ChatStatusWaitingOnUser {
 			t.Fatalf("the fixture lost the retention: status is %q", got.Status)
 		}
 
-		nextEpoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourceWireTurnStart)
-		if nextEpoch == 0 {
+		wire := h.stageWireTurn(t, "c1")
+		if wire == nil {
 			t.Fatal("the fixture could not open a wire-started turn")
 		}
-		endTurn(t, h, nextEpoch)
+		sayText(t, wire)
+		h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 
 		if got := awaitBody(t, fp); got != defaultAgentFinishedBody {
 			t.Errorf("push body = %q, want %q: this turn declared nothing", got, defaultAgentFinishedBody)
@@ -212,18 +217,19 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 
 // A chat notification must still travel as a chat SUBJECT rather than a bare key, or it
 // loses the per-chat coalescing tag.
-func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
-	cs := newFakeChatStore()
+func TestPushTurnOutcome_PushSubjectIsTheChat(t *testing.T) {
+	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(context.Background(), "/tmp/push-subject", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+	id, log := h.stagePromptTurn(t, "c1")
+	sayText(t, log)
 	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
+	h.SettleTurnOnResponse(ctx, "c1", id, 0, resp)
 
 	select {
 	case <-fp.sends:

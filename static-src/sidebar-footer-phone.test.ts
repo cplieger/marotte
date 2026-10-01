@@ -1,10 +1,10 @@
 // THE FOOTER AT REAL PHONE VIEWPORT SIZES, and the tier no attribute can reach.
 //
-// This change DELETED a 60-line `width <= 48rem` block that turned the connection
-// dot into a transparent 44px grid with the mark on a `::before`. The target is the
-// merged trigger's own band at every tier now, so there is ONE mark rule — which
-// means the phone tier is exactly where a regression would land, and a media query
-// answers about the VIEWPORT, so no amount of DOM setup can stand in for a resize.
+// A deleted 60-line `width <= 48rem` block used to turn the connection dot into a
+// transparent 44px grid with the mark on a `::before`. The target is the merged
+// trigger's own box at every tier now, so there is ONE mark rule — which means the
+// phone tier is exactly where a regression would land, and a media query answers
+// about the VIEWPORT, so no amount of DOM setup can stand in for a resize.
 //
 // FIVE READINGS, and each catches something the others cannot:
 //
@@ -104,6 +104,13 @@ function mountFooter(email = "someone@example.invalid"): Footer {
   logout.type = "button";
   logout.id = "logout-btn";
   logout.className = "icon-btn";
+  // The glyph is load-bearing: `.icon-btn` declares no height, so an empty one is the
+  // bare hit floor where production is glyph plus padding, and `assertFooter` compares
+  // the trigger's height against this box.
+  const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  glyph.setAttribute("class", "ic-ui");
+  glyph.setAttribute("viewBox", "0 0 24 24");
+  logout.appendChild(glyph);
   actions.appendChild(logout);
   footer.append(anchor, actions);
   sidebar.appendChild(footer);
@@ -139,19 +146,25 @@ function assertFooter(label: string, floor: number): Footer {
   const border = parseFloat(getComputedStyle(f.footer).borderTopWidth);
 
   expect(border, `${label}: the dotted divider survives`).toBeCloseTo(1, 1);
-  expect(btnBox.height, `${label}: the trigger fills the content band`).toBeCloseTo(
-    footerBox.height - border,
+  // The trigger is the LOGOUT button's pill, centred in the band — the same claim
+  // `account-btn-css.test.ts` owns per pointer tier, re-asserted here because a
+  // viewport arm can move `--hit-floor` without moving the attribute.
+  expect(btnBox.height, `${label}: the trigger is the logout button's height`).toBeCloseTo(
+    f.logout.getBoundingClientRect().height,
     0,
   );
   expect(btnBox.height, `${label}: and clears the tier's floor`).toBeGreaterThanOrEqual(floor);
+  expect(btnBox.top - (footerBox.top + border), `${label}: slack above against below`).toBeCloseTo(
+    footerBox.bottom - btnBox.bottom,
+    0,
+  );
 
-  // FOUR-EDGE HIT TEST, off the corners. The band's edges vertically, the trigger's
-  // own edges horizontally.
+  // FOUR-EDGE HIT TEST, off the corners, on the trigger's own box.
   const midX = btnBox.left + btnBox.width / 2;
-  const midY = footerBox.top + border + (footerBox.height - border) / 2;
+  const midY = btnBox.top + btnBox.height / 2;
   for (const [edge, x, y] of [
-    ["top", midX, footerBox.top + border + 1],
-    ["bottom", midX, footerBox.bottom - 1],
+    ["top", midX, btnBox.top + 1],
+    ["bottom", midX, btnBox.bottom - 1],
     ["leading", btnBox.left + 1, midY],
     ["trailing", btnBox.right - 1, midY],
   ] as const) {

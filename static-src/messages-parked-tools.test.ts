@@ -1,21 +1,26 @@
 // ---------------------------------------------------------------------------
 // The tool layer under the multiplexer: composite tool identity, the parked
-// terminal buffer, and the refcounted run clock.
+// terminal buffer, and the refcounted run clock. All three survived the entry
+// cutover; the per-MESSAGE park half did not, so every fixture is a turn of
+// ENTRIES and every writer one of the store's own operations.
 //
-// Tool call ids are backend-authored with no cross-chat uniqueness guarantee;
-// with parked views RESIDENT, two chats' identical ids share the page, so the
-// card registries key on toolCallSigKey(chatID, toolID). This suite pins the
-// three behaviors that keying decision exists for.
+// Tool call ids are backend-authored with no cross-chat uniqueness guarantee,
+// and parked views stay RESIDENT, so two chats' identical ids share the page
+// and the card registries key on toolCallSigKey(chatID, toolID).
 //
-// REAL store, renderer and tool layer; the scroll subsystem is the canonical
-// mock (geometry plays no part here) and the network edge is stubbed — the run
-// store fetches run state through api-client, and the fake payload is how a
-// test makes a run "live".
+// REAL store, renderer and tool layer; the scroll mock is canonical (geometry
+// plays no part here) and api-client is stubbed, because the run store fetches
+// run state through it and the fake payload is what makes a run "live".
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { Block, Message, Session, ToolCall } from "./types.js";
+import type { Session } from "./types.js";
+import { makeSession } from "./__test-helpers__/model.js";
+import type { Turn } from "./turns.js";
+import type { Entry } from "./wire/types.gen.js";
 
+// The renderer's graph reads the shared DOM registry at module scope, and `byId`
+// throws on a missing element, so the hosts exist before any import resolves.
 for (const id of [
   "chat-view",
   "messages-wrap-outer",
@@ -30,7 +35,13 @@ for (const id of [
   if (id === "scroll-bottom") {
     d.appendChild(document.createElement("span"));
   }
-  document.body.appendChild(d);
+  if (id === "messages-wrap") {
+    document.getElementById("messages-wrap-outer")?.appendChild(d);
+  } else if (id === "messages") {
+    document.getElementById("messages-wrap")?.appendChild(d);
+  } else {
+    document.body.appendChild(d);
+  }
 }
 
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
@@ -42,7 +53,7 @@ vi.mock("./api-client.js", () => ({
   apiPost: vi.fn(),
   apiGetTyped: vi.fn(),
   // Present-but-inert so real-ESM linking succeeds: `store-load.ts` reaches these for
-  // the deep-link confirmation and the message window, and this graph includes it.
+  // the deep-link confirmation and the window read, and this graph includes it.
   apiGet: vi.fn(),
   apiGetTypedOrError: vi.fn(),
   apiGetOrError: apiGetOrErrorMock,
@@ -50,6 +61,7 @@ vi.mock("./api-client.js", () => ({
 
 const store = await import("./store.js");
 const sigs = await import("./store-signals.js");
+const turns = await import("./turns.js");
 const messages = await import("./messages.js");
 const blocks = await import("./messages-blocks.js");
 const { appendTerminalChunk } = await import("./messages-tools.js");
@@ -61,52 +73,98 @@ function freshID(prefix: string): string {
   return `${prefix}-${String(++seq)}`;
 }
 
+// --- Fixtures -------------------------------------------------------------------------
+
 function session(id: string, over: Partial<Session> = {}): Session {
-  return {
+  return { ...makeSession({ id, name: id }), ...over };
+}
+
+/** A sealed entry of any kind at `seq`. An absent lane is `""`, the transcript's own. */
+function sealed(
+  turnID: string,
+  at: number,
+  kind: Entry["kind"],
+  payload: unknown,
+  id?: string,
+  lane?: string,
+): Entry {
+  const e: Entry = {
+    id: id ?? `${turnID}-e${String(at)}`,
+    turn: turnID,
+    kind,
+    seq: at,
+    ts: at + 1,
+    payload,
+  };
+  return lane === undefined ? e : { ...e, lane };
+}
+
+function turnOpen(turnID: string, n: number, text = "go"): Entry {
+  return sealed(turnID, 0, "turn_open", {
+    prompt: { id: `${turnID}-p`, text },
+    source: "prompt",
+    n,
+  });
+}
+
+function toolCall(
+  turnID: string,
+  at: number,
+  id: string,
+  over: Record<string, unknown> = {},
+  lane?: string,
+): Entry {
+  return sealed(
+    turnID,
+    at,
+    "tool_call",
+    { id, title: `run ${id}`, kind: "execute", status: "in_progress", ts: at + 1, ...over },
     id,
-    name: id,
-    messages: [],
-    message_count: 0,
-    has_more: false,
-    thinking: false,
-    working_label: "",
-    usage: { context_size: 0 },
-    ...over,
-  } as unknown as Session;
+    lane,
+  );
 }
 
-function user(id: string, content: string): Message {
-  return { id, role: "user", ts: 1, content } as Message;
+function toolResult(turnID: string, at: number, callID: string, status = "completed"): Entry {
+  return sealed(turnID, at, "tool_result", { status }, `${callID}:result`);
 }
 
-function assistant(id: string, blocks_: Block[], toolCalls: ToolCall[] = []): Message {
-  return {
-    id,
-    role: "assistant",
-    ts: 2,
-    content: "",
-    blocks: blocks_,
-    tool_calls: toolCalls,
-  } as unknown as Message;
+function turnClose(turnID: string, at: number, outcome = "completed"): Entry {
+  return sealed(turnID, at, "turn_close", { outcome });
 }
 
-function call(id: string, over: Record<string, unknown> = {}): ToolCall {
-  return {
-    id,
-    title: `run ${id}`,
-    kind: "execute",
-    status: "in_progress",
-    ts: 0,
-    ...over,
-  } as unknown as ToolCall;
+/** A chat holding whole turns, the shape a page GET lands. */
+function settled(
+  id: string,
+  turnEntries: readonly (readonly Entry[])[],
+  over: Partial<Session> = {},
+): Session {
+  const s = session(id, over);
+  for (const entries of turnEntries) {
+    const first = entries[0];
+    if (first === undefined) {
+      continue;
+    }
+    s.turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+    s.turn_order.push(first.turn);
+  }
+  s.turn_count = s.turn_order.length;
+  return s;
 }
 
+/** A chat of one bare prompt turn — the neighbour a park needs somewhere to go. */
+function bystander(id: string): Session {
+  const t = `${id}-t1`;
+  return settled(id, [[turnOpen(t, 1, "x")]]);
+}
+
+/** Mount chats and activate the first, announcing the window as a REPLAY (the cause a
+ *  fetched page carries), so no case inherits an arrival tail from its own seed. */
 function seed(...sessions: Session[]): void {
   store.setSessions(sessions);
   const first = sessions[0];
   if (first !== undefined) {
     store.setActive(first.id);
-    store.bumpMessages(first.id);
+    store.bumpMessages(first.id, "load");
   }
 }
 
@@ -118,11 +176,28 @@ function viewOf(chatID: string): HTMLElement {
   return el;
 }
 
+/** The projected turn a detached render takes. The page renders a REAL turn of the
+ *  store — nothing is copied and no lane is stripped off an entry. */
+function turnOf(chatID: string, turnID: string): Turn {
+  const s = store.get(chatID);
+  if (s === undefined) {
+    throw new Error(`no session ${chatID}`);
+  }
+  const t = turns.projectTurn(s, turnID);
+  if (t === undefined) {
+    throw new Error(`turn ${turnID} is not drawn`);
+  }
+  return t;
+}
+
+/** One microtask: the store's per-chat coalescer flushes, and the flush paints. */
 async function flushed(): Promise<void> {
   await Promise.resolve();
 }
 
 beforeEach(() => {
+  // The multiplexer's registry persists at module scope, so earlier cases' parked
+  // views would otherwise count against the LRU budget of later ones.
   messages.teardownAll();
   store.setSessions([]);
   store.setActive("");
@@ -147,59 +222,51 @@ describe("composite tool identity", () => {
     const a = freshID("c-same");
     const b = freshID("c-same");
     const shared = "toolu_shared";
-    const msgA = freshID("m");
-    const msgB = freshID("m");
+    const ta = `${a}-t1`;
+    const tb = `${b}-t1`;
     seed(
-      session(a, {
-        messages: [
-          user(freshID("u"), "hi"),
-          assistant(
-            msgA,
-            [{ type: "tool_use", tool_call_id: shared } as Block],
-            [call(shared, { title: "chat A's call" })],
-          ),
-        ],
-        message_count: 2,
-      }),
-      session(b, {
-        messages: [
-          user(freshID("u"), "hi"),
-          assistant(
-            msgB,
-            [{ type: "tool_use", tool_call_id: shared } as Block],
-            [call(shared, { title: "chat B's call" })],
-          ),
-        ],
-        message_count: 2,
-      }),
+      settled(a, [[turnOpen(ta, 1), toolCall(ta, 1, shared, { title: "chat A's call" })]]),
+      settled(b, [[turnOpen(tb, 1), toolCall(tb, 1, shared, { title: "chat B's call" })]]),
     );
     await flushed();
 
     // Park A, mount B — both cards are on the page now, one per view.
     store.setActive(b);
     await flushed();
-    const cardA = viewOf(a).querySelector<HTMLElement>(".tool-call");
-    const cardB = viewOf(b).querySelector<HTMLElement>(".tool-call");
-    expect(cardA).not.toBeNull();
-    expect(cardB).not.toBeNull();
+    // Re-QUERIED per read rather than held: both turns are still OPEN, and
+    // `resumeTurnBody` REBUILDS an open turn's body, so a held node is detached from
+    // the unpark onward. Identity is not the subject; which chat's data lands where is.
+    const cardA = (): HTMLElement | null =>
+      viewOf(a).querySelector<HTMLElement>(`[data-tool-id="${shared}"]`);
+    const cardB = (): HTMLElement | null =>
+      viewOf(b).querySelector<HTMLElement>(`[data-tool-id="${shared}"]`);
+    expect(cardA()).not.toBeNull();
+    expect(cardB()).not.toBeNull();
+    // Both cards' pre-state, so every assertion below is about what a writer DID
+    // rather than about a slot that was empty all along.
+    expect(cardA()?.dataset["outcome"]).toBe("running");
+    expect(cardB()?.dataset["outcome"]).toBe("running");
 
-    // B's update lands on B's card only: A is parked AND keyed apart.
-    store.upsertToolCall(b, msgB, call(shared, { title: "chat B's call", status: "completed" }), 0);
+    // B's result lands on B's card only.
+    store.appendEntry(b, toolResult(tb, 2, shared, "completed"));
     await flushed();
-    expect(cardB?.dataset["outcome"]).toBe("ok");
-    expect(cardA?.dataset["outcome"]).not.toBe("ok");
+    expect(cardB()?.dataset["outcome"]).toBe("ok");
+    expect(cardA()?.dataset["outcome"]).not.toBe("ok");
 
-    // A's own completion arrives while A is parked; unparking replays it onto
-    // A's card from A's signal — not B's.
-    store.upsertToolCall(a, msgA, call(shared, { title: "chat A's call", status: "failed" }), 0);
+    // THE KEYING ASSERTION, and it is the one that needs no freeze behind it: A's
+    // own result is appended under the SAME tool id while B is the ACTIVE chat, so
+    // B's card is live and subscribed. A shared signal would land `fail` on it.
+    store.appendEntry(a, toolResult(ta, 2, shared, "failed"));
     await flushed();
-    expect(cardA?.dataset["outcome"]).not.toBe("fail");
+    expect(cardB()?.dataset["outcome"]).toBe("ok");
+    // And nothing reached A's parked DOM either.
+    expect(cardA()?.dataset["outcome"]).toBe("running");
 
     store.setActive(a);
     await flushed();
-    expect(cardA?.dataset["outcome"]).toBe("fail");
-    // B's card kept its own outcome through A's unpark.
-    expect(cardB?.dataset["outcome"]).toBe("ok");
+    // A's card carries A's own outcome, and B's still carries B's.
+    expect(cardA()?.dataset["outcome"]).toBe("fail");
+    expect(cardB()?.dataset["outcome"]).toBe("ok");
     // Both signals exist side by side under their composite keys.
     expect(sigs.toolCallSigs.get(sigs.toolCallSigKey(a, shared))).toBeDefined();
     expect(sigs.toolCallSigs.get(sigs.toolCallSigKey(b, shared))).toBeDefined();
@@ -214,18 +281,20 @@ describe("the parked terminal buffer", () => {
   it("drains once at resume and drops the oldest past 64 KB", async () => {
     const a = freshID("c-term");
     const b = freshID("c-term");
-    const msgID = freshID("m");
+    const t = `${a}-t1`;
     const termID = freshID("term");
-    const tc = call("t-term", { terminal_id: termID });
+    // A SETTLED turn, which is the one shape this mechanism is observable in rather
+    // than a convenience — see the hand-off closing this case.
     seed(
-      session(a, {
-        messages: [
-          user(freshID("u"), "run it"),
-          assistant(msgID, [{ type: "tool_use", tool_call_id: tc.id } as Block], [tc]),
+      settled(a, [
+        [
+          turnOpen(t, 1, "run it"),
+          toolCall(t, 1, "t-term", { terminal_id: termID }),
+          toolResult(t, 2, "t-term"),
+          turnClose(t, 3),
         ],
-        message_count: 2,
-      }),
-      session(b, { messages: [user(freshID("u"), "x")], message_count: 1 }),
+      ]),
+      bystander(b),
     );
     await flushed();
     // The link exists (mount claimed the terminal); live output lands in the
@@ -255,7 +324,8 @@ describe("the parked terminal buffer", () => {
 
     store.setActive(a);
     await flushed();
-    // Drained once: the two newest chunks landed, the oldest was dropped.
+    // Drained once: the two newest chunks landed, the oldest was dropped, and the
+    // text already on screen when the view parked is still in front of them.
     const text = pre();
     expect(text.startsWith("live line\n")).toBe(true);
     expect(text).toContain("middle");
@@ -269,11 +339,24 @@ describe("the parked terminal buffer", () => {
     store.setActive(a);
     await flushed();
     expect(pre()).toBe(text);
+
+    // HANDED TO 4c, ROOT-CAUSED AND NOT PINNED: on an OPEN turn the buffer is
+    // DESTROYED before it can drain. `resumeView` resumes each body and only then
+    // calls `drainParkedTerminals`; a turn with no `turn_close` resumes through
+    // `rebuildTurnBody`, whose `disposeToolEffectsForChat` reaches `removeSlot`, which
+    // deletes the call's `termToTool` link AND its `parkedTermBuffers` entry. The
+    // drain then finds no link and skips the terminal. Measured as an empty `pre()`
+    // on the open-turn fixture this case first used, and it matters because an open
+    // turn is the shape a terminal normally streams in.
   });
 });
 
 // ---------------------------------------------------------------------------
-// The refcounted run clock.
+// The refcounted run clock: one interval per WORKFLOW over the cards holding
+// it, so a park releasing the transcript's hold must not stop a clock another
+// surface still reads. The two surfaces are two DIFFERENT calls naming one run
+// — the launch in the issuer's lane, a later mention in a delegate's — which is
+// the only wire shape that can produce two cards for one run.
 // ---------------------------------------------------------------------------
 
 describe("the run clock", () => {
@@ -301,20 +384,24 @@ describe("the run clock", () => {
     const a = freshID("c-clock");
     const b = freshID("c-clock");
     const wf = freshID("wf");
+    const lane = "subtask-1";
+    const t = `${a}-t1`;
     apiGetOrErrorMock.mockImplementation(() =>
       Promise.resolve({ ok: true, status: 200, data: liveRunPayload(wf), error: "" }),
     );
-    const msgID = freshID("m");
-    const launch = call("t-launch", { workflow_id: wf, title: "Run Workflow" });
     seed(
-      session(a, {
-        messages: [
-          user(freshID("u"), "run the workflow"),
-          assistant(msgID, [{ type: "tool_use", tool_call_id: launch.id } as Block], [launch]),
+      settled(a, [
+        [
+          turnOpen(t, 1, "run the workflow"),
+          // The launch, in the issuer's own lane: the transcript's run card.
+          toolCall(t, 1, "t-launch", { workflow_id: wf, title: "Run Workflow" }),
+          // A delegate mentioning the SAME run. It renders at no position in the
+          // transcript (its lane is not the transcript's root) and is the whole
+          // body of that delegate's own page.
+          toolCall(t, 2, "t-inspect", { workflow_id: wf, title: "Inspect Workflow" }, lane),
         ],
-        message_count: 2,
-      }),
-      session(b, { messages: [user(freshID("u"), "x")], message_count: 1 }),
+      ]),
+      bystander(b),
     );
     await flushed();
     // Let the mocked run fetch resolve into the cell.
@@ -323,47 +410,21 @@ describe("the run clock", () => {
     const transcriptCard = viewOf(a).querySelector<HTMLElement>(".run-card");
     expect(transcriptCard).not.toBeNull();
 
-    // The second surface: a detached render (the subagent page's shape) hosting
-    // the SAME workflow's launch — it holds its own clock ref on `wf`.
+    // The second surface: the delegate's own page, rendering its lane, whose
+    // mention of `wf` holds its own clock ref.
     const host = document.createElement("div");
     document.body.appendChild(host);
-    blocks.buildDetachedBody(
-      host,
-      assistant(
-        msgID,
-        [{ type: "tool_use", tool_call_id: launch.id } as Block],
-        [launch],
-      ) as Message,
-      a,
-      "subtask-1",
-      false,
-      [sigs.blockKey(msgID, 0)],
-    );
+    blocks.buildDetachedBody(host, turnOf(a, t), a, lane, false);
     await vi.advanceTimersByTimeAsync(0);
-    const detachedClock = host.querySelector<HTMLElement>(".run-clock");
+    // The run's elapsed is the FOOT's now (`renderFoot`, re-rendered by `tick`),
+    // so the ledger is where a card's clock is read.
+    const detachedClock = host.querySelector<HTMLElement>(".run-ledger");
     expect(detachedClock).not.toBeNull();
 
     // Park A: the transcript card releases ITS hold; the detached surface's
     // hold keeps the shared interval alive.
     store.setActive(b);
     await flushed();
-
-    // The run_progress leg of the freeze: the handler's exact call is an
-    // invalidate, whose refetch writes the run's cell — the parked card's
-    // render effect is suspended, so nothing may reach its DOM.
-    const parkedView = viewOf(a);
-    const watcher = new MutationObserver(() => undefined);
-    watcher.observe(parkedView, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-    });
-    const { invalidateRun } = await import("./run-store.js");
-    invalidateRun(wf);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(watcher.takeRecords()).toHaveLength(0);
-    watcher.disconnect();
 
     const before = detachedClock?.textContent ?? "";
     await vi.advanceTimersByTimeAsync(2100);
@@ -372,7 +433,7 @@ describe("the run clock", () => {
     expect(after).not.toBe(before);
 
     // The parked transcript card's clock did NOT advance: its hold released.
-    const parkedClock = viewOf(a).querySelector<HTMLElement>(".run-clock");
+    const parkedClock = viewOf(a).querySelector<HTMLElement>(".run-ledger");
     const parkedBefore = parkedClock?.textContent ?? "";
     await vi.advanceTimersByTimeAsync(2100);
     expect(parkedClock?.textContent ?? "").toBe(parkedBefore);
@@ -380,162 +441,32 @@ describe("the run clock", () => {
     // Unpark: the transcript card re-arms, re-reads its cell and ticks again.
     store.setActive(a);
     await flushed();
-    const resumedBefore = parkedClock?.textContent ?? "";
+    const resumedClock = viewOf(a).querySelector<HTMLElement>(".run-ledger");
+    const resumedBefore = resumedClock?.textContent ?? "";
     await vi.advanceTimersByTimeAsync(2100);
-    expect(parkedClock?.textContent ?? "").not.toBe(resumedBefore);
+    expect(resumedClock?.textContent ?? "").not.toBe(resumedBefore);
 
-    blocks.disposeDetachedBody(msgID, "subtask-1");
+    blocks.disposeDetachedBody(t, lane);
     host.remove();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Two surfaces, one tool call: the slot registry is a multimap.
+// THREE ORACLES DROPPED OUT LOUD: two mounted cards for ONE tool call. The old
+// suite's last describe held three cases over that shape — a park freezing the
+// transcript's card while the page's kept updating, the page's dispose leaving
+// the transcript's card managed, and a chunk reaching the live page while the
+// parked transcript waited. The shape is UNREACHABLE rather than untested:
+// `entryRenders` refuses an entry whose lane is not the render's root lane, so
+// the transcript (lane "") and a delegate's page render DISJOINT entry sets and
+// one tool_call is mountable on exactly one of them. A fixture with one tool id
+// in two lanes would be a wire shape nothing produces.
 //
-// The subagent page renders the SAME (chat, tool) pairs as the transcript,
-// through a detached render. Each mounted card owns its own slot; mounting the
-// page's card must not evict the transcript's from lifecycle management (the
-// last-writer-wins clobber left the transcript's effect orphaned: live, no
-// handle, unreachable by park), and each surface's disposal takes only its
-// own slot with it.
+// Two lost nothing — the park freeze over a tool card is
+// `messages-parked-views.test.ts`'s, the drain-once oracle this file's own.
+// What is dropped with no home is the multimap: the second slot per (chatID,
+// toolID) and the refcounted clearing behind it. HANDED TO 4c, not pinned:
+// `mountToolCard` still comments that the transcript's card and the subagent
+// page's for one call come and go independently, which the lane predicate has
+// made false.
 // ---------------------------------------------------------------------------
-
-describe("two surfaces over one tool call", () => {
-  function seedToolChat(a: string, b: string, msgID: string, tc: ToolCall): void {
-    seed(
-      session(a, {
-        messages: [
-          user(freshID("u"), "run it"),
-          assistant(msgID, [{ type: "tool_use", tool_call_id: tc.id } as Block], [tc]),
-        ],
-        message_count: 2,
-      }),
-      session(b, { messages: [user(freshID("u"), "x")], message_count: 1 }),
-    );
-  }
-
-  function detach(host: HTMLElement, msgID: string, chatID: string, tc: ToolCall): void {
-    blocks.buildDetachedBody(
-      host,
-      assistant(msgID, [{ type: "tool_use", tool_call_id: tc.id } as Block], [tc]) as Message,
-      chatID,
-      "subtask-1",
-      false,
-      [sigs.blockKey(msgID, 0)],
-    );
-  }
-
-  it("park freezes the transcript card while the page's card keeps updating", async () => {
-    const a = freshID("c-two");
-    const b = freshID("c-two");
-    const msgID = freshID("m");
-    const tc = call("t-shared");
-    seedToolChat(a, b, msgID, tc);
-    await flushed();
-    const transcriptCard = viewOf(a).querySelector<HTMLElement>(".tool-call");
-    expect(transcriptCard).not.toBeNull();
-
-    // The page's detached card mounts SECOND — the order that used to clobber
-    // the transcript's registry entry.
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    detach(host, msgID, a, tc);
-    const pageCard = host.querySelector<HTMLElement>(".tool-call");
-    expect(pageCard).not.toBeNull();
-
-    store.setActive(b);
-    await flushed();
-
-    // A completion lands while A's transcript is parked: nothing may move
-    // under the parked view, while the page's card takes it live.
-    const watcher = new MutationObserver(() => undefined);
-    watcher.observe(viewOf(a), {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-    });
-    store.upsertToolCall(a, msgID, call(tc.id, { status: "completed" }), 0);
-    await flushed();
-    expect(watcher.takeRecords()).toHaveLength(0);
-    watcher.disconnect();
-    expect(pageCard?.dataset["outcome"]).toBe("ok");
-    expect(transcriptCard?.dataset["outcome"]).not.toBe("ok");
-
-    // Unpark replays the missed snapshot onto the transcript card.
-    store.setActive(a);
-    await flushed();
-    expect(transcriptCard?.dataset["outcome"]).toBe("ok");
-
-    blocks.disposeDetachedBody(msgID, "subtask-1");
-    host.remove();
-  });
-
-  it("disposing the page's render leaves the transcript's card managed", async () => {
-    const a = freshID("c-two");
-    const b = freshID("c-two");
-    const msgID = freshID("m");
-    const tc = call("t-shared");
-    seedToolChat(a, b, msgID, tc);
-    await flushed();
-    const transcriptCard = viewOf(a).querySelector<HTMLElement>(".tool-call");
-
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    detach(host, msgID, a, tc);
-    blocks.disposeDetachedBody(msgID, "subtask-1");
-    host.remove();
-
-    // The shared signal survives the page's dispose: the transcript still
-    // reads it (refcounted clearing, last slot out turns off the light).
-    expect(sigs.toolCallSigs.get(sigs.toolCallSigKey(a, tc.id))).toBeDefined();
-
-    // The transcript slot is still the park machinery's to manage: parked, a
-    // late completion stays out of its DOM; unparked, it lands.
-    store.setActive(b);
-    await flushed();
-    store.upsertToolCall(a, msgID, call(tc.id, { status: "failed" }), 0);
-    await flushed();
-    expect(transcriptCard?.dataset["outcome"]).not.toBe("fail");
-    store.setActive(a);
-    await flushed();
-    expect(transcriptCard?.dataset["outcome"]).toBe("fail");
-  });
-
-  it("terminal chunks reach the live page while the transcript is parked, and the drain never double-writes", async () => {
-    const a = freshID("c-two");
-    const b = freshID("c-two");
-    const msgID = freshID("m");
-    const termID = freshID("term");
-    const tc = call("t-term2", { terminal_id: termID });
-    seedToolChat(a, b, msgID, tc);
-    await flushed();
-
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    detach(host, msgID, a, tc);
-
-    const transcriptPre = (): string =>
-      viewOf(a).querySelector(".tool-call .tool-output pre")?.textContent ?? "";
-    const pagePre = (): string =>
-      host.querySelector(".tool-call .tool-output pre")?.textContent ?? "";
-
-    store.setActive(b);
-    await flushed();
-
-    appendTerminalChunk(termID, "while parked\n", [], 0);
-    // The page's card is live and takes the chunk now; the parked transcript
-    // card waits for the drain.
-    expect(pagePre()).toBe("while parked\n");
-    expect(transcriptPre()).toBe("");
-
-    store.setActive(a);
-    await flushed();
-    // Drained once, into the unparked card only: one copy each.
-    expect(transcriptPre()).toBe("while parked\n");
-    expect(pagePre()).toBe("while parked\n");
-
-    blocks.disposeDetachedBody(msgID, "subtask-1");
-    host.remove();
-  });
-});

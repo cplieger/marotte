@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/chat"
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // tombstonedChats is a chat store that refuses every write the way the real one
@@ -26,6 +26,12 @@ type promptSpy struct {
 	hostDouble
 	opened int
 	events []marotte.ServerEvent
+}
+
+// OpenTurn relays the store's tombstone the way the registry does: the turn_open
+// is the first write a prompt makes, and a tombstoned chat refuses it.
+func (s *promptSpy) OpenTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource, *marotte.EntryPrompt, func(*marotte.Chat)) (string, error) {
+	return "", chat.ErrTombstoned
 }
 
 func (s *promptSpy) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {

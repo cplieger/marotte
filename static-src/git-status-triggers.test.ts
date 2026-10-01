@@ -1,10 +1,10 @@
 // What makes the git-status store read the tree — and what no longer does.
 //
 // It polled `/api/git/status-all` every 15 s and fired an extra FULL scan on
-// every `turn_ended`. One scan is 270 git subprocesses across 54 worktrees, so
+// every `turn_closed`. One scan is 270 git subprocesses across 54 worktrees, so
 // an idle page paid for a scan every 15 seconds for a tree nothing had touched,
 // and a turn ending is a GUESS that the tree changed. The client already holds
-// the fact — `handlers/messages.ts` sees each repo-mutating tool call complete —
+// the fact — `handlers/entries.ts` sees each repo-mutating tool call complete —
 // and was throwing it away.
 //
 // Its own file because it has to mock the actions layer to count the reads, and
@@ -34,7 +34,7 @@ vi.mock("./actions/index.js", () => ({
     observed.pollers++;
   },
 }));
-// The bus, so a `turn_ended` subscription would be visible if one were made.
+// The bus, so a `turn_closed` subscription would be visible if one were made.
 vi.mock("./bus.js", () => ({
   onSSE: () => {
     observed.sseSubs++;
@@ -61,7 +61,7 @@ describe("the git-status store's triggers", () => {
 
     // No timer: an idle page costs nothing.
     expect(observed.pollers).toBe(0);
-    // No `turn_ended` subscription: a turn ending is a guess, and the fact it was
+    // No `turn_closed` subscription: a turn ending is a guess, and the fact it was
     // guessing at now arrives per completed tool call through markGitDirty.
     expect(observed.sseSubs).toBe(0);
 

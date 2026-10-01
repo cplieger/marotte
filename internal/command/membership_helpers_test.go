@@ -15,8 +15,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // newTestMembership builds a coordinator over a chat store and NO tab store.

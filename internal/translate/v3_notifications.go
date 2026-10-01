@@ -11,9 +11,16 @@ package translate
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
+
+// unstatedFailureReason stands in for an errorMessage KAS left empty. The row's
+// three leads ("Failed to start", the dot's tooltip, the toast) all append the
+// reason, so an empty one renders as a bare colon and the reader is told a
+// server failed with no way to tell whether the cause was withheld or lost.
+const unstatedFailureReason = "the server did not report a reason"
 
 // v3MCPStatus is the _kiro/mcp/status payload. v3 consolidates v2's
 // per-server server_initialized / server_init_failure / oauth_request
@@ -86,7 +93,11 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ marotte.ChatID, msg 
 				t.mcp.RecordOAuth(ctx, s.Name, s.AuthorizationURL)
 				continue
 			}
-			t.mcp.RecordInitFailure(ctx, s.Name, s.ErrorMessage)
+			reason := s.ErrorMessage
+			if strings.TrimSpace(reason) == "" {
+				reason = unstatedFailureReason
+			}
+			t.mcp.RecordInitFailure(ctx, s.Name, reason)
 		case "disabled":
 			// A marotte-configured server's off state is already on its config
 			// row, which is what the MCP page renders it from — so the recorder

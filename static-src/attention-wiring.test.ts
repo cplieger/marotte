@@ -274,6 +274,10 @@ function registerOpeners(): void {
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
+    // `TabOpeners` gained a required `spec` member, so a fixture without one does not
+    // type-check. Inert here: no case opens a spec tab, and closing the member is not
+    // this suite taking a position on the kind.
+    spec: { show: vi.fn(), refresh: vi.fn() },
   });
 }
 

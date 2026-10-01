@@ -243,11 +243,18 @@ func TestRunDispatch_SessionNotifyBecomesAnAsk(t *testing.T) {
 // the ask belongs in that chat's own dock.
 func TestTranslateACPEvent_SessionNotifyBecomesAnAsk(t *testing.T) {
 	h, cs, _ := newTestHub()
-	cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
+	cs.seed(t, "c1", nil)
+	seeded := h.bus.fanout.Position().Head
 
 	h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
-	events := bufferedEvents(h)
+	var events []bufferedEvent
+	for _, e := range bufferedSince(h, seeded) {
+		var evt bufferedEvent
+		if json.Unmarshal(e.Event.Data, &evt) == nil {
+			events = append(events, evt)
+		}
+	}
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(events), events)
 	}
@@ -330,7 +337,7 @@ func TestRunAskCleared(t *testing.T) {
 
 	t.Run("the asking node completing retires it and says so", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
+		cs.seed(t, "c1", nil)
 		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
 		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
@@ -355,7 +362,7 @@ func TestRunAskCleared(t *testing.T) {
 
 	t.Run("a node that FAILED still does not claim an answer", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
+		cs.seed(t, "c1", nil)
 		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
 		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
@@ -373,7 +380,7 @@ func TestRunAskCleared(t *testing.T) {
 
 	t.Run("a sibling node completing leaves it alone", func(t *testing.T) {
 		h, cs, _ := newTestHub()
-		cs.Chats["c1"] = &marotte.Chat{ID: "c1"}
+		cs.seed(t, "c1", nil)
 		h.translateACPEvent("c1", notifyAsk("wf_1", "review", "which branch?", "n1"))
 
 		h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{

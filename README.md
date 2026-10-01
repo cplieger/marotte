@@ -266,6 +266,6 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 ## License
 
-AGPL-3.0-or-later. See [LICENSE](LICENSE).
+AGPL-3.0-or-later. See [LICENSE](LICENSE). The image carries the license text of every bundled component under `/usr/share/licenses/`.
 
 The terminal's two web fonts ship under their own licences, each licence text served beside the font files under `/vendor/fonts/`: [Monaspace](https://github.com/githubnext/monaspace) Neon NF under SIL Open Font License 1.1, and [web-terminal-glyphs](https://github.com/cplieger/web-terminal-glyphs) under Apache-2.0.

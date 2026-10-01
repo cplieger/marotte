@@ -36,9 +36,3 @@ func (v *chatVersions) current(id marotte.ChatID) string {
 	}
 	return strconv.FormatUint(n, 10)
 }
-
-// stamped returns evt carrying a `chat` stamp for chatID at version.
-func stamped(evt marotte.ServerEvent, chatID marotte.ChatID, version string) marotte.ServerEvent {
-	evt.Subject = marotte.NewSubjectStamp("chat", string(chatID), version)
-	return evt
-}

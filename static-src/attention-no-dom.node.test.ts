@@ -106,12 +106,11 @@ function seen(entries: Record<string, CueStatus> = {}): Map<string, CueStatus> {
 //
 // THE INVARIANT is the scan below, and it is deliberately NOT the realm. A realm
 // only answers for the globals it happens to lack, and this one lacks the wrong
-// set: measured on the Node the gate runs (v24.18.0; ts-ci pins node-version
-// '24'), `navigator` is a populated `Navigator` instance, so a module-scope
+// set: measured on the Node the gate runs (v26.8.2; ts-ci pins node-version
+// '26'), `navigator` is a populated `Navigator` instance, so a module-scope
 // `navigator.setAppBadge` read would import cleanly and every assertion below
-// would still pass. `localStorage` is absent today and one
-// `--experimental-webstorage` from present, so it is the same hole queued behind
-// a flag. The scan reads attention.ts's own module scope and asserts it
+// would still pass. `localStorage` is undefined only until a `--localstorage-file`
+// is passed, so it is the same hole queued behind a flag. The scan reads attention.ts's own module scope and asserts it
 // references nothing outside itself and executes nothing, which covers every
 // global at once and stays true whatever a runtime adds.
 //
@@ -487,7 +486,7 @@ describe("summarize folds the chat tabs into one value", () => {
   // What a FRESH DEVICE opens at, which is the cost of the header seed.
   //
   // The two latches behind `done` and `failed` used to be reachable only from a
-  // live `turn_ended` this browser observed, so the device that could raise the
+  // live `turn_closed` this browser observed, so the device that could raise the
   // cue was always the device that could acknowledge it — and a device with no
   // stored acknowledgements had every tab on `idle`, which is not a CueStatus, so
   // it opened at (0) whatever was on disk. Seeding those latches from the chat

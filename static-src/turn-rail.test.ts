@@ -130,7 +130,7 @@ import { railMetrics } from "./rail-select.js";
 import { apiGet } from "./api-client.js";
 import { loadMessages } from "./store-load.js";
 import { setSessions, setActive, get } from "./store.js";
-import type { Message, Session } from "./types.js";
+import type { Entry, Session, TurnState } from "./types.js";
 import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnOutcome } from "./turns.js";
 
@@ -150,6 +150,70 @@ function turn(n: number, over: Partial<TurnSummary> = {}): TurnSummary {
 
 function turns(count: number, outcome: TurnOutcome = "completed"): TurnSummary[] {
   return Array.from({ length: count }, (_, i) => turn(i + 1, { outcome }));
+}
+
+/** One sealed entry of `turnID`, at `seq`. */
+function entry(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
+  return {
+    id: `${turnID}-e${String(at)}`,
+    turn: turnID,
+    lane: "",
+    kind,
+    seq: at,
+    ts: at + 1,
+    payload,
+  } as Entry;
+}
+
+interface ResidentOpts {
+  prompt?: string;
+  elapsedMs?: number;
+  outcome?: TurnOutcome;
+  /** No `turn_close`: the turn is still streaming. */
+  open?: boolean;
+}
+
+/** A turn as the STORE holds it: the `turn_open` the projection requires, whose id the
+ *  rail's index joins on, plus the close carrying the stamps a marker's slot reads. */
+function residentTurn(id: string, n: number, opts: ResidentOpts = {}): TurnState {
+  const entries: Entry[] = [
+    entry(id, 0, "turn_open", {
+      prompt: { id: `${id}-p`, text: opts.prompt ?? "ask" },
+      source: "prompt",
+      n,
+    }),
+  ];
+  if (opts.open !== true) {
+    entries.push(
+      entry(id, 1, "turn_close", {
+        outcome: opts.outcome ?? "completed",
+        ...(opts.elapsedMs === undefined ? {} : { elapsed_ms: opts.elapsedMs }),
+      }),
+    );
+  }
+  return { entries, openEntries: new Map() };
+}
+
+type Resident = Pick<Session, "turns" | "turn_order">;
+
+/** The resident slice a Session carries, in file order. The ids are `m<n>` because
+ *  `turn(n)` mints the same one, which is the key the index merge joins on. */
+function residentTurns(ids: string[], opts: ResidentOpts = {}): Resident {
+  const turnStates = new Map<string, TurnState>();
+  for (const id of ids) {
+    turnStates.set(id, residentTurn(id, Number(id.slice(1)), opts));
+  }
+  return { turns: turnStates, turn_order: [...ids] };
+}
+
+/** An older page landing: the store PREPENDS its turns, which is why `turn_order` is an
+ *  array rather than the Map's own insertion order. */
+function prependTurns(s: Session, ids: string[]): void {
+  const older = residentTurns(ids);
+  for (const [id, state] of older.turns) {
+    s.turns.set(id, state);
+  }
+  s.turn_order = [...ids, ...s.turn_order];
 }
 
 /** Mount the rail and give it the box the stylesheet would.
@@ -288,7 +352,7 @@ describe("which chat the rail belongs to", () => {
   });
 
   // The mirror of the stale-markers defect, and the reason pointing cannot be
-  // skipped for an empty chat. `turn_ended` is the only moment the index is
+  // skipped for an empty chat. `turn_closed` is the only moment the index is
   // re-read, so a rail that was never handed the chat discards the very refresh
   // that would have drawn its first marker, and the session stays blank until
   // the reader switches away and back.
@@ -593,11 +657,11 @@ describe("which turn the reading line is in", () => {
 // ---------------------------------------------------------------------------
 // The per-chat record: what makes a switch back to a loaded chat cost zero
 // fetches. The rail keeps each chat's fetched index alongside the sync epoch
-// and the message count captured BEFORE the request, and an activation fetches
+// and the turn count captured BEFORE the request, and an activation fetches
 // only when that record cannot stand in — missing, from before a transport
 // gap, from before the count moved, or overruled by the caller's `force` (the
 // stale-transcript activation, whose verdict the rail cannot re-derive after
-// the messages heal re-stamps the session fresh).
+// the transcript heals re-stamps the session fresh).
 // ---------------------------------------------------------------------------
 
 describe("the rail record gates the activation fetch", () => {
@@ -614,7 +678,7 @@ describe("the rail record gates the activation fetch", () => {
     );
   }
 
-  function session(id: string, messageCount: number): Session {
+  function session(id: string, turnCount: number): Session {
     return {
       id,
       name: id,
@@ -625,12 +689,11 @@ describe("the rail record gates the activation fetch", () => {
         context_pct: 0,
         context_size: 0,
         credits: 0,
-        turn_count: 0,
         last_turn_ms: 0,
         has_real_data: false,
       },
-      message_count: messageCount,
-      messages: [],
+      ...residentTurns([]),
+      turn_count: turnCount,
       has_more: false,
       thinking: false,
       working_label: "Thinking",
@@ -672,11 +735,11 @@ describe("the rail record gates the activation fetch", () => {
     expect(apiGet).toHaveBeenCalledTimes(1);
   });
 
-  it("a moved message count invalidates the record", async () => {
+  it("a moved turn count invalidates the record", async () => {
     await loadTurnRail("c-a");
-    // A background turn lands while the rail points elsewhere: SSE ingest moves
-    // the chat's count, and the record now describes an older session.
-    get("c-a")!.message_count = 3;
+    // A background turn lands while the rail points elsewhere: an entry frame moves
+    // the chat's turn count, and the record now describes an older session.
+    get("c-a")!.turn_count = 3;
     pointTurnRail("c-b");
 
     vi.mocked(apiGet).mockClear();
@@ -698,7 +761,7 @@ describe("the rail record gates the activation fetch", () => {
   });
 
   it("records a background refresh without painting it, so the next activation is free", async () => {
-    // The turn_ended door for a chat the rail points away from: the fetched
+    // The turn_closed door for a chat the rail points away from: the fetched
     // index is recorded for that chat's next activation but must not paint over
     // the pointed chat's rail.
     await loadTurnRail("c-b");
@@ -715,7 +778,7 @@ describe("the rail record gates the activation fetch", () => {
 
   it("keeps the stale record on a failed refetch, so the next activation retries", async () => {
     await loadTurnRail("c-a");
-    get("c-a")!.message_count = 3;
+    get("c-a")!.turn_count = 3;
     pointTurnRail("c-b");
 
     // The refetch the moved count demands fails; the record must not be
@@ -769,12 +832,11 @@ describe("the newest turn needs no fetch", () => {
     return [...rail.querySelectorAll(".rail-marker")].map((b) => b.firstChild?.textContent ?? "");
   }
 
-  function msg(id: string, role: Message["role"]): Message {
-    return { id, role, content: "x", ts: 1 };
-  }
-
   it("paints a resident turn the index has never seen", async () => {
     // Turn 3 is streaming, so the index the rail holds names only turns 1 and 2.
+    const live = residentTurns(["m1", "m2"]);
+    live.turns.set("m3", residentTurn("m3", 3, { open: true }));
+    live.turn_order.push("m3");
     setSessions([
       {
         id: "c-live",
@@ -786,19 +848,11 @@ describe("the newest turn needs no fetch", () => {
           context_pct: 0,
           context_size: 0,
           credits: 0,
-          turn_count: 0,
           last_turn_ms: 0,
           has_real_data: false,
         },
-        message_count: 6,
-        messages: [
-          msg("m1", "user"),
-          msg("a1", "assistant"),
-          msg("m2", "user"),
-          msg("a2", "assistant"),
-          msg("m3", "user"),
-          msg("a3", "assistant"),
-        ],
+        ...live,
+        turn_count: 3,
         has_more: false,
         thinking: false,
         working_label: "Thinking",
@@ -877,11 +931,7 @@ describe("which card a marker jumps to", () => {
     return btn;
   }
 
-  function msg(id: string): Message {
-    return { id, role: "assistant", content: "", ts: 1 };
-  }
-
-  function paged(id: string, messages: Message[], hasMore: boolean): Session {
+  function paged(id: string, ids: string[], hasMore: boolean): Session {
     return {
       id,
       name: id,
@@ -892,12 +942,11 @@ describe("which card a marker jumps to", () => {
         context_pct: 0,
         context_size: 0,
         credits: 0,
-        turn_count: 0,
         last_turn_ms: 0,
         has_real_data: false,
       },
-      message_count: messages.length,
-      messages,
+      ...residentTurns(ids),
+      turn_count: ids.length,
       has_more: hasMore,
       thinking: false,
       working_label: "Thinking",
@@ -980,7 +1029,7 @@ describe("which card a marker jumps to", () => {
     // the one case it exists for.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(5), turn(6), turn(7), turn(8)] });
     await loadTurnRail("c-page-in");
-    setSessions([paged("c-page-in", [msg("m8")], true)]);
+    setSessions([paged("c-page-in", ["m8"], true)]);
     setActive("c-page-in");
     residentCard(1, "m8");
 
@@ -989,7 +1038,7 @@ describe("which card a marker jumps to", () => {
       pendingWhileWaiting = marker(6).dataset["pending"] !== undefined;
       const s = get("c-page-in");
       if (s !== undefined) {
-        s.messages = [msg("m6"), msg("m7"), ...s.messages];
+        prependTurns(s, ["m6", "m7"]);
       }
       residentCard(2, "m6");
       await Promise.resolve();
@@ -1018,7 +1067,7 @@ describe("which card a marker jumps to", () => {
     // loop stops rather than spinning, and the marker must not be left pending.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-gone");
-    setSessions([paged("c-gone", [msg("m2")], false)]);
+    setSessions([paged("c-gone", ["m2"], false)]);
     setActive("c-gone");
     residentCard(1, "m2");
 
@@ -1044,7 +1093,7 @@ describe("which card a marker jumps to", () => {
     // reader is taken off the turn they clicked.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-overlap");
-    setSessions([paged("c-overlap", [msg("m2")], true)]);
+    setSessions([paged("c-overlap", ["m2"], true)]);
     setActive("c-overlap");
     const target = residentCard(2, "m2");
 
@@ -1112,13 +1161,13 @@ describe("which card a marker jumps to", () => {
     // lands and nothing ever scrolls to it.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-double-click");
-    setSessions([paged("c-double-click", [msg("m2")], true)]);
+    setSessions([paged("c-double-click", ["m2"], true)]);
     setActive("c-double-click");
     residentCard(2, "m2");
     vi.mocked(loadMessages).mockImplementation(async () => {
       const s = get("c-double-click");
       if (s !== undefined) {
-        s.messages = [msg("m1"), ...s.messages];
+        prependTurns(s, ["m1"]);
       }
       const landed = residentCard(1, "m1");
       await Promise.resolve();
@@ -1190,7 +1239,7 @@ describe("which card a marker jumps to", () => {
     // the close sits in a `finally` rather than after the scroll.
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-epoch");
-    setSessions([paged("c-epoch", [msg("m2")], false)]);
+    setSessions([paged("c-epoch", ["m2"], false)]);
     setActive("c-epoch");
 
     marker(1).click();
@@ -1598,32 +1647,15 @@ describe("the duration a rail marker can show", () => {
     resetTurnRail();
   });
 
-  /** A turn as the STORE holds it: the user message that opens it (whose id is what
-   *  the rail's index joins on) plus one assistant message carrying the stamp. The
-   *  prompt text is a parameter because the merge takes the RESIDENT turn's label
-   *  over the index's, which is the whole point of the merge. */
-  function storedTurn(
-    n: number,
-    opts: { elapsedMs?: number; prompt?: string; outcome?: TurnOutcome } = {},
-  ): Message[] {
-    const opener: Message = {
-      id: `m${String(n)}`,
-      role: "user",
-      content: opts.prompt ?? "ask",
-      ts: n * 1000,
-    };
-    const reply: Message = {
-      id: `a${String(n)}`,
-      role: "assistant",
-      content: "answer",
-      ts: n * 1000 + 1,
-      ...(opts.elapsedMs === undefined ? {} : { turn_elapsed_ms: opts.elapsedMs }),
-      ...(opts.outcome === undefined ? {} : { turn_outcome: opts.outcome }),
-    };
-    return [opener, reply];
+  /** A turn as the STORE holds it: the `turn_open` whose id the rail's index joins on
+   *  plus the `turn_close` carrying the stamps. The prompt text is a parameter because
+   *  the merge takes the RESIDENT turn's label over the index's, which is the whole
+   *  point of the merge. */
+  function storedTurn(n: number, opts: ResidentOpts = {}): Resident {
+    return residentTurns([`m${String(n)}`], opts);
   }
 
-  function seed(chatID: string, messages: Message[]): void {
+  function seed(chatID: string, resident: Resident): void {
     setSessions([
       {
         id: chatID,
@@ -1635,12 +1667,11 @@ describe("the duration a rail marker can show", () => {
           context_pct: 0,
           context_size: 0,
           credits: 0,
-          turn_count: 0,
           last_turn_ms: 0,
           has_real_data: false,
         },
-        message_count: messages.length,
-        messages,
+        ...resident,
+        turn_count: resident.turn_order.length,
         has_more: true,
         thinking: false,
         working_label: "Thinking",
@@ -1679,25 +1710,6 @@ describe("the duration a rail marker can show", () => {
     expect(time?.tagName).toBe("TIME");
   });
 
-  it("sums the turn's body rather than reading one message", async () => {
-    // A turn splits across two assistant messages when the model is switched mid-turn,
-    // and each carries its own stamp. `turnLedger` owns the sum; this is the case that
-    // proves the rail goes through it rather than taking the last value it sees.
-    const messages = storedTurn(1, { elapsedMs: 60_000 });
-    messages.push({
-      id: "a1b",
-      role: "assistant",
-      content: "more",
-      ts: 1002,
-      turn_elapsed_ms: 32_000,
-    });
-    seed("c-sum", messages);
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
-    await loadTurnRail("c-sum");
-
-    expect(slot(1)?.textContent).toBe("1m 32s");
-  });
-
   it("shows nothing for a turn the store does not hold", async () => {
     // THE HONEST GAP. The rail spans the session; the store holds a window. Turn 1 is
     // resident, turn 2 is not, and the rail cannot know turn 2's duration without a
@@ -1725,7 +1737,7 @@ describe("the duration a rail marker can show", () => {
     // The map is rebuilt per render rather than captured with the fetch: `ingestMessage`
     // upserts in place, so an array identity is not a version and a cached answer would
     // go stale exactly when history arrives.
-    seed("c-late", []);
+    seed("c-late", residentTurns([]));
     vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1)] });
     await loadTurnRail("c-late");
     expect(slot(1)).toBeNull();
@@ -1734,7 +1746,9 @@ describe("the duration a rail marker can show", () => {
     if (session === undefined) {
       throw new Error("session gone");
     }
-    session.messages = storedTurn(1, { elapsedMs: 92_000 });
+    const late = storedTurn(1, { elapsedMs: 92_000 });
+    session.turns = late.turns;
+    session.turn_order = late.turn_order;
     await refreshTurnRail("c-late");
 
     expect(slot(1)?.textContent).toBe("1m 32s");
@@ -1767,5 +1781,186 @@ describe("the duration a rail marker can show", () => {
     await loadTurnRail("c-quiet");
 
     expect(marker(1).getAttribute("data-tooltip")).toBe("do the thing");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Where the markers SIT. A position is a function of the marker's slot in the shown
+// set, so `k` markers are `k - 1` equal gaps apart whatever turns the rank dropped
+// between them. The arithmetic is `rail-select.node.test.ts`'s and the rendered
+// pixels are `rail-position-css.test.ts`'s; this pins that the renderer publishes
+// the slot's fraction rather than the turn's.
+// ---------------------------------------------------------------------------
+
+describe("markers sit at one pitch", () => {
+  const host = document.createElement("div");
+  let rail: HTMLElement;
+
+  beforeAll(() => {
+    rail = mountRail(host);
+  });
+
+  beforeEach(() => {
+    scrollable.reset();
+    resetTurnRail();
+  });
+
+  function fractions(): number[] {
+    return [...rail.querySelectorAll<HTMLElement>(".rail-marker")].map((b) =>
+      Number(b.style.getPropertyValue("--rail-at")),
+    );
+  }
+
+  it("spends every slot the track holds and spaces them equally", async () => {
+    // 60 turns on a 600px track at the fallback pitch: 21 slots, spread over the
+    // whole travel because 20 relaxed gaps overrun it.
+    const { pitchPx } = railMetrics(rail);
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
+    await loadTurnRail("c-pitch");
+
+    const at = fractions();
+    expect(at).toHaveLength(Math.floor(600 / pitchPx));
+    expect(at[0]).toBe(0);
+    expect(at[at.length - 1]).toBe(1);
+    const first = (at[1] ?? 0) - (at[0] ?? 0);
+    for (let i = 1; i < at.length; i++) {
+      expect((at[i] ?? 0) - (at[i - 1] ?? 0)).toBeCloseTo(first, 9);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The mark is STICKY. A downsampled rail has a marker for one turn in two or three,
+// so the reading line spends most of its time in a turn with no marker of its own,
+// and the mark then belongs to the nearest shown marker at or below it. Once a turn
+// has been placed, exactly one marker is marked: a re-render, a refresh, an emptied
+// table or an id the index does not carry can move the mark, never clear it.
+// ---------------------------------------------------------------------------
+
+describe("the mark is sticky", () => {
+  const host = document.createElement("div");
+  let rail: HTMLElement;
+
+  beforeAll(() => {
+    rail = mountRail(host);
+  });
+
+  beforeEach(() => {
+    scrollable.reset();
+    resetTurnRail();
+  });
+
+  function card(key: string, top: number): HTMLElement {
+    const e = document.createElement("div");
+    e.className = "turn";
+    e.setAttribute(KEY_ATTR, key);
+    Object.defineProperty(e, "getBoundingClientRect", {
+      configurable: true,
+      value: () => fakeRect(top, 400),
+    });
+    Object.defineProperty(e, "getClientRects", {
+      configurable: true,
+      value: () => [fakeRect(top, 400)],
+    });
+    return e;
+  }
+
+  function marked(): HTMLElement[] {
+    return [...rail.querySelectorAll<HTMLElement>(".rail-marker[data-current]")];
+  }
+
+  function labels(): number[] {
+    return [...rail.querySelectorAll<HTMLElement>(".rail-marker")].map((b) =>
+      Number(b.firstChild?.textContent ?? "0"),
+    );
+  }
+
+  async function scrollTo(px: number): Promise<void> {
+    scrollable.el.scrollTop = px;
+    scrollable.fire("scroll");
+    await frames();
+  }
+
+  async function seatSixty(): Promise<void> {
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
+    await loadTurnRail("c-sticky");
+    setResidentTurns(Array.from({ length: 60 }, (_, i) => card(`m${String(i + 1)}`, i * 400)));
+    await frames();
+  }
+
+  it("marks the nearest shown marker while the reading line is in an unsampled turn", async () => {
+    await seatSixty();
+    const shown = labels();
+    expect(shown.length).toBeLessThan(60);
+
+    for (let k = 0; k < 60; k++) {
+      await scrollTo(k * 400);
+      const active = k + 1;
+      const m = marked();
+      expect(m, `turn ${String(active)}`).toHaveLength(1);
+      expect(m[0]?.getAttribute("aria-current")).toBe("true");
+      const label = Number(m[0]?.firstChild?.textContent ?? "0");
+      expect(label).toBeLessThanOrEqual(active);
+      expect(
+        shown.some((n) => n > label && n <= active),
+        `turn ${String(active)}`,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps the mark when the table empties or the index is re-read", async () => {
+    await seatSixty();
+    await scrollTo(5 * 400);
+    expect(marked()).toHaveLength(1);
+    const before = marked()[0]?.firstChild?.textContent;
+
+    setResidentTurns([]);
+    await frames();
+    expect(marked()).toHaveLength(1);
+
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(60) });
+    await refreshTurnRail("c-sticky");
+    expect(marked()).toHaveLength(1);
+    expect(marked()[0]?.firstChild?.textContent).toBe(before);
+  });
+
+  it("marks the window's first turn when its opening message was paged out", async () => {
+    // The window's first card is keyed by an id the index does not name, so only its
+    // own `turn_open.n` can place it: the mark has to resolve it to turn 5 anyway.
+    setSessions([
+      {
+        id: "c-frag",
+        name: "c-frag",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        turns: new Map([
+          ["a5tail", residentTurn("a5tail", 5)],
+          ["m6", residentTurn("m6", 6)],
+        ]),
+        turn_order: ["a5tail", "m6"],
+        turn_count: 6,
+        has_more: true,
+        thinking: false,
+        working_label: "Thinking",
+      },
+    ]);
+    setActive("c-frag");
+    vi.mocked(apiGet).mockResolvedValue({ turns: turns(6) });
+    await loadTurnRail("c-frag");
+    setResidentTurns([card("a5tail", 0), card("m6", 400)]);
+    await frames();
+
+    await scrollTo(0);
+
+    expect(marked()).toHaveLength(1);
+    expect(marked()[0]?.firstChild?.textContent).toBe("5");
   });
 });

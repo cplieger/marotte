@@ -72,6 +72,9 @@ vi.mock("./tabs.js", () => ({
   // "Open the conversation" note reads it) and the door that link dispatches through.
   parentChatRef: undefined,
   openTab: undefined,
+  // navigate.js's `openSpec`, reached from this page's own spec-group door.
+  activateTab: undefined,
+  setTabParent: undefined,
   setDocsTab: vi.fn(),
   toggleDocsView: vi.fn(() => Promise.resolve()),
 }));
@@ -81,6 +84,18 @@ vi.mock("./bus.js", () => ({
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   BUS_RUNS_CHANGED: undefined,
+  BUS_USER_INPUT_ANSWERED: undefined,
+  BUS_ACTIVATE_CHAT: undefined,
+  BUS_COMMAND_FAILED: undefined,
+  BUS_EDITOR_FILE_LOADED: undefined,
+  BUS_KEYS_ESCAPE: undefined,
+  BUS_PAGE_RESUMED: undefined,
+  BUS_RECONCILE: undefined,
+  BUS_TAB_CHANGED: undefined,
+  decodeEnvelope: undefined,
+  dispatch: undefined,
+  emitBus: undefined,
+  registerSSEDecoder: undefined,
   onBus: undefined,
   onSSE: vi.fn(() => () => undefined),
 }));
@@ -260,19 +275,57 @@ describe("row rendering", () => {
     expect(row.querySelector(".docs-git-letter")).toBeNull();
   });
 
-  it("is a keyboard-operable button", () => {
-    // The three assertions are unchanged; they moved from the ROW onto the
-    // activation SURFACE, because the row now also holds a delete button and a
-    // button cannot contain one (D65's sibling-slot restructure).
+  it("makes the body a real button named after the document", () => {
     const row = _renderRowForTest({
       category: "steering",
       name: "actions",
       path: "workspace/.kiro/steering/actions.md",
     });
-    const surface = row.querySelector<HTMLElement>(".docs-row-surface");
-    expect(surface?.getAttribute("role")).toBe("button");
-    expect(surface?.getAttribute("tabindex")).toBe("0");
-    expect(surface?.getAttribute("aria-label")).toBe("Open actions");
+    const door = row.querySelector<HTMLElement>("button.entry-open");
+    expect(door?.getAttribute("type")).toBe("button");
+    expect(door?.getAttribute("aria-label")).toBe("Open actions");
+  });
+
+  it("opens the file from the body and from the Edit button alike", async () => {
+    const { openFile } = await import("./editor-openers.js");
+    vi.mocked(openFile).mockClear();
+    const row = _renderRowForTest({
+      category: "steering",
+      name: "actions",
+      path: "workspace/.kiro/steering/actions.md",
+    });
+    row.querySelector<HTMLButtonElement>("button.entry-open")?.click();
+    row.querySelector<HTMLButtonElement>(".docs-edit")?.click();
+    expect(vi.mocked(openFile).mock.calls).toEqual([
+      ["workspace/.kiro/steering/actions.md"],
+      ["workspace/.kiro/steering/actions.md"],
+    ]);
+    expect(row.querySelector(".docs-edit")?.getAttribute("aria-label")).toBe("Edit actions");
+  });
+
+  it("renders a spec's path and its group as the two lines under the title", () => {
+    const row = _renderRowForTest({
+      category: "spec",
+      name: "Design",
+      path: "workspace/.kiro/specs/search/design.md",
+      group: "search",
+    });
+    const lines = [...(row.querySelector(".entry-lines")?.children ?? [])];
+    expect(lines.map((l) => l.textContent)).toEqual([
+      "workspace/.kiro/specs/search/design.md",
+      "search",
+    ]);
+    expect(lines[0]?.classList.contains("entry-sub-mono")).toBe(true);
+  });
+
+  it("clamps a description to the two-line region", () => {
+    const row = _renderRowForTest({
+      category: "agent",
+      name: "a",
+      path: "workspace/.kiro/agents/a.md",
+      description: "A paragraph of description.",
+    });
+    expect(row.querySelector(".entry-sub")?.classList.contains("entry-sub-clamp")).toBe(true);
   });
 });
 
@@ -284,7 +337,7 @@ describe("row affordances", () => {
       name: "actions",
       path: "workspace/.kiro/steering/actions.md",
     });
-    const del = row.querySelector<HTMLButtonElement>(".docs-row-delete");
+    const del = row.querySelector<HTMLButtonElement>(".entry-delete");
     expect(del).not.toBeNull();
     expect(del?.getAttribute("aria-label")).toBe("Delete actions");
   });
@@ -296,8 +349,8 @@ describe("row affordances", () => {
       path: "workspace/.kiro/steering/locked.md",
       read_only: true,
     });
-    expect(row.querySelector(".docs-row-delete")).toBeNull();
-    expect(row.querySelector(".list-row-btn")).toBeNull();
+    expect(row.querySelector(".entry-delete")).toBeNull();
+    expect(row.querySelector(".docs-edit")).toBeNull();
   });
 
   it("makes no read-only claim, because the surface still opens the file", () => {
@@ -324,8 +377,8 @@ describe("row affordances", () => {
       path: "workspace/.kiro/steering/alias.md",
       delete_protected: true,
     });
-    expect(row.querySelector(".docs-row-delete")).toBeNull();
-    expect(row.querySelector(".list-row-btn")).not.toBeNull();
+    expect(row.querySelector(".entry-delete")).toBeNull();
+    expect(row.querySelector(".docs-edit")).not.toBeNull();
     const badge = row.querySelector(".docs-badge-link");
     expect(badge?.textContent).toBe("link");
     expect(badge?.getAttribute("data-tooltip")).toContain("delete is disabled");
@@ -339,25 +392,24 @@ describe("row affordances", () => {
       name: "h",
       path: "workspace/.kiro/hooks/h.json",
     });
-    expect(row.querySelector(".docs-row-delete")).not.toBeNull();
-    expect(row.querySelector(".list-row-btn")).not.toBeNull();
+    expect(row.querySelector(".entry-delete")).not.toBeNull();
+    expect(row.querySelector(".docs-edit")).not.toBeNull();
   });
 
-  it("keeps the delete OUTSIDE the activation surface", () => {
-    // Nesting an interactive control inside a role=button is invalid HTML and
-    // gets flattened by assistive tech — the defect pill-expand.ts documents.
-    // The two are siblings, which is what makes both reachable.
+  it("keeps the actions OUTSIDE the open button", () => {
+    // A button cannot hold another: nested interactive content is invalid HTML
+    // and gets flattened by assistive tech. The two are siblings.
     const row = _renderRowForTest({
       category: "agent",
       name: "a",
       path: "workspace/.kiro/agents/a.md",
     });
-    const surface = row.querySelector<HTMLElement>(".docs-row-surface");
-    const del = row.querySelector<HTMLButtonElement>(".docs-row-delete");
-    expect(surface?.getAttribute("role")).toBe("button");
-    expect(del).not.toBeNull();
-    expect(surface?.contains(del ?? null)).toBe(false);
-    expect(surface?.querySelector("button")).toBeNull();
+    const door = row.querySelector<HTMLElement>("button.entry-open");
+    const actions = row.querySelector<HTMLElement>(".entry-actions");
+    expect(door).not.toBeNull();
+    expect(actions?.querySelectorAll("button")).toHaveLength(2);
+    expect(door?.contains(actions ?? null)).toBe(false);
+    expect(door?.querySelector("button")).toBeNull();
   });
 });
 
@@ -476,24 +528,50 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
     expect(badge?.getAttribute("data-tooltip")).toBe("its command is empty");
   });
 
-  it("renders the matcher beside the trigger", () => {
-    // A trigger says WHEN and its matcher says WHICH; the row used to show only
-    // the first half, so a hook scoped to one tool looked identical to one scoped
-    // to none.
-    //
-    // The two badges have DIFFERENT sources and that is not incidental: the
-    // trigger comes from the docs scan (the file's own front matter), while the
-    // matcher can only come from the joined endpoint row — marotte's own hook
-    // parser is matcher-blind, so the scan has no matcher to report. The fixture
-    // sets both sides for that reason.
+  it("renders the matcher as the first line under the title, the command as the second", () => {
+    // A trigger says WHEN and its matcher says WHICH, so the row shows both. The
+    // two have DIFFERENT sources: the trigger comes from the docs scan (the
+    // file's own front matter), while the matcher can only come from the joined
+    // endpoint row — marotte's own hook parser is matcher-blind. The fixture sets
+    // both sides for that reason.
     _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher: "fsWrite" })]);
     const row = _renderRowForTest(wsHookDoc({ trigger: "PreToolUse" }));
     expect(row.querySelector(".docs-badge-trigger")?.textContent).toBe("PreToolUse");
-    const matcher = row.querySelector(".docs-badge-matcher");
-    expect(matcher?.textContent).toBe("fsWrite");
-    // A <code> element, because the content is a regex read character for
-    // character rather than a label.
-    expect(matcher?.tagName).toBe("CODE");
+    const lines = [...(row.querySelector(".entry-lines")?.children ?? [])];
+    expect(lines.map((l) => l.textContent)).toEqual(["fsWrite", "echo hello"]);
+    // Mono on both: a regex and a command are read character for character.
+    expect(lines.every((l) => l.classList.contains("entry-sub-mono"))).toBe(true);
+  });
+
+  it("keeps the trigger and drops the tail when a row has more than two badges", () => {
+    // The title line holds two badges, most important first: the trigger, then
+    // the scope, then a matcher defect, then the disabled reason. Every label
+    // stays in the filter's haystack whether or not it is painted.
+    _setHooksForTest([
+      wsHook({
+        scope: "global",
+        file_path: "~/.kiro/hooks/greet.json",
+        matcher_warning: "missing_tool_matcher",
+        disabled_reason: "its command is empty",
+      }),
+    ]);
+    const row = _renderRowForTest(
+      wsHookDoc({ path: "~/.kiro/hooks/greet.json", hook_scope: "global" }),
+    );
+    const badges = [...(row.querySelector(".entry-badges")?.children ?? [])];
+    expect(badges.map((b) => b.textContent)).toEqual(["Manual", "global"]);
+  });
+
+  it("puts the toggle first among the actions", () => {
+    _setHooksForTest([wsHook()]);
+    const actions = [
+      ...(_renderRowForTest(wsHookDoc()).querySelector(".entry-actions")?.children ?? []),
+    ];
+    expect(actions.map((a) => a.className)).toEqual([
+      "toggle toggle-inline",
+      "icon-btn docs-edit",
+      "icon-btn entry-delete",
+    ]);
   });
 
   it("badges a hook that runs on every tool call", () => {
@@ -542,11 +620,9 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
     // — plus the toggle. That is the whole of D69's "three affordances, not four".
     _setHooksForTest([wsHook()]);
     const row = _renderRowForTest(wsHookDoc());
-    const surface = row.querySelector<HTMLElement>(".docs-row-surface");
-    expect(surface?.getAttribute("role")).toBe("button");
-    expect(surface?.getAttribute("aria-label")).toBe("Open greet");
-    expect(row.querySelector(".docs-row-delete")).not.toBeNull();
-    expect(row.querySelector(".list-row-btn")).not.toBeNull();
+    expect(row.querySelector("button.entry-open")?.getAttribute("aria-label")).toBe("Open greet");
+    expect(row.querySelector(".entry-delete")).not.toBeNull();
+    expect(row.querySelector(".docs-edit")).not.toBeNull();
   });
 
   it("leaves a non-hook row untouched by the join", () => {
@@ -565,7 +641,7 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
     // toggle whose position it cannot know.
     const row = _renderRowForTest(wsHookDoc());
     expect(row.querySelector(".hook-toggle")).toBeNull();
-    expect(row.querySelector(".docs-row-delete")).not.toBeNull();
+    expect(row.querySelector(".entry-delete")).not.toBeNull();
   });
 });
 
@@ -587,28 +663,31 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
   it("gives it neither an open surface nor a delete", () => {
     _setHooksForTest([globalHook()]);
     const row = _renderRowForTest(globalDoc());
-    expect(row.querySelector(".docs-row-delete")).toBeNull();
-    expect(row.querySelector(".list-row-btn")).toBeNull();
+    expect(row.querySelector(".entry-delete")).toBeNull();
+    expect(row.querySelector(".docs-edit")).toBeNull();
   });
 
-  it("makes the surface INERT, not a disabled-looking button", () => {
-    // The fourth state the two existing gates could not express: they left
-    // role=button, tabindex and the click listener in place, so the row
-    // advertised a control that must not exist.
+  it("makes the body INERT, not a disabled-looking button", () => {
+    // A row whose controls are withheld must not still open a file on click, and
+    // a disabled button would still announce itself as one.
     _setHooksForTest([globalHook()]);
-    const surface = _renderRowForTest(globalDoc()).querySelector<HTMLElement>(".docs-row-surface");
-    expect(surface).not.toBeNull();
-    expect(surface?.getAttribute("role")).toBeNull();
-    expect(surface?.getAttribute("tabindex")).toBeNull();
-    expect(surface?.getAttribute("aria-label")).toBeNull();
+    const row = _renderRowForTest(globalDoc());
+    expect(row.querySelector(".entry-open")).toBeNull();
+    const body = row.querySelector<HTMLElement>(".entry-body");
+    expect(body?.tagName).toBe("DIV");
+    expect(body?.getAttribute("role")).toBeNull();
+    expect(body?.getAttribute("tabindex")).toBeNull();
+    expect(body?.getAttribute("aria-label")).toBeNull();
   });
 
-  it("does not open the file when its surface is clicked or Entered", async () => {
+  it("does not open the file when its body is clicked or Entered", async () => {
     const { openFile } = await import("./editor-openers.js");
+    vi.mocked(openFile).mockClear();
     _setHooksForTest([globalHook()]);
-    const surface = _renderRowForTest(globalDoc()).querySelector<HTMLElement>(".docs-row-surface");
-    surface?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    surface?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const body = _renderRowForTest(globalDoc()).querySelector<HTMLElement>(".entry-body");
+    expect(body).not.toBeNull();
+    body?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    body?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(vi.mocked(openFile)).not.toHaveBeenCalled();
   });
 
@@ -642,10 +721,8 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
     // workspace hook of affordances it legitimately has.
     _setHooksForTest([withoutScope(wsHook())]);
     const row = _renderRowForTest(wsHookDoc());
-    expect(row.querySelector<HTMLElement>(".docs-row-surface")?.getAttribute("role")).toBe(
-      "button",
-    );
-    expect(row.querySelector(".docs-row-delete")).not.toBeNull();
+    expect(row.querySelector("button.entry-open")).not.toBeNull();
+    expect(row.querySelector(".entry-delete")).not.toBeNull();
   });
 });
 
@@ -736,11 +813,11 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
     expect((global.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(false);
 
     // The workspace row keeps the affordances a workspace file legitimately has.
-    expect(ws.querySelector<HTMLElement>(".docs-row-surface")?.getAttribute("role")).toBe("button");
-    expect(ws.querySelector(".docs-row-delete")).not.toBeNull();
+    expect(ws.querySelector("button.entry-open")).not.toBeNull();
+    expect(ws.querySelector(".entry-delete")).not.toBeNull();
     // The global row has neither, because its file is outside the file surface.
-    expect(global.querySelector<HTMLElement>(".docs-row-surface")?.getAttribute("role")).toBeNull();
-    expect(global.querySelector(".docs-row-delete")).toBeNull();
+    expect(global.querySelector("button.entry-open")).toBeNull();
+    expect(global.querySelector(".entry-delete")).toBeNull();
   });
 
   it("uses an askAgent hook's prompt as its subtitle", () => {
@@ -832,8 +909,9 @@ describe("the Hooks tab: staying current", () => {
           <button type="button" data-docs-tab="hooks"></button>
           <button type="button" data-docs-tab="workflows"></button>
         </nav>
-        <div data-docs-panel="steering" class="list-container docs-panel"></div>
-        <div data-docs-panel="hooks" class="list-container docs-panel hidden"></div>
+        <div data-docs-panel="steering" class="docs-panel"></div>
+        <div data-docs-panel="hooks" class="docs-panel hidden"></div>
+        <div data-docs-panel="specs" class="docs-panel hidden"></div>
       </div>`;
     // offsetParent is null for a detached host, and both SSE handlers gate on it to skip
     // work while the page is closed. Force it truthy so the OPEN case is what
@@ -988,10 +1066,100 @@ describe("showDocsTab and refreshDocsView", () => {
 
       const steering = panel("steering");
       expect(steering).not.toBeNull();
-      expect(steering?.querySelector(".docs-skeleton")).toBeNull();
+      expect(steering?.querySelector(".entry-skel")).toBeNull();
     } finally {
       settle({ docs: [], truncated: false });
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Groups are SECTIONS: a label on the page rung followed by that group's own
+// list card, so a header stops reading as a short row with the rows' own fill.
+// ---------------------------------------------------------------------------
+
+describe("grouped tabs render one section per group", () => {
+  function panel(tab: string): HTMLElement {
+    return document.querySelector<HTMLElement>(`[data-docs-panel="${tab}"]`) as HTMLElement;
+  }
+
+  it("labels each hook file and gives it its own list card", async () => {
+    const { _setDocsForTest, _setHooksForTest, forceDocsTab, _renderActiveForTest } =
+      await import("./docs.js");
+    _setHooksForTest([]);
+    _setDocsForTest([
+      wsHookDoc({ name: "first", group: "a.json", path: "workspace/.kiro/hooks/a.json" }),
+      wsHookDoc({ name: "second", group: "a.json", path: "workspace/.kiro/hooks/a.json" }),
+      wsHookDoc({ name: "third", group: "b.json", path: "workspace/.kiro/hooks/b.json" }),
+    ]);
+    forceDocsTab("hooks");
+    _renderActiveForTest();
+
+    const out = [...panel("hooks").querySelectorAll<HTMLElement>(":scope > .docs-section")].map(
+      (s) => ({
+        label: s.querySelector(".entry-section-label")?.textContent ?? null,
+        rows: [...s.querySelectorAll(".entry-title")].map((r) => r.textContent),
+        list: s.querySelector(".list-container")?.getAttribute("role"),
+      }),
+    );
+    expect(out).toEqual([
+      { label: "a.json", rows: ["first", "second"], list: "list" },
+      { label: "b.json", rows: ["third"], list: "list" },
+    ]);
+  });
+
+  it("renders a flat category as one unlabelled section", async () => {
+    const { _setDocsForTest, forceDocsTab, _renderActiveForTest } = await import("./docs.js");
+    _setDocsForTest([
+      { category: "steering", name: "alpha", path: "workspace/.kiro/steering/alpha.md" },
+      { category: "steering", name: "beta", path: "workspace/.kiro/steering/beta.md" },
+    ]);
+    forceDocsTab("steering");
+    _renderActiveForTest();
+
+    const secs = panel("steering").querySelectorAll(":scope > .docs-section");
+    expect(secs).toHaveLength(1);
+    expect(secs[0]?.querySelector(".entry-section-label")).toBeNull();
+    expect(secs[0]?.querySelectorAll(".entry")).toHaveLength(2);
+  });
+
+  it("keeps a root-level spec out of the feature above it", async () => {
+    // The server's "." marks a document directly in the category root. It gets a
+    // section of its own rather than sitting under the previous feature's label,
+    // and two unlabelled runs are two sections, not one key twice.
+    const { _setDocsForTest, forceDocsTab, _renderActiveForTest } = await import("./docs.js");
+    _setDocsForTest([
+      { category: "spec", name: "Loose", path: "workspace/.kiro/specs/loose.md", group: "." },
+      { category: "spec", name: "Design", path: "workspace/.kiro/specs/f/design.md", group: "f" },
+      { category: "spec", name: "Notes", path: "workspace/.kiro/specs/notes.md", group: "." },
+    ]);
+    forceDocsTab("specs");
+    _renderActiveForTest();
+
+    const labels = [...panel("specs").querySelectorAll<HTMLElement>(":scope > .docs-section")].map(
+      (s) => s.querySelector(".entry-section-label")?.textContent ?? "",
+    );
+    expect(labels).toEqual(["", "f", ""]);
+    // And a repaint keeps every section rather than orphaning a same-key twin.
+    _renderActiveForTest();
+    expect(panel("specs").querySelectorAll(":scope > .docs-section")).toHaveLength(3);
+  });
+
+  it("repaints a kept row in place when its state moves", async () => {
+    const { _setDocsForTest, _setHooksForTest, forceDocsTab, _renderActiveForTest } =
+      await import("./docs.js");
+    _setDocsForTest([wsHookDoc()]);
+    _setHooksForTest([wsHook({ enabled: true })]);
+    forceDocsTab("hooks");
+    _renderActiveForTest();
+    const row = panel("hooks").querySelector<HTMLElement>(".entry");
+    expect((row?.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(true);
+
+    _setHooksForTest([wsHook({ enabled: false })]);
+    _renderActiveForTest();
+    // Same element, new contents: reconcile kept the node and the signature repainted it.
+    expect(panel("hooks").querySelector<HTMLElement>(".entry")).toBe(row);
+    expect((row?.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(false);
   });
 });

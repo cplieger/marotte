@@ -16,11 +16,11 @@ const noSubscriberLine = `"msg":"no push subscribers; notifications are being dr
 // is the only input the drop path reads.
 func newDropHub(t *testing.T) (*Runtime, *recordingPush) {
 	t.Helper()
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	fp.noSubs.Store(true)
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	return h, fp
 }

@@ -10,7 +10,7 @@ import (
 	"pgregory.net/rapid"
 )
 
-// The round-trip property `toolCallDelta` claims: apply the frame to the value the
+// The round-trip property `toolProgress` claims: apply the frame to the value the
 // fold started from and you get the value the fold produced.
 
 // applyDelta is the wire contract: every omitted field means unchanged, output
@@ -18,7 +18,7 @@ import (
 // SPECIFICATION, not a copy of production code — nothing in the server applies a
 // delta, so it mirrors the client fold in static-src/store.ts, the only consumer a
 // delta has.
-func applyDelta(before marotte.ToolCall, d *marotte.ToolCallUpdatePayload) marotte.ToolCall {
+func applyDelta(before marotte.ToolCall, d *marotte.ToolProgressPayload) marotte.ToolCall {
 	out := before
 	if d.Title != "" {
 		out.Title = d.Title
@@ -49,9 +49,6 @@ func applyDelta(before marotte.ToolCall, d *marotte.ToolCallUpdatePayload) marot
 	}
 	if d.TerminalID != "" {
 		out.TerminalID = d.TerminalID
-	}
-	if d.SubSessionID != "" {
-		out.SubSessionID = d.SubSessionID
 	}
 	if d.AgentSubtaskID != "" {
 		out.AgentSubtaskID = d.AgentSubtaskID
@@ -90,16 +87,16 @@ func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 		for range rapid.IntRange(1, 20).Draw(rt, "steps") {
 			before := tc
 			foldStep(rt, &tc)
-			d := toolCallDelta("msg-1", &before, &tc)
+			d := toolProgress("t-1", &before, &tc)
 			got := applyDelta(before, &d)
 			if !sameToolCall(&got, &tc) {
 				t.Fatalf("round trip lost a change\nbefore = %+v\ndelta  = %+v\nfolded = %+v\nwant   = %+v",
 					before, d, got, tc)
 			}
 			// A frame that names no call gives the client nothing to apply it to.
-			if d.ToolCallID != tc.ID || d.MessageID != "msg-1" {
+			if d.ToolCallID != tc.ID || d.Turn != "t-1" {
 				t.Fatalf("delta address = (%q, %q), want (%q, %q)",
-					d.MessageID, d.ToolCallID, "msg-1", tc.ID)
+					d.Turn, d.ToolCallID, "t-1", tc.ID)
 			}
 		}
 	})
@@ -140,20 +137,16 @@ func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 		// Adopted once, never overwritten, so a step finding one already set
 		// changes nothing — itself a case worth generating.
 		id := rapid.StringMatching(`[a-z]{4,8}`).Draw(rt, "attachID")
-		switch rapid.IntRange(0, 3).Draw(rt, "which") {
+		switch rapid.IntRange(0, 2).Draw(rt, "which") {
 		case 0:
 			if tc.TerminalID == "" {
 				tc.TerminalID = id
 			}
 		case 1:
-			if tc.SubSessionID == "" {
-				tc.SubSessionID = id
-			}
-		case 2:
 			if tc.AgentSubtaskID == "" {
 				tc.AgentSubtaskID = id
 			}
-		case 3:
+		case 2:
 			if tc.WorkflowID == "" {
 				tc.WorkflowID = id
 			}
@@ -186,10 +179,10 @@ func sameToolCall(a, b *marotte.ToolCall) bool {
 // deltaFixture is one cross-language case: the value the fold started from, the
 // frame the server sends, and the value a client must end up holding.
 type deltaFixture struct {
-	Name   string                        `json:"name"`
-	Before marotte.ToolCall              `json:"before"`
-	Delta  marotte.ToolCallUpdatePayload `json:"delta"`
-	After  marotte.ToolCall              `json:"after"`
+	Name   string                      `json:"name"`
+	Before marotte.ToolCall            `json:"before"`
+	Delta  marotte.ToolProgressPayload `json:"delta"`
+	After  marotte.ToolCall            `json:"after"`
 }
 
 // The BUILDER is pinned against the same cases static-src/tool-call-delta.node.
@@ -212,15 +205,15 @@ func TestToolCallDelta_SharedFixture(t *testing.T) {
 	}
 	for _, c := range fx.Cases {
 		t.Run(c.Name, func(t *testing.T) {
-			got := toolCallDelta(c.Delta.MessageID, &c.Before, &c.After)
+			got := toolProgress(c.Delta.Turn, &c.Before, &c.After)
 			wantJSON, _ := json.Marshal(c.Delta)
 			gotJSON, err := json.Marshal(got)
 			if err != nil {
 				t.Fatalf("Setup: marshal delta: %v", err)
 			}
 			if string(gotJSON) != string(wantJSON) {
-				t.Errorf("toolCallDelta(%q, before, after) = %s, want %s",
-					c.Delta.MessageID, gotJSON, wantJSON)
+				t.Errorf("toolProgress(%q, before, after) = %s, want %s",
+					c.Delta.Turn, gotJSON, wantJSON)
 			}
 			// A fixture whose `after` does not follow from `before` + `delta`
 			// fails here rather than teaching the client half a wrong expectation.

@@ -32,9 +32,9 @@
 
   /* A CONTAINER spaces its children and a child never spaces itself
      (marotte-ui.md): the gap above is the only vertical rhythm on this page, so no
-     region below carries a margin of its own. That rule exists because
-     `.msg-wrap` shipped without it and every block boundary in a turn measured
-     0.0px. */
+     region below carries a margin of its own. That rule exists because a turn's
+     block container shipped without it and every block boundary in a turn
+     measured 0.0px. */
   container: exec-view / inline-size;
 }
 
@@ -484,17 +484,23 @@
 
 /* Real separation between top-level entries, because a top-level container is a
    BORDERED BOX now and two boxes a hairline apart read as one. Rows INSIDE a box
-   stay tight — `.ev-kids` keeps its own hairline gap. */
+   are FLUSH — see `.ev-kids`. */
 .ev-tree {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
 }
 
+/* FLUSH, because a gap here paints the BOX's own fill rather than a separation, and
+   that fill is the darkest rung: invisible while every row is transparent, and a
+   black hairline cut across the list the moment one takes the hover wash or the
+   selected fill (measured 1px, selected 2.282:1 against the box in dark). The fill
+   carries the separation on its own, which is 70-selection.css's ruling and what
+   `.pill-model-list` and `.fb-list` already do. */
 .ev-kids {
   display: flex;
   flex-direction: column;
-  gap: 0.0625rem;
+  gap: 0;
 }
 
 .ev-kids[hidden] {
@@ -1205,16 +1211,28 @@
 /* `max-block-size` + `overflow: hidden` rather than `-webkit-line-clamp`: that
    property needs `display: -webkit-box`, whose children become legacy box items, so
    it does not reliably clamp the block children a markdown bubble is made of
-   (paragraphs, fences, lists, tables). `attachClamp` is mechanism-agnostic — it
-   compares `scrollHeight` against `clientHeight` — so the attribute, the labels and
-   the measured-overflow rule are unchanged.
+   (paragraphs, fences, lists, tables). Measured over 21 real report shapes in
+   Chromium, Firefox and WebKit: 14 of 21 are not clamped AT ALL under
+   `-webkit-line-clamp` (`display` computes to `flow-root`), so the collapsed box
+   would render the whole report. `attachClamp` is mechanism-agnostic — it compares
+   `scrollHeight` against `clientHeight` — so the attribute, the labels and the
+   measured-overflow rule are unchanged.
+
+   THE CAP IS A FALLBACK, and no fixed cap can satisfy "the collapsed state ends on
+   a whole line": the bubble inside is `.message.assistant`, whose block children
+   carry their own line metrics AND their own margins (measured in ONE report: 13,
+   16 and 17px ink boxes, plus 8px between adjacent paragraphs), so `N × lh` lands
+   on a line boundary only for a single-block, single-metric report and every
+   structured one is off by the accumulated margin. `clamp-text.ts`'s `snapToLine`
+   measures the rendered line positions and writes `--clamp-h`; this value is the
+   budget that snap reads, and what it clips to before the snap lands.
 
    12 lines at 14px × 1.6 is 268.8px, which leaves the panes their room under the
    header and the timeline on a 900px viewport. The count is also
    `RESULT_CLAMP.lines` in `exec-view/page.ts`, and `clamp-line-count.test.ts`
    fails when the two disagree. */
 .ev-r-text[data-clamped] {
-  max-block-size: 12lh;
+  max-block-size: var(--clamp-h, 12lh);
   overflow: hidden;
 }
 

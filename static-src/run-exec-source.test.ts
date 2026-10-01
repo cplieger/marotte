@@ -11,13 +11,19 @@
 import { describe, it, expect } from "vitest";
 import { runToExec, indexPlan } from "./run-exec-source.js";
 import { flatten, leaves, counters } from "./exec-view/model.js";
-import type { RunState } from "./run-store.js";
+import { makeRunState } from "./__test-helpers__/model.js";
+import type { RunNode, RunState } from "./run-store.js";
 import type { RunAsks } from "./fundamentals/run-card.js";
 
 const NO_ASKS: RunAsks = { count: 0, nodes: new Set<string>(), label: "" };
 
+// `root` stays `unknown`: one case hands over a container whose `type` is not in
+// `RunNode`'s union, which is the foreign-shape axis the adapter's structural walk
+// exists for, so a typed parameter would refuse the case rather than the shape. The
+// factory supplies every field production reads, and the assertion is narrowed to
+// that one member.
 function stateWith(root: unknown, extra: Record<string, unknown> = {}): RunState {
-  return { workflowId: "wf_1", status: "running", root, ...extra } as unknown as RunState;
+  return { ...makeRunState({ status: "running" }), root: root as RunNode, ...extra };
 }
 
 const step = (nodeId: string, status: string, extra: Record<string, unknown> = {}) => ({

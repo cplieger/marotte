@@ -1,50 +1,10 @@
 /* ==========================================================================
-   Settings: tabbed shell
+   Settings
+
+   The shell, its sticky header and the segmented bar are the shared page-list
+   system's (11-page-lists.css: .page-shell, .page-header, .seg-bar), so this
+   slice carries only what belongs to the Settings page itself.
    ========================================================================== */
-
-.settings-shell {
-  max-width: var(--content-max-w);
-  margin: 0 auto;
-  width: 100%;
-  padding: var(--sp-4);
-  display: flex;
-  flex-direction: column;
-
-  /* was: flex: 1; min-height: 0 — as a flex item of the #settings-view
-     scroller, basis 0 + no content floor clamped the shell's box to exactly
-     the scrollport height. Tall panels overflowed the box, stranding the
-     shell's bottom padding one viewport up (no breathing room under the last
-     section) and capping the sticky .settings-header's containing block at
-     one viewport (header scrolled away). Basis auto + no shrink lets the
-     shell grow with its content; grow keeps short panels filling the
-     viewport. */
-  flex: 1 0 auto;
-  gap: var(--sp-3);
-}
-
-/* THE TITLE BAR ABOVE THIS HEADER ALREADY PAID THE TOP INSET, so paying it again
-   here is the "inset as container padding" defect one level in. This header is a
-   sticky row inside a SCROLLER whose top edge is `.chat-toolbar`'s bottom
-   (12-chat.css: `min-block-size: calc(var(--titlebar-h) + env(safe-area-inset-top))`),
-   so `top: 0` already sits clear of the status bar and there is nothing left to
-   clear. It used to declare
-   `padding-block: calc(0.3125rem + env(safe-area-inset-top, 0)) var(--sp-2)`.
-   Measured at 390x844 with the iPhone values substituted (top 47px): the tab bar's
-   top sat 68px below the title bar's bottom, 47 of which were this term, against
-   21px with it gone — reported as a weird gap above the multi-select menu on the
-   settings, docs and git pages, all three of which use this header. Invisible in
-   Chromium, which reports every `env(safe-area-inset-*)` as 0, so the gap only
-   appears on a device with a real inset. */
-.settings-header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--c-bg-primary);
-  padding-block: 0.3125rem var(--sp-2);
-}
 
 /* A setting's title with its own save indicator beside it. Every user setting has
    one: the indicator belongs to the thing being written, not to a page-wide slot,
@@ -102,110 +62,6 @@
 
 .icon-save-fail {
   color: var(--c-red);
-}
-
-/* Desktop tab bar: segmented-control pills.
- *
- * THIS PAIR IS DERIVED THE OTHER WAY ROUND, and that is the interesting half.
- * The nesting rule is inner = outer − border − inset, so with a 6px bar, a 1px
- * border and a 4px inset the segment would have to be 1px — square, on the one
- * element whose whole job is to read as a pressable pill. The rule does not care
- * which side moves, only that the two corner centres coincide, so the SEGMENT
- * keeps its shape and the bar takes 4 + 1 + 4 = 9px.
- *
- * It shipped as `calc(var(--r) - 0.125rem)` on the segment: the padding term was
- * 2px where the padding is 4px, and the border term was missing entirely, so the
- * segments sat at 4px against a bar whose corner wanted 1px.
- *
- * No rung of the radius ladder can satisfy this pair. The ladder steps 12/8/6/4
- * and the gap here is 5px, so one side of a nested pair is always a derived
- * value; that is why this is a calc rather than a token. Rule and sources:
- * web.md "A nested rounded corner". The `.mcp-modal-tabs` bar (60-mcp.css) is
- * the same component under another name and carries the same derivation. */
-.settings-tab-bar {
-  display: flex;
-  flex-wrap: wrap;
-
-  --seg-inset: 0.25rem;
-  --seg-radius: var(--r-sm);
-
-  gap: var(--seg-inset);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: calc(var(--seg-radius) + 1px + var(--seg-inset));
-  padding: var(--seg-inset);
-}
-
-.settings-tab {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--seg-radius);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  font-family: var(--font-sans);
-  cursor: pointer;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
-  transition:
-    background var(--dur-micro),
-    color var(--dur-micro),
-    border-color var(--dur-micro) var(--ease-standard);
-
-  /* Scoped away from the selected tab: without it, hover repaints the selected
-     fill and the bar forgets which tab you are on. The wash is the
-     SELECTION-TINTED one every tab-shaped control shares (01-tokens.css), and
-     `any-hover` keeps a tap from latching it; touch takes the press from
-     03-base.css's floor, which reaches this one because it is a real button. */
-  @media (any-hover: hover) {
-    &:not(.active):hover {
-      background: var(--c-hover-select);
-      color: var(--c-text-primary);
-    }
-  }
-
-  /* The press takes the same tinted ladder, and `box-shadow: none` opts out of
-     03-base.css's universal wash for the reason 70-selection.css states for the
-     SELECTED segment: this control reaches that floor (it is a real button, unlike
-     a tab row), so without the opt-out a press would step the tinted rung and the
-     achromatic wash at once — two steps on two ramps. Ungated, deliberately: press
-     is the channel a touchscreen has instead of hover. */
-  &:not(.active):active {
-    background: var(--c-press-select);
-    color: var(--c-text-primary);
-    box-shadow: none;
-  }
-
-  /* Selected: 70-selection.css. This was the one segmented control that marked
-     selection with NO accent at all — a raised white card against the bar —
-     and in dark mode its hover moved LIGHTER while its selected state moved
-     DARKER, so a hovered unselected tab read as more prominent than the
-     selected one. */
-}
-
-/* Segment content: icon + label by default, icon-only when the bar cannot fit
-   the labels. tab-bar-fit.ts measures per bar (never a breakpoint — which
-   labels fit depends on the label set) and sets .tab-bar-icons when any
-   label would truncate; one truncated label flips the WHOLE bar, because a
-   row mixing text pills and icon pills reads as broken. The label stays in
-   the DOM for the accessible name; every button also carries aria-label. */
-.settings-tab-icon {
-  display: block;
-  flex-shrink: 0;
-}
-
-.tab-bar-icons .settings-tab {
-  & > .settings-tab-label {
-    display: none;
-  }
 }
 
 /* Panel body container. One panel visible at a time (others get .hidden). */
@@ -736,7 +592,7 @@
 }
 
 .forge-field-label {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-form-label);
   color: var(--c-text-tertiary);
   font-weight: 500;
 }
@@ -1611,15 +1467,26 @@ dd.governance-off {
   border: var(--hairline) solid var(--c-border);
   border-radius: var(--r);
   background: var(--c-bg-secondary);
-  font-size: var(--fs-sm);
+
+  /* The row's TEXT follows the same tier as its height, for the same reason: a
+     writable row's select is floored to 16px, so a row left at --fs-sm put its
+     capability and globs 4px under the badge beside them. */
+  font-size: var(--fs-form-label);
 }
 
+/* THE PEER RUNG IS WHAT MAKES THE TWO BADGE VARIANTS AGREE, and before it they
+ * did not: the writable row renders this badge as a <select>, which the iOS
+ * text-entry floor (61-mcp-tools.css) puts at 16px, while the read-only row
+ * renders a <span> that kept --fs-xs — so on a coarse pointer one list showed
+ * the same badge at 16px and 11px, in adjacent rows, against the "keep it
+ * visually identical" note below. Both read the peer rung now, so they match at
+ * both tiers (01-tokens.css "The FORM type scale"). */
 .native-rule-effect {
   flex: none;
   min-inline-size: 3.2rem;
   padding: 0 var(--sp-1);
   border-radius: var(--r);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-form-peer);
   font-weight: var(--fw-medium);
   text-align: center;
   text-transform: uppercase;
@@ -1755,8 +1622,10 @@ select.native-rule-effect:focus-visible {
   min-width: 0;
 }
 
+/* The form-label rung, which lifts on the coarse pointer because the fields it
+   names are floored to 16px there (01-tokens.css "The FORM type scale"). */
 .rf-label {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-form-label);
   font-weight: var(--fw-medium);
   color: var(--c-text-tertiary);
 }
@@ -1807,6 +1676,10 @@ select.native-rule-effect:focus-visible {
 .rule-form .rf-submit {
   min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
   padding-block: 0;
+
+  /* Equal rank with the fields it submits, so it takes the peer rung rather than
+     the label one (01-tokens.css "The FORM type scale"). */
+  font-size: var(--fs-form-peer);
 }
 
 /* Tablet: two columns; the grow field + submit take full rows.
@@ -1890,29 +1763,12 @@ select.native-rule-effect:focus-visible {
   block-size: 0.85rem;
 }
 
-/* --- History (full-page table): keyboard rows, skeleton, error --- */
+/* --- History: the load-failure state --- */
 
-/* Load-failure state: message + Retry, so it's never a dead end. */
+/* Message + Retry, so it's never a dead end. */
 .history-error {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--sp-2);
-}
-
-.history-skel-row {
-  pointer-events: none;
-}
-
-.history-skel-name {
-  block-size: 0.85rem;
-}
-
-.history-skel-summary {
-  block-size: 0.7rem;
-  margin-block-start: var(--sp-1);
-}
-
-.history-skel-date {
-  block-size: 0.75rem;
 }

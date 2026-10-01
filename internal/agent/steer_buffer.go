@@ -5,8 +5,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // steerBuffer is marotte's projection of KAS's own steering buffer: the mid-turn
@@ -102,21 +102,29 @@ func (b *steerBuffer) SteerForgotten(chatID marotte.ChatID, steerIDs []string) [
 // steer's lifetime is one turn, so a chat that is gone can only ever hold ids no
 // frame will arrive for.
 func (b *steerBuffer) ClearForChat(chatID marotte.ChatID) {
+	b.TakeForChat(chatID)
+}
+
+// TakeForChat drops every waiting steer owned by chatID and answers the rows it
+// held, so the death closer can tell the rows KAS queued from the ones this
+// process parked.
+func (b *steerBuffer) TakeForChat(chatID marotte.ChatID) []marotte.SteerQueuedPayload {
 	if chatID == "" {
-		return
+		return nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	removed := false
-	for k := range b.waiting {
+	var taken []marotte.SteerQueuedPayload
+	for k, p := range b.waiting {
 		if k.chat == chatID {
 			delete(b.waiting, k)
-			removed = true
+			taken = append(taken, p)
 		}
 	}
-	if removed {
+	if len(taken) > 0 {
 		mintPending(&b.versions)
 	}
+	return taken
 }
 
 // List returns the waiting steers as the events a connect replay writes, filtered to

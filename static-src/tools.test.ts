@@ -5,6 +5,7 @@
 // search-first add modal, and the SSE job-following output panel.
 import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 
+import indexHtml from "../static/index.html?raw";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import type { ToolInfo, Job, Inventory } from "./types.js";
 
@@ -27,6 +28,9 @@ const mocks = vi.hoisted(() => ({
   confirm: vi.fn(),
   rollingAppend: vi.fn(),
   rollingClear: vi.fn(),
+  toastError: vi.fn(),
+  applyManifestDispatch: vi.fn(),
+  openFile: vi.fn(),
   sseHandlers: new Map<string, (chatID: string, payload: unknown) => void>(),
 }));
 
@@ -43,6 +47,12 @@ vi.mock("./modals.js", () => ({
   },
 }));
 vi.mock("./confirm.js", () => ({ confirm: mocks.confirm }));
+vi.mock("./toast.js", () => ({
+  error: mocks.toastError,
+  info: vi.fn(),
+  success: vi.fn(),
+  showToast: vi.fn(),
+}));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
   bindLoadingState: vi.fn(() => vi.fn()),
@@ -58,9 +68,15 @@ vi.mock("./actions/tools.js", () => ({
   getToolsJobs: { dispatch: mocks.jobsDispatch },
   getCatalogInfo: { dispatch: mocks.catalogInfoDispatch },
   refreshCatalog: { dispatch: mocks.refreshCatalogDispatch },
+  applyManifest: { dispatch: mocks.applyManifestDispatch },
   cancelToolJob: { dispatch: mocks.cancelJobDispatch },
   ensureTool: { dispatch: mocks.ensureDispatch },
 }));
+// The editor is the Advanced-configuration door's surface, and mocking the
+// opener is what keeps the whole editor graph out of this file's link: a partial
+// mock further down that graph (toast.js here) fails collection outright once it
+// is linked for real.
+vi.mock("./editor-openers.js", () => ({ openFile: mocks.openFile }));
 vi.mock("./bus.js", () => ({
   onSSE: (type: string, fn: (chatID: string, payload: unknown) => void) => {
     mocks.sseHandlers.set(type, fn);
@@ -91,6 +107,9 @@ function mountToolsDOM(): void {
   addPill("tool-update-btn", "Update all", "Update all tools");
   add("button", "tool-cancel-btn");
   addPill("tool-catalog-refresh-btn", "Refresh catalog", "Refresh the tool catalog");
+  addPill("tool-apply-btn", "Apply", "Apply the manifest");
+  add("button", "tool-open-manifest");
+  add("button", "tool-open-config");
   add("p", "tool-catalog-meta").classList.add("hidden");
   add("div", "tool-update-output");
   // Both list hosts carry the classes index.html gives them, because the
@@ -102,8 +121,11 @@ function mountToolsDOM(): void {
   // Mirrors index.html's classes: the button's two glyph faces are picked by
   // `.tool-search-go`, so a bare fixture button would show both at once.
   add("button", "tool-search-btn").className = "action-pill tool-search-go";
-  // The footer's permanent sentence lives in the markup; the module only toggles
-  // the apt caveat, so the fixture has to carry both the way index.html does.
+  // The footer's permanent sentence lives in the markup and the module only
+  // toggles the apt caveat, so the fixture carries both. The caveat is seeded
+  // with a stale root claim on purpose: it is the pre-state that gives the
+  // repaint's own assertions their force, since a repaint over an empty span
+  // proves nothing about overwriting.
   const note = add("p", "tool-shell-note");
   note.textContent =
     "Not listed? Install it in the shell; the engine only manages what it installed.";
@@ -280,6 +302,82 @@ describe("row actions", () => {
     rowFor("gh")?.querySelector<HTMLButtonElement>('button[aria-label="Remove gh"]')?.click();
     await flush();
     expect(mocks.deleteDispatch).not.toHaveBeenCalled();
+  });
+
+  // The pre-flight and the 409 ask about the SAME thing, so they ask it in the
+  // same words: two spellings of one question are two owners of one sentence.
+  it("asks the cascade question in one wording, whoever derived the set", async () => {
+    initWith(listWith([tool({ name: "java" })]));
+    mocks.confirm.mockResolvedValue(true);
+    mocks.deleteDispatch
+      .mockResolvedValueOnce({ code: "has_dependents", dependents: ["jdtls"] })
+      .mockResolvedValueOnce({ job: { id: "tj-10" } });
+    rowFor("java")?.querySelector<HTMLButtonElement>('button[aria-label="Remove java"]')?.click();
+    await flush();
+    await flush();
+    const derived = String(mocks.confirm.mock.calls[1]?.[0]);
+
+    // Same tool, same set, this time named by the row rather than by the engine.
+    vi.clearAllMocks();
+    mountToolsDOM();
+    initWith(listWith([tool({ name: "java", dependents: ["jdtls"] })]));
+    mocks.confirm.mockResolvedValue(true);
+    mocks.deleteDispatch.mockResolvedValue({ job: { id: "tj-11" } });
+    rowFor("java")?.querySelector<HTMLButtonElement>('button[aria-label="Remove java"]')?.click();
+    await flush();
+    await flush();
+
+    expect(String(mocks.confirm.mock.calls[0]?.[0])).toBe(derived);
+  });
+
+  // The bin is withheld on a row the inventory reports essential, so a refused
+  // removal is the backstop for a row rendered before the flag arrived. Silence
+  // there is a confirmed destructive dialog that did nothing and said nothing.
+  it("reports a refused essential removal and refetches the row", async () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    mocks.confirm.mockResolvedValue(true);
+    mocks.deleteDispatch.mockResolvedValue({
+      code: "essential",
+      error: "tool is essential to this application: gh",
+    });
+    const loadsBefore = mocks.loadDispatch.mock.calls.length;
+
+    rowFor("gh")?.querySelector<HTMLButtonElement>('button[aria-label="Remove gh"]')?.click();
+    await flush();
+    await flush();
+
+    expect(mocks.toastError).toHaveBeenCalledTimes(1);
+    const said = String(mocks.toastError.mock.calls[0]?.[0]);
+    expect(said).toContain("gh");
+    expect(said).toContain("essential");
+    // The switch is the escape hatch, and the refusal is where a reader learns it.
+    expect(said).toContain("Switch it off");
+    // The refetch is what takes the bin away: the inventory that answers
+    // `essential` changes the row's reconcile key, so the row is REPLACED — which
+    // is why the refusal is reported off the row rather than written onto it.
+    expect(mocks.loadDispatch.mock.calls.length).toBe(loadsBefore + 1);
+    // Not a cascade: no second, forced request goes out.
+    expect(mocks.deleteDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+  });
+
+  // The negative control for the case above: the OTHER coded refusal is an
+  // ordinary flow with a dialog of its own, so it must raise nothing. Both
+  // confirms are answered so the request is genuinely made and refused.
+  it("says nothing extra when a removal is refused for dependents", async () => {
+    initWith(listWith([tool({ name: "java" })]));
+    mocks.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    mocks.deleteDispatch.mockResolvedValue({
+      code: "has_dependents",
+      dependents: ["jdtls"],
+    });
+    rowFor("java")?.querySelector<HTMLButtonElement>('button[aria-label="Remove java"]')?.click();
+    await flush();
+    await flush();
+
+    expect(mocks.deleteDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.confirm).toHaveBeenCalledTimes(2);
+    expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
   it("delete asks once and forces when the row already names its dependents", async () => {
@@ -500,7 +598,7 @@ describe("add modal", () => {
   // sentence is permanent markup at the modal's bottom, and the apt caveat is the
   // one clause the module decides. Inside the capped scroller they scrolled away
   // from exactly the empty result that needed them.
-  it("says why Debian packages are missing when apt is unavailable", async () => {
+  it("names no cause when the engine states no apt state", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false, truncated: false });
     byId<HTMLButtonElement>("tool-add-btn").click();
@@ -508,10 +606,51 @@ describe("add modal", () => {
 
     const note = byId("tool-shell-note");
     expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(false);
-    expect(note.textContent ?? "").toContain("apt needs root");
+    expect(byId("tool-shell-note-apt").textContent).toBe(
+      " Debian packages are not searchable right now.",
+    );
+    expect(note.textContent ?? "").not.toContain("root");
     // The shell is always the fallback, and it is out of the list entirely.
     expect(note.textContent ?? "").toContain("Install it in the shell");
     expect(byId("tool-search-results").textContent ?? "").not.toContain("Install it in the shell");
+  });
+
+  // `indexing` is a PENDING condition: the host has apt and the index is still
+  // being read, so the same query answers differently a moment later. A note
+  // calling apt unavailable there asserts a permanent state over a transient one.
+  it("renders a building index as pending rather than as absent apt", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [],
+      apt_available: false,
+      apt_state: "indexing",
+      truncated: false,
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+
+    const apt = byId("tool-shell-note-apt");
+    expect(apt.classList.contains("hidden")).toBe(false);
+    expect(apt.textContent).toContain("the package index is still loading");
+    expect(apt.textContent).toContain("Search again in a moment");
+  });
+
+  it("names the host when the engine reports apt unusable", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [],
+      apt_available: false,
+      apt_state: "unavailable",
+      truncated: false,
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+
+    const apt = byId("tool-shell-note-apt");
+    expect(apt.classList.contains("hidden")).toBe(false);
+    expect(apt.textContent).toBe(
+      " Debian packages are not searchable here: this host has no usable apt.",
+    );
   });
 
   // The caveat is a fact about the RESULT SET, so an available-apt search has to
@@ -524,17 +663,26 @@ describe("add modal", () => {
     await flush();
     expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(false);
 
-    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: true, truncated: false });
+    mocks.searchDispatch.mockResolvedValue({
+      results: [],
+      apt_available: true,
+      apt_state: "available",
+      truncated: false,
+    });
     const input = byId<HTMLInputElement>("tool-search");
     input.value = "sl";
     byId<HTMLButtonElement>("tool-search-btn").click();
     await flush();
-    expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(true);
+    const apt = byId("tool-shell-note-apt");
+    expect(apt.classList.contains("hidden")).toBe(true);
+    // The claim is retracted rather than merely hidden, so a stylesheet that
+    // stopped honouring `.hidden` could not leave a false sentence on screen.
+    expect(apt.textContent).toBe("");
   });
 
-  // The reply says whether a block was cut to its cap and nothing about how many
-  // rows matched, so the readout can state the cut but not a denominator. An
-  // uncut reply keeps the bare count.
+  // An engine that states no matched count can say a block was cut and nothing
+  // about how many rows were cut from it, so the readout keeps the bare count
+  // plus the cut. An uncut reply keeps the bare count alone.
   it("keeps the bare count when no block was cut", async () => {
     initWith(listWith([]));
     mocks.searchDispatch.mockResolvedValue({
@@ -559,6 +707,41 @@ describe("add modal", () => {
     expect(byId("tool-results-count").textContent).toBe(
       "1 shown; more matched than shown, narrow the query to see the rest",
     );
+  });
+
+  // With the count stated the cut gets a denominator, which is the fact that
+  // tells a reader whether narrowing is worth the effort: "more matched than
+  // shown" reads the same for 2 and for 6,627.
+  it("prints the denominator when the engine reports how many matched", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "python3", source: "apt:python3", apt: true }],
+      apt_available: true,
+      apt_state: "available",
+      matched: 6627,
+      truncated: true,
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    expect(byId("tool-results-count").textContent).toBe(
+      "1 of 6627 shown, narrow the query to see the rest",
+    );
+  });
+
+  // The count is judged over the blocks the reply HOLDS, so equal counts mean
+  // nothing was cut and the readout must not claim a cut it can see is absent.
+  it("keeps the bare count when the stated count equals what is shown", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "jq", source: "aqua:jqlang/jq" }],
+      apt_available: true,
+      apt_state: "available",
+      matched: 1,
+      truncated: false,
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    expect(byId("tool-results-count").textContent).toBe("1 shown");
   });
 
   // A failed fetch is a different answer from an empty one: "no matches" tells
@@ -774,6 +957,43 @@ describe("a job-owning pill becomes its own cancel control", () => {
     expect(faceOf("tool-update-btn").label).toBe("Update all");
   });
 
+  it("Apply owns the reconcile job, whoever launched it", () => {
+    mountToolsDOM();
+    initTools();
+    const btn = byId<HTMLButtonElement>("tool-apply-btn");
+    btn.click();
+    expect(mocks.applyManifestDispatch).toHaveBeenCalledTimes(1);
+
+    const sse = mocks.sseHandlers.get("tool_job_changed");
+    // The job id is not correlated with the click, so any reconcile job takes
+    // this pill, the boot one included.
+    sse?.("", live("tj-r", "reconcile"));
+    expect(faceOf("tool-apply-btn")).toEqual({
+      label: "Cancel",
+      aria: "Cancel the install pass",
+      tip: "Cancel the install pass",
+      busy: true,
+    });
+    expect(byId("tool-cancel-btn").classList.contains("hidden")).toBe(true);
+    expect(faceOf("tool-update-btn").busy).toBe(false);
+
+    btn.click();
+    expect(mocks.cancelJobDispatch).toHaveBeenCalledWith({ id: "tj-r" });
+
+    sse?.("", settled("tj-r", "reconcile"));
+    expect(faceOf("tool-apply-btn").label).toBe("Apply");
+  });
+
+  it("opens each advanced-configuration file in the editor", () => {
+    mountToolsDOM();
+    initTools();
+    byId<HTMLButtonElement>("tool-open-manifest").click();
+    byId<HTMLButtonElement>("tool-open-config").click();
+    expect(mocks.openFile.mock.calls).toEqual([["/config/tools.json"], ["/config/config.json"]]);
+    // A door is not a mutation: neither click enqueues anything.
+    expect(mocks.applyManifestDispatch).not.toHaveBeenCalled();
+  });
+
   it("falls back to the shared Cancel pill for a job no pill owns", () => {
     mountToolsDOM();
     initTools();
@@ -828,6 +1048,17 @@ describe("a job-owning pill becomes its own cancel control", () => {
   });
 });
 
+describe("the shipped page declares the ids the Tools panel looks up", () => {
+  it("carries the Advanced-configuration controls", () => {
+    // mountToolsDOM is a fixture, so a rename in the page alone leaves the
+    // suite green while byId throws on the reader's first visit.
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    expect(doc.getElementById("tool-apply-btn")).not.toBeNull();
+    expect(doc.getElementById("tool-open-manifest")).not.toBeNull();
+    expect(doc.getElementById("tool-open-config")).not.toBeNull();
+  });
+});
+
 describe("catalog refresh UI", () => {
   it("renders the freshness line with catalog age and the failure suffix", async () => {
     mountToolsDOM();
@@ -853,8 +1084,8 @@ describe("catalog refresh UI", () => {
     expect(meta.classList.contains("hidden")).toBe(false);
     expect(meta.textContent).toContain("716 tools");
     expect(meta.textContent).toContain("aqua v4.541.0 + mise v2026.7.11");
-    expect(meta.textContent).toContain("compiled 3 h ago");
-    expect(meta.textContent).toContain("checked 1 min ago");
+    expect(meta.textContent).toContain("compiled 3 hours ago");
+    expect(meta.textContent).toContain("checked 1 minute ago");
     expect(meta.textContent).toContain("auto-refresh on");
     expect(meta.textContent).toContain("last refresh failed");
   });
@@ -1253,6 +1484,85 @@ describe("an installed row measures the same whether or not it carries a badge",
     const above = (name?.top ?? 0) - row.top;
     const below = row.bottom - (name?.bottom ?? 0);
     expect(Math.abs(above - below), "the label is vertically centred").toBeLessThanOrEqual(1);
+  });
+});
+
+describe("a failed install's error text sits in the name's column", () => {
+  let style: HTMLStyleElement;
+
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+
+  afterAll(() => {
+    style.remove();
+    document.documentElement.removeAttribute("data-pointer");
+  });
+
+  /** The engine's own shape: one path-shaped token after another, none of them
+   *  offering a break, longer than any settings column. */
+  const LAST_ERROR =
+    "declared file prometheus-3.14.0.linux-amd64/prometheus missing after extract: " +
+    "lstat /config/tools/opt/prometheus/3.14.0/prometheus-3.14.0.linux-amd64/prometheus: " +
+    "no such file or directory";
+
+  function failedRow(lastError: string): {
+    row: HTMLElement;
+    name: HTMLElement;
+    error: HTMLElement;
+  } {
+    initWith(listWith([tool({ name: "prometheus", installed: false, last_error: lastError })]));
+    const row = rowFor("prometheus");
+    const name = row?.querySelector<HTMLElement>(".list-row-name") ?? null;
+    const error = row?.querySelector<HTMLElement>(".tool-row-error") ?? null;
+    if (row === null || name === null || error === null) {
+      throw new Error("the failed row must render its name and its error");
+    }
+    expect(error.textContent).toBe(lastError);
+    return { row, name, error };
+  }
+
+  it.each(["fine", "coarse"])("starts the error where the name starts on a %s pointer", (tier) => {
+    // The error used to be a flex SIBLING after the flex-grown name, so it
+    // started wherever the name's box ended. In the name's own column its left
+    // edge IS the name's, on both tiers, and it takes the line under the name.
+    // A SHORT error is the discriminating input: a long one falls onto its own
+    // line because nothing else fits beside it, whatever the rule says.
+    document.documentElement.dataset["pointer"] = tier;
+    const { name, error } = failedRow("download failed");
+    const n = name.getBoundingClientRect();
+    const e = error.getBoundingClientRect();
+    expect(
+      e.left,
+      `${tier}: error at ${String(e.left)} against the name at ${String(n.left)}`,
+    ).toBeCloseTo(n.left, 1);
+    expect(e.top, `${tier}: the error takes the line under the name`).toBeGreaterThanOrEqual(
+      n.bottom,
+    );
+  });
+
+  it("wraps a path-shaped error inside the row rather than overflowing it", () => {
+    document.documentElement.dataset["pointer"] = "fine";
+    // Narrow enough that the text cannot fit on one line: without that there is
+    // no break to take and the assertion passes for a single long line too.
+    byId("tools-list").style.inlineSize = "24rem";
+    const { row, error } = failedRow(LAST_ERROR);
+    const range = document.createRange();
+    range.selectNodeContents(error);
+    expect(range.getClientRects().length, "the text broke onto more than one line").toBeGreaterThan(
+      1,
+    );
+    // The INK, not the box: a path token longer than the column overflows the
+    // error's own box while the box itself stays inside the row, so a check on
+    // the box's right edge passes with the token painted across the version and
+    // the controls beside it.
+    expect(
+      error.scrollWidth,
+      `${String(error.scrollWidth)}px of text in a ${String(error.clientWidth)}px box`,
+    ).toBeLessThanOrEqual(error.clientWidth + 1);
+    expect(error.getBoundingClientRect().right).toBeLessThanOrEqual(
+      row.getBoundingClientRect().right + 0.5,
+    );
   });
 });
 

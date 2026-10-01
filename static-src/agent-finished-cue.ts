@@ -31,7 +31,7 @@ import { chatSettled } from "./chat-settled.js";
 import { isAgentFinishedEnabled, notifyIfHidden, NOTIFY_TITLE } from "./notify.js";
 import { chatTarget } from "./push-subject.js";
 
-/** Per-chat dedup window. An SSE reconnect replays `turn_ended`, and the duplicates
+/** Per-chat dedup window. An SSE reconnect replays `turn_closed`, and the duplicates
  *  arrive within milliseconds of each other. */
 const DEDUP_MS = 2000;
 /** How long a dedup stamp is worth keeping. Pruning is what stops the map growing
@@ -116,7 +116,7 @@ export function noteAgentFinished(chatID: string, body: string): void {
     raiseAgentFinished(chatID, body);
     return;
   }
-  // A repeat park is an overwrite by key, so a replayed `turn_ended` cannot produce
+  // A repeat park is an overwrite by key, so a replayed `turn_closed` cannot produce
   // two cues for one turn — the dedup window in the raise covers the same burst on
   // the immediate path.
   deferred.set(chatID, body);

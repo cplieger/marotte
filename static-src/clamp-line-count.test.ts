@@ -19,8 +19,7 @@ import { describe, it, expect } from "vitest";
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import execPageSrc from "./exec-view/page.ts?raw";
 import steerNoteSrc from "./fundamentals/steer-note.ts?raw";
-import runInputSrc from "./run-input.ts?raw";
-import userInputSrc from "./user-input.ts?raw";
+import dockAskSrc from "./dock-ask.ts?raw";
 
 /** Every shipped stylesheet, for the exhaustiveness sweep. `css-rules.ts` exports
  *  no sheet map, so the sweep needs its own eager glob — the pattern
@@ -84,20 +83,16 @@ const PAIRS: readonly ClampPair[] = [
     selector: ".steer-note-text[data-clamped]",
   },
   {
-    what: "a parked workflow step's question",
-    tsFile: "run-input.ts",
-    tsSrc: runInputSrc,
+    // ONE row for BOTH dock ask cards — the agent's own question and a parked
+    // workflow step's. They were two rows against two constants and two rules
+    // until `dock-ask.ts` made them one primitive; a second row here would be a
+    // second name for one fact, which is what this file exists to prevent.
+    what: "a dock ask card's question",
+    tsFile: "dock-ask.ts",
+    tsSrc: dockAskSrc,
     constant: "CLAMP_LINES",
     sheet: "26-dock.css",
-    selector: ".run-input-question[data-clamped]",
-  },
-  {
-    what: "the agent's own question",
-    tsFile: "user-input.ts",
-    tsSrc: userInputSrc,
-    constant: "CLAMP_LINES",
-    sheet: "26-dock.css",
-    selector: ".user-input-question[data-clamped]",
+    selector: ".dock-ask-question[data-clamped]",
   },
 ];
 
@@ -128,14 +123,21 @@ function tsClampLines(pair: ClampPair): number {
  *  tree: `-webkit-line-clamp`, its standard twin `line-clamp`, and `max-block-size`
  *  in `lh` (the results clamp, which cannot use line-clamp because a markdown
  *  bubble's children are block-level). All of them are returned, so a rule
- *  declaring the pair has both checked and cannot half-move. */
+ *  declaring the pair has both checked and cannot half-move.
+ *
+ *  The `max-block-size` matcher reads the count from ANYWHERE in the declaration's
+ *  value rather than anchoring on the colon, because the results clamp spells its
+ *  cap as the FALLBACK of a `var()` — `clamp-text.ts` writes a measured height into
+ *  `--clamp-h` and the authored count is what it snaps down from. The count is still
+ *  authored in CSS and still checked against the constant, so the two-language
+ *  contract this file states is unchanged. */
 function cssClampCounts(pair: ClampPair): { prop: string; lines: number }[] {
   const body = ruleBody(loadCSS(pair.sheet), pair.selector).replace(/\/\*[\s\S]*?\*\//g, " ");
   return [
     // `(?:-webkit-)?` rather than an alternation, so `-webkit-line-clamp` cannot be
     // read as a bare `line-clamp`.
     ...body.matchAll(/((?:-webkit-)?line-clamp)\s*:\s*(\d+)/g),
-    ...body.matchAll(/(max-block-size)\s*:\s*(\d+)lh/g),
+    ...body.matchAll(/(max-block-size)\s*:[^;}]*?(\d+)lh/g),
   ].map((m) => ({ prop: m[1] ?? "", lines: Number.parseInt(m[2] ?? "", 10) }));
 }
 

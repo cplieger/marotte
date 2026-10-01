@@ -134,10 +134,12 @@ const m = vi.hoisted(() => {
     registerRunStateDemand: vi.fn<(fn: (id: string) => boolean) => () => void>(
       () => () => undefined,
     ),
-    // Both live-run predicates, so a case can say WHICH one the exemption takes.
-    hasExecutingRunForChat: vi.fn(),
-    hasLiveRunForChat: vi.fn(),
-    runTabProjectsChat: vi.fn(),
+    registerTurnRepair: vi.fn(),
+    registerRevertReadAbort: vi.fn(),
+    requestTurnRange: vi.fn(),
+    abortReadsForRevert: vi.fn(),
+    registerRunTurnRepair: vi.fn(),
+    requestRunTurnRange: vi.fn(),
     subagentTabProjectsChat: vi.fn(),
     chatTabFoldsRun: vi.fn(),
     hasTab: vi.fn(() => false),
@@ -159,13 +161,19 @@ vi.mock("./actions/index.js", () => ({ subscribeByName: m.subscribeByName }));
 // Only the action's NAME is read here (boot.ts subscribes by it rather than by a
 // literal), so the definition itself needs no behaviour.
 vi.mock("./actions/settings.js", () => ({ logout: { name: "settings.logout" } }));
-vi.mock("./store-load.js", () => ({ loadList: m.loadList }));
+vi.mock("./store-load.js", () => ({
+  loadList: m.loadList,
+  requestTurnRange: m.requestTurnRange,
+  abortReadsForRevert: m.abortReadsForRevert,
+}));
 vi.mock("./persist.js", () => ({}));
 vi.mock("./store.js", () => ({
   getActive: m.getActive,
   getActiveId: m.getActiveId,
   getSessions: m.getSessions,
   registerEvictionExemption: m.registerEvictionExemption,
+  registerTurnRepair: m.registerTurnRepair,
+  registerRevertReadAbort: m.registerRevertReadAbort,
   startEvictionSweep: vi.fn(),
 }));
 vi.mock("./settings.js", () => ({
@@ -212,14 +220,16 @@ vi.mock("./status.js", () => ({
 }));
 vi.mock("./versions.js", () => ({ loadVersions: m.loadVersions }));
 vi.mock("./retention.js", () => ({ refreshRetention: m.refreshRetention }));
+// `rebuildLiveRuns` is here for the case that asserts the boot never calls it: with the
+// export absent from the factory, re-adding that call would fail to LINK rather than fail
+// the assertion, which reports a different defect than the one that case is about.
 vi.mock("./run-store.js", () => ({
-  hasExecutingRunForChat: m.hasExecutingRunForChat,
-  hasLiveRunForChat: m.hasLiveRunForChat,
   rebuildLiveRuns: m.rebuildLiveRuns,
   registerRunStateDemand: m.registerRunStateDemand,
+  registerRunTurnRepair: m.registerRunTurnRepair,
 }));
+vi.mock("./run-turn-range.js", () => ({ requestRunTurnRange: m.requestRunTurnRange }));
 vi.mock("./chat-run-dots.js", () => ({ chatTabFoldsRun: m.chatTabFoldsRun }));
-vi.mock("./run-view.js", () => ({ runTabProjectsChat: m.runTabProjectsChat }));
 vi.mock("./subagent-view.js", () => ({ subagentTabProjectsChat: m.subagentTabProjectsChat }));
 vi.mock("./view-swap.js", () => ({ markBootDone: m.markBootDone }));
 vi.mock("./share-target.js", () => ({ applyShareTarget: m.applyShareTarget }));
@@ -1137,31 +1147,60 @@ describe("a boot inside a reload loop", () => {
   });
 });
 
-describe("the eviction exemptions", () => {
-  it("registers all three, and takes the EXECUTING-run predicate over the wider one", async () => {
+describe("the eviction exemption", () => {
+  it("keeps the delegate page's alone, so no surface pins a chat's window for a run", async () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    // The SET, because each of these predicates was declared an exemption where it
-    // is defined while the registration was the half that did not land. The narrowing
-    // is `run-store.ts`'s: the wider predicate answers for a PARKED run, which writes
-    // nothing to pin, and the run TAB is what keeps a parked or finished run's slice.
-    expect(m.registerEvictionExemption.mock.calls.flat()).toEqual([
-      m.hasExecutingRunForChat,
-      m.runTabProjectsChat,
-      m.subagentTabProjectsChat,
-    ]);
-    expect(m.registerEvictionExemption).not.toHaveBeenCalledWith(m.hasLiveRunForChat);
+    // The SET rather than one membership, because the question is which surfaces read a
+    // chat's resident window: a delegate's entries are in that log and its page renders
+    // them, while a step's are in the RUN's, so neither run-shaped predicate answers for
+    // a chat any more. An added exemption fails here whatever it is named.
+    expect(m.registerEvictionExemption.mock.calls.flat()).toEqual([m.subagentTabProjectsChat]);
   });
 
-  it("registers on a REDUCED boot too, being registrations rather than reads", async () => {
+  it("registers on a REDUCED boot too, being a registration rather than a read", async () => {
     m.bootMode.mockReturnValue("reduced");
 
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    expect(m.registerEvictionExemption).toHaveBeenCalledWith(m.hasExecutingRunForChat);
-    expect(m.registerEvictionExemption).toHaveBeenCalledTimes(3);
+    expect(m.registerEvictionExemption).toHaveBeenCalledWith(m.subagentTabProjectsChat);
+    expect(m.registerEvictionExemption).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the turn-repair registration", () => {
+  it("hands the loader's range read to the store, which detects a hole and never fetches", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    // By IDENTITY, like each registration beside it: the store owns hole DETECTION and
+    // `store-load.ts` owns every read, so the repair is injected rather than imported and
+    // the loader's one-way edge onto the store survives. Unregistered, a `seq` hole is
+    // detected and nothing repairs it.
+    expect(m.registerTurnRepair.mock.calls.flat()).toEqual([m.requestTurnRange]);
+  });
+
+  it("hands the revert's repair ABORT to the loader, the other half of that seam", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    // A revert drops turns, and the reads already OUT for one of them are the loader's to
+    // cancel. Unregistered, such a read answers after the drop and `applyTurnRange` seats
+    // the turn again — the store's own seat refusal is the belt, not this.
+    expect(m.registerRevertReadAbort.mock.calls.flat()).toEqual([m.abortReadsForRevert]);
+  });
+
+  it("hands the run log's range read to the run store, the chat twin's seam", async () => {
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+
+    // The run store DETECTS a `seq` hole (`markRunHole`) and `run-turn-range.ts` owns the
+    // read, so the repair is injected here too. Unregistered, a hole on a run's log only
+    // marks itself for the pane's step GET and the range read is asked for by nobody — a
+    // state no other gate can see, since the export is well-typed and knip reads nothing.
+    expect(m.registerRunTurnRepair.mock.calls.flat()).toEqual([m.requestRunTurnRange]);
   });
 });
 

@@ -13,17 +13,23 @@ import type { ToolStatus, TextSpan } from "./types.js";
 import type { BuildToolCardOpts } from "./tool-card-opts.js";
 import { escText, windowOutput, windowSpans, humanName } from "./strings.js";
 import { renderOutput } from "./output-render.js";
-import { linkifyPaths } from "./linkify.js";
 import { fileIcon, toolIcon, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { chevronEl } from "./chevron.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { openChange, openAtLine, openCallDiff } from "./navigate.js";
+import { openChange, openAtLine, openCallDiff, openSpec } from "./navigate.js";
+import { specDirOf } from "./spec-path.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import { wireRowToggle } from "./disclosure-row.js";
 import { toolCallBulk, type ToolBulk } from "./tool-bulk.js";
+import {
+  SILENCE_THRESHOLD_MS,
+  noteToolActivity,
+  silenceLabel,
+  silenceMsFor,
+} from "./tool-silence.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
@@ -88,6 +94,11 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // `tool-group.ts` refuse to collapse a group holding one. It is dropped by
     // `applyStatusUpdate` on every settle.
     node.dataset["startMs"] = String(Date.now());
+    // The create IS a frame this client applied, so it seeds the silence value: a
+    // call that streams nothing at all from its first moment is the case a reader
+    // most wants the marker for, and with no seed it would be the one case that
+    // never gets one.
+    noteToolActivity(opts.chatID ?? "", opts.id);
   }
 
   const summary = el("div", {
@@ -118,9 +129,9 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   if (withToggle) {
     // The SHELL only: an empty details region plus the output slot the live
     // update path writes into. Everything with a cost in it — the denial rows,
-    // the input dump, painting the output through the ANSI renderer and the path
-    // linkifier — is built on first open by `detailsBody`, because a collapsed
-    // card is a claim line and a transcript mounts dozens of them.
+    // the input dump, painting the output through the ANSI renderer — is built on
+    // first open by `detailsBody`, because a collapsed card is a claim line and a
+    // transcript mounts dozens of them.
     node.insertAdjacentHTML("beforeend", detailsShell());
     // What the transcript dropped and the bulk can put back, declared once so the
     // load below and the `data-disclosable` arms cannot disagree about it.
@@ -142,19 +153,11 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // call in a reopened chat, which is a resting state rather than a reveal.
     const buildOpen = opts.detailsOpen === true;
     wireToggle(node, detailsBody(node, deferred), buildOpen);
-    // One arm per thing opening this card writes, read back by `refreshToolDisclosure`.
-    // The region cannot be read for them: it is empty until first open, so a card whose
-    // only content is deferred looks exactly like one with none. The first three arms are
-    // content this card already holds; the deferred pieces contribute their own through
-    // `reveals`, which is why a diffs-only cut is openable rather than bare.
-    //
-    // The chat id gates the WHOLE table and is not a per-member predicate: both pieces
-    // come from one bulk behind one guard, so two copies of the condition would be two
-    // things to keep in step — `bulkChatID` is that one owner, shared with
-    // `detailsBody`'s fetch guard. Without it a card with no chat id kept its chevron
-    // and opened onto a region that can never fill — reachable from
-    // `run-step-blocks.ts`, whose `toolCardOptsFor(tc, true)` carries no chat id, on a
-    // run step's `hasFull` edit.
+    // One arm per thing that can open this card, read back by `refreshToolDisclosure`.
+    // The region itself cannot answer: it is empty until first open, so a card whose only
+    // content is deferred looks exactly like one with none. The chat id gates the whole
+    // table through `bulkChatID`, the same guard `detailsBody`'s fetch reads — without it
+    // a card with no chat id keeps a chevron over a region that can never fill.
     if (
       opts.denial !== undefined ||
       (opts.live && opts.input !== undefined) ||
@@ -296,6 +299,28 @@ function buildHeader(
       el("span", { className: "tool-file-name" }, info.fileBasename),
     );
     header.appendChild(btn);
+    // A path under a spec directory is a door onto the spec page, nested under
+    // the chat this card belongs to. The chip's own click stays the
+    // file's diff, so the door is its own control beside it.
+    const specDir = specDirOf(info.filePath);
+    if (specDir !== null) {
+      const open = el(
+        "button",
+        {
+          type: "button",
+          className: "tool-spec-link btn-small",
+          "data-spec-dir": specDir,
+          "data-tooltip": `Open the ${specDir.split("/").pop() ?? specDir} spec`,
+          [CHROME_ATTR]: "",
+        },
+        "Open spec",
+      );
+      open.addEventListener("click", (e: Event) => {
+        e.stopPropagation();
+        void openSpec(specDir, opts.chatID);
+      });
+      header.appendChild(open);
+    }
   }
 
   if (opts.live && isToolActive(opts.status)) {
@@ -459,6 +484,41 @@ export function applyOutcome(
   }
   const subject = info.fileBasename !== "" ? `${displayTitle} ${info.fileBasename}` : displayTitle;
   nameTarget.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
+}
+
+/** Bring one card's SILENCE marker up to date: state the silence past the threshold,
+ *  and remove the row otherwise. Idempotent, and cheap enough for the card's own
+ *  effect to call on every pass.
+ *
+ *  Gated on `data-start-ms`, which MEANS the card is in flight and is dropped on
+ *  every settle — so a settled card cannot carry a marker whatever the value says,
+ *  and the gate is the same fact `tool-group.ts`'s fold guards read. The value is
+ *  TRACKED, so a caller inside an effect repaints while the call stays quiet, which
+ *  is what makes the marker appear with no frame behind it. */
+export function syncSilenceMarker(card: HTMLElement, chatID: string, toolID: string): void {
+  const header = card.querySelector<HTMLElement>(".tool-header");
+  if (header === null) {
+    return;
+  }
+  const existing = header.querySelector<HTMLElement>(".tool-silence");
+  const ms = silenceMsFor(chatID, toolID);
+  if (card.dataset["startMs"] === undefined || ms === undefined || ms < SILENCE_THRESHOLD_MS) {
+    existing?.remove();
+    return;
+  }
+  const words = silenceLabel(ms);
+  if (existing !== null) {
+    existing.textContent = words;
+    return;
+  }
+  // CHROME, so find-in-chat does not count a row the client composed as content, and
+  // ahead of the spinner so the fact sits with the title rather than past the row's
+  // trailing controls.
+  const marker = el("span", { className: "tool-silence", [CHROME_ATTR]: "" }, words);
+  header.insertBefore(
+    marker,
+    header.querySelector(".tool-spinner") ?? header.querySelector(".tool-disclosure"),
+  );
 }
 
 /** The word the accessible name uses. Deliberately not the wire enum: "pending"
@@ -862,10 +922,6 @@ function appendOutput(
   const pre = el("pre");
   const paint = (text: string, s: readonly TextSpan[]): void => {
     renderOutput(pre, text, s);
-    // A search tool's output IS its result list — `path:line: match` per hit —
-    // so linkifying it is the search-hit seam. It ran on prose and turn headers
-    // but never on tool output, which is where the hits actually are.
-    linkifyPaths(pre, { insidePre: true });
   };
   if (!windowed) {
     paint(output, spans);
@@ -920,10 +976,11 @@ export function insertDiffPreview(
     el("span", { className: "diff-add-count" }, `+${String(s.adds)}`),
     el("span", { className: "diff-del-count" }, `-${String(s.dels)}`),
   );
-  statBtn.addEventListener("click", (e: Event) => {
+  const openDiff = (e: Event): void => {
     e.stopPropagation();
     openCallDiff(filePath, src.oldText, src.newText);
-  });
+  };
+  statBtn.addEventListener("click", openDiff);
   wrap.appendChild(statBtn);
 
   // Unified, whole hunks, line numbers ON. Line numbers are what let a reader
@@ -939,14 +996,21 @@ export function insertDiffPreview(
   mini.classList.add("tool-diff-mini");
   wrap.appendChild(mini);
 
+  // The omitted hunks are this call's own, so the count opens the same full pair
+  // the stats do; a count with no way to reach what it counts is a dead end.
   if (win.hunksOmitted > 0) {
-    wrap.appendChild(
-      el(
-        "div",
-        { className: "tool-diff-more", [CHROME_ATTR]: "" },
-        `+${String(win.hunksOmitted)} more hunk${win.hunksOmitted === 1 ? "" : "s"}`,
-      ),
+    const more = el(
+      "button",
+      {
+        type: "button",
+        className: "tool-diff-more",
+        "data-tooltip": "Open the diff",
+        [CHROME_ATTR]: "",
+      },
+      `+${String(win.hunksOmitted)} more hunk${win.hunksOmitted === 1 ? "" : "s"}`,
     );
+    more.addEventListener("click", openDiff);
+    wrap.appendChild(more);
   }
 
   // The third §3.4 case: a card GROWS when its diff preview lands on the update

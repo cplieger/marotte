@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/cplieger/envx/v2"
-	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/bridge"
 	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/webhttp/v3"
 )
 

@@ -15,11 +15,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func effortReq(t *testing.T, chatID marotte.ChatID, level string) *marotte.ClientCommand {
@@ -40,8 +41,19 @@ func effortReq(t *testing.T, chatID marotte.ChatID, level string) *marotte.Clien
 // per-model memory is skipped, and nothing touches a settings file.
 func setEffort(t *testing.T, host hostDouble, configDir string, chatID marotte.ChatID, level string) (any, error) {
 	t.Helper()
-	return CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir},
+	return CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir}, host,
 		effortReq(t, chatID, level))
+}
+
+// effortHost is newBridgeHost's double kept at its concrete type, so a test can
+// read back what the transcript recorder saw.
+func effortHost(t *testing.T, store ChatStore, bridge Bridge) *bridgeDeps {
+	t.Helper()
+	h, ok := newBridgeHost(store, bridge).(*bridgeDeps)
+	if !ok {
+		t.Fatalf("newBridgeHost returned %T, want *bridgeDeps", h)
+	}
+	return h
 }
 
 // recordingBus counts the events a command published, so a test can tell a seed
@@ -112,7 +124,7 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	host := newBridgeHost(store, b)
 	bus := &recordingBus{}
 
-	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir},
+	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host,
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusBadGateway {
@@ -137,7 +149,7 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 	bus := &recordingBus{}
 
-	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir},
+	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir}, host,
 		effortReq(t, "c1", "max"))
 
 	if statusOf(err) != http.StatusOK {
@@ -177,7 +189,7 @@ func TestCmdSetEffort_AChatWithNoModelIsNotSeeded(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir},
+	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir}, host,
 		effortReq(t, "c-brand-new", "high"))
 
 	if statusOf(err) != http.StatusOK {
@@ -348,6 +360,63 @@ func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
 	c, _ := store.Get(t.Context(), "c1")
 	if c.Effort != "none" {
 		t.Errorf("Effort = %q, want %q persisted on the chat", c.Effort, "none")
+	}
+}
+
+// An accepted tier leaves ONE transcript row, carrying the chat's own model: the
+// renderer reads From == To off it to tell an effort-only change from a switch, so
+// the model is what makes the row addressable at all.
+func TestCmdSetEffort_AnAcceptedTierRecordsOneRow(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedChatOnModel(t, store, "c1", "opus-5")
+	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
+
+	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{}, host, effortReq(t, "c1", "max"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	want := []effortRecord{{chatID: "c1", model: "opus-5", level: marotte.EffortMax}}
+	if !slices.Equal(host.effortRecords, want) {
+		t.Errorf("recorder calls = %v, want %v", host.effortRecords, want)
+	}
+}
+
+// A refused live switch is not a change, so it leaves no row — the same rule that
+// keeps it off the chat record and out of the per-model seed.
+func TestCmdSetEffort_ARefusedSwitchRecordsNoRow(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedChatOnModel(t, store, "c1", "opus-5")
+	host := effortHost(t, store, &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"})
+
+	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{}, host, effortReq(t, "c1", "max"))
+
+	if statusOf(err) != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", statusOf(err))
+	}
+	if n := len(host.effortRecords); n != 0 {
+		t.Errorf("recorder calls = %d, want 0; a tier the session never took is not a change", n)
+	}
+}
+
+// One user action, one row. The Mutate closure reports no change for a repeat of
+// the tier the chat already holds, and the row follows that answer rather than the
+// click — a control that dispatches on every render would otherwise fill the
+// transcript with rows nothing happened for.
+func TestCmdSetEffort_ARepeatOfTheHeldTierRecordsNoSecondRow(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedChatOnModel(t, store, "c1", "opus-5")
+	host := effortHost(t, store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
+
+	for range 2 {
+		if _, err := CmdSetEffort(t.Context(), host, host, host, Workspace{}, host,
+			effortReq(t, "c1", "high")); statusOf(err) != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+		}
+	}
+
+	if n := len(host.effortRecords); n != 1 {
+		t.Errorf("recorder calls = %d over two identical picks, want 1", n)
 	}
 }
 

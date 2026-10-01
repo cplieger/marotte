@@ -8,6 +8,8 @@ package translate
 
 import (
 	"maps"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -81,7 +83,26 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 	}
 }
 
-func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
+// appendedSteers decodes every entry_appended{steer} frame in events, in order:
+// the one frame a read or dropped steer travels as, and what takes the dock row
+// out and puts the note into the turn body in one client update.
+func appendedSteers(t *testing.T, events []marotte.ServerEvent) []steerRow {
+	t.Helper()
+	var out []steerRow
+	for _, e := range events {
+		if e.Type != marotte.EventEntryAppended {
+			continue
+		}
+		p, ok := e.Payload.(marotte.EntryAppendedPayload)
+		if !ok || p.Entry.Kind != marotte.EntryKindSteer {
+			continue
+		}
+		out = append(out, steerRow{ID: p.Entry.ID, EntrySteer: decodePayload[marotte.EntrySteer](t, &p.Entry)})
+	}
+	return out
+}
+
+func TestSteeringInjected_AnnouncesTheReadSteerEntry(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_injected", map[string]any{
@@ -89,34 +110,94 @@ func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 			"content":   "use tabs",
 		}), FrameAttribution{})
 
-	if len(*events) != 1 || (*events)[0].Type != marotte.EventSteerInjected {
-		t.Fatalf("events = %+v, want one steer_injected", *events)
+	if len(*events) != 1 {
+		t.Fatalf("events = %v, want the one entry_appended", eventTypes(*events))
 	}
-	p, ok := (*events)[0].Payload.(marotte.SteerInjectedPayload)
-	if !ok {
-		t.Fatalf("payload type = %T", (*events)[0].Payload)
+	rows := appendedSteers(t, *events)
+	if len(rows) != 1 {
+		t.Fatalf("entry_appended{steer} frames = %d, want 1: %v", len(rows), eventTypes(*events))
 	}
-	if p.SteerID != "steer-1" {
-		t.Errorf("steer id = %q, want steer-1", p.SteerID)
+	if rows[0].ID != "steer-1" || rows[0].State != marotte.SteerStateRead || rows[0].Text != "use tabs" {
+		t.Errorf("announced steer = %+v, want id steer-1, state read, text %q", rows[0], "use tabs")
 	}
 }
 
-func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
+// A boundary drop is recorded per steer, with the text and origin the queued frame
+// carried: KAS's cleared frame names ids alone, so the waiting set is the one
+// place the words survive.
+func TestSteeringCleared_RecordsEachDroppedSteer(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+	deps.userSteers = map[string]bool{"steer-1": true}
+	tr := New(rolesOf(deps))
+	for id, text := range map[string]string{"steer-1": "use tabs", "notify-wf-2": "a run finished"} {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1",
+			steerFrame(t, "steering_queued", map[string]any{"messageId": id, "content": text}), FrameAttribution{})
+	}
+	*events = nil
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
-			"messageIds": []string{"steer-1", "steer-2"},
+			"messageIds": []string{"steer-1", "notify-wf-2"},
 		}), FrameAttribution{})
 
-	if len(*events) != 1 || (*events)[0].Type != marotte.EventSteerCleared {
-		t.Fatalf("events = %+v, want one steer_cleared", *events)
+	rows := steerRows(t, deps, "c1")
+	if len(rows) != 2 {
+		t.Fatalf("steer entries = %+v, want one dropped row per cleared id", rows)
 	}
-	p, ok := (*events)[0].Payload.(marotte.SteerClearedPayload)
-	if !ok {
-		t.Fatalf("payload type = %T", (*events)[0].Payload)
+	// Each drop carries the BOUNDARY reason: the turn ended before the agent read it,
+	// which is the one thing this clear knows and the label's clause is worded from.
+	want := map[string]steerRow{
+		"steer-1": {ID: "steer-1", EntrySteer: marotte.EntrySteer{
+			Text: "use tabs", Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped,
+			Reason: marotte.SteerReasonBoundary,
+		}},
+		"notify-wf-2": {ID: "notify-wf-2", EntrySteer: marotte.EntrySteer{
+			Text: "a run finished", Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
+			Reason: marotte.SteerReasonBoundary,
+		}},
 	}
-	if len(p.SteerIDs) != 2 || p.SteerIDs[0] != "steer-1" || p.SteerIDs[1] != "steer-2" {
-		t.Errorf("ids = %v, want both", p.SteerIDs)
+	for _, row := range rows {
+		if !reflect.DeepEqual(row, want[row.ID]) {
+			t.Errorf("dropped row %q = %+v, want %+v", row.ID, row, want[row.ID])
+		}
+	}
+	if got := appendedSteers(t, *events); len(got) != 2 {
+		t.Errorf("entry_appended{steer} frames = %d, want 2: %v", len(got), eventTypes(*events))
+	}
+	if left := waitingOf(t, deps, "c1"); len(left) != 0 {
+		t.Errorf("waiting after the clear = %v, want empty", left)
+	}
+}
+
+// An agent note this process never queued is dropped text-less, stamped with the
+// finished run it came from, and the absent words ARE the signal the resume's merge
+// reads; a user steer it never queued was already read, so its drop is not a fact
+// and nothing is written.
+func TestSteeringCleared_ANoteNeverHeldIsDroppedTextless(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	deps.userSteers = map[string]bool{"steer-mine": true}
+	deps.runNotices = map[marotte.ChatID][]stagedRunNotice{"c1": {{workflowID: "wf_9", producedTs: 1_700_000_000_000}}}
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_cleared", map[string]any{
+			"messageIds": []string{"steer-mine", "notify-wf-9"},
+		}), FrameAttribution{})
+
+	rows := steerRows(t, deps, "c1")
+	want := []steerRow{{
+		ID:     "notify-wf-9",
+		Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
+		Reason: marotte.SteerReasonBoundary, OriginRun: "wf_9", ProducedTs: 1_700_000_000_000,
+	}}
+	if len(rows) != 1 || !reflect.DeepEqual(rows[0], want[0]) {
+		t.Errorf("steer entries = %+v, want only the text-less agent drop carrying its run's provenance %+v", rows, want[0])
+	}
+	if got := appendedSteers(t, *events); len(got) != 1 {
+		t.Errorf("entry_appended{steer} frames = %d, want 1: %v", len(got), eventTypes(*events))
+	}
+	// The text-less note IS the signal: nothing is written beside it, and the next
+	// session/load's merge reads the entry's own empty text.
+	if rows[0].Text != "" {
+		t.Errorf("the dropped agent note carries text %q, want none: the absent words ARE the signal", rows[0].Text)
 	}
 }
 
@@ -164,8 +245,9 @@ func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 			"content":   "use tabs",
 		}), FrameAttribution{SubSessionID: "sub-session-7"})
 
-	if len(*events) != 1 || (*events)[0].Type != marotte.EventSteerInjected {
-		t.Fatalf("events = %+v — a steer consumed inside a subagent must still be reported", *events)
+	rows := appendedSteers(t, *events)
+	if len(rows) != 1 || rows[0].ID != "steer-1" || rows[0].State != marotte.SteerStateRead {
+		t.Fatalf("events = %v — a steer consumed inside a subagent must still be recorded as read", eventTypes(*events))
 	}
 }
 
@@ -214,15 +296,15 @@ func TestSteeringQueued_OriginIsAgentForAnIDTheLedgerDoesNotHold(t *testing.T) {
 	}
 }
 
-// The injected frame carries it too, and that is load-bearing rather than
+// The read steer's ENTRY carries it too, and that is load-bearing rather than
 // symmetric: both agent injection paths append straight to KAS's buffer and only
 // `_session/steer` broadcasts a queued frame, so for the case Origin exists to
-// name, the injected frame is the ONLY one the client ever sees.
+// name, the steer entry is the ONLY record the client ever sees.
 //
 // The agent case carries a `notify-` id because that is the id space an agent's
 // own steering row lands in. A `steer-` id is one THIS server sent, so it names
 // the user whatever the ledger holds — the case below pins that separately.
-func TestSteeringInjected_CarriesTheOrigin(t *testing.T) {
+func TestSteeringInjected_TheEntryCarriesTheOrigin(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		id    string
@@ -243,12 +325,45 @@ func TestSteeringInjected_CarriesTheOrigin(t *testing.T) {
 					"content":   "use tabs",
 				}), FrameAttribution{})
 
-			p, ok := (*events)[0].Payload.(marotte.SteerInjectedPayload)
-			if !ok {
-				t.Fatalf("payload type = %T", (*events)[0].Payload)
+			rows := appendedSteers(t, *events)
+			if len(rows) != 1 {
+				t.Fatalf("entry_appended{steer} frames = %d, want 1: %v", len(rows), eventTypes(*events))
 			}
-			if p.Origin != tc.want {
-				t.Errorf("origin = %q, want %q", p.Origin, tc.want)
+			if rows[0].Origin != tc.want {
+				t.Errorf("origin = %q, want %q", rows[0].Origin, tc.want)
+			}
+		})
+	}
+}
+
+// The steer entry carries the resends the sender recorded, read or dropped: KAS's
+// frames never name them, so the ledger is the one source.
+func TestSteering_TheEntryCarriesTheRecordedResends(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		kind  string
+		frame map[string]any
+	}{
+		{"read", "steering_injected", map[string]any{"messageId": "steer-2", "content": "for decision 5 too"}},
+		{"dropped", "steering_cleared", map[string]any{"messageIds": []string{"steer-2"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, events, _ := depsWithStore(t, "c1")
+			deps.userSteers = map[string]bool{"steer-2": true}
+			deps.steerResends = map[string][]string{"steer-2": {"steer-1"}}
+			tr := New(rolesOf(deps))
+			tr.HandleSessionInfoUpdate(t.Context(), "c1",
+				steerFrame(t, "steering_queued", map[string]any{"messageId": "steer-2", "content": "for decision 5 too"}), FrameAttribution{})
+			*events = nil
+
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", steerFrame(t, tc.kind, tc.frame), FrameAttribution{})
+
+			rows := appendedSteers(t, *events)
+			if len(rows) != 1 {
+				t.Fatalf("entry_appended{steer} frames = %d, want 1: %v", len(rows), eventTypes(*events))
+			}
+			if want := []string{"steer-1"}; !slices.Equal(rows[0].Resends, want) {
+				t.Errorf("%s steer resends = %v, want the ledger's %v", tc.name, rows[0].Resends, want)
 			}
 		})
 	}

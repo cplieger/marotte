@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 
-	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/modeltext"
 )
 
 const modelAuto = marotte.ModelAuto

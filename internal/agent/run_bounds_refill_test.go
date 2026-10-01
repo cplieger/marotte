@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // stagedStretch gives a run a lease, a deadline, and an OPEN executing stretch beginning
@@ -212,8 +212,8 @@ func TestRefillDeadline_SwapsTheTimerForTheNewDeadline(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if got := h.runs.endReason(id); got != runEndOverran {
-		t.Errorf("the fired timer recorded %q, want %q", got, runEndOverran)
+	if got := h.runs.endReason(id); got != runEndStalled {
+		t.Errorf("the fired timer recorded %q, want %q", got, runEndStalled)
 	}
 }
 
@@ -420,14 +420,15 @@ func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 		want       string
 		unwant     string
 		wantKey    string
+		wantReason string
 	}{
 		"a run that stopped producing is a stall": {
 			banked: 0, stretchAge: 0,
-			want: logMsgRunStalled, unwant: logMsgRunBackstop, wantKey: "idle_window",
+			want: logMsgRunStalled, unwant: logMsgRunBackstop, wantKey: "idle_window", wantReason: runEndStalled,
 		},
 		"a run that spent its whole budget is not": {
 			banked: runBackstop - openStretch, stretchAge: openStretch,
-			want: logMsgRunBackstop, unwant: logMsgRunStalled, wantKey: "backstop",
+			want: logMsgRunBackstop, unwant: logMsgRunStalled, wantKey: "backstop", wantReason: runEndOverran,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -461,8 +462,8 @@ func TestCancelExpiredRun_TellsAStallFromASpentBackstop(t *testing.T) {
 				t.Errorf("the line carries no %s attribute, so it does not say which bound came "+
 					"due or what its size was: %s", attr, out)
 			}
-			if got := h.runs.endReason(id); got != runEndOverran {
-				t.Errorf("endReason = %q, want %q for both bounds", got, runEndOverran)
+			if got := h.runs.endReason(id); got != tc.wantReason {
+				t.Errorf("endReason = %q, want %q: the row is what tells a stall from a spent budget", got, tc.wantReason)
 			}
 		})
 	}

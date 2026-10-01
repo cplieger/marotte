@@ -4,12 +4,17 @@
 // a person does.
 //
 // IT HOLDS ONLY WHAT THE AGENT HAS NOT READ, and that is the invariant most of
-// these cases are about: a steer LEAVES the stack the moment it is read
-// (`promoteSteer`) or dropped at a turn boundary (`dropSteers`), and reappears
-// inside the turn transcript as a note. So there is no read row, no checkmark and
-// no ack line here — the count falling to zero is the whole read signal, and the
-// ack rides the transcript mark, which several cases below assert on directly
-// because that is where the fact moved rather than a fact that stopped existing.
+// these cases are about: a steer LEAVES the stack on its own `steer` ENTRY, read
+// or dropped, and that entry IS the transcript note. `appendEntry` removes the row
+// in the same store update that seats the entry, so no render frame exists in
+// which the message is in neither place — which is why the cases below land a real
+// entry rather than calling a dock-side promotion. The boundary leave
+// (`dropSteers`) is the second one, and it is the one a bridge death owes: KAS
+// writes no `steer` entry for a steer it was holding.
+//
+// So there is no read row, no checkmark and no ack line here. The count falling to
+// zero is the whole read signal, and what the agent DID about a steer rides the
+// entry's own note, which `fundamentals/steer-note.test.ts` owns.
 //
 // The two states that remain are both "not read yet": `pending` (this device's
 // own claim that a POST is in flight, drawn on submit) and confirmed by KAS's
@@ -72,12 +77,12 @@ import {
   setActive,
   recordSteerQueued,
   recordSteerSent,
-  promoteSteer,
   dropSteers,
-  steerMarks,
+  openTurn,
+  appendEntry,
 } from "./store.js";
 import { initPendingSteers } from "./pending-steers.js";
-import type { Session } from "./types.js";
+import type { Entry, Session } from "./types.js";
 import { loadCSS, mountAppCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 
 function makeSession(chatID: string): Session {
@@ -92,16 +97,54 @@ function makeSession(chatID: string): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: 0,
-    messages: [],
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
   };
+}
+
+/** The seq the next entry of the fixture turn takes. Reset per case, because the
+ *  session is rebuilt per case and `appendEntry` refuses any seq that is not the
+ *  turn's next one. */
+let seq = 0;
+
+/** Land the `steer` entry KAS's own frame produces for a steer the agent READ, or one
+ *  a turn boundary DROPPED. This is the leave the dock's own rows are keyed to, and
+ *  the turn is opened lazily so a case that never lands one holds no turn at all. */
+function landSteerEntry(
+  chatID: string,
+  steerID: string,
+  text: string,
+  state: "read" | "dropped" = "read",
+): void {
+  if (seq === 0) {
+    const open: Entry = {
+      id: "t1-open",
+      turn: "t1",
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m-0", text: "hi" } },
+    };
+    openTurn(chatID, open);
+    seq = 1;
+  }
+  const entry: Entry = {
+    id: steerID,
+    turn: "t1",
+    kind: "steer",
+    seq,
+    ts: seq + 1,
+    payload: { text, origin: "user", state },
+  };
+  seq += 1;
+  appendEntry(chatID, entry);
 }
 
 function rows(): HTMLElement[] {
@@ -162,6 +205,7 @@ describe("the steer stack", () => {
   beforeEach(() => {
     // A fresh session has no steers, so the render empties the stack: the store
     // is the only input, which is what makes the reset one line.
+    seq = 0;
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
     expect(rows()).toHaveLength(0);
@@ -230,52 +274,48 @@ describe("the steer stack", () => {
   });
 
   // The read state has no row at all: the stack is what the agent has NOT read,
-  // so the message leaves it and lands in the transcript instead. Its being read
-  // with nothing said about it is a mark with no ack.
+  // so the message leaves it the moment its entry lands and is read from the
+  // transcript instead.
   it("takes a message the agent has read out of the stack entirely", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "use tabs instead", "user");
+    landSteerEntry("chat-1", "steer-1", "use tabs instead");
 
     expect(rows()).toHaveLength(0);
     // It was the last one, so the stack goes away rather than sitting empty.
     expect(stackHidden()).toBe(true);
-    expect(steerMarks("chat-1")).toEqual([
-      {
-        id: "steer-1",
-        text: "use tabs instead",
-        origin: "user",
-        anchor: { msgID: "", blockIndex: 0 },
-      },
-    ]);
-    expect(steerMarks("chat-1")[0]?.ack).toBeUndefined();
   });
 
-  // What the agent DID about a steer is still recorded — on the transcript note,
-  // which is where the change of course actually happened. The dock never renders
-  // it: an ack line here was the agent's own words inside the message box.
-  it("carries what the agent did on the mark rather than on a dock row", () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "actually target main", "user");
-    promoteSteer("chat-1", "steer-1", "", "user", "rebased onto main instead");
+  // The entry the READ lands is also the row's key, so a row whose entry never
+  // arrived is left standing: a leave is per steer rather than per frame.
+  it("leaves a row whose own entry has not landed", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "read one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "still waiting", origin: "user" });
+    landSteerEntry("chat-1", "steer-1", "read one");
 
-    expect(rows()).toHaveLength(0);
-    expect(document.querySelectorAll("#steer-stack .steer-ack")).toHaveLength(0);
-    const mark = steerMarks("chat-1")[0];
-    // The steer's own text survives the ack frame: the note has to stay
-    // identifiable as the thing the user sent.
-    expect(mark?.text).toBe("actually target main");
-    expect(mark?.ack).toBe("rebased onto main instead");
+    expect(rows().map(textOf)).toEqual(["still waiting"]);
+    expect(stackHidden()).toBe(false);
   });
 
   // A dropped steer leaves the stack the same way a read one does — the dock's
-  // lifetime is the turn, and the transcript keeps the record.
+  // lifetime is the turn, whatever the entry's state says.
   it("takes a message dropped at a turn boundary out of the stack", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "never read this", origin: "user" });
-    dropSteers("chat-1", ["steer-1"]);
+    landSteerEntry("chat-1", "steer-1", "never read this", "dropped");
 
     expect(rows()).toHaveLength(0);
     expect(stackHidden()).toBe(true);
-    expect(steerMarks("chat-1")[0]?.dropped).toBe(true);
+  });
+
+  // The boundary's own leave, which is the one a bridge death owes: no entry
+  // arrives for a steer KAS was holding, so the rows would otherwise sit in the
+  // dock until the next connect.
+  it("empties the stack at a boundary that produced no entry at all", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
+    dropSteers("chat-1");
+
+    expect(rows()).toHaveLength(0);
+    expect(stackHidden()).toBe(true);
   });
 
   // The repaint key has to include the SENDING state. The computed dedups by
@@ -353,20 +393,17 @@ describe("the steer stack", () => {
     );
   });
 
-  // Each steer's verdict belongs to that steer. Two answered in one response is
-  // the case where a shared render would put one answer on the other's message —
-  // which is now a case about the marks, since both rows have left the stack.
-  it("keeps each steer's acknowledgement on its own mark", () => {
+  // Two steers read inside one turn leave independently and in either order: the
+  // row's key is the steer id the entry carries, so nothing about the second leave
+  // depends on the first having happened.
+  it("leaves each row on its own entry, in either order", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "first ask", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "second ask", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "first ask", "user", "answered the first");
-    promoteSteer("chat-1", "steer-2", "second ask", "user", "answered the second");
+    landSteerEntry("chat-1", "steer-2", "second ask");
+    expect(rows().map(textOf)).toEqual(["first ask"]);
 
+    landSteerEntry("chat-1", "steer-1", "first ask");
     expect(rows()).toHaveLength(0);
-    expect(steerMarks("chat-1").map((m) => [m.text, m.ack])).toEqual([
-      ["first ask", "answered the first"],
-      ["second ask", "answered the second"],
-    ]);
   });
 
   // --- Controls, bounded by what the wire can honour -----------------------
@@ -378,7 +415,7 @@ describe("the steer stack", () => {
   it("offers no controls on a message the agent has read, having no row for it", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: "read one", origin: "user" });
     recordSteerQueued("chat-1", { id: "steer-2", text: "still waiting", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "read one", "user");
+    landSteerEntry("chat-1", "steer-1", "read one");
     expect(rows().map(textOf)).toEqual(["still waiting"]);
   });
 
@@ -418,7 +455,7 @@ describe("the steer stack", () => {
       expect(actions(row)).toEqual(["Send this message now", "Discard all 2 unread messages"]);
     }
 
-    promoteSteer("chat-1", "steer-1", "one", "user");
+    landSteerEntry("chat-1", "steer-1", "one");
     expect(rows()).toHaveLength(1);
     expect(actions(firstRow())).toEqual([
       "Send this message now",
@@ -599,6 +636,7 @@ describe("the row across its own confirmation", () => {
   });
 
   beforeEach(() => {
+    seq = 0;
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
   });
@@ -764,6 +802,7 @@ describe("the row's clamp", () => {
     // Same one-line reset as the suite above: a fresh session has no steers, so
     // the render empties the stack. Repeated rather than hoisted because these
     // cases are a sibling describe with their own layout host.
+    seq = 0;
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
   });

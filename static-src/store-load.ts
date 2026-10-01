@@ -1,38 +1,31 @@
 // HTTP load operations for the session store: hydrates the state store.ts owns.
 
-import type { Session, ChatHeader, Message } from "./types.js";
+import { join } from "@cplieger/keyenc";
+
+import type { Session, ChatHeader, TurnState } from "./types.js";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
-import { asObject, decodeArray, optBool, optNum, reqBool, type Decoder } from "./validators.js";
+import { asArray, asObject, decodeArray, optBool, reqBool, type Decoder } from "./validators.js";
 import {
   decodeChatHeader,
-  decodeLiveTurn,
-  decodeMessage,
+  decodeEntry,
+  decodeOpenEntry,
   decodeSubjectStamp,
 } from "./wire/decoders.gen.js";
-import type { LiveTurn } from "./wire/types.gen.js";
 import { registerCleanup } from "./actions/index.js";
 import {
   setSessions,
   derivedHasMore,
   get,
   getSessions,
-  rebuildMsgIndex,
   bumpMessages,
-  normalizeMessage,
-  liveTurnMessage,
-  chunkWatermark,
-  setChunkWatermark,
-  noteLiveTurnMessage,
-  noteAdoptedSnapshot,
-  upsertMessage,
-  relatchTurnVerdict,
-  latchFieldsFor,
   upsertHeader,
   republishWindowToolCalls,
+  markWindowStale,
+  setTurnOpen,
 } from "./store.js";
-import { healSettledChat } from "./turn-teardown.js";
+import { clearTurnState } from "./turn-teardown.js";
 import { observeStamp } from "./subject-versions.js";
-import type { SubjectStamp } from "./wire/types.gen.js";
+import type { Entry, OpenEntry, SubjectStamp } from "./wire/types.gen.js";
 
 // --- Inline decoders ---
 const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[]; subject?: SubjectStamp }> = (
@@ -51,169 +44,277 @@ const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[]; subject?: Sub
   return out;
 };
 
-/** The in-flight turn this response carries, or NOTHING TO ADOPT — one outcome out of two
- *  shapes, because the store has no third state for it.
- *
- *  ABSENT is the majority case: `internal/chat`'s router sets the key only while a turn is
- *  running, and the generated decoder is a `Decoder<LiveTurn>` whose `asObject` refuses
- *  undefined AND null by design.
- *
- *  REFUSED is a server older than one of the payload's REQUIRED fields. A throw out of the
- *  enclosing decoder is a decode failure `apiGetTyped` collapses to null, which costs the
- *  WHOLE window for every chat with a running turn, so it is answered here instead. It
- *  yields no DEFAULT either: an unstated base is not a base of 0. Logged, or a refusal
- *  reads as an idle chat. */
-function adoptableLiveTurn(v: unknown): LiveTurn | undefined {
-  if (v === undefined || v === null) {
-    return undefined;
+/** Describe a member the decoder refused, best-effort: an entry that did not decode may
+ *  not carry the fields this line wants either, so every one of them is optional here. */
+function describeMember(m: unknown): string {
+  if (typeof m !== "object" || m === null) {
+    return "a non-object member";
   }
-  try {
-    return decodeLiveTurn(v);
-  } catch (e) {
-    console.warn(
-      "chat_get: decoder rejected live_turn:",
-      e instanceof Error ? e.message : String(e),
-    );
-    return undefined;
-  }
+  const o = m as Record<string, unknown>;
+  const kind = typeof o["kind"] === "string" ? o["kind"] : "?";
+  const id = typeof o["id"] === "string" ? o["id"] : "?";
+  const turn = typeof o["turn"] === "string" ? o["turn"] : "?";
+  return `${kind} ${id} of turn ${turn}`;
 }
 
+/** Decode a list of entries, DROPPING a member the generated decoder refuses: the `seq` gap
+ *  it leaves reaches the same hole check every other gap does, and the warn IS the signal.
+ *  The CONTAINER still throws — a reply whose `entries` is not an array is not one bad line. */
+function decodeTolerant<T>(v: unknown, one: Decoder<T>, path: string): T[] {
+  const out: T[] = [];
+  const raw = asArray(v, path);
+  for (let i = 0; i < raw.length; i++) {
+    try {
+      out.push(one(raw[i]));
+    } catch (e) {
+      console.warn(
+        `${path}[${String(i)}]: dropped ${describeMember(raw[i])}:`,
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  }
+  return out;
+}
+
+/** The stamps a page certifies, or none. Optional-tolerant for the reason the `chats`
+ *  stamp is: a server from before the list still answers a usable page. */
+function decodeStamps(v: unknown, path: string): SubjectStamp[] {
+  if (v === undefined || v === null) {
+    return [];
+  }
+  return decodeArray(v, decodeSubjectStamp, path);
+}
+
+/** The single-chat GET of section 6.3: `{chat, entries, open_entries, has_more, live,
+ *  subject, draft}`. `entries` is every entry of a window of WHOLE turns in FILE order and
+ *  `open_entries` the in-memory tails of the open turns inside it, so the in-flight turn
+ *  travels on the same channel as everything else and nothing is pushed on connect. */
 const decodeChatGetResponseLocal: Decoder<{
   chat: ChatHeader;
-  messages: Message[];
+  entries: Entry[];
+  open_entries: OpenEntry[];
   has_more: boolean;
+  live: boolean | undefined;
+  subject: SubjectStamp[];
   draft: string;
-  turn_open: boolean | undefined;
-  turn_workflow_step: boolean | undefined;
-  turn_offset: number | undefined;
-  turn_segment_closed: boolean | undefined;
-  live_turn: LiveTurn | undefined;
-  subject: SubjectStamp | undefined;
 }> = (v) => {
   const o = asObject(v, "$.chat_get");
   return {
     chat: decodeChatHeader(o["chat"]),
-    // The `chat` digest stamp, read under the same lock as the window it describes, and
-    // observed only once that window is committed.
-    subject:
-      o["subject"] === undefined || o["subject"] === null
-        ? undefined
-        : decodeSubjectStamp(o["subject"]),
-    messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
+    entries: decodeTolerant(o["entries"], decodeEntry, "$.chat_get.entries"),
+    open_entries: decodeTolerant(o["open_entries"], decodeOpenEntry, "$.chat_get.open_entries"),
     has_more: reqBool(o, "has_more", "$.chat_get"),
-    // The in-flight turn, which the window structurally cannot carry: it is the one thing
-    // in this response that is not in the chat file yet.
-    live_turn: adoptableLiveTurn(o["live_turn"]),
-    // Every field below is optional-tolerant: an older server, or a proxy that strips
-    // one, must not fail the whole chat load. `store.ts` turnLive is turn_open's one
-    // reader; `turnBaseOf` is the window base's. UNDEFINED rather than false when absent,
-    // for the base's reason below AND because the newest-page door's teardown arm turns on
-    // the server having STATED the turn closed — a collapse to false hands it that
-    // statement for a chat the answer said nothing about.
-    turn_open: optBool(o, "turn_open", "$.chat_get"),
-    // WHOSE turn `turn_open` is about. Absent means this chat's OWN, matching `turn_ended`
-    // and `turn_state`, so a server predating the field reads as it did before.
-    turn_workflow_step: optBool(o, "turn_workflow_step", "$.chat_get"),
-    // The window base is UNDEFINED rather than 0/false when absent, so the session
-    // records "the server said nothing" instead of "the window starts the session" —
-    // the same distinction `has_more`'s guess-versus-answer split turns on.
-    turn_offset: optNum(o, "turn_offset", "$.chat_get"),
-    turn_segment_closed: optBool(o, "turn_segment_closed", "$.chat_get"),
+    // The chat's OWN turn being open, from the turn registry and never from the log.
+    // UNDEFINED rather than false when absent, because the teardown arm below turns on the
+    // server having STATED the turn closed and a collapse to false would hand it that
+    // statement for an answer that said nothing. No owner marker to fold in any more: a
+    // step's turn is in the RUN's log, so no turn in this log is a step's.
+    live: optBool(o, "live", "$.chat_get"),
+    // One `chat` stamp plus one `live_turn` per open turn in the window, read under the
+    // same store lock as the entries and the tails, so each certifies exactly what was
+    // served; an older page carries the `chat` stamp alone. Observed after the commit.
+    subject: decodeStamps(o["subject"], "$.chat_get.subject"),
     draft: typeof o["draft"] === "string" ? o["draft"] : "",
   };
 };
 
-/** Record the server's statement about the window's LEFT EDGE, or forget the one the
- *  session held. A half-present answer is a stripped field rather than a partial fact,
- *  and forgetting beats keeping: `turnBaseOf`'s fallback numbers the window from 1,
- *  where a stale offset numbers it from a place nothing in the window corresponds to. */
-function adoptTurnBase(
-  session: Session,
-  offset: number | undefined,
-  closed: boolean | undefined,
-): void {
-  if (offset === undefined || closed === undefined) {
-    delete session.turn_offset;
-    delete session.turn_segment_closed;
-    return;
-  }
-  session.turn_offset = offset;
-  session.turn_segment_closed = closed;
+interface TurnRangeResponse {
+  entries: Entry[];
+  open_entries: OpenEntry[];
+  subject: SubjectStamp[];
 }
 
-/** Adopt the fetched in-flight turn, or refuse it as stale. The marker and the upsert are
- *  the two writes the live `message_created` door makes (`handlers/messages.ts`): the same
- *  content through a second door has to land in the same places, or the two doors leave
- *  the store in different shapes. This GET is the ONE channel that carries the in-flight
- *  transcript — the connect carries `busy_chats` and no turn content.
- *
- *  THE GATE is the whole guard against a stale answer — the response is a point-in-time read,
- *  and `store.ts` chunkWatermarks states what adopting an older copy costs. A refusal changes
- *  nothing: the live stream is already ahead. An absent local mark passes. */
-function adoptLiveTurn(chatID: string, live: LiveTurn): void {
-  if (live.message.id === "") {
-    return;
-  }
-  const held = chunkWatermark(chatID, live.message.id);
-  if (held !== undefined && live.chunk_seq < held) {
-    return;
-  }
-  setChunkWatermark(chatID, live.message.id, live.chunk_seq);
-  // The server holds this message in memory and nowhere else, so it is unpersisted by
-  // construction — which is what a later refetch has to know before it may drop it.
-  noteLiveTurnMessage(chatID, live.message.id);
-  // ONE unconditional write, which is what makes this answer REPLACE the record an earlier
-  // GET left for this id rather than being merged with it. A later read outranks an
-  // earlier one — both facts are statements about the SAME reply and the later one is the
-  // fresher — so its `truncated: false` RETRACTS a marker an earlier answer set (without
-  // which the note stays on screen claiming output is still coming for a reply the reader
-  // already holds whole), and its base replaces the earlier window with this response's
-  // own. Keyed on the message id, so a record held for a DIFFERENT message is untouched.
-  noteAdoptedSnapshot(chatID, live.message.id, {
-    blockBase: live.block_base,
-    truncated: live.truncated,
-  });
-  upsertMessage(chatID, live.message);
+/** The range read of section 6.4: one turn's entries past `after` plus its open tails. */
+const decodeTurnRangeResponseLocal: Decoder<TurnRangeResponse> = (v) => {
+  const o = asObject(v, "$.turn_range");
+  return {
+    entries: decodeTolerant(o["entries"], decodeEntry, "$.turn_range.entries"),
+    open_entries: decodeTolerant(o["open_entries"], decodeOpenEntry, "$.turn_range.open_entries"),
+    subject: decodeStamps(o["subject"], "$.turn_range.subject"),
+  };
+};
+
+/** The turns a page's entries describe, plus the gaps the walk could not fold in. */
+interface PageTurns {
+  turns: Map<string, TurnState>;
+  /** The page's turn ids in FILE order, which is the order the transcript renders. */
+  order: string[];
+  /** Turn id to the highest `seq` held before the gap, or undefined for a turn with no
+   *  `turn_open`, which asks for the whole turn. */
+  holes: Map<string, number | undefined>;
 }
 
-/** Re-order re-adopted rows the way the live path puts them; `store.ts` insertIndexFor owns
- *  that rule. Inert when the live message is not among them — nothing to insert against. */
-function reorderKept(kept: Message[], liveID: string | undefined): Message[] {
-  const live = kept.find((m) => m.id === liveID);
-  if (live === undefined) {
-    return kept;
-  }
-  const before: Message[] = [];
-  const after: Message[] = [];
-  for (const m of kept) {
-    if (m.id === liveID) {
+/** Build the turn map by walking the page's entries in FILE order: a `turn_open` opens a
+ *  `TurnState` and every other entry appends at the `seq` it carries. An entry whose `seq` is
+ *  not the next one, or naming a turn this page did not open, is a HOLE rather than an append
+ *  at the wrong index. Idempotent by turn id. */
+function buildPageTurns(entries: readonly Entry[], open: readonly OpenEntry[]): PageTurns {
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  const holes = new Map<string, number | undefined>();
+  for (const e of entries) {
+    if (e.kind === "turn_open") {
+      if (!turns.has(e.turn)) {
+        turns.set(e.turn, { entries: [e], openEntries: new Map() });
+        order.push(e.turn);
+      }
       continue;
     }
-    (m.role === "user" ? after : before).push(m);
+    const state = turns.get(e.turn);
+    if (state === undefined) {
+      holes.set(e.turn, undefined);
+      continue;
+    }
+    if (e.seq !== state.entries.length) {
+      // The FIRST gap's watermark, kept: a later entry of the same turn sits past it, so
+      // its index would ask the repair for less than the turn is actually missing.
+      if (!holes.has(e.turn)) {
+        holes.set(e.turn, state.entries.length - 1);
+      }
+      continue;
+    }
+    state.entries.push(e);
+    if (e.kind === "turn_close") {
+      // The one cached lookup, the same one `appendEntry` caches: `turnLive` reads it.
+      state.closeAt = e.seq;
+    }
   }
-  return [...before, live, ...after];
+  seatOpenEntries(turns, holes, open);
+  return { turns, order, holes };
 }
 
-/**
- * The BYTE bound on one transcript page: the hostile-input ceiling on what the wire
- * may carry, matching the server's own default. It is not a proxy for what one paint
- * can mount, which `block-window.ts` bounds itself, per turn, on arrival. Nothing
- * becomes unreachable: the server returns the newest turn whole however big it is,
- * and `has_more` plus `before_id` reach everything older.
- */
-const PAGE_BUDGET_BYTES = 1 << 20;
+/** Seat each open tail under its `(turn, lane)`. A tail naming a turn the walk did not
+ *  open is the dropped-`turn_open` hole again. */
+function seatOpenEntries(
+  turns: Map<string, TurnState>,
+  holes: Map<string, number | undefined>,
+  open: readonly OpenEntry[],
+): void {
+  for (const o of open) {
+    const state = turns.get(o.turn);
+    if (state === undefined) {
+      holes.set(o.turn, undefined);
+      continue;
+    }
+    const lane = o.lane ?? "";
+    state.openEntries.set(lane, { ...o, lane });
+  }
+}
 
-/**
- * The server's cap on messages per page, and NOT this client's budget — it is a
- * bound on the answer's shape, not on its size. It binds only where messages are
- * small enough that 50 of them fit in the budget above, which on this workload is
- * never: the budget is what cuts every real page.
- */
-const PAGE_MESSAGE_CAP = 50;
+/** Merge one turn the page describes with the copy the store already holds. The page is a
+ *  point-in-time read, so an entry that landed during the flight is NEWER than the answer and
+ *  goes back on past its end, contiguously; a held open tail travels the same way unless the
+ *  page carries that entry SEALED, which is the answer that the tail is history. */
+function mergeTurn(page: TurnState, held: TurnState): TurnState {
+  for (let i = page.entries.length; i < held.entries.length; i++) {
+    const e = held.entries[i];
+    if (e?.seq !== i) {
+      break;
+    }
+    page.entries.push(e);
+    if (e.kind === "turn_close") {
+      page.closeAt = e.seq;
+    }
+  }
+  if (held.openEntries.size > 0) {
+    const sealed = new Set(page.entries.map((e) => e.id));
+    for (const [lane, open] of held.openEntries) {
+      if (sealed.has(open.id)) {
+        continue;
+      }
+      const fromPage = page.openEntries.get(lane);
+      if (fromPage === undefined || (fromPage.id === open.id && open.n > fromPage.n)) {
+        page.openEntries.set(lane, open);
+      }
+    }
+  }
+  return page;
+}
+
+/** Commit a page's turns into the session's window, and answer whether the page speaks for the
+ *  window's LEFT EDGE, which decides whose `has_more` is the answer. A newest page keeps the
+ *  resident turns older than its own oldest — pages already fetched that the answer says
+ *  nothing about — anchored on that turn id rather than on a count, so no overlap replaces.
+ *
+ *  `heldAtRequest` is the window as it stood when the newest page was asked for. A held turn
+ *  past the page's newest is an ARRIVAL only when it was not held then: one held before the
+ *  read that the answer neither carries nor precedes is a turn the server no longer serves,
+ *  which is what a client that missed a `turn_revert` frame is holding. Not by ordinal: a
+ *  reverted turn sits above the surviving count, and a prompt after the revert reuses its n. */
+function applyPage(
+  session: Session,
+  page: PageTurns,
+  older: boolean,
+  heldAtRequest: ReadonlySet<string>,
+): boolean {
+  if (older) {
+    const fresh = page.order.filter((id) => !session.turns.has(id));
+    for (const id of fresh) {
+      const state = page.turns.get(id);
+      if (state !== undefined) {
+        session.turns.set(id, state);
+      }
+    }
+    session.turn_order = [...fresh, ...session.turn_order];
+    return true;
+  }
+  const held = session.turns;
+  const oldest = page.order[0];
+  const newest = page.order[page.order.length - 1];
+  const anchor = oldest === undefined ? -1 : session.turn_order.indexOf(oldest);
+  const tail = newest === undefined ? -1 : session.turn_order.indexOf(newest);
+  const kept = anchor > 0 ? session.turn_order.slice(0, anchor) : [];
+  const arrived =
+    tail >= 0
+      ? session.turn_order
+          .slice(tail + 1)
+          .filter((id) => !page.turns.has(id) && !heldAtRequest.has(id))
+      : [];
+  const turns = new Map<string, TurnState>();
+  for (const id of kept) {
+    const state = held.get(id);
+    if (state !== undefined) {
+      turns.set(id, state);
+    }
+  }
+  for (const id of page.order) {
+    const state = page.turns.get(id);
+    if (state === undefined) {
+      continue;
+    }
+    const prev = held.get(id);
+    turns.set(id, prev === undefined ? state : mergeTurn(state, prev));
+  }
+  for (const id of arrived) {
+    const state = held.get(id);
+    if (state !== undefined) {
+      turns.set(id, state);
+    }
+  }
+  session.turns = turns;
+  session.turn_order = [...kept, ...page.order, ...arrived].filter((id) => turns.has(id));
+  return kept.length === 0;
+}
 
 // --- Abort controllers ---
 let listController: AbortController | null = null;
-const msgControllers = new Map<string, AbortController>();
+/** The page load in flight per chat, and whether it reads the NEWEST page: a revert aborts
+ *  it and re-asks for that one, because the frame proves a read issued now is served after
+ *  the record (`abortReadsForRevert`). */
+const msgControllers = new Map<string, { controller: AbortController; newest: boolean }>();
+
+/** The load a revert re-issued in place of an aborted newest one, keyed by the aborted
+ *  load's controller: its caller is answered with the re-issue's result, because an
+ *  activation reads `false` as a failed open. */
+const reissuedLoads = new WeakMap<AbortController, Promise<boolean>>();
+
+/** Forget a finished load's entry, but only its own: a load superseded by a newer one wakes
+ *  after the newer one registered, and deleting by key alone would orphan the newer read. */
+function releaseLoad(chatID: string, controller: AbortController): void {
+  if (msgControllers.get(chatID)?.controller === controller) {
+    msgControllers.delete(chatID);
+  }
+}
 
 // Observability of the newest-page refetch, printed on every outcome; nothing branches on it.
 const loadOutcomes = { changed: 0, unchanged: 0, load_failed: 0 };
@@ -322,32 +423,28 @@ export type ChatVerdict = "exists" | "gone" | "unresolved";
 
 /** The single-chat GET reduced to the one field this question needs. Its own
  *  decoder rather than `decodeChatGetResponseLocal`, because that one requires
- *  `messages` and `has_more` — fields a verdict does not read, and each an extra
- *  way for an answer that DID arrive to be discarded as undecodable. */
+ *  `entries`, `open_entries`, `has_more` and `subject` — fields a verdict does not
+ *  read, and each an extra way for an answer that DID arrive to be discarded as
+ *  undecodable. */
 const decodeChatConfirmResponseLocal: Decoder<{ chat: ChatHeader }> = (v) => {
   const o = asObject(v, "$.chat_confirm");
   return { chat: decodeChatHeader(o["chat"]) };
 };
 
-/** Is this id SHAPED like a chat id? The only 400 this client can explain to itself.
- *
- *  It mirrors the server's `ids.ValidChatID` deliberately: the question is not whether the id
- *  is valid — the server answers that — but whether the 400 could have come from an id gate
- *  at all. KEEP IT AT LEAST AS PERMISSIVE as the server's, because accepting an id the server
- *  would refuse costs one non-terminal `unresolved`, while refusing one it would ACCEPT reads
- *  a request-level 400 as "no such chat". Length in UTF-16 units is exact here: every
- *  character this admits is ASCII, so a non-ASCII id fails the charset test first. */
+/** Is this id SHAPED like a chat id? The only 400 this client can explain to itself, so KEEP
+ *  IT AT LEAST AS PERMISSIVE as the server's own gate: admitting an id the server refuses
+ *  costs one non-terminal `unresolved`, while refusing one it would ACCEPT reads a
+ *  request-level 400 as "no such chat". */
 function chatIDShaped(id: string): boolean {
   return id !== "" && id.length <= 128 && /^[A-Za-z0-9_-]+$/.test(id);
 }
 
-/** Does this status settle the question ABOUT THIS CHAT, rather than about the request?
- *  404 is the server reading its own store. A 400 counts only for an id this client can see
- *  is not a chat id, because a request-level 400 — a stale CSRF header, a host check, a body
- *  limit — is not evidence about a conversation, and reading one as "no such chat" is the
- *  false-terminal claim this whole path exists to remove. Measured against the route as it
- *  stands (`chatIDPattern`, `canonicalAPIPath`) every 400 source IS id-shaped, so the
- *  narrowing changes no verdict today; what it stops is a middleware added later making one. */
+/** Does this status settle the question ABOUT THIS CHAT, rather than about the request? 404 is
+ *  the server reading its own store; a 400 counts only for an id this client can see is not a
+ *  chat id, because a request-level 400 is not evidence about a conversation and reading one as
+ *  "no such chat" is the false-terminal claim this path exists to remove. Measured against the
+ *  route as it stands (`chatIDPattern`, `canonicalAPIPath`) every 400 source IS id-shaped, so
+ *  the narrowing changes no verdict today; it stops a middleware added later making one. */
 function saysTheChatIsGone(status: number, chatID: string): boolean {
   return status === 404 || (status === 400 && !chatIDShaped(chatID));
 }
@@ -361,8 +458,11 @@ function saysTheChatIsGone(status: number, chatID: string): boolean {
  *  `chat_created` frame would have used, so no second Session-construction rule appears and
  *  the deep link opens. Everything `saysTheChatIsGone` does not settle is `unresolved`. */
 export async function confirmChatExists(chatID: string): Promise<ChatVerdict> {
-  // `limit=1` is the cheapest page the endpoint will serve (it clamps 0 and below back to
-  // its 50 default), and the transcript is not what is being asked about. No abort
+  // `limit=1` is the cheapest page the endpoint will serve — it honours 1..200 inclusive
+  // and answers anything else with its own 20-turn default, so 1 is served rather than
+  // widened — and the transcript is not what is being asked about. This is the ONE read
+  // that names a limit: the window read below sends none, because the server owns that
+  // number and this probe wants the smallest page rather than a good one. No abort
   // controller: two confirmations for one id are an idempotent read plus an idempotent
   // upsert, and the CALLER owns whether a late answer still matters to what is on screen.
   const r = await apiGetTypedOrError(
@@ -410,7 +510,7 @@ registerCleanup(() => {
 });
 registerCleanup(() => {
   for (const c of msgControllers.values()) {
-    c.abort();
+    c.controller.abort();
   }
   msgControllers.clear();
 });
@@ -466,49 +566,37 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
       effort_levels: h.effort_levels ?? existing?.effort_levels ?? [],
       effort_active: h.effort_active ?? existing?.effort_active ?? "",
       usage: h.usage,
-      message_count: h.message_count,
-      messages: existing?.messages ?? [],
+      turn_count: h.turn_count,
+      // The resident window travels as one value: the map and the order it renders in
+      // describe the same turns, so carrying one without the other is a window that
+      // renders nothing or renders it twice.
+      turns: existing?.turns ?? new Map<string, TurnState>(),
+      turn_order: existing?.turn_order ?? [],
       // A header carries no window, so this is the DERIVATION and never an answer — one
       // rule, `store.ts` `derivedHasMore`, over the count the server just sent and whatever
       // window is carried over above. Never OR'd with the previous value: a sticky true can
       // only be wrong in the direction of a Load-older button with nothing behind it, and
       // this runs on boot, on login and on every `connected` handshake.
-      has_more: derivedHasMore(h.message_count, existing?.messages.length ?? 0),
+      has_more: derivedHasMore(h.turn_count, existing?.turn_order.length ?? 0),
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
       ...(existing?.steers !== undefined && { steers: existing.steers }),
-      // The promoted steers too, and this one is load-bearing rather than
-      // symmetric: a mark's lifetime is the loaded TRANSCRIPT, not the turn, so
-      // without it every reconnect would wipe the notes back out of turns the
-      // reader can still see.
-      ...(existing?.steer_marks !== undefined && { steer_marks: existing.steer_marks }),
-      // The two outcome latches are SERVER-SUPPLIED, with the local one carried over on
-      // top: `last_turn_outcome` rides the header, so a chat this client has never seen
-      // live gets a real verdict instead of the hollow `idle` ring. A moved header wins, a
-      // live `turn_ended` on this page is newer than one that has not moved, and a live
-      // turn seeds nothing; `latchFieldsFor` owns all four rules.
-      ...latchFieldsFor(existing, h),
-      // Every OTHER client-only projection is a pure carry-over: the server sends none of
-      // them, so rebuilding a Session from a header alone silently resets them — and
-      // `boot.ts onTransportStatus` owns which connections call this, which is more of
-      // them than a reconnect, so an ordinary network recovery dropped the agent's
-      // declared status. The reconcile that IS entitled to drop them is `transport:gap`,
-      // which clears them explicitly and runs first.
+      // Every OTHER client-only projection is a pure carry-over: the server sends none of them,
+      // so rebuilding a Session from a header alone would reset them — and `boot.ts`
+      // `onTransportStatus` calls this for more connections than a reconnect, so an ordinary
+      // network recovery reaches this rebuild. The reconcile that IS entitled to drop them is
+      // `BUS_RECONCILE`, which clears them explicitly and runs first.
       ...(existing?.agent_status !== undefined && { agent_status: existing.agent_status }),
-      // Residency describes the carried-over `messages` window, so it travels
-      // with it: dropping it here would make every reconnect read a loaded
-      // chat as never-loaded (or an evicted one as fresh).
+      // Residency describes the carried-over window of turns, so it travels with it:
+      // dropping it here would make every reconnect read a loaded chat as never-loaded
+      // (or an evicted one as fresh). A card's ordinal rides its own `turn_open.n`, so
+      // there is no window base to carry beside it any more.
       ...(existing?.residency !== undefined && { residency: existing.residency }),
-      // The window BASE describes that same window, and it travels TOGETHER or not
-      // at all, matching `adoptTurnBase`'s half-present rule. A reconnect moves no
-      // held version, so nothing refetches to replace a dropped base and the next
-      // repaint renumbers a paged chat from 1.
-      ...(existing?.turn_offset !== undefined &&
-        existing.turn_segment_closed !== undefined && {
-          turn_offset: existing.turn_offset,
-          turn_segment_closed: existing.turn_segment_closed,
-        }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
+      // The model badge's ONE input, replaced by every header read: an absent
+      // `pending_model` is a CLEAR, which is how a pick applied at a turn's close reaches
+      // every device.
+      ...(h.pending_model !== undefined && { pending_model: h.pending_model }),
       // The two SERVER facts the row used to drop on the floor. The row is rebuilt from the
       // header rather than spread from `existing`, so a conditional spread IS a replace here:
       // nothing carries over because nothing is there. `updated_at` needs no guard — it is
@@ -550,36 +638,33 @@ export async function loadList(signal?: AbortSignal): Promise<boolean> {
 
 export async function loadMessages(
   chatID: string,
-  beforeID?: string,
+  beforeTurnID?: string,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  msgControllers.get(chatID)?.abort();
+  msgControllers.get(chatID)?.controller.abort();
   const controller = new AbortController();
-  msgControllers.set(chatID, controller);
+  msgControllers.set(chatID, { controller, newest: beforeTurnID === undefined });
   const combined =
     signal === undefined ? controller.signal : AbortSignal.any([controller.signal, signal]);
-  const params = new URLSearchParams({
-    limit: String(PAGE_MESSAGE_CAP),
-    max_bytes: String(PAGE_BUDGET_BYTES),
-  });
-  if (beforeID !== undefined) {
-    params.set("before_id", beforeID);
+  // No `limit`: a window is N TURNS and the count is the server's decision (it clamps
+  // and defaults its own), so naming one here would be this client asserting a number it
+  // has no basis for. `?before=<turn_id>` pages by turn, and whole turns only, so a turn
+  // is never split across two pages.
+  const params = new URLSearchParams();
+  if (beforeTurnID !== undefined) {
+    params.set("before", beforeTurnID);
   }
-  // The ids present BEFORE the request goes out. The server computes its answer
-  // from the chat file when the handler runs, so anything that arrives while the
-  // request is in flight is NEWER than that answer and the answer is not entitled
-  // to drop it — a plan or event message persisted and broadcast inside that
-  // window would otherwise vanish from the transcript until the next fetch.
-  const knownBefore = new Set((get(chatID)?.messages ?? []).map((m) => m.id));
-  const path = `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`;
+  const query = params.toString();
+  const path = `/api/chats/${encodeURIComponent(chatID)}${query === "" ? "" : `?${query}`}`;
+  const heldAtRequest = new Set(beforeTurnID === undefined ? (get(chatID)?.turn_order ?? []) : []);
   const d = await apiGetTyped(path, decodeChatGetResponseLocal, combined);
   if (combined.aborted) {
-    msgControllers.delete(chatID);
-    return false;
+    releaseLoad(chatID, controller);
+    return reissuedLoads.get(controller) ?? false;
   }
   if (d === null) {
-    msgControllers.delete(chatID);
-    if (beforeID === undefined) {
+    releaseLoad(chatID, controller);
+    if (beforeTurnID === undefined) {
       const failed = get(chatID);
       if (failed !== undefined) {
         failed.residency = "load_failed";
@@ -590,144 +675,289 @@ export async function loadMessages(
   }
   const session = get(chatID);
   if (session === undefined) {
-    msgControllers.delete(chatID);
+    releaseLoad(chatID, controller);
     return false;
   }
-  // Whether the page this load applies STARTS the client's window — the subject the
-  // server's `has_more` and its window base both describe (the OLDEST MESSAGE HELD).
-  // A `before_id` page always does: it becomes the new oldest. A no-cursor page does
-  // only when nothing older was re-adopted in front of it, which the branch below
-  // decides.
-  let pageStartsWindow = true;
-  if (beforeID !== undefined) {
-    // Prepend older-page messages, deduped by id. The cursor is a message ID and
-    // the server treats it as exclusive, so a boundary message cannot come back
-    // twice the way the old millisecond cursor allowed. The id filter STAYS
-    // anyway: it costs one Set, and it is what makes a re-issued or overlapping
-    // page harmless rather than a double render that also corrupts the msg index.
-    const seen = new Set(session.messages.map((m) => m.id));
-    const older = d.messages.filter((m) => !seen.has(m.id)).map(normalizeMessage);
-    session.messages = [...older, ...session.messages];
-  } else {
-    // Normalize replayed messages so legacy transcripts (persisted before the
-    // blocks field) get synthesized blocks — the renderer is block-only.
-    const fetched = d.messages.map(normalizeMessage);
-    // Then re-adopt what this page CANNOT know about, and NEVER by position: the agent
-    // persists messages DURING a turn — a plan update, a compaction or safety event, the
-    // cancel badge — each landing after the streaming reply locally while sitting inside
-    // the page, so a boundary derived from the page's newest id steps past the reply and
-    // the replace deletes it. Exactly two things qualify: the in-flight turn, which the
-    // server holds in an in-memory buffer until turn_ended so only the store's own marker
-    // names it, and a message that arrived while the request was in flight. Both go at the
-    // END, where the server puts the finished turn too.
-    const fetchedIDs = new Set(fetched.map((m) => m.id));
-    const liveID = liveTurnMessage(chatID);
-    // And the RESIDENT OLDER PAGES go back in front. The page is a CONTIGUOUS newest
-    // window, so held messages older than its oldest one are pages this client already
-    // fetched that the answer says nothing about; dropping them threw a paged-up reader's
-    // history away — and their scroll position with it — on every no-cursor reload, which
-    // is what the gap heal is. Anchored on that oldest id rather than on a count or a
-    // timestamp: no overlap means the window moved out from under what is held, and then
-    // the page replaces, which is the honest answer.
-    const oldest = fetched[0]?.id;
-    const anchor = oldest === undefined ? -1 : session.messages.findIndex((m) => m.id === oldest);
-    const older =
-      anchor > 0 ? session.messages.slice(0, anchor).filter((m) => !fetchedIDs.has(m.id)) : [];
-    const kept = session.messages
-      .slice(anchor > 0 ? anchor : 0)
-      .filter((m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)));
-    // The byte comparison is the refetch-outcome measurement, bounded by the resident window.
-    const heldBytes = JSON.stringify(session.messages);
-    session.messages = [...older, ...fetched, ...reorderKept(kept, liveID)];
+  const page = buildPageTurns(d.entries, d.open_entries);
+  // The byte comparison is the refetch-outcome measurement, bounded by the resident window.
+  const heldBefore = beforeTurnID === undefined ? snapshotWindow(session) : "";
+  const pageStartsWindow = applyPage(session, page, beforeTurnID !== undefined, heldAtRequest);
+  if (beforeTurnID === undefined) {
     reportLoadOutcome(
       chatID,
-      JSON.stringify(session.messages) === heldBytes ? "unchanged" : "changed",
+      snapshotWindow(session) === heldBefore ? "unchanged" : "changed",
       path,
     );
-    // A card already on screen does not read the array this line just replaced: its DOM
-    // has one refresh channel, the per-call signal, and the repaint below writes none. So
-    // the page's own calls go through that channel — which is what makes a card built from
-    // the boot snapshot's truncated copy show the server's output rather than keeping the
-    // hint for the life of the document. Only the FETCHED rows: a prepended older page
-    // mounts its cards fresh, and the live turn's calls arrive on their own signal.
-    republishWindowToolCalls(chatID, fetched);
-    // The answer describes what is older than the PAGE, which is only the same
-    // question the session's flag and base answer when nothing older sits in front
-    // of it.
-    pageStartsWindow = older.length === 0;
+    // A card already on screen has one refresh channel, the per-call signal, and the repaint
+    // below writes none — so the page's own tool calls go through that channel. Only the turns
+    // the PAGE landed: a prepended older page mounts its cards fresh.
+    republishWindowToolCalls(chatID, page.order);
   }
-  // Before the two reads below, so both see the server's own count.
-  session.message_count = d.chat.message_count;
+  // Before the read below, so it sees the server's own count.
+  session.turn_count = d.chat.turn_count;
   if (pageStartsWindow) {
     session.has_more = d.has_more;
-    adoptTurnBase(session, d.turn_offset, d.turn_segment_closed);
   } else {
     // The page said nothing about this window's left edge, so `has_more` falls back to the
     // derivation rather than preserving the previous value: preserving is only right when
     // that value was an ANSWER, and for a header-built row it is the guess, which left a
-    // button on a chat holding every message it has. The base IS left alone, for the mirror
-    // reason — the edge did not move, so whatever was recorded still describes it.
-    session.has_more = derivedHasMore(session.message_count, session.messages.length);
+    // button on a chat holding every turn it has.
+    session.has_more = derivedHasMore(session.turn_count, session.turn_order.length);
   }
-  rebuildMsgIndex(chatID, session.messages);
-  msgControllers.delete(chatID);
-  // Park the server's draft on the session so the composer can adopt it. Only on
-  // the newest page: an older page fetch is a scroll-up, not an open. This module
-  // deliberately does not reach into the composer — chat.ts owns that call, right
-  // where it already sequences the rest of the activation.
-  if (beforeID === undefined) {
+  releaseLoad(chatID, controller);
+  // Park the server's draft on the session so the composer can adopt it. Only on the newest
+  // page: an older page fetch is a scroll-up, not an open. This module deliberately does not
+  // reach into the composer — chat.ts owns that call, right where it already sequences the
+  // rest of the activation.
+  if (beforeTurnID === undefined) {
     session.draft = d.draft;
-    // The server's liveness statement, newest page ONLY, for the draft's reason: an
-    // older-page fetch is a scroll-up and asserts nothing about liveness. RECORDED in both
-    // directions, and FORGOTTEN when the answer carries no statement, because a `true` left
-    // standing would keep `turnLive` answering live off an answer nothing restates.
-    //
-    // FOLDED here, the one door where the two facts arrive apart: the wire's `turn_open`
-    // says SOME turn is open, `turn_workflow_step` says it is a run's, and
-    // `Session.turn_open` means the chat's OWN — the same thing `turn_ended` writes.
-    if (d.turn_open === undefined) {
+    // The server's liveness statement, newest page ONLY, for the draft's reason. RECORDED
+    // in both directions, and FORGOTTEN when the answer carries no statement, because a
+    // `true` left standing would keep `turnLive` answering live off an answer nothing
+    // restates.
+    if (d.live === undefined) {
       delete session.turn_open;
     } else {
-      session.turn_open = d.turn_open && d.turn_workflow_step !== true;
+      setTurnOpen(chatID, d.live);
     }
-    // The CONTENT behind that liveness statement. Newest page only, like the two above,
-    // and AFTER the splice so the upsert sees the merged window. No duplicate is possible
-    // either way: the merge is keyed by message id and the live turn is not in `messages`.
-    if (d.live_turn !== undefined) {
-      adoptLiveTurn(chatID, d.live_turn);
-    }
-    // A successful newest-page load is the ONE writer of `loaded`: the window
-    // is now the server's answer, so an activation may trust it. An older-page
-    // prepend extends an already-trusted window and asserts nothing new. The stamp
-    // is observed here, after the commit, and carries the server's epoch: a map
-    // bound to a different one refuses it, so an answer from a process that has
-    // since restarted records no claim.
+    // A successful newest-page load is the ONE writer of `loaded`: the window is now the
+    // server's answer, so an activation may trust it. An older-page prepend extends an
+    // already-trusted window and asserts nothing new.
     session.residency = "loaded";
-    observeStamp(d.subject);
   }
-  // `load`, not `shape`: both branches above REPLACED or EXTENDED the window
-  // with the server's own answer, so its rows are a replay and the paint must
-  // not read them as messages that arrived here (messages.ts `appendNewIds`).
-  // The array cannot say so on its own — a cold open paints before this fetch
-  // resolves, so the paint it drives is not a chat switch and its predecessor
-  // recorded no tail to append past.
+  // Every gap the walk found is MARKED and then asks for the range read of section 6.4 for
+  // that turn alone, BEFORE the repaint: the store's own order, so the window is stale in
+  // the same pass that renders what did arrive. The mark is what the repair's own restore
+  // arm reads, and what stops the next activation trusting a window with a known gap — a
+  // repair that gets no answer must leave a refetch trigger behind.
+  if (page.holes.size > 0) {
+    markWindowStale(chatID);
+    for (const [turnID, afterSeq] of page.holes) {
+      requestTurnRange(chatID, turnID, afterSeq);
+    }
+  }
+  // `load`, not `shape`: both branches above REPLACED or EXTENDED the window with the
+  // server's own answer, so its rows are a replay and the paint must not read them as
+  // entries that arrived here (messages.ts `appendNewIds`). The array cannot say so on its
+  // own — a cold open paints before this fetch resolves, so the paint it drives is not a
+  // chat switch and its predecessor recorded no tail to append past.
   bumpMessages(chatID, "load");
-  if (beforeID === undefined) {
-    // The page carries the last turn's PERSISTED outcome, so the outcome latches — client
-    // memory the gap door just dropped, or a fresh page never had — are re-derived from it.
-    // Both arms sit after `bumpMessages`, so the repaint and the dot read one settled window.
-    //
-    // A stated `turn_open === false` covers the chat's WHOLE liveness, so it also retracts a
-    // `thinking` this client is holding for a turn that is over — the one door licensed to
-    // run the full teardown. Anything else only re-derives, because the page has asserted
-    // nothing about liveness that would let it drop a live turn's markers. The RAW field,
-    // unfolded: this arm's licence is "no turn at all", and the folded value reads false for
-    // a run's step turn, whose content the teardown would free the next fetch to delete.
-    if (d.turn_open === false) {
-      healSettledChat(chatID);
-    } else {
-      relatchTurnVerdict(chatID);
+  if (beforeTurnID === undefined) {
+    // AFTER the commit: every stamp in the list certifies exactly the entries and tails
+    // this page served, so a client that saw no frame afterwards can still say what it
+    // missed. Newest page only, like the three writes above; an older page's stamp
+    // describes an edge this load did not adopt.
+    for (const stamp of d.subject) {
+      observeStamp(stamp);
+    }
+    // A stated `live === false` covers the chat's WHOLE liveness, so it retracts a `thinking`
+    // this client is holding for a turn that is over. AFTER `bumpMessages`, so the repaint and
+    // the dot read one settled window; nothing to do on any other answer, because the dot is
+    // derived from the log this page just served.
+    if (d.live === false) {
+      clearTurnState(chatID);
     }
   }
   return true;
+}
+
+/** The resident window as bytes, for the refetch-outcome measurement alone. Turn ids plus
+ *  each turn's entry ids and open tails: enough to tell a page that changed nothing from one
+ *  that did, without serializing every payload the window holds. */
+function snapshotWindow(session: Session): string {
+  const parts: string[] = [];
+  for (const id of session.turn_order) {
+    const state = session.turns.get(id);
+    if (state === undefined) {
+      continue;
+    }
+    const open = [...state.openEntries.values()].map((o) => `${o.id}@${String(o.n)}`);
+    parts.push(`${id}:${state.entries.map((e) => e.id).join(",")}|${open.join(",")}`);
+  }
+  return parts.join(";");
+}
+
+// --- The range read of section 6.4 ---
+
+/** The repair reads in flight, one per `(chat, turn)`: a burst of holes on one turn asks
+ *  once, because the answer covers every gap that arrived while it was out. */
+const turnRepairs = new Map<string, { chatID: string; controller: AbortController }>();
+
+registerCleanup(() => {
+  for (const r of turnRepairs.values()) {
+    r.controller.abort();
+  }
+  turnRepairs.clear();
+});
+
+/** Read one turn's entries past `afterSeq` plus its open tails, and apply them.
+ *
+ *  The ONE repair for every gap: a `seq` hole, a delta or seal whose count does not match, a
+ *  `live_turn` digest mismatch, or a frame naming an unknown turn. `after` omitted returns the
+ *  whole turn, which is what a lost `turn_opened` asks for; the answer to a lost frame is to
+ *  re-read the range, never to pad or re-index. Registered through `registerTurnRepair`, so the
+ *  store owns the DETECTION and this module owns every read. */
+export function requestTurnRange(chatID: string, turnID: string, afterSeq?: number): void {
+  void runTurnRange(chatID, turnID, afterSeq);
+}
+
+/** Abort every read a revert could be answered with. The range reads for the turns it just
+ *  dropped, because `applyTurnRange` would seat one again, and the chat's PAGE load whatever
+ *  turns it took: a page read before the record carries the reverted turns, possibly ones
+ *  this client never held, and its header carries the pre-revert count. Registered through
+ *  `registerRevertReadAbort`. An aborted newest page is asked for again, since the frame that
+ *  got here proves the record is on disk. The seats keep their own refusals, which is what
+ *  covers an answer this abort was too late for. */
+export function abortReadsForRevert(chatID: string, turnIDs: readonly string[]): void {
+  const load = msgControllers.get(chatID);
+  if (load !== undefined) {
+    load.controller.abort();
+    msgControllers.delete(chatID);
+    if (load.newest) {
+      reissuedLoads.set(load.controller, loadMessages(chatID));
+    }
+  }
+  for (const turnID of turnIDs) {
+    const key = join(chatID, turnID);
+    const r = turnRepairs.get(key);
+    if (r === undefined) {
+      continue;
+    }
+    r.controller.abort();
+    turnRepairs.delete(key);
+  }
+}
+
+async function runTurnRange(chatID: string, turnID: string, afterSeq?: number): Promise<void> {
+  const key = join(chatID, turnID);
+  if (turnRepairs.has(key)) {
+    return;
+  }
+  const controller = new AbortController();
+  turnRepairs.set(key, { chatID, controller });
+  const params = afterSeq === undefined ? "" : `?after=${String(afterSeq)}`;
+  const path = `/api/chats/${encodeURIComponent(chatID)}/turns/${encodeURIComponent(turnID)}${params}`;
+  let d: TurnRangeResponse | null;
+  // Released the moment it settles, before the seat: a read still counting itself keeps
+  // `repairsPending` true so the window never returns to `loaded`, and the in-flight guard
+  // above would swallow the second-gap re-ask the seat schedules.
+  try {
+    d = await apiGetTyped(path, decodeTurnRangeResponseLocal, controller.signal);
+  } finally {
+    turnRepairs.delete(key);
+  }
+  if (controller.signal.aborted) {
+    return;
+  }
+  if (d === null) {
+    // The window stays `partial`, so the next activation refetches it: a repair that got
+    // no answer must not hand the store a window it will trust.
+    console.warn(`turn range: no answer for ${chatID} ${turnID}`);
+    return;
+  }
+  applyTurnRange(chatID, turnID, d.entries, d.open_entries);
+  for (const stamp of d.subject) {
+    observeStamp(stamp);
+  }
+}
+
+/** Seat a repaired turn's entries at the positions their `seq` claims. A held turn takes them
+ *  from its own end, contiguously, and stops at the first `seq` that is not next, which is a
+ *  second gap and re-asks the read. A turn the store does not hold is a whole-turn answer,
+ *  seated by its session-absolute `turn_open.n`. */
+function applyTurnRange(
+  chatID: string,
+  turnID: string,
+  entries: readonly Entry[],
+  open: readonly OpenEntry[],
+): void {
+  const session = get(chatID);
+  if (session === undefined) {
+    return;
+  }
+  if (session.reverted?.has(turnID) === true) {
+    // The turn went with a revert's window, so this answer describes material no reader
+    // may see and `insertTurnByOrdinal` below would put it back. The abort is the primary
+    // mechanism; this covers a read it was too late for, which is why the refusal is the
+    // REVERTED set rather than "absent from `turn_order`" — that is also every turn whose
+    // own `turn_opened` was lost, and re-reading those is what this repair exists for.
+    return;
+  }
+  const held = session.turns.get(turnID);
+  const state = held ?? { entries: [], openEntries: new Map<string, OpenEntry>() };
+  let applied = 0;
+  for (const e of entries) {
+    if (e.seq !== state.entries.length) {
+      break;
+    }
+    state.entries.push(e);
+    applied++;
+    if (e.kind === "turn_close") {
+      state.closeAt = e.seq;
+    }
+  }
+  if (state.entries.length === 0) {
+    // Nothing to seat and nothing held: the turn's own `turn_open` did not arrive, so there
+    // is no turn to render and asking again would ask the same question.
+    console.warn(`turn range: ${chatID} ${turnID} answered no turn_open`);
+    return;
+  }
+  state.openEntries = new Map();
+  seatOpenEntries(new Map([[turnID, state]]), new Map(), open);
+  if (held === undefined) {
+    insertTurnByOrdinal(session, turnID, state);
+  }
+  if (applied < entries.length) {
+    // A second gap, re-asked only when this seat made PROGRESS: an answer that fitted
+    // nothing is asked the same question forever, which a permanently undecodable entry
+    // serves, so that case leaves the window `partial` for the next activation instead.
+    console.warn(
+      `turn range: ${chatID} ${turnID} left a gap at seq ${String(state.entries.length)}`,
+    );
+    if (applied > 0) {
+      requestTurnRange(chatID, turnID, state.entries.length - 1);
+    }
+  } else if (session.residency === "partial" && !repairsPending(chatID)) {
+    // The window is the server's answer again: every repair this chat asked for has landed.
+    session.residency = "loaded";
+  }
+  bumpMessages(chatID, "load");
+}
+
+/** Whether this chat still has a repair out. Read after one lands, so `residency` goes back
+ *  to `loaded` only when nothing is missing rather than after whichever answer arrives last. */
+function repairsPending(chatID: string): boolean {
+  for (const r of turnRepairs.values()) {
+    if (r.chatID === chatID) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Seat a turn the store did not hold at the position its `turn_open.n` claims among the
+ *  resident turns. The ordinal is session-absolute in every window, so it orders a repaired
+ *  turn against the ones already held without a second projection; a turn whose ordinal
+ *  cannot be read goes at the end, where a newer turn belongs. */
+function insertTurnByOrdinal(session: Session, turnID: string, state: TurnState): void {
+  session.turns.set(turnID, state);
+  const n = turnOrdinal(state);
+  const at = session.turn_order.findIndex((id) => {
+    const other = session.turns.get(id);
+    return other !== undefined && turnOrdinal(other) > n;
+  });
+  if (at < 0) {
+    session.turn_order.push(turnID);
+    return;
+  }
+  session.turn_order.splice(at, 0, turnID);
+}
+
+function turnOrdinal(state: TurnState): number {
+  const open = state.entries[0];
+  if (open?.kind !== "turn_open") {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const payload = open.payload as { n?: unknown };
+  return typeof payload.n === "number" ? payload.n : Number.MAX_SAFE_INTEGER;
 }

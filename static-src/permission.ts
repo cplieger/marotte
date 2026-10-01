@@ -39,6 +39,7 @@ import { editNativeRule } from "./actions/permissions.js";
 import { openChange } from "./navigate.js";
 import { openSetting } from "./settings-highlight.js";
 import { get } from "./store.js";
+import { payloadOf } from "./turns.js";
 import { ICON_DIFF } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 
@@ -68,8 +69,8 @@ export function buildPermissionCard(
 }
 
 /** The agent's own arguments for the tool it is asking to run — the thing the
- *  user is actually approving. Walks back from the newest message because the
- *  ask is about the turn in flight. */
+ *  user is actually approving. Walks back from the newest turn because the ask
+ *  is about the turn in flight. */
 function lookupToolInput(chatID: string, toolCallID: string): unknown {
   if (toolCallID === "") {
     return undefined;
@@ -78,14 +79,17 @@ function lookupToolInput(chatID: string, toolCallID: string): unknown {
   if (s === undefined) {
     return undefined;
   }
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = s.messages[i];
-    if (m?.tool_calls === undefined) {
+  for (let i = s.turn_order.length - 1; i >= 0; i--) {
+    const turnID = s.turn_order[i];
+    const t = turnID === undefined ? undefined : s.turns.get(turnID);
+    if (t === undefined) {
       continue;
     }
-    for (const tc of m.tool_calls) {
-      if (tc.id === toolCallID) {
-        return tc.input;
+    for (let j = t.entries.length - 1; j >= 0; j--) {
+      const e = t.entries[j];
+      const call = e === undefined ? undefined : payloadOf(e, "tool_call");
+      if (call?.id === toolCallID) {
+        return call.input;
       }
     }
   }

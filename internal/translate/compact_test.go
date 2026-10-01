@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -24,21 +23,53 @@ func summarizationInfo(t *testing.T, status, summary string) json.RawMessage {
 	})
 }
 
-// eventMsgsByKind returns the persisted RoleEvent messages on chatID whose
-// EventKind matches.
-func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID marotte.ChatID, kind marotte.EventKind) []marotte.Message {
-	t.Helper()
-	c, ok := store.Get(t.Context(), chatID)
-	if !ok {
-		return nil
-	}
-	var got []marotte.Message
-	for _, m := range c.Messages {
-		if m.EventKind == kind {
-			got = append(got, m)
+// entriesOfKind is the subset of entries of one kind, in seal order.
+func entriesOfKind(entries []marotte.Entry, kind marotte.EntryKind) []marotte.Entry {
+	var got []marotte.Entry
+	for _, e := range entries {
+		if e.Kind == kind {
+			got = append(got, e)
 		}
 	}
 	return got
+}
+
+// compactionsOf decodes every compaction entry in entries, in seal order.
+func compactionsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryCompaction {
+	t.Helper()
+	var out []marotte.EntryCompaction
+	for _, e := range entriesOfKind(entries, marotte.EntryKindCompaction) {
+		var p marotte.EntryCompaction
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatalf("decode compaction %q: %v", e.ID, err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// compactionFailuresOf decodes every compaction_failed entry in entries.
+func compactionFailuresOf(t *testing.T, entries []marotte.Entry) []marotte.EntryCompactionFailed {
+	t.Helper()
+	var out []marotte.EntryCompactionFailed
+	for _, e := range entriesOfKind(entries, marotte.EntryKindCompactionFailed) {
+		var p marotte.EntryCompactionFailed
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatalf("decode compaction_failed %q: %v", e.ID, err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// entryKinds is the entries' kinds in seal order: the shape a mid-turn compaction is
+// judged on, since where the summary sits is log position and nothing else.
+func entryKinds(entries []marotte.Entry) []marotte.EntryKind {
+	kinds := make([]marotte.EntryKind, 0, len(entries))
+	for _, e := range entries {
+		kinds = append(kinds, e.Kind)
+	}
+	return kinds
 }
 
 // errorPayloads collects every EventError payload broadcast.
@@ -69,11 +100,9 @@ func countCompactionStarted(events *[]marotte.ServerEvent) int {
 	return n
 }
 
-// TestHandleV3Summarization_CanceledIsBenign pins the fix for the MED finding:
-// a KAS summarization "canceled"/"cancelled" reason is benign and must NOT
-// surface a failed-compaction boundary (EventCompactFailed message) or an
-// error banner (EventError broadcast). It is a quiet no-op — the turn simply
-// continues uncompacted, so nothing reaches the client.
+// TestHandleV3Summarization_CanceledIsBenign pins that a KAS summarization
+// "canceled"/"cancelled" reason is a quiet no-op: no compaction entry, no
+// compaction_failed entry, no error banner, no host tell, nothing on the wire.
 func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 	for _, status := range []string{"canceled", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
@@ -82,11 +111,11 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, ""), FrameAttribution{})
 
-			if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed); len(msgs) != 0 {
-				t.Errorf("EventCompactFailed messages = %d, want 0 (cancel is benign)", len(msgs))
+			if got := deps.between["c1"]; len(got) != 0 {
+				t.Errorf("between-turns entries = %v, want none (cancel is benign)", entryKinds(got))
 			}
-			if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompacted); len(msgs) != 0 {
-				t.Errorf("EventCompacted messages = %d, want 0 (cancel is not a completion)", len(msgs))
+			if got := deps.chatEntries("c1"); len(got) != 0 {
+				t.Errorf("turn entries = %v, want none (cancel is benign)", entryKinds(got))
 			}
 			if p := errorPayloads(t, events); len(p) != 0 {
 				t.Errorf("EventError broadcasts = %+v, want none (cancel must not banner)", p)
@@ -104,35 +133,36 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 	}
 }
 
-// TestHandleV3Summarization_SuccessCompletes pins that a "success" reason still
-// drives the completion path after injectContextRecovery was removed: exactly
-// one EventCompacted message carrying the summary is persisted and the
-// CompactionWatermark is set to that message's id — with no failure surface.
-//
-// It also pins the POSITION for the between-turns case: with no turn open there is
-// nothing to seal, so the event is the only message the frame appends.
+// TestHandleV3Summarization_SuccessCompletes pins the between-turns completion:
+// with no turn open there is nothing to seal, so the compaction entry is the one
+// entry the frame files, after the newest turn's close, and the header's
+// watermark names it.
 func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
 
-	msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompacted)
-	if len(msgs) != 1 {
-		t.Fatalf("EventCompacted messages = %d, want 1", len(msgs))
+	between := deps.between["c1"]
+	if got := entryKinds(between); len(got) != 1 || got[0] != marotte.EntryKindCompaction {
+		t.Fatalf("between-turns entries = %v, want just the compaction", got)
 	}
-	if msgs[0].Content != "history summary" {
-		t.Errorf("EventCompacted content = %q, want %q", msgs[0].Content, "history summary")
+	if got := compactionsOf(t, between); got[0].Summary != "history summary" {
+		t.Errorf("compaction summary = %q, want %q", got[0].Summary, "history summary")
 	}
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
-		t.Errorf("persisted roles = %v, want just the event (nothing to seal between turns)", got)
+	if got := deps.chatEntries("c1"); len(got) != 0 {
+		t.Errorf("turn entries = %v, want none (nothing to seal between turns)", entryKinds(got))
+	}
+	wantID := marotte.CompactionEntryID([]byte("history summary"), 1)
+	if between[0].ID != wantID {
+		t.Errorf("compaction entry id = %q, want the summary-derived %q", between[0].ID, wantID)
 	}
 	c, _ := store.Get(t.Context(), "c1")
-	if c.CompactionWatermark != "evt-1" {
-		t.Errorf("CompactionWatermark = %q, want %q (must equal the compacted event id)", c.CompactionWatermark, "evt-1")
+	if c.CompactionWatermark != wantID {
+		t.Errorf("CompactionWatermark = %q, want the compaction entry's id %q", c.CompactionWatermark, wantID)
 	}
-	if failed := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed); len(failed) != 0 {
-		t.Errorf("EventCompactFailed messages = %d, want 0 on success", len(failed))
+	if !hasEntryAppended(events, marotte.EntryKindCompaction) {
+		t.Errorf("no entry_appended{compaction} on the wire; events = %d", len(*events))
 	}
 	if len(deps.compactionFailures) != 0 {
 		t.Errorf("CompactionFailed calls = %+v, want none on success", deps.compactionFailures)
@@ -142,151 +172,124 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	}
 }
 
-// roleOrder is the persisted messages' roles, in order — the shape a mid-turn
-// compaction is judged on, since where the summary sits is array position and
-// nothing else.
-func roleOrder(t *testing.T, store *testsupport.InMemoryChatStore, chatID marotte.ChatID) []marotte.Role {
-	t.Helper()
-	c, ok := store.Get(t.Context(), chatID)
-	if !ok {
-		t.Fatalf("chat %q not found", chatID)
-	}
-	roles := make([]marotte.Role, 0, len(c.Messages))
-	for _, m := range c.Messages {
-		roles = append(roles, m.Role)
-	}
-	return roles
-}
-
-// A compaction that lands MID-TURN seals the turn first, so the summary sits
-// between what the model said before it and what it says after — the position the
-// compaction actually happened at.
-//
-// Without the seal the event is a sibling of the whole turn, and the two paths
-// disagree: live it appends AFTER the reply, because the assistant message is only
-// persisted at turn end, while a replay projects it BEFORE.
-func TestHandleV3Summarization_SealsTheSegmentBeforeTheEvent(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
-	// A turn in flight with two blocks buffered, as a reply mid-stream is.
-	buf := deps.bufStore.GetOrInit("c1")
-	buf.StartTurn("m-pre")
-	buf.AppendTextDelta("before the compaction", "")
-	buf.AppendThinkingDelta("thinking about it", "")
-
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
-
-	got := roleOrder(t, store, "c1")
-	want := []marotte.Role{marotte.RoleAssistant, marotte.RoleEvent}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("persisted roles = %v, want %v (the sealed segment must precede the summary)", got, want)
-	}
-
-	c, _ := store.Get(t.Context(), "c1")
-	seg := c.Messages[0]
-	if seg.ID != "m-pre" {
-		t.Errorf("sealed segment id = %q, want the streamed message's %q", seg.ID, "m-pre")
-	}
-	if seg.Content != "before the compaction" || seg.Reasoning != "thinking about it" {
-		t.Errorf("sealed segment content = %q / reasoning = %q, want the pre-compaction pair",
-			seg.Content, seg.Reasoning)
-	}
-	if len(seg.Blocks) != 2 {
-		t.Errorf("sealed segment carried %d blocks, want the 2 buffered before the compaction", len(seg.Blocks))
-	}
-	// The TURN is not over, so the segment carries none of the turn's own facts:
-	// exactly one message per turn may claim the outcome, and a second carrier
-	// opens a spurious segment for both projections.
-	if seg.TurnOutcome != "" {
-		t.Errorf("sealed segment TurnOutcome = %q, want empty (the turn has not ended)", seg.TurnOutcome)
-	}
-	if c.CompactionWatermark != "evt-1" {
-		t.Errorf("CompactionWatermark = %q, want the event's id %q", c.CompactionWatermark, "evt-1")
-	}
-
-	// And the rest of the turn accumulates into a fresh message rather than
-	// re-extending the one already on disk.
-	if after := deps.bufStore.Get("c1").TakeTurn(); after.Content != "" || after.Started {
-		t.Errorf("after the seal the buffer holds %q with Started = %t, want empty and false",
-			after.Content, after.Started)
-	}
-}
-
-// A turn holding a tool call still in flight is NOT split, so the summary lands
-// after the turn instead.
-//
-// The alternative is worse than the wrong position: an update resolves its call
-// against the current buffer, so a call sealed mid-flight can never be written
-// back and its card renders as a permanent spinner in a message nothing rewrites.
-func TestHandleV3Summarization_DoesNotSealWithAToolInFlight(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
-	deps.sealRefusals = map[marotte.ChatID]bool{"c1": true}
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
-	buf := deps.bufStore.GetOrInit("c1")
-	buf.StartTurn("m-pre")
-	buf.AppendTextDelta("before the compaction", "")
-	buf.AppendToolCall(&marotte.ToolCall{ID: "t-1", Status: marotte.ToolInProgress})
-
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
-
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
-		t.Errorf("persisted roles = %v, want just the event (a declined split appends nothing else)", got)
-	}
-	// The turn keeps its content, so its closer still persists the whole reply.
-	if snap := deps.bufStore.Get("c1").TakeTurn(); snap.Content != "before the compaction" {
-		t.Errorf("after a declined split the buffer holds %q, want the turn's content intact", snap.Content)
-	}
-}
-
-// A compaction between turns appends the event and nothing else: there is no
-// position inside a turn to seal at.
-func TestHandleV3Summarization_NoTurnOpenAppendsOnly(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
-
-	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
-
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
-		t.Errorf("persisted roles = %v, want just the event", got)
-	}
-}
-
-// A FAILED compaction is a notice rather than a boundary — nothing about the
-// context changed, so there is no point for it to sit at and the turn is left
-// whole.
-func TestHandleV3Summarization_FailureDoesNotSealTheTurn(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+// A compaction that lands MID-TURN seals every lane first, so the summary sits
+// between what the model said before it and what it says after: the position the
+// compaction happened at, and the position the replay projects it to.
+func TestHandleV3Summarization_SealsTheLanesBeforeTheEntry(t *testing.T) {
+	deps, events, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
-	buf := deps.bufStore.GetOrInit("c1")
-	buf.StartTurn("m-pre")
-	buf.AppendTextDelta("mid-reply", "")
+	turn := deps.turns.chatTurn("c1")
+	if _, err := turn.TextDelta(t.Context(), "", "say-1", "before the compaction"); err != nil {
+		t.Fatalf("stage the open text: %v", err)
+	}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
+
+	sealed := deps.chatEntries("c1")
+	want := []marotte.EntryKind{marotte.EntryKindText, marotte.EntryKindCompaction}
+	if got := entryKinds(sealed); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("sealed entries = %v, want %v (the open text seals ahead of the summary)", got, want)
+	}
+	var text marotte.EntryText
+	if err := json.Unmarshal(sealed[0].Payload, &text); err != nil || text.Text != "before the compaction" {
+		t.Errorf("sealed text = %q (%v), want the pre-compaction prose", text.Text, err)
+	}
+	if turn.Closed() {
+		t.Error("the turn closed on a compaction; only the turn end closes it")
+	}
+	if open := turn.OpenEntries(); len(open) != 0 {
+		t.Errorf("open entries after the seal = %d, want 0", len(open))
+	}
+	c, _ := store.Get(t.Context(), "c1")
+	if c.CompactionWatermark != sealed[1].ID {
+		t.Errorf("CompactionWatermark = %q, want the compaction entry's id %q", c.CompactionWatermark, sealed[1].ID)
+	}
+	if got := deps.between["c1"]; len(got) != 0 {
+		t.Errorf("between-turns entries = %v, want none while a turn is open", entryKinds(got))
+	}
+	if !hasEntryAppended(events, marotte.EntryKindCompaction) {
+		t.Errorf("no entry_appended{compaction} on the wire; events = %d", len(*events))
+	}
+
+	// The rest of the turn opens a fresh entry rather than re-extending the sealed one.
+	if _, err := turn.TextDelta(t.Context(), "", "say-1", "after"); err != nil {
+		t.Fatalf("stage the follow-on text: %v", err)
+	}
+	if open := turn.OpenEntries(); len(open) != 1 || open[0].Text != "after" {
+		t.Errorf("open entries after the follow-on delta = %+v, want one holding %q", open, "after")
+	}
+	if got := deps.chatEntries("c1"); len(got) != 2 {
+		t.Errorf("sealed entries after the follow-on delta = %d, want still 2", len(got))
+	}
+}
+
+// A tool call still in flight does not hold the compaction back: its result is an
+// entry of its own and lands in the turn after the summary.
+func TestHandleV3Summarization_AToolCallInFlightStillLandsAfterTheEntry(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	turn := deps.turns.chatTurn("c1")
+	if _, err := turn.ToolCall(t.Context(), "", &marotte.EntryToolCall{ID: "t-1", Status: marotte.ToolInProgress}); err != nil {
+		t.Fatalf("stage the tool call: %v", err)
+	}
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
+	if _, err := turn.ToolResult(t.Context(), "", "t-1", &marotte.EntryToolResult{Status: marotte.ToolCompleted}); err != nil {
+		t.Fatalf("settle the tool call: %v", err)
+	}
+
+	want := []marotte.EntryKind{marotte.EntryKindToolCall, marotte.EntryKindCompaction, marotte.EntryKindToolResult}
+	got := entryKinds(deps.chatEntries("c1"))
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Errorf("sealed entries = %v, want %v", got, want)
+	}
+}
+
+// A FAILED compaction is a notice rather than a boundary, but it is still an entry
+// of the turn: it seals what was open and sits where it happened, and the turn goes
+// on. Nothing about the context changed, so no watermark moves.
+func TestHandleV3Summarization_FailureLandsInTheTurnWithoutAWatermark(t *testing.T) {
+	deps, events, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	turn := deps.turns.chatTurn("c1")
+	if _, err := turn.TextDelta(t.Context(), "", "say-1", "mid-reply"); err != nil {
+		t.Fatalf("stage the open text: %v", err)
+	}
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
 
-	if got := roleOrder(t, store, "c1"); len(got) != 1 || got[0] != marotte.RoleEvent {
-		t.Errorf("persisted roles = %v, want just the failed-compaction event", got)
+	want := []marotte.EntryKind{marotte.EntryKindText, marotte.EntryKindCompactionFailed}
+	sealed := deps.chatEntries("c1")
+	if got := entryKinds(sealed); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("sealed entries = %v, want %v", got, want)
 	}
-	if snap := deps.bufStore.Get("c1").TakeTurn(); snap.Content != "mid-reply" {
-		t.Errorf("after a failed compaction the buffer holds %q, want the turn's content intact", snap.Content)
+	if turn.Closed() {
+		t.Error("the turn closed on a failed compaction; only the turn end closes it")
+	}
+	if c, _ := store.Get(t.Context(), "c1"); c.CompactionWatermark != "" {
+		t.Errorf("CompactionWatermark = %q, want empty (nothing was compacted)", c.CompactionWatermark)
+	}
+	if !hasEntryAppended(events, marotte.EntryKindCompactionFailed) {
+		t.Errorf("no entry_appended{compaction_failed} on the wire; events = %d", len(*events))
 	}
 }
 
 // TestHandleV3Summarization_GenuineErrorFails is the regression guard that the
-// canceled special-case did not swallow real failures: a genuine "error"
-// reason still persists an EventCompactFailed boundary AND broadcasts a
-// compaction_failed error banner.
+// canceled special-case did not swallow real failures: a genuine "error" reason
+// still files a compaction_failed entry AND broadcasts the turn-scoped error
+// banner AND tells the host.
 func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
-	deps, events, store := depsWithStore(t, "c1")
+	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
 
-	msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed)
-	if len(msgs) != 1 {
-		t.Fatalf("EventCompactFailed messages = %d, want 1", len(msgs))
+	failed := compactionFailuresOf(t, deps.between["c1"])
+	if len(failed) != 1 {
+		t.Fatalf("compaction_failed entries = %d, want 1", len(failed))
 	}
-	if msgs[0].Content != "error" {
-		t.Errorf("EventCompactFailed content = %q, want %q", msgs[0].Content, "error")
+	if failed[0].Reason != "error" {
+		t.Errorf("compaction_failed reason = %q, want %q", failed[0].Reason, "error")
 	}
 	p := errorPayloads(t, events)
 	if len(p) != 1 {
@@ -298,16 +301,18 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	if p[0].Message != "error" {
 		t.Errorf("error message = %q, want %q", p[0].Message, "error")
 	}
+	if !p[0].TurnScoped {
+		t.Error("the compaction error banner is not turn-scoped")
+	}
 	if len(deps.compactionFailures) != 1 || deps.compactionFailures[0].chatID != "c1" || deps.compactionFailures[0].detail != "error" {
 		t.Errorf("CompactionFailed calls = %+v, want one call for c1 with detail error", deps.compactionFailures)
 	}
 }
 
 // TestHandleV3Summarization_RunningStarts pins that a "running" reason
-// broadcasts exactly one compaction_started signal and persists no terminal
-// (compacted/failed) event.
+// broadcasts exactly one compaction_started signal and files no entry.
 func TestHandleV3Summarization_RunningStarts(t *testing.T) {
-	deps, events, store := depsWithStore(t, "c1")
+	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "running", ""), FrameAttribution{})
@@ -321,97 +326,51 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	if p := errorPayloads(t, events); len(p) != 0 {
 		t.Errorf("EventError broadcasts = %+v, want none while running", p)
 	}
-	if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompacted); len(msgs) != 0 {
-		t.Errorf("EventCompacted messages = %d, want 0 while running", len(msgs))
-	}
-	if msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed); len(msgs) != 0 {
-		t.Errorf("EventCompactFailed messages = %d, want 0 while running", len(msgs))
+	if got := deps.between["c1"]; len(got) != 0 {
+		t.Errorf("between-turns entries = %v, want none while running", entryKinds(got))
 	}
 }
 
-// The compacted-event append logs an error when it FAILS and says nothing when
-// it succeeds. The quiet half is the half worth pinning: compaction runs on
-// every long conversation, so an error line on the ordinary path trains an
-// operator to scroll past the one that means the breadcrumb was really lost.
-func TestHandleV3Summarization_CompactedAppendSpeaksOnlyOnFailure(t *testing.T) {
-	tests := []struct {
-		appendErr  error
-		name       string
-		wantLogged bool
-	}{
-		{name: "a_successful_append_is_silent", appendErr: nil, wantLogged: false},
-		{name: "a_failed_append_reports_itself", appendErr: errBoom, wantLogged: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+// A compaction that lands says nothing in the log, whether it completed or failed:
+// compaction runs on every long conversation, so a line on the ordinary path trains
+// an operator to scroll past the one that means the entry was really refused (which
+// is the write-error rule's Warn, pinned in tombstone_drop_test.go).
+func TestHandleV3Summarization_ALandedCompactionIsSilent(t *testing.T) {
+	for _, status := range []string{"success", "error"} {
+		t.Run(status, func(t *testing.T) {
 			var logs bytes.Buffer
 			t.Cleanup(captureSlog(&logs))
-			deps, _ := newEventCaptureDeps()
-			deps.store = &recStore{appendErr: tc.appendErr}
+			deps, _, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), FrameAttribution{})
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, "history summary"), FrameAttribution{})
 
-			got := strings.Contains(logs.String(), `msg="compaction: append event"`)
-			if got != tc.wantLogged {
-				t.Errorf("HandleSessionInfoUpdate(success, appendErr=%v) logged the append error = %t, want %t; logs = %q",
-					tc.appendErr, got, tc.wantLogged, logs.String())
-			}
-		})
-	}
-}
-
-// The compaction-FAILED event's own append follows the same rule: the error
-// line belongs to the persist failing, not to a compaction failure being
-// recorded successfully. The error banner reaches the client either way, so a
-// line here would be the second report of a failure already surfaced.
-func TestHandleV3Summarization_FailedEventAppendSpeaksOnlyOnFailure(t *testing.T) {
-	tests := []struct {
-		appendErr  error
-		name       string
-		wantLogged bool
-	}{
-		{name: "a_successful_append_is_silent", appendErr: nil, wantLogged: false},
-		{name: "a_failed_append_reports_itself", appendErr: errBoom, wantLogged: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var logs bytes.Buffer
-			t.Cleanup(captureSlog(&logs))
-			deps, _ := newEventCaptureDeps()
-			deps.store = &recStore{appendErr: tc.appendErr}
-			tr := New(rolesOf(deps))
-
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), FrameAttribution{})
-
-			got := strings.Contains(logs.String(), `msg="compaction: append failed event"`)
-			if got != tc.wantLogged {
-				t.Errorf("HandleSessionInfoUpdate(error, appendErr=%v) logged the append error = %t, want %t; logs = %q",
-					tc.appendErr, got, tc.wantLogged, logs.String())
+			if got := logs.String(); strings.Contains(got, "level=WARN") || strings.Contains(got, "level=ERROR") {
+				t.Errorf("a landed %q compaction logged:\n%s", status, got)
 			}
 		})
 	}
 }
 
 func TestHandleCompactionFailed_BoundsAndSanitizesTheDetail(t *testing.T) {
-	deps, events, store := depsWithStore(t, "c1")
+	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	detail := strings.Repeat("x", maxCompactionDetailBytes) + "\nsecret tail"
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, detail, ""), FrameAttribution{})
 
-	msgs := eventMsgsByKind(t, store, "c1", marotte.EventCompactFailed)
-	if len(msgs) != 1 {
-		t.Fatalf("EventCompactFailed messages = %d, want 1", len(msgs))
+	failed := compactionFailuresOf(t, deps.between["c1"])
+	if len(failed) != 1 {
+		t.Fatalf("compaction_failed entries = %d, want 1", len(failed))
 	}
-	if strings.Contains(msgs[0].Content, "\n") || strings.Contains(msgs[0].Content, "secret tail") {
-		t.Errorf("bounded detail = %q, want one sanitized line without the tail", msgs[0].Content)
+	if strings.Contains(failed[0].Reason, "\n") || strings.Contains(failed[0].Reason, "secret tail") {
+		t.Errorf("bounded detail = %q, want one sanitized line without the tail", failed[0].Reason)
 	}
 	payloads := errorPayloads(t, events)
-	if len(payloads) != 1 || payloads[0].Message != msgs[0].Content {
-		t.Errorf("error payloads = %+v, want the persisted bounded detail %q", payloads, msgs[0].Content)
+	if len(payloads) != 1 || payloads[0].Message != failed[0].Reason {
+		t.Errorf("error payloads = %+v, want the filed bounded detail %q", payloads, failed[0].Reason)
 	}
-	if len(deps.compactionFailures) != 1 || deps.compactionFailures[0].detail != msgs[0].Content {
-		t.Errorf("CompactionFailed calls = %+v, want the persisted bounded detail %q", deps.compactionFailures, msgs[0].Content)
+	if len(deps.compactionFailures) != 1 || deps.compactionFailures[0].detail != failed[0].Reason {
+		t.Errorf("CompactionFailed calls = %+v, want the filed bounded detail %q", deps.compactionFailures, failed[0].Reason)
 	}
 }

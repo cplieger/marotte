@@ -128,8 +128,14 @@ type Store struct {
 	path     string
 	kasPath  string
 	onChange func(context.Context)
-	servers  []*Server
-	mu       sync.RWMutex
+	// honourAutoApprove answers whether the security profile in force lets a
+	// server's `auto_approve` list reach the agent. Read on every WRITE rather than
+	// captured at construction: the profile is a setting the user changes while the
+	// store is alive, and a captured value would render the posture that was in
+	// force at boot for the rest of the process.
+	honourAutoApprove func(context.Context) bool
+	servers           []*Server
+	mu                sync.RWMutex
 }
 
 // New loads the file (or initialises empty) and returns a ready store.
@@ -183,6 +189,44 @@ type Option func(*Store)
 // own ~/.kiro/settings/mcp.json — which is exactly what happened once.
 func WithKASConfigPath(path string) Option {
 	return func(s *Store) { s.kasPath = path }
+}
+
+// WithAutoApprove supplies the resolver for whether the security profile in force
+// lets a server's `auto_approve` list reach the agent.
+//
+// A FUNCTION rather than a value, because the profile is a setting the user
+// changes while the store is alive: the composition root wires a closure that
+// reads the setting, and every render then answers with the rung actually in
+// force. `policyfile.HonoursAutoApprove` owns the rung table and the unknown-id
+// fallback, so this package never holds the ladder's vocabulary.
+//
+// Unwired means SUSPEND — see [Store.honoursAutoApprove].
+func WithAutoApprove(fn func(context.Context) bool) Option {
+	return func(s *Store) { s.honourAutoApprove = fn }
+}
+
+// honoursAutoApprove resolves the posture for one render.
+//
+// NO RESOLVER MEANS FALSE, which is the fail-closed direction and is chosen
+// rather than inherited: the ladder's own default rung honours nothing, so a
+// composition that forgot to wire this renders exactly what `guarded` renders. The
+// alternative — defaulting to honour, preserving the behaviour before this option
+// existed — would make a missing wire silently WIDEN every instance, and a
+// widening nobody authored is the defect this whole mechanism removes.
+//
+// It is not a construction refusal like New's nil-ctx check, because that would
+// make every test and every future caller declare a posture to get a store.
+//
+// The field is read WITHOUT the mutex, and must stay that way: it is write-once in
+// New like ctx and kasPath, never swappable like onChange, and this is reached from
+// writeKASConfig — which persist calls with s.mu held for WRITING, so an RLock here
+// would deadlock the one path that matters. The resolver itself must not call back
+// into the store for the same reason.
+func (s *Store) honoursAutoApprove(ctx context.Context) bool {
+	if s.honourAutoApprove == nil {
+		return false
+	}
+	return s.honourAutoApprove(ctx)
 }
 
 // SetOnChange replaces the change callback.

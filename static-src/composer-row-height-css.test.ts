@@ -411,31 +411,22 @@ describe("the composer, measured at real viewport sizes", () => {
     }
   });
 
-  it("paints the same INK in Send as in the control beside it", async () => {
-    // The other half of the reported defect, and the one a box measurement misses.
-    // `--icon-ui` sizes a glyph's BOX; the eye compares the INK inside it, and Lucide
-    // draws this arrow edge to edge — PATH_SEND spans 20 of 24 viewBox units against
-    // PATH_PLUS's 14 — so at an identical box it painted 43% more ink. `.send-btn`
-    // scales its glyph by 14/20 to normalise that, which is why this compares rendered
-    // ink rather than the `width` either rule declares.
+  it("sizes Send's glyph box with the same token as the control beside it", async () => {
+    // Send swaps faces (send, stop, steer), so a per-path ink correction cannot live
+    // on it: every face takes `--icon-ui`, the box the sibling's glyph has too.
     await bandsAt(390, 844, "coarse");
     withSendGlyph();
-    const ink = (id: string): number => {
+    const glyph = (id: string): DOMRect => {
       const svg = document.querySelector(`#${id} svg`);
       if (!(svg instanceof SVGGraphicsElement)) {
         throw new Error(`${id} has no glyph`);
       }
-      const box = svg.getBoundingClientRect();
-      const bb = svg.getBBox();
-      // getBBox is in viewBox units; every glyph here declares a 24-unit viewBox.
-      return Math.max(bb.width, bb.height) * (box.width / 24);
+      return svg.getBoundingClientRect();
     };
-    const send = ink("send-btn");
-    const sibling = ink("chat-options-btn");
-    expect(send, `Send paints ${send.toFixed(1)}px against ${sibling.toFixed(1)}px`).toBeCloseTo(
-      sibling,
-      0,
-    );
+    const send = glyph("send-btn");
+    const sibling = glyph("chat-options-btn");
+    expect(send.width).toBeCloseTo(sibling.width, 1);
+    expect(send.height).toBeCloseTo(sibling.height, 1);
   });
 
   it("matches them on a wide viewport with no pointer tier resolved yet", async () => {

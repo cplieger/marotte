@@ -1,7 +1,8 @@
 package agent
 
-// Tests for bridge_coord.go: override application, fast model switch, registry
-// teardown on the last bridge, turn-ended push behaviour, and the silent successes.
+// Tests for bridge_coord.go: override application, the in-session model switch and
+// its record, registry teardown on the last bridge, the turn-close push, and the
+// silent successes.
 
 import (
 	"context"
@@ -17,9 +18,9 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/kirosession"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // --- helpers ---
@@ -48,12 +49,12 @@ func (b *recordingStartBridge) startOpts() marotte.StartOpts {
 	return b.lastStart
 }
 
-func newRecordingStartHub(t *testing.T) (*Runtime, *fakeChatStore, *recordingStartBridge) {
+func newRecordingStartHub(t *testing.T) (*Runtime, *testChatStore, *recordingStartBridge) {
 	t.Helper()
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	rb := newRecordingStartBridge()
 	h := New(t.Context(), "/tmp/rec-start", func() ACPBridge { return rb }, cs)
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	return h, cs, rb
 }
@@ -125,7 +126,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 	// the load's.
 	var mu sync.Mutex
 	var spawned []*recordingStartBridge
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	h := New(t.Context(), t.TempDir(), func() ACPBridge {
 		rb := newRecordingStartBridge()
 		mu.Lock()
@@ -133,7 +134,7 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 		mu.Unlock()
 		return rb
 	}, cs)
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 
 	ctx := t.Context()
@@ -171,13 +172,13 @@ func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
 	}
 }
 
-// --- TryFastModelSwitch ---
+// --- ApplyModelSwitch ---
 
 // A successful in-session SetModel returns true, and the chat's reasoning-effort
 // level is re-applied after the swap. The re-apply is the load-bearing half: KAS
 // reconciles the session's effortLevel against the NEW model's tier list, so a chat
 // at max dropped to the new default while the record and the pill still read max.
-func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
+func TestApplyModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
@@ -185,83 +186,43 @@ func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", "max"); got != true {
-		t.Errorf("TryFastModelSwitch(success) = %v, want true", got)
+	if got := h.coord.ApplyModelSwitch(ctx, "c1", "m-new", "max"); got != true {
+		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "max" {
 		t.Errorf("effort re-applied after the swap = %q, want %q; KAS resets the level inside the model swap", got, "max")
 	}
 }
 
-// The fast path CLOSES whatever turn is open before it swaps, which is what the
-// restart fallback has always done through its own flush.
-//
-// An engine-opened turn holds no admission reservation, so nothing refuses a
-// switch that lands mid-turn — a second device, or the client's queue draining
-// while a workflow step's turn folds onto the launching chat. The
-// `model_switched` row this path persists is not turn-terminal, so without the
-// flush it is written into the body of a turn the switch had nothing to do with.
-func TestTryFastModelSwitch_ClosesTheTurnInFlight(t *testing.T) {
+// A switch never touches a turn: the session survives the swap, so a turn that was
+// going to finish still finishes with its accumulator intact and nothing closes it.
+// A busy chat's switch is parked on the header as pending_model and applied by the
+// closer instead, so reaching this path mid-turn (a second device, a client draining
+// its queue) must not displace the reply already on every screen.
+func TestApplyModelSwitch_TouchesNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
-	h.coord.StartTurn(ctx, "c1", marotte.TurnSourceWireTurnStart)
-	buf := h.stageTurnBuffer(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("the step's reply, still streaming")
-	if _, open := h.coord.turns.openEpoch("c1"); !open {
-		t.Fatal("the fixture left no turn open, so there is nothing for the switch to close")
+	id, log := streamingPromptTurn(t, h, "c1", "the user's own reply, still streaming")
+
+	if got := h.coord.ApplyModelSwitch(ctx, "c1", "m-new", ""); !got {
+		t.Fatalf("ApplyModelSwitch = %v, want true", got)
 	}
 
-	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); !got {
-		t.Fatalf("TryFastModelSwitch = %v, want true", got)
+	if after := h.liveTurn("c1"); after != log {
+		t.Errorf("open turn after the swap = %p, want the prompt's own %s (%p) still open", after, id, log)
 	}
-
-	if epoch, open := h.coord.turns.openEpoch("c1"); open {
-		t.Errorf("turn %d is still open after the fast switch; the model_switched row lands in its body", epoch)
-	}
-	// The content already on every client's screen is persisted rather than
-	// discarded: the session survives the fast swap, so nothing licenses dropping
-	// a reply somebody else's turn produced.
-	if got := assistantMessages(t, cs, "c1"); len(got) != 1 {
-		t.Errorf("persisted %d assistant messages, want the displaced step's reply", len(got))
-	}
-}
-
-// The other side of that guard: the caller's OWN prompt turn survives the swap.
-//
-// The restart fallback discards an in-flight turn because the bridge goes with
-// it; the fast path keeps the session, so a turn that was going to finish still
-// finishes. Widening the guard to any open turn destroyed exactly this.
-func TestTryFastModelSwitch_LeavesThePromptsOwnTurnOpen(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
-		t.Fatalf("OpenBridge: %v", err)
-	}
-	epoch := h.coord.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
-	buf := h.stageTurnBuffer(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("the user's own reply, still streaming")
-
-	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); !got {
-		t.Fatalf("TryFastModelSwitch = %v, want true", got)
-	}
-
-	if open, ok := h.coord.turns.openEpoch("c1"); !ok || open != epoch {
-		t.Errorf("open turn = %d (open %t), want the prompt's own %d", open, ok, epoch)
+	if closes := closesOf(t, logOf(t, cs, "c1")); len(closes) != 0 {
+		t.Errorf("the log holds %d turn_close after the swap, want 0: a switch closes no turn", len(closes))
 	}
 }
 
 // A chat that has chosen no level sends no effort call: there is nothing to
 // re-assert, and the service's own reconciliation is the right answer.
-func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
+func TestApplyModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
@@ -269,8 +230,8 @@ func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 		t.Fatalf("OpenBridge: %v", err)
 	}
 
-	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new", ""); got != true {
-		t.Errorf("TryFastModelSwitch(success) = %v, want true", got)
+	if got := h.coord.ApplyModelSwitch(ctx, "c1", "m-new", ""); got != true {
+		t.Errorf("ApplyModelSwitch(success) = %v, want true", got)
 	}
 	if got := br.lastEffort(); got != "" {
 		t.Errorf("effort applied = %q, want none for a chat that chose no level", got)
@@ -510,18 +471,18 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 // KAS reviews a whole turn at once, so there is no per-turn trust gate to test.
 
 // A non-cancelled turn fires the "Agent finished" push.
-func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
-	cs := newFakeChatStore()
+func TestSettleTurnOnResponse_NonCancelledFiresPush(t *testing.T) {
+	cs := newTestChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(t.Context(), "/tmp/push", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+	id, log := h.stagePromptTurn(t, "c1")
+	sayText(t, log)
 	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
+	h.SettleTurnOnResponse(ctx, "c1", id, 0, resp)
 
 	select {
 	case body := <-fp.sends:
@@ -535,40 +496,134 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 
 // --- success paths must not emit an error log ---
 
-// EmitTurnEndedWithStats logs no persist error when the assistant-turn
-// and cancel-event appends both succeed.
-func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
-	h, cs, _ := newTestHub()
+// A settled turn whose seal and close both land logs no error: the log is where an
+// operator looks for a failed persist, so a line there on every ordinary turn buries
+// the real one.
+func TestSettleTurnOnResponse_NoErrorLogOnSuccess(t *testing.T) {
+	h, _, _ := newTestHub()
 	ctx := t.Context()
-	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	epoch, buf := h.stagePromptTurn(t, "c1")
-	buf.Started = true
-	buf.MessageID = "m-asst"
+	id, _ := streamingPromptTurn(t, h, "c1", "the reply")
 
 	logs := captureLogs(t)
 	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
-	h.SettleTurnOnResponse(ctx, "c1", epoch, 0, resp)
+	h.SettleTurnOnResponse(ctx, "c1", id, 0, resp)
 
-	got := logs.String()
-	if strings.Contains(got, "persist assistant turn") {
-		t.Errorf("unexpected assistant-turn persist error log on success: %s", got)
-	}
-	if strings.Contains(got, "persist cancel event") {
-		t.Errorf("unexpected cancel-event persist error log on success: %s", got)
+	if got := logs.String(); strings.Contains(got, `"level":"ERROR"`) {
+		t.Errorf("an ERROR line on a turn that settled cleanly: %s", got)
 	}
 }
 
-// PersistModelSwitch logs nothing when the event append succeeds.
+// PersistModelSwitch logs nothing when the entry append and the header write both
+// succeed.
 func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
-	h.coord.PersistModelSwitch(ctx, "c1", "m-new", 1234)
-	if got := logs.String(); strings.Contains(got, "switch_model: append event") {
-		t.Errorf("unexpected append-event error log on success: %s", got)
+	h.coord.PersistModelSwitch(ctx, "c1", marotte.EntryModelSwitched{From: "m-old", To: "m-new"}, 1234)
+	if got := logs.String(); strings.Contains(got, "switch_model:") {
+		t.Errorf("unexpected switch_model error log on success: %s", got)
+	}
+}
+
+// A landed switch is one model_switched entry between turns plus a header that
+// takes the pick: pending_model cleared (or every later close re-applies the switch
+// and resets the counters again), the old model's tier dropped, usage reset to the
+// new context size.
+func TestPersistModelSwitch_RecordsTheSwitchAndClearsThePendingPick(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "m-old"
+		c.PendingModel = "m-new"
+		c.Effort = "max"
+		c.Usage = marotte.Usage{ContextSize: 100, Credits: 7}
+		return true
+	})
+
+	h.coord.PersistModelSwitch(ctx, "c1",
+		marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}, 1234)
+
+	entries := logOf(t, cs, "c1")
+	switches := switchesOf(t, entries)
+	// The tier travels on the entry: the banner names it, and the header clears its
+	// own copy two assertions below, so the entry is the only record of it.
+	if len(switches) != 1 || switches[0] != (marotte.EntryModelSwitched{From: "m-old", To: "m-new", Effort: "high"}) {
+		t.Errorf("model_switched entries = %+v, want one {From: m-old, To: m-new, Effort: high}", switches)
+	}
+	if closes := closesOf(t, entries); len(closes) != 0 {
+		t.Errorf("the log holds %d turn_close, want 0: the switch opened and closed no turn", len(closes))
+	}
+
+	c, ok := cs.Get(ctx, "c1")
+	if !ok {
+		t.Fatal("the chat vanished")
+	}
+	if c.Model != "m-new" || c.PendingModel != "" || c.Effort != "" {
+		t.Errorf("header after the switch = {Model %q, PendingModel %q, Effort %q}, want {m-new, \"\", \"\"}",
+			c.Model, c.PendingModel, c.Effort)
+	}
+	if c.Usage.ContextSize != 1234 || c.Usage.Credits != 0 {
+		t.Errorf("Usage after the switch = %+v, want the counters reset and ContextSize 1234", c.Usage)
+	}
+}
+
+// --- PersistEffortChange: the effort-only banner ---
+
+// An effort change picked BETWEEN turns is appended on its own, and its From == To
+// is what tells the renderer it was not a model switch.
+func TestPersistEffortChange_AppendsTheTierBetweenTurns(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+
+	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortMax)
+
+	switches := switchesOf(t, logOf(t, cs, "c1"))
+	want := marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "max"}
+	if len(switches) != 1 || switches[0] != want {
+		t.Errorf("model_switched entries = %+v, want one %+v", switches, want)
+	}
+}
+
+// The same pick DURING a turn folds into that turn instead, so a tier changed
+// mid-reply lands at the point it happened rather than after the turn closes.
+func TestPersistEffortChange_FoldsTheTierIntoAnOpenTurn(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; c.Model = "opus-5"; return true })
+	turnID, _ := streamingPromptTurn(t, h, "c1", "the reply")
+
+	h.coord.PersistEffortChange(ctx, "c1", "opus-5", marotte.EffortHigh)
+
+	entries := logOf(t, cs, "c1")
+	switches := switchesOf(t, entries)
+	want := marotte.EntryModelSwitched{From: "opus-5", To: "opus-5", Effort: "high"}
+	if len(switches) != 1 || switches[0] != want {
+		t.Fatalf("model_switched entries = %+v, want one %+v", switches, want)
+	}
+	for i := range entries {
+		if entries[i].Kind == marotte.EntryKindModelSwitched && entries[i].Turn != turnID {
+			t.Errorf("the entry sits in turn %q, want the open turn %q", entries[i].Turn, turnID)
+		}
+	}
+}
+
+// A chat with no model writes nothing: the renderer reads an empty To as
+// `Context reset`, which is neither true here nor recoverable, and CmdSetEffort
+// auto-creates a record so this is the ordinary state of a pick before the first
+// prompt.
+func TestPersistEffortChange_AChatWithNoModelWritesNothing(t *testing.T) {
+	h, cs, _ := newTestHub()
+	ctx := t.Context()
+	_, _ = cs.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	h.coord.PersistEffortChange(ctx, "c1", "", marotte.EffortHigh)
+
+	if switches := switchesOf(t, logOf(t, cs, "c1")); len(switches) != 0 {
+		t.Errorf("model_switched entries = %+v, want none for a modelless chat", switches)
 	}
 }
 
@@ -778,7 +833,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 			// Wire the reaper at CONSTRUCTION, not after: New starts
 			// sweepSessionsLoop, which reads these fields, so assigning them
 			// afterwards is a data race (caught by -race, not by plain go test).
-			cs := newFakeChatStore()
+			cs := newTestChatStore()
 			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
@@ -786,7 +841,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 						return map[string]struct{}{"sess_ref": {}}, tc.complete
 					},
 				))
-			cs.Bus = h
+			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 
 			h.sweepSessionsOnce()
@@ -811,9 +866,9 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	// newTestHub's factory hands back ONE shared fake so tests can inspect it;
 	// this test needs bridges with distinct session ids, so build the runtime with
 	// a per-spawn factory instead.
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs)
-	cs.Bus = h
+	cs.wire(h)
 
 	setSession := func(chatID marotte.ChatID, sessionID string) {
 		t.Helper()
@@ -981,13 +1036,13 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs := newFakeChatStore()
+			cs := newTestChatStore()
 			br := newFakeBridge()
 			br.mu.Lock()
 			br.supervisedAssertFails = tc.assertFails
 			br.mu.Unlock()
 			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs)
-			cs.Bus = h
+			cs.wire(h)
 			h.mcpRegistry.SignalReady()
 			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
@@ -1055,7 +1110,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			}
 			writeSessionRecord(t, sessDir, testReaperWorkDir)
 
-			cs := newFakeChatStore()
+			cs := newTestChatStore()
 			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
@@ -1063,7 +1118,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 						return map[string]struct{}{"sess_owned": {}}, true
 					},
 				))
-			cs.Bus = h
+			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 
 			ctx := t.Context()
@@ -1118,7 +1173,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 			}
 			writeSessionRecord(t, sessDir, testReaperWorkDir)
 
-			cs := newFakeChatStore()
+			cs := newTestChatStore()
 			h := New(t.Context(), testReaperWorkDir, func() ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir, testReaperWorkDir),
@@ -1126,7 +1181,7 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 						return map[string]struct{}{"sess_owned": {}}, true
 					},
 				))
-			cs.Bus = h
+			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 
 			// NO chat record: the escalation deleted it inside the close commit.
@@ -1179,12 +1234,11 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 	}
 }
 
-// TurnFoldTarget reads the chat store only when it has to OPEN a turn, not on every folded
-// frame. The two facts a turn records at open — the answering model and the credit baseline —
-// come from chat.Store.Get: a per-chat mutex, a whole-file read and a json.Unmarshal of the
-// entire history, per streamed delta and per tool frame. The cost scales with the TRANSCRIPT,
-// it contends with every persist on the same chat, and it runs on the only consumer of a
-// 256-slot channel. No benchmark sees it: the translate benchmarks' fold target is a fake.
+// TurnFoldTarget reads the chat store only when it has to OPEN a turn, not on every
+// folded frame. The open reads the header for the model the turn_open records; a fold
+// is a registry lookup, and it runs per streamed delta and per tool frame on the only
+// consumer of a 256-slot channel, contending with every persist on the same chat. No
+// benchmark sees it: the translate benchmarks' fold target is a fake.
 func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
@@ -1192,28 +1246,35 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// The first frame has no turn to fold into, so it opens one and pays for the facts.
-	h.coord.TurnFoldTarget(ctx, chatID, marotte.TurnSourceWireTurnStart)
+	first := h.coord.TurnFoldTarget(ctx, chatID)
+	if first == nil {
+		t.Fatal("TurnFoldTarget opened no turn, so there is no fold path to measure")
+	}
 	before := cs.Gets.Load()
 
 	for range 20 {
-		h.coord.TurnFoldTarget(ctx, chatID, marotte.TurnSourceWireTurnStart)
+		if got := h.coord.TurnFoldTarget(ctx, chatID); got != first {
+			t.Fatalf("a folded frame's target = %p, want the open turn %p", got, first)
+		}
 	}
 
 	if got := cs.Gets.Load(); got != before {
-		t.Errorf("chat reads = %d after 20 folded frames, want %d: the fold path reads and "+
-			"unmarshals the whole chat file per frame", got-before, 0)
+		t.Errorf("chat reads = %d after 20 folded frames, want %d: the fold path reads the "+
+			"chat header per frame", got-before, 0)
 	}
 }
 
-func TestOpenTurnBuffer_DoesNotOpenATurn(t *testing.T) {
+// OwnTurn is the fold for a frame that may join a turn but must never start one: on
+// an idle chat it answers nothing, opens nothing, and reads nothing.
+func TestOwnTurn_DoesNotOpenATurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	before := cs.Gets.Load()
 
-	if buf, ok := h.coord.OpenTurnBuffer("c1"); ok || buf != nil {
-		t.Errorf("OpenTurnBuffer(no open turn) = (%v, %t), want (nil, false)", buf, ok)
+	if log, ok := h.coord.OwnTurn("c1"); ok || log != nil {
+		t.Errorf("OwnTurn(no open turn) = (%v, %t), want (nil, false)", log, ok)
 	}
-	if _, open := h.coord.turns.openEpoch("c1"); open {
-		t.Error("OpenTurnBuffer opened a turn")
+	if h.coord.turns.live("c1") {
+		t.Error("OwnTurn opened a turn")
 	}
 	if got := cs.Gets.Load(); got != before {
 		t.Errorf("chat reads = %d, want %d", got, before)

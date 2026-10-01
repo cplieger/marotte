@@ -1,9 +1,10 @@
-// Knowledge-base actions: add / remove workspace knowledge contexts.
+// Knowledge-base actions: add / remove / re-index workspace knowledge contexts.
 //
 // The knowledge list is server-canonical (it lives in kiro-cli's global store,
 // not marotte's chat store) and is refetched after every mutation, so these
-// actions carry no optimistic state — `add` is async/background anyway (the
-// server returns a "indexing in background" message). See knowledge.ts.
+// actions carry no optimistic state — `add` and `reindex` are async/background
+// anyway (the server returns a "indexing in background" message). See
+// knowledge.ts.
 // ---------------------------------------------------------------------------
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
@@ -19,8 +20,9 @@ interface AddArgs {
 }
 
 /** POST /api/knowledge {path, name?} — start a background index of a directory.
- *  `error: false`: the add form surfaces the server's validation message inline
- *  (bad path, missing args) rather than as a toast. */
+ *  `error: false` because a validation message belongs beside the field it is
+ *  about: `knowledge.ts`'s add form reads the failure off the dispatch's typed
+ *  outcome and writes it into its own `<output>`. */
 export const addKnowledge = apiAction<AddArgs, { message?: string }>({
   name: "knowledge.add",
   idempotencyKey: true,
@@ -51,4 +53,25 @@ export const removeKnowledge = apiAction<RemoveArgs, void>({
     path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}`,
   }),
   error: "Couldn't remove knowledge base",
+});
+
+// --- knowledge.reindex ---
+
+interface ReindexArgs {
+  name: string;
+}
+
+// No auto-retry: the server issues an ASYNC `update` to kiro-cli, so a timed-out
+// POST may already be indexing and a retry would start a second pass over the
+// same directory. The name resolves to its indexed PATH server-side (kiro-cli's
+// `update` subcommand matches on the source path, not the name), so a base the
+// server cannot resolve answers 404 rather than silently indexing nothing.
+export const reindexKnowledge = apiAction<ReindexArgs, { message?: string }>({
+  name: "knowledge.reindex",
+  dedupe: (args) => `knowledge.reindex:${args.name}`,
+  request: ({ name }) => ({
+    method: "POST",
+    path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/reindex`,
+  }),
+  error: "Couldn't re-index knowledge base",
 });

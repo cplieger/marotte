@@ -132,33 +132,30 @@ func TestKnownKeys_CoversTheClientSurface(t *testing.T) {
 	}
 }
 
-// TestDefaultAgentIgnoreFiles_SeededAndDiscoverable pins the settled
-// "agent read filter ON by default" decision: the seeded ignore-file list is
-// non-empty and includes .gitignore + .kiroignore, EffectiveDefaults carries it
-// (so a fresh GET answers the real list rather than an empty one), and each
-// returned slice is a fresh copy callers can mutate without corrupting the
-// shared default.
-func TestDefaultAgentIgnoreFiles_SeededAndDiscoverable(t *testing.T) {
+// TestDefaultAgentIgnoreFiles_EmptyAndTheFloorCarriesEnforcement pins the
+// reversal of the seeded default and the mechanism that replaced it. The seeded
+// list is EMPTY, because every other Kiro client leaves a workspace ignore file
+// unapplied and a seeded list made marotte the one whose agent could not read
+// the local work files; what still enforces something is AgentIgnoreFloor, sent
+// whatever the list holds. The two halves are one test: an empty default with no
+// floor would be the read filter silently going away.
+func TestDefaultAgentIgnoreFiles_EmptyAndTheFloorCarriesEnforcement(t *testing.T) {
 	got := DefaultAgentIgnoreFiles()
-	if len(got) == 0 {
-		t.Fatal("DefaultAgentIgnoreFiles() is empty; a fresh install would not filter agent reads")
+	if len(got) != 0 {
+		t.Errorf("DefaultAgentIgnoreFiles() = %v, want it empty; a seeded entry filters reads nobody asked to filter", got)
 	}
-	if !slices.Contains(got, ".gitignore") || !slices.Contains(got, ".kiroignore") {
-		t.Errorf("DefaultAgentIgnoreFiles() = %v, want it to include .gitignore and .kiroignore", got)
+	// Non-nil, because the wire field carries no omitempty: nil marshals as null
+	// and the client's required string[] cannot hold one.
+	if got == nil {
+		t.Error("DefaultAgentIgnoreFiles() returned nil; it marshals as null and the client cannot decode it")
 	}
 
-	// The effective view must carry the seeded list, because this is the key whose
-	// absent-means-empty reading was a live data-losing bug: the client rendered an
-	// empty chip row while the filter was applying both patterns, and the first edit
-	// persisted that emptiness over them.
 	if list := EffectiveDefaults().AgentIgnoreFiles; !slices.Equal(list, DefaultAgentIgnoreFiles()) {
 		t.Errorf("EffectiveDefaults().AgentIgnoreFiles = %v, want %v", list, DefaultAgentIgnoreFiles())
 	}
 
-	// Fresh copy: mutating the returned slice must not affect the next call.
-	got[0] = "MUTATED"
-	if again := DefaultAgentIgnoreFiles(); again[0] == "MUTATED" {
-		t.Error("DefaultAgentIgnoreFiles() returned a shared slice; callers can corrupt the default")
+	if list := AgentIgnoreList(DefaultAgentIgnoreFiles()); !slices.Equal(list, []string{AgentIgnoreFloor}) {
+		t.Errorf("AgentIgnoreList(default) = %v, want just the floor %q", list, AgentIgnoreFloor)
 	}
 }
 

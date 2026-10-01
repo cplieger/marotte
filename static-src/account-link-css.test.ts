@@ -212,18 +212,13 @@ describe("the link's corner and box", () => {
   });
 });
 
-describe("the card's block position after the anchor started stretching", () => {
-  it.each(TIERS)("puts the card's bottom one --sp-1 above the footer's band at %s", (tier) => {
-    // ACCEPTED CONSEQUENCE, pinned rather than waved through. `.pill-status-content`
-    // is `bottom: calc(100% + var(--sp-1))` against `.popup-anchor`, so `100%` is the
-    // ANCHOR's height — and `align-self: stretch` changes it from the mark's 8px box
-    // to the footer's whole content band. The card RISES ~21.5px on desktop, and it
-    // stops overlapping its own trigger by the 17.5px it used to. That was tolerable
-    // while the trigger was an 8px disc under the card; it is not once the trigger is
-    // a 240px row painting a hover wash and a press wash.
-    //
-    // A CLAIM ABOUT THE NEW GEOMETRY rather than a snapshot of a number: the card's
-    // bottom edge sits `--sp-1` above the footer's own content-box top.
+describe("the card's block position", () => {
+  it.each(TIERS)("puts the card's bottom one --sp-1 above the TRIGGER at %s", (tier) => {
+    // `.pill-status-content` is `bottom: calc(100% + var(--sp-1))` against
+    // `.popup-anchor`, so `100%` is the ANCHOR's height. The claim is that the anchor
+    // wraps its trigger, which is what makes the declared 4px true — measured against
+    // the trigger rather than the footer's band, so it holds at every tier and reddens
+    // if the anchor starts stretching again.
     document.documentElement.dataset["pointer"] = tier;
     const { card, footer, btn } = mountFooter();
     open(btn, card);
@@ -234,13 +229,11 @@ describe("the card's block position after the anchor started stretching", () => 
     gapProbe.remove();
     expect(sp1).toBeGreaterThan(0);
 
-    const f = footer.getBoundingClientRect();
-    const border = parseFloat(getComputedStyle(footer).borderTopWidth);
-    const bandTop = f.top + border;
+    const top = btn.getBoundingClientRect().top;
     expect(
       card.getBoundingClientRect().bottom,
-      `the card's bottom against the band top ${bandTop}`,
-    ).toBeCloseTo(bandTop - sp1, 0);
+      `the card's bottom against the trigger's top ${top}`,
+    ).toBeCloseTo(top - sp1, 0);
   });
 });
 

@@ -115,12 +115,15 @@ function mountPanel(count: number, opts: { dual?: boolean } = {}): Panel {
   card.className = "uip-modal-dialog mcp-modal-card";
 
   const tabs = document.createElement("nav");
-  tabs.className = "mcp-modal-tabs";
+  tabs.className = "seg-bar mcp-modal-tabs";
   for (const label of ["Search registry", "Remote URL", "npm package", "Paste JSON"]) {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "mcp-modal-tab";
-    b.textContent = label;
+    b.className = "seg";
+    const span = document.createElement("span");
+    span.className = "seg-label";
+    span.textContent = label;
+    b.appendChild(span);
     tabs.appendChild(b);
   }
   card.appendChild(tabs);

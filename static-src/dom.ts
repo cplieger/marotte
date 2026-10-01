@@ -234,8 +234,8 @@ class Elements {
   get ctxLastTurn(): HTMLElement {
     return byId("ctx-last-turn");
   }
-  get ctxMsgs(): HTMLElement {
-    return byId("ctx-msgs");
+  get ctxEntries(): HTMLElement {
+    return byId("ctx-entries");
   }
   get ctxTools(): HTMLElement {
     return byId("ctx-tools");
@@ -382,6 +382,9 @@ class Elements {
   // History
   get historyBtn(): HTMLButtonElement {
     return byId("history-btn");
+  }
+  get historyTabBar(): HTMLElement {
+    return byId("history-tab-bar");
   }
 
   // Transcript search. The Ctrl+F overlay's toolbar trigger — the hotkey used

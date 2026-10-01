@@ -4,16 +4,12 @@
 // all plan entries with status indicators.
 // ---------------------------------------------------------------------------
 
-import type { PlanEntry } from "./types.js";
+import type { PlanEntry, Session } from "./types.js";
 import { getActive, watchActiveId, messagesVersionOf } from "./store.js";
+import { payloadOf } from "./turns.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
-
-const STATUS_ICON: Record<string, string> = {
-  completed: "\u2705", // green check
-  in_progress: "\u23f3", // hourglass
-  pending: "\u25cb", // circle
-};
+import { paintStatus } from "./fundamentals/work-status.js";
 
 export function initTaskListPill(): void {
   effect(() => {
@@ -30,6 +26,26 @@ export function initTaskListPill(): void {
   });
 }
 
+/** The plan in force: the newest `plan` entry of the newest turn holding one.
+ *  A later plan frame is its own entry, so the last one appended wins. */
+function latestPlan(s: Session): PlanEntry[] {
+  for (let i = s.turn_order.length - 1; i >= 0; i--) {
+    const turnID = s.turn_order[i];
+    const t = turnID === undefined ? undefined : s.turns.get(turnID);
+    if (t === undefined) {
+      continue;
+    }
+    for (let j = t.entries.length - 1; j >= 0; j--) {
+      const e = t.entries[j];
+      const entries = e === undefined ? undefined : payloadOf(e, "plan")?.entries;
+      if (entries !== undefined && entries.length > 0) {
+        return entries;
+      }
+    }
+  }
+  return [];
+}
+
 function refreshTaskList(): void {
   const pill = document.getElementById("task-list-pill");
   const badge = document.getElementById("task-list-badge");
@@ -44,16 +60,7 @@ function refreshTaskList(): void {
     return;
   }
 
-  // Find the latest plan entries from messages.
-  let plan: PlanEntry[] = [];
-  for (let i = session.messages.length - 1; i >= 0; i--) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const m = session.messages[i]!;
-    if (m.plan !== undefined && m.plan.length > 0) {
-      plan = m.plan;
-      break;
-    }
-  }
+  const plan = latestPlan(session);
 
   if (plan.length === 0) {
     pill.classList.add("hidden");
@@ -78,22 +85,21 @@ function refreshTaskList(): void {
     mount: (e) => buildTaskRow(e),
     update: (row, e) => {
       row.className = `task-item task-${e.status}`;
-      const icon = row.querySelector(".task-icon");
+      const icon = row.querySelector<HTMLElement>(".task-icon");
       if (icon !== null) {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        icon.textContent = STATUS_ICON[e.status] ?? STATUS_ICON["pending"]!;
+        paintStatus(icon, e.status);
       }
     },
   });
 }
 
 function buildTaskRow(entry: PlanEntry): HTMLElement {
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  const iconText = STATUS_ICON[entry.status] ?? STATUS_ICON["pending"]!;
+  const icon = el("span", { className: "task-icon" });
+  paintStatus(icon, entry.status);
   return el(
     "div",
     { className: `task-item task-${entry.status}` },
-    el("span", { className: "task-icon" }, iconText),
+    icon,
     el("span", { className: "task-text" }, entry.content),
   );
 }

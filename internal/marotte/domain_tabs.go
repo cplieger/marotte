@@ -16,10 +16,10 @@ package marotte
 // TabSubject is a wire type: a tabs.Kind would make the wire package import tabs
 // while tabs imports the wire package, which is a cycle. That is the whole reason
 // for the placement, and it is why the type carries the Tab prefix its sibling
-// kinds (ToolKind, PushKind, EventKind) carry too.
+// kinds (ToolKind, PushKind, EntryKind) carry too.
 type TabKind string
 
-// The nine tab kinds. Each string is the wire value AND the client's TabKind
+// The ten tab kinds. Each string is the wire value AND the client's TabKind
 // union member, so a rename here is a cross-language change.
 //
 // There is deliberately no "plan". The client's TabKind.plan was dead — nothing
@@ -34,6 +34,11 @@ type TabKind string
 // and no cross-chat subtask index — so a ref naming the subtask alone could not
 // be resolved on a cold load. A chat id cannot contain a slash (ids.ValidChatID),
 // so the split is unambiguous; the client owns the codec (tab-materialize.ts).
+//
+// "spec" is one spec directory read as a page; its Ref is the workspace-relative
+// directory (".kiro/specs/<name>" or "<repo>/.kiro/specs/<name>"), because the
+// docs scanner covers every "<repo>/.kiro" root and a bare name is ambiguous
+// across them.
 const (
 	TabKindChat     TabKind = "chat"
 	TabKindEditor   TabKind = "editor"
@@ -44,6 +49,7 @@ const (
 	TabKindFiles    TabKind = "files"
 	TabKindHistory  TabKind = "history"
 	TabKindDocs     TabKind = "docs"
+	TabKindSpec     TabKind = "spec"
 )
 
 // tabKinds is the authoritative set, and the bool answers the question a caller
@@ -64,9 +70,10 @@ var tabKinds = map[TabKind]bool{
 	TabKindFiles:    false,
 	TabKindHistory:  true,
 	TabKindDocs:     true,
+	TabKindSpec:     false,
 }
 
-// Valid reports whether k is one of the nine kinds. Used at the command
+// Valid reports whether k is one of the ten kinds. Used at the command
 // boundary and again inside the store, because a kind that reaches the persisted
 // set is a kind every client has to render.
 func (k TabKind) Valid() bool {
@@ -119,10 +126,10 @@ type TabSubject struct {
 	Ref string `json:"ref"`
 	// Parent is the tab this one hangs under, empty for a top-level tab.
 	//
-	// Set at open and NEVER reassigned, which is what makes a cycle
-	// unrepresentable: a child's parent already existed when the child was
-	// minted, so no chain can close on itself and no reparent check is needed
-	// anywhere.
+	// Set at open, and reassigned by exactly ONE mutation, reparent_tab, which
+	// accepts only an open CHAT tab as the new parent. A chat tab is never a
+	// child of a non-chat tab, so a chain still cannot close on itself and no
+	// general cycle check is needed.
 	Parent string `json:"parent"`
 	// Pinned sorts a tab ahead of every unpinned one. The partition is applied
 	// by the client when it renders (applyPinOrder); the stored slice keeps the
@@ -147,7 +154,7 @@ type TabSubject struct {
 // It carries no op_id and no idempotency key: those are the command envelope's,
 // and the store has no opinion about either.
 type OpenTab struct {
-	// Kind is required and must be one of the nine (see TabKind.Valid).
+	// Kind is required and must be one of the ten (see TabKind.Valid).
 	Kind TabKind `json:"kind"`
 	// Ref is required for every kind but a singleton, where it must be empty.
 	Ref string `json:"ref,omitempty"`

@@ -137,14 +137,19 @@ func TestHandleDiagnostics_NotTruncatedNoMarker(t *testing.T) {
 	}
 }
 
-// TestHandleDiagnostics_ExecError verifies an exec failure returns the
+// TestHandleDiagnostics_ExecError verifies a failed spawn is a 502 carrying the
 // generic error envelope and no report body.
+//
+// The STATUS is the load-bearing half: the client's action framework classifies by
+// it, so a 200 with an error envelope reached every apiGet-style caller as success.
+// This route has no 200-with-error wire contract to honour — writeCmdResult's is a
+// git-panel convention.
 func TestHandleDiagnostics_ExecError(t *testing.T) {
 	f := &fakeCLIRunner{runErr: errors.New("boom")}
 	rec := postDiagnostics(t, f)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (error envelope)", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
 	}
 	var got map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {

@@ -8,8 +8,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { KEY_ATTR } from "@cplieger/reactive";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+import { makeSession } from "./__test-helpers__/model.js";
 import type * as ScrollModule from "./scroll.js";
-import type { Message, Session } from "./types.js";
+import type { Session, TurnState } from "./types.js";
 import type { TurnSummary } from "./turn-rail.js";
 
 /** How long one scroll is given to settle before the landing is re-measured
@@ -111,21 +112,53 @@ function summary(n: number): TurnSummary {
   return { id: `u${String(n)}`, n, outcome: "completed", ts: n * MINUTE };
 }
 
-function message(id: string): Message {
-  return { id, role: "user", ts: 1, content: `prompt ${id}` } as Message;
+/** One settled turn of the store's own entry log, at session-absolute ordinal `n`.
+ *  `closeAt` is set, so the turn does not read as live; the rail's resident
+ *  projection reads `turn_open.n`, which is why there is no window base here — the
+ *  ordinal is session-absolute in every window. */
+function turnState(n: number): TurnState {
+  const id = `u${String(n)}`;
+  return {
+    entries: [
+      {
+        id: `${id}-open`,
+        turn: id,
+        kind: "turn_open",
+        seq: 0,
+        ts: n * MINUTE,
+        payload: { source: "prompt", n, prompt: { id: `m-${id}`, text: `prompt ${id}` } },
+      },
+      {
+        id: `${id}-close`,
+        turn: id,
+        kind: "turn_close",
+        seq: 1,
+        ts: n * MINUTE,
+        payload: { outcome: "completed" },
+      },
+    ],
+    openEntries: new Map(),
+    closeAt: 1,
+  };
 }
 
-function session(id: string, msgs: Message[], hasMore: boolean, turnOffset: number): Session {
+/** A chat whose resident window holds the turns `ns` names. `turn_count` is the
+ *  SESSION's total, which is what the index's own count is read against. */
+function session(id: string, ns: number[], hasMore: boolean, turnCount: number): Session {
   return {
-    id,
-    name: id,
-    messages: msgs,
-    message_count: msgs.length,
-    has_more: hasMore,
-    turn_offset: turnOffset,
-    thinking: false,
-    working_label: "",
-  } as unknown as Session;
+    ...makeSession({ id, name: id, has_more: hasMore }),
+    turns: new Map(ns.map((n) => [`u${String(n)}`, turnState(n)])),
+    turn_order: ns.map((n) => `u${String(n)}`),
+    turn_count: turnCount,
+  };
+}
+
+/** Prepend one older turn to a resident window, the way a page landing in front of
+ *  the reader does: `turn_order[0]` moves, which is the rail's own no-progress test. */
+function prependTurn(s: Session, n: number): void {
+  const id = `u${String(n)}`;
+  s.turns.set(id, turnState(n));
+  s.turn_order.unshift(id);
 }
 
 /** A resident turn card, keyed the way the transcript keys one: the id of the turn's
@@ -318,14 +351,7 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
       turns: [1, 2, 3, 4, 5, 6].map(summary),
     } as never);
     await rail.loadTurnRail(chat);
-    store.setSessions([
-      session(
-        chat,
-        [4, 5, 6].map((n) => message(`u${String(n)}`)),
-        true,
-        3,
-      ),
-    ]);
+    store.setSessions([session(chat, [4, 5, 6], true, 6)]);
     store.setActive(chat);
     for (const n of [4, 5, 6]) {
       card(n, 200);
@@ -334,9 +360,9 @@ describe("the jump's own scroll", { timeout: testTimeoutFor(FRAME_BUDGET_MS) }, 
     vi.mocked(loadMessages).mockImplementation((chatID: string) => {
       const s = store.get(chatID);
       if (s !== undefined) {
-        s.messages = [1, 2, 3].map((n) => message(`u${String(n)}`)).concat(s.messages);
-        s.message_count = s.messages.length;
-        s.turn_offset = 0;
+        for (const n of [3, 2, 1]) {
+          prependTurn(s, n);
+        }
       }
       const grown: HTMLElement[] = [];
       for (const n of [3, 2, 1]) {

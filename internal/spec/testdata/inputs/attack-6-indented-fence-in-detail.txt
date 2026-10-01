@@ -1,0 +1,5 @@
+- [ ] 1. Task with a fenced snippet in its detail
+    ```json
+    {"a": 1}
+    ```
+- [ ] 2. Next task

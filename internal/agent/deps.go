@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -34,12 +35,18 @@ type RouteRegistrar interface {
 // the path that tears bridges down on exit and restart must not be able to.
 type bridgeChatRecords interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	// Mutate is the single write primitive: load, apply, save, broadcast.
+	// Mutate is the header write primitive: load, apply, save, broadcast.
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
-	AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error
-	// UpdateMessage amends ONE persisted message by id and NO-OPS when that id
-	// is absent, which is what a truncation leaves (amendLostReason).
-	UpdateMessage(ctx context.Context, chatID marotte.ChatID, msgID string, mutate func(*marotte.Message)) error
+	// OpenTurn appends a turn_open and answers it; init writes the header for an
+	// id with none, and nil refuses such an id.
+	OpenTurn(ctx context.Context, chatID marotte.ChatID, spec *chat.TurnSpec, init func(c *marotte.Chat)) (*marotte.Entry, error)
+	// Sink is the chat's log as the accumulator's sink.
+	Sink(chatID marotte.ChatID) chat.EntrySink
+	// AppendBetweenTurns files a lane-less entry after the newest turn's close.
+	AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error)
+	// WriteCounters rewrites the header's turn_count and last_turn_outcome from the
+	// log's index, outside every registry lock.
+	WriteCounters(ctx context.Context, chatID marotte.ChatID) error
 }
 
 // chatRecords is the runtime's field type: a UNION of the narrower views the
@@ -57,10 +64,22 @@ type chatRecords interface {
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
 	SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error)
 	SetAttachments(ctx context.Context, id marotte.ChatID, paths []string) (*marotte.ComposerState, error)
-	// Delete removes the chat file; only cmdDeleteChat calls it.
+	// Delete removes the chat directory; only cmdDeleteChat calls it.
 	Delete(ctx context.Context, id marotte.ChatID) error
-	// UpsertTurnPlan writes the turn's single plan row; only HandlePlan calls it.
-	UpsertTurnPlan(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error
+	// The log reads command.ChatStore and translate.ChatRecords name.
+	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record, opened *marotte.Entry, err error)
+	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
+	PromptAttachmentPaths(ctx context.Context, chatID marotte.ChatID, watermark string) ([]string, error)
+	PromptTexts(ctx context.Context, id marotte.ChatID) ([]string, error)
+	EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error)
+	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
+	// TurnSeq is a turn's newest sealed seq: the digest's live_turn version.
+	TurnSeq(ctx context.Context, chatID marotte.ChatID, turn string) (uint64, bool)
+	// NewestRevert is the provenance a resume's projection snapshots at open, in the
+	// shape TurnSeq has: the log's answer, read through the store.
+	NewestRevert(ctx context.Context, chatID marotte.ChatID) (string, bool)
+	// Reconcile is the resume merge's locked swap over the chat's log and header.
+	Reconcile(ctx context.Context, chatID marotte.ChatID, swap func(l *chat.EntryLog, h chat.EntryHeader) (bool, error)) (version string, changed bool, err error)
 }
 
 // pushNotifier is the notification SEND half. *push.Service satisfies it.

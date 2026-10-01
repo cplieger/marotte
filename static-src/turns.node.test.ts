@@ -1,1056 +1,982 @@
-import { readFileSync } from "node:fs";
+// Tests for turns.ts, the TURN PROJECTION over the entry log.
+//
+// The store already performed the partition: every entry names its own turn, so
+// nothing here infers a boundary, an ordinal or a verdict. An ordinal is
+// `turn_open.n`, a verdict is `turn_close.outcome`, and a turn with no close IS
+// running — exact rather than derived, because the store's open closes every
+// crash-orphaned turn before the log is served. Pure and DOM-free, hence `.node`.
+
 import { describe, it, expect } from "vitest";
+import { toolResultID } from "./entry-ids.js";
 import {
+  COMMAND_KINDS,
+  closeOfBody,
+  entryUnion,
+  isEntryKind,
+  payloadOf,
+  projectTurn,
   projectTurns,
-  turnLedger,
   turnAnchorID,
+  turnCloseOf,
   turnFaceProse,
   turnFailureText,
   turnFoldHides,
+  turnIsDrawn,
+  turnLedger,
+  turnOpenOf,
   type Turn,
+  type TurnSource,
 } from "./turns.js";
-import { padBlock } from "./block-pad.js";
-import type { Block, Message } from "./types.js";
+import type { OpenEntry, TurnState } from "./types.js";
+import type { Entry, EntryToolCall, EntryTurnClose } from "./wire/types.gen.js";
 
-function user(id: string, content: string, ts = 1000): Message {
-  return { id, role: "user", content, ts } as Message;
+// --- Fixtures ---------------------------------------------------------------
+//
+// One builder per shape the log really holds, matching store.test.ts's so a turn
+// means the same thing in both files. `Object.assign` rather than a spread for the
+// optional members: under `exactOptionalPropertyTypes` a spread of a `Partial`
+// widens every required field to include `undefined`.
+
+/** The `turn_open` that opens `turnID` at session-absolute ordinal `n`. A prompt
+ *  makes it reader-opened, which is the first clause of `turnIsDrawn`. */
+function turnOpen(
+  turnID: string,
+  n: number,
+  opts: { readonly source?: string; readonly prompt?: string; readonly ts?: number } = {},
+): Entry {
+  const source = opts.source ?? (opts.prompt === undefined ? "wire_turn_start" : "prompt");
+  return {
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
+    ts: opts.ts ?? 1,
+    payload: {
+      source,
+      n,
+      ...(opts.prompt !== undefined && { prompt: { id: opts.prompt, text: "do a thing" } }),
+    },
+  };
 }
 
-function assistant(id: string, extra: Partial<Message> = {}, ts = 2000): Message {
-  return { id, role: "assistant", content: "ok", ts, ...extra } as Message;
+/** A sealed entry of any kind at `seq`. `lane` is absent unless named, which is the
+ *  transcript's own lane. */
+function sealed(
+  turnID: string,
+  seq: number,
+  kind: Entry["kind"],
+  payload: unknown = {},
+  opts: { readonly id?: string; readonly lane?: string; readonly ts?: number } = {},
+): Entry {
+  const base: Entry = {
+    id: opts.id ?? `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind,
+    seq,
+    ts: opts.ts ?? seq + 1,
+    payload,
+  };
+  return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
 }
 
-function event(id: string, kind: string, ts = 2500): Message {
-  return { id, role: "event", event_kind: kind, ts } as unknown as Message;
+function textEntry(turnID: string, seq: number, text = "hi", lane?: string): Entry {
+  return sealed(turnID, seq, "text", { text }, lane === undefined ? {} : { lane });
 }
 
-describe("projectTurns", () => {
-  it("promotes the user message to the turn's trigger and keeps the rest as body", () => {
-    const turns = projectTurns([user("u1", "do a thing"), assistant("a1")], false);
-    expect(turns).toHaveLength(1);
-    expect(turns[0]?.trigger?.id).toBe("u1");
-    expect(turns[0]?.body.map((m) => m.id)).toEqual(["a1"]);
+function closeEntry(turnID: string, seq: number, over: Partial<EntryTurnClose> = {}): Entry {
+  const payload: EntryTurnClose = Object.assign({ outcome: "completed" } as EntryTurnClose, over);
+  return sealed(turnID, seq, "turn_close", payload);
+}
+
+/** A tool call ENTRY. The entry id IS the payload id, because the appender
+ *  round-trips KAS's `toolCallId` as both — which is what makes `toolResultID`
+ *  below a join with no table behind it. */
+function callEntry(
+  turnID: string,
+  seq: number,
+  callID: string,
+  over: Partial<EntryToolCall> = {},
+): Entry {
+  const payload: EntryToolCall = Object.assign(
+    {
+      id: callID,
+      title: "Run Command",
+      kind: "execute",
+      status: "completed",
+      ts: 1,
+    } as EntryToolCall,
+    over,
+  );
+  return sealed(turnID, seq, "tool_call", payload, { id: callID });
+}
+
+/** The settled value of `callID`, keyed `<call>:result` so the ledger can pair it. */
+function resultEntry(
+  turnID: string,
+  seq: number,
+  callID: string,
+  over: { readonly duration_ms?: number } = {},
+): Entry {
+  return sealed(turnID, seq, "tool_result", Object.assign({ status: "completed" }, over), {
+    id: toolResultID(callID),
+  });
+}
+
+function state(
+  entries: readonly Entry[],
+  opts: { readonly open?: readonly OpenEntry[]; readonly closeAt?: number } = {},
+): TurnState {
+  const openEntries = new Map<string, OpenEntry>();
+  for (const o of opts.open ?? []) {
+    openEntries.set(o.lane ?? "", o);
+  }
+  const base: TurnState = { entries: [...entries], openEntries };
+  return opts.closeAt === undefined ? base : Object.assign(base, { closeAt: opts.closeAt });
+}
+
+/** The two store fields a projection reads, in file order. */
+function src(...pairs: readonly (readonly [string, TurnState])[]): TurnSource {
+  return { turns: new Map(pairs), turn_order: pairs.map(([id]) => id) };
+}
+
+/** One reader-opened turn holding `body`, projected. Throws rather than answering a
+ *  `Turn | undefined`, so a fixture that stopped producing a turn fails loudly at
+ *  the arrange step instead of silently passing an assertion on `undefined`. */
+function oneTurn(body: readonly Entry[], opts: { readonly n?: number } = {}): Turn {
+  const t = projectTurns(
+    src(["t1", state([turnOpen("t1", opts.n ?? 1, { prompt: "m-1" }), ...body])]),
+  )[0];
+  if (t === undefined) {
+    throw new Error("the fixture produced no turn");
+  }
+  return t;
+}
+
+/** An open tail, one per `(turn, lane)`. It has no `seq` and never reaches the log. */
+function openTail(turnID: string, lane = ""): OpenEntry {
+  const base: OpenEntry = {
+    turn: turnID,
+    id: `${turnID}-open-tail`,
+    kind: "text",
+    text: "so far",
+    n: 1,
+  };
+  return lane === "" ? base : Object.assign(base, { lane });
+}
+
+// --- Reading an entry -------------------------------------------------------
+
+describe("narrowing an entry to its kind", () => {
+  it("payloadOf answers the payload for a matching kind and nothing for another", () => {
+    const e = textEntry("t1", 1, "the answer");
+    expect(payloadOf(e, "text")?.text).toBe("the answer");
+    expect(payloadOf(e, "tool_call")).toBeUndefined();
   });
 
-  it("never leaves a user message in a body", () => {
-    const turns = projectTurns(
-      [user("u1", "one"), assistant("a1"), user("u2", "two"), assistant("a2")],
-      false,
-    );
-    expect(turns).toHaveLength(2);
-    for (const t of turns) {
-      expect(t.body.some((m) => m.role === "user")).toBe(false);
+  it("isEntryKind narrows, so a caller reads a typed payload off the entry itself", () => {
+    const e = closeEntry("t1", 1, { credits: 0.5 });
+    expect(isEntryKind(e, "turn_close")).toBe(true);
+    expect(isEntryKind(e, "text")).toBe(false);
+    if (isEntryKind(e, "turn_close")) {
+      expect(e.payload.credits).toBe(0.5);
     }
   });
 
-  it("keys each turn on its opening message and numbers from 1", () => {
-    const turns = projectTurns([user("u1", "a"), assistant("a1"), user("u2", "b")], false);
+  it("entryUnion hands back the same object, so a dispatcher switches without a decode", () => {
+    // The one cast in the client's entry path, and it is a cast BECAUSE the generated
+    // decoder has already validated the payload per kind. Identity is the assertion:
+    // a copy would mean something re-decoded it.
+    const e = textEntry("t1", 1);
+    expect(entryUnion(e)).toBe(e);
+  });
+});
+
+describe("turnOpenOf", () => {
+  it("reads the opening entry's payload", () => {
+    const t = state([turnOpen("t1", 7, { prompt: "m-1" })]);
+    expect(turnOpenOf(t)?.n).toBe(7);
+    expect(turnOpenOf(t)?.prompt?.id).toBe("m-1");
+  });
+
+  it("answers nothing for a turn whose open the caller never saw", () => {
+    // A HOLE. The store answers one with a range read rather than a repair, so the
+    // projection's job is only to refuse to render it.
+    expect(turnOpenOf(state([]))).toBeUndefined();
+    expect(turnOpenOf(state([textEntry("t1", 1)]))).toBeUndefined();
+  });
+});
+
+describe("turnCloseOf", () => {
+  it("reads the close off the store's cached index", () => {
+    const t = state([turnOpen("t1", 1), textEntry("t1", 1), closeEntry("t1", 2, { credits: 3 })], {
+      closeAt: 2,
+    });
+    expect(turnCloseOf(t)?.credits).toBe(3);
+  });
+
+  it("scans backward when the store recorded no index", () => {
+    // The store records `closeAt` at the append that closes the turn; a turn read
+    // back from a range read may arrive without one, and a `turn_close` is an
+    // ordinary entry that is almost always last.
+    const t = state([turnOpen("t1", 1), textEntry("t1", 1), closeEntry("t1", 2, { credits: 3 })]);
+    expect(turnCloseOf(t)?.credits).toBe(3);
+  });
+
+  it("answers nothing for an OPEN turn, which is what makes `running` exact", () => {
+    expect(turnCloseOf(state([turnOpen("t1", 1), textEntry("t1", 1)]))).toBeUndefined();
+  });
+});
+
+describe("closeOfBody", () => {
+  it("finds the close wherever it sits in a projected body", () => {
+    // A turn's entries are not a contiguous byte range and a later append can land
+    // after the close is written, so the scan is backward rather than a tail read.
+    expect(
+      closeOfBody([textEntry("t1", 1), closeEntry("t1", 2), textEntry("t1", 3)])?.outcome,
+    ).toBe("completed");
+  });
+
+  it("answers nothing for a body carrying none", () => {
+    expect(closeOfBody([textEntry("t1", 1)])).toBeUndefined();
+  });
+});
+
+// --- Whether a turn is DRAWN ------------------------------------------------
+
+describe("turnIsDrawn", () => {
+  it("refuses a turn with no opening entry", () => {
+    expect(turnIsDrawn(state([textEntry("t1", 1)]))).toBe(false);
+  });
+
+  it.each(["prompt", "local_shell", "empty_retry"])(
+    "draws a %s turn on its header alone, with no body at all",
+    (source) => {
+      expect(turnIsDrawn(state([turnOpen("t1", 1, { source })]))).toBe(true);
+    },
+  );
+
+  it.each(["wire_turn_start", "event", "workflow_step"])(
+    "does not draw an empty %s turn — there is no header to render",
+    (source) => {
+      expect(turnIsDrawn(state([turnOpen("t1", 1, { source })]))).toBe(false);
+    },
+  );
+
+  it("draws an agent-initiated turn on a body entry that renders at its own position", () => {
+    expect(turnIsDrawn(state([turnOpen("t1", 1), textEntry("t1", 1)]))).toBe(true);
+  });
+
+  it.each(["turn_bind", "tool_result", "turn_close"] as const)(
+    "does not draw an agent-initiated turn whose only body entry is a %s",
+    (kind) => {
+      // These three render ELSEWHERE — a bind renders nothing, a result renders as its
+      // call's outcome, a close feeds the footer — so none of them is content at a
+      // position of its own.
+      expect(turnIsDrawn(state([turnOpen("t1", 1), sealed("t1", 1, kind)]))).toBe(false);
+    },
+  );
+
+  it("draws an agent-initiated turn whose only body entry is a steer_ack", () => {
+    // An ack is AGENT content at its own position rather than a fold into the steer's
+    // note, so a turn carrying nothing else still has a card to render it in.
+    expect(turnIsDrawn(state([turnOpen("t1", 1), sealed("t1", 1, "steer_ack")]))).toBe(true);
+  });
+
+  it("does not draw a turn whose only body entry is a delegate's", () => {
+    // A non-empty lane is a delegate's work, and this predicate answers for the
+    // transcript, whose root lane is "".
+    expect(turnIsDrawn(state([turnOpen("t1", 1), textEntry("t1", 1, "report", "sub-A")]))).toBe(
+      false,
+    );
+  });
+
+  it("draws an agent-initiated turn on its FIRST plan", () => {
+    // The plan clause cannot flip the verdict — the first plan reached returns true —
+    // so there is no case for a SECOND plan here: it could not fail. The clause is
+    // written literally in the module so the predicate reads as its own statement.
+    expect(turnIsDrawn(state([turnOpen("t1", 1), sealed("t1", 1, "plan", { entries: [] })]))).toBe(
+      true,
+    );
+  });
+
+  it('draws a headerless turn on an OPEN entry in lane "", which the server cannot', () => {
+    // THE CLIENT-ONLY CLAUSE. A headerless turn's first text streams as an open entry
+    // and never reaches the log, so without this the card its bubble mounts into would
+    // not exist until the turn ended.
+    expect(turnIsDrawn(state([turnOpen("t1", 1)], { open: [openTail("t1")] }))).toBe(true);
+  });
+
+  it("is not drawn by a DELEGATE's open entry", () => {
+    // The open clause is lane-scoped for the body clause's reason: a delegate's
+    // stream is not the transcript's content.
+    expect(turnIsDrawn(state([turnOpen("t1", 1)], { open: [openTail("t1", "sub-A")] }))).toBe(
+      false,
+    );
+  });
+
+  it("stays drawn after the open entry seals, because the sealed entry then carries it", () => {
+    const t = state([turnOpen("t1", 1), textEntry("t1", 1)]);
+    expect(turnIsDrawn(t)).toBe(true);
+  });
+});
+
+// --- The projection ---------------------------------------------------------
+
+describe("projectTurns", () => {
+  it("reads the log in file order, one turn per `turn_order` entry", () => {
+    const turns = projectTurns(
+      src(
+        ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+        ["t2", state([turnOpen("t2", 2, { prompt: "m-2" })])],
+      ),
+    );
+    expect(turns.map((t) => t.id)).toEqual(["t1", "t2"]);
+  });
+
+  it("takes the ordinal from `turn_open.n` rather than the window's position", () => {
+    // Session-absolute by construction: the appender assigned it at open, so a
+    // paginated window and the rail's index agree without a join and nothing shifts
+    // when an older page loads.
+    const turns = projectTurns(
+      src(
+        ["t9", state([turnOpen("t9", 9, { prompt: "m-9" })])],
+        ["t10", state([turnOpen("t10", 10, { prompt: "m-10" })])],
+      ),
+    );
+    expect(turns.map((t) => t.n)).toEqual([9, 10]);
+  });
+
+  it("promotes the open entry's prompt to the trigger and keeps the rest as body", () => {
+    const t = oneTurn([textEntry("t1", 1), closeEntry("t1", 2)]);
+    expect(t.trigger?.id).toBe("m-1");
+    expect(t.body.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it("leaves the trigger absent on a turn nobody prompted", () => {
+    // The header then renders a typed trigger line rather than putting words in the
+    // reader's mouth.
+    const t = projectTurns(src(["t1", state([turnOpen("t1", 1), textEntry("t1", 1)])]))[0];
+    expect(t?.trigger).toBeUndefined();
+  });
+
+  it("takes the turn's start stamp from its opening entry", () => {
+    const t = projectTurns(
+      src(["t1", state([turnOpen("t1", 1, { prompt: "m-1", ts: 500 }), textEntry("t1", 1)])]),
+    )[0];
+    expect(t?.ts).toBe(500);
+  });
+
+  it("carries each lane's open entry BESIDE the body, never in it", () => {
+    // An open entry has no `seq` and no position (section 3.4), so nothing can render
+    // it above a sealed entry that arrived later.
+    const t = projectTurns(
+      src(["t1", state([turnOpen("t1", 1, { prompt: "m-1" })], { open: [openTail("t1")] })]),
+    )[0];
+    expect(t?.body).toEqual([]);
+    expect(t?.openEntries.get("")?.text).toBe("so far");
+  });
+
+  it("drops a turn the store holds no state for", () => {
+    const source: TurnSource = { turns: new Map(), turn_order: ["t1"] };
+    expect(projectTurns(source)).toEqual([]);
+  });
+
+  it("drops a turn whose opening entry is missing", () => {
+    expect(projectTurns(src(["t1", state([textEntry("t1", 1)])]))).toEqual([]);
+  });
+
+  it("drops an undrawn turn and keeps its neighbours' ordinals intact", () => {
+    // A bind-only agent turn renders nothing, and the ordinals either side are the
+    // appender's, so dropping it cannot renumber anything.
+    const turns = projectTurns(
+      src(
+        ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+        ["t2", state([turnOpen("t2", 2), sealed("t2", 1, "turn_bind", { kas_message_id: "k" })])],
+        ["t3", state([turnOpen("t3", 3, { prompt: "m-3" })])],
+      ),
+    );
     expect(turns.map((t) => [t.id, t.n])).toEqual([
-      ["u1", 1],
-      ["u2", 2],
+      ["t1", 1],
+      ["t3", 3],
     ]);
   });
 
-  it("takes the turn's start time from the trigger, not the reply", () => {
-    const turns = projectTurns([user("u1", "a", 500), assistant("a1", {}, 900)], false);
-    expect(turns[0]?.ts).toBe(500);
-  });
-
-  // A turn with no user row is the agent-initiated case (a run-completion wake)
-  // AND the paginated-window case (the first page starts mid-turn). Both must
-  // render, and neither may borrow a neighbouring turn's header.
-  it("opens a headerless turn when the transcript starts without a user message", () => {
-    const turns = projectTurns([assistant("a1"), user("u1", "then this"), assistant("a2")], false);
-    expect(turns).toHaveLength(2);
-    expect(turns[0]?.trigger).toBeUndefined();
-    expect(turns[0]?.id).toBe("a1");
-    expect(turns[0]?.body.map((m) => m.id)).toEqual(["a1"]);
-    expect(turns[1]?.trigger?.id).toBe("u1");
-  });
-
-  it("returns nothing for an empty transcript", () => {
-    expect(projectTurns([], false)).toEqual([]);
+  it("returns nothing for an empty log", () => {
+    expect(projectTurns(src())).toEqual([]);
   });
 
   describe("outcome", () => {
-    it("is completed for a clean finished turn", () => {
-      expect(projectTurns([user("u1", "a"), assistant("a1")], false)[0]?.outcome).toBe("completed");
-    });
-
-    it("is running only for the LAST turn while the session is thinking", () => {
-      const turns = projectTurns(
-        [user("u1", "a"), assistant("a1"), user("u2", "b"), assistant("a2")],
-        true,
-      );
-      expect(turns[0]?.outcome).toBe("completed");
-      expect(turns[1]?.outcome).toBe("running");
-    });
-
-    it("is failed on a refusal", () => {
-      const turns = projectTurns(
-        [user("u1", "a"), assistant("a1", { refusal: { category: "x" } } as Partial<Message>)],
-        false,
-      );
-      expect(turns[0]?.outcome).toBe("failed");
-    });
-
-    it("is failed on a safety block or a failed compaction", () => {
-      for (const kind of ["infra_safety_blocked", "compaction_failed"]) {
-        const turns = projectTurns([user("u1", "a"), event("e1", kind)], false);
-        expect(turns[0]?.outcome, kind).toBe("failed");
+    it("is the close's own verdict, read verbatim", () => {
+      // Nothing derives it and nothing infers precedence: one turn has one close, and
+      // the server already decided.
+      for (const outcome of [
+        "completed",
+        "cancelled",
+        "interrupted",
+        "failed",
+        "refused",
+      ] as const) {
+        const t = oneTurn([textEntry("t1", 1), closeEntry("t1", 2, { outcome })]);
+        expect(t.outcome, outcome).toBe(outcome);
       }
     });
 
-    it("is cancelled on a cancel, not interrupted", () => {
+    it("is running for a turn with no close, whatever the turn holds", () => {
+      expect(oneTurn([]).outcome).toBe("running");
+      expect(oneTurn([textEntry("t1", 1)]).outcome).toBe("running");
+      expect(oneTurn([callEntry("t1", 1, "c1")]).outcome).toBe("running");
+    });
+
+    it("is not moved by an entry that would once have implied one", () => {
+      // A model switch, a safety block and a failed compaction are entries at their own
+      // positions now. None of them ends a turn, so none of them is an outcome.
+      const t = oneTurn([
+        sealed("t1", 1, "model_switched", { from: "a", to: "b" }),
+        sealed("t1", 2, "safety_blocked", {}),
+        sealed("t1", 3, "compaction_failed", {}),
+        closeEntry("t1", 4, { outcome: "completed" }),
+      ]);
+      expect(t.outcome).toBe("completed");
+    });
+
+    it("reads a close that is not the turn's last entry", () => {
+      const t = oneTurn([closeEntry("t1", 1, { outcome: "failed" }), textEntry("t1", 2)]);
+      expect(t.outcome).toBe("failed");
+    });
+  });
+
+  describe("rewindTo", () => {
+    it("addresses the NEXT turn's prompt, because rewind reverts to after this turn", () => {
+      // KAS drops the message it is given plus everything following, so keeping turn N
+      // means addressing turn N+1's prompt.
       const turns = projectTurns(
-        [user("u1", "a"), assistant("a1"), event("e1", "cancelled")],
-        false,
+        src(
+          ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+          ["t2", state([turnOpen("t2", 2, { prompt: "m-2" })])],
+        ),
       );
-      expect(turns[0]?.outcome).toBe("cancelled");
+      expect(turns[0]?.rewindTo?.id).toBe("m-2");
     });
 
-    // A fault outranks a gesture: grading a turn something broke in as `cancelled`
-    // would paint it as a stop the reader asked for.
-    it("prefers interrupted over cancelled when a turn carries both", () => {
+    it("is absent on the last turn — there is nothing after it to discard", () => {
       const turns = projectTurns(
-        [user("u1", "a"), event("e1", "cancelled"), event("e2", "interrupted")],
-        false,
+        src(
+          ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+          ["t2", state([turnOpen("t2", 2, { prompt: "m-2" })])],
+        ),
       );
-      expect(turns[0]?.outcome).toBe("interrupted");
+      expect(turns[1]?.rewindTo).toBeUndefined();
     });
 
-    // The precedence that matters: `thinking` can legitimately still be true on
-    // the last turn when the NEXT stream has already opened, so trusting the
-    // session flag over a terminal marker would repaint a finished failure as
-    // in-progress.
-    it("lets a terminal marker beat the running flag on the last turn", () => {
-      const failed = projectTurns(
-        [user("u1", "a"), assistant("a1", { refusal: {} } as Partial<Message>)],
-        true,
-      );
-      expect(failed[0]?.outcome).toBe("failed");
-      const stopped = projectTurns([user("u1", "a"), event("e1", "interrupted")], true);
-      expect(stopped[0]?.outcome).toBe("interrupted");
-    });
-
-    // THE TWO DIRECTIONS of the liveness fix, over the record a mid-turn reload
-    // actually produces: the user's prompt persisted, the reply still in the
-    // server's in-memory buffer, so NO assistant message and no carrier.
-    //
-    // Absent-carrier has two meanings and only the caller can tell them apart, which
-    // is why `live` composes two facts (`store.ts` `turnLive`) rather than being the
-    // `thinking` flag. Both cases are one message list, so nothing but the liveness
-    // input separates them.
-    it("is running for a carrier-less newest turn while a turn is live", () => {
-      const turns = projectTurns([user("u1", "do the thing")], true);
-      expect(turns[0]?.outcome).toBe("running");
-    });
-
-    it("is unknown for a carrier-less newest turn when nothing is live", () => {
-      // The direction the fix must NOT erase: after a server restart mid-turn no
-      // turn is open, because the process died — so the newest turn genuinely is one
-      // nothing closed, and its neutral mark is honest.
-      const turns = projectTurns([user("u1", "do the thing")], false);
-      expect(turns[0]?.outcome).toBe("unknown");
-    });
-
-    it("prefers failed over interrupted when a turn carries both", () => {
+    it("is absent when the next turn carries no prompt, which KAS refuses to revert to", () => {
       const turns = projectTurns(
-        [user("u1", "a"), event("e1", "cancelled"), event("e2", "infra_safety_blocked")],
-        false,
+        src(
+          ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+          ["t2", state([turnOpen("t2", 2), textEntry("t2", 1)])],
+        ),
       );
-      expect(turns[0]?.outcome).toBe("failed");
+      expect(turns).toHaveLength(2);
+      expect(turns[0]?.rewindTo).toBeUndefined();
     });
 
-    it("ignores a model switch, which is not an outcome", () => {
+    it("skips an UNDRAWN neighbour, because a rewind may only address a rendered turn", () => {
       const turns = projectTurns(
-        [user("u1", "a"), event("e1", "model_switched"), assistant("a1")],
-        false,
+        src(
+          ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+          ["t2", state([turnOpen("t2", 2), sealed("t2", 1, "turn_bind", {})])],
+          ["t3", state([turnOpen("t3", 3, { prompt: "m-3" })])],
+        ),
       );
-      expect(turns[0]?.outcome).toBe("completed");
+      expect(turns[0]?.rewindTo?.id).toBe("m-3");
     });
   });
 });
 
+// --- ONE turn of the source -------------------------------------------------
+
+describe("projectTurn", () => {
+  /** Two turns, the first failed and holding a body, the second a bare prompt. */
+  function pair(): TurnSource {
+    return src(
+      [
+        "t1",
+        state([
+          turnOpen("t1", 1, { prompt: "m-1", ts: 700 }),
+          textEntry("t1", 1),
+          closeEntry("t1", 2, { outcome: "failed" }),
+        ]),
+      ],
+      ["t2", state([turnOpen("t2", 2, { prompt: "m-2" })])],
+    );
+  }
+
+  it("projects the one turn a keyed pass names", () => {
+    // The whole projection allocates a `Turn` and slices a body per resident turn,
+    // which a per-frame tool update must not do.
+    const t = projectTurn(pair(), "t1");
+    expect(t?.id).toBe("t1");
+    expect(t?.n).toBe(1);
+    expect(t?.trigger?.id).toBe("m-1");
+    expect(t?.body.map((e) => e.seq)).toEqual([1, 2]);
+    expect(t?.ts).toBe(700);
+    expect(t?.outcome).toBe("failed");
+  });
+
+  it("answers exactly what the whole projection answers for the same turn", () => {
+    // The two are one rule with two entry points, so the differential is what stops
+    // them drifting — a complete `Turn` rather than one with a field left empty.
+    const source = pair();
+    expect(projectTurn(source, "t1")).toEqual(projectTurns(source)[0]);
+    expect(projectTurn(source, "t2")).toEqual(projectTurns(source)[1]);
+  });
+
+  it("carries each lane's open entry beside the body here too", () => {
+    const source = src([
+      "t1",
+      state([turnOpen("t1", 1, { prompt: "m-1" })], { open: [openTail("t1")] }),
+    ]);
+    const t = projectTurn(source, "t1");
+    expect(t?.body).toEqual([]);
+    expect(t?.openEntries.get("")?.text).toBe("so far");
+  });
+
+  it("answers nothing for a turn `turn_order` does not name", () => {
+    // File order is the projection's only order, so a turn the log has not placed is
+    // not a turn a reader can be shown — even when the store holds its state.
+    const source: TurnSource = {
+      turns: new Map([["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])]]),
+      turn_order: [],
+    };
+    expect(projectTurn(source, "t1")).toBeUndefined();
+  });
+
+  it("answers nothing when the store holds no state for the turn", () => {
+    const source: TurnSource = { turns: new Map(), turn_order: ["t1"] };
+    expect(projectTurn(source, "t1")).toBeUndefined();
+  });
+
+  it("answers nothing for a turn whose opening entry is missing", () => {
+    expect(projectTurn(src(["t1", state([textEntry("t1", 1)])]), "t1")).toBeUndefined();
+  });
+
+  it("answers nothing for a turn `turnIsDrawn` refuses", () => {
+    // A bind-only agent turn renders nothing, so the keyed pass must refuse it exactly
+    // as the whole projection drops it.
+    const source = src([
+      "t1",
+      state([turnOpen("t1", 1), sealed("t1", 1, "turn_bind", { kas_message_id: "k" })]),
+    ]);
+    expect(projectTurn(source, "t1")).toBeUndefined();
+    expect(projectTurns(source)).toEqual([]);
+  });
+
+  it("resolves rewindTo through the NEXT turn in file order", () => {
+    expect(projectTurn(pair(), "t1")?.rewindTo?.id).toBe("m-2");
+  });
+
+  it("skips an UNDRAWN neighbour when resolving rewindTo", () => {
+    // The same undrawn-neighbour walk `projectTurns` performs: a rewind may only
+    // address a turn the reader can see.
+    const source = src(
+      ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+      ["t2", state([turnOpen("t2", 2), sealed("t2", 1, "turn_bind", {})])],
+      ["t3", state([turnOpen("t3", 3, { prompt: "m-3" })])],
+    );
+    expect(projectTurn(source, "t1")?.rewindTo?.id).toBe("m-3");
+  });
+
+  it("leaves rewindTo absent on the last turn, and on a next turn with no prompt", () => {
+    expect(projectTurn(pair(), "t2")?.rewindTo).toBeUndefined();
+    const source = src(
+      ["t1", state([turnOpen("t1", 1, { prompt: "m-1" })])],
+      ["t2", state([turnOpen("t2", 2), textEntry("t2", 1)])],
+    );
+    expect(projectTurn(source, "t1")?.rewindTo).toBeUndefined();
+  });
+});
+
+// --- The ledger -------------------------------------------------------------
+
 describe("turnLedger", () => {
-  it("sums credits and elapsed across a turn's assistant messages", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1", { turn_credits: 0.5, turn_elapsed_ms: 1000 }),
-        assistant("a2", { turn_credits: 0.25, turn_elapsed_ms: 500 }),
-      ],
-      false,
-    );
-    const led = turnLedger(t!);
-    expect(led.credits).toBeCloseTo(0.75);
-    expect(led.elapsedMs).toBe(1500);
-  });
-
-  // changed_files is a cumulative per-turn SNAPSHOT stamped at turn_ended, not
-  // a delta, so two messages reporting the same path must not have their counts
-  // added — that would double-count the file.
-  it("merges changed files by path instead of adding their counts", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1", { changed_files: { "a.ts": { lines_added: 3, lines_removed: 1 } } }),
-        assistant("a2", {
-          changed_files: {
-            "a.ts": { lines_added: 5, lines_removed: 2 },
-            "b.ts": { lines_added: 1, lines_removed: 0 },
-          },
-        }),
-      ],
-      false,
-    );
-    const led = turnLedger(t!);
-    expect(Object.keys(led.changedFiles).sort()).toEqual(["a.ts", "b.ts"]);
-    expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 5, lines_removed: 2 });
-  });
-
-  // A turn split at a COMPACTION point: the server seals what the model said
-  // before the boundary as its own message, so the summary sits between two
-  // assistant segments of one turn. The pre-compaction segment carries none of
-  // the turn's facts — exactly one message per turn may — so the ledger has to
-  // read through the event to reach the post-compaction segment that does.
-  it("reads a compaction-split turn's footer off the segment that carries it", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1"),
-        event("e1", "compacted"),
-        assistant("a2", {
-          turn_credits: 0.75,
-          turn_elapsed_ms: 2000,
-          turn_model: "opus-5",
-          changed_files: { "a.ts": { lines_added: 3, lines_removed: 1 } },
-        }),
-      ],
-      false,
-    );
-    expect(t?.body).toHaveLength(3);
-    const led = turnLedger(t!);
+  it("takes the aggregate off the one close entry and SUMS nothing", () => {
+    // One turn has one close carrying the whole aggregate, so there is no second
+    // carrier to add to and no split to read through.
+    const t = oneTurn([
+      textEntry("t1", 1),
+      closeEntry("t1", 2, {
+        credits: 0.75,
+        elapsed_ms: 2000,
+        stop_reason_raw: "max_tokens",
+        truncated: true,
+        changed_files: { "a.ts": { lines_added: 3, lines_removed: 1 } },
+      }),
+    ]);
+    const led = turnLedger(t);
     expect(led.credits).toBeCloseTo(0.75);
     expect(led.elapsedMs).toBe(2000);
-    expect(led.models).toEqual(["opus-5"]);
-    expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 3, lines_removed: 1 });
+    expect(led.stopReasonRaw).toBe("max_tokens");
+    expect(led.truncated).toBe(true);
+    expect(led.changedFiles).toEqual({ "a.ts": { lines_added: 3, lines_removed: 1 } });
   });
 
-  // A reply that ended exactly AT the compaction point closes with nothing after
-  // the split, so the turn's outcome marker is what carries its footer. The
-  // ledger reads an event row like any other message, which is what makes that
-  // carrier work.
-  it("reads a split turn's footer off its outcome marker when nothing followed the split", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1"),
-        event("e1", "compacted"),
-        {
-          id: "e2",
-          role: "event",
-          event_kind: "turn_outcome",
-          turn_outcome: "completed",
-          turn_credits: 0.5,
-          turn_elapsed_ms: 1200,
-          changed_files: { "a.ts": { lines_added: 2, lines_removed: 0 } },
-          ts: 2600,
-        } as unknown as Message,
-      ],
-      false,
-    );
-    const led = turnLedger(t!);
-    expect(led.credits).toBeCloseTo(0.5);
-    expect(led.elapsedMs).toBe(1200);
-    expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 2, lines_removed: 0 });
+  it("carries the close's changed-file map VERBATIM", () => {
+    // It is a cumulative per-turn snapshot rather than a delta, and one turn has
+    // exactly one close, so nothing merges and nothing is added.
+    const files = {
+      "a.ts": { lines_added: 5, lines_removed: 2 },
+      "b.ts": { lines_added: 1, lines_removed: 0, is_new_file: true },
+    };
+    const led = turnLedger(oneTurn([closeEntry("t1", 1, { changed_files: files })]));
+    expect(led.changedFiles).toEqual(files);
   });
 
-  // The model is the FOURTH aggregation strategy in this function, and it is
-  // none of the other three: adding two ids is meaningless, and taking the last
-  // one is silently wrong on a turn a mid-turn switch split in two.
-  it("names the model that served the turn", () => {
-    const [t] = projectTurns([user("u1", "a"), assistant("a1", { turn_model: "sonnet-4" })], false);
-    expect(turnLedger(t!).models).toEqual(["sonnet-4"]);
-  });
-
-  it("carries both models in order when a switch split the turn", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1", { turn_model: "sonnet-4" }),
-        event("e1", "model_switched"),
-        assistant("a2", { turn_model: "opus-4" }),
-      ],
-      false,
-    );
-    expect(turnLedger(t!).models).toEqual(["sonnet-4", "opus-4"]);
-  });
-
-  it("does not repeat one model that answered several messages", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1", { turn_model: "sonnet-4" }),
-        assistant("a2", { turn_model: "sonnet-4" }),
-      ],
-      false,
-    );
-    expect(turnLedger(t!).models).toEqual(["sonnet-4"]);
-  });
-
-  // Every message persisted before the field existed carries no model, and the
-  // footer renders nothing for that rather than "unknown".
-  it("reports no model for a turn that carries none", () => {
-    const [t] = projectTurns([user("u1", "a"), assistant("a1")], false);
-    expect(turnLedger(t!).models).toEqual([]);
-  });
-
-  it("ignores an empty model string", () => {
-    const [t] = projectTurns([user("u1", "a"), assistant("a1", { turn_model: "" })], false);
-    expect(turnLedger(t!).models).toEqual([]);
-  });
-
-  it("keeps the models a partly-stamped turn does have", () => {
-    const [t] = projectTurns(
-      [user("u1", "a"), assistant("a1"), assistant("a2", { turn_model: "opus-4" })],
-      false,
-    );
-    expect(turnLedger(t!).models).toEqual(["opus-4"]);
-  });
-
-  it("reports a zeroed ledger for a turn that carried no data", () => {
-    const [t] = projectTurns([user("u1", "a"), assistant("a1")], false);
-    const led = turnLedger(t!);
+  it("reports a zeroed ledger for a turn that stamped nothing", () => {
+    const led = turnLedger(oneTurn([textEntry("t1", 1)]));
     expect(led.credits).toBe(0);
     expect(led.elapsedMs).toBe(0);
-    expect(Object.keys(led.changedFiles)).toEqual([]);
+    expect(led.changedFiles).toEqual({});
+    expect(led.stopReasonRaw).toBe("");
+    expect(led.truncated).toBe(false);
   });
 
-  // Non-file work exists only on the tool calls; nothing else aggregates it, so
-  // a turn that read forty files and wrote none reported no work at all.
-  it("counts commands and file reads from the turn's tool calls", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1", {
-          // `title` is REQUIRED on the wire, and these carry it because the ledger
-          // now reads it (`isSubagentInvocation` matches an invocation by title).
-          // Omitting it was a fixture that lied about the shape and got away with it
-          // only while nothing looked.
-          tool_calls: [
-            { id: "1", kind: "execute", title: "npm test" },
-            { id: "2", kind: "shell", title: "ls" },
-            { id: "3", kind: "command", title: "git status" },
-            { id: "4", kind: "read", title: "a.ts" },
-            { id: "5", kind: "read", title: "b.ts" },
-            { id: "6", kind: "edit", title: "c.ts" },
-            { id: "7", kind: "search", title: "needle" },
-          ],
-        } as Partial<Message>),
-        assistant("a2", {
-          tool_calls: [{ id: "8", kind: "read", title: "d.ts" }],
-        } as Partial<Message>),
-      ],
-      false,
-    );
-    const led = turnLedger(t!);
-    // Counted across every message in the turn, per kind: the ledger no longer folds
-    // them into command/read aggregates, and `turnFacts` owns that ranking now.
-    expect(led.kindCounts).toEqual({
-      execute: 1,
-      shell: 1,
-      command: 1,
-      read: 3,
-      edit: 1,
-      search: 1,
+  describe("models", () => {
+    it("names the model that finished the turn", () => {
+      const led = turnLedger(oneTurn([closeEntry("t1", 1, { model: "sonnet-4" })]));
+      expect(led.models).toEqual(["sonnet-4"]);
+    });
+
+    it("carries every model in emission order, from the switch entries", () => {
+      // `turn_close.model` records only the model that FINISHED, so a mid-turn switch
+      // is legible solely from the entries it appended.
+      const led = turnLedger(
+        oneTurn([
+          sealed("t1", 1, "model_switched", { from: "sonnet-4", to: "opus-5" }),
+          closeEntry("t1", 2, { model: "opus-5" }),
+        ]),
+      );
+      expect(led.models).toEqual(["sonnet-4", "opus-5"]);
+    });
+
+    it("does not repeat a model named more than once", () => {
+      const led = turnLedger(
+        oneTurn([
+          sealed("t1", 1, "model_switched", { from: "sonnet-4", to: "opus-5" }),
+          sealed("t1", 2, "model_switched", { from: "opus-5", to: "sonnet-4" }),
+          closeEntry("t1", 3, { model: "sonnet-4" }),
+        ]),
+      );
+      expect(led.models).toEqual(["sonnet-4", "opus-5"]);
+    });
+
+    it('reports no model at all rather than "unknown"', () => {
+      expect(turnLedger(oneTurn([textEntry("t1", 1)])).models).toEqual([]);
+    });
+
+    it("ignores an empty model string, which is what nothing-stamped-it looks like", () => {
+      expect(turnLedger(oneTurn([closeEntry("t1", 1, { model: "" })])).models).toEqual([]);
     });
   });
 
-  // The info panel's inputs. These three cases pin the ABSENCE RULES rather than the
-  // arithmetic: a duration nobody stamped must not read as zero, a kind with no calls
-  // must have no entry, and a fragment's provisional stop reason must not outrank the
-  // reply's. Each one is a way a renderer can state something nobody measured.
-  it("counts each tool kind, sums tool time, and separates delegates from their nesting", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a"),
-        assistant("a1", {
-          tool_calls: [
-            { id: "1", kind: "execute", title: "npm test", duration_ms: 500 },
-            // No `duration_ms`: it is absent on every call a settle never reached, so
-            // the sum below is 525 rather than a third measurement of zero.
-            { id: "2", kind: "read", title: "a.ts" },
-            { id: "3", kind: "read", title: "b.ts", duration_ms: 25 },
-            { id: "4", kind: "other", title: "Sub-agent: reviewer", duration_ms: 9000 },
-          ],
-        } as Partial<Message>),
-      ],
-      false,
-    );
-    const led = turnLedger(t!);
-    expect(led.toolMs).toBe(9525);
-    // No entry for the thirteen kinds this turn did not use.
-    expect(led.kindCounts).toEqual({ execute: 1, read: 2, other: 1 });
-    expect(led.delegateCount).toBe(1);
-    expect(led.delegateMs).toBe(9000);
+  describe("tool work", () => {
+    it("counts each kind that made a call, and gives a kind with none NO entry", () => {
+      // PARTIAL over `ToolKind`: an entry reading zero is a measurement, and nobody
+      // made one.
+      const led = turnLedger(
+        oneTurn([
+          callEntry("t1", 1, "c1", { kind: "execute" }),
+          callEntry("t1", 2, "c2", { kind: "read" }),
+          callEntry("t1", 3, "c3", { kind: "read" }),
+          callEntry("t1", 4, "c4", { kind: "edit" }),
+        ]),
+      );
+      expect(led.kindCounts).toEqual({ execute: 1, read: 2, edit: 1 });
+    });
+
+    it("sums tool time off the RESULTS, and counts an unstamped one as nothing", () => {
+      // ZERO MEANS NOBODY STAMPED ONE, so a result that never settled a duration must
+      // not read as a third measurement of zero.
+      const led = turnLedger(
+        oneTurn([
+          callEntry("t1", 1, "c1"),
+          callEntry("t1", 2, "c2"),
+          resultEntry("t1", 3, "c1", { duration_ms: 500 }),
+          resultEntry("t1", 4, "c2"),
+        ]),
+      );
+      expect(led.toolMs).toBe(500);
+    });
+
+    it("is not bounded by the turn's elapsed time, because calls overlap", () => {
+      const led = turnLedger(
+        oneTurn([
+          callEntry("t1", 1, "c1"),
+          resultEntry("t1", 2, "c1", { duration_ms: 9000 }),
+          closeEntry("t1", 3, { elapsed_ms: 1000 }),
+        ]),
+      );
+      expect(led.toolMs).toBe(9000);
+      expect(led.elapsedMs).toBe(1000);
+    });
+
+    it("counts the calls that OPEN a delegate, and their time, by pairing on the id", () => {
+      // Counted off the invocation's `agent_subtask_id`, so it counts the call that
+      // dispatched the delegate and not the nested calls the delegate then made. The
+      // pairing is the entry id — `<call>:result` — with no join table behind it.
+      const led = turnLedger(
+        oneTurn([
+          callEntry("t1", 1, "c1", { kind: "other", agent_subtask_id: "sub-A" }),
+          callEntry("t1", 2, "c2", { kind: "read" }),
+          resultEntry("t1", 3, "c1", { duration_ms: 9000 }),
+          resultEntry("t1", 4, "c2", { duration_ms: 25 }),
+        ]),
+      );
+      expect(led.delegateCount).toBe(1);
+      expect(led.delegateMs).toBe(9000);
+      expect(led.toolMs).toBe(9025);
+    });
+
+    it("ignores an empty subtask id, which is what a non-delegate call carries", () => {
+      const led = turnLedger(
+        oneTurn([
+          callEntry("t1", 1, "c1", { agent_subtask_id: "" }),
+          resultEntry("t1", 2, "c1", { duration_ms: 40 }),
+        ]),
+      );
+      expect(led.delegateCount).toBe(0);
+      expect(led.delegateMs).toBe(0);
+      expect(led.toolMs).toBe(40);
+    });
+
+    it("charges a DELEGATE's own nested call to tool time and not to delegate time", () => {
+      // The delegate's lane is where its nested work lives, and the pairing is on the
+      // invocation's id, so nesting cannot double-count.
+      const led = turnLedger(
+        oneTurn([
+          callEntry("t1", 1, "c1", { agent_subtask_id: "sub-A" }),
+          sealed(
+            "t1",
+            2,
+            "tool_call",
+            { id: "c2", title: "Read File", kind: "read", status: "completed", ts: 1 },
+            { id: "c2", lane: "sub-A" },
+          ),
+          sealed(
+            "t1",
+            3,
+            "tool_result",
+            { status: "completed", duration_ms: 30 },
+            {
+              id: toolResultID("c2"),
+              lane: "sub-A",
+            },
+          ),
+          resultEntry("t1", 4, "c1", { duration_ms: 100 }),
+        ]),
+      );
+      expect(led.delegateCount).toBe(1);
+      expect(led.delegateMs).toBe(100);
+      expect(led.toolMs).toBe(130);
+    });
   });
 
-  it("takes the diagnostics off the SETTLED carrier, not a fragment's non-verdict", () => {
-    const [t] = projectTurns(
-      [
-        user("u1", "a", 1000),
-        assistant(
-          "a1",
-          { turn_outcome: "unknown", turn_stop_reason_raw: "unknown", turn_truncated: false },
-          7500,
-        ),
-        assistant(
-          "a2",
-          { turn_outcome: "completed", turn_stop_reason_raw: "max_tokens", turn_truncated: true },
-          9000,
-        ),
-      ],
-      false,
-    );
-    const led = turnLedger(t!);
-    expect(led.stopReasonRaw).toBe("max_tokens");
-    expect(led.truncated).toBe(true);
-    // The trigger's stamp and the LAST body message's, never `startedAt + elapsedMs`.
-    expect(led.startedAt).toBe(1000);
-    expect(led.endedAt).toBe(9000);
-  });
+  describe("stamps", () => {
+    it("takes both ends from append stamps, never from startedAt plus elapsed", () => {
+      // `elapsed_ms` is the agent's own duration and nothing on the wire carries a
+      // turn end, so the two are different measurements of different things.
+      const t = projectTurns(
+        src([
+          "t1",
+          state([
+            turnOpen("t1", 1, { prompt: "m-1", ts: 1000 }),
+            textEntry("t1", 1),
+            sealed(
+              "t1",
+              2,
+              "turn_close",
+              { outcome: "completed", elapsed_ms: 50 } as EntryTurnClose,
+              {
+                ts: 9000,
+              },
+            ),
+          ]),
+        ]),
+      )[0];
+      const led = turnLedger(t as Turn);
+      expect(led.startedAt).toBe(1000);
+      expect(led.endedAt).toBe(9000);
+      expect(led.elapsedMs).toBe(50);
+    });
 
-  it("reports nothing rather than zero when a turn stamped nothing", () => {
-    const [t] = projectTurns([user("u1", "a", 42)], false);
-    const led = turnLedger(t!);
-    expect(led.toolMs).toBe(0);
-    expect(led.kindCounts).toEqual({});
-    expect(led.startedAt).toBe(42);
-    // An empty body has no last message, so there is no end stamp to report.
-    expect(led.endedAt).toBe(0);
-    expect(led.stopReasonRaw).toBe("");
-    expect(led.truncated).toBe(false);
+    it("reports no end stamp for a turn that sealed nothing", () => {
+      const t = projectTurns(src(["t1", state([turnOpen("t1", 1, { prompt: "m-1", ts: 42 })])]))[0];
+      const led = turnLedger(t as Turn);
+      expect(led.startedAt).toBe(42);
+      expect(led.endedAt).toBe(0);
+    });
+  });
+});
+
+describe("COMMAND_KINDS", () => {
+  it("names the three kinds that mean a command ran", () => {
+    // `command` is in the wire enum and is counted for completeness rather than
+    // because it has been observed; `execute` and `shell` are what KAS emits.
+    expect([...COMMAND_KINDS].sort()).toEqual(["command", "execute", "shell"]);
   });
 });
 
 describe("turnAnchorID", () => {
-  it("builds the permalink fragment target", () => {
+  it("builds the anchor target from the SESSION-absolute ordinal", () => {
     expect(turnAnchorID(14)).toBe("turn-14");
   });
 });
 
-// ---------------------------------------------------------------------------
-// The cross-language pin.
-//
-// The outcome rule exists in two implementations and neither can go: the server
-// derives it for the whole session (internal/chat/turns.go), because the rail
-// must describe turns this paginated store does not hold, and the client derives
-// it for the IN-FLIGHT turn, which no fetched summary can know. This runs the
-// same fixture Go's TestTurnOutcomeContract runs, so a rule changed in one
-// language fails here.
-// ---------------------------------------------------------------------------
+// --- The collapsed turn's face ---------------------------------------------
 
-interface FixtureMessage {
-  role?: string;
-  id?: string;
-  event?: string;
-  outcome?: string;
-  refusal?: boolean;
-  /** Absent means the row carries no kind at all, which is what every legacy row
-   *  and every non-steer user row needs. */
-  user_kind?: string;
-  /** One subtask id per block; absent means the message carries no blocks at all,
-   *  which is what every row predating the step rule needs. */
-  blocks?: string[];
-  /** Suppresses the content every other row carries, which is what stages a message
-   *  carrying nothing. */
-  empty?: boolean;
-}
-
-interface OutcomeFixture {
-  cases: {
-    name: string;
-    body: { refusal?: boolean; event?: string; outcome?: string; truncated?: boolean }[];
-    is_live: boolean;
-    want: string;
-  }[];
-  segmentation: {
-    name: string;
-    messages: FixtureMessage[];
-    want: { id: string; agent_initiated: boolean; outcome: string }[];
-  }[];
-}
-
-const FIXTURE_PATH = "../internal/chat/testdata/turn_outcomes.json";
-
-describe("the turn-outcome contract shared with the Go implementation", () => {
-  const raw = readFileSync(new URL(FIXTURE_PATH, import.meta.url), "utf8");
-  const fx = JSON.parse(raw) as OutcomeFixture;
-
-  it("carries cases (an empty table would pass forever)", () => {
-    expect(fx.cases.length).toBeGreaterThan(0);
+describe("turnFaceProse", () => {
+  it("takes the last non-empty top-level text entry", () => {
+    const t = oneTurn([
+      textEntry("t1", 1, "working on it"),
+      callEntry("t1", 2, "c1"),
+      textEntry("t1", 3, "the final answer"),
+    ]);
+    expect(turnFaceProse(t)).toBe("the final answer");
   });
 
-  it.each(fx.cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
-    const body: Message[] = c.body.map((b, i) => {
-      const extra: Partial<Message> = {};
-      if (b.outcome !== undefined) {
-        extra.turn_outcome = b.outcome as NonNullable<Message["turn_outcome"]>;
-      }
-      if (b.truncated === true) {
-        extra.turn_truncated = true;
-      }
-      if (b.event !== undefined) {
-        return { ...event(`e${String(i)}`, b.event), ...extra } as Message;
-      }
-      if (b.refusal === true) {
-        return assistant(`a${String(i)}`, { refusal: {}, ...extra } as Partial<Message>);
-      }
-      return assistant(`a${String(i)}`, extra);
-    });
-    // projectTurns applies `is_live` to the LAST turn only, so a single turn
-    // built from a trigger plus this body reproduces the Go call exactly.
-    const turns = projectTurns([user("u1", "req"), ...body], c.is_live);
-    expect(turns).toHaveLength(1);
-    expect(turns[0]?.outcome).toBe(c.want);
+  it("skips a delegate's prose — a delegate's report is not the turn's answer", () => {
+    const t = oneTurn([
+      textEntry("t1", 1, "the parent's answer"),
+      textEntry("t1", 2, "delegate report", "sub-A"),
+    ]);
+    expect(turnFaceProse(t)).toBe("the parent's answer");
+  });
+
+  it("skips a whitespace-only entry", () => {
+    const t = oneTurn([textEntry("t1", 1, "the answer"), textEntry("t1", 2, "   ")]);
+    expect(turnFaceProse(t)).toBe("the answer");
+  });
+
+  it("answers empty for a turn with no prose at all", () => {
+    expect(turnFaceProse(oneTurn([callEntry("t1", 1, "c1")]))).toBe("");
   });
 });
 
-// ---------------------------------------------------------------------------
-// The BOUNDARY half of the same pin, over the same fixture.
-//
-// Where the table above asks how a turn ended, this asks which turn a message
-// belongs to. Reviewers caught the rule wrong in both directions — too narrow
-// puts a non-empty agent-initiated turn's outcome in the previous turn's body,
-// too broad splits a prompted empty turn off its own prompt — so both languages
-// answer the same cases rather than describing the rule twice.
-// ---------------------------------------------------------------------------
+// --- Whether the fold would hide anything ---------------------------------
 
-describe("the turn-segmentation contract shared with the Go implementation", () => {
-  const raw = readFileSync(new URL(FIXTURE_PATH, import.meta.url), "utf8");
-  const fx = JSON.parse(raw) as OutcomeFixture;
-
-  it("carries segmentation cases (an empty table would pass forever)", () => {
-    expect(fx.segmentation.length).toBeGreaterThan(0);
+describe("turnFoldHides", () => {
+  it("hides nothing on a prose-only turn — its face IS its body", () => {
+    expect(turnFoldHides(oneTurn([textEntry("t1", 1, "the answer")]))).toBe(false);
   });
 
-  it.each(fx.segmentation.map((c) => [c.name, c] as const))("%s", (_name, c) => {
-    const turns = projectTurns(fixtureMessages(c.messages), false);
-    expect(turns.map((t) => t.id)).toEqual(c.want.map((w) => w.id));
-    expect(turns.map((t) => t.trigger === undefined)).toEqual(c.want.map((w) => w.agent_initiated));
-    expect(turns.map((t) => t.outcome)).toEqual(c.want.map((w) => w.outcome));
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The WINDOW-BASE half of the pin, over its own fixture.
-//
-// The store is a paginated window, so this scan cannot know how many turns
-// precede its first message. It is told, by `turn_offset` /
-// `turn_segment_closed` on the window response — and Go's
-// TestTurnWindowBaseContract answers the same table for the producing side.
-// ---------------------------------------------------------------------------
-
-interface WindowFixture {
-  cases: {
-    name: string;
-    messages: FixtureMessage[];
-    windows: {
-      name: string;
-      start: number;
-      turn_offset: number;
-      turn_segment_closed: boolean;
-      n: number[];
-    }[];
-  }[];
-}
-
-const WINDOW_FIXTURE_PATH = "../internal/chat/testdata/turn_windows.json";
-
-/** Build the fixture's message array. The ONE reader for both tables, so a row
- *  means the same thing in the segmentation contract and the window one. */
-function fixtureMessages(rows: FixtureMessage[]): Message[] {
-  return rows.map((fm) => {
-    const extra: Partial<Message> = {};
-    if (fm.empty === true) {
-      extra.content = "";
-    }
-    if (fm.outcome !== undefined) {
-      extra.turn_outcome = fm.outcome as NonNullable<Message["turn_outcome"]>;
-    }
-    if (fm.refusal === true) {
-      (extra as { refusal?: unknown }).refusal = {};
-    }
-    if (fm.user_kind !== undefined) {
-      extra.user_kind = fm.user_kind as NonNullable<Message["user_kind"]>;
-    }
-    if (fm.blocks !== undefined) {
-      // `text` is not a fixture field and is not part of the contract: every REAL block
-      // carries the content that created it, and a block with a kind and nothing behind
-      // it is a PAD — which `isStepMessage` skips, so without this every row here would
-      // stage a message whose blocks are all reservations. The Go reader needs no
-      // counterpart: a persisted message cannot hold a pad, so that side has no such
-      // predicate to be misled.
-      (extra as { blocks?: unknown }).blocks = fm.blocks.map((agentSubtaskID, i) => ({
-        type: "text",
-        text: `block ${String(i)}`,
-        agent_subtask_id: agentSubtaskID,
-      }));
-    }
-    if (fm.role === "user") {
-      return { ...user(fm.id ?? "", "req"), ...extra } as Message;
-    }
-    if (fm.role === "event") {
-      return { ...event(fm.id ?? "", fm.event ?? ""), ...extra } as Message;
-    }
-    return assistant(fm.id ?? "", extra);
-  });
-}
-
-describe("the window-base contract shared with the Go implementation", () => {
-  const raw = readFileSync(new URL(WINDOW_FIXTURE_PATH, import.meta.url), "utf8");
-  const fx = JSON.parse(raw) as WindowFixture;
-
-  it("carries cases (an empty table would pass forever)", () => {
-    expect(fx.cases.length).toBeGreaterThan(0);
+  it("hides nothing on a bodyless turn", () => {
+    expect(turnFoldHides(oneTurn([]))).toBe(false);
   });
 
-  for (const c of fx.cases) {
-    describe(c.name, () => {
-      const msgs = fixtureMessages(c.messages);
-      it("carries windows", () => {
-        expect(c.windows.length).toBeGreaterThan(0);
-      });
-      it.each(c.windows.map((w) => [w.name, w] as const))("%s", (_name, w) => {
-        const turns = projectTurns(msgs.slice(w.start), false, {
-          offset: w.turn_offset,
-          closed: w.turn_segment_closed,
-        });
-        expect(turns.map((t) => t.n)).toEqual(w.n);
-      });
-    });
-  }
+  it.each([
+    ["tool_call", { id: "c1", title: "t", kind: "read", status: "completed", ts: 1 }],
+    ["thinking", { text: "hmm" }],
+    ["plan", { entries: [] }],
+    ["compaction", {}],
+    ["compaction_failed", {}],
+    ["safety_blocked", {}],
+    ["model_switched", { from: "a", to: "b" }],
+    ["mode_switched", { from: "spec", to: "vibe", source: "user" }],
+  ] as const)("hides a %s entry", (kind, payload) => {
+    const t = oneTurn([sealed("t1", 1, kind, payload), textEntry("t1", 2, "done")]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
 
-  // The property the fixture cannot state, expressed over the production code
-  // rather than restated as a table: a turn visible before a page loads keeps its
-  // number after it. Every window is projected with its own base and compared
-  // against the whole-session projection, so a shift of one anywhere fails here
-  // even for a shape nobody wrote a row for.
-  it.each(fx.cases.map((c) => [c.name, c] as const))(
-    "numbers do not shift under the reader: %s",
-    (_name, c) => {
-      const msgs = fixtureMessages(c.messages);
-      const whole = new Map(projectTurns(msgs, false).map((t) => [t.id, t.n]));
-      expect(whole.size).toBeGreaterThan(0);
-      for (const w of c.windows) {
-        const windowed = projectTurns(msgs.slice(w.start), false, {
-          offset: w.turn_offset,
-          closed: w.turn_segment_closed,
-        });
-        for (const t of windowed) {
-          // A window's FIRST turn can be a fragment whose opening message was paged
-          // out, so it keys on a different message than the whole-array turn it is
-          // part of; every other turn opens on the same message in both.
-          const absolute = whole.get(t.id);
-          if (absolute !== undefined) {
-            expect(`${c.name} @${String(w.start)} ${t.id}=${String(t.n)}`).toBe(
-              `${c.name} @${String(w.start)} ${t.id}=${String(absolute)}`,
-            );
-          }
-        }
-      }
+  it("hides a delegate's output, and the LANE is what reports it", () => {
+    // A delegate's nested tool result is not a kind the switch counts, so the lane
+    // clause is the only thing that can answer for it — which is what makes this case
+    // able to fail. A delegate's TEXT would be counted as intermediate prose by the
+    // `text` arm and answer true with the lane clause deleted (measured).
+    const t = oneTurn([
+      sealed("t1", 1, "tool_result", { status: "completed" }, { id: "c1:result", lane: "sub-A" }),
+      textEntry("t1", 2, "the answer"),
+    ]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("hides intermediate prose — the face shows only the final answer", () => {
+    const t = oneTurn([textEntry("t1", 1, "working on it"), textEntry("t1", 2, "the answer")]);
+    expect(turnFoldHides(t)).toBe(true);
+  });
+
+  it("does not count an empty text entry as intermediate prose", () => {
+    const t = oneTurn([textEntry("t1", 1, "  "), textEntry("t1", 2, "the answer")]);
+    expect(turnFoldHides(t)).toBe(false);
+  });
+
+  it.each(["turn_bind", "tool_result", "steer_ack", "turn_close"] as const)(
+    "hides nothing behind a %s, which the face does not draw either",
+    (kind) => {
+      const t = oneTurn([textEntry("t1", 1, "the answer"), sealed("t1", 2, kind, {})]);
+      expect(turnFoldHides(t)).toBe(false);
     },
   );
 });
 
-// ---------------------------------------------------------------------------
-// The collapsed turn's FACE content: input in the header, these in the footer.
-// ---------------------------------------------------------------------------
-
-describe("turnFaceProse", () => {
-  function blocks(id: string, bs: Record<string, unknown>[]): Message {
-    return assistant(id, { blocks: bs } as unknown as Partial<Message>);
-  }
-
-  it("takes the last non-empty top-level text block", () => {
-    const t = projectTurns(
-      [
-        user("u1", "q"),
-        blocks("a1", [
-          { type: "text", text: "working on it" },
-          { type: "tool_use", tool_call_id: "t1" },
-          { type: "text", text: "the final answer" },
-        ]),
-      ],
-      false,
-    )[0];
-    expect(t === undefined ? "" : turnFaceProse(t)).toBe("the final answer");
-  });
-
-  it("skips a delegate's prose — a delegate's report is not the turn's answer", () => {
-    const t = projectTurns(
-      [
-        user("u1", "q"),
-        blocks("a1", [
-          { type: "text", text: "the parent's answer" },
-          { type: "text", text: "delegate report", agent_subtask_id: "sub-A" },
-        ]),
-      ],
-      false,
-    )[0];
-    expect(t === undefined ? "" : turnFaceProse(t)).toBe("the parent's answer");
-  });
-
-  it("answers empty for a turn with no prose at all", () => {
-    const t = projectTurns(
-      [user("u1", "q"), blocks("a1", [{ type: "tool_use", tool_call_id: "t1" }])],
-      false,
-    )[0];
-    expect(t === undefined ? "x" : turnFaceProse(t)).toBe("");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Whether the fold would hide anything — the gate on the fold affordance.
-// ---------------------------------------------------------------------------
-
-describe("turnFoldHides", () => {
-  function blocks(id: string, bs: Record<string, unknown>[]): Message {
-    return assistant(id, { blocks: bs } as unknown as Partial<Message>);
-  }
-
-  function first(msgs: Message[]): Turn {
-    const t = projectTurns(msgs, false)[0];
-    if (t === undefined) {
-      throw new Error("no turn projected");
-    }
-    return t;
-  }
-
-  it("a prose-only turn hides nothing — its face IS its body", () => {
-    // The user-reported shape (2026-08-31): one answer, no tools. Folding it
-    // animated and changed nothing, so such a turn offers no fold.
-    const t = first([user("u1", "q"), blocks("a1", [{ type: "text", text: "the answer" }])]);
-    expect(turnFoldHides(t)).toBe(false);
-  });
-
-  it("a tool call is hidden by the fold", () => {
-    const t = first([
-      user("u1", "q"),
-      blocks("a1", [
-        { type: "tool_use", tool_call_id: "t1" },
-        { type: "text", text: "done" },
-      ]),
-    ]);
-    expect(turnFoldHides(t)).toBe(true);
-  });
-
-  it("reasoning is hidden by the fold", () => {
-    const t = first([
-      user("u1", "q"),
-      blocks("a1", [
-        { type: "thinking", text: "hmm" },
-        { type: "text", text: "done" },
-      ]),
-    ]);
-    expect(turnFoldHides(t)).toBe(true);
-  });
-
-  it("intermediate prose is hidden — the face shows only the final answer", () => {
-    const t = first([
-      user("u1", "q"),
-      blocks("a1", [
-        { type: "text", text: "working on it" },
-        { type: "text", text: "the final answer" },
-      ]),
-    ]);
-    expect(turnFoldHides(t)).toBe(true);
-  });
-
-  it("a delegate's output is hidden by the fold", () => {
-    const t = first([
-      user("u1", "q"),
-      blocks("a1", [
-        { type: "text", text: "delegate report", agent_subtask_id: "sub-A" },
-        { type: "text", text: "the answer" },
-      ]),
-    ]);
-    expect(turnFoldHides(t)).toBe(true);
-  });
-
-  it("an event row is hidden by the fold", () => {
-    const t = first([
-      user("u1", "q"),
-      blocks("a1", [{ type: "text", text: "partial" }]),
-      event("e1", "cancelled"),
-    ]);
-    expect(turnFoldHides(t)).toBe(true);
-  });
-
-  it("a plan card is hidden by the fold", () => {
-    const withPlan = {
-      ...blocks("a1", [{ type: "text", text: "done" }]),
-      plan: [{ id: "p1", text: "step", status: "done" }],
-    } as unknown as Message;
-    const t = first([user("u1", "q"), withPlan]);
-    expect(turnFoldHides(t)).toBe(true);
-  });
-
-  it("empty text blocks do not count as intermediate prose", () => {
-    const t = first([
-      user("u1", "q"),
-      blocks("a1", [
-        { type: "text", text: "  " },
-        { type: "text", text: "the answer" },
-      ]),
-    ]);
-    expect(turnFoldHides(t)).toBe(false);
-  });
-
-  it("a bodyless turn hides nothing", () => {
-    const t = first([user("u1", "q")]);
-    expect(turnFoldHides(t)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The CONTROL for the spurious "unknown outcome" notice, not its regression
-// test. `projectTurns` is honest whenever it is told the truth, so this passes
-// before the fix as well as after it; what fails before the fix is
-// store.test.ts's provisional-row case, because the defect is that `turnLive`
-// answers `false` for a row holding no liveness statement. Keeping the control
-// here says which half of the pair is which.
-// ---------------------------------------------------------------------------
-
-describe("a reloading client's newest turn", () => {
-  it("is running, and states no failure, while the chat is live", () => {
-    // The window a crash mid-turn leaves behind: the prompt row survived and the
-    // reply has not been persisted, so the turn carries no assistant message and
-    // no settled outcome.
-    const turns = projectTurns([user("u1", "do a thing")], true);
-    const t = turns[turns.length - 1];
-    expect(t?.outcome).toBe("running");
-    expect(t === undefined ? "" : turnFailureText(t)).toBe("");
-  });
-});
+// --- What a turn that did not end cleanly SAYS ----------------------------
 
 describe("turnFailureText", () => {
-  function textOf(msgs: readonly Message[]): string {
-    const t = projectTurns(msgs, false)[0];
-    if (t === undefined) {
-      throw new Error("the fixture produced no turn");
-    }
-    return turnFailureText(t);
+  function textOf(close: Partial<EntryTurnClose>): string {
+    return turnFailureText(oneTurn([textEntry("t1", 1), closeEntry("t1", 2, close)]));
   }
 
-  it("prefers the newest INTERRUPTED event row's own prose", () => {
-    // The most specific source available, and the one the prompt-failure and
-    // bridge-death closers write. THIS is the half that makes the divider's own
-    // labelFn removable: the sentence still reaches the reader, on the durable
-    // card-level surface, instead of on both at once
-    // (messages-events.test.ts holds the divider's side of the rule).
-    expect(
-      textOf([
-        user("u1", "q"),
-        { ...event("e1", "interrupted"), content: "the bridge died" } as Message,
-        assistant("a1", { turn_outcome: "interrupted" }),
-      ]),
-    ).toBe("the bridge died");
+  it("prefers the close's own persisted reason", () => {
+    // The specific source, written by the closer that finalized the turn.
+    expect(textOf({ outcome: "failed", failure_reason: "The upstream connection dropped." })).toBe(
+      "The upstream connection dropped.",
+    );
   });
 
-  it("reads NO other event kind's content, however new", () => {
-    // Source 1 is scoped to `event_kind === "interrupted"`, because that is the only
-    // kind whose content is authored as the turn's stop account. Five others persist
-    // content that is not, and each one is its own wrong answer — the worst being
-    // `compacted`, whose content is the WHOLE conversation summary.
-    //
-    // Each case falls through to source 2 (absent here) and then to the outcome's
-    // default sentence, which is honest and does not duplicate the divider.
-    const cases: { kind: string; content: string }[] = [
-      { kind: "compacted", content: "A very long conversation summary about everything." },
-      { kind: "model_switched", content: "claude-opus-5" },
-      { kind: "step_notice", content: "Which branch should I target?" },
-      { kind: "compaction_failed", content: "context window exceeded during compaction" },
-      { kind: "infra_safety_blocked", content: "violated: no-prod-writes" },
-    ];
-    for (const c of cases) {
-      const text = textOf([
-        user("u1", "q"),
-        { ...event("e1", c.kind), content: c.content } as Message,
-        assistant("a1", { turn_outcome: "failed" }),
-      ]);
-      expect(text, c.kind).not.toContain(c.content);
-      expect(text, c.kind).toBe("The agent reported an error and the turn stopped.");
-    }
-  });
-
-  it("reaches PAST a newer non-interrupted row to the interrupted one", () => {
-    // The scope is a filter, not an early stop: a plan row, a compaction watermark
-    // or a step notice can legitimately land after the interrupt divider inside one
-    // turn, and the interrupt is still the turn's account of itself.
-    expect(
-      textOf([
-        user("u1", "q"),
-        { ...event("e1", "interrupted"), content: "the bridge died" } as Message,
-        { ...event("e2", "model_switched"), content: "claude-opus-5" } as Message,
-        assistant("a1", { turn_outcome: "interrupted" }),
-      ]),
-    ).toBe("the bridge died");
-  });
-
-  it("falls back to the carrier's persisted reason when no divider was written", () => {
-    // `closeWithOutcome` writes no divider once the turn has streamed anything, so
-    // the message that finalized the turn is the only place the reason can live.
-    expect(
-      textOf([
-        user("u1", "q"),
-        assistant("a1", {
-          turn_outcome: "failed",
-          turn_failure_reason: "The upstream connection dropped.",
-        }),
-      ]),
-    ).toBe("The upstream connection dropped.");
+  it("ignores a whitespace-only reason and speaks the default instead", () => {
+    expect(textOf({ outcome: "failed", failure_reason: "   " })).toBe(
+      "The agent reported an error and the turn stopped.",
+    );
   });
 
   it("speaks for a failed turn that recorded no reason at all", () => {
-    // THE SYMPTOM-1 SHAPE, taken from the reported chat file: a settled `failed`
-    // outcome on an assistant message with blocks, no event row, and no reason
-    // anywhere in the record. It rendered a red footer mark over an empty body, and
-    // the only account of the failure was a 12-second toast.
-    const text = textOf([user("u1", "q"), assistant("a1", { turn_outcome: "failed" })]);
-    expect(text).not.toBe("");
-    expect(text).toBe("The agent reported an error and the turn stopped.");
-  });
-
-  it("speaks for an empty turn whose only trace is an outcome marker", () => {
-    // Turn 2 of the same chat: a `turn_outcome` event carrying no content, which
-    // EVENT_RENDER_MAP skips, so the body rendered nothing whatsoever.
-    expect(
-      textOf([
-        user("u2", "resume"),
-        { ...event("e1", "turn_outcome"), turn_outcome: "failed" } as Message,
-      ]),
-    ).toBe("The agent reported an error and the turn stopped.");
+    // Otherwise a red footer mark sits over an empty body with no account anywhere.
+    expect(textOf({ outcome: "failed" })).toBe("The agent reported an error and the turn stopped.");
   });
 
   it("distinguishes a refusal from a dropped connection", () => {
     // Both are `broken`, and the default is keyed per OUTCOME precisely so the
     // severity's own coarseness does not reach the reader.
-    const refused = textOf([user("u1", "q"), assistant("a1", { turn_outcome: "refused" })]);
-    const interrupted = textOf([user("u2", "q"), assistant("a2", { turn_outcome: "interrupted" })]);
-    expect(refused).not.toBe(interrupted);
+    const refused = textOf({ outcome: "refused" });
+    const interrupted = textOf({ outcome: "interrupted" });
     expect(refused).toBe("The model declined to continue.");
-  });
-
-  it("answers empty for a clean turn — the card shows the answer instead", () => {
-    expect(
-      textOf([
-        user("u1", "q"),
-        event("e1", "model_switched"),
-        assistant("a1", { turn_outcome: "completed" }),
-      ]),
-    ).toBe("");
-  });
-
-  it("answers empty for a turn still running", () => {
-    const t = projectTurns([user("u1", "q"), assistant("a1")], true)[0];
-    expect(t?.outcome).toBe("running");
-    expect(t === undefined ? "x" : turnFailureText(t)).toBe("");
+    expect(refused).not.toBe(interrupted);
   });
 
   it("still speaks for an UNKNOWN turn, which is what the footer glyph cannot", () => {
-    // `unknown` is `stopped` and not a failure, but a footer glyph with no words
-    // beside it is the same silence one severity down: nobody read the end, so the
-    // footer's word cannot stand in for a sentence. The notice tints itself yellow
-    // for it rather than red.
-    //
-    // This is also the NEGATIVE CONTROL for the two cancelled cases below: the gate
-    // that silences a cancel is keyed on the OUTCOME precisely because keying it on
-    // the severity would silence this one too.
-    expect(textOf([user("u1", "q"), assistant("a1", { turn_outcome: "unknown" })])).toBe(
+    // `unknown` is `stopped` rather than broken, and the NEGATIVE CONTROL for the two
+    // cancelled cases below: the gate that silences a cancel is keyed on the OUTCOME
+    // precisely because keying it on the severity would silence this one too.
+    expect(textOf({ outcome: "unknown" })).toBe(
       "The turn ended for a reason marotte could not read.",
     );
   });
 
   it("says nothing for a CANCELLED turn — the footer's own word carries it", () => {
-    // The reader caused the stop, and the footer already reads "Cancelled" a row
-    // away, so a notice would render one fact twice.
-    expect(textOf([user("u1", "q"), assistant("a1", { turn_outcome: "cancelled" })])).toBe("");
+    expect(textOf({ outcome: "cancelled" })).toBe("");
   });
 
-  it("silences the sentence already persisted on a historical cancelled turn", () => {
-    // THE POPULATION THE DEFAULT-REASON CHANGE CANNOT REACH: every cancelled turn
-    // written before `defaultFailureReason` stopped supplying one carries
-    // "The turn was cancelled." in its own record, so source 2 would hand it straight
-    // back. This is why the gate sits AHEAD of all three sources rather than being a
-    // change to the default alone.
-    expect(
-      textOf([
-        user("u1", "q"),
-        assistant("a1", {
-          turn_outcome: "cancelled",
-          turn_failure_reason: "The turn was cancelled.",
-        }),
-      ]),
-    ).toBe("");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A RESERVED SLOT is not content.
-//
-// `padBlocks` reserves the DOM position of a block whose own frame has not
-// arrived, because the block mounter is append-only. Such a placeholder says
-// nothing about who produced the block that will fill it, so a predicate reading
-// the array has to skip it — and `isStepMessage` is a UNIVERSAL, so counting one
-// reservation as the parent agent's own work flips a step message into a
-// headerless turn card.
-//
-// Scoped to `isStepMessage` alone, deliberately. `carriesNothing` reads the same
-// array and has the same rule, and a case for it here could not fail: both
-// fixtures hold real blocks, so it answers false before and after.
-// ---------------------------------------------------------------------------
-
-describe("a padded block array", () => {
-  const STEP = "wf:w1:root";
-
-  function step(text: string): Block {
-    return { type: "text", text, agent_subtask_id: STEP };
-  }
-
-  /** One settled turn, then a step message. The settled turn is what makes
-   *  `opensHeaderlessTurn` reachable at all: without a closed segment before it the
-   *  step message joins the open turn whatever the predicate answers. */
-  function project(bs: Block[]): Turn[] {
-    return projectTurns(
-      [
-        user("u1", "run the release workflow"),
-        assistant("a1", { turn_outcome: "completed" }),
-        assistant("a2", { blocks: bs } as unknown as Partial<Message>),
-      ],
-      false,
-    );
-  }
-
-  it("reads a padded block array the same as an unpadded one", () => {
-    const padded = project([step("first"), padBlock(undefined), step("last")]);
-    const unpadded = project([step("first"), step("last")]);
-
-    // Hardcoded on both sides rather than compared against each other, so a rule that
-    // broke BOTH readings the same way cannot pass this.
-    expect(padded).toHaveLength(1);
-    expect(unpadded).toHaveLength(1);
-    expect(padded[0]?.trigger?.id).toBe("u1");
-    expect(unpadded[0]?.trigger?.id).toBe("u1");
+  it("silences a sentence already persisted on a cancelled turn", () => {
+    // The gate sits AHEAD of the source rather than being a change to the default
+    // alone, because a cancelled turn's own record can carry a sentence that would
+    // otherwise be handed straight back.
+    expect(textOf({ outcome: "cancelled", failure_reason: "The turn was cancelled." })).toBe("");
   });
 
-  it("still counts a REAL untagged block, so the skip is the pad's alone", () => {
-    // The negative control. Without it the case above passes just as well for a
-    // predicate that stopped reading the array at all.
-    const mixed = project([step("first"), { type: "text", text: "the chat's own work" }]);
+  it("answers empty for a clean turn — the card shows the answer instead", () => {
+    expect(textOf({ outcome: "completed" })).toBe("");
+  });
 
-    expect(mixed).toHaveLength(2);
-    expect(mixed[1]?.trigger).toBeUndefined();
+  it("answers empty for a turn still running", () => {
+    const t = oneTurn([textEntry("t1", 1)]);
+    expect(t.outcome).toBe("running");
+    expect(turnFailureText(t)).toBe("");
   });
 });

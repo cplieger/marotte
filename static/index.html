@@ -370,7 +370,7 @@
                   <span class="pill-ctx-row"><span class="pill-ctx-label">Credits this chat</span><span id="ctx-credits" class="pill-detail">0.00 cr</span></span>
                   <span class="pill-ctx-row"><span class="pill-ctx-label">Turns</span><span id="ctx-turns" class="pill-detail">0</span></span>
                   <span class="pill-ctx-row"><span class="pill-ctx-label">Last turn</span><span id="ctx-last-turn" class="pill-detail">-</span></span>
-                  <span class="pill-ctx-row"><span class="pill-ctx-label">Messages</span><span id="ctx-msgs" class="pill-detail">0</span></span>
+                  <span class="pill-ctx-row"><span class="pill-ctx-label">Entries</span><span id="ctx-entries" class="pill-detail">0</span></span>
                   <span class="pill-ctx-row"><span class="pill-ctx-label">Tool calls</span><span id="ctx-tools" class="pill-detail">0</span></span>
                   <span id="ctx-metering" class="pill-metering hidden" role="group"></span>
                 </span>
@@ -437,25 +437,25 @@
 
       <!-- Settings view (tabbed: General / Tools / Permissions / Instructions / Git) -->
       <div id="settings-view" class="hidden" data-tab-view>
-        <div class="settings-shell">
-          <header class="settings-header">
+        <div class="page-shell">
+          <header class="page-header">
 
-            <nav id="settings-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Settings tabs">
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="general" aria-label="General">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-                <span class="settings-tab-label">General</span>
+            <nav id="settings-tab-bar" class="seg-bar" role="tablist" aria-label="Settings tabs">
+              <button type="button" class="seg" role="tab" data-settings-tab="general" aria-label="General">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                <span class="seg-label">General</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="tools" aria-label="Tools">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-                <span class="settings-tab-label">Tools</span>
+              <button type="button" class="seg" role="tab" data-settings-tab="tools" aria-label="Tools">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+                <span class="seg-label">Tools</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="permissions" aria-label="Permissions">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                <span class="settings-tab-label">Permissions</span>
+              <button type="button" class="seg" role="tab" data-settings-tab="permissions" aria-label="Permissions">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span class="seg-label">Permissions</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" data-settings-tab="instructions" aria-label="Custom instructions">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                <span class="settings-tab-label">Custom instructions</span>
+              <button type="button" class="seg" role="tab" data-settings-tab="instructions" aria-label="Custom instructions">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span class="seg-label">Custom instructions</span>
               </button>
             </nav>
           </header>
@@ -704,6 +704,25 @@
               <div id="tools-list" class="list-container"><div class="skeleton-list-row"></div><div class="skeleton-list-row"></div><div class="skeleton-list-row"></div></div>
             </div>
 
+            <div class="page-section">
+              <h2 class="section-title">Advanced configuration</h2>
+              <p class="section-hint">The manifest behind this list, and the workspace preferences, opened in the editor. Editing <strong>tools.json</strong> changes nothing on its own: <strong>Apply</strong> is what converges the volume on it, and Cancel stops the pass in flight. Keep it valid JSON at schema version 2; a manifest the engine cannot read stops the container from starting, and then this editor is gone too. <strong>config.json</strong> needs no Apply: the server re-reads it on the next request, so reload the page to see a hand edit here.</p>
+              <details>
+                <summary class="section-subtitle native-explain-summary">What Apply runs, and two keys a hand edit cannot finish</summary>
+                <p class="section-hint">Apply converges in two passes: install what the manifest now asks for and remove what it no longer does, then update anything unpinned. Both stream their output above. Cancel beside Apply stops the install pass only; the update pass is Update all's to stop, and the Cancel control moves there when it starts. Two keys in <strong>config.json</strong> need more than the file: <code>security_profile</code> only chooses the presets a new session starts with, since rewriting the policy files is Settings → Permissions' job, and <code>agent_ignore_files</code> names ignore files whose patterns still come from the workspace.</p>
+              </details>
+              <div class="section-actions-row">
+                <div class="action-bar action-bar-inline">
+                  <button type="button" id="tool-open-manifest" class="btn btn-small" aria-label="Open tools.json in the editor">tools.json</button>
+                  <button type="button" id="tool-open-config" class="btn btn-small" aria-label="Open config.json in the editor">config.json</button>
+                  <button type="button" id="tool-apply-btn" class="action-pill" aria-label="Apply the manifest">
+                    <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    <span>Apply</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div class="page-section" id="mcp-section">
               <!-- MCP integrations section body is rendered by mcp.ts at startup. -->
             </div>
@@ -787,7 +806,11 @@
                 <h2 class="section-title">Supervised mode (default for new chats)</h2>
                 <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
               </div>
-              <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent may <em>run</em> a write tool; supervised mode decides whether the turn's file changes are <em>kept</em>. When it is on, the agent writes its changes for a turn to disk, then the turn pauses and one review card appears in the bar at the bottom of the chat, listing the files it changed. Every file starts ticked, so confirming keeps all of them; you untick anything you want reverted. The changes are on disk while you review, so a running dev server, build watcher or test runner can pick up a change you are about to reject. A rename that spans several paths is one decision you cannot split. To turn supervised mode on for the conversation you are in, use the chat-actions menu next to the prompt; this setting only picks the default for new ones.</p>
+              <p class="section-hint">Picks the default for <strong>new</strong> conversations; to turn it on for the conversation you are in, use the chat-actions menu next to the prompt. While a turn is held for review its file changes are already <strong>on disk</strong>, so a running dev server, build watcher or test runner can pick up a change you are about to reject.</p>
+              <details>
+                <summary class="section-subtitle native-explain-summary">How the review works</summary>
+                <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent may <em>run</em> a write tool; supervised mode decides whether the turn's file changes are <em>kept</em>. The turn pauses and one review card appears in the bar at the bottom of the chat, listing the files it changed. Every file starts ticked, so confirming keeps all of them; you untick anything you want reverted. A rename that spans several paths is one decision you cannot split.</p>
+              </details>
               <label class="perm-mode">
                 <input type="checkbox" id="supervised-default-checkbox">
                 <span>Turn on Supervised mode for new conversations</span>
@@ -812,7 +835,8 @@
                   <h2 class="section-title">Agent ignore files</h2>
                   <span class="settings-save-status hidden" data-save-status="agent_ignore_files" aria-live="polite"></span>
                 </div>
-                <p class="section-hint">Paths to gitignore-style files. The agent cannot <em>read</em> files matching these patterns (writes are still allowed, same as git). Good for keeping decrypted secrets (<code>.env.dec</code>), build artifacts, and other gitignored files out of the agent's context window. Relative entries resolve against the workspace root.</p>
+                <p class="section-hint"><code>.kiroignore</code> at the workspace root is always honoured; add other gitignore-style files to apply them too. <strong>kiro-cli</strong> does the enforcing, across its file <em>and search</em> tools, checked ahead of the Active policy above so no rule there can override it. Some limits: a matching name can still appear in a directory listing, though its contents stay unreadable, and a shell command the agent runs reads the file normally — that output lands in the transcript, so this keeps a decrypted secret (<code>.env.dec</code>) away from the file tools rather than out of the conversation. The agent cannot rewrite <code>.kiroignore</code> itself; editing any other file you list here, at the workspace root, asks you first.</p>
+                <div id="agent-ignore-floor" class="chip-list"></div>
                 <div id="agent-ignore-chips" class="chip-list"></div>
                 <div class="rule-form" data-rule-form="ignore" role="group" aria-label="Add an agent ignore file">
                   <label class="rf-field rf-grow">
@@ -822,7 +846,7 @@
                   <button id="agent-ignore-add" class="btn rf-submit" type="button">Add</button>
                 </div>
                 <p id="agent-ignore-empty-hint" class="section-hint hidden">
-                  No ignore files. Common choices: .gitignore (keeps all gitignored paths off-limits to reads), .kiroignore (dedicated marotte-only list).
+                  Nothing added. The common choice is .gitignore, which keeps every gitignored path away from the file tools.
                 </p>
               </div>
             </div>
@@ -866,42 +890,42 @@
            (whose toolbar slot it took) and the duplicate list that used to sit
            in Settings -> Custom instructions. -->
       <div id="docs-view" class="hidden" data-tab-view>
-        <div class="page-content">
-          <header class="settings-header">
+        <div class="page-shell">
+          <header class="page-header">
 
-            <nav id="docs-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Kiro document categories">
-              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-                <span class="settings-tab-label">Steering</span>
+            <nav id="docs-tab-bar" class="seg-bar" role="tablist" aria-label="Kiro document categories">
+              <button type="button" class="seg active" role="tab" aria-selected="true" data-docs-tab="steering" aria-label="Steering">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                <span class="seg-label">Steering</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="skills" aria-label="Skills">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span class="settings-tab-label">Skills</span>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="skills" aria-label="Skills">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span class="seg-label">Skills</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/></svg>
-                <span class="settings-tab-label">Agents</span>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="agents" aria-label="Agents">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/></svg>
+                <span class="seg-label">Agents</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
-                <span class="settings-tab-label">Specs</span>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="specs" aria-label="Specs">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
+                <span class="seg-label">Specs</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0020 0h-3"/></svg>
-                <span class="settings-tab-label">Hooks</span>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="hooks" aria-label="Hooks">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0020 0h-3"/></svg>
+                <span class="seg-label">Hooks</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
-                <span class="settings-tab-label">Workflows</span>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-docs-tab="workflows" aria-label="Workflows">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
+                <span class="seg-label">Workflows</span>
               </button>
             </nav>
           </header>
-          <div data-docs-panel="steering" class="list-container docs-panel"></div>
-          <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
-          <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
-          <div data-docs-panel="specs" class="list-container docs-panel hidden"></div>
-          <div data-docs-panel="hooks" class="list-container docs-panel hidden"></div>
-          <div data-docs-panel="workflows" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="steering" class="docs-panel"></div>
+          <div data-docs-panel="skills" class="docs-panel hidden"></div>
+          <div data-docs-panel="agents" class="docs-panel hidden"></div>
+          <div data-docs-panel="specs" class="docs-panel hidden"></div>
+          <div data-docs-panel="hooks" class="docs-panel hidden"></div>
+          <div data-docs-panel="workflows" class="docs-panel hidden"></div>
         </div>
       </div>
 
@@ -910,21 +934,21 @@
            Tab 2 (Pull requests): per-repo collapsible PR lists.
            Tab 3 (Sources): forge accounts + cloneable repos per forge. -->
       <div id="git-view" class="hidden" data-tab-view>
-        <div class="page-content">
-          <header class="settings-header">
+        <div class="page-shell">
+          <header class="page-header">
 
-            <nav id="git-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Git tabs">
-              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-git-tab="changes" aria-label="Changes">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><line x1="1.05" y1="12" x2="7" y2="12"/><line x1="17.01" y1="12" x2="22.96" y2="12"/></svg>
-                <span class="settings-tab-label">Changes</span>
+            <nav id="git-tab-bar" class="seg-bar" role="tablist" aria-label="Git tabs">
+              <button type="button" class="seg active" role="tab" aria-selected="true" data-git-tab="changes" aria-label="Changes">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><line x1="1.05" y1="12" x2="7" y2="12"/><line x1="17.01" y1="12" x2="22.96" y2="12"/></svg>
+                <span class="seg-label">Changes</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="prs" aria-label="Pull requests">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 012 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
-                <span class="settings-tab-label">Pull requests</span>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-git-tab="prs" aria-label="Pull requests">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 012 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+                <span class="seg-label">Pull requests</span>
               </button>
-              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-git-tab="sources" aria-label="Sources">
-                <svg class="settings-tab-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
-                <span class="settings-tab-label">Sources</span>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-git-tab="sources" aria-label="Sources">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+                <span class="seg-label">Sources</span>
               </button>
             </nav>
           </header>
@@ -1137,11 +1161,32 @@
         </button>
       </div>
 
-      <!-- History view (archived chats) -->
+      <!-- History view: previous chats and previous workflow runs, two panes
+           behind one segmented bar. Both lists are sourced from KAS. -->
       <div id="history-view" class="hidden" data-tab-view>
-        <div class="page-content">
-          <div id="history-table" class="list-container">
-            <div class="list-empty">No previous sessions in this workspace.</div>
+        <div class="page-shell">
+          <header class="page-header">
+
+            <nav id="history-tab-bar" class="seg-bar" role="tablist" aria-label="History categories">
+              <button type="button" class="seg active" role="tab" aria-selected="true" data-history-tab="chats" aria-label="Chats">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 17a2 2 0 01-2 2H6.828a2 2 0 00-1.414.586l-2.202 2.202A.71.71 0 012 21.286V5a2 2 0 012-2h16a2 2 0 012 2z"/></svg>
+                <span class="seg-label">Chats</span>
+              </button>
+              <button type="button" class="seg" role="tab" aria-selected="false" data-history-tab="runs" aria-label="Runs">
+                <svg class="seg-icon ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/></svg>
+                <span class="seg-label">Runs</span>
+              </button>
+            </nav>
+          </header>
+          <div data-history-panel="chats" class="history-panel">
+            <div id="history-table" class="list-container" role="list">
+              <div class="list-empty">No previous conversations in this workspace.</div>
+            </div>
+          </div>
+          <div data-history-panel="runs" class="history-panel hidden">
+            <div id="history-runs" class="list-container" role="list">
+              <div class="list-empty">No previous workflow runs in this workspace.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1162,6 +1207,15 @@
              than a composer feature. -->
         <div class="run-bottom-bar bottom-bar">
           <div id="run-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
+        </div>
+      </div>
+
+      <!-- One Kiro spec's documents, tasks.md as a live checklist. Same .page-content
+           rules as #run-view; no bottom bar, because running a task is a prompt into
+           the parent chat rather than a decision of this page's own. -->
+      <div id="spec-view" class="hidden" data-tab-view>
+        <div class="page-content">
+          <div id="spec-body"></div>
         </div>
       </div>
 
@@ -1258,7 +1312,7 @@
       </div>
       <div id="tool-search-results" class="list-container tool-search-results" role="group" aria-label="Search results"></div>
     </div>
-    <p id="tool-shell-note" class="tool-shell-note">Not listed? Install it in the shell; the engine only manages what it installed.<span id="tool-shell-note-apt" class="hidden"> Debian packages are not searchable here: apt needs root and this container has none.</span></p>
+    <p id="tool-shell-note" class="tool-shell-note">Not listed? Install it in the shell; the engine only manages what it installed.<span id="tool-shell-note-apt" class="hidden"></span></p>
   </div>
 
   <!-- MCP connect / edit modal -->
@@ -1269,11 +1323,11 @@
         <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
-    <nav id="mcp-modal-tabs" class="mcp-modal-tabs" role="tablist" aria-label="Add integration method">
-      <button type="button" class="mcp-modal-tab active" role="tab" aria-selected="true" data-mcp-mode="search">Search registry</button>
-      <button type="button" class="mcp-modal-tab" role="tab" aria-selected="false" data-mcp-mode="remote">Remote URL</button>
-      <button type="button" class="mcp-modal-tab" role="tab" aria-selected="false" data-mcp-mode="npm">npm package</button>
-      <button type="button" class="mcp-modal-tab" role="tab" aria-selected="false" data-mcp-mode="raw">Paste JSON</button>
+    <nav id="mcp-modal-tabs" class="seg-bar mcp-modal-tabs" role="tablist" aria-label="Add integration method">
+      <button type="button" class="seg active" role="tab" aria-selected="true" data-mcp-mode="search"><span class="seg-label">Search registry</span></button>
+      <button type="button" class="seg" role="tab" aria-selected="false" data-mcp-mode="remote"><span class="seg-label">Remote URL</span></button>
+      <button type="button" class="seg" role="tab" aria-selected="false" data-mcp-mode="npm"><span class="seg-label">npm package</span></button>
+      <button type="button" class="seg" role="tab" aria-selected="false" data-mcp-mode="raw"><span class="seg-label">Paste JSON</span></button>
     </nav>
 
     <!-- Search panel: queries the official MCP registry via proxy -->
@@ -1323,13 +1377,13 @@
       </label>
       <div class="mcp-form-section">
         <div class="mcp-form-section-head">
-          <span class="tool-form-label-text">Headers</span>
+          <span class="tool-form-label-text">Headers (API tokens go here)</span>
           <button type="button" id="mcp-remote-add-header" class="action-pill" data-tooltip="Add header" aria-label="Add header">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
         </div>
         <div id="mcp-remote-headers" class="mcp-pair-list"></div>
-        <p class="tool-form-hint">Authorization, API keys, etc. Stored locally with 0600 perms; never sent back to the browser once saved.</p>
+        <p class="tool-form-hint">For a bearer token, add a header named <code>Authorization</code> with the value <code>Bearer &lt;your token&gt;</code>. Stored locally with 0600 perms; never sent back to the browser once saved.</p>
       </div>
       <p id="mcp-remote-error" class="section-hint mcp-form-error hidden"></p>
       <button type="submit" id="mcp-remote-save" class="btn-save">
@@ -1395,6 +1449,25 @@
       <div class="chip-adder">
         <input id="mcp-disabled-input" class="chip-input" type="text" autocomplete="off" placeholder="e.g. create_issue" aria-label="Add disabled tool">
         <button id="mcp-disabled-add" class="action-pill" type="button" data-tooltip="Block tool" aria-label="Block tool">
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Run without asking: shared across all modes, only visible on edit -->
+    <div id="mcp-auto-approve" class="mcp-form-section hidden">
+      <div class="mcp-form-section-head">
+        <span class="tool-form-label-text">Run without asking</span>
+      </div>
+      <p class="section-hint">A tool listed here is marked to run without a permission request. The agent engine installed here does not act on that mark yet, so a listed tool still asks for now. The list is suspended on the Guarded and Read-only security profiles. Pasting a publisher's block can add tools here, so read the list before saving. Type the tool name exactly as it appears in the agent's tool list (e.g. <code>search_repos</code>).</p>
+      <div id="mcp-auto-approve-suspended" class="mcp-list-suspended hidden">
+        <span>Suspended by the security profile in force: every tool below still asks for permission. The names are kept and take effect again on a profile that honours them.</span>
+        <div class="approval-policy-pointer">Pick a security profile that honours it in <button id="mcp-auto-approve-profile-link" class="approval-policy-link" type="button">Settings</button>.</div>
+      </div>
+      <div id="mcp-auto-approve-chips" class="chip-list"></div>
+      <div class="chip-adder">
+        <input id="mcp-auto-approve-input" class="chip-input" type="text" autocomplete="off" placeholder="e.g. search_repos" aria-label="Add a tool to run without asking">
+        <button id="mcp-auto-approve-add" class="action-pill" type="button" data-tooltip="Add tool" aria-label="Add a tool to run without asking">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </button>
       </div>

@@ -1,3 +1,7 @@
+// Package buffer tracks which LINES of a file the agent changed, and the line delta
+// one diff represents. The per-turn content accumulator lives in internal/turnlog,
+// which appends every seal to the chat's entry log rather than holding a turn in
+// memory until its closer takes it.
 package buffer
 
 import (
@@ -7,6 +11,10 @@ import (
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
+
+// DefaultOutputCap is the shared byte budget for subprocess output buffers. 64 KiB covers a
+// full terminal screen at 200×50 with generous ANSI escapes, well below container limits.
+const DefaultOutputCap = 64 * 1024
 
 // LineRange is a range of lines modified by the agent.
 type LineRange struct {
@@ -128,7 +136,7 @@ func (lt *LineTracker) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.To
 
 // Get returns the line ranges for a file in a chat.
 //
-// A COPY, for the same reason SnapshotCapped clones its three slices: the production
+// A COPY, and it has to be one: the production
 // caller is an HTTP handler (agent/line_tracker.go) that reads the result after
 // this returns and drops the read lock, while the dispatch loop keeps calling
 // Record on the same key. Handing out the tracker's own slice made the handler's

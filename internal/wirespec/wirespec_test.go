@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -30,7 +29,7 @@ import (
 
 // marottePkgPath is read off a registration rather than written as a literal, so
 // renaming the package cannot leave these tests silently scanning nothing.
-var marottePkgPath = wiregen.TypeRef[marotte.Message]().PkgPath
+var marottePkgPath = wiregen.TypeRef[marotte.ChatHeader]().PkgPath
 
 // emptySignalPayloads are the payload types deliberately absent from the
 // registry. Each is an empty struct: the event is a pure invalidation signal
@@ -337,95 +336,5 @@ func TestRegistry_DeclaresNoTypeOrDecoderMappings(t *testing.T) {
 	if len(r.DecoderMappings) != 0 {
 		t.Errorf("Registry().DecoderMappings has %d entries, want 0; same rule: %v",
 			len(r.DecoderMappings), r.DecoderMappings)
-	}
-}
-
-// TestLiveTurn_TruncatedIsRequiredOnTheWire mirrors internal/settings'
-// TestEffectiveSettings_EveryFieldIsSettable discipline on the one field the GET's
-// capped live_turn snapshot depends on.
-//
-// wiregen emits an OPTIONAL TypeScript member for a Go field carrying omitempty, and
-// an optional member is exactly what lets a reader invent a fallback — at which point
-// an ABSENT marker reads as "the payload is complete", which is false for every capped
-// snapshot. Required makes that drift class unrepresentable instead of tested for, so
-// the tag is the contract and this is what holds it.
-func TestLiveTurn_TruncatedIsRequiredOnTheWire(t *testing.T) {
-	rt := reflect.TypeFor[marotte.LiveTurn]()
-	f, ok := rt.FieldByName("Truncated")
-	if !ok {
-		t.Fatal("LiveTurn has no Truncated field; a capped snapshot then reaches the client unmarked")
-	}
-	tag := f.Tag.Get("json")
-	name, _, _ := strings.Cut(tag, ",")
-	if name != "truncated" {
-		t.Errorf("LiveTurn.Truncated json name = %q, want %q", name, "truncated")
-	}
-	if strings.Contains(tag, "omitempty") {
-		t.Errorf("LiveTurn.Truncated carries omitempty (tag %q); that generates an OPTIONAL "+
-			"TypeScript member, so a client can supply a fallback and read an absent marker as a "+
-			"complete payload", tag)
-	}
-}
-
-// TestBlockBaseIsRequiredOnLiveTurn holds the offset between a capped snapshot's block
-// array and the absolute block_index a live message_chunk carries. capBlocks keeps the
-// TAIL of the array and re-indexes it from zero, so without a base on the wire a client
-// addresses every later chunk against the wrong array. live_turn on the chat GET is the
-// ONE channel that carries a capped snapshot: the connect carries busy_chats and no turn
-// content.
-//
-// The absent-omitempty half is Truncated's rule — wiregen emits an OPTIONAL member for
-// a field carrying it, and an optional member is what lets a reader supply the `?? 0`
-// that IS the corruption this field exists to remove.
-func TestBlockBaseIsRequiredOnLiveTurn(t *testing.T) {
-	rt := reflect.TypeFor[marotte.LiveTurn]()
-	f, ok := rt.FieldByName("BlockBase")
-	if !ok {
-		t.Fatal("marotte.LiveTurn has no BlockBase field; a capped snapshot then reaches the " +
-			"client with its blocks re-indexed from zero and nothing naming the offset")
-	}
-	if f.Type.Kind() != reflect.Int {
-		t.Errorf("marotte.LiveTurn.BlockBase is %s, want int: a pointer generates an OPTIONAL "+
-			"member read with optNum, so an absent base answers undefined and every call "+
-			"site is one `?? 0` from the corruption", f.Type)
-	}
-	tag := f.Tag.Get("json")
-	if got, _, _ := strings.Cut(tag, ","); got != "block_base" {
-		t.Errorf("marotte.LiveTurn.BlockBase json name = %q, want %q", got, "block_base")
-	}
-	if strings.Contains(tag, "omitempty") {
-		t.Errorf("marotte.LiveTurn.BlockBase carries omitempty (tag %q); a base of 0 is a POSITIVE "+
-			"statement that these blocks start at 0, and omitting it makes an absent base "+
-			"indistinguishable from it", tag)
-	}
-}
-
-// TestLiveTurnIsRegistered pins the registration itself, which no existing test
-// reaches: all three registry walks go through registeredMarottePayloads, which
-// filters on a `Payload` suffix, so marotte.LiveTurn is invisible to every one of
-// them. That same filter is what makes the type's SSE-binding exemption structural
-// rather than a list entry — the binding walk cannot see it either, exactly as it
-// cannot see ToolCallBulk.
-//
-// Registered so the single-chat GET's `live_turn` reads a GENERATED decoder: the
-// hand-mirrored one it replaces could read a required field as optional on one side
-// only, which is the whole reason the base is required.
-func TestLiveTurnIsRegistered(t *testing.T) {
-	names := make([]string, 0, len(Registry().Types))
-	for _, wt := range Registry().Types {
-		if wt.PkgPath == marottePkgPath {
-			names = append(names, wt.Name)
-		}
-	}
-	if !slices.Contains(names, "LiveTurn") {
-		t.Errorf("marotte.LiveTurn is not in Registry().Types, so the client reads a hand-written "+
-			"decoder for the chat GET's live_turn and a required field can be optional on one side "+
-			"only.\nAdd wiregen.TypeRef[marotte.LiveTurn]() to wireTypes.\nRegistered marotte types: %v",
-			names)
-	}
-	if got := registeredMarottePayloads(t); slices.Contains(got, "LiveTurn") {
-		t.Errorf("registeredMarottePayloads names LiveTurn, so the SSE-binding walk now demands an " +
-			"event binding for a REST reply; that exemption is supposed to hold by the `Payload` " +
-			"suffix rather than by a list")
 	}
 }

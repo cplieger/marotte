@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/procgroup"
 )
 
 // bareTerminals builds the registry with NO collaborators, for the tests that
@@ -357,7 +357,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 // the next chunk so every terminal_output chunk is valid UTF-8, while the ring
 // still receives every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 	term := newAgentTerminal(nil, "c1", 1024)
 	// "aé€😀" with reads that split every multi-byte rune internally:
 	// é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
@@ -499,7 +499,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	// vacuous; chunkSize 1 is what makes the boundary real.
 	f.Add([]byte("\x1b0"), uint8(1))
 	f.Add([]byte("a\x1b0b"), uint8(1))
-	h := New(f.Context(), f.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(f.Context(), f.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 	f.Fuzz(func(t *testing.T, data []byte, chunkRaw uint8) {
 		if len(data) > 512 {
 			data = data[:512] // keep this iteration's emits under the 1024-event ring cap
@@ -618,7 +618,7 @@ func processAlive(pid int) bool {
 // disappears from the transcript instead of showing as the truncated sequence it
 // is, and a command killed mid-write silently loses its last characters.
 func TestPumpTerminalOutput_ReleasesATruncatedEscapeSequenceAtEOF(t *testing.T) {
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 
 	// "hi" parses out as text; "\x1b[3" is a CSI sequence with no final byte, so
 	// the parser holds it and neutralizes the ESC on release.
@@ -663,7 +663,7 @@ func TestExitStatusFromState_CleanExitIsACodeNotASignal(t *testing.T) {
 // would silently lose the last characters of any command killed mid-write, while
 // the ring kept them, so the two views of the same output would disagree.
 func TestPumpTerminalOutput_DeliversTheHeldRuneTailAtEOF(t *testing.T) {
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 
 	// "hi" then the first two bytes of "€": complete text, then a rune whose
 	// third byte never arrives.

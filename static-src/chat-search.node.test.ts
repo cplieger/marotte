@@ -69,10 +69,10 @@ describe("the in-chat search reply shared with the Go implementation", () => {
     },
   );
 
-  it("carries the tally beside the hits: every message read, every occurrence counted", () => {
+  it("carries the tally beside the hits: every entry read, every occurrence counted", () => {
     for (const r of decodeAll()) {
-      // The fixture's message set is four messages, all read whatever matched.
-      expect(r.scanned).toBe(4);
+      // The fixture's log is nineteen entries, all read whatever matched.
+      expect(r.scanned).toBe(19);
       // Nothing in the fixture reaches the cap, so the count IS the list.
       expect(r.matched).toBe(r.matches.length);
       expect(r.truncated).toBe(false);
@@ -87,47 +87,51 @@ describe("the in-chat search reply shared with the Go implementation", () => {
     expect(() => decodeSearchResult(forged)).toThrow(/segment_kind/);
   });
 
-  it("keeps the message-kind contract: offset 0, zero length, no block, no subtask", () => {
-    const messages = allHits().filter((h) => h.segment_kind === "message");
-    expect(messages.length).toBeGreaterThan(0);
-    for (const h of messages) {
+  it("keeps the entry-kind contract: offset 0, zero length, no lane", () => {
+    // The filter-only answer locates ENTRIES rather than spans in them, so its hits
+    // carry no position at all — which is what keeps the ranker's segment_len
+    // division unreachable for the kind (`landOnHit` routes it to the container).
+    const entries = allHits().filter((h) => h.segment_kind === "entry");
+    expect(entries.length).toBeGreaterThan(0);
+    for (const h of entries) {
       expect(h.offset).toBe(0);
       expect(h.segment_len).toBe(0);
-      expect(h.block_index).toBeUndefined();
-      expect(h.agent_subtask_id).toBeUndefined();
+      expect(h.lane).toBeUndefined();
     }
   });
 
   it("keeps offsets RUNE-counted: a multibyte word before the match must not skew it", () => {
-    // The fixture's legacy message reads "… The naïve loop calls retry twice."
-    // — the second occurrence sits behind "naïve", whose ï is two UTF-8 bytes,
-    // so a server regression to byte offsets would regenerate this as 57.
+    // The fixture's prompt reads "… The naïve loop calls retry twice." — the second
+    // occurrence sits behind "naïve", whose ï is two UTF-8 bytes, so a server
+    // regression to byte offsets would regenerate this as 57.
     //
-    // Scoped to that message's CONTENT segment: the same message also carries an
+    // Scoped to the PROMPT segment: the same `turn_open` entry also carries an
     // attachment, whose own segment is a different span with its own offsets.
-    const legacy = allHits().filter((h) => h.message_id === "u1" && h.segment_kind === "content");
-    expect(legacy.map((h) => h.offset)).toEqual([15, 56]);
-    // And segment-relative rather than message-relative: the tool output is
-    // block 2 of a longer message, yet its match indexes the OUTPUT alone
-    // ("func retry…" → 5).
+    const prompt = allHits().filter((h) => h.segment_kind === "prompt");
+    expect(prompt.map((h) => h.offset)).toEqual([15, 56]);
+    // And segment-relative rather than turn-relative: the tool output is one entry
+    // of a long turn, yet its match indexes the OUTPUT alone ("func retry…" → 5).
     const output = allHits().find((h) => h.segment_kind === "tool_output");
     expect(output?.offset).toBe(5);
     expect(output?.segment_len).toBe(37);
   });
 
-  it("addresses blocks: tool title and output share an index, the delegate names its subtask", () => {
+  it("addresses entries: a result pairs to its call by id, the delegate names its lane", () => {
+    // A call and its settled value are TWO entries, paired by `<call>:result` — which
+    // is the identity both sides mint, so the client resolves the output's card from
+    // the call's own element with no join.
     const hits = allHits();
     const title = hits.find((h) => h.segment_kind === "tool_title");
     const output = hits.find((h) => h.segment_kind === "tool_output");
-    expect(title?.block_index).toBe(2);
-    expect(output?.block_index).toBe(2);
-    const delegate = hits.find((h) => h.agent_subtask_id !== undefined);
-    expect(delegate?.agent_subtask_id).toBe("sub-1");
-    expect(delegate?.block_index).toBe(3);
+    expect(title?.entry_id).toBe("tc1");
+    expect(output?.entry_id).toBe("tc1:result");
+    const delegate = hits.find((h) => h.lane !== undefined);
+    expect(delegate?.lane).toBe("sub-1");
+    expect(delegate?.entry_id).toBe("a2");
     expect(delegate?.segment_kind).toBe("content");
-    // Legacy blockless hits stay unaddressed — the optionality is load-bearing,
-    // not decorative.
-    expect(hits.some((h) => h.block_index === undefined)).toBe(true);
+    // Every OTHER hit carries no lane at all, which is the chat's own agent: the
+    // optionality is load-bearing, and it is what routes a hit to another tab.
+    expect(hits.filter((h) => h.lane !== undefined)).toHaveLength(1);
   });
 });
 

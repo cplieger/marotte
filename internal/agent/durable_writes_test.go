@@ -4,7 +4,7 @@ package agent
 // remember: a write carrying a CONVERSATIONAL RECORD (a prompt, a reply, a
 // turn-boundary event, a plan row, a transcript) must run detached from the shutdown
 // that made it necessary, and every other write is abandonable. A whitelist cannot
-// see the omission it exists for — SealTurnSegment landed in a function nobody listed.
+// see the omission it exists for — a seal path landed in a function nobody listed.
 
 import (
 	"go/ast"
@@ -16,19 +16,25 @@ import (
 	"testing"
 )
 
-// The two packages the class spans. Their SOURCE is read rather than imported:
+// The three packages the class spans. Their SOURCE is read rather than imported:
 // agent imports translate, so a test here has no other way to reach the far half.
-var storeWritePackages = []string{"internal/agent", "internal/translate"}
+// turnlog is in the population because every content seal reaches the store through
+// its one Sink.Append, which the two writer packages never call directly.
+var storeWritePackages = []string{"internal/agent", "internal/translate", "internal/turnlog"}
 
-// What the census counts as a write: the four store methods, plus the five
-// finalize-path helpers that reach them on the caller's own context.
+// What the census counts as a write: the entry store's verbs (the log
+// appenders, the turn opener, the two history rewriters, the header setters
+// and the header mutator) and the run log's own appenders.
 var storeWriteNames = []string{
-	"Mutate", "AppendMessage", "UpsertTurnPlan", "UpdateMessage",
-	"persistTurn", "persistDisplacedTurn", "persistTurnReply", "appendEventMessage", "persistOutcomeMarker",
+	"Mutate", "Append", "AppendBetweenTurns", "OpenTurn", "Revert", "Rewrite",
+	"Reconcile", "SetDraft", "SetAttachments", "WriteCounters",
+	"CloseRun", "SwapMerged", "dropUnreadSteers", "appendLaneless", "appendBetweenTurns",
 }
 
 // A walk that stops finding anything must fail rather than report a clean class.
-const storeWriteFloor = 25
+// 44 measured; the slack covers a site or two moving, not a walker that drops the
+// package-level callees (calleeName's selector-only regression costs four).
+const storeWriteFloor = 35
 
 // One function whose store writes carry a ruling.
 type durableSite struct {
@@ -43,51 +49,57 @@ type durableSite struct {
 // Sites carrying a conversational record. finalizeTurn is deliberately absent: its
 // whole closer dispatch runs below one seam, which has its own test below.
 var durableWriteSites = []durableSite{{
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "amendLostReason",
-	calls:   []string{"UpdateMessage"},
-	because: "the losing closer's own account of the stop, which nothing re-derives",
-}, {
-	file:    "internal/agent/bridge_coord.go",
-	fn:      "SealTurnSegment",
-	calls:   []string{"persistTurn"},
-	because: "a compaction-displaced turn's assistant content",
-}, {
 	file:    "internal/agent/bridge_coord.go",
 	fn:      "PersistModelSwitch",
-	calls:   []string{"AppendMessage", "Mutate"},
-	because: "the model_switched event, which is on no KAS wire",
+	calls:   []string{"Mutate"},
+	because: "the model_switched entry and the header's pick, which are on no KAS wire",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "PersistEffortChange",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "the model_switched entry a reader's effort change leaves, which is on no KAS wire",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "closeTurnOnBridgeDeath",
+	calls:   []string{"dropUnreadSteers"},
+	because: "a dead session's dropped steers, whose text-less entries ARE the signal",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "PersistModeSwitch",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "the mode_switched entry a landed mode switch leaves, which is on no KAS wire",
 }, {
 	file:    "internal/agent/load_projection.go",
 	fn:      "swapProjectedTranscript",
-	calls:   []string{"Mutate"},
+	calls:   []string{"SwapMerged"},
 	because: "the whole reconciled transcript",
 }, {
 	file:    "internal/translate/compact.go",
 	fn:      "handleCompactionCompleted",
-	calls:   []string{"AppendMessage", "Mutate"},
-	because: "the compacted event, its summary text and the watermark that pairs with it",
+	calls:   []string{"Mutate"},
+	because: "the compaction watermark that pairs with the compaction entry",
 }, {
 	file:    "internal/translate/compact.go",
 	fn:      "handleCompactionFailed",
-	calls:   []string{"AppendMessage"},
-	because: "the compaction_failed event, which is on no KAS wire",
+	calls:   []string{"appendLaneless"},
+	because: "the compaction_failed entry, which is on no KAS wire",
 }, {
 	file:    "internal/translate/safety.go",
 	fn:      "persistSafetyBlock",
-	calls:   []string{"AppendMessage"},
+	calls:   []string{"appendLaneless"},
 	because: "an infrastructure-safety refusal, which is on no KAS wire",
 }, {
-	file:    "internal/translate/streaming_content.go",
-	fn:      "HandlePlan",
-	calls:   []string{"UpsertTurnPlan"},
-	because: "the turn's plan row, which the replay wire carries none of and nothing regenerates",
-}, {
 	file:  "internal/translate/steering.go",
-	fn:    "persistSteer",
-	calls: []string{"Mutate"},
+	fn:    "appendSteer",
+	calls: []string{"appendLaneless"},
 	because: "the reader's own mid-turn message and whether the agent read it — " +
 		"a replay re-derives the row from KAS's log but never its delivery state",
+}, {
+	file:  "internal/translate/steering.go",
+	fn:    "appendSteerInLane",
+	calls: []string{"appendBetweenTurns"},
+	because: "which agent read the steer, taken from its own ack — a replay carries the " +
+		"steer's text but neither its delivery state nor the lane that consumed it",
 }}
 
 // Writes ruled NOT durable, each row naming its reason: the next frame or load
@@ -109,10 +121,30 @@ var abandonableWriteSites = []durableSite{{
 	calls:   []string{"Mutate"},
 	because: "the new session's id and facts — no conversational record, and a chat that lost them takes session/new next time",
 }, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "ReviseTurnBinding",
+	calls:   []string{"OpenTurn", "WriteCounters"},
+	because: "the agent's own turn_open on the frame's context: a bridge dying mid-frame has nothing to file under it, and the death closer closes what did open",
+}, {
+	file:    "internal/agent/turn_open.go",
+	fn:      "OpenTurn",
+	calls:   []string{"OpenTurn", "WriteCounters"},
+	because: "a prompt's turn_open on the request's context: a request that died before its turn opened has no turn to record, and the caller answers the request's error",
+}, {
+	file:    "internal/agent/turn_open.go",
+	fn:      "openWireTurn",
+	calls:   []string{"OpenTurn", "WriteCounters"},
+	because: "the wire bracket's turn_open on the frame's context, the same class as ReviseTurnBinding",
+}, {
 	file:    "internal/agent/model_switch.go",
-	fn:      "persistModelPick",
+	fn:      "cmdSwitchModel",
 	calls:   []string{"Mutate"},
 	because: "a model pick on the REQUEST's context, the same class as the command/* writes: a switch nobody is waiting for must not land",
+}, {
+	file:    "internal/translate/streaming_content.go",
+	fn:      "appendSteerAcks",
+	calls:   []string{"appendBetweenTurns"},
+	because: "a steer acknowledgement stripped from a delta, on the frame's context: it lands or is lost with the delta it came out of",
 }, {
 	file:    "internal/translate/v3_updates.go",
 	fn:      "persistUsage",
@@ -138,64 +170,87 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "HandleAgentNotFound",
 	calls:   []string{"Mutate"},
 	because: "the fallback mode, re-derived",
-}, {
-	file:  "internal/translate/user_message_id.go",
-	fn:    "handleUserMessageID",
-	calls: []string{"Mutate"},
-	because: "the agent's own id for a prompt row — no conversational record, and the " +
-		"replay projection re-derives it on the chat's next session/load; a row that " +
-		"lost it is the legacy population rewind's own fallback already answers for",
 }}
 
 // Sites that take the caller's context and must not wrap it, because the decision is
-// not theirs: a persist helper shared between the finalize path and the segment seal,
-// where a wrap would silently change the OTHER caller's shutdown behaviour, and a
-// closer already running below finalizeTurn's seam.
+// not theirs: a store forwarder shared between paths, a helper below a caller's
+// detach, and the run log's own writers, which the run appender drives on the
+// translator's frame context.
 var inheritedWriteSites = []durableSite{{
-	file:    "internal/agent/bridge_coord.go",
-	fn:      "persistTurn",
-	calls:   []string{"AppendMessage"},
-	because: "finalizeTurn's seam for a closer, SealTurnSegment's own wrap for the seal",
+	file:    "internal/agent/turn_finalize.go",
+	fn:      "closeTurn",
+	calls:   []string{"WriteCounters"},
+	because: "finalizeTurn's seam and closeTurnOnBridgeDeath's detach, its two callers",
 }, {
 	file:    "internal/agent/bridge_coord.go",
-	fn:      "persistDisplacedTurn",
+	fn:      "recordSteer",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "its callers decide: dropUnreadSteers's caller's detach, and the run bound's own derived lifecycle context",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "AppendBetweenTurns",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "a forwarder for the command path; the command decides",
+}, {
+	file:    "internal/agent/command_deps.go",
+	fn:      "OpenTurn",
+	calls:   []string{"OpenTurn"},
+	because: "a forwarder for the command path; the command decides",
+}, {
+	file:    "internal/agent/bridge_coord.go",
+	fn:      "persistModelPick",
 	calls:   []string{"Mutate"},
-	because: "finalizeTurn's seam, the only caller",
+	because: "applyPendingModel's detach, and the spawn's own ctx at its fold",
 }, {
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "appendEventMessage",
-	calls:   []string{"AppendMessage"},
-	because: "finalizeTurn's seam, and every caller sits below it",
+	file:    "internal/agent/model_switch.go",
+	fn:      "clearPendingModel",
+	calls:   []string{"Mutate"},
+	because: "applyPendingModel's detach",
 }, {
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "persistTurnReply",
-	calls:   []string{"persistDisplacedTurn", "persistTurn"},
-	because: "finalizeTurn's seam, and both callers sit below it",
+	file:    "internal/agent/entry_merge.go",
+	fn:      "SwapMerged",
+	calls:   []string{"Rewrite"},
+	because: "swapProjectedTranscript's detach, the only caller",
 }, {
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "persistTurnContent",
-	calls:   []string{"persistTurnReply"},
-	because: "finalizeTurn's seam, through closeWithOutcome",
+	file:    "internal/agent/run_log.go",
+	fn:      "Open",
+	calls:   []string{"OpenTurn"},
+	because: "the run appender's frame context",
 }, {
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "recordTurnCarrier",
-	calls:   []string{"appendEventMessage", "persistOutcomeMarker"},
-	because: "finalizeTurn's seam, through closeWithOutcome",
+	file:    "internal/agent/run_log.go",
+	fn:      "Append",
+	calls:   []string{"Append"},
+	because: "the turnlog sink's caller, the run appender's frame context",
 }, {
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "closeAsInterrupted",
-	calls:   []string{"appendEventMessage", "persistTurnReply"},
-	because: "finalizeTurn's seam, asserted above it by the seam test",
+	file:    "internal/agent/run_log.go",
+	fn:      "AppendAfterClosed",
+	calls:   []string{"Append"},
+	because: "the run appender's frame context",
 }, {
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "closeAsDiscarded",
-	calls:   []string{"appendEventMessage"},
-	because: "finalizeTurn's seam, asserted above it by the seam test",
+	file:    "internal/agent/run_appender.go",
+	fn:      "closeRun",
+	calls:   []string{"CloseRun"},
+	because: "the run_complete frame's context; the death arm through host closes what a cancelled frame left open",
 }, {
-	file:    "internal/agent/turn_finalize.go",
-	fn:      "persistOutcomeMarker",
-	calls:   []string{"appendEventMessage"},
-	because: "finalizeTurn's seam, reached only from closeWithOutcome",
+	file:    "internal/translate/entries.go",
+	fn:      "AppendBetweenTurns",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "a helper every between-turns writer shares; each caller detaches or not",
+}, {
+	file:    "internal/translate/entries.go",
+	fn:      "appendBetweenTurns",
+	calls:   []string{"AppendBetweenTurns"},
+	because: "appendLaneless's caller decides",
+}, {
+	file:    "internal/translate/entries.go",
+	fn:      "appendLaneless",
+	calls:   []string{"appendBetweenTurns"},
+	because: "every caller hands it a detached context; a wrap here would hide a caller that forgot",
+}, {
+	file:    "internal/turnlog/turnlog.go",
+	fn:      "append",
+	calls:   []string{"Append"},
+	because: "the seal path; the frame's context, refused on a dead ctx by EntryLog.Append, which the turnlog and entrylog tests pin",
 }}
 
 // The seam itself: one detach, below the position wait, above every closer. Both
@@ -249,12 +304,7 @@ func TestFinalizeTurn_EveryDurableWriteRunsDetached(t *testing.T) {
 	}
 
 	// The helpers take finalizeTurn's ctx, so a call above the seam is refused.
-	persistHelpers := map[string]bool{
-		"persistTurn":          true,
-		"persistDisplacedTurn": true,
-		"appendEventMessage":   true,
-		"persistOutcomeMarker": true,
-	}
+	persistHelpers := map[string]bool{"closeTurn": true}
 	var seen, above []string
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -465,12 +515,12 @@ func writeCallsIn(fset *token.FileSet, body *ast.BlockStmt) []writeCall {
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || !want[sel.Sel.Name] {
+		name := calleeName(call)
+		if !want[name] {
 			return true
 		}
 		out = append(out, writeCall{
-			name:     sel.Sel.Name,
+			name:     name,
 			at:       fset.Position(call.Pos()).String(),
 			detached: isDurableCall(call.Args) || (reassigned.IsValid() && reassigned < call.Pos()),
 		})
@@ -501,9 +551,9 @@ func formatWrites(calls []writeCall) []string {
 	return out
 }
 
-// Whether stmt is `ctx = durable.Context(…)`.
+// Whether stmt is `ctx = durable.Context(…)` or `ctx := durable.Context(…)`.
 func isDurableReassign(stmt *ast.AssignStmt) bool {
-	if stmt.Tok != token.ASSIGN || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
+	if (stmt.Tok != token.ASSIGN && stmt.Tok != token.DEFINE) || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
 		return false
 	}
 	id, ok := stmt.Lhs[0].(*ast.Ident)

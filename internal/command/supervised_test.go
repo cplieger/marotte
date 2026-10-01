@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func supervisedReq(t *testing.T, chatID marotte.ChatID, enabled bool) *marotte.ClientCommand {

@@ -229,7 +229,7 @@ func TestWriteAttachments_StatesTheCaps(t *testing.T) {
 		"15 MiB per prompt",
 		"16 images",
 		"2000px",
-		"49 MiB per gesture, 25 files",
+		"255 MiB per gesture (the total across every file in one upload), 25 files",
 		"the stamp is UTC",
 		"NO filename",
 		"png/jpg/jpeg/gif/webp/svg/avif/ico/bmp",
@@ -275,7 +275,7 @@ func TestWriteCapabilities(t *testing.T) {
 	writeCapabilities(&b, "/cfg")
 	out := b.String()
 	for _, want := range []string{
-		"`/cfg/chats/*.json`",
+		"`/cfg/chats/<id>/entries.jsonl`",
 		"Undo is per TURN, not per file",
 		"no resume or retry tool",
 	} {

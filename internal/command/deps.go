@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -87,28 +88,42 @@ type Bridge interface {
 type BridgeAccess interface {
 	Bridge(chatID marotte.ChatID) Bridge
 	OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error)
-	CloseBridge(chatID marotte.ChatID)
-	// AwaitReplayAdopted blocks until a session/load replay this chat may have in
-	// flight has been adopted into the record (or discarded), so a caller about to
-	// REWRITE the transcript cannot be undone by it; nil error on a chat with no
-	// replay open. A non-nil error means DO NOT REWRITE, and it is bounded by the
-	// implementation's own budget as well as by ctx.
-	AwaitReplayAdopted(ctx context.Context, chatID marotte.ChatID) error
+	// BridgeLive reports a bridge for the chat that is past its spawn: the state
+	// a steer can be delivered into, where a spawning one parks it.
+	BridgeLive(chatID marotte.ChatID) bool
+	// CloseBridge closes every turn the bridge hosted with outcome, then stops the
+	// process: `cancelled` for a stop the reader asked for, `interrupted` otherwise.
+	CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome)
 }
 
-// ChatStore is the chat store as the command handlers use it: read a chat, mutate it,
-// append a message, record a draft and its attachments, delete it. It excludes List,
-// BuildHistory, UpsertTurnPlan, UpdateMessage and RegisterRoutes — each a capability a
-// command handler must not have. Exported because ChatAccess is exported and
-// *agent.Runtime names this.
+// ChatStore is the chat store as the command handlers use it: read the header,
+// mutate it, record a draft and its attachments, delete the chat, and the two
+// log operations a command owns, the rewind's truncate and the attachment count.
+// It excludes List, RegisterRoutes and every append but the turn_open the turn
+// registry writes. Exported because *agent.Runtime names this.
 type ChatStore interface {
-	// Get returns the full chat at id, or false if it does not exist.
+	// Get returns the chat header at id, or false if it does not exist.
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	// Mutate is the single write primitive: load, apply, save, broadcast
+	// Mutate is the header write primitive: load, apply, save, broadcast
 	// chat_created / chat_updated.
 	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
-	// AppendMessage appends msg to the chat's messages.
-	AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error
+	// Revert appends the log's record of a rewind: turn and everything after it
+	// become unreadable rather than absent, so nothing is cut and nothing is
+	// re-closed. It answers the appended record, and the carrier's own turn_open
+	// when no turn survived the window and the log minted one to hold it.
+	Revert(ctx context.Context, chatID marotte.ChatID, turn, kasMessageID string) (record, opened *marotte.Entry, err error)
+	// RewindTarget resolves the prompt id a rewind addresses to the turn that
+	// prompt opened and the id KAS holds the prompt under. False when no turn's
+	// prompt carries that id.
+	RewindTarget(ctx context.Context, chatID marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error)
+	// PromptAttachmentPaths is every attachment path on the log's prompts after the
+	// compaction watermark entry (the whole log when watermark is ""), in turn
+	// order: what KAS still holds, which bounds how many more images this prompt
+	// may inline. The image predicate is the caller's.
+	PromptAttachmentPaths(ctx context.Context, chatID marotte.ChatID, watermark string) ([]string, error)
+	// TurnCount is the header's turn_count, the whole-history read the rewind and
+	// the model switch key on.
+	TurnCount(ctx context.Context, chatID marotte.ChatID) (uint64, bool)
 	// SetDraft persists the chat's unsent composer text. Its own method rather than a
 	// Mutate call because a draft save is not activity: Mutate stamps UpdatedAt, which
 	// the retention purge ages a chat from. A no-op for a chat that does not exist —
@@ -254,10 +269,11 @@ const (
 	AdmissionStarting
 )
 
-// TurnOutcomeAccess is what a prompt handler needs to run a turn's
-// lifecycle: admit it, open it, wait for its outcome, and close it —
-// whether the engine answered or the call failed.
-type TurnOutcomeAccess interface {
+// TurnAdmission is the chat's admission slot as the command handlers hold it:
+// a bare per-chat reservation decided before any turn exists, plus the read
+// that says who holds it. Separate from TurnOutcomeAccess because the steer and
+// the rewind read the holder and never open a turn.
+type TurnAdmission interface {
 	// ReserveTurnForPrompt takes the chat's admission slot for a prompt,
 	// minting no turn — a bare per-chat reservation, decided synchronously
 	// before any bridge exists. A held slot parks the caller up to wait;
@@ -277,47 +293,140 @@ type TurnOutcomeAccess interface {
 	// workflow step's turn reads it as the step's own input — so CmdSteer refuses
 	// instead.
 	AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool)
-	// StartTurn opens the chat's turn at bridge-ready, immediately before the call
-	// that drives it, so everything true of the turn is recorded once with the bridge
-	// live. The caller holds a completion handle until ReleaseTurn; zero means none
-	// opened, and a caller answering zero must broadcast the failure and release its
-	// slots. It waits while the chat is finalizing a previous turn.
-	StartTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) marotte.TurnEpoch
+}
+
+// TurnOutcomeAccess is what a prompt handler needs to run an admitted turn's
+// lifecycle: open it, wait for its outcome, and close it — whether the engine
+// answered or the call failed.
+type TurnOutcomeAccess interface {
+	// OpenTurn appends the turn_open at admission and creates the turn's registry
+	// record in one operation: prompt is the turn's prompt (nil for a source with
+	// none) and init is the header fallback for an id no record exists for, nil for
+	// every source but prompt and local_shell. Refuses on a dead ctx before it
+	// appends. The id it returns is what StartTurn and every closer are handed.
+	OpenTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, prompt *marotte.EntryPrompt, init func(*marotte.Chat)) (string, error)
+	// StartTurn stamps the model and the credit baseline onto the turn the id
+	// names, with the bridge live, immediately before the call that drives it.
+	// False for a dead ctx and for an id the registry no longer holds, and a caller
+	// answering false runs the turn end rule on that turn itself.
+	StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool
 	// AwaitTurn blocks until the named turn has finalized and reports what
 	// it did. A caller holding that turn's handle never receives
 	// marotte.ErrNoSuchTurn.
-	AwaitTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) (marotte.TurnResult, error)
-	// ReleaseTurn gives up the handle StartTurn issued, after which the
+	AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error)
+	// ReleaseTurn gives up the handle OpenTurn issued, after which the
 	// finalized record may be dropped.
-	ReleaseTurn(chatID marotte.ChatID, epoch marotte.TurnEpoch)
+	ReleaseTurn(chatID marotte.ChatID, turnID string)
 	// SettleTurnOnResponse closes the named turn on the response that settled it —
 	// the local fallback, which runs only if the wire's own turn_end did not get
 	// there first. seq is the read loop position the response arrived at, and the
 	// settle parks until the folder reaches it.
-	SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, seq uint64, resp *marotte.RPCResponse)
-	// TurnOpenedAfter reports whether any turn on the chat opened after
-	// epoch — the structural half of the empty-turn gate.
-	TurnOpenedAfter(chatID marotte.ChatID, epoch marotte.TurnEpoch) bool
-	// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself.
-	FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch)
-	// AbandonInFlightTurn finalizes a turn the prompt call could not finish. stop is what
-	// the failure CONCLUDES — `interrupted` for a fault, `cancelled` for a user cancel
-	// KAS never acked — and reason is the user-facing account of it, which becomes the
-	// transcript's divider. It waits for no read loop position: the two failures that
-	// reach it — an oversize frame and a cancel-grace expiry — settle with the bridge
-	// still alive.
-	AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, stop marotte.StopReason, reason string)
+	SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64, resp *marotte.RPCResponse)
+	// TurnOpenedAfter reports whether any own turn on the chat opened after
+	// turnID — the structural half of the empty-turn gate.
+	TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool
+	// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself, appending
+	// its one text entry first.
+	FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string)
+	// AbandonInFlightTurn finalizes a turn the prompt call could not finish, and
+	// the prompt's exits before any call. stop is what the failure CONCLUDES —
+	// `interrupted` for a fault, `cancelled` for a user cancel KAS never acked — and
+	// reason is the user-facing account of it, which the turn_close carries. It
+	// waits for no read loop position.
+	AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string)
+	// RecordDroppedSteer writes steer{state: dropped, origin: user} for a parked
+	// steer KAS refused or never received: into the chat's open turn, sealing
+	// every lane first, else after the newest turn's close.
+	RecordDroppedSteer(ctx context.Context, chatID marotte.ChatID, steer ParkedSteer)
 }
 
-// SteerRecorder is what CmdSteer needs of the steer ledger: record that THIS
-// server sent a steer, and take that back when the send turns out to have been
-// refused. Write-only on purpose — the read is the translate layer's, on its own
-// role — and the pair is what lets the record be written BEFORE the RPC, which is
-// the only ordering that beats KAS's own notification (see CmdSteer).
+// SteerRecorder is what CmdSteer and the prompt's drain need of the steer ledger:
+// record that THIS server sent a steer, take that back when the send turns out
+// to have been refused, and hold the steers parked for a prompt whose bridge is
+// still spawning. Write-only on purpose — the read is the translate layer's, on
+// its own role — and the record-then-forget pair is what lets the record be
+// written BEFORE the RPC, which is the only ordering that beats KAS's own
+// notification (see CmdSteer).
 type SteerRecorder interface {
-	RecordUserSteer(chatID marotte.ChatID, steerID string)
+	// RecordUserSteer records a steer this server sent, with the dropped steers it
+	// re-sends (nil for an ordinary one).
+	RecordUserSteer(chatID marotte.ChatID, steerID string, resends []string)
 	ForgetUserSteer(chatID marotte.ChatID, steerID string)
+	// ParkSteer holds a steer for the chat's admitted prompt until its bridge is
+	// live, mirrored into the dock; false when the chat's parked set is full.
+	ParkSteer(chatID marotte.ChatID, steerID, text string, resends []string) bool
+	// HasParkedSteers reports an undelivered parked steer, read under the same
+	// lock the drain's exit test takes, so a steer arriving mid-drain joins the
+	// tail rather than overtaking it.
+	HasParkedSteers(chatID marotte.ChatID) bool
+	// NextParkedSteer is the oldest parked steer still undelivered.
+	NextParkedSteer(chatID marotte.ChatID) (ParkedSteer, bool)
+	// ForgetParkedSteer drops one delivered or refused row from the parked set;
+	// its dock row stays for KAS's own steering_queued dedupe.
+	ForgetParkedSteer(chatID marotte.ChatID, steerID string)
+	// TakeParkedSteers drains the chat's whole parked set, for a prompt that never
+	// reaches StartTurn.
+	TakeParkedSteers(chatID marotte.ChatID) []ParkedSteer
 }
+
+// ParkedSteer is one steer held for a spawning prompt: KAS's id for it and its
+// text, in arrival order.
+type ParkedSteer struct {
+	ID      string
+	Text    string
+	Resends []string
+}
+
+// RunCutter is what a rewind needs of the run registry: which of the runs a cut
+// launched are still live, and a cancel that returns once the run has stopped, so
+// nothing appends into the range being cut. Declared here, at the consumer;
+// *agent.Runs satisfies it.
+type RunCutter interface {
+	// LiveRuns filters workflowIDs to the ones still holding a lease, each with the
+	// label the reader knows it by, in the order given.
+	LiveRuns(workflowIDs []string) []LiveRunRef
+	// CancelRun stops one run and waits for its lease to be released. It answers
+	// ErrRunStillLive when the run has not stopped inside the wait; the cancel itself
+	// landed in that case.
+	CancelRun(ctx context.Context, workflowID string) error
+}
+
+// LiveRunRef names one live run to the reader: KAS's workflow id and the recipe
+// name it was launched from. The shape a rewind's 409 carries.
+type LiveRunRef struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// EffortRecorder is what set_effort needs to leave a transcript record: one write
+// of the model_switched entry an effort change produces. Declared here, at the
+// consumer; *agent.BridgeCoordinator satisfies it.
+//
+// Its own role rather than a method on BridgeAccess, whose job is bridge lifecycle:
+// this reaches the chat's LOG, and a lifecycle role that also writes the transcript
+// is the aggregate the shape test refuses.
+type EffortRecorder interface {
+	// PersistEffortChange appends the entry for a tier the session accepted. It
+	// writes nothing for an empty model, and reports no error: the level is already
+	// on the chat record, so a failed append costs the record and not the change.
+	PersistEffortChange(ctx context.Context, chatID marotte.ChatID, model string, level marotte.EffortLevel)
+}
+
+// ModeRecorder is what set_mode needs to leave a transcript record: one write of
+// the mode_switched entry a mode change produces. Its own role beside
+// EffortRecorder rather than a method on it, for that interface's reason — a role
+// is named for the command that needs it — and *agent.BridgeCoordinator satisfies
+// both.
+type ModeRecorder interface {
+	// PersistModeSwitch appends the entry for a mode the chat took. It reports no
+	// error: the mode is already on the chat record, so a failed append costs the
+	// record and not the change.
+	PersistModeSwitch(ctx context.Context, chatID marotte.ChatID, sw marotte.EntryModeSwitched)
+}
+
+// ErrRunStillLive is CancelRun's answer for a run whose cancel landed but whose
+// lease was still held when the wait ran out.
+var ErrRunStillLive = errors.New("the run was told to stop but has not stopped yet")
 
 // Roles is the wiring-time role set: the host names which of its interfaces answers
 // each role once, at registration, and RegisterDefaults hands every handler only the
@@ -342,10 +451,18 @@ type Roles struct {
 	// Runs answers which chat launched a run, so a run tab opened with no
 	// parent still nests under its conversation.
 	Runs RunOwner
+	// RunCutter is the run registry as a rewind uses it: the live runs a cut
+	// launched, and the cancel that stops them before the cut.
+	RunCutter RunCutter
+	// Effort records the transcript entry a reader's reasoning-tier change leaves.
+	Effort EffortRecorder
+	// Modes records the transcript entry a reader's mode switch leaves.
+	Modes ModeRecorder
 	// Lifecycle is the process lifetime: the turn context and the
 	// in-flight counter a shutdown waits on.
 	Lifecycle   LifecycleAccess
 	MCP         MCPAccess
+	Admission   TurnAdmission
 	TurnOutcome TurnOutcomeAccess
 	// Steers records the steers this server sent, so the translate layer can
 	// tell the user's own words from a workflow reporting into the same buffer.
@@ -355,6 +472,10 @@ type Roles struct {
 	Status ChatStatus
 	// AuthReadiness carries prompt authentication outcomes to readiness.
 	AuthReadiness *AuthReadiness
+	// SpecApprovals is the spec-phase approval record, and it may be nil: a build
+	// with no config dir has no store to persist one to. The handler answers a
+	// 503 in that state rather than reporting an approval nothing kept.
+	SpecApprovals SpecApprovals
 	// Workspace is last for fieldalignment (a trailing length word stops
 	// the leading-pointer count early).
 	Workspace Workspace
@@ -369,7 +490,10 @@ type promptRoles struct {
 	bus         Broadcaster
 	lifecycle   LifecycleAccess
 	mcp         MCPAccess
+	admission   TurnAdmission
 	turnOutcome TurnOutcomeAccess
-	auth        *AuthReadiness
-	workspace   Workspace // last for fieldalignment, as in Roles
+	// steers is the parked-steer ledger the prompt drains once its bridge is live.
+	steers    SteerRecorder
+	auth      *AuthReadiness
+	workspace Workspace // last for fieldalignment, as in Roles
 }

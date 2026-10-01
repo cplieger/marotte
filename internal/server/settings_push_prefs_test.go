@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind is the claim that

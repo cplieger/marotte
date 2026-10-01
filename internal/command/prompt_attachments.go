@@ -110,31 +110,8 @@ func BuildPromptBlocks(ctx context.Context, text string, attachments []marotte.A
 	return blocks
 }
 
-func historyInlineImageCount(c *marotte.Chat, currentMessageID string) int {
-	if c == nil {
-		return MaxHistoryInlineImages
-	}
-	count := 0
-	for i := range c.Messages {
-		msg := &c.Messages[i]
-		if msg.ID == c.CompactionWatermark {
-			count = 0
-			continue
-		}
-		if msg.ID == currentMessageID || msg.Role != marotte.RoleUser {
-			continue
-		}
-		for _, att := range msg.Attachments {
-			if isImageAttachment(att) {
-				count++
-			}
-		}
-	}
-	return count
-}
-
-func isImageAttachment(att marotte.Attachment) bool {
-	_, ok := imageExts[strings.ToLower(filepath.Ext(att.Path))]
+func isImagePath(path string) bool {
+	_, ok := imageExts[strings.ToLower(filepath.Ext(path))]
 	return ok
 }
 

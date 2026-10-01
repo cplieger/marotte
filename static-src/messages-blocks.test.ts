@@ -1,26 +1,18 @@
-// ---------------------------------------------------------------------------
-// Two grouping rules of the block dispatcher, which are deliberately OPPOSITE
-// and were documented as the same thing.
+// The entry dispatcher: what `placeEntry` draws for each kind, and the two grouping rules
+// that are deliberately OPPOSITE. A tool GROUP is contiguous, keyed on the store run its
+// cards started at; a DELEGATE's card is minted by its invocation `tool_call` and by nothing
+// else, because the delegate's own entries carry its uuid as `lane` and every lane predicate
+// compares against the VIEW's root lane.
 //
-// A tool GROUP is contiguous, and it is contiguous because its key is the STORE
-// index the run of tool cards STARTED at (`indexGroups`) — so a further tool call
-// computes the same key and extends it, while anything else posted into the
-// container starts a new run, which is what turns a run broken by prose into two
-// groups. A SUBAGENT card is keyed by subtask id instead, and nothing closes it, so
-// a delegate's blocks join the card it opened however much the parent agent emitted
-// in between. Two opposite behaviours, both derived from the store rather than
-// implied by which append path a mounter happens to use.
-//
-// Four comments and three steering passages all claimed the subagent case was
-// contiguous too. It never was, and nothing caught it, which is why these are
-// tests rather than a corrected sentence.
-// ---------------------------------------------------------------------------
+// Position is `seq`: an entry that renders nothing does not break a prose run, and one that
+// renders ends it, which is what makes a seal invisible (design 8.5).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { Message, SteerMark, SteerOrigin, ToolCall } from "./types.js";
+import type { Turn } from "./turns.js";
+import type { Entry, EntryToolCall, EntryToolResult, OpenEntry } from "./wire/types.gen.js";
 
-// The dispatcher's import graph reaches the shared DOM registry, which throws on
-// a missing app root. These ids have to exist before the import is evaluated.
+// The dispatcher's import graph reaches the shared DOM registry, which throws on a missing
+// app root. These ids have to exist before the import is evaluated.
 for (const id of [
   "messages",
   "messages-wrap",
@@ -36,3719 +28,1339 @@ for (const id of [
 const {
   buildAssistantBody,
   updateAssistantBody,
-  finalizeAssistantBody,
-  getLiveAnchor,
+  buildDetachedBody,
   disposeAssistantBody,
   resetBlockRenders,
-  buildDetachedBody,
+  initBlockRenderer,
   blockElement,
+  getLiveAnchor,
   mountedWindow,
   mountHeadRange,
   dropHead,
   dropTail,
-  initBlockRenderer,
-  setSupersededMessages,
   setRunCardOwners,
 } = await import("./messages-blocks.js");
-const {
-  blockKey,
-  blockTextSigs,
-  blockThinkingSigs,
-  ensureBlockTextSig,
-  ensureToolCallSig,
-  clearAllBlockSigs,
-} = await import("./store-signals.js");
-const { forgetHeights, spacerHeight } = await import("./block-heights.js");
-const { setActive, noteAdoptedSnapshot, clearAdoptedSnapshot, clearAdoptedSnapshots } =
-  await import("./store.js");
-const { outcomeIcon } = await import("./icons.js");
-const { iconEl } = await import("./icon-el.js");
+const { runCardOwners, sliceTurn } = await import("./block-window.js");
+const { toolResultID } = await import("./entry-ids.js");
+const { clearAllEntrySigs, ensureToolCallSig, toolCallSigs } = await import("./store-signals.js");
+const { setActive } = await import("./store.js");
 
-/** The shared failure mark, as markup, for the delegate-card assertions below. */
-const failMark = (): string => (iconEl(outcomeIcon("fail")) as HTMLElement).outerHTML;
-
-/** The chat every render in this file belongs to. It is part of the per-tool
- *  signal key, so a mount and its writer have to name the same one — and it
- *  must be the store's ACTIVE chat: the live-anchor fallback scan only
- *  considers the active chat's renders (a parked view's still-live bubble is
- *  DOM the reader cannot see). */
+/** The chat every render in this file belongs to. It is part of the per-tool signal key, so
+ *  a mount and its writer have to name the same one — and it must be the store's ACTIVE
+ *  chat: the live-anchor fallback scan only considers the active chat's renders. */
 const CHAT_ID = "c-blocks";
 setActive(CHAT_ID);
 
-function text(t: string, subtask = ""): Record<string, unknown> {
-  return { type: "text", text: t, agent_subtask_id: subtask };
+initBlockRenderer({
+  // messages.ts owns the effect registry; no case here asserts on it.
+  pushStreamingEffect: (): void => {
+    /* noop */
+  },
+  pushEntryEffect: (): void => {
+    /* noop */
+  },
+  disposeEntryEffects: (): void => {
+    /* noop */
+  },
+  makeRow: () => {
+    const row = document.createElement("div");
+    row.className = "msg-row";
+    return row;
+  },
+  makeEvent: (e: Entry) => {
+    const row = document.createElement("div");
+    row.className = `event event-${e.kind}`;
+    return row;
+  },
+});
+
+// --- Fixtures -------------------------------------------------------------------------
+
+let turnSeq = 0;
+
+function nextTurnID(): string {
+  turnSeq += 1;
+  return `t-${String(turnSeq)}`;
 }
 
-function toolUse(id: string, subtask = ""): Record<string, unknown> {
-  return { type: "tool_use", tool_call_id: id, agent_subtask_id: subtask };
+/** A sealed entry of any kind at `seq`. `lane` absent is `""`, the transcript's own lane. */
+function sealed(
+  turnID: string,
+  seq: number,
+  kind: Entry["kind"],
+  payload: unknown,
+  opts: { readonly id?: string; readonly lane?: string } = {},
+): Entry {
+  return {
+    id: opts.id ?? `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind,
+    seq,
+    ts: seq + 1,
+    ...(opts.lane !== undefined && { lane: opts.lane }),
+    payload,
+  };
 }
 
-function call(id: string, title: string): ToolCall {
-  return { id, title, kind: "execute", status: "completed" } as unknown as ToolCall;
+function text(turnID: string, seq: number, s: string, lane?: string): Entry {
+  return sealed(turnID, seq, "text", { text: s }, lane === undefined ? {} : { lane });
 }
 
-/** The id `render` last used, for a test that needs to drive a dispose path. */
-let lastMsgID = "";
+function thinking(turnID: string, seq: number, s: string, lane?: string): Entry {
+  return sealed(turnID, seq, "thinking", { text: s }, lane === undefined ? {} : { lane });
+}
 
-function render(blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): HTMLElement {
-  const wrap = document.createElement("div");
-  lastMsgID = `m-${String(Math.random())}`;
-  buildAssistantBody(
-    wrap,
-    {
-      id: lastMsgID,
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: toolCalls,
-    } as unknown as Message,
-    CHAT_ID,
-    false,
+// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a
+// `Partial` widens every required field to include `undefined`, which the target refuses.
+function toolCall(id: string, over: Partial<EntryToolCall> = {}): EntryToolCall {
+  const base: EntryToolCall = {
+    id,
+    title: "Run Command",
+    status: "completed",
+    kind: "execute",
+    ts: 1,
+  };
+  return Object.assign(base, over);
+}
+
+function callEntry(
+  turnID: string,
+  seq: number,
+  call: EntryToolCall,
+  opts: { readonly lane?: string } = {},
+): Entry {
+  return sealed(turnID, seq, "tool_call", call, { id: `${turnID}-c${String(seq)}`, ...opts });
+}
+
+/** The `tool_result` settling `callSeq`'s call. Its id is derived from the call ENTRY's, so
+ *  the pairing is readable off the id with no join table. */
+function resultEntry(
+  turnID: string,
+  seq: number,
+  callSeq: number,
+  over: Partial<EntryToolResult> = {},
+): Entry {
+  const payload: EntryToolResult = Object.assign({ status: "completed" } as EntryToolResult, over);
+  return sealed(turnID, seq, "tool_result", payload, {
+    id: toolResultID(`${turnID}-c${String(callSeq)}`),
+  });
+}
+
+/** A delegate invocation in the ISSUER's lane, carrying the delegate's uuid. */
+function invocation(turnID: string, seq: number, subtask: string): Entry {
+  return callEntry(
+    turnID,
+    seq,
+    toolCall(`tool-${subtask}`, {
+      title: `Sub-agent: ${subtask}`,
+      agent_subtask_id: subtask,
+    }),
   );
-  return wrap;
 }
 
-/** The `.assistant-blocks` children, as a readable shape. */
-function shape(wrap: HTMLElement): string[] {
-  return [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) => {
-    if (e.classList.contains("subagent-container")) {
-      return `pipeline(${String((e as HTMLElement).dataset["pipeline"])})`;
+/** A workflow launch plus the `tool_result` that supplies its run id, which is where the
+ *  wire actually carries one: a `tool_call` never has a `workflow_id` of its own. */
+function launch(turnID: string, seq: number, runID: string, toolID = `tool-${runID}`): Entry[] {
+  return [
+    callEntry(turnID, seq, toolCall(toolID, { title: "Run Workflow" })),
+    resultEntry(turnID, seq + 1, seq, { workflow_id: runID }),
+  ];
+}
+
+function turnOf(
+  turnID: string,
+  body: Entry[],
+  opts: { readonly open?: OpenEntry[]; readonly n?: number } = {},
+): Turn {
+  return {
+    id: turnID,
+    n: opts.n ?? 1,
+    trigger: { id: `${turnID}-p`, text: "go" },
+    body,
+    openEntries: new Map((opts.open ?? []).map((o) => [o.lane ?? "", o])),
+    ts: 1,
+    outcome: "completed",
+    rewindTo: undefined,
+  };
+}
+
+let hosts: HTMLElement[] = [];
+
+/** A `.turn-body` attached to the document, so a mount that reads geometry or moves focus
+ *  behaves as it does in a card. */
+function bodyHost(): HTMLElement {
+  const host = document.createElement("div");
+  host.className = "turn-body";
+  document.body.appendChild(host);
+  hosts.push(host);
+  return host;
+}
+
+interface Render {
+  readonly turnID: string;
+  readonly body: HTMLElement;
+  readonly turn: Turn;
+}
+
+/** Re-key `entries` onto `turnID`. The builders spell their ids against the placeholder `t`,
+ *  so a case reads without threading a fresh turn id through every fixture call. */
+function retarget(entries: Entry[], turnID: string): Entry[] {
+  return entries.map((e) => ({
+    ...e,
+    turn: turnID,
+    id: e.id.startsWith("t-") ? turnID + e.id.slice(1) : e.id,
+  }));
+}
+
+/** Build one turn's body from `entries`. The turn id is fresh per call, so two renders in
+ *  one case cannot share a render slot. */
+function render(entries: Entry[], opts: { readonly live?: boolean } = {}): Render {
+  const turnID = nextTurnID();
+  const turn = turnOf(turnID, retarget(entries, turnID));
+  const body = bodyHost();
+  buildAssistantBody(body, turn, CHAT_ID, opts.live ?? false);
+  return { turnID, body, turn };
+}
+
+/** Build one turn's body over `range` alone, the windowed mount. */
+function renderWindow(entries: Entry[], range: { from: number; to: number }): Render {
+  const turnID = nextTurnID();
+  const turn = turnOf(turnID, retarget(entries, turnID));
+  const body = bodyHost();
+  buildAssistantBody(body, turn, CHAT_ID, false, range);
+  return { turnID, body, turn };
+}
+
+/** Re-render `r`'s body against `entries`, the update path a later frame takes. */
+function update(r: Render, entries: Entry[], live = false): Turn {
+  const turn = turnOf(r.turnID, retarget(entries, r.turnID));
+  updateAssistantBody(r.body, turn, CHAT_ID, live);
+  return turn;
+}
+
+/** The body's direct children, as a readable shape. */
+function shape(body: HTMLElement): string[] {
+  return [...body.children].map((e) => {
+    const h = e as HTMLElement;
+    if (h.classList.contains("subagent-container")) {
+      return `pipeline(${String(h.dataset["pipeline"])})`;
     }
-    if (e.classList.contains("subagent-block")) {
-      return `card(${String((e as HTMLElement).dataset["subtask"])})`;
+    if (h.classList.contains("subagent-block")) {
+      return `card(${String(h.dataset["subtask"])})`;
     }
-    if (e.classList.contains("run-card")) {
-      return `run(${String((e as HTMLElement).dataset["run"])})`;
+    if (h.classList.contains("run-card")) {
+      return `run(${String(h.dataset["run"])})`;
     }
-    if (e.classList.contains("tool-group")) {
-      return `group(${String(e.querySelectorAll(".tool-call").length)})`;
+    if (h.classList.contains("tool-group")) {
+      return `group(${String(h.querySelectorAll(".tool-call").length)})`;
     }
-    if (e.classList.contains("steer-note")) {
+    if (h.classList.contains("steer-note")) {
       return "note";
     }
-    return `text(${String(e.textContent).trim().slice(0, 16)})`;
+    if (h.classList.contains("plan-message")) {
+      return "plan";
+    }
+    if (h.classList.contains("reasoning-block")) {
+      return "thinking";
+    }
+    if (h.classList.contains("event")) {
+      return `event(${h.className.replace("event event-", "")})`;
+    }
+    return `text(${String(h.textContent).trim().slice(0, 16)})`;
   });
 }
 
-describe("subagent grouping is keyed by subtask id, NOT by contiguity", () => {
-  it("puts non-adjacent same-subtask blocks in ONE card", () => {
-    const wrap = render([
-      text("delegate first", "sub-A"),
-      text("parent interleaved"),
-      text("delegate second", "sub-A"),
-    ]);
-    const cards = wrap.querySelectorAll(".subagent-block");
-    expect(cards).toHaveLength(1);
-    // Grouping is still the subject; the CONTENT is not here to group. Both blocks are
-    // dropped, so what one card proves is that one delegate gets one record.
-    expect(cards[0]?.querySelector(".subagent-body")).toBeNull();
-    expect(cards[0]?.textContent).not.toContain("delegate first");
-  });
+beforeEach(() => {
+  resetBlockRenders();
+  setRunCardOwners(new Map());
+  clearAllEntrySigs();
+  toolCallSigs.clearAll();
+});
 
-  it("keeps two DIFFERENT subtasks in two cards", () => {
-    const wrap = render([text("a", "sub-A"), text("b", "sub-B"), text("a again", "sub-A")]);
-    expect(wrap.querySelectorAll(".subagent-block")).toHaveLength(2);
-  });
-
-  it("costs ORDER, not grouping: an interleaved parent block lands after the card", () => {
-    // The card is appended at the subtask's FIRST appearance and later blocks are
-    // appended into it, so prose that arrived between two of a delegate's halves
-    // renders below the whole card. This is the accepted consequence of keying by
-    // id; assert it so a future reader meets it as a decision, not a surprise.
-    const wrap = render([
-      text("delegate first", "sub-A"),
-      text("parent interleaved"),
-      text("delegate second", "sub-A"),
-    ]);
-    expect(shape(wrap)).toEqual(["card(sub-A)", "text(parent interleav)"]);
-  });
+afterEach(() => {
+  resetBlockRenders();
+  for (const host of hosts) {
+    host.remove();
+  }
+  hosts = [];
 });
 
 // ---------------------------------------------------------------------------
-// A WORKFLOW STEP is the other delegate kind, and it is the one with no
-// invocation tool call: KAS announces a step with a
-// `_kiro/workflow/node_start` notification, so `bindSubagent` never runs and
-// whatever the card is named at creation is what the reader sees for the whole
-// run. It was "Subagent" for every step, on the shared agent hexagon, so a
-// three-step run rendered as three identical anonymous boxes.
-// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// A WORKFLOW RUN is the launch tool call's card, and a WORKFLOW STEP is the one
-// block kind with NO destination at all: a block whose `agent_subtask_id` parses as
-// `wf:<workflowId>:<nodePath>` is DROPPED.
-//
-// The DROP is the property to pin, and it is explicit rather than a removed route
-// for one reason: a block with no destination falls through to `blocksEl` and
-// renders as loose top-level content in the launching turn, which is worse than
-// either hosting it or dropping it. So every case here asserts the step's text is
-// NOWHERE in the wrap, not merely that it is not in a row.
-//
-// The card itself is still keyed on the launch's `workflow_id`, and both arrival
-// orders must still build exactly one card: the launch is persisted in its turn
-// while a step's frames are not, so a refresh delivers them in either order.
-// ---------------------------------------------------------------------------
-
-describe("a workflow run's card is its launch, and its steps are dropped", () => {
-  // `st.runs` is per RENDER and every case here shares one chat id, so a reset keeps
-  // each case's cards its own.
-  beforeEach(() => {
-    resetBlockRenders();
+describe("a delegate's card is its invocation, and its own entries are dropped", () => {
+  it("draws ONE card for a delegate whose own entries are in its own lane", () => {
+    const r = render([
+      text("t", 1, "parent one"),
+      invocation("t", 2, "sub-A"),
+      text("t", 3, "delegate says", "sub-A"),
+      thinking("t", 4, "delegate thinks", "sub-A"),
+      text("t", 5, "parent two"),
+    ]);
+    const cards = r.body.querySelectorAll(".subagent-block");
+    expect(cards).toHaveLength(1);
+    expect(r.body.textContent).not.toContain("delegate says");
+    expect(r.body.textContent).not.toContain("delegate thinks");
   });
 
-  const launch = (id: string, wf: string): ToolCall =>
-    ({
-      id,
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: wf,
-    }) as unknown as ToolCall;
-
-  const cards = (wrap: HTMLElement): HTMLElement[] => [
-    ...wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .run-card"),
-  ];
-  const stepNodes = (wrap: HTMLElement): string[] =>
-    [...wrap.querySelectorAll<HTMLElement>(".run-card .run-step")].map(
-      (e) => e.dataset["node"] ?? "",
-    );
-
-  it("makes the launch tool call the card, not a tool row", () => {
-    const wrap = render([toolUse("t1")], [launch("t1", "wf_1")]);
-    expect(cards(wrap)).toHaveLength(1);
-    expect(cards(wrap)[0]?.dataset["run"]).toBe("wf_1");
-    // The point of the change: it is NOT also a tool card.
-    expect(wrap.querySelectorAll(".assistant-blocks > .tool-group")).toHaveLength(0);
+  it("keeps two DIFFERENT delegates in two cards", () => {
+    const r = render([
+      invocation("t", 1, "sub-A"),
+      text("t", 2, "parent between"),
+      invocation("t", 3, "sub-B"),
+    ]);
+    expect(shape(r.body)).toEqual(["card(sub-A)", "text(parent between)", "card(sub-B)"]);
   });
 
-  it("renders a step's text NOWHERE, not even as a top-level block", () => {
-    // The strong form of the drop. Removing the routing without dropping would put
-    // this prose at the top level of the launching turn, which is why the assertion
-    // is on the whole wrap rather than on the absence of a row.
-    const wrap = render(
-      [toolUse("t1"), text("checking the build", "wf:wf_1:wf_1/build")],
-      [launch("t1", "wf_1")],
-    );
-    expect(cards(wrap)).toHaveLength(1);
-    expect(cards(wrap)[0]?.dataset["run"]).toBe("wf_1");
-    expect(wrap.textContent).not.toContain("checking the build");
-    expect(shape(wrap)).toEqual(["run(wf_1)"]);
+  it("renders the parent's continuation BELOW the card, where it arrived", () => {
+    // The invocation renders at its own `seq`, so prose that arrived after it is below the
+    // card rather than above it. The old model appended the card at the delegate's first
+    // block and every later parent block landed under the whole card, whatever its order.
+    const r = render([text("t", 1, "before"), invocation("t", 2, "sub-A"), text("t", 3, "after")]);
+    expect(shape(r.body)).toEqual(["text(before)", "card(sub-A)", "text(after)"]);
   });
 
-  it("is order-independent: a step arriving BEFORE its launch still builds one card", () => {
-    const stepFirst = render(
-      [text("checking the build", "wf:wf_1:wf_1/build"), toolUse("t1")],
-      [launch("t1", "wf_1")],
-    );
-    expect(cards(stepFirst)).toHaveLength(1);
-    expect(cards(stepFirst)[0]?.dataset["run"]).toBe("wf_1");
-    expect(stepFirst.textContent).not.toContain("checking the build");
+  it("does not break a prose run: a dropped lane's entry renders nothing", () => {
+    const r = render([
+      text("t", 1, "one "),
+      text("t", 2, "delegate", "sub-A"),
+      text("t", 3, "two"),
+    ]);
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("one two");
+  });
+
+  it("gives a delegate-hosted entry no element of its own", () => {
+    const r = render([invocation("t", 1, "sub-A"), text("t", 2, "delegate", "sub-A")]);
+    expect(blockElement(r.turnID, 1)).toBeInstanceOf(HTMLElement);
+    expect(blockElement(r.turnID, 2)).toBeUndefined();
+  });
+});
+
+describe("a workflow run's card is its launch", () => {
+  it("makes the launch entry the run card, not a tool row", () => {
+    const r = render(launch("t", 1, "wf-1"));
+    expect(shape(r.body)).toEqual(["run(wf-1)"]);
+    expect(r.body.querySelectorAll(".tool-call")).toHaveLength(0);
+  });
+
+  it("leaves an ordinary tool call alone: no run id means no card", () => {
+    const r = render([callEntry("t", 1, toolCall("tool-plain")), resultEntry("t", 2, 1)]);
+    expect(shape(r.body)).toEqual(["group(1)"]);
   });
 
   it("gives two runs their own cards, and neither any rows", () => {
-    // Rows come from the run's STATE now, and this suite mocks no network, so no
-    // state resolves and no row is ever painted here. `run-card.test.ts` owns the
-    // rows; what this owns is that a step block contributes nothing.
-    const wrap = render(
-      [
-        toolUse("t1"),
-        text("a", "wf:wf_1:wf_1/lint"),
-        text("b", "wf:wf_1:wf_1/build"),
-        toolUse("t2"),
-        text("c", "wf:wf_2:wf_2/deploy"),
-      ],
-      [launch("t1", "wf_1"), launch("t2", "wf_2")],
-    );
-    expect(cards(wrap).map((c) => c.dataset["run"])).toEqual(["wf_1", "wf_2"]);
-    expect(stepNodes(wrap)).toEqual([]);
-    expect(shape(wrap)).toEqual(["run(wf_1)", "run(wf_2)"]);
+    const r = render([...launch("t", 1, "wf-1"), ...launch("t", 3, "wf-2")]);
+    expect(shape(r.body)).toEqual(["run(wf-1)", "run(wf-2)"]);
   });
 
-  it("builds no card at all for a step whose launch is not resident", () => {
-    // The card's ONLY creator is the launch tool call now, and that is a stated
-    // consequence rather than an oversight: a run whose launching turn has paged out
-    // has no card, and `run-bar.ts` plus the run's own sub-tab are its surfaces.
-    const wrap = render([text("x", "wf:wf_1:wf/loop/iter-1/work")], []);
-    expect(cards(wrap)).toHaveLength(0);
-    expect(shape(wrap)).toEqual([]);
+  it("seats the card in ENTRY order, between the tool cards either side", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-before")),
+      ...launch("t", 2, "wf-1"),
+      callEntry("t", 4, toolCall("tool-after")),
+    ]);
+    expect(shape(r.body)).toEqual(["group(1)", "run(wf-1)", "group(1)"]);
   });
 
-  it("falls back to a delegate box for a malformed step id rather than losing the block", () => {
-    // No second colon: not a step id this client can split, and dropping the
-    // block would lose a delegate's whole transcript.
-    const wrap = render([text("orphan text", "wf:no-node-path")], []);
-    expect(cards(wrap)).toHaveLength(0);
-    const box = wrap.querySelector(".subagent-block");
-    expect(box?.getAttribute("data-subtask")).toBe("wf:no-node-path");
-    // The block is not LOST — it has a card, which is the route to its output — but the
-    // transcript renders none of its text.
-    expect(box?.textContent).not.toContain("orphan text");
+  it("makes the launch entry's element the card it opened", () => {
+    const r = render(launch("t", 1, "wf-1"));
+    const el = blockElement(r.turnID, 1);
+    expect(el?.classList.contains("run-card")).toBe(true);
+    expect(el?.dataset["run"]).toBe("wf-1");
   });
 
-  it("leaves an ordinary tool call alone: no workflow id means no card", () => {
-    const wrap = render([toolUse("t1")], [call("t1", "Run Command")]);
-    expect(cards(wrap)).toHaveLength(0);
-    expect(wrap.querySelectorAll(".tool-call")).toHaveLength(1);
+  it("re-dispatches the launch in place when the RESULT supplies the id later", () => {
+    // Live, the call is drawn as a tool row and the run id arrives on the entry that
+    // settles it; the row is replaced by the card at the same position.
+    const call = callEntry("t", 1, toolCall("tool-late", { title: "Run Workflow" }));
+    const r = render([call]);
+    expect(shape(r.body)).toEqual(["group(1)"]);
+    update(r, [call, resultEntry("t", 2, 1, { workflow_id: "wf-late" })]);
+    expect(shape(r.body)).toEqual(["run(wf-late)"]);
+    expect(blockElement(r.turnID, 1)?.classList.contains("run-card")).toBe(true);
   });
 
-  // A run OUTLIVES the turn that started it: `run_workflow` returns as soon as the
-  // run is created, so the launching turn ends while the run carries on for
-  // minutes. The card's store subscription and its clock therefore hang off the
-  // MESSAGE's lifetime, not the turn's — `pushStreamingEffect` is disposed at turn
-  // end too, and registering there froze the card at exactly the moment it
-  // mattered most. Invisible to the type checker and to the eye in a short test,
-  // so it is pinned by which dispose path clears it.
-  it("keeps the card alive through turn end and drops it only on unmount", () => {
-    const wrap = render([toolUse("t1")], [launch("t1", "wf_live")]);
-    expect(cards(wrap)).toHaveLength(1);
+  it("RE-HOMES the card into a later turn's render, keeping the element", () => {
+    // ONE card per run per TRANSCRIPT rather than per render: a run's frames span turns, and
+    // ownership is derived over the resident window, so the card MOVES rather than being
+    // rebuilt beside itself. Moving the node is what keeps its effect and its clock.
+    const a = render(launch("t", 1, "wf-1"));
+    const card = blockElement(a.turnID, 1);
+    expect(shape(a.body)).toEqual(["run(wf-1)"]);
+    const b = render(launch("t", 1, "wf-1"));
+    expect(shape(b.body)).toEqual(["run(wf-1)"]);
+    expect(shape(a.body)).toEqual([]);
+    expect(blockElement(b.turnID, 1)).toBe(card);
+  });
 
-    // Turn end: the caret is sealed and the streaming effects go, but the card is
-    // still the run's surface and must still be in the transcript.
-    finalizeAssistantBody(lastMsgID);
-    expect(cards(wrap)).toHaveLength(1);
-    // Its parent, not `isConnected`: `wrap` is a detached node in this suite, so
-    // nothing here is connected to a document and that check would only ever
-    // measure the fixture.
-    expect(cards(wrap)[0]?.parentElement?.className).toBe("assistant-blocks");
+  it("keeps the card alive through a sibling render's dispose", () => {
+    const a = render(launch("t", 1, "wf-1"));
+    const b = render(launch("t", 1, "wf-2"));
+    disposeAssistantBody(b.turnID);
+    expect(shape(a.body)).toEqual(["run(wf-1)"]);
+    expect(mountedWindow(a.turnID)).toEqual({ from: 0, to: 3 });
+  });
 
-    // Unmount is what releases it. Nothing observable is asserted beyond "this
-    // does not throw and clears the render state": the disposers are internal, and
-    // a second dispose must be a no-op because a chat switch resets every render
-    // AND the reconcile removes each row.
-    disposeAssistantBody(lastMsgID);
-    disposeAssistantBody(lastMsgID);
+  it("drops the card on unmount", () => {
+    const r = render(launch("t", 1, "wf-1"));
+    disposeAssistantBody(r.turnID);
+    expect(mountedWindow(r.turnID)).toBeUndefined();
+    expect(blockElement(r.turnID, 1)).toBeUndefined();
   });
 });
 
-// ---------------------------------------------------------------------------
-// ONE RUN CARD PER RUN, and it lives in the LAUNCHING message.
-//
-// This used to need a chat-level registry (`runCardHosts`): the server folds a
-// run's later frames into a new assistant message per turn-segment, so a later
-// message's step blocks had to find the card the first one built rather than build
-// a second — the reported symptom was four identical boxes across two turns, all
-// reading one store cell. With those blocks dropped, the launch TOOL CALL is the
-// only creator and a tool call belongs to exactly one message, so the dedupe is
-// unreachable and the registry is gone. These cases pin that: a step-bearing
-// message contributes NOTHING, whichever order the two arrive in.
-// ---------------------------------------------------------------------------
-
-describe("one run card per run, in the message that launched it", () => {
-  beforeEach(() => {
-    resetBlockRenders();
-  });
-
-  const launch = (id: string, wf: string): ToolCall =>
-    ({
-      id,
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: wf,
-    }) as unknown as ToolCall;
-
-  function renderMsg(
-    blocks: Record<string, unknown>[],
-    toolCalls: ToolCall[] = [],
-    chatID = CHAT_ID,
-  ): { wrap: HTMLElement; id: string } {
-    const wrap = document.createElement("div");
-    const id = `m-${String(Math.random())}`;
-    buildAssistantBody(
-      wrap,
-      { id, role: "assistant", content: "", blocks, tool_calls: toolCalls } as unknown as Message,
-      chatID,
-      false,
-    );
-    return { wrap, id };
-  }
-
-  it("keeps the card in the launching message and gives a later step message none", () => {
-    const a = renderMsg([toolUse("t1")], [launch("t1", "wf_seg")]);
-    const b = renderMsg([text("second segment work", "wf:wf_seg:wf_seg/deploy")]);
-
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(0);
-    // And the later segment's own turn stays empty rather than growing loose prose.
-    expect(b.wrap.textContent).not.toContain("second segment work");
-  });
-
-  it("is order-independent across messages: the step message contributes nothing", () => {
-    const b = renderMsg([text("early frame", "wf:wf_race:wf_race/lint")]);
-    const a = renderMsg([toolUse("t2")], [launch("t2", "wf_race")]);
-
-    expect(b.wrap.querySelectorAll(".run-card")).toHaveLength(0);
-    expect(b.wrap.textContent).not.toContain("early frame");
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-  });
-
-  it("seats the card in STORE order, between the tool cards either side", () => {
-    // The grouping index prices where a container lands so a tool run can be broken
-    // there. Without that break the card is appended after a group holding BOTH tool
-    // calls, and renders below a call that follows it.
-    const a = renderMsg(
-      [toolUse("c1"), toolUse("t3"), toolUse("c2")],
-      [call("c1", "Run Command"), launch("t3", "wf_seat"), call("c2", "Run Command")],
-    );
-
-    const seats = [...(a.wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
-      e.classList.contains("run-card")
-        ? "run"
-        : `group(${String(e.querySelectorAll(".tool-call").length)})`,
-    );
-    expect(seats).toEqual(["group(1)", "run", "group(1)"]);
-  });
-
-  it("removes the card when a window drop takes its launch block", () => {
-    const blocks = [toolUse("t8"), text("prose after the launch")];
-    const calls = [launch("t8", "wf_drop")];
-    const a = renderMsg(blocks, calls);
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-
-    dropHead(
-      { id: a.id, role: "assistant", content: "", blocks, tool_calls: calls } as unknown as Message,
-      { from: 1, to: 2 },
-      [],
-    );
-
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
-  });
-
-  it("makes the launch block's element the card it opened", () => {
-    const a = renderMsg([toolUse("t-stamp")], [launch("t-stamp", "wf_stamp")]);
-    // Every other kind stamps the element its ordinal names. The launch stamped
-    // nothing, so a search hit on the launch call resolved to no element at all and
-    // the reader was handed the whole message instead of the run's box.
-    expect(blockElement(a.id, 0)).toBe(a.wrap.querySelector(".run-card"));
-  });
-
-  it("scopes the card to its own RENDER: two launches of one run build two cards", () => {
-    // The chat-level dedupe is gone, so nothing folds a second LAUNCH of the same
-    // workflow id into the first message's card. Two launch calls are two runs to
-    // the reader whatever their ids say, and a launch belongs to one message.
-    const a = renderMsg([toolUse("t3")], [launch("t3", "wf_x")]);
-    const other = renderMsg([toolUse("t3b")], [launch("t3b", "wf_x")], "c-other-chat");
-
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-    expect(other.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-  });
-
-  it("a detached render builds its own card and never adopts the transcript's", () => {
-    // Adopting would MOVE the card's DOM node out of the transcript and into the
-    // page. Driven by LAUNCH calls, because a step block reaches neither surface.
-    const detached = document.createElement("div");
-    buildDetachedBody(
-      detached,
-      {
-        id: "m-det",
-        role: "assistant",
-        content: "",
-        blocks: [toolUse("t4d")],
-        tool_calls: [launch("t4d", "wf_det")],
-      } as unknown as Message,
-      CHAT_ID,
-      "sub-1",
-      false,
-      [blockKey("m-det", 0)],
-    );
-    const a = renderMsg([toolUse("t4")], [launch("t4", "wf_det")]);
-
-    expect(detached.querySelectorAll(".run-card")).toHaveLength(1);
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-    expect(a.wrap.querySelector(".run-card")).not.toBe(detached.querySelector(".run-card"));
-  });
-
-  it("keeps the card alive across a sibling render's dispose", () => {
-    // Nothing is shared between renders any more, so one message's unmount cannot
-    // reach another's card. The registry this replaced needed a release rule for
-    // exactly this, and getting it wrong took a live card away.
-    const a = renderMsg([toolUse("t5")], [launch("t5", "wf_re")]);
-    const b = renderMsg([toolUse("t6")], [launch("t6", "wf_re2")]);
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-
-    disposeAssistantBody(b.id);
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// THE CALL THAT STARTED THE RUN HOSTS ITS CARD; EVERY LATER MENTION IS A ROW.
-//
-// `run_workflow` and `inspect_workflow` are indistinguishable to the client: both
-// carry a `workflow_id` decoded off a `{workflowId, status}` rawOutput (MEASURED
-// identical on the 2.21.4 bundle), the ACP frame carries no action type, and the
-// title is model-composed. So the branch cannot be keyed on the call's kind, and
-// before the owner map an `inspect_workflow` in the same message took the launch's
-// branch: `bindRunCard` seated its block on the launch's card and `setLaunch` wrote
-// the INSPECT's status and output over the launch's.
-//
-// The owner is derived per pass over the resident window (`block-window.ts`
-// `runCardOwners`) and installed by the paint, so these cases install it by hand.
-// An ABSENT owner is a real state — a surface reaching the dispatcher directly —
-// and fails toward the pre-owner behaviour rather than toward no card at all.
-// ---------------------------------------------------------------------------
-
-describe("only the call that started a run hosts its card", () => {
-  beforeEach(() => {
-    resetBlockRenders();
-    // Installed by the paint per pass; cleared so no case inherits another's.
-    setRunCardOwners(new Map());
-  });
-
-  /** A call naming a run. `Inspect Workflow` and `Run Workflow` differ in the title
-   *  alone, which is exactly why the title cannot be the discriminator. */
-  const mention = (id: string, wf: string, title: string): ToolCall =>
-    ({
-      id,
-      title,
-      kind: "other",
-      status: "completed",
-      workflow_id: wf,
-    }) as unknown as ToolCall;
-
-  function renderOwned(
-    blocks: Record<string, unknown>[],
-    toolCalls: ToolCall[],
-  ): { wrap: HTMLElement; id: string } {
-    const wrap = document.createElement("div");
-    const id = `m-own-${String(Math.random())}`;
-    buildAssistantBody(
-      wrap,
-      { id, role: "assistant", content: "", blocks, tool_calls: toolCalls } as unknown as Message,
-      CHAT_ID,
-      false,
-    );
-    return { wrap, id };
-  }
-
+describe("only the entry that started a run hosts its card", () => {
   it("gives a later mention of the run a tool card, not the run's box", () => {
-    setRunCardOwners(new Map([["wf_own", "t-launch"]]));
-    const a = renderOwned(
-      [toolUse("t-launch"), toolUse("t-inspect")],
-      [
-        mention("t-launch", "wf_own", "Run Workflow"),
-        mention("t-inspect", "wf_own", "Inspect Workflow"),
-      ],
-    );
-
-    expect(shape(a.wrap)).toEqual(["run(wf_own)", "group(1)"]);
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(1);
-    // And the later mention's own block resolves to its ROW, not to the card — the
-    // stamp is what a search hit lands on.
-    const card = a.wrap.querySelector(".run-card");
-    expect(blockElement(a.id, 0)).toBe(card);
-    expect(blockElement(a.id, 1)).not.toBe(card);
-  });
-
-  it("leaves a mention a tool card when the owner is in ANOTHER message", () => {
-    // The launch has paged out or sits in an earlier turn. The card lives where the
-    // launch is; this message contributes a row and no box.
-    setRunCardOwners(new Map([["wf_far", "t-elsewhere"]]));
-    const a = renderOwned([toolUse("t-only")], [mention("t-only", "wf_far", "Inspect Workflow")]);
-
-    expect(a.wrap.querySelectorAll(".run-card")).toHaveLength(0);
-    expect(shape(a.wrap)).toEqual(["group(1)"]);
+    const turnID = nextTurnID();
+    const body = [
+      ...launch(turnID, 1, "wf-1", "tool-launch"),
+      callEntry(turnID, 3, toolCall("tool-inspect", { title: "Inspect Workflow" })),
+      resultEntry(turnID, 4, 3, { workflow_id: "wf-1" }),
+    ].map((e) => ({ ...e, turn: turnID }));
+    const turn = turnOf(turnID, body);
+    setRunCardOwners(runCardOwners([turn]));
+    const host = bodyHost();
+    buildAssistantBody(host, turn, CHAT_ID, false);
+    expect(shape(host)).toEqual(["run(wf-1)", "group(1)"]);
   });
 
   it("falls toward the pre-owner behaviour when NO owner is named", () => {
-    // Empty map: every mention takes the launch branch, which is one card per run per
-    // render, so the reader still gets the box. Failing the other way would leave a
-    // dispatcher-driven surface with no run card at all.
-    const a = renderOwned(
-      [toolUse("t-l2"), toolUse("t-i2")],
-      [mention("t-l2", "wf_none", "Run Workflow"), mention("t-i2", "wf_none", "Inspect Workflow")],
-    );
+    // An absent map is what a surface reaching the dispatcher directly leaves: every mention
+    // takes the run branch, so the later one seats on the card instead of drawing a tool row.
+    const r = render([
+      ...launch("t", 1, "wf-1", "tool-launch"),
+      callEntry("t", 3, toolCall("tool-inspect", { title: "Inspect Workflow" })),
+      resultEntry("t", 4, 3, { workflow_id: "wf-1" }),
+    ]);
+    expect(shape(r.body)).toEqual(["run(wf-1)"]);
+    expect(r.body.querySelectorAll(".tool-call")).toHaveLength(0);
+    expect(blockElement(r.turnID, 3)).toBe(blockElement(r.turnID, 1));
+  });
 
-    expect(shape(a.wrap)).toEqual(["run(wf_none)"]);
+  it("leaves a mention a tool card when the owner is in ANOTHER turn", () => {
+    const first = turnOf(nextTurnID(), []);
+    const secondID = nextTurnID();
+    const body = [
+      callEntry(secondID, 1, toolCall("tool-inspect", { title: "Inspect Workflow" })),
+      resultEntry(secondID, 2, 1, { workflow_id: "wf-1" }),
+    ].map((e) => ({ ...e, turn: secondID }));
+    const second = turnOf(secondID, body);
+    // The owner names an entry of a turn this body does not hold.
+    setRunCardOwners(new Map([["wf-1", `${first.id}-c1`]]));
+    const host = bodyHost();
+    buildAssistantBody(host, second, CHAT_ID, false);
+    expect(shape(host)).toEqual(["group(1)"]);
   });
 
   it("exempts a DETACHED render, whose lane the transcript's owner does not describe", () => {
-    // The subagent page renders one delegate's blocks and may not hold the launch at
-    // all, so an owner naming a call it does not have must not cost it the card.
-    setRunCardOwners(new Map([["wf_det2", "t-not-here"]]));
-    const detached = document.createElement("div");
-    buildDetachedBody(
-      detached,
-      {
-        id: "m-own-det",
-        role: "assistant",
-        content: "",
-        blocks: [toolUse("t-det2")],
-        tool_calls: [mention("t-det2", "wf_det2", "Inspect Workflow")],
-      } as unknown as Message,
-      CHAT_ID,
-      "sub-own",
-      false,
-      [blockKey("m-own-det", 0)],
-    );
-
-    expect(detached.querySelectorAll(".run-card")).toHaveLength(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A PIPELINE is the fourth destination, and the only delegate relationship the
-// wire states outright. `orchestrate_subagent` produces three kinds of tool call:
-// an `Orchestrate Sub-agent` driver with NO subtask, then per stage a
-// `Sub-agent: <name>` invocation with a fresh subtask uuid, then that stage's own
-// work under the same uuid. The stage's tool-call ID embeds its driver's —
-// `invoke_subagent_<orchestrateId>_stage_<name>` — which is the parent pointer,
-// measured on 59 of the 60 stage calls in 36 live chat files (the exception is a
-// plain unorchestrated subagent, which has no parent).
-//
-// Before this join the driver and its stages rendered as flat siblings with no
-// relation the DOM could express, and BOTH spun: the driver as an ordinary tool
-// card at 0.8s, the stage box at 0.6s, so two rings beat against each other for
-// one delegated task. So these tests pin two things: the nesting, and that exactly
-// one level carries a ring.
-// ---------------------------------------------------------------------------
-
-describe("a pipeline's stages render inside the orchestrate call that started them", () => {
-  // EVERY TEST GETS ITS OWN DRIVER ID, and that is a requirement rather than
-  // tidiness: `store-signals.ts` `ensureToolCallSig` is `SignalMap.ensure`, which
-  // returns the signal already registered for an id and IGNORES the initial value.
-  // Nothing here disposes a render, so a reused id hands a later test the first
-  // test's tool call, and the bind effect then applies that stale status and input
-  // over the correct ones. Reusing "d1" cost four confusing failures.
-  const driver = (id: string, stages = 0, status = "completed"): ToolCall =>
-    ({
-      id,
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status,
-      input: stages > 0 ? { task: "do the thing", stages: Array.from({ length: stages }) } : {},
-    }) as unknown as ToolCall;
-
-  /** A stage invocation. Its id embeds its driver's, which IS the join. */
-  const stage = (driverID: string, name: string, subtask: string, status = "completed"): ToolCall =>
-    ({
-      id: stageID(driverID, name),
-      title: `Sub-agent: ${name}`,
-      kind: "other",
-      status,
-      agent_subtask_id: subtask,
-    }) as unknown as ToolCall;
-
-  const stageID = (driverID: string, name: string): string =>
-    `invoke_subagent_${driverID}_stage_${name}`;
-
-  /** A plain subagent invocation: no pipeline in its id, so nothing to nest under. */
-  const loneSubagent = (id: string, subtask: string, status = "completed"): ToolCall =>
-    ({
-      id,
-      title: "Sub-agent: general-task-execution",
-      kind: "other",
-      status,
-      agent_subtask_id: subtask,
-    }) as unknown as ToolCall;
-
-  const boxes = (wrap: HTMLElement): HTMLElement[] => [
-    ...wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .subagent-container"),
-  ];
-  const nested = (wrap: HTMLElement): string[] =>
-    [
-      ...wrap.querySelectorAll<HTMLElement>(
-        ".subagent-container > .subagent-body > .subagent-block",
-      ),
-    ].map((e) => e.dataset["subtask"] ?? "");
-  const nameOf = (e: Element | undefined): string =>
-    e?.querySelector(".subagent-name")?.textContent ?? "";
-
-  it("makes the orchestrate call the pipeline box, not a tool row", () => {
-    const wrap = render([toolUse("d-bare")], [driver("d-bare")]);
-    expect(boxes(wrap)).toHaveLength(1);
-    expect(boxes(wrap)[0]?.dataset["pipeline"]).toBe("d-bare");
-    // The point of the change: it is NOT also a tool card.
-    expect(wrap.querySelectorAll(".assistant-blocks > .tool-group")).toHaveLength(0);
-  });
-
-  it("puts a stage's box inside the pipeline's body, not beside it", () => {
-    const wrap = render(
-      [
-        toolUse("d-one"),
-        toolUse(stageID("d-one", "plan"), "u-one"),
-        text("planning", "u-one"),
-        toolUse(stageID("d-one", "code"), "u-one-b"),
-      ],
-      [driver("d-one", 2), stage("d-one", "plan", "u-one"), stage("d-one", "code", "u-one-b")],
-    );
-    // ONE top-level object for the whole pipeline, where there were two.
-    expect(shape(wrap)).toEqual(["pipeline(d-one)"]);
-    expect(nested(wrap)).toEqual(["u-one", "u-one-b"]);
-    // The pipeline's body holds its stages' CARDS; a stage's prose is on the stage's page.
-    const stageCard = wrap.querySelector(".subagent-container .subagent-block");
-    expect(stageCard).not.toBeNull();
-    expect(stageCard?.textContent).not.toContain("planning");
-  });
-
-  it("gives one pipeline its several stages, in first-seen order", () => {
-    const wrap = render(
-      [
-        toolUse("d-two"),
-        toolUse(stageID("d-two", "plan"), "u-two-a"),
-        toolUse(stageID("d-two", "code"), "u-two-b"),
-      ],
-      [driver("d-two", 2), stage("d-two", "plan", "u-two-a"), stage("d-two", "code", "u-two-b")],
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-two)"]);
-    expect(nested(wrap)).toEqual(["u-two-a", "u-two-b"]);
-  });
-
-  it("keeps two pipelines in two boxes", () => {
-    const wrap = render(
-      [
-        toolUse("d-p1"),
-        toolUse(stageID("d-p1", "plan"), "u-p1"),
-        toolUse(stageID("d-p1", "code"), "u-p1-b"),
-        toolUse("d-p2"),
-        toolUse(stageID("d-p2", "plan"), "u-p2"),
-        toolUse(stageID("d-p2", "code"), "u-p2-b"),
-      ],
-      [
-        driver("d-p1", 2),
-        stage("d-p1", "plan", "u-p1"),
-        stage("d-p1", "code", "u-p1-b"),
-        driver("d-p2", 2),
-        stage("d-p2", "plan", "u-p2"),
-        stage("d-p2", "code", "u-p2-b"),
-      ],
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-p1)", "pipeline(d-p2)"]);
-    expect(nested(wrap)).toEqual(["u-p1", "u-p1-b", "u-p2", "u-p2-b"]);
-  });
-
-  it("is order-independent: a stage arriving BEFORE its driver builds the same one box", () => {
-    const wrap = render(
-      [
-        toolUse(stageID("d-rev", "plan"), "u-rev"),
-        text("planning", "u-rev"),
-        toolUse(stageID("d-rev", "code"), "u-rev-b"),
-        toolUse("d-rev"),
-      ],
-      [driver("d-rev", 2), stage("d-rev", "plan", "u-rev"), stage("d-rev", "code", "u-rev-b")],
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-rev)"]);
-    expect(nested(wrap)).toEqual(["u-rev", "u-rev-b"]);
-    // The driver still names the box, so `bindPipeline` FOUND it rather than
-    // building a second one beside it.
-    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
-  });
-
-  it("leaves a plain unorchestrated subagent at the top level", () => {
-    // No `invoke_subagent_<driver>_stage_<name>` id, so no parent to nest under.
-    // This is the shape of the one stage-less call in the live chat files.
-    const wrap = render(
-      [toolUse("tc-lone", "u-lone"), text("working", "u-lone")],
-      [loneSubagent("tc-lone", "u-lone")],
-    );
-    expect(boxes(wrap)).toHaveLength(0);
-    expect(shape(wrap)).toEqual(["card(u-lone)"]);
-  });
-
-  it("falls back to the top level for a malformed stage id rather than losing the block", () => {
-    // Prefix present, separator absent: not an id this client can split, and
-    // nesting it under a guessed parent would be worse than not nesting it.
-    const wrap = render(
-      [toolUse("invoke_subagent_d-bad", "u-bad"), text("orphan", "u-bad")],
-      [loneSubagent("invoke_subagent_d-bad", "u-bad")],
-    );
-    expect(boxes(wrap)).toHaveLength(0);
-    expect(shape(wrap)).toEqual(["card(u-bad)"]);
-    expect(wrap.querySelector(".subagent-block")?.textContent).not.toContain("orphan");
-  });
-
-  it("keeps the driver id whole when a stage NAME contains the separator", () => {
-    // `indexOf`, not `lastIndexOf`: only the RIGHT half can carry a separator,
-    // since a driver id is machine-minted and a stage name is author-supplied, so
-    // a stage called `run_stage_two` must still resolve to its own driver.
-    const wrap = render(
-      [
-        toolUse("d-sep"),
-        toolUse(stageID("d-sep", "run_stage_two"), "u-sep"),
-        toolUse(stageID("d-sep", "code"), "u-sep-b"),
-      ],
-      [
-        driver("d-sep", 2),
-        stage("d-sep", "run_stage_two", "u-sep"),
-        stage("d-sep", "code", "u-sep-b"),
-      ],
-    );
-    expect(boxes(wrap)[0]?.dataset["pipeline"]).toBe("d-sep");
-    expect(nested(wrap)).toEqual(["u-sep", "u-sep-b"]);
-  });
-
-  it("names the box from the driver's own declared stage count", () => {
-    const wrap = render([toolUse("d-three")], [driver("d-three", 3)]);
-    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 3 stages");
-  });
-
-  it("names it plainly when the driver declares no stages", () => {
-    const wrap = render([toolUse("d-none")], [driver("d-none")]);
-    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline");
-  });
-
-  // -------------------------------------------------------------------------
-  // ONE RING PER PIPELINE, and it belongs to the stage. This is the half of the
-  // change a reader sees: before it, the driver's tool card spun at 0.8s and the
-  // stage box spun at 0.6s, side by side, for one delegated task.
-  // -------------------------------------------------------------------------
-
-  it("spins the STAGE and not the pipeline", () => {
-    // The driver declares 2 and only one has arrived: a legitimate mid-run state,
-    // and one that keeps the container this test is about.
-    const wrap = render(
-      [toolUse("d-spin"), toolUse(stageID("d-spin", "plan"), "u-spin")],
-      [driver("d-spin", 2, "in_progress"), stage("d-spin", "plan", "u-spin", "in_progress")],
-    );
-    const pipeline = boxes(wrap)[0];
-    const inner = wrap.querySelector<HTMLElement>(
-      ".subagent-container > .subagent-body > .subagent-block",
-    );
-    // Both are running, so before the container variant both carried a ring.
-    expect(pipeline?.classList.contains("running")).toBe(true);
-    expect(inner?.classList.contains("running")).toBe(true);
-
-    expect(inner?.querySelector(".subagent-spinner")).not.toBeNull();
-    expect(pipeline?.querySelector(":scope > .subagent-header > .subagent-spinner")).toBeNull();
-  });
-
-  it("keeps the pipeline's identity glyph while it runs, with no outcome mark yet", () => {
-    const wrap = render([toolUse("d-glyph")], [driver("d-glyph", 2, "in_progress")]);
-    const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
-    // A leaf empties this slot to become a ring; a container must not.
-    expect(icon?.querySelector("svg")).not.toBeNull();
-    expect(icon?.classList.contains("subagent-spinner")).toBe(false);
-    // ONE mark, and while it runs that mark is still the identity glyph — not an
-    // outcome silhouette.
-    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
-    expect(icon?.querySelector("svg")?.outerHTML).not.toBe(failMark());
-  });
-
-  it("gives the pipeline its outcome mark once it settles", () => {
-    // TWO declared, not one: at one this would pass by exercising the
-    // settled-with-no-stage fallback, which has its own named test below.
-    const wrap = render([toolUse("d-fail")], [driver("d-fail", 2, "failed")]);
-    const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
-    expect(icon?.classList.contains("is-fail")).toBe(true);
-    expect(icon?.querySelector("svg")?.outerHTML).toBe(failMark());
-    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
-  });
-
-  it("carries activity dots, and a leaf carries none", () => {
-    // The CSS gate is `.collapsed.running`, so the fixture has to be a SUPERSEDED
-    // pipeline — the trailing text block is what folds it, and folded is the only
-    // state the dots are shown in.
-    const wrap = render(
-      [toolUse("d-dots"), text("and then some prose")],
-      [driver("d-dots", 2, "in_progress")],
-    );
-    const pipeline = boxes(wrap)[0];
-    expect(
-      pipeline?.querySelector(".subagent-busy")?.querySelectorAll(".activity-dot"),
-    ).toHaveLength(3);
-    expect(pipeline?.classList.contains("running")).toBe(true);
-    // Collapsed even though a stage is still running: the carve-outs are refusals to
-    // FOLD, never reasons to open, so a box the store already holds something after is
-    // BORN from the verdict and the reader is one click from its stages.
-    expect(pipeline?.classList.contains("collapsed")).toBe(true);
-
-    const leaf = render(
-      [toolUse("tc-leaf", "u-leaf")],
-      [loneSubagent("tc-leaf", "u-leaf", "in_progress")],
-    );
-    expect(leaf.querySelector(".subagent-busy")).toBeNull();
-  });
-
-  it("shows the dots on a pipeline the verdict folded, and not on the newest one", () => {
-    // The two halves of the gate, through the policy rather than through a default: a
-    // SETTLED pipeline with prose after it folds, and one nothing follows stays open.
-    const folded = render(
-      [toolUse("d-fold"), text("and then some prose")],
-      [driver("d-fold", 2, "completed")],
-    );
-    expect(boxes(folded)[0]?.classList.contains("collapsed")).toBe(true);
-
-    const newest = render([toolUse("d-newest")], [driver("d-newest", 2, "completed")]);
-    expect(boxes(newest)[0]?.classList.contains("collapsed")).toBe(false);
-  });
-
-  it("gives the pipeline no rolling tail, because its body holds cards not prose", () => {
-    // `blockLines` splits a child on the newlines its own text carries, and a
-    // stage card's DOM carries none — so a tail here would fold the whole stage
-    // into one line of glued words. The dots are its progress cue instead.
-    const wrap = render(
-      [toolUse("d-tail"), toolUse(stageID("d-tail", "plan"), "u-tail")],
-      [driver("d-tail", 2, "in_progress"), stage("d-tail", "plan", "u-tail", "in_progress")],
-    );
-    expect(boxes(wrap)[0]?.querySelector(":scope > .subagent-tail")).toBeNull();
-    // The stage keeps its own.
-    const inner = wrap.querySelector(".subagent-container > .subagent-body > .subagent-block");
-    expect(inner?.querySelector(":scope > .subagent-tail")).not.toBeNull();
-  });
-
-  // -------------------------------------------------------------------------
-  // ONE STAGE MEANS NO CONTAINER. A container over a single card is two
-  // disclosures, two headers and two ledgers for one piece of work, and 7 of the
-  // 8 pipelines on the live volume declare exactly one stage — so promotion is
-  // the common case rather than an edge.
-  //
-  // Blocks arrive incrementally and out of order, so the count comes from the
-  // DRIVER's declared `stages` (complete the moment its tool call lands: the
-  // server writes `ToolCall.Input` on the create frame and never on an update)
-  // with the stages seen so far as the lower bound while the driver is not yet
-  // resident. A sibling arriving later therefore RE-PARENTS the promoted card
-  // into a container instead of rebuilding it, which is what carries its
-  // streaming text, its disclosure state and its page link across the upgrade.
-  // -------------------------------------------------------------------------
-
-  /** Render a message, then grow that SAME message with more blocks and calls —
-   *  the incremental-arrival shape, where a pipeline that had one stage on the
-   *  first pass gains a second on the next. */
-  function renderThenGrow(
-    first: { blocks: Record<string, unknown>[]; calls: ToolCall[] },
-    second: { blocks: Record<string, unknown>[]; calls: ToolCall[] },
-    between?: (wrap: HTMLElement) => void,
-  ): HTMLElement {
-    const wrap = document.createElement("div");
-    const id = `m-${String(Math.random())}`;
-    const msg = (b: Record<string, unknown>[], c: ToolCall[]): Message =>
-      ({ id, role: "assistant", content: "", blocks: b, tool_calls: c }) as unknown as Message;
-    buildAssistantBody(wrap, msg(first.blocks, first.calls), CHAT_ID, true);
-    between?.(wrap);
-    updateAssistantBody(
-      wrap,
-      msg([...first.blocks, ...second.blocks], [...first.calls, ...second.calls]),
-      CHAT_ID,
-      true,
-    );
-    return wrap;
-  }
-
-  it("renders no container for a pipeline of ONE stage", () => {
-    const wrap = render(
-      [toolUse("d-solo"), toolUse(stageID("d-solo", "plan"), "u-solo"), text("planning", "u-solo")],
-      [driver("d-solo", 1), stage("d-solo", "plan", "u-solo")],
-    );
-    expect(boxes(wrap)).toHaveLength(0);
-    expect(shape(wrap)).toEqual(["card(u-solo)"]);
-    const solo = wrap.querySelector(".assistant-blocks > .subagent-block");
-    expect(solo).not.toBeNull();
-    expect(solo?.textContent).not.toContain("planning");
-  });
-
-  it("a promoted stage keeps its page link", () => {
-    const wrap = render(
-      [toolUse("d-link"), toolUse(stageID("d-link", "plan"), "u-link")],
-      [driver("d-link", 1), stage("d-link", "plan", "u-link")],
-    );
-    // Direct-child `.subagent-header`, because a container IS a `.subagent-block`
-    // too: a descendant selector would find the nested stage's own head and pass
-    // whether or not the stage was promoted.
-    const link = wrap.querySelector<HTMLAnchorElement>(
-      ".assistant-blocks > .subagent-block > a.subagent-header",
-    );
-    expect(link?.getAttribute("href")).toBe("/chat/c-blocks/subagent/u-link");
-
-    // The negative half: a CONTAINER deliberately has none, because opening any
-    // stage's page already shows the whole pipeline.
-    const multi = render(
-      [
-        toolUse("d-link2"),
-        toolUse(stageID("d-link2", "plan"), "u-link2"),
-        toolUse(stageID("d-link2", "code"), "u-link2-b"),
-      ],
-      [
-        driver("d-link2", 2),
-        stage("d-link2", "plan", "u-link2"),
-        stage("d-link2", "code", "u-link2-b"),
-      ],
-    );
-    expect(boxes(multi)[0]?.querySelector(":scope > a.subagent-header")).toBeNull();
-  });
-
-  it("upgrades a promoted stage into a container when a sibling arrives", () => {
-    // The driver declares NOTHING, so the first pass counts the one stage it can
-    // see and promotes it; the second stage then has to re-parent that card.
-    const wrap = renderThenGrow(
-      {
-        blocks: [
-          toolUse("d-up"),
-          toolUse(stageID("d-up", "plan"), "u-up-a"),
-          text("planning hard", "u-up-a"),
-          // A member with a countable kind, so the pipeline's ledger has a row to
-          // show: `setSummary` withholds the footer for an empty summary.
-          toolUse("cmd-up", "u-up-a"),
-        ],
-        calls: [driver("d-up"), stage("d-up", "plan", "u-up-a"), call("cmd-up", "npm test")],
-      },
-      {
-        blocks: [toolUse(stageID("d-up", "code"), "u-up-b")],
-        calls: [stage("d-up", "code", "u-up-b")],
-      },
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-up)"]);
-    expect(nested(wrap)).toEqual(["u-up-a", "u-up-b"]);
-    // MOVED into the container. The streamed text that used to evidence "moved, not
-    // rebuilt" is no longer rendered anywhere, so what remains asserted is the seat and
-    // the moved card's own door; a rebuild would be indistinguishable here.
-    const moved = wrap.querySelector(
-      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-up-a"]',
-    );
-    expect(moved).not.toBeNull();
-    expect(moved?.querySelector(":scope > a.subagent-header")?.getAttribute("href")).toBe(
-      "/chat/c-blocks/subagent/u-up-a",
-    );
-    // The upgraded container paints its OWN header: the count comes from the
-    // stages it now holds, and the status from the DRIVER, which has settled — not
-    // from `live`, which would read as running over finished work.
-    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
-    expect(boxes(wrap)[0]?.classList.contains("running")).toBe(false);
-    expect(boxes(wrap)[0]?.querySelector(".subagent-icon")?.classList.contains("is-ok")).toBe(true);
-    // The third channel the self-paint writes. Direct child of the container's OWN
-    // foot, because the promoted stage carries a ledger of its own one level down.
-    expect(
-      boxes(wrap)[0]?.querySelector(":scope > .subagent-foot > .subagent-footer"),
-    ).not.toBeNull();
-  });
-
-  it("keeps both stages in one container when the driver declared only one", () => {
-    // The declared count is a FLOOR, not the answer: at `declared ?? observed` this
-    // pipeline read as promoted and BOTH stages rendered as flat siblings, which is
-    // the shape the stage-to-driver join was added to remove.
-    const wrap = render(
-      [
-        toolUse("d-short"),
-        toolUse(stageID("d-short", "plan"), "u-short-a"),
-        toolUse(stageID("d-short", "code"), "u-short-b"),
-      ],
-      [
-        driver("d-short", 1),
-        stage("d-short", "plan", "u-short-a"),
-        stage("d-short", "code", "u-short-b"),
-      ],
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-short)"]);
-    expect(nested(wrap)).toEqual(["u-short-a", "u-short-b"]);
-    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
-  });
-
-  it("names a stage-built container before the driver's block arrives", () => {
-    // The one order in which the CONSTRUCTOR's own label is the title: the driver's
-    // CALL is resident, so its declared count is known, but its BLOCK never renders,
-    // so `bindPipeline` never runs and nothing paints the box afterwards. No status
-    // assertion: with no driver painted, the constructor's `live ? … : …` is a
-    // deliberate guess rather than a fact.
-    const wrap = render(
-      [toolUse(stageID("d-pre", "plan"), "u-pre"), toolUse(stageID("d-pre", "code"), "u-pre-b")],
-      [driver("d-pre", 2), stage("d-pre", "plan", "u-pre"), stage("d-pre", "code", "u-pre-b")],
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-pre)"]);
-    expect(nested(wrap)).toEqual(["u-pre", "u-pre-b"]);
-    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
-  });
-
-  it("carries a promoted stage's own NODE through the upgrade", () => {
-    // A RE-PARENT, not a rebuild: everything a stage card accumulates — its bound
-    // header, its footer ledger, its live tail subscription — is a property of the
-    // node, and a rebuild would drop all three on the floor. The card no longer
-    // holds a disclosure for a reader to have opened, so node identity IS the
-    // property to pin.
-    let promoted: Element | null | undefined;
-    const wrap = renderThenGrow(
-      {
-        blocks: [toolUse("d-open"), toolUse(stageID("d-open", "plan"), "u-open-a")],
-        calls: [driver("d-open"), stage("d-open", "plan", "u-open-a")],
-      },
-      {
-        blocks: [toolUse(stageID("d-open", "code"), "u-open-b")],
-        calls: [stage("d-open", "code", "u-open-b")],
-      },
-      (w) => {
-        promoted = w.querySelector('.assistant-blocks > .subagent-block[data-subtask="u-open-a"]');
-        expect(promoted).not.toBeNull();
-      },
-    );
-    const moved = wrap.querySelector<HTMLElement>(
-      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-open-a"]',
-    );
-    expect(moved).toBe(promoted);
-  });
-
-  it("upgrades when a late driver declares two stages", () => {
-    // Only ONE stage ever arrives; the upgrade is driven purely by the driver's
-    // declared count landing after its stage did.
-    const wrap = renderThenGrow(
-      {
-        blocks: [toolUse(stageID("d-late", "plan"), "u-late"), text("early work", "u-late")],
-        calls: [stage("d-late", "plan", "u-late")],
-      },
-      { blocks: [toolUse("d-late")], calls: [driver("d-late", 2)] },
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-late)"]);
-    expect(nested(wrap)).toEqual(["u-late"]);
-    expect(nameOf(boxes(wrap)[0])).toBe("Subagent pipeline · 2 stages");
-    const moved = wrap.querySelector(
-      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-late"]',
-    );
-    expect(moved).not.toBeNull();
-  });
-
-  it("re-homes a stage whose pipeline became known after its box was placed", () => {
-    // A stage's text can reach the dispatcher before its invocation is in the store,
-    // so its box starts at the top level and `rehomeStages` has to move it.
-    const wrap = renderThenGrow(
-      { blocks: [toolUse("d-ooo"), text("planning", "u-ooo-a")], calls: [driver("d-ooo", 2)] },
-      {
-        blocks: [toolUse(stageID("d-ooo", "code"), "u-ooo-b")],
-        calls: [stage("d-ooo", "plan", "u-ooo-a"), stage("d-ooo", "code", "u-ooo-b")],
-      },
-    );
-    expect(shape(wrap)).toEqual(["pipeline(d-ooo)"]);
-    expect(nested(wrap)).toEqual(["u-ooo-a", "u-ooo-b"]);
-    // RE-PARENTED. As above, the streamed text that distinguished a re-parent from a
-    // rebuild is not rendered any more, so the seat is what stays asserted.
-    const moved = wrap.querySelector(
-      '.subagent-container > .subagent-body > .subagent-block[data-subtask="u-ooo-a"]',
-    );
-    expect(moved).not.toBeNull();
-  });
-
-  it("still renders a box for a driver that settled having dispatched no stage", () => {
-    // The one case where a promoted-count driver keeps its box: nothing stands in
-    // for it, and a block that renders nothing is a lost block. Deferred to the
-    // settle so it can never displace a stage still on its way.
-    const wrap = render([toolUse("d-nodisp")], [driver("d-nodisp", 1, "failed")]);
-    expect(boxes(wrap)).toHaveLength(1);
-    const icon = boxes(wrap)[0]?.querySelector(".subagent-icon");
-    expect(icon?.classList.contains("is-fail")).toBe(true);
-    expect(icon?.querySelector("svg")?.outerHTML).toBe(failMark());
-    expect(icon?.querySelectorAll("svg")).toHaveLength(1);
+    const turnID = nextTurnID();
+    const body = [
+      callEntry(turnID, 1, toolCall("tool-inv", { title: "Sub-agent: sub-A" })),
+      ...launch(turnID, 2, "wf-1", "tool-launch"),
+    ].map((e) => ({ ...e, turn: turnID }));
+    body[0] = {
+      ...body[0]!,
+      payload: toolCall("tool-inv", { title: "Sub-agent: sub-A", agent_subtask_id: "sub-A" }),
+    };
+    // The launch entry moves into the delegate's lane, which is the detached render's root.
+    body[1] = { ...body[1]!, lane: "sub-A" };
+    body[2] = { ...body[2]!, lane: "sub-A" };
+    const turn = turnOf(turnID, body);
+    setRunCardOwners(new Map([["wf-1", "some-other-entry"]]));
+    const host = bodyHost();
+    buildDetachedBody(host, turn, CHAT_ID, "sub-A", false);
+    expect(shape(host)).toEqual(["run(wf-1)"]);
   });
 });
 
 describe("tool grouping IS contiguous, which is the contrast", () => {
   it("splits a run of tool calls broken by prose into two groups", () => {
-    const wrap = render(
-      [toolUse("t1"), toolUse("t2"), text("prose between"), toolUse("t3")],
-      [call("t1", "Run Command"), call("t2", "Run Command"), call("t3", "Run Command")],
-    );
-    expect(shape(wrap)).toEqual(["group(2)", "text(prose between)", "group(1)"]);
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      callEntry("t", 2, toolCall("tool-b")),
+      text("t", 3, "prose"),
+      callEntry("t", 4, toolCall("tool-c")),
+    ]);
+    expect(shape(r.body)).toEqual(["group(2)", "text(prose)", "group(1)"]);
   });
 
   it("keeps an unbroken run in one group", () => {
-    const wrap = render(
-      [toolUse("t1"), toolUse("t2"), toolUse("t3")],
-      [call("t1", "Run Command"), call("t2", "Run Command"), call("t3", "Run Command")],
-    );
-    expect(shape(wrap)).toEqual(["group(3)"]);
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      callEntry("t", 2, toolCall("tool-b")),
+      callEntry("t", 3, toolCall("tool-c")),
+    ]);
+    expect(shape(r.body)).toEqual(["group(3)"]);
+  });
+
+  it("does not break a group at an entry that renders nothing", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      resultEntry("t", 2, 1),
+      callEntry("t", 3, toolCall("tool-b")),
+    ]);
+    expect(shape(r.body)).toEqual(["group(2)"]);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The auto-collapse REGISTRY, which is what makes the rule above total.
-//
-// A tool group declares `continues: ["tool_use"]`, so a further tool call joins
-// it and EVERY other destination in a container supersedes it. That used to be
-// seven hand-written `closeToolGroup` calls — all of them correct, and the eighth
-// destination added would have forgotten. The table below is one row per closer,
-// so a ninth destination has an obvious place to be added.
-// ---------------------------------------------------------------------------
+describe("sealing is invisible: the prose run", () => {
+  it("mounts consecutive text entries as ONE row carrying the concatenation", () => {
+    const r = render([text("t", 1, "one "), text("t", 2, "two "), text("t", 3, "three")]);
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("one two three");
+  });
 
-describe("the auto-collapse registry: which arrivals close a tool group", () => {
-  /** Member counts of the top-level groups, in order. One entry means the run
-   *  was unbroken; two means something closed the first group. */
-  function groups(wrap: HTMLElement): number[] {
-    return [...wrap.querySelectorAll(".assistant-blocks > .tool-group")].map(
-      (g) => g.querySelectorAll(".tool-call").length,
+  it("names its members on the row, in stream order", () => {
+    const r = render([text("t", 1, "a"), text("t", 2, "b")]);
+    const row = r.body.querySelector(".msg-row") as HTMLElement;
+    expect(row.dataset["entries"]).toBe(`${r.turnID}-e1 ${r.turnID}-e2`);
+  });
+
+  it("ends the run at an entry that RENDERS, and opens a new one after it", () => {
+    const r = render([
+      text("t", 1, "before"),
+      callEntry("t", 2, toolCall("tool-a")),
+      text("t", 3, "after"),
+    ]);
+    expect(shape(r.body)).toEqual(["text(before)", "group(1)", "text(after)"]);
+  });
+
+  it("renders a run broken by a FOLD kind identically to one text entry", () => {
+    // Design 8.5's own property: a seal inside a run is invisible, so an entry that renders
+    // nothing between two members leaves the same markup as the concatenated text.
+    const split = render([
+      text("t", 1, "one **two** "),
+      callEntry("t", 2, toolCall("tool-a")),
+      resultEntry("t", 3, 2),
+      text("t", 4, "three"),
+    ]);
+    // The tool call renders, so it breaks the run; its RESULT does not. Take the run whose
+    // members straddle the result.
+    const whole = render([text("t", 1, "one **two** three")]);
+    const straddle = render([
+      text("t", 1, "one **two** "),
+      resultEntry("t", 2, 1),
+      text("t", 3, "three"),
+    ]);
+    const bubble = (r: Render): string =>
+      (r.body.querySelector(".message.assistant") as HTMLElement).innerHTML;
+    expect(bubble(straddle)).toBe(bubble(whole));
+    expect(split.body.querySelectorAll(".msg-row")).toHaveLength(2);
+  });
+
+  it("answers for every member with the run's ONE element", () => {
+    const r = render([text("t", 1, "a"), text("t", 2, "b")]);
+    const row = r.body.querySelector(".msg-row");
+    expect(blockElement(r.turnID, 1)).toBe(row);
+    expect(blockElement(r.turnID, 2)).toBe(row);
+  });
+});
+
+describe("four kinds fold into an entry already on screen", () => {
+  it("folds a tool_result onto its call's card and renders nothing of its own", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a", { status: "in_progress" })),
+      resultEntry("t", 2, 1, { status: "failed" }),
+    ]);
+    expect(shape(r.body)).toEqual(["group(1)"]);
+    expect(r.body.querySelector(".tool-call")?.getAttribute("data-outcome")).toBe("fail");
+    expect(blockElement(r.turnID, 2)).toBeUndefined();
+  });
+
+  it("renders NOTHING for a turn_bind", () => {
+    const r = render([sealed("t", 1, "turn_bind", { kas_message_id: "kas-1", session: "s-1" })]);
+    expect(shape(r.body)).toEqual([]);
+    expect(blockElement(r.turnID, 1)).toBeUndefined();
+  });
+
+  it("replaces the first plan card's entries with a later plan's", () => {
+    const first = sealed("t", 1, "plan", {
+      entries: [{ content: "step one", priority: "high", status: "in_progress" }],
+    });
+    const r = render([first]);
+    expect(shape(r.body)).toEqual(["plan"]);
+    expect(r.body.textContent).toContain("step one");
+    update(r, [
+      first,
+      sealed("t", 2, "plan", {
+        entries: [{ content: "step two", priority: "high", status: "completed" }],
+      }),
+    ]);
+    expect(r.body.querySelectorAll(".plan-message")).toHaveLength(1);
+    expect(r.body.textContent).toContain("step two");
+    expect(r.body.textContent).not.toContain("step one");
+    expect(blockElement(r.turnID, 2)).toBeUndefined();
+  });
+
+  it("marks the steer note acknowledged AND renders the ack's own words as agent content", () => {
+    // ADDENDUM 5: the acknowledgement's words are the model's, so they render as the model's
+    // — in a bubble of their own, since an entry that renders ends the run it interrupted.
+    const steer = sealed(
+      "t",
+      1,
+      "steer",
+      { text: "use tabs", origin: "user", state: "read" },
+      {
+        id: "steer-1",
+      },
     );
-  }
-
-  function thinking(t: string, subtask = ""): Record<string, unknown> {
-    return { type: "thinking", thinking: t, agent_subtask_id: subtask };
-  }
-
-  const todoCall = { id: "td", title: "todo_list", kind: "other", status: "completed" };
-
-  /** `[what arrives between two tool calls, the middle blocks, its tool calls, the
-   *  member counts of the resulting groups]`. The continuation row is the only one
-   *  expecting ONE group holding all three cards; every closer splits the run. */
-  const arrivals: [string, Record<string, unknown>[], ToolCall[], number[]][] = [
-    [
-      "a further tool call (the one TOLERATED continuation)",
-      [toolUse("t2")],
-      [call("t2", "Read")],
-      [3],
-    ],
-    ["a text block", [text("prose")], [], [1, 1]],
-    ["a thinking block", [thinking("weighing")], [], [1, 1]],
-    ["a todo checklist", [toolUse("td")], [todoCall as unknown as ToolCall], [1, 1]],
-    ["a delegate's box", [text("delegate prose", "sub-A")], [], [1, 1]],
-    // A genuine card ARRIVAL closes the group; a DROPPED step block appends nothing
-    // at all, so it must not. The two rows together are what say the supersede is
-    // driven by an append rather than by a block existing.
-    [
-      "a run card",
-      [toolUse("tw")],
-      [
+    const r = render([
+      steer,
+      sealed(
+        "t",
+        2,
+        "steer_ack",
+        { steer_id: "steer-1", text: "tabs it is" },
         {
-          id: "tw",
-          title: "Run Workflow",
-          kind: "other",
-          status: "completed",
-          workflow_id: "wf_8",
-        } as unknown as ToolCall,
-      ],
-      [1, 1],
-    ],
-    [
-      "a DROPPED workflow step (appends nothing)",
-      [text("step prose", "wf:wf_9:wf_9/build")],
-      [],
-      [2],
-    ],
-  ];
+          id: "steer-1:ack",
+        },
+      ),
+    ]);
+    const note = r.body.querySelector(".steer-note") as HTMLElement;
+    expect(note.getAttribute("data-acknowledged")).toBe("true");
+    expect(shape(r.body)).toEqual(["note", "text(tabs it is)"]);
+  });
+});
 
-  it.each(arrivals)("%s", (what, middle, extra, expected) => {
-    const wrap = render(
-      [toolUse("t1"), ...middle, toolUse("t9")],
-      [call("t1", "Read"), ...extra, call("t9", "Read")],
-    );
-    expect(
-      groups(wrap),
-      `${what} must ${expected.length === 1 ? "extend" : "close"} the group`,
-    ).toEqual(expected);
+describe("the lane's OPEN entry is what streams, at the tail of its view", () => {
+  const openText = (turnID: string, id: string, s: string, lane = ""): OpenEntry => ({
+    turn: turnID,
+    id,
+    lane,
+    kind: "text",
+    text: s,
+    n: 1,
   });
 
-  // The per-container keying case was here. Its subject is gone: a delegate's tool calls
-  // are dropped with the rest of its output, so the transcript holds no delegate tool run
-  // for an interleaved parent block to split. The parent-lane keying is still covered by
-  // the cases above.
+  /** Build a live body holding `open` as the lane's open entry. */
+  function renderLive(entries: Entry[], open: OpenEntry[]): Render {
+    const turnID = nextTurnID();
+    const turn = turnOf(turnID, retarget(entries, turnID), {
+      open: open.map((o) => ({ ...o, turn: turnID })),
+    });
+    const body = bodyHost();
+    buildAssistantBody(body, turn, CHAT_ID, true);
+    return { turnID, body, turn };
+  }
 
-  it("does not enrol a subagent box: a following block neither closes nor folds it", () => {
-    // The non-contiguity contrast the file's header comment draws, now enforced
-    // rather than implied. Two halves: a later same-subtask block still joins the
-    // card, and the card's own disclosure is untouched by the arrival.
-    const wrap = render(
-      [text("delegate prose", "sub-A"), text("parent prose"), text("more delegate", "sub-A")],
-      [],
-    );
-    const cards = wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .subagent-block");
-    expect(cards).toHaveLength(1);
-    // The card has no disclosure for an arrival to close, and no body for the second
-    // same-subtask block to join.
-    expect(cards[0]?.querySelector(".subagent-body")).toBeNull();
-    expect(cards[0]?.classList.contains("collapsed")).toBe(false);
+  // A LIVE bubble's text arrives over frames (the reveal buffer sees only GROWTH), so these
+  // cases assert the run's own membership rather than the words it has painted so far.
+  it("joins the run its lane's tail sits in", () => {
+    const r = renderLive([text("t", 1, "sealed ")], [openText("t", "open-1", "growing")]);
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e1 open-1`);
   });
 
-  it("leaves a leaf card's collapsed class alone when the next block lands", () => {
-    // The UPDATE-pass half of the case above: a LEAF card has no disclosure and no body,
-    // so `.collapsed` on one is a skin hook and nothing in the dispatcher may write it.
-    // The class is cleared by hand here to make a re-fold observable — if the card were
-    // enrolled in the supersede path the way a pipeline box is, the parent's prose
-    // arriving after it would put `.collapsed` back.
-    const wrap = render([text("delegate prose", "sub-A")], []);
-    const box = wrap.querySelector<HTMLElement>(".subagent-block")!;
-    box.classList.remove("collapsed");
+  it("mounts a run of its OWN when the lane's tail is not prose", () => {
+    const r = renderLive(
+      [callEntry("t", 1, toolCall("tool-a"))],
+      [openText("t", "open-1", "after the card")],
+    );
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe("open-1");
+    expect(r.body.lastElementChild).toBe(rows[0]);
+  });
 
+  it("carries the caret on the open run alone", () => {
+    const r = renderLive(
+      [text("t", 1, "one"), callEntry("t", 2, toolCall("tool-a")), text("t", 3, "two")],
+      [openText("t", "open-1", "three")],
+    );
+    const carets = r.body.querySelectorAll(".message.assistant.streaming");
+    expect(carets).toHaveLength(1);
+    const row = carets[0]?.closest(".msg-row") as HTMLElement;
+    expect(row.dataset["entries"]).toBe(`${r.turnID}-e3 open-1`);
+  });
+
+  it("opens no caret on a REPLAY", () => {
+    const r = render([text("t", 1, "history")]);
+    expect(r.body.querySelectorAll(".message.assistant.streaming")).toHaveLength(0);
+  });
+
+  it("hands the surface to the SEAL rather than mounting a second bubble", () => {
+    const r = renderLive([], [openText("t", "open-1", "growing")]);
+    const row = r.body.querySelector(".msg-row");
+    // The same words now carry a position: the open-only run is re-keyed under it.
+    update(r, [sealed("t", 1, "text", { text: "growing" }, { id: "open-1" })], true);
+    expect(r.body.querySelectorAll(".msg-row")).toHaveLength(1);
+    expect(blockElement(r.turnID, 1)).toBe(row);
+  });
+
+  it("drops the open surface when the store retires that entry unsealed", () => {
+    const r = renderLive([], [openText("t", "open-1", "abandoned")]);
+    expect(r.body.querySelectorAll(".msg-row")).toHaveLength(1);
+    const turn = turnOf(r.turnID, [], { open: [] });
+    updateAssistantBody(r.body, turn, CHAT_ID, true);
+    expect(shape(r.body)).toEqual([]);
+  });
+
+  it("ignores an open entry of another LANE", () => {
+    const r = renderLive([text("t", 1, "root")], [openText("t", "open-A", "delegate", "sub-A")]);
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    // The membership, not the painted words: a live bubble reveals growth over frames, so a
+    // text assertion here would pass whether or not the delegate's tail had been mounted.
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e1`);
+  });
+});
+
+describe("an event kind renders a row at its own seq", () => {
+  it("draws all four event kinds in seq order, between prose", () => {
+    const r = render([
+      text("t", 1, "before"),
+      sealed("t", 2, "compaction", { summary: "s", id: "compaction-1" }),
+      sealed("t", 3, "compaction_failed", { reason: "too big" }),
+      sealed("t", 4, "safety_blocked", { reason: "blocked" }),
+      sealed("t", 5, "model_switched", { from: "a", to: "b" }),
+      text("t", 6, "after"),
+    ]);
+    expect(shape(r.body)).toEqual([
+      "text(before)",
+      "event(compaction)",
+      "event(compaction_failed)",
+      "event(safety_blocked)",
+      "event(model_switched)",
+      "text(after)",
+    ]);
+  });
+
+  it("breaks a prose run, because it renders at its own position", () => {
+    const r = render([
+      text("t", 1, "one"),
+      sealed("t", 2, "compaction", { summary: "s", id: "compaction-1" }),
+      text("t", 3, "two"),
+    ]);
+    expect(r.body.querySelectorAll(".msg-row")).toHaveLength(2);
+  });
+});
+
+describe("a thinking trace is per LANE, and its disclosure is positional", () => {
+  const trace = (body: HTMLElement): HTMLDetailsElement =>
+    body.querySelector(".reasoning-block") as HTMLDetailsElement;
+
+  it("renders EXPANDED while it is the newest element of its lane", () => {
+    const r = render([text("t", 1, "before"), thinking("t", 2, "weighing it up")]);
+    expect(shape(r.body)).toEqual(["text(before)", "thinking"]);
+    expect(trace(r.body).open).toBe(true);
+  });
+
+  it("renders collapsed once the store holds a successor", () => {
+    // Sealed from the STORE rather than from what arrives next, so a trace reaches this
+    // range already finished however the range got here.
+    const r = render([thinking("t", 1, "weighing it up"), text("t", 2, "answer")]);
+    expect(shape(r.body)).toEqual(["thinking", "text(answer)"]);
+    expect(trace(r.body).open).toBe(false);
+    expect(r.body.querySelector(".reasoning-label")?.textContent).toContain("completed");
+  });
+
+  it("renders NOTHING for an empty settled trace", () => {
+    const r = render([thinking("t", 1, "")]);
+    expect(shape(r.body)).toEqual([]);
+    expect(blockElement(r.turnID, 1)).toBeUndefined();
+  });
+
+  it("drops a trace of another lane", () => {
+    const r = render([thinking("t", 1, "delegate thinks", "sub-A"), text("t", 2, "root")]);
+    expect(shape(r.body)).toEqual(["text(root)"]);
+  });
+
+  it("ends the prose run it interrupts", () => {
+    const r = render([text("t", 1, "one"), thinking("t", 2, "hmm"), text("t", 3, "two")]);
+    expect(shape(r.body)).toEqual(["text(one)", "thinking", "text(two)"]);
+  });
+
+  it("adopts the OPEN trace's element when it seals rather than drawing it twice", () => {
+    const turnID = nextTurnID();
+    const open: OpenEntry = {
+      turn: turnID,
+      id: "open-th",
+      lane: "",
+      kind: "thinking",
+      text: "still weighing",
+      n: 1,
+    };
+    const body = bodyHost();
+    buildAssistantBody(body, turnOf(turnID, [], { open: [open] }), CHAT_ID, true);
+    const live = trace(body);
+    expect(live).not.toBeNull();
+    expect(body.querySelector(".reasoning-label")?.textContent).toBe("Thinking…");
     updateAssistantBody(
-      wrap,
-      {
-        id: lastMsgID,
-        role: "assistant",
-        content: "",
-        blocks: [text("delegate prose", "sub-A"), text("parent prose")],
-        tool_calls: [],
-      } as unknown as Message,
-      CHAT_ID,
-      false,
-    );
-
-    expect(wrap.querySelector(".assistant-blocks")?.children).toHaveLength(2);
-    expect(box.classList.contains("collapsed")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Legacy internal engine bookkeeping never mounts a card.
-//
-// KAS's session-boot cloud-config fetch is suppressed server-side at translate
-// (keyed on _meta.kiro.toolId), so a live stream never delivers one. What
-// still carries it is a transcript PERSISTED BEFORE the suppression, where the
-// call sits at in_progress forever — its completion frame was lost to the boot
-// displacement — which is the user-visible "Fetching your cloud config spinner
-// never expires". Title-keyed here: the persisted ToolCall carries no tool id,
-// and the title is a KAS constant, not model prose.
-// ---------------------------------------------------------------------------
-
-describe("legacy internal tool calls are dropped at the dispatcher", () => {
-  it("renders no card for a persisted cloud-config fetch", () => {
-    const stuck = {
-      id: "t-cc",
-      title: "Fetching your cloud config",
-      kind: "other",
-      status: "in_progress",
-    } as unknown as ToolCall;
-    const wrap = render([toolUse("t-cc")], [stuck]);
-    expect(wrap.querySelector(".tool-call")).toBeNull();
-    expect(wrap.querySelector(".tool-group")).toBeNull();
-  });
-
-  it("drops it as if it never existed, so real neighbours still group", () => {
-    const wrap = render(
-      [toolUse("t1"), toolUse("t-cc"), toolUse("t2")],
-      [
-        call("t1", "Run Command"),
-        call("t-cc", "Fetching your cloud config"),
-        call("t2", "Run Command"),
-      ],
-    );
-    expect(shape(wrap)).toEqual(["group(2)"]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A mounted block tracks the store's text whether or not it was mounted live.
-//
-// The fast path for a live turn is the per-block signal effect: a chunk writes
-// the signal and the DOM updates with no reconcile. That effect only exists for
-// a block the renderer judged LIVE, and `store.appendChunk` falls back to
-// scheduling a full repaint for any block with no signal — so the repaint is the
-// only channel left for a block whose liveness was misjudged, and it used to
-// mount new blocks and never revisit a mounted one. The measured symptom was an
-// assistant reply frozen at its first streamed chunk (`<p>Here's v</p>`), with
-// no ellipsis, healed only by reloading the page.
-//
-// Liveness is misjudged cheaply: `isLikelyLiveStreaming` requires the chat's
-// `thinking` flag, and any mid-turn event that clears it (a `.kiro/agents` parse
-// error arriving at session construction was the real one) makes every later
-// block of that turn mount for replay.
-// ---------------------------------------------------------------------------
-
-describe("a mounted block picks up text that arrived after it mounted", () => {
-  function growingMessage(blocks: Record<string, unknown>[]): Message {
-    return {
-      id: "m-grow",
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: [],
-    } as unknown as Message;
-  }
-
-  it("renders a text block's tail on the next repaint, mounted for REPLAY", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("Here's v")];
-    const m = growingMessage(blocks);
-    // live: false — the frozen case.
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelector(".message.assistant")?.textContent).toBe("Here's v");
-
-    blocks[0]!["text"] = "Here's version two of the plan.";
-    updateAssistantBody(wrap, m, CHAT_ID, false);
-    // The grown bubble is on the incremental renderer now, which holds its last
-    // character provisionally until the next write or the finalize — the same
-    // contract a live turn has. What matters here is that the tail arrived at all.
-    expect(wrap.querySelector(".message.assistant")?.textContent).toContain(
-      "Here's version two of the plan",
-    );
-
-    finalizeAssistantBody(m.id);
-    expect(wrap.querySelector(".message.assistant")?.textContent).toBe(
-      "Here's version two of the plan.",
-    );
-  });
-
-  it("renders a thinking block's tail the same way", () => {
-    const wrap = document.createElement("div");
-    const blocks: Record<string, unknown>[] = [
-      { type: "thinking", thinking: "I", agent_subtask_id: "" },
-    ];
-    const m = growingMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelector(".reasoning-body")?.textContent).toBe("I");
-
-    blocks[0]!["thinking"] = "I should read the file first.";
-    updateAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelector(".reasoning-body")?.textContent).toBe(
-      "I should read the file first.",
-    );
-  });
-
-  it("adds nothing when the block did not grow", () => {
-    // The sweep runs on every repaint of every mounted block, so a settled
-    // transcript must cost a length comparison and produce no DOM churn.
-    const wrap = document.createElement("div");
-    const blocks = [text("settled")];
-    const m = growingMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-    const before = wrap.querySelector(".message.assistant")?.innerHTML;
-
-    updateAssistantBody(wrap, m, CHAT_ID, false);
-    updateAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelector(".message.assistant")?.innerHTML).toBe(before);
-  });
-
-  // The delegate-hosted case was here, and it cannot exist: the transcript mounts no block
-  // of a delegate's, so there is none to pick up late text. The delegate's own page renders
-  // those blocks through the detached path, which `subagent-view.test.ts` covers.
-});
-
-// ---------------------------------------------------------------------------
-// The live per-block effect consumes {full, delta} under a WATERMARK GUARD
-// (design B5): the delta is appended only when it bridges the text accepted so
-// far to `full`; anything else resyncs from `full`. The signal layer's
-// synchronous flush makes a mismatch impossible in the steady state, so these
-// pin the self-healing paths — a missed write, a replayed write, and a mount
-// onto a signal that advanced before this render subscribed (the unpark case).
-// ---------------------------------------------------------------------------
-
-describe("the live block effect's watermark guard", () => {
-  beforeEach(() => {
-    resetBlockRenders();
-    clearAllBlockSigs();
-  });
-
-  function liveMount(blocks: Record<string, unknown>[]): { wrap: HTMLElement; id: string } {
-    const wrap = document.createElement("div");
-    const id = `m-wm-${String(Math.random())}`;
-    buildAssistantBody(
-      wrap,
-      {
-        id,
-        role: "assistant",
-        content: "",
-        blocks,
-        tool_calls: [],
-      } as unknown as Message,
+      body,
+      turnOf(turnID, [
+        {
+          id: "open-th",
+          turn: turnID,
+          kind: "thinking",
+          seq: 1,
+          ts: 1,
+          payload: { text: "still weighing" },
+        },
+      ]),
       CHAT_ID,
       true,
     );
-    return { wrap, id };
-  }
-
-  /** The bubble's settled text: dispose drains the reveal and finalizes the
-   *  markdown stream synchronously, so the DOM is exact. */
-  function settledText(wrap: HTMLElement, id: string): string {
-    disposeAssistantBody(id);
-    return wrap.querySelector(".message.assistant")?.textContent ?? "";
-  }
-
-  it("resyncs from full after a missed write — no loss, no duplication", () => {
-    const { wrap, id } = liveMount([text("")]);
-    const sig = blockTextSigs.get(blockKey(id, 0));
-    expect(sig).toBeDefined();
-    sig!.value = { full: "Hello ", delta: "Hello " };
-    // The "lo brave " write never reaches the effect; the next one arrives
-    // with a delta that cannot bridge the accepted text to full.
-    sig!.value = { full: "Hello brave world", delta: "world" };
-    expect(settledText(wrap, id)).toBe("Hello brave world");
-  });
-
-  it("ignores a replayed write — no duplication", () => {
-    const { wrap, id } = liveMount([text("")]);
-    const sig = blockTextSigs.get(blockKey(id, 0));
-    sig!.value = { full: "Hi ", delta: "Hi " };
-    sig!.value = { full: "Hi there", delta: "there" };
-    // The same value re-published as a fresh object: the effect observes it
-    // again, and the guard must not append "there" twice.
-    sig!.value = { full: "Hi there", delta: "there" };
-    expect(settledText(wrap, id)).toBe("Hi there");
-  });
-
-  it("a rebind's first observed value never double-appends", () => {
-    // The unpark shape: the signal advanced while no render was subscribed,
-    // so its LAST value still carries a nonempty delta. A fresh mount reads
-    // the store's full text as its initial, observes that stale pair once,
-    // and must treat it as already-on-screen rather than growth.
-    const seeded = ensureBlockTextSig("m-wm-rebind", 0, "");
-    seeded.value = { full: "abc", delta: "c" };
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      {
-        id: "m-wm-rebind",
-        role: "assistant",
-        content: "",
-        blocks: [text("abc")],
-        tool_calls: [],
-      } as unknown as Message,
-      CHAT_ID,
-      true,
-    );
-    expect(settledText(wrap, "m-wm-rebind")).toBe("abc");
-  });
-
-  it("a thinking block follows full text across a missed write", () => {
-    const { wrap, id } = liveMount([{ type: "thinking", thinking: "", agent_subtask_id: "" }]);
-    const sig = blockThinkingSigs.get(blockKey(id, 0));
-    expect(sig).toBeDefined();
-    sig!.value = { full: "why", delta: "why" };
-    sig!.value = { full: "why not now", delta: "now" };
-    expect(wrap.querySelector(".reasoning-body")?.textContent).toBe("why not now");
+    expect(body.querySelectorAll(".reasoning-block")).toHaveLength(1);
+    expect(blockElement(turnID, 1)).toBe(live);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The row over an empty bubble carries `.is-empty`, which is what hides it
-// (css/13-messages.css). The bubble reports its own blank state — nothing
-// rendered AND not streaming — and mountText writes it onto the row, so the
-// class must track every way a bubble stops (or starts) being blank.
-// ---------------------------------------------------------------------------
-
-describe("an empty bubble's row is marked .is-empty", () => {
-  function message(blocks: Record<string, unknown>[]): Message {
-    return {
-      id: `m-empty-${String(Math.random())}`,
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: [],
-    } as unknown as Message;
-  }
-
-  // The row is the bubble's wrapper. Queried by relation rather than by class:
-  // the real `.msg-row` factory is injected by messages.ts (initBlockCallbacks),
-  // which this harness deliberately leaves out; messages-paint-causes.test.ts
-  // covers the fully-wired `.msg-row.is-empty` combination.
-  const rowOf = (wrap: HTMLElement): HTMLElement | null =>
-    wrap.querySelector(".message.assistant")?.parentElement ?? null;
-
-  it("marks a reserved slot's row at mount and clears it when the text lands", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("")];
-    const m = message(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(true);
-
-    blocks[0]!["text"] = "the frame arrived after all.";
-    updateAssistantBody(wrap, m, CHAT_ID, false);
-    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
-  });
-
-  it("never marks a live bubble's row — the caret needs the row visible", () => {
-    const wrap = document.createElement("div");
-    const m = message([text("")]);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelector(".message.assistant.streaming")).not.toBeNull();
-    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
-  });
-
-  it("marks the row when a live bubble seals with nothing revealed", () => {
-    // A reserved slot whose text never arrives: the caret drops at finalize and
-    // the row must hide with it.
-    const wrap = document.createElement("div");
-    const m = message([text("")]);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
-
-    finalizeAssistantBody(m.id);
-    expect(wrap.querySelector(".message.assistant.streaming")).toBeNull();
-    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(true);
-  });
-
-  it("leaves a content-bearing row unmarked from the start", () => {
-    const wrap = document.createElement("div");
-    buildAssistantBody(wrap, message([text("hello")]), CHAT_ID, false);
-    expect(rowOf(wrap)?.classList.contains("is-empty")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The streaming caret has an END, and there is exactly one of it.
-//
-// The caret is a single CSS pseudo-element on `.message.assistant.streaming`,
-// added by `buildAssistantBubble(initial, live)` and removed only by that
-// bubble's `end()`. `renderRange` decides liveness as `live && i === lastIdx`,
-// evaluated once when a block MOUNTS, and mounting is append-only — so a turn
-// shaped "prose → tool call → prose → tool call → prose" opened three text
-// blocks, each of which was the tail when it mounted, and nothing ever sealed
-// the one that stopped being the tail. The reader saw a caret per block for the
-// whole turn (3, 4, 5 of them), and the accent wash stayed on every one of them.
-// ---------------------------------------------------------------------------
-
-describe("exactly one streaming caret, and it ends", () => {
-  const CARET = ".message.assistant.streaming";
-
-  function liveMessage(blocks: Record<string, unknown>[]): Message {
-    return {
-      id: `m-caret-${String(Math.random())}`,
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: [],
-    } as unknown as Message;
-  }
-
-  it("moves the caret to the new tail instead of accumulating one per block", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("first paragraph")];
-    const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
-
-    // Three more text blocks arrive, each becoming the tail in turn. This is the
-    // ordinary shape of a turn that interleaves prose and tool calls.
-    for (const next of ["second paragraph", "third paragraph", "fourth paragraph"]) {
-      blocks.push(text(next));
-      updateAssistantBody(wrap, m, CHAT_ID, true);
-      expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
-    }
-    // ...and it is the LAST bubble that carries it.
-    const bubbles = [...wrap.querySelectorAll(".message.assistant")];
-    expect(bubbles).toHaveLength(4);
-    expect(bubbles.at(-1)?.classList.contains("streaming")).toBe(true);
-  });
-
-  it("seals the previous text block when the new tail is a tool call", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("about to run something")];
-    const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
-
-    blocks.push(toolUse("t1"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-    // Prose that has been superseded by a tool call is not streaming; a tool
-    // card carries its own status affordance and never a caret.
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
-  });
-
-  it("leaves no caret behind after finalize", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("one")];
-    const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    blocks.push(text("two"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-
-    finalizeAssistantBody(m.id);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
-  });
-
-  it("is idempotent: finalize twice, and a repaint after it, stay caret-free", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("one")];
-    const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-
-    finalizeAssistantBody(m.id);
-    finalizeAssistantBody(m.id);
-    updateAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
-  });
-
-  it("never opens a caret on a replayed message", () => {
-    const wrap = document.createElement("div");
-    const blocks = [text("a"), toolUse("t1"), text("b")];
-    const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
-  });
-
-  it("holds one caret across the whole message when a subagent streams", () => {
-    // `mountText` is the same function for a top-level bubble and one inside a
-    // SubagentBlock body, so a delegate's tail block used to add a caret of its
-    // own nested inside the collapsible box.
-    const wrap = document.createElement("div");
-    const blocks = [text("parent prose")];
-    const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-
-    blocks.push(text("delegate prose", "sub-A"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
-
-    blocks.push(text("parent again"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
-
-    finalizeAssistantBody(m.id);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
-  });
-
-  it("keeps the caret when the only arrival is a DROPPED workflow step", () => {
-    // A workflow step's frames land in the launching chat by the dozen while that
-    // chat's own reply is still streaming. Nothing is placed for one, so sealing on
-    // its arrival would end the reader's caret for a render that draws nothing —
-    // which is what the seal ahead of the drop did.
-    const wrap = document.createElement("div");
-    const blocks = [text("still writing")];
-    const m = liveMessage(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
-
-    blocks.push(text("step output", "wf:wf_1:wf_1/build"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(1);
-    expect(wrap.textContent).not.toContain("step output");
-
-    // A real arrival still seals, so the skip is scoped rather than a disabled rule.
-    blocks.push(toolUse("t1"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-    expect(wrap.querySelectorAll(CARET)).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Which bubble Following pins to.
-//
-// The pin puts the anchor's bottom at the viewport's bottom, so an anchor that
-// sits ABOVE the live edge parks the reader mid-transcript with the newest work
-// off-screen — and, before the scroll listener learned to ignore the controller's
-// own landing, latched the auto-scroll off entirely. The anchor is a REGISTRY
-// maintained at the `.streaming` grant/seal sites, so the follow path reads one
-// field instead of walking the tree per frame.
-// ---------------------------------------------------------------------------
-describe("getLiveAnchor", () => {
-  const CARETS = ".message.assistant.streaming";
-
-  // The registry is module state written by every render in this file, so each
-  // case starts from a clean slate rather than from the previous case's caret.
-  beforeEach(() => {
-    resetBlockRenders();
-  });
-
-  function liveMsg(blocks: Record<string, unknown>[]): Message {
-    return {
-      id: `m-${String(Math.random())}`,
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: [],
-    } as unknown as Message;
+describe("getLiveAnchor: the registry, not the tree", () => {
+  /** A live body, which is what registers a top-level bubble as the follow anchor. */
+  function renderLiveBody(entries: Entry[], chatID = CHAT_ID): Render {
+    const turnID = nextTurnID();
+    const turn = turnOf(turnID, retarget(entries, turnID));
+    const body = bodyHost();
+    buildAssistantBody(body, turn, chatID, true);
+    return { turnID, body, turn };
   }
 
   it("has no anchor when nothing is streaming", () => {
-    const wrap = document.createElement("div");
-    buildAssistantBody(wrap, liveMsg([text("done")]), CHAT_ID, false);
+    render([text("t", 1, "history")]);
     expect(getLiveAnchor()).toBeNull();
   });
 
-  it("takes the LAST live bubble, not the first in document order", () => {
-    // One turn, two assistant messages: a mid-turn model switch splits it, and
-    // the seal that drops `.streaming` is per-MESSAGE state, so the earlier
-    // message's trailing bubble stays marked until the turn finalizes. A
-    // `querySelector` would hand back that one, which is the older of the two.
-    const wrap = document.createElement("div");
-    buildAssistantBody(wrap, liveMsg([text("the earlier message")]), CHAT_ID, true);
-    buildAssistantBody(wrap, liveMsg([text("the message still streaming")]), CHAT_ID, true);
-
-    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
-    expect(live).toHaveLength(2);
-    expect(getLiveAnchor()).toBe(live[1]);
+  it("takes the NEWEST live bubble, not the first in document order", () => {
+    const first = renderLiveBody([text("t", 1, "older")]);
+    const second = renderLiveBody([text("t", 1, "newer")]);
+    expect(second.body.contains(getLiveAnchor())).toBe(true);
+    expect(first.body.contains(getLiveAnchor())).toBe(false);
   });
 
-  it("falls back to the older split-turn survivor when the newest seals", () => {
-    // The registry's clear is identity-guarded and falls back by scanning the
-    // render map: when the NEWER message's bubble finalizes first, the older
-    // still-streaming bubble takes the slot back — the case the tree walk
-    // solved by taking the LAST match.
-    const wrap = document.createElement("div");
-    const older = liveMsg([text("the earlier message")]);
-    const newer = liveMsg([text("the message that finalizes first")]);
-    buildAssistantBody(wrap, older, CHAT_ID, true);
-    buildAssistantBody(wrap, newer, CHAT_ID, true);
-
-    finalizeAssistantBody(newer.id);
-    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
-    expect(live).toHaveLength(1);
-    expect(getLiveAnchor()).toBe(live[0]);
+  it("falls back to the older survivor when the newest render goes", () => {
+    const first = renderLiveBody([text("t", 1, "older")]);
+    const second = renderLiveBody([text("t", 1, "newer")]);
+    disposeAssistantBody(second.turnID);
+    expect(first.body.contains(getLiveAnchor())).toBe(true);
   });
 
-  it("clears for good when every bubble has sealed", () => {
-    const wrap = document.createElement("div");
-    const m = liveMsg([text("prose")]);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
+  it("clears for good once every live render is disposed", () => {
+    const r = renderLiveBody([text("t", 1, "live")]);
     expect(getLiveAnchor()).not.toBeNull();
-
-    finalizeAssistantBody(m.id);
+    disposeAssistantBody(r.turnID);
     expect(getLiveAnchor()).toBeNull();
   });
 
-  it("a disposed render releases its anchor", () => {
-    const wrap = document.createElement("div");
-    const m = liveMsg([text("prose")]);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(getLiveAnchor()).not.toBeNull();
-
-    disposeAssistantBody(m.id);
+  it("never anchors a DETACHED render, whose box the reader cannot see", () => {
+    const turnID = nextTurnID();
+    const turn = turnOf(turnID, retarget([text("t", 1, "delegate", "sub-A")], turnID));
+    buildDetachedBody(bodyHost(), turn, CHAT_ID, "sub-A", true);
     expect(getLiveAnchor()).toBeNull();
   });
 
-  it("reads the registry, not the tree — no selector call on the follow path", () => {
-    const wrap = document.createElement("div");
-    buildAssistantBody(wrap, liveMsg([text("prose")]), CHAT_ID, true);
-
-    const spyAll = vi.spyOn(document, "querySelectorAll");
-    const spyWrap = vi.spyOn(wrap, "querySelectorAll");
-    try {
-      expect(getLiveAnchor()).not.toBeNull();
-      expect(spyAll).not.toHaveBeenCalled();
-      expect(spyWrap).not.toHaveBeenCalled();
-    } finally {
-      spyAll.mockRestore();
-      spyWrap.mockRestore();
-    }
-  });
-
-  it("never anchors inside a delegate's card when a DELEGATE is the tail", () => {
-    // The dispatcher seals the parent's bubble when the delegate's block
-    // appends, so this is the ordinary shape of a running subagent. Null is the
-    // answer rather than the delegate's bubble: that bubble sits inside a box
-    // collapsed to `height: 0` with `overflow: hidden`, which clips it without
-    // taking it out of layout, so its offsets describe a position the reader
-    // cannot see. The document bottom is where the box's tail and footer are.
-    const wrap = document.createElement("div");
-    const blocks = [text("parent prose")];
-    const m = liveMsg(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    blocks.push(text("delegate prose", "sub-A"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-
-    // The delegate's block renders nothing, so it contributes no caret and does not seal
-    // the parent's: one caret, at the top level, and it is the anchor. The old case put the
-    // only caret INSIDE the delegate's body and expected no anchor at all; that DOM no
-    // longer exists, so what is worth pinning is that an anchor is never inside a card.
-    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
-    expect(live).toHaveLength(1);
-    expect(live[0]?.closest(".subagent-block")).toBeNull();
-    expect(getLiveAnchor()).toBe(live[0]);
-  });
-
-  it("prefers a top-level bubble over a later delegate bubble", () => {
-    // Two messages again, and this is the case that makes "last match" and
-    // "skip delegates" two separate rules rather than one: the delegate's bubble
-    // is the LAST in document order while the top-level one is what the reader
-    // is following.
-    const wrap = document.createElement("div");
-    const withDelegate = liveMsg([text("older parent prose")]);
-    const blocks = withDelegate.blocks as unknown as Record<string, unknown>[];
-    buildAssistantBody(wrap, withDelegate, CHAT_ID, true);
-    blocks.push(text("delegate prose", "sub-A"));
-    updateAssistantBody(wrap, withDelegate, CHAT_ID, true);
-    buildAssistantBody(wrap, liveMsg([text("newer parent prose")]), CHAT_ID, true);
-
-    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
-    expect(live).toHaveLength(2);
-    expect(live[1]?.closest(".subagent-body")).toBeNull();
-    expect(getLiveAnchor()).toBe(live[1]);
-  });
-
-  it("self-heals when the registry no longer owns the anchored element", () => {
-    // resumeMessage and updateAssistantBody's self-healing path replace a
-    // message's DOM wholesale, so the registry entry for that id points at the
-    // NEW state while the anchor slot still holds the old, now-detached
-    // element. Following that element pinned the scroller to a box with no
-    // layout — the live-caught "scroll keeps snapping to the start of the
-    // turn" (instrumented mid-stream: scrollTop 786 → 0).
-    const wrap = document.createElement("div");
-    const m = liveMsg([text("prose")]);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(getLiveAnchor()).not.toBeNull();
-
-    // The same message rebuilt SETTLED into a fresh row: the registry's
-    // topLiveEl goes null while the anchor slot still names the old bubble.
-    const wrap2 = document.createElement("div");
-    buildAssistantBody(wrap2, m, CHAT_ID, false);
+  it("never anchors into a PARKED chat on the fallback scan", () => {
+    const parked = renderLiveBody([text("t", 1, "other chat")], "c-other");
+    const active = renderLiveBody([text("t", 1, "this chat")]);
+    disposeAssistantBody(active.turnID);
     expect(getLiveAnchor()).toBeNull();
-  });
-
-  it("the self-heal falls back to another still-live message", () => {
-    const wrap = document.createElement("div");
-    const older = liveMsg([text("older, still streaming")]);
-    const newer = liveMsg([text("newer")]);
-    buildAssistantBody(wrap, older, CHAT_ID, true);
-    buildAssistantBody(wrap, newer, CHAT_ID, true);
-    const live = [...wrap.querySelectorAll<HTMLElement>(CARETS)];
-    expect(getLiveAnchor()).toBe(live[1]);
-
-    // The anchored (newer) message rebuilds settled elsewhere; the heal scans
-    // the registry and hands the slot back to the older live bubble.
-    const wrap2 = document.createElement("div");
-    buildAssistantBody(wrap2, newer, CHAT_ID, false);
-    expect(getLiveAnchor()).toBe(live[0]);
+    expect(parked.body.querySelectorAll(".msg-row")).toHaveLength(1);
   });
 });
 
-// ---------------------------------------------------------------------------
-// Which thinking block mounts OPEN, and what closes it.
-//
-// A live trace mounts open ("Thinking…") while it is the last block of its OWN
-// lane — the server extends the newest block of the delta's own subtask, so
-// lane-tail is what wires its growth signal. DISCLOSURE is the append rule's:
-// ANYTHING posted after it in its container seals it (collapse + label flip) —
-// text, a tool group, a delegate's box, a steer note, another trace — because
-// the wire carries no thinking-ended signal, so the next element's arrival is
-// the end signal. The turn's finalize seals a trace nothing followed.
-// ---------------------------------------------------------------------------
+describe("a body mounts an entry RANGE, and the grouping is derived", () => {
+  const sixCalls = (): Entry[] => [
+    text("t", 1, "one"),
+    callEntry("t", 2, toolCall("tool-a")),
+    callEntry("t", 3, toolCall("tool-b")),
+    callEntry("t", 4, toolCall("tool-c")),
+    text("t", 5, "two"),
+    text("t", 6, "three"),
+  ];
 
-describe("thinking blocks mount open per LANE and seal on the next sibling", () => {
-  function thinking(t: string, subtask = ""): Record<string, unknown> {
-    return { type: "thinking", thinking: t, agent_subtask_id: subtask };
-  }
-
-  function liveMsg(blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): Message {
-    return {
-      id: `m-think-${String(Math.random())}`,
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: toolCalls,
-    } as unknown as Message;
-  }
-
-  function traces(wrap: HTMLElement): HTMLDetailsElement[] {
-    return [...wrap.querySelectorAll<HTMLDetailsElement>("details.msg-reasoning")];
-  }
-
-  function labelOf(d: HTMLDetailsElement | undefined): string {
-    return d?.querySelector(".reasoning-label")?.textContent ?? "";
-  }
-
-  it("mounts the tail thinking block of a live message open", () => {
-    const wrap = document.createElement("div");
-    buildAssistantBody(wrap, liveMsg([thinking("weighing")]), CHAT_ID, true);
-    const [t] = traces(wrap);
-    expect(t?.open).toBe(true);
-    expect(labelOf(t)).toBe("Thinking…");
+  it("mounts the range and nothing outside it", () => {
+    const r = renderWindow(sixCalls(), { from: 3, to: 5 });
+    expect(mountedWindow(r.turnID)).toEqual({ from: 3, to: 5 });
+    expect(shape(r.body)).toEqual(["group(2)"]);
+    expect(blockElement(r.turnID, 1)).toBeUndefined();
+    expect(blockElement(r.turnID, 5)).toBeUndefined();
   });
 
-  it("seals the parent trace when a delegate's box mounts after it", () => {
-    // The parent's trace is at index 0, the delegate's prose at index 1. The
-    // delegate box landing in the parent's container is "something posted
-    // after", so the trace closes — even though the parent's lane may still be
-    // growing (the wiring stays live; disclosure is the append rule's).
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      liveMsg([thinking("parent trace"), text("delegate prose", "sub-A")]),
-      CHAT_ID,
-      true,
-    );
-    const [t] = traces(wrap);
-    expect(t?.open).toBe(false);
-    expect(labelOf(t)).not.toBe("Thinking…");
+  it("INSERTS a head extension above what is mounted", () => {
+    const r = renderWindow(sixCalls(), { from: 4, to: 7 });
+    expect(shape(r.body)).toEqual(["group(1)", "text(twothree)"]);
+    mountHeadRange(r.turn, { from: 1, to: 7 }, false);
+    expect(mountedWindow(r.turnID)).toEqual({ from: 1, to: 7 });
+    expect(shape(r.body)).toEqual(["text(one)", "group(3)", "text(twothree)"]);
   });
 
-  it("seals the parent trace for a delegate box the RANGE never mounts", () => {
-    // The delegate's prose is above the range, so no append can seal the trace and
-    // the store is the only witness that it finished. The box's creation is priced
-    // into its host at the index the STORE gives it, which is what says so.
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      liveMsg([thinking("parent trace"), text("delegate prose", "sub-B")]),
-      CHAT_ID,
-      true,
-      [],
-      { from: 0, to: 1 },
-    );
-    expect(traces(wrap)).toHaveLength(1);
-    const [t] = traces(wrap);
-    expect(t?.open).toBe(false);
-    expect(labelOf(t)).not.toBe("Thinking…");
+  it("derives the group from the STORE run, so a head extension joins it", () => {
+    // The key is the `seq` the run of tool calls STARTED at, not the mount order, so the
+    // earlier calls land in the group the later one already opened.
+    const r = renderWindow(sixCalls(), { from: 4, to: 5 });
+    expect(shape(r.body)).toEqual(["group(1)"]);
+    mountHeadRange(r.turn, { from: 2, to: 5 }, false);
+    expect(shape(r.body)).toEqual(["group(3)"]);
   });
 
-  it("seals the trace and starts a NEW tool group below it when a tool call follows", () => {
-    // The pileup fix: tool cards used to keep joining the group ABOVE the
-    // trace, so a think→tool loop rendered as one stack of cards over a pile
-    // of traces that read as consecutive thinking blocks.
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      liveMsg(
-        [toolUse("t1"), thinking("weighing"), toolUse("t2")],
-        [call("t1", "Read File"), call("t2", "Write File")],
-      ),
-      CHAT_ID,
-      true,
-    );
-    const kinds = [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) => {
-      if (e.classList.contains("tool-group")) {
-        return `group(${String(e.querySelectorAll(".tool-call").length)})`;
-      }
-      if (e.matches("details.msg-reasoning")) {
-        return "trace";
-      }
-      return "other";
-    });
-    expect(kinds).toEqual(["group(1)", "trace", "group(1)"]);
-    expect(traces(wrap)[0]?.open).toBe(false);
+  it("retracts at the head, and at the tail", () => {
+    const r = render(sixCalls());
+    expect(mountedWindow(r.turnID)).toEqual({ from: 0, to: 7 });
+    dropHead(r.turn, { from: 2, to: 7 });
+    expect(mountedWindow(r.turnID)).toEqual({ from: 2, to: 7 });
+    expect(blockElement(r.turnID, 1)).toBeUndefined();
+    dropTail(r.turn, { from: 2, to: 5 });
+    expect(mountedWindow(r.turnID)).toEqual({ from: 2, to: 5 });
+    expect(shape(r.body)).toEqual(["group(3)"]);
   });
 
-  it("seals the trace when a run card mounts after it", () => {
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      liveMsg(
-        [thinking("planning"), toolUse("tw2")],
-        [
-          {
-            id: "tw2",
-            title: "Run Workflow",
-            kind: "other",
-            status: "completed",
-            workflow_id: "wf_9",
-          } as unknown as ToolCall,
-        ],
-      ),
-      CHAT_ID,
-      true,
-    );
-    const [t] = traces(wrap);
-    expect(t?.open).toBe(false);
+  it("snaps an edge that would CUT a prose run", () => {
+    // Design 8.6: a run cut at an edge would mount as two rows with two markdown streams,
+    // which is the seam 8.5 removes. `from` moves down to the run's first entry and `to` up
+    // past its last, so the budget can overspend by at most one run on each side.
+    const turnID = nextTurnID();
+    const turn = turnOf(turnID, retarget(sixCalls(), turnID));
+    expect(sliceTurn(turn, { from: 6, to: 7 })).toEqual({ from: 5, to: 7 });
+    expect(sliceTurn(turn, { from: 4, to: 6 })).toEqual({ from: 4, to: 7 });
+    // A range whose edges already fall on a boundary is left alone.
+    expect(sliceTurn(turn, { from: 2, to: 5 })).toEqual({ from: 2, to: 5 });
   });
 
-  it("leaves the trace open when the step's card belongs to another message", () => {
-    // The mirror of the case above: the launching message hosts the card, so this
-    // message's step block mounts nothing here and the trace it sits under is
-    // still this container's live tail.
-    const launch = {
-      id: "l-seal",
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: "wf_seal",
-    } as unknown as ToolCall;
-    buildAssistantBody(
-      document.createElement("div"),
-      liveMsg([toolUse("l-seal")], [launch]),
-      CHAT_ID,
-      false,
-    );
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      liveMsg([thinking("still planning"), text("step prose", "wf:wf_seal:wf_seal/build")]),
-      CHAT_ID,
-      true,
-    );
-    const [t] = traces(wrap);
-    expect(t?.open).toBe(true);
+  it("mounts a snapped range's run as ONE row", () => {
+    const r = renderWindow(sixCalls(), { from: 5, to: 7 });
+    const rows = r.body.querySelectorAll(".msg-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).dataset["entries"]).toBe(`${r.turnID}-e5 ${r.turnID}-e6`);
   });
 
-  it("mounts a trace with a later same-lane sibling sealed", () => {
-    // Both top-level: the text block after it is the lane's newer content, so
-    // the trace is settled however live the message is.
-    const wrap = document.createElement("div");
-    buildAssistantBody(wrap, liveMsg([thinking("first"), text("the answer")]), CHAT_ID, true);
-    const [t] = traces(wrap);
-    expect(t?.open).toBe(false);
+  it("leaves a run's row to its HEAD's own drop", () => {
+    // Only the head releases the shared element: a later member drops its own registrations
+    // and leaves the row standing, which is what makes the snap above the whole rule.
+    const r = render(sixCalls());
+    const row = blockElement(r.turnID, 5);
+    dropTail(r.turn, { from: 0, to: 6 });
+    expect(blockElement(r.turnID, 6)).toBeUndefined();
+    expect(blockElement(r.turnID, 5)).toBe(row);
+    expect(r.body.contains(row ?? null)).toBe(true);
   });
 
-  it("seals the open trace when the next thinking block spawns in its container", () => {
-    const wrap = document.createElement("div");
-    const blocks: Record<string, unknown>[] = [thinking("first")];
-    const m = liveMsg(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    expect(traces(wrap)[0]?.open).toBe(true);
-
-    blocks.push(thinking("second"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-
-    const all = traces(wrap);
-    expect(all).toHaveLength(2);
-    expect(all[0]?.open).toBe(false);
-    expect(labelOf(all[0])).toBe("Thinking completed");
-    expect(all[1]?.open).toBe(true);
-    expect(labelOf(all[1])).toBe("Thinking…");
-  });
-
-  it("renders no trace for a DELEGATE, and leaves the parent's open", () => {
-    // A delegate's thinking block is dropped like the rest of its output, so the two-lane
-    // case this used to assert has one lane in the DOM now: the parent's own trace, which
-    // the delegate's arrival must not seal.
-    const wrap = document.createElement("div");
-    const blocks: Record<string, unknown>[] = [thinking("delegate trace", "sub-A")];
-    const m = liveMsg(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-
-    blocks.push(thinking("parent trace"));
-    updateAssistantBody(wrap, m, CHAT_ID, true);
-
-    const all = traces(wrap);
-    expect(all).toHaveLength(1);
-    expect(all[0]?.textContent).not.toContain("delegate trace");
-    expect(all[0]?.open).toBe(true);
-  });
-
-  it("finalize settles every trace and leaves the newest one expanded", () => {
-    // The turn ending is not another element being posted, and the trigger for a fold
-    // is POSITIONAL — so finalize flips the label and drops the pulse, and the trace
-    // nothing followed keeps its body on screen. (What this replaced collapsed every
-    // trace at turn end, which is the one non-positional trigger the rule forbids.)
-    const wrap = document.createElement("div");
-    const blocks: Record<string, unknown>[] = [
-      thinking("first trace"),
-      text("in between"),
-      thinking("last trace"),
-    ];
-    const m = liveMsg(blocks);
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    finalizeAssistantBody(m.id);
-
-    const all = traces(wrap);
-    expect(all).toHaveLength(2);
-    for (const t of all) {
-      expect(labelOf(t)).toBe("Thinking completed");
-      expect(t.classList.contains("streaming")).toBe(false);
-    }
-    // The first was superseded by the text block, so it was already sealed at its own
-    // mount; the last is still the newest thing in its lane.
-    expect(all[0]?.open).toBe(false);
-    expect(all[1]?.open).toBe(true);
+  it("removes a run card when the drop takes its launch", () => {
+    const r = render([text("t", 1, "one"), ...launch("t", 2, "wf-1")]);
+    expect(shape(r.body)).toEqual(["text(one)", "run(wf-1)"]);
+    dropTail(r.turn, { from: 0, to: 2 });
+    expect(shape(r.body)).toEqual(["text(one)"]);
+    expect(blockElement(r.turnID, 2)).toBeUndefined();
   });
 });
 
-// ---------------------------------------------------------------------------
-// A RANGE is what a body mounts, and the grouping is derived from the store.
-//
-// Which tool group is open in a container and whether a reasoning trace is sealed
-// used to live in mount ORDER, so the DOM depended on how the renderer got there.
-// Both are store predicates now, which lets a body mount blocks 4..6 without 0..3
-// and reach the same grouping. The steer-note case pins behaviour that held.
-// ---------------------------------------------------------------------------
-
-describe("a body mounts a block RANGE, and the grouping is derived", () => {
-  beforeEach(() => {
-    resetBlockRenders();
-    // The paint installs both per pass; cleared here so no case inherits another's.
-    setSupersededMessages(new Set());
-    setRunCardOwners(new Map());
-  });
-
-  const cmd = (id: string): ToolCall => call(id, "Run Command");
-
-  /** A delegate INVOCATION call, carrying the subtask its box is keyed by — which is what
-   *  lets a range that does not hold the invocation block bind the box it creates. */
-  const subagentCall = (id: string, subtask: string): ToolCall =>
-    ({
-      id,
-      title: "Sub-agent: helper",
-      kind: "execute",
-      status: "completed",
-      agent_subtask_id: subtask,
-    }) as unknown as ToolCall;
-
-  function mark(id: string, msgID: string, blockIndex: number): SteerMark {
-    return {
-      id,
-      text: `steer ${id}`,
-      origin: "user" as SteerOrigin,
-      anchor: { msgID, blockIndex },
-    };
+describe("a pipeline's stages render inside the orchestrate call that started them", () => {
+  /** An `orchestrate_subagent` DRIVER. `declared` is the `input.stages` length, which is a
+   *  FLOOR on the stage count: it is the only source that knows a stage still on its way. */
+  function driver(seq: number, id: string, declared: number, status = "completed"): Entry {
+    return callEntry(
+      "t",
+      seq,
+      toolCall(id, {
+        title: "Orchestrate Sub-agent",
+        status: status as EntryToolCall["status"],
+        input: { stages: Array.from({ length: declared }, (_, i) => ({ name: `s${String(i)}` })) },
+      }),
+    );
   }
 
-  /** One render of `blocks`, optionally windowed and with steer marks. */
-  function renderRange(
-    blocks: Record<string, unknown>[],
-    toolCalls: ToolCall[],
-    opts: { id?: string; marks?: SteerMark[]; range?: { from: number; to: number } } = {},
-  ): { wrap: HTMLElement; m: Message } {
-    const wrap = document.createElement("div");
-    const m = {
-      id: opts.id ?? `m-${String(Math.random())}`,
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: toolCalls,
-    } as unknown as Message;
-    buildAssistantBody(wrap, m, CHAT_ID, false, opts.marks ?? [], opts.range);
-    return { wrap, m };
+  /** One stage of `driverID`. The tool-call ID EMBEDS its driver's, which is the whole
+   *  join: no wire field states it. */
+  function stage(seq: number, driverID: string, name: string, subtask: string): Entry {
+    return callEntry(
+      "t",
+      seq,
+      toolCall(`invoke_subagent_${driverID}_stage_${name}`, {
+        title: `Sub-agent: ${name}`,
+        agent_subtask_id: subtask,
+      }),
+    );
   }
 
-  /** Markup with the two per-render volatile values masked: the owning message
-   *  id, and the disclosure primitive's global id counter. */
-  const mask = (html: string): string =>
-    html
-      .replaceAll(/data-block-msg="[^"]*"/g, 'data-block-msg="M"')
-      .replaceAll(/uip-disclosure-\d+/g, "uip-disclosure-N");
+  const box = (r: Render, pipelineID: string): HTMLElement =>
+    r.body.querySelector(`.subagent-container[data-pipeline="${pipelineID}"]`) as HTMLElement;
 
-  const blocksHTML = (wrap: HTMLElement): string =>
-    mask(wrap.querySelector(".assistant-blocks")?.innerHTML ?? "");
+  const inside = (r: Render, pipelineID: string): string[] =>
+    shape(box(r, pipelineID).querySelector(".subagent-body") as HTMLElement);
 
-  it("keeps a tool card that follows a steer note BELOW that note", () => {
-    // The note is posted into the container between two consecutive cards, so
-    // the second card may not join the group that opened above it.
-    const { wrap } = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
-      id: "m-note",
-      marks: [mark("s1", "m-note", 1)],
-    });
-    expect(shape(wrap)).toEqual(["group(1)", "note", "group(1)"]);
+  it("nests every stage's card inside the driver's box", () => {
+    const r = render([
+      driver(1, "orc-1", 2),
+      stage(2, "orc-1", "review", "sub-A"),
+      stage(3, "orc-1", "apply", "sub-B"),
+    ]);
+    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
+    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
   });
 
-  it("keeps a whole tool run in one group when the note sits above all of it", () => {
-    const { wrap } = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
-      id: "m-above",
-      marks: [mark("s1", "m-above", 0)],
-    });
-    expect(shape(wrap)).toEqual(["note", "group(2)"]);
-  });
-
-  it("keeps a tool card that follows a DELEGATE box below that box", () => {
-    // The box is posted into the top level, so a card after it may not join the
-    // group that opened above it — the same rule a steer note carries, for the
-    // one block that creates a container in someone else's container.
-    const { wrap } = renderRange(
-      [toolUse("t1"), toolUse("inv", "sub-D"), toolUse("t2")],
-      [cmd("t1"), call("inv", "Sub-agent: helper"), cmd("t2")],
-      { id: "m-box" },
+  it("labels the box by its DECLARED count, which knows a stage still on its way", () => {
+    const r = render([driver(1, "orc-1", 3), stage(2, "orc-1", "review", "sub-A")]);
+    expect(box(r, "orc-1").querySelector(".subagent-name")?.textContent).toBe(
+      "Subagent pipeline · 3 stages",
     );
-    expect(shape(wrap)).toEqual(["group(1)", "card(sub-D)", "group(1)"]);
   });
 
-  it("keeps a tool card that follows a PIPELINE box below that box", () => {
-    const driver = {
-      id: "d-brk",
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status: "completed",
-      input: { stages: [{}, {}] },
-    } as unknown as ToolCall;
-    const { wrap } = renderRange(
-      [toolUse("t1"), toolUse("d-brk"), toolUse("t2")],
-      [cmd("t1"), driver, cmd("t2")],
-      { id: "m-pipe" },
-    );
-    expect(shape(wrap)).toEqual(["group(1)", "pipeline(d-brk)", "group(1)"]);
+  it("places a stage whose invocation arrives BEFORE its driver", () => {
+    // `indexPipelines` reads the turn's whole tool-call array, so neither arrival order
+    // leaves a stage stranded beside its own pipeline.
+    const r = render([
+      stage(1, "orc-1", "review", "sub-A"),
+      driver(2, "orc-1", 2),
+      stage(3, "orc-1", "apply", "sub-B"),
+    ]);
+    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
+    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
   });
 
-  it("keeps a tool card that follows a RUN CARD below that card", () => {
-    const wf = {
-      id: "l1",
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: "wf-brk",
-    } as unknown as ToolCall;
-    const { wrap } = renderRange(
-      [toolUse("t1"), toolUse("l1"), toolUse("t2")],
-      [cmd("t1"), wf, cmd("t2")],
-      { id: "m-run" },
-    );
-    // The run card is not in `shape`'s vocabulary, so read the order directly.
-    expect(
-      [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
-        e.classList.contains("run-card")
-          ? "run"
-          : `group(${String(e.querySelectorAll(".tool-call").length)})`,
-      ),
-    ).toEqual(["group(1)", "run", "group(1)"]);
+  it("PROMOTES a lone stage: no container over one card", () => {
+    const r = render([driver(1, "orc-1", 1), stage(2, "orc-1", "only", "sub-A")]);
+    expect(shape(r.body)).toEqual(["card(sub-A)"]);
+    expect(r.body.querySelectorAll(".subagent-container")).toHaveLength(0);
   });
 
-  it("keeps a run whole where the step block's card belongs to another message", () => {
-    // A run's later frames arrive as a NEW assistant message per turn-segment, so
-    // this step routes into the launching message's card and nothing lands here.
-    // The two cards are adjacent in THIS render, so a break between them would be
-    // one the reader has nothing to explain.
-    const wf = {
-      id: "l-seg",
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: "wf-seg",
-    } as unknown as ToolCall;
-    renderRange([toolUse("l-seg")], [wf], { id: "m-launch" });
-    const later = renderRange(
-      [toolUse("s1"), text("step work", "wf:wf-seg:wf-seg/build"), toolUse("s2")],
-      [cmd("s1"), cmd("s2")],
-      { id: "m-frame" },
-    );
-    expect(shape(later.wrap)).toEqual(["group(2)"]);
+  it("upgrades a promoted stage into a container when a sibling arrives, KEEPING the card", () => {
+    // A re-parent rather than a rebuild: the move carries the disclosure, the observers
+    // and every effect with the node.
+    const first = [driver(1, "orc-1", 1), stage(2, "orc-1", "one", "sub-A")];
+    const r = render(first);
+    const card = blockElement(r.turnID, 2);
+    expect(shape(r.body)).toEqual(["card(sub-A)"]);
+    update(r, [...first, stage(3, "orc-1", "two", "sub-B")]);
+    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
+    expect(inside(r, "orc-1")).toEqual(["card(sub-A)", "card(sub-B)"]);
+    expect(blockElement(r.turnID, 2)).toBe(card);
   });
 
-  it("keeps a run whole around a pipeline box its own stage count no longer asks for", () => {
-    // The box is built for a driver that declared no stage; the first stage then
-    // makes the count 1, which is the ONE count that renders no container — and
-    // `stageHostFor` keeps putting the stage inside the box that already exists.
-    // So the break stays at the driver's block, where the box actually stands.
-    const driver = {
-      id: "d-live",
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status: "completed",
-      input: {},
-    } as unknown as ToolCall;
-    const stage = {
-      id: "invoke_subagent_d-live_stage_plan",
-      title: "Sub-agent: plan",
-      kind: "other",
-      status: "completed",
-      agent_subtask_id: "u-live",
-    } as unknown as ToolCall;
-    const first = renderRange([toolUse("d-live"), toolUse("p1")], [driver, cmd("p1")], {
-      id: "m-outlived",
-    });
-    expect(shape(first.wrap)).toEqual(["pipeline(d-live)", "group(1)"]);
-
-    const grown = {
-      ...first.m,
-      blocks: [toolUse("d-live"), toolUse("p1"), text("planning", "u-live"), toolUse("p2")],
-      tool_calls: [driver, cmd("p1"), stage, cmd("p2")],
-    } as unknown as Message;
-    updateAssistantBody(first.wrap, grown, CHAT_ID, false);
-    expect(shape(first.wrap)).toEqual(["pipeline(d-live)", "group(2)"]);
+  it("keeps the box for a driver that SETTLED having dispatched no stage", () => {
+    const r = render([driver(1, "orc-1", 1)]);
+    expect(shape(r.body)).toEqual(["pipeline(orc-1)"]);
+    expect(inside(r, "orc-1")).toEqual([]);
   });
 
-  /** Whether each top-level group in `wrap` is auto-collapsed, in document order. */
-  const collapsed = (wrap: HTMLElement): boolean[] =>
-    [...wrap.querySelectorAll(".assistant-blocks > .tool-group")].map((g) =>
-      g.classList.contains("tool-group-auto-collapsed"),
-    );
-
-  it("leaves a TRAILING run of tool cards open, however many cards it holds", () => {
-    // A run's own second and third cards post at their own indices, so asking
-    // whether the run's START is followed collapses the run the reader is
-    // watching. Nothing follows this one.
-    const { wrap } = renderRange(
-      [toolUse("t1"), toolUse("t2"), toolUse("t3")],
-      [cmd("t1"), cmd("t2"), cmd("t3")],
-      { id: "m-tail" },
-    );
-    expect(shape(wrap)).toEqual(["group(3)"]);
-    expect(collapsed(wrap)).toEqual([false]);
+  it("withholds that box while the driver is still RUNNING", () => {
+    // Deferring to the settle is what stops the fallback box displacing a live stage
+    // that is about to be promoted into its place.
+    const r = render([driver(1, "orc-1", 1, "in_progress")]);
+    expect(shape(r.body)).toEqual([]);
   });
 
-  it("collapses a run the next block follows, and only that one", () => {
-    const { wrap } = renderRange(
-      [toolUse("t1"), toolUse("t2"), text("prose"), toolUse("t3"), toolUse("t4")],
-      [cmd("t1"), cmd("t2"), cmd("t3"), cmd("t4")],
-      { id: "m-mid" },
-    );
-    expect(shape(wrap)).toEqual(["group(2)", "text(prose)", "group(2)"]);
-    expect(collapsed(wrap)).toEqual([true, false]);
+  it("resolves a stage whose NAME carries the separator to its own driver", () => {
+    // `indexOf`, not `lastIndexOf`: the driver half is machine-minted and the stage name
+    // is author-supplied, so the FIRST occurrence is the seam.
+    const r = render([driver(1, "orc-1", 2), stage(2, "orc-1", "run_stage_two", "sub-A")]);
+    expect(inside(r, "orc-1")).toEqual(["card(sub-A)"]);
   });
 
-  it("collapses a TRAILING run when a later message of the turn follows it", () => {
-    // Turn scope. Nothing in this message follows the run, so the message-scoped
-    // verdict leaves it open — which is the state the pair below is asserting the
-    // difference between, and the reason the control comes first.
-    const open = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
-      id: "m-tail-open",
-    });
-    expect(collapsed(open.wrap)).toEqual([false]);
-
-    setSupersededMessages(new Set(["m-tail-super"]));
-    const folded = renderRange([toolUse("t1"), toolUse("t2")], [cmd("t1"), cmd("t2")], {
-      id: "m-tail-super",
-    });
-    expect(shape(folded.wrap)).toEqual(["group(2)"]);
-    expect(collapsed(folded.wrap)).toEqual([true]);
-  });
-
-  it("supersedes a BOX at the message tail too", () => {
-    // A PIPELINE container, because it is a box that discloses: a leaf delegate card
-    // carries no body, and a run card refuses to fold on a state the store has not
-    // answered for yet, so neither can show this either way.
-    const pipe = {
-      id: "d-super",
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status: "completed",
-      input: { stages: [{}, {}] },
-    } as unknown as ToolCall;
-    const open = renderRange([toolUse("d-super")], [pipe], { id: "m-pipe-open" });
-    const openBox = open.wrap.querySelector(".subagent-container");
-    expect(openBox?.classList.contains("collapsed")).toBe(false);
-
-    setSupersededMessages(new Set(["m-pipe-super"]));
-    const { wrap } = renderRange([toolUse("d-super")], [pipe], { id: "m-pipe-super" });
-    expect(shape(wrap)).toEqual(["pipeline(d-super)"]);
-    expect(wrap.querySelector(".subagent-container")?.classList.contains("collapsed")).toBe(true);
-  });
-
-  it("exempts a DETACHED render, whose lane no turn follows", () => {
-    // An OUTCOME test, and it does not isolate the `st.detached` guard: TWO mechanisms
-    // deliver this and either alone suffices, because `buildDetachedBody` renders under
-    // `detachedID` so the projection's own message id is not the id the derivation is
-    // asked about. Red-checked as failing only when BOTH go. The guard stays as the
-    // statement of the rule — a detached lane has no turn after it — rather than
-    // leaving this resting on another module's id convention.
-    setSupersededMessages(new Set(["m-detached"]));
-    const host = document.createElement("div");
-    const m = {
-      id: "m-detached",
-      role: "assistant",
-      content: "",
-      blocks: [toolUse("t1"), toolUse("t2")],
-      tool_calls: [cmd("t1"), cmd("t2")],
-    } as unknown as Message;
-    buildDetachedBody(host, m, CHAT_ID, "sub-D", false, []);
-    expect(collapsed(host)).toEqual([false]);
-  });
-
-  /** Whether the group holding `toolID`'s card is auto-collapsed. */
-  const cardCollapsed = (wrap: HTMLElement, toolID: string): boolean => {
-    const group = wrap
-      .querySelector(`.tool-call[data-tool-id="${toolID}"]`)
-      ?.closest(".tool-group");
-    if (group === null || group === undefined) {
-      throw new Error(`no group holds ${toolID}`);
-    }
-    return group.classList.contains("tool-group-auto-collapsed");
-  };
-
-  it("gives a windowed range the collapse state the whole mount gives the same card", () => {
-    // `shape` counts a group's cards, so a group rendered COLLAPSED where the whole mount
-    // leaves it open is invisible to every other case here. Two things put the divergence
-    // in reach: a container established BELOW the floor (the delegate box at block 3), and
-    // a run the store's last start does NOT follow (t3..t5, keyed 4 with the last start at
-    // 4). Price that box's run break at the range's own landing instead of at its store
-    // index and t3 lands in group 1 with a start at 7 above it, which reads as followed.
-    // t1 is asserted collapsed so the fixture is known to produce a collapse at all,
-    // without which the two `false`s below would agree vacuously.
-    //
-    // EVERY run here holds TWO cards or more, and that is a requirement rather than
-    // padding: a group of one is BARE (no header, no box to fold) and `autoCollapseGroup`
-    // exempts it, so a one-card fixture can neither produce the guard's collapse nor
-    // register the mispricing it is watching for.
-    const blocks = [
-      text("intro"),
-      toolUse("t1"),
-      toolUse("t2"),
-      toolUse("inv", "sub-D"),
-      toolUse("t3"),
-      toolUse("t4"),
-      text("delegate prose", "sub-D"),
-      toolUse("t5"),
-    ];
-    const calls = [
-      cmd("t1"),
-      cmd("t2"),
-      subagentCall("inv", "sub-D"),
-      cmd("t3"),
-      cmd("t4"),
-      cmd("t5"),
-    ];
-    const whole = renderRange(blocks, calls, { id: "m-col-whole" });
-    expect(cardCollapsed(whole.wrap, "t1")).toBe(true);
-    expect(cardCollapsed(whole.wrap, "t3")).toBe(false);
-
-    resetBlockRenders();
-    const partial = renderRange(blocks, calls, { id: "m-col-part", range: { from: 4, to: 8 } });
-    expect(cardCollapsed(partial.wrap, "t3")).toBe(false);
-  });
-
-  it("mounts a mid-message range with the grouping a whole mount gives it", () => {
-    // The DELEGATE's box is established at block 2, BELOW the range, so the range first
-    // reaches it at block 4 and has to SEAT it at block 2's position anyway. Left where
-    // it landed, block 3's card renders above it, the store's one run {3,5} is split by
-    // it into two group nodes, and the same window reached the other way is a different
-    // document. The markup comparison is the criterion; `shape` names what differs.
-    const blocks = [
-      text("intro"),
-      toolUse("t1"),
-      toolUse("inv", "sub-D"),
-      toolUse("t2"),
-      text("delegate prose", "sub-D"),
-      toolUse("t3"),
-    ];
-    // The invocation CALL carries the subtask, which the range's own lazy binder needs to
-    // find it: without it the box keeps the generic header and the markup differs for a
-    // reason that has nothing to do with where it sits.
-    const calls = [cmd("t1"), subagentCall("inv", "sub-D"), cmd("t2"), cmd("t3")];
-    const whole = renderRange(blocks, calls, { id: "m-eq-whole" });
-    expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "card(sub-D)", "group(2)"]);
-    // The one attribute pair the two mounts may NOT share: the box's block coordinates
-    // name the INVOCATION at ordinal 2, and `blockEls` is mounted space, so a range
-    // starting at 3 must not claim it. Stripped from the expectation, asserted on both
-    // sides instead — and stripped from the whole mount only, so a range that started
-    // stamping it would still fail the comparison.
-    const wholeBox = whole.wrap.querySelector<HTMLElement>(".subagent-block");
-    expect(wholeBox?.dataset["blockIndex"]).toBe("2");
-    const tail = mask(
-      [...(whole.wrap.querySelector(".assistant-blocks")?.children ?? [])]
-        .slice(2)
-        .map((e) => {
-          const bare = e.cloneNode(true) as HTMLElement;
-          if (bare.classList.contains("subagent-block")) {
-            bare.removeAttribute("data-block-index");
-            bare.removeAttribute("data-block-msg");
-          }
-          return bare.outerHTML;
-        })
-        .join(""),
-    );
-
-    resetBlockRenders();
-    const partial = renderRange(blocks, calls, { id: "m-eq-part", range: { from: 3, to: 6 } });
-    expect(shape(partial.wrap)).toEqual(["card(sub-D)", "group(2)"]);
-    const partBox = partial.wrap.querySelector<HTMLElement>(".subagent-block");
-    expect(partBox?.dataset["blockIndex"]).toBeUndefined();
-    expect(blocksHTML(partial.wrap)).toBe(tail);
-  });
-
-  it("mounts a container-free mid-message range as the whole mount's own markup", () => {
-    const blocks = [
-      text("intro"),
-      toolUse("t1"),
-      toolUse("t2"),
-      text("mid"),
-      toolUse("t3"),
-      toolUse("t4"),
-    ];
-    const calls = [cmd("t1"), cmd("t2"), cmd("t3"), cmd("t4")];
-    const whole = renderRange(blocks, calls);
-    const tail = mask(
-      [...(whole.wrap.querySelector(".assistant-blocks")?.children ?? [])]
-        .slice(2)
-        .map((e) => e.outerHTML)
-        .join(""),
-    );
-
-    resetBlockRenders();
-    const partial = renderRange(blocks, calls, { range: { from: 3, to: 6 } });
-    expect(shape(partial.wrap)).toEqual(["text(mid)", "group(2)"]);
-    expect(blocksHTML(partial.wrap)).toBe(tail);
-  });
-
-  // DELETED: "keeps a mid-message range's cards around a RUN CARD the range builds".
-  // Its range held the run's STEP block and not the launch, so the card under test was
-  // step-built — and `placeBlock` renders a step block nowhere, so no range can build a
-  // card its launch ordinal sits outside. The seating rule it shared with the sibling
-  // case below (a container whose establishing block is BELOW the range is seated at that
-  // block's store ordinal, not where the range first reached it) is still covered there
-  // for a PIPELINE box; what no case covers any more is that rule for a run card, which
-  // now has no reachable shape.
-
-  it("keeps a mid-message range's cards around a PIPELINE box the range builds", () => {
-    const driver = {
-      id: "d-win",
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status: "completed",
-      input: { stages: [{}, {}] },
-    } as unknown as ToolCall;
-    const stage = {
-      id: "invoke_subagent_d-win_stage_plan",
-      title: "Sub-agent: plan",
-      kind: "other",
-      status: "completed",
-      agent_subtask_id: "u-win",
-    } as unknown as ToolCall;
-    const blocks = [
-      text("intro"),
-      toolUse("t1"),
-      toolUse("d-win"),
-      toolUse("t2"),
-      text("stage prose", "u-win"),
-      toolUse("t3"),
-    ];
-    const calls = [cmd("t1"), driver, cmd("t2"), cmd("t3"), stage];
-    const whole = renderRange(blocks, calls, { id: "m-pw2" });
-    expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "pipeline(d-win)", "group(2)"]);
-
-    resetBlockRenders();
-    const partial = renderRange(blocks, calls, { id: "m-pp", range: { from: 3, to: 6 } });
-    expect(shape(partial.wrap)).toEqual(["pipeline(d-win)", "group(2)"]);
-  });
-
-  it("keeps a tail extension's card in the group the earlier slice opened", () => {
-    // The box's own first block is below the window, so it is seated above ordinal 2
-    // rather than left where ordinal 3 built it — and that is what leaves ONE group
-    // below it for both cards, which is the run the store has.
-    const blocks = [
-      toolUse("t0"),
-      toolUse("inv", "sub-F"),
-      toolUse("t1"),
-      text("delegate prose", "sub-F"),
-      toolUse("t2"),
-    ];
-    const calls = [cmd("t0"), call("inv", "Sub-agent: helper"), cmd("t1"), cmd("t2")];
-    const first = renderRange(blocks, calls, { id: "m-ext", range: { from: 2, to: 4 } });
-    expect(shape(first.wrap)).toEqual(["card(sub-F)", "group(1)"]);
-
-    updateAssistantBody(first.wrap, first.m, CHAT_ID, false, [], { from: 2, to: 5 });
-    expect(shape(first.wrap)).toEqual(["card(sub-F)", "group(2)"]);
-  });
-
-  it("breaks the run at a box that lands on the range's own first block", () => {
-    // The delegate's first block IS the floor, so the box lands there and the two
-    // cards below it are one run. Priced at the container's NEXT block instead, a
-    // break appears between them that the whole mount does not have.
-    const blocks = [
-      text("intro"),
-      toolUse("t0"),
-      text("delegate a", "sub-E"),
-      toolUse("t1"),
-      text("delegate b", "sub-E"),
-      toolUse("t2"),
-    ];
-    const calls = [cmd("t0"), cmd("t1"), cmd("t2")];
-    const whole = renderRange(blocks, calls, { id: "m-fw" });
-    expect(shape(whole.wrap)).toEqual(["text(intro)", "group(1)", "card(sub-E)", "group(2)"]);
-
-    resetBlockRenders();
-    const partial = renderRange(blocks, calls, { id: "m-fp", range: { from: 2, to: 6 } });
-    expect(shape(partial.wrap)).toEqual(["card(sub-E)", "group(2)"]);
-  });
-
-  it("builds the same DOM whether the range arrived in one slice or two", () => {
-    const blocks = [toolUse("t1"), text("mid"), toolUse("t2"), toolUse("t3")];
-    const calls = [cmd("t1"), cmd("t2"), cmd("t3")];
-    // A steer note in the overlap, because the two flushes deliberately overlap:
-    // the second slice re-reads every mark, so a note must render exactly once.
-    const whole = renderRange(blocks, calls, { id: "m-one", marks: [mark("s", "m-one", 1)] });
-
-    resetBlockRenders();
-    const split = renderRange(blocks, calls, {
-      id: "m-two",
-      marks: [mark("s", "m-two", 1)],
-      range: { from: 0, to: 2 },
-    });
-    updateAssistantBody(split.wrap, split.m, CHAT_ID, false, [mark("s", "m-two", 1)], {
-      from: 0,
-      to: 4,
-    });
-    expect(blocksHTML(split.wrap)).toBe(blocksHTML(whole.wrap));
-  });
-
-  it("skips a steer mark anchored outside the range, at BOTH edges", () => {
-    const { wrap } = renderRange([toolUse("t1"), toolUse("t2"), toolUse("t3")], [cmd("t2")], {
-      id: "m-out",
-      marks: [mark("below", "m-out", 0), mark("above", "m-out", 3)],
-      range: { from: 1, to: 2 },
-    });
-    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(0);
-    expect(shape(wrap)).toEqual(["group(1)"]);
-  });
-
-  it("mounts a steer mark anchored INSIDE the range", () => {
-    const { wrap } = renderRange([toolUse("t1"), toolUse("t2"), toolUse("t3")], [cmd("t2")], {
-      id: "m-in",
-      marks: [mark("inside", "m-in", 1)],
-      range: { from: 1, to: 2 },
-    });
-    expect(shape(wrap)).toEqual(["note", "group(1)"]);
-  });
-
-  it("reports the range it mounted, and grows it on a tail extension", () => {
-    const blocks = [text("a"), text("b"), text("c")];
-    const { wrap, m } = renderRange(blocks, [], { id: "m-win", range: { from: 1, to: 2 } });
-    expect(mountedWindow("m-win")).toEqual({ from: 1, to: 2 });
-
-    updateAssistantBody(wrap, m, CHAT_ID, false, [], { from: 1, to: 3 });
-    expect(mountedWindow("m-win")).toEqual({ from: 1, to: 3 });
-  });
-
-  it("has no mounted range for a message nothing rendered", () => {
-    expect(mountedWindow("m-never")).toBeUndefined();
-  });
-
-  it("builds the same DOM whether the head arrived whole or was INSERTED under it", () => {
-    // A DELEGATE box established BELOW the first range, with a tool card either side of
-    // it, which is what makes this able to fail. Two block kinds cannot express it: a
-    // text block's break is in the store whatever the range, and a RUN CARD is re-homed
-    // to its launch ordinal by `reseatInserted`, a mechanism a delegate box has none of
-    // — so only a box the insertion never touches states whether its position and its
-    // groups came from the store or from the order the reader arrived in.
-    const blocks = [
-      toolUse("t1"),
-      toolUse("inv", "sub-Q"),
-      toolUse("t2"),
-      text("delegate prose", "sub-Q"),
-      toolUse("t3"),
-    ];
-    const calls = [cmd("t1"), subagentCall("inv", "sub-Q"), cmd("t2"), cmd("t3")];
-    // Anchored at 0, so the note is INSIDE the inserted region and its own placement is
-    // pinned too. Above ordinal 0 it adds no break the two arrivals could disagree on.
-    const whole = renderRange(blocks, calls, { id: "m-whole", marks: [mark("s", "m-whole", 0)] });
-    expect(shape(whole.wrap)).toEqual(["note", "group(1)", "card(sub-Q)", "group(2)"]);
-
-    resetBlockRenders();
-    const grown = renderRange(blocks, calls, {
-      id: "m-grown",
-      marks: [mark("s", "m-grown", 0)],
-      range: { from: 2, to: 5 },
-    });
-    mountHeadRange(grown.m, { from: 0, to: 5 }, false, [mark("s", "m-grown", 0)]);
-
-    expect(mountedWindow("m-grown")).toEqual({ from: 0, to: 5 });
-    expect(blocksHTML(grown.wrap)).toBe(blocksHTML(whole.wrap));
-  });
-
-  it("leaves the mounted region's LIVE trace open across a head insertion", () => {
-    // The trace is the message's last block and nothing follows it in the store, so
-    // it mounts open and `st.openReasoning` holds it. A head insertion posts nothing
-    // after it, so an unconditional seal at the append would collapse it under the
-    // reader with nothing to re-open it.
-    const wrap = document.createElement("div");
-    const m = {
-      id: "m-live-trace",
-      role: "assistant",
-      content: "",
-      blocks: [text("a"), text("b"), { type: "thinking", thinking: "still going" }],
-      tool_calls: [],
-    } as unknown as Message;
-    buildAssistantBody(wrap, m, CHAT_ID, true, [], { from: 2, to: 3 });
-    const trace = wrap.querySelector<HTMLDetailsElement>("details.reasoning-block");
-    expect(trace?.open).toBe(true);
-
-    mountHeadRange(m, { from: 0, to: 3 }, true, []);
-
-    expect(wrap.querySelector<HTMLDetailsElement>("details.reasoning-block")?.open).toBe(true);
-  });
-
-  it("keeps a head insertion's own container above the rows already mounted", () => {
-    // The insertion reference is captured per container at first touch and does not
-    // move, so a box the extension creates lands above the previously-mounted rows
-    // and its own members land inside it in ascending order.
-    const blocks = [text("a", "sub-H"), text("b", "sub-H"), text("tail")];
-    const { wrap, m } = renderRange(blocks, [], { id: "m-ins", range: { from: 2, to: 3 } });
-    expect(shape(wrap)).toEqual(["text(tail)"]);
-
-    mountHeadRange(m, { from: 0, to: 3 }, false, []);
-
-    expect(shape(wrap)).toEqual(["card(sub-H)", "text(tail)"]);
-    // The delegate's own members used to mount inside the card and pinned ascending order
-    // there as well. They are dropped now, so the top-level order above is the whole claim.
-    expect(wrap.querySelectorAll(".subagent-body .message.assistant")).toHaveLength(0);
-  });
-
-  it("keeps the insertion boundary below a container the insertion itself seated", () => {
-    // The box is established BELOW the first window, so seating it puts it above the
-    // pre-existing region — which makes it the host's FIRST child. Read the boundary
-    // after that move rather than before it and the boundary becomes the box, so every
-    // ordinal the insertion has still to mount lands above a container holding ordinal 0.
-    const blocks = [text("in the box", "sub-J"), text("mid"), text("tail")];
-    const { wrap, m } = renderRange(blocks, [], { id: "m-bound", range: { from: 2, to: 3 } });
-    expect(shape(wrap)).toEqual(["text(tail)"]);
-
-    mountHeadRange(m, { from: 0, to: 3 }, false, []);
-
-    expect(shape(wrap)).toEqual(["card(sub-J)", "text(mid)", "text(tail)"]);
-  });
-
-  // DELETED: "seats a step-built run card at the launch ordinal a head insertion brings
-  // down". Its card was built by the STEP block inside a window that started below the
-  // launch, and a step block renders nowhere now, so nothing can build a card ahead of its
-  // own launch ordinal. That is also the one case `reseatInserted` names as reachable, so
-  // its "bring an already-mounted node DOWN to the ordinal being inserted" arm is left
-  // with no test; the reference-side half of the same rule (a card the insertion itself
-  // placed must NOT move) is still covered by "leaves a card the insertion itself placed
-  // where its own launch put it" below, and the step-row content assertion it also carried
-  // is retired outright — the card hosts no step content at all.
-
-  it("carries the reader's own run-card state across a drop, in both directions", () => {
-    // The card is BORN COLLAPSED here — the launch has a text block after it, so the
-    // newest-element verdict folds it — which is what makes the reader's click the
-    // OPEN one and the re-mount's job to bring that back. It also proves the registry
-    // records a reader's toggle rather than the card's own: the fold that happened at
-    // build wrote nothing, so the only entry is the one the click made.
-    const wf = {
-      id: "l-shut",
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: "wf-shut",
-    } as unknown as ToolCall;
-    const blocks = [toolUse("l-shut"), text("after the launch")];
-    const { wrap, m } = renderRange(blocks, [wf], { id: "m-shut" });
-    const cardEl = (): HTMLElement | null => wrap.querySelector<HTMLElement>(".run-card");
-    expect(cardEl()?.classList.contains("collapsed")).toBe(true);
-    wrap.querySelector<HTMLElement>(".run-head")?.click();
-    expect(cardEl()?.classList.contains("collapsed")).toBe(false);
-
-    dropHead(m, { from: 1, to: 2 }, []);
-    expect(cardEl()).toBeNull();
-    mountHeadRange(m, { from: 0, to: 2 }, false, []);
-
-    expect(cardEl()).not.toBeNull();
-    expect(cardEl()?.classList.contains("collapsed")).toBe(false);
-    expect(wrap.querySelector(".run-head")?.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("leaves a card the insertion itself placed where its own launch put it", () => {
-    // The same message and the same insertion, one ordinal LOWER: the window holds only
-    // the last block, so the LAUNCH builds the card during the insertion and the step
-    // frame after it finds one already correctly seated. A reseat that moves whatever is
-    // not the reference carries it past every ordinal mounted since — here past ordinal
-    // 2, which the store puts below it.
-    const wf = {
-      id: "l-low",
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: "wf-low",
-    } as unknown as ToolCall;
-    const blocks = [
-      text("one"),
-      toolUse("l-low"),
-      text("two"),
-      text("step work", "wf:wf-low:wf-low/build"),
-      text("three"),
-    ];
-    const { wrap, m } = renderRange(blocks, [wf], { id: "m-low", range: { from: 4, to: 5 } });
-    expect(shape(wrap)).toEqual(["text(three)"]);
-
-    mountHeadRange(m, { from: 0, to: 5 }, false, []);
-
-    const seats = [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
-      e.classList.contains("run-card") ? "run" : String(e.textContent).trim(),
-    );
-    expect(seats).toEqual(["one", "run", "two", "three"]);
-    expect(wrap.querySelectorAll(".run-card")).toHaveLength(1);
-  });
-
-  it("seats a container BELOW the launch above the card, not after it", () => {
-    // The LAUNCH ordinal answers `seatAbove` with the run card, which it began doing when
-    // the launch block started stamping. The answer differs in one shape: a container whose
-    // establishing block sits BELOW the launch, built by a TAIL extension so no captured
-    // insertion boundary decides the position instead, and with nothing above the launch
-    // mounted. The walk used to find no element there and fall through to the tail, putting
-    // a box the store places FIRST after the card.
-    const wf = {
-      id: "l-seat",
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: "wf-seat2",
-    } as unknown as ToolCall;
-    const blocks = [
-      text("delegate prose", "sub-S"),
-      toolUse("l-seat"),
-      text("more prose", "sub-S"),
-    ];
-    const first = renderRange(blocks, [wf], { id: "m-seat", range: { from: 1, to: 2 } });
-    const order = (wrap: HTMLElement): string[] =>
-      [...(wrap.querySelector(".assistant-blocks")?.children ?? [])].map((e) =>
-        e.classList.contains("run-card")
-          ? "run"
-          : `card(${String((e as HTMLElement).dataset["subtask"])})`,
-      );
-    expect(order(first.wrap)).toEqual(["run"]);
-
-    updateAssistantBody(first.wrap, first.m, CHAT_ID, false, [], { from: 1, to: 3 });
-
-    expect(order(first.wrap)).toEqual(["card(sub-S)", "run"]);
-  });
-
-  // DELETED: "keeps a re-seated card ABOVE the ordinals inserted after it". Its premise
-  // was a window opened by the STEP block that built the card, which is what made the card
-  // the captured insertion reference; a step block renders nowhere now, so the card can
-  // only ever be built by its own launch and can only ever be the reference when the
-  // insertion itself placed it — the case the surviving sibling above covers. What is no
-  // longer covered is `reseatInserted`'s reference-stepping arm (`refs.set(container,
-  // el.nextElementSibling)`) for a node it did not move.
-
-  it("leaves a dropped block's element, text sink and streaming signal behind", () => {
-    const { wrap, m } = renderRange([text("one"), text("two"), text("three")], [], {
-      id: "m-drop",
-    });
-    ensureBlockTextSig("m-drop", 0, "one");
-    expect(blockTextSigs.get(blockKey("m-drop", 0))).not.toBeUndefined();
-
-    dropHead(m, { from: 1, to: 3 }, []);
-
-    expect(mountedWindow("m-drop")).toEqual({ from: 1, to: 3 });
-    expect(blockElement("m-drop", 0)).toBeUndefined();
-    expect(blockTextSigs.get(blockKey("m-drop", 0))).toBeUndefined();
-    expect(wrap.querySelector('[data-block-index="0"]')).toBeNull();
-    // A WINDOW move, so the blocks it kept are untouched.
-    expect(blockElement("m-drop", 1)).not.toBeUndefined();
-  });
-
-  it("leaves a DELEGATE box standing when the drop takes the invocation that opened it", () => {
-    // The card is the delegate's whole record in the transcript and the only route to its
-    // output, so a window that drops the invocation must not take it: `subagentCardFor`
-    // seats a card from any of the delegate's blocks, not just the one that names it.
-    const blocks = [
-      toolUse("inv-d", "sub-K"),
-      text("delegate prose", "sub-K"),
-      text("prose below the box"),
-    ];
-    const calls = [subagentCall("inv-d", "sub-K")];
-    const { wrap, m } = renderRange(blocks, calls, { id: "m-boxdrop" });
-    const box = wrap.querySelector<HTMLElement>(".subagent-block");
-    // The stamp is the premise: without it the drop finds no element and the guard below
-    // has nothing to refuse.
-    expect(blockElement("m-boxdrop", 0)).toBe(box);
-    // The delegate's prose is NOT in it: the card renders none of its delegate's output.
-    expect(box?.textContent).not.toContain("delegate prose");
-    expect(blockElement("m-boxdrop", 1)).toBeUndefined();
-
-    dropHead(m, { from: 1, to: 3 }, []);
-
-    expect(wrap.querySelector(".subagent-block")).toBe(box);
-    expect(box?.parentElement?.classList.contains("assistant-blocks")).toBe(true);
-    expect(mountedWindow("m-boxdrop")).toEqual({ from: 1, to: 3 });
-  });
-
-  it("leaves a PIPELINE box standing when the drop takes the driver that opened it", () => {
-    // Same rule, the other container kind: the driver's block element is the pipeline box,
-    // and a stage's box lives inside it.
-    const driver = {
-      id: "d-drop",
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status: "completed",
-      input: { stages: [{}, {}] },
-    } as unknown as ToolCall;
-    const stage = {
-      id: "invoke_subagent_d-drop_stage_plan",
-      title: "Sub-agent: plan",
-      kind: "other",
-      status: "completed",
-      agent_subtask_id: "u-drop",
-    } as unknown as ToolCall;
-    const blocks = [
-      toolUse("d-drop"),
-      text("stage prose", "u-drop"),
-      text("prose below the pipeline"),
-    ];
-    const { wrap, m } = renderRange(blocks, [driver, stage], { id: "m-pipedrop" });
-    const box = wrap.querySelector<HTMLElement>(".subagent-container");
-    expect(blockElement("m-pipedrop", 0)).toBe(box);
-    // A pipeline's body holds its stages' CARDS, never their prose.
-    const stageCard = box?.querySelector<HTMLElement>(".subagent-block");
-    expect(stageCard).not.toBeNull();
-    expect(box?.textContent).not.toContain("stage prose");
-
-    dropHead(m, { from: 1, to: 3 }, []);
-
-    expect(wrap.querySelector(".subagent-container")).toBe(box);
-    expect(box?.parentElement?.classList.contains("assistant-blocks")).toBe(true);
-    expect(box?.contains(stageCard ?? null)).toBe(true);
-    expect(mountedWindow("m-pipedrop")).toEqual({ from: 1, to: 3 });
-  });
-
-  it("prices a block whose element has NO BOX at its estimate, not at zero", () => {
-    // The measurement is only worth taking where the element really has one: a spacer
-    // short by a block leaves the document shorter above the reader than the content it
-    // replaces, and the cache has no invalidation, so one zero is permanent. The premise
-    // is asserted rather than assumed — an element measuring its real height would make
-    // the expectation below hold for the estimate it never reached.
-    const blocks = [text("intro"), text("second"), text("third")];
-    const m = {
-      id: "m-zero",
-      role: "assistant",
-      ts: 2,
-      content: "",
-      blocks,
-      tool_calls: [],
-    } as unknown as Message;
-    // NOT in the document, so no block gets laid out.
-    const wrap = document.createElement("div");
-    forgetHeights(["m-zero"]);
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-    expect(blockElement("m-zero", 1)?.offsetHeight).toBe(0);
-
-    dropTail(m, { from: 0, to: 1 }, []);
-
-    // Ordinals 1 and 2, unmounted: two 48px text estimates and the 12px gap between two
-    // non-empty boxes. Priced at 0 the answer is 0, the gap gone with them.
-    const t = {
-      id: "t-zero",
-      n: 1,
-      trigger: undefined,
-      body: [m],
-      ts: 1,
-      outcome: "completed" as const,
-      rewindTo: undefined,
-    };
-    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(108);
-  });
-
-  it("prices a dropped LAUNCH block at its own estimate, not at the card's height", () => {
-    // The launch block's element IS the run card, a container whose fate the range's own
-    // resolution owns. Measured like an ordinary block it records the whole card's height
-    // against one ordinal, so the spacer over-prices the launch by everything the card
-    // holds.
-    const wf = {
-      id: "l-px",
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: "wf-px",
-    } as unknown as ToolCall;
-    const blocks = [text("intro"), toolUse("l-px")];
-    const m = {
-      id: "m-px",
-      role: "assistant",
-      ts: 2,
-      content: "",
-      blocks,
-      tool_calls: [wf],
-    } as unknown as Message;
-    const wrap = document.createElement("div");
-    document.body.appendChild(wrap);
-    forgetHeights(["m-px"]);
-    buildAssistantBody(wrap, m, CHAT_ID, false);
-    // Real layout, or the card measures 0 and the wrong reading is indistinguishable
-    // from the right one.
-    expect(wrap.querySelector(".run-card")?.clientHeight).toBeGreaterThan(0);
-
-    dropTail(m, { from: 0, to: 1 }, []);
-
-    const t = {
-      id: "t-px",
-      n: 1,
-      trigger: undefined,
-      body: [m],
-      ts: 1,
-      outcome: "completed" as const,
-      rewindTo: undefined,
-    };
-    // The fine-tier `runCard` estimate (block-heights.ts).
-    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(71);
-    wrap.remove();
-  });
-
-  it("narrows the tail without touching the head, and never both in one call", () => {
-    const { wrap, m } = renderRange([text("one"), text("two"), text("three")], [], {
-      id: "m-two-edges",
-    });
-
-    // `keep.from` is 1, and the tail call must IGNORE it: a relocation retracts both
-    // edges, and one call doing both is the shape whose compensation drags the view.
-    dropTail(m, { from: 1, to: 2 }, []);
-
-    expect(mountedWindow("m-two-edges")).toEqual({ from: 0, to: 2 });
-    expect(wrap.querySelector('[data-block-index="2"]')).toBeNull();
-    expect(wrap.querySelector('[data-block-index="0"]')).not.toBeNull();
-  });
-
-  it("removes a container the drop left empty", () => {
-    const { wrap, m } = renderRange(
-      [toolUse("t1"), toolUse("t2"), text("after")],
-      [cmd("t1"), cmd("t2")],
-      {
-        id: "m-empty-group",
-      },
-    );
-    expect(shape(wrap)).toEqual(["group(2)", "text(after)"]);
-
-    dropHead(m, { from: 2, to: 3 }, []);
-
-    expect(shape(wrap)).toEqual(["text(after)"]);
-    expect(wrap.querySelectorAll(".tool-group")).toHaveLength(0);
-  });
-
-  it("takes a steer note whose anchor left the window with it", () => {
-    const { wrap, m } = renderRange(
-      [toolUse("t1"), toolUse("t2"), toolUse("t3")],
-      [cmd("t1"), cmd("t2"), cmd("t3")],
-      {
-        id: "m-note-drop",
-        marks: [mark("s", "m-note-drop", 1)],
-      },
-    );
-    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(1);
-
-    dropHead(m, { from: 2, to: 3 }, [mark("s", "m-note-drop", 1)]);
-
-    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(0);
-  });
-
-  it("keeps a steer note whose anchor is still inside the narrowed window", () => {
-    const { wrap, m } = renderRange(
-      [toolUse("t1"), toolUse("t2"), toolUse("t3")],
-      [cmd("t1"), cmd("t2"), cmd("t3")],
-      {
-        id: "m-note-keep",
-        marks: [mark("s", "m-note-keep", 2)],
-      },
-    );
-    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(1);
-
-    dropHead(m, { from: 2, to: 3 }, [mark("s", "m-note-keep", 2)]);
-
-    expect(wrap.querySelectorAll(".steer-note")).toHaveLength(1);
+  it("leaves a delegate whose id is not stage-shaped OUT of the pipeline", () => {
+    const r = render([driver(1, "orc-1", 2), invocation("t", 2, "sub-A")]);
+    expect(shape(r.body)).toEqual(["pipeline(orc-1)", "card(sub-A)"]);
+    expect(inside(r, "orc-1")).toEqual([]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// A block's element is looked up per RENDER, never by a subtree query, and the
-// element it answers with is the one a drop removes: a row for a top-level text
-// block, the bubble for a delegate-hosted one, the card for a tool call.
-// ---------------------------------------------------------------------------
-
-describe("blockElement resolves a block's own element", () => {
-  beforeEach(() => {
-    resetBlockRenders();
-  });
-
-  function build(id: string, blocks: Record<string, unknown>[], toolCalls: ToolCall[] = []): void {
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      {
-        id,
-        role: "assistant",
-        content: "",
-        blocks,
-        tool_calls: toolCalls,
-      } as unknown as Message,
-      CHAT_ID,
-      false,
-    );
-    document.body.appendChild(wrap);
-  }
-
-  it("gives a top-level text block its ROW, which is what a drop removes", () => {
-    build("m-row", [text("hello")]);
-    const el = blockElement("m-row", 0);
-    expect(el?.classList.contains("message")).toBe(false);
-    expect(el?.querySelector(".message.assistant")).not.toBeNull();
-    expect(el?.dataset["blockIndex"]).toBe("0");
-    expect(el?.dataset["blockMsg"]).toBe("m-row");
-  });
-
-  it("gives a delegate-hosted text block NO element, because nothing renders it", () => {
-    build("m-sub", [text("delegate prose", "sub-Z")]);
-    expect(blockElement("m-sub", 0)).toBeUndefined();
-    // The delegate still has its card; it is just not this block's element.
-    expect(document.querySelector(".subagent-block[data-subtask='sub-Z']")).not.toBeNull();
-  });
-
-  it("gives a reasoning block its details element", () => {
-    build("m-trace", [{ type: "thinking", thinking: "pondering", agent_subtask_id: "" }]);
-    expect(blockElement("m-trace", 0)?.classList.contains("reasoning-block")).toBe(true);
-  });
-
-  it("gives a tool card the card itself", () => {
-    build("m-card", [toolUse("t1")], [call("t1", "Run Command")]);
-    expect(blockElement("m-card", 0)?.classList.contains("tool-call")).toBe(true);
-  });
-
-  it("answers undefined for an index this render never mounted", () => {
-    build("m-short", [text("only one")]);
-    expect(blockElement("m-short", 4)).toBeUndefined();
-  });
-
-  it("answers undefined for a message with no render at all", () => {
-    expect(blockElement("m-absent", 0)).toBeUndefined();
-  });
-
-  // DELETED: "cannot cross a message boundary, even where the DOM does". Its whole
-  // fixture was a LATER message's step blocks mounting inside the launching message's run
-  // card, which is what put a foreign `data-block-index` inside one render's own region;
-  // `placeBlock` renders a step block nowhere, so a second message contributes no element
-  // to another's subtree and the collision has no shape. `blockElement` still resolves per
-  // render — the cases above pin what it answers with — but nothing now pins that it must
-  // not be a subtree query, because no fixture can make the two disagree.
-});
-
-// ---------------------------------------------------------------------------
-// The withheld-output note: the CONSUMER that makes a capped `live_turn` admissible.
-//
-// A capped transcript GET carries only the TAIL of a big in-flight turn, so
-// without a note the reader takes that tail for the whole reply. It is a STATIC
-// line and never a show-more: the withheld
-// bytes are not on the wire, and `#marotte-ui` forbids a control that does
-// nothing.
-// ---------------------------------------------------------------------------
-describe("truncated-snapshot note", () => {
-  const NOTE = ".msg-truncated-note";
-
-  beforeEach(() => {
-    resetBlockRenders();
-    clearAdoptedSnapshots(CHAT_ID);
-  });
-
-  function bodyFor(id: string): HTMLElement {
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      {
-        id,
-        role: "assistant",
-        content: "",
-        blocks: [text("the tail of a long reply")],
-      } as unknown as Message,
-      CHAT_ID,
-      false,
-    );
-    return wrap;
-  }
-
-  it("is absent for an untruncated message", () => {
-    expect(bodyFor("m-clean").querySelector(NOTE)).toBeNull();
-  });
-
-  it("mounts FIRST in the body of a truncated message", () => {
-    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
-    const wrap = bodyFor("m-cut");
-    const note = wrap.querySelector(NOTE);
-    expect(note).not.toBeNull();
-    // First child: a preface to the body, not a footnote to whatever mounted last.
-    expect(wrap.firstElementChild).toBe(note);
-    // WHAT the sentence says has its own case in this describe, pinned whole; this one
-    // owns the position, and the one rule below is about the sentence's SHAPE rather than
-    // its wording, so a reword cannot silently take it with it.
-    // No byte counts: the doc comment above TRUNCATION_NOTE_TEXT states the rule, and a
-    // matcher is what keeps it from drifting back in as a "helpful" diagnostic.
-    expect(note?.textContent ?? "").not.toMatch(/\d+\s*(bytes|B|KiB|MiB)/);
-  });
-
-  // THE SENTENCE, pinned whole rather than by fragment, because every word of it is a
-  // claim an end user reads. "the end of this reply" says where the reader is; "arrives
-  // when the turn finishes" names the CONDITION under which the rest shows up, and that
-  // condition is the one thing the channel setting the marker can promise: a GET carrying
-  // `truncated` issues no retraction of its own. What does clear the marker is the turn's
-  // own end, whose `message_appended` carries the whole message.
-  //
-  // Rendered SETTLED (`bodyFor` passes `live: false`), which is the state the reader of a
-  // capped snapshot is in: the note describes a transfer that already happened.
-  it("says the earlier part arrives when the turn finishes", () => {
-    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
-    const note = bodyFor("m-cut").querySelector(NOTE);
-    expect(note?.textContent).toBe(
-      "You are seeing the end of this reply; the earlier part arrives when the turn finishes.",
-    );
-  });
-
-  it("carries no control: the withheld bytes are not on the wire", () => {
-    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
-    const note = bodyFor("m-cut").querySelector(NOTE);
-    expect(note?.querySelectorAll("button, a, [role='button'], [tabindex]")).toHaveLength(0);
-  });
-
-  // The two lifetimes do not line up: the marker is set when a capped `live_turn` is
-  // adopted and cleared by `message_appended` at turn end, and neither moment
-  // rebuilds the body. So the update path has to ask again — a note left standing claims
-  // output is still coming for a turn that is over.
-  it("drops on the next update once the marker is cleared", () => {
-    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
-    const wrap = bodyFor("m-cut");
-    expect(wrap.querySelector(NOTE)).not.toBeNull();
-
-    clearAdoptedSnapshot(CHAT_ID, "m-cut");
-    updateAssistantBody(
-      wrap,
-      {
-        id: "m-cut",
-        role: "assistant",
-        content: "",
-        blocks: [text("the tail of a long reply"), text("and the rest")],
-      } as unknown as Message,
-      CHAT_ID,
-      false,
-    );
-    expect(wrap.querySelector(NOTE)).toBeNull();
-  });
-
-  // The other direction: a marker that arrives after the body was built (the
-  // refetch lands on a chat already rendered) still reaches the reader.
-  it("appears on the next update when the marker arrives late", () => {
-    const wrap = bodyFor("m-late");
-    expect(wrap.querySelector(NOTE)).toBeNull();
-
-    noteAdoptedSnapshot(CHAT_ID, "m-late", { blockBase: 0, truncated: true });
-    updateAssistantBody(
-      wrap,
-      {
-        id: "m-late",
-        role: "assistant",
-        content: "",
-        blocks: [text("the tail of a long reply")],
-      } as unknown as Message,
-      CHAT_ID,
-      false,
-    );
-    expect(wrap.querySelectorAll(NOTE)).toHaveLength(1);
-  });
-
-  // A DETACHED render is the subagent page, which shows one delegate's blocks
-  // while the cap is a property of the whole message's transfer — so the claim
-  // belongs in the transcript. What enforces it is the SYNTHETIC id such a render
-  // uses, not a guard, so this pins that mechanism: route the real id and the note
-  // appears on a delegate's page.
-  it("is withheld from a detached render", () => {
-    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
-    const wrap = document.createElement("div");
-    buildDetachedBody(
-      wrap,
-      {
-        id: "m-cut",
-        role: "assistant",
-        content: "",
-        blocks: [text("delegate prose")],
-      } as unknown as Message,
-      CHAT_ID,
-      "sub-A",
-      false,
-      [],
-    );
-    expect(wrap.querySelector(NOTE)).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// THE NEWEST TOP-LEVEL ELEMENT RENDERS EXPANDED, and the moment another element is
-// posted after it, it folds. One policy, applied to every collapsible kind, and the
-// trigger is POSITIONAL — never a count and never a timer.
-//
-// This is the DISPATCHER's half: which seat each box takes and what the store says is
-// posted after it. The per-kind CARVE-OUTS (a running stage, a failure, an unanswered
-// ask, an unfetched run state) are refusals to COLLAPSE and are pinned against real
-// states in `fundamentals/subagent-block.test.ts` and `fundamentals/run-card.test.ts`,
-// where a state can be handed in directly; this file fetches no run state, so a card
-// here only ever shows the seat it was born from.
-//
-// ONLY THE OUTERMOST LAYER OPENS: the newest-ness test is over the message's own
-// top-level lane, so a box nested inside an expanded box is refused by the gate rather
-// than trusted to inherit. The observable form of that is the last case.
-// ---------------------------------------------------------------------------
 
 describe("the newest top-level box renders expanded", () => {
-  beforeEach(() => {
-    resetBlockRenders();
-  });
-
-  const stageID = (driverID: string, name: string): string =>
-    `invoke_subagent_${driverID}_stage_${name}`;
-
-  const driver = (id: string, stages = 2, status = "completed"): ToolCall =>
-    ({
-      id,
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status,
-      input: { stages: Array.from({ length: stages }, (_, i) => ({ name: `s${String(i)}` })) },
-    }) as unknown as ToolCall;
-
-  const stage = (driverID: string, name: string, subtask: string, status = "completed"): ToolCall =>
-    ({
-      id: stageID(driverID, name),
-      title: `Sub-agent: ${name}`,
-      kind: "other",
-      status,
-      agent_subtask_id: subtask,
-    }) as unknown as ToolCall;
-
-  const launch = (id: string, wf: string): ToolCall =>
-    ({
-      id,
-      title: "Run Workflow",
-      kind: "other",
-      status: "completed",
-      workflow_id: wf,
-    }) as unknown as ToolCall;
-
-  const pipelines = (wrap: HTMLElement): HTMLElement[] => [
-    ...wrap.querySelectorAll<HTMLElement>(".assistant-blocks > .subagent-container"),
-  ];
-  const folded = (e: Element | undefined): boolean => e?.classList.contains("collapsed") ?? false;
-
-  /** A pipeline of two stages, as blocks and calls, so each fixture below differs only
-   *  in what sits AROUND it. */
-  function pipelineOf(id: string, status = "completed"): [Record<string, unknown>[], ToolCall[]] {
-    return [
-      [
-        toolUse(id),
-        toolUse(stageID(id, "plan"), `${id}-a`),
-        toolUse(stageID(id, "code"), `${id}-b`),
-      ],
-      [driver(id, 2, status), stage(id, "plan", `${id}-a`), stage(id, "code", `${id}-b`)],
-    ];
-  }
-
-  it("opens the newest pipeline and folds the one before it", () => {
-    const [b1, c1] = pipelineOf("d-first");
-    const [b2, c2] = pipelineOf("d-second");
-    const wrap = render([...b1, ...b2], [...c1, ...c2]);
-    const [first, second] = pipelines(wrap);
-    expect(folded(first)).toBe(true);
-    expect(folded(second)).toBe(false);
-  });
-
-  it("folds a pipeline the next text block follows", () => {
-    const [blocks, calls] = pipelineOf("d-before");
-    const before = render([...blocks, text("and then some prose")], calls);
-    expect(folded(pipelines(before)[0])).toBe(true);
-
-    const after = render([text("some prose first"), ...blocks], calls);
-    expect(folded(pipelines(after)[0])).toBe(false);
-  });
-
-  it("does not fold a pipeline its own stages follow", () => {
-    // A stage posts into its PIPELINE's box, never into the top-level lane, so a
-    // pipeline is not superseded by its own contents. That routing is what the
-    // whole verdict depends on.
-    const [blocks, calls] = pipelineOf("d-own");
-    const wrap = render(blocks, calls);
-    expect(pipelines(wrap)).toHaveLength(1);
-    expect(folded(pipelines(wrap)[0])).toBe(false);
-  });
-
-  it("folds a pipeline already on screen when the next block arrives", () => {
-    // The UPDATE path, which is the live-stream shape: the box exists and its seed is
-    // spent, so nothing but the per-pass verdict can fold it. This is what makes the
-    // policy a rule about the store rather than about how a box happened to be born.
-    const [blocks, calls] = pipelineOf("d-live");
-    const id = `m-${String(Math.random())}`;
-    const msg = (b: Record<string, unknown>[]): Message =>
-      ({ id, role: "assistant", content: "", blocks: b, tool_calls: calls }) as unknown as Message;
-    const wrap = document.createElement("div");
-    buildAssistantBody(wrap, msg(blocks), CHAT_ID, true);
-    expect(folded(pipelines(wrap)[0])).toBe(false);
-
-    updateAssistantBody(wrap, msg([...blocks, text("and then some prose")]), CHAT_ID, true);
-    expect(folded(pipelines(wrap)[0])).toBe(true);
-  });
-
-  it("folds a run card the next block follows, and leaves the newest one open", () => {
-    const before = render([toolUse("l-a"), text("after the launch")], [launch("l-a", "wf-a")]);
-    expect(folded(before.querySelector<HTMLElement>(".run-card") ?? undefined)).toBe(true);
-
-    const newest = render([text("before the launch"), toolUse("l-b")], [launch("l-b", "wf-b")]);
-    expect(folded(newest.querySelector<HTMLElement>(".run-card") ?? undefined)).toBe(false);
-  });
-
-  it("opens the newest pipeline and gives its stage cards no open state", () => {
-    // THE NO-CASCADE GUARANTEE, in its only falsifiable form: the outer box opens and
-    // nothing inside it gains a disclosure to inherit that from. A stage card has no
-    // body, no disclosure toggle and no `aria-expanded` at all, so "the container
-    // opened" cannot reach one level down.
-    const [blocks, calls] = pipelineOf("d-cascade");
-    const wrap = render(blocks, calls);
-    const box = pipelines(wrap)[0];
-    expect(folded(box)).toBe(false);
-    const stages = [
-      ...(box?.querySelectorAll<HTMLElement>(":scope > .subagent-body > .subagent-block") ?? []),
-    ];
-    expect(stages).toHaveLength(2);
-    for (const card of stages) {
-      expect(card.querySelector(".subagent-body")).toBeNull();
-      expect(card.querySelector(".subagent-toggle")).toBeNull();
-      expect(card.querySelector("[aria-expanded]")).toBeNull();
-      expect(card.hasAttribute("aria-expanded")).toBe(false);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A DELEGATE CARD'S STATUS FOLLOWS ITS INVOCATION CALL, NOT ITS BLOCK'S RESIDENCY.
-//
-// A window drop leaves the card STANDING (`isContainerRoot`) while releasing its
-// binding, and `pruneOrphanedCards` keeps it while the delegate's other blocks are
-// resident; unsubscribed, it freezes at whatever it last painted. The invocation
-// CALL is message-level, so only its BLOCK's residency is the window's to decide.
-// ---------------------------------------------------------------------------
-describe("a delegate card's status follows its invocation CALL", () => {
-  // THE HARNESS HAS TO DISPOSE, or the drop case below asserts nothing. Every other
-  // suite in this file leaves `cbs` at its until-init no-ops, so `pushBlockEffect` and
-  // `disposeBlockEffects` are both dead there — the binding survives a drop for a
-  // reason production does not supply, and a card that would freeze live stays
-  // painting. This is `messages.ts`'s own registry, the two functions the drop's
-  // contract is between, restored to the stubs afterwards so no sibling suite inherits
-  // a disposal it was not written against.
-  const blockEffects = new Map<string, Map<number, (() => void)[]>>();
-  beforeEach(() => {
-    blockEffects.clear();
-    initBlockRenderer({
-      pushStreamingEffect: () => {
-        /* the turn-lifetime axis is not this suite's subject */
-      },
-      pushBlockEffect: (id, blockIndex, fn) => {
-        const per = blockEffects.get(id) ?? new Map<number, (() => void)[]>();
-        blockEffects.set(id, per);
-        per.set(blockIndex, [...(per.get(blockIndex) ?? []), fn]);
-      },
-      disposeBlockEffects: (id, indices) => {
-        const per = blockEffects.get(id);
-        if (per === undefined) {
-          return;
-        }
-        for (const i of indices) {
-          const arr = per.get(i);
-          per.delete(i);
-          for (const fn of arr ?? []) {
-            fn();
-          }
-        }
-      },
-      makeRow: () => document.createElement("div"),
-    });
-  });
-  afterEach(() => {
-    initBlockRenderer({
-      pushStreamingEffect: () => {
-        /* until init */
-      },
-      pushBlockEffect: () => {
-        /* until init */
-      },
-      disposeBlockEffects: () => {
-        /* until init */
-      },
-      makeRow: () => document.createElement("div"),
-    });
-  });
-
-  const liveSubagent = (id: string, subtask: string): ToolCall =>
-    ({
-      id,
-      title: "Sub-agent: general-task-execution",
-      kind: "other",
-      status: "in_progress",
-      agent_subtask_id: subtask,
-    }) as unknown as ToolCall;
-
-  const cardOf = (wrap: HTMLElement, subtask: string): HTMLElement | null =>
-    wrap.querySelector<HTMLElement>(`.subagent-block[data-subtask="${subtask}"]`);
-
-  /** The card left the running state for the yellow stopped mark. */
-  function expectCancelled(card: HTMLElement | null): void {
-    expect(card).not.toBeNull();
-    expect(card?.querySelector(".subagent-spinner")).toBeNull();
-    expect(card?.classList.contains("running")).toBe(false);
-    const icon = card?.querySelector<HTMLElement>(".subagent-icon");
-    expect(icon?.classList.contains("is-warn")).toBe(true);
-    expect(icon?.querySelector("svg")?.outerHTML).toBe(
-      (iconEl(outcomeIcon("warn")) as HTMLElement).outerHTML,
+  function driver(seq: number, id: string, declared: number): Entry {
+    return callEntry(
+      "t",
+      seq,
+      toolCall(id, {
+        title: "Orchestrate Sub-agent",
+        input: { stages: Array.from({ length: declared }, (_, i) => ({ name: `s${String(i)}` })) },
+      }),
     );
   }
 
-  function buildLive(
-    id: string,
-    subtask: string,
-    range?: { from: number; to: number },
-  ): { wrap: HTMLElement; m: Message; inv: ToolCall } {
-    const inv = liveSubagent(`inv-${id}`, subtask);
-    const blocks = [
-      toolUse(inv.id, subtask),
-      text("delegate output", subtask),
-      text("more delegate output", subtask),
-    ];
-    const wrap = document.createElement("div");
-    const m = {
-      id,
-      role: "assistant",
-      content: "",
-      blocks,
-      tool_calls: [inv],
-    } as unknown as Message;
-    buildAssistantBody(wrap, m, CHAT_ID, true, [], range);
-    return { wrap, m, inv };
-  }
-
-  /** Publish a new value for the invocation, the way `republishToolCall` does. */
-  function cancel(inv: ToolCall): void {
-    ensureToolCallSig(CHAT_ID, inv.id, inv).value = {
-      ...inv,
-      status: "aborted",
-    } as unknown as ToolCall;
-  }
-
-  it("keeps painting after the window drops the invocation block", () => {
-    const { wrap, m, inv } = buildLive("m-stall-drop", "u-drop-x");
-    expect(cardOf(wrap, "u-drop-x")?.querySelector(".subagent-spinner")).not.toBeNull();
-
-    // The invocation block leaves the window; the delegate's two output blocks keep
-    // the card alive.
-    dropHead(m, { from: 1, to: 3 }, []);
-    expect(cardOf(wrap, "u-drop-x")).not.toBeNull();
-
-    cancel(inv);
-
-    expectCancelled(cardOf(wrap, "u-drop-x"));
-  });
-
-  it("paints a card the DROPPED-BLOCK path seated, whose invocation never mounted", () => {
-    // The card's other door: a range that never contains the invocation block, so
-    // only `isDroppedDelegateBlock` seats the card. It had no subscription at all.
-    const { wrap, inv } = buildLive("m-stall-seat", "u-seat-x", { from: 1, to: 3 });
-    const card = cardOf(wrap, "u-seat-x");
-    expect(card).not.toBeNull();
-    expect(blockElement("m-stall-seat", 0)).toBeUndefined();
-    expect(card?.querySelector(".subagent-spinner")).not.toBeNull();
-
-    cancel(inv);
-
-    expectCancelled(cardOf(wrap, "u-seat-x"));
-  });
-
-  it("says CANCELLED in the footer of a card built from a persisted aborted call", () => {
-    // The reload path: the status is already terminal in the chat file, so the card is
-    // BUILT from it rather than transitioned into it by a frame. What the two cases
-    // above cannot see is what the card then claims HAPPENED — `delegateOutcome` folding
-    // `aborted` onto `completed` leaves the mark yellow and the footer reading clean.
-    const inv = {
-      ...liveSubagent("inv-m-persisted", "u-persisted"),
-      status: "aborted",
-    } as unknown as ToolCall;
-    const wrap = document.createElement("div");
-    buildAssistantBody(
-      wrap,
-      {
-        id: "m-persisted",
-        role: "assistant",
-        content: "",
-        blocks: [toolUse(inv.id, "u-persisted"), text("delegate output", "u-persisted")],
-        tool_calls: [inv],
-      } as unknown as Message,
-      CHAT_ID,
-      false,
-    );
-
-    const card = cardOf(wrap, "u-persisted");
-    expectCancelled(card);
-    const footer = card?.querySelector<HTMLElement>(".subagent-footer");
-    expect(footer?.dataset["outcome"]).toBe("cancelled");
-    expect(footer?.querySelector(".turn-ledger-text")?.textContent).toContain("Cancelled");
-  });
-
-  // RELEASING A CARD RELEASES ITS BINDING, or the card that replaces it is refused one.
-  //
-  // A card's binding is filed against a BOX, not against a block, because the two have
-  // different lifetimes: `isContainerRoot` keeps the element through the drop of its own
-  // invocation block, and the card then dies at `pruneOrphanedCards`, which no block
-  // bucket is reached by. So the drop → prune → re-mount sequence is what separates a
-  // binding released with its box from one left naming a card that is gone: the second
-  // makes a FRESH card take the already-bound early return and freeze permanently.
-  for (const door of [
-    { name: "the window drop", range: undefined },
-    { name: "the dropped-block path", range: { from: 1, to: 3 } },
-  ] as const) {
-    it(`re-binds a card rebuilt after a prune, seated by ${door.name}`, () => {
-      const id = door.range === undefined ? "m-remount-drop" : "m-remount-seat";
-      const subtask = door.range === undefined ? "u-remount-drop" : "u-remount-seat";
-      const { m, wrap, inv } = buildLive(id, subtask, door.range);
-      expect(cardOf(wrap, subtask)).not.toBeNull();
-
-      // The invocation block leaves the window; the delegate's output blocks keep the
-      // card, so `rebindSurvivingBoxes` re-files the binding at that block's index —
-      // now outside the window, where no later drop reaches it.
-      dropHead(m, { from: 1, to: 3 }, []);
-      expect(cardOf(wrap, subtask)).not.toBeNull();
-
-      // Every delegate block leaves: the card itself is pruned.
-      dropHead(m, { from: 3, to: 3 }, []);
-      expect(cardOf(wrap, subtask)).toBeNull();
-
-      // The window grows back over the invocation block, seating a FRESH card.
-      mountHeadRange(m, { from: 0, to: 3 }, true, []);
-      expect(cardOf(wrap, subtask)?.querySelector(".subagent-spinner")).not.toBeNull();
-
-      cancel(inv);
-
-      expectCancelled(cardOf(wrap, subtask));
-    });
-  }
-
-  it("re-binds a PIPELINE box rebuilt after its last stage was pruned", () => {
-    // The other survivor, and the same rule: `pruneEmptyContainers` releases a box whose
-    // stages have all gone, so the driver's own block can bind a fresh one. Held by the
-    // stale guard, the re-mounted invocation block binds nothing — so it stamps no
-    // element and the window counts a mounted block that has none.
-    const driverID = "d-remount";
-    const stageID = (name: string): string => `invoke_subagent_${driverID}_stage_${name}`;
-    const driver = {
-      id: driverID,
-      title: "Orchestrate Sub-agent",
-      kind: "other",
-      status: "in_progress",
-      input: { stages: [{ name: "plan" }, { name: "code" }] },
-    } as unknown as ToolCall;
-    const stageCall = (name: string, subtask: string): ToolCall =>
-      ({
-        id: stageID(name),
+  function stage(seq: number, driverID: string, name: string, subtask: string): Entry {
+    return callEntry(
+      "t",
+      seq,
+      toolCall(`invoke_subagent_${driverID}_stage_${name}`, {
         title: `Sub-agent: ${name}`,
-        kind: "other",
-        status: "in_progress",
         agent_subtask_id: subtask,
-      }) as unknown as ToolCall;
+      }),
+    );
+  }
 
-    const wrap = document.createElement("div");
-    const m = {
-      id: "m-remount-pipe",
-      role: "assistant",
-      content: "",
-      blocks: [
-        toolUse(driverID),
-        toolUse(stageID("plan"), "u-pipe-a"),
-        toolUse(stageID("code"), "u-pipe-b"),
-      ],
-      tool_calls: [driver, stageCall("plan", "u-pipe-a"), stageCall("code", "u-pipe-b")],
-    } as unknown as Message;
-    buildAssistantBody(wrap, m, CHAT_ID, true);
-    const box = (): HTMLElement | null =>
-      wrap.querySelector<HTMLElement>(`.subagent-container[data-pipeline="${driverID}"]`);
-    expect(box()).not.toBeNull();
-    expect(blockElement("m-remount-pipe", 0)).toBe(box());
+  const pipeline = (r: Render): HTMLElement =>
+    r.body.querySelector(".subagent-container") as HTMLElement;
 
-    // The driver's block leaves; the stage cards keep the box.
-    dropHead(m, { from: 1, to: 3 }, []);
-    expect(box()).not.toBeNull();
+  /** The container's disclosure settles on a microtask (the withdrawal check) and on its
+   *  own MutationObserver, so the verdict is readable a task after the mount. */
+  const settled = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-    // Both stages leave, so the box is empty and is pruned with them.
-    dropHead(m, { from: 3, to: 3 }, []);
-    expect(box()).toBeNull();
+  it("leaves a pipeline box open while it is the newest top-level element", async () => {
+    const r = render([driver(1, "orc-1", 2), stage(2, "orc-1", "a", "sub-A")]);
+    await settled();
+    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
+  });
 
-    mountHeadRange(m, { from: 0, to: 3 }, true, []);
+  it("is BORN folded when the range already holds the entry after it", async () => {
+    // The verdict is resolved before the box is created, so a superseded box is built
+    // closed rather than opened and then animated shut under the reader.
+    const r = render([
+      driver(1, "orc-1", 2),
+      stage(2, "orc-1", "a", "sub-A"),
+      text("t", 3, "and so"),
+    ]);
+    await settled();
+    expect(pipeline(r).classList.contains("collapsed")).toBe(true);
+  });
 
-    expect(box()).not.toBeNull();
-    expect(blockElement("m-remount-pipe", 0)).toBe(box());
+  it("folds when the entry after it ARRIVES, on the next pass", async () => {
+    const before = [driver(1, "orc-1", 2), stage(2, "orc-1", "a", "sub-A")];
+    const r = render(before);
+    await settled();
+    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
+    update(r, [...before, text("t", 3, "and so")]);
+    await settled();
+    expect(pipeline(r).classList.contains("collapsed")).toBe(true);
+  });
+
+  it("refuses that fold while the driver is still RUNNING", async () => {
+    // The carve-out, which is a refusal to COLLAPSE rather than a reason to expand: an
+    // open box whose work is in flight stays open when the verdict says superseded.
+    const running = callEntry(
+      "t",
+      1,
+      toolCall("orc-1", {
+        title: "Orchestrate Sub-agent",
+        status: "in_progress",
+        input: { stages: [{ name: "a" }, { name: "b" }] },
+      }),
+    );
+    const before = [running, stage(2, "orc-1", "a", "sub-A")];
+    const r = render(before);
+    await settled();
+    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
+    update(r, [...before, text("t", 3, "and so")]);
+    await settled();
+    expect(pipeline(r).classList.contains("collapsed")).toBe(false);
+  });
+
+  it("gives a box whose HOST is another box no expanded verdict of its own", () => {
+    // The no-cascade clause, which reads the HOST rather than a flag at the creation site:
+    // only the view's root lane earns the newest-element verdict. A delegate's own page is
+    // rendered in the delegate's lane, so a trace there is never the root lane's newest.
+    const turnID = nextTurnID();
+    const turn = turnOf(turnID, retarget([thinking("t", 1, "on its own page", "sub-A")], turnID));
+    const host = bodyHost();
+    buildDetachedBody(host, turn, CHAT_ID, "sub-A", false);
+    const trace = host.querySelector(".reasoning-block") as HTMLDetailsElement;
+    expect(trace).not.toBeNull();
+    expect(trace.open).toBe(false);
   });
 });
 
-// ---------------------------------------------------------------------------
-// A pass that renders a superseded run PAINTS the fold; it does not replay it.
-//
-// The transcript's own case, one level above `tool-group.test.ts`'s: the real
-// `buildAssistantBody` over `[tool, tool, text]` into an ATTACHED host, with the
-// real stylesheet mounted so the height transition is in force. Every rebuild the
-// reader sees is this shape — a cold-build slice extending a body, a head-side
-// window move, a message rebuilt after its view was parked — and each one used to
-// cost a 0.2s collapse per group, staggered across the slices, which is what a tab
-// switch read as one long animation.
-// ---------------------------------------------------------------------------
+describe("blockElement resolves an entry's own element", () => {
+  it("answers the trace's own details element", () => {
+    const r = render([thinking("t", 1, "weighing")]);
+    expect(blockElement(r.turnID, 1)).toBe(r.body.querySelector(".reasoning-block"));
+  });
+
+  it("answers the tool card, not the group that holds it", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      callEntry("t", 2, toolCall("tool-b")),
+    ]);
+    const cards = r.body.querySelectorAll(".tool-call");
+    expect(blockElement(r.turnID, 1)).toBe(cards[0]);
+    expect(blockElement(r.turnID, 2)).toBe(cards[1]);
+  });
+
+  it("answers the pipeline box for the driver that opened it", () => {
+    const r = render([
+      callEntry(
+        "t",
+        1,
+        toolCall("orc-1", { title: "Orchestrate Sub-agent", input: { stages: [] } }),
+      ),
+    ]);
+    expect(blockElement(r.turnID, 1)).toBe(r.body.querySelector(".subagent-container"));
+  });
+
+  it("answers undefined for a seq the turn does not hold", () => {
+    const r = render([text("t", 1, "one")]);
+    expect(blockElement(r.turnID, 99)).toBeUndefined();
+    expect(blockElement("t-nosuch", 1)).toBeUndefined();
+  });
+});
+
+describe("a delegate card's status follows its invocation CALL", () => {
+  const cardOf = (r: Render): HTMLElement => r.body.querySelector(".subagent-block") as HTMLElement;
+
+  it("says CANCELLED for a persisted aborted invocation", () => {
+    // marotte's own word for a call its turn ended under, matching the turn footer; the
+    // wire value is `aborted`.
+    const r = render([
+      callEntry(
+        "t",
+        1,
+        toolCall("tool-sub-A", {
+          title: "Sub-agent: sub-A",
+          agent_subtask_id: "sub-A",
+          status: "aborted",
+        }),
+      ),
+    ]);
+    const head = cardOf(r).querySelector(".subagent-header") as HTMLElement;
+    expect(head.getAttribute("aria-label")).toContain("cancelled");
+    expect(cardOf(r).querySelector(".subagent-icon")?.classList.contains("is-warn")).toBe(true);
+  });
+
+  it("follows a later status arriving on the CALL's signal", () => {
+    const call = toolCall("tool-sub-A", {
+      title: "Sub-agent: sub-A",
+      agent_subtask_id: "sub-A",
+      status: "in_progress",
+    });
+    const r = render([callEntry("t", 1, call)]);
+    const head = cardOf(r).querySelector(".subagent-header") as HTMLElement;
+    expect(head.getAttribute("aria-label")).toContain("running");
+    const sig = ensureToolCallSig(CHAT_ID, "tool-sub-A", call);
+    sig.value = { ...call, status: "failed" };
+    expect(head.getAttribute("aria-label")).toContain("failed");
+  });
+
+  it("re-binds a pipeline box whose driver entry the window dropped", () => {
+    // The box survives the drop of the entry that opened it, and that entry's cleanup
+    // released its binding — so without the rebind its header freezes at whatever it
+    // last painted, for as long as the reader stays scrolled past the driver.
+    const driverCall = toolCall("orc-1", {
+      title: "Orchestrate Sub-agent",
+      status: "in_progress",
+      input: { stages: [{ name: "a" }, { name: "b" }] },
+    });
+    const r = render([
+      callEntry("t", 1, driverCall),
+      callEntry(
+        "t",
+        2,
+        toolCall("invoke_subagent_orc-1_stage_a", {
+          title: "Sub-agent: a",
+          agent_subtask_id: "sub-A",
+        }),
+      ),
+    ]);
+    dropHead(r.turn, { from: 2, to: 3 });
+    const box = r.body.querySelector(".subagent-container") as HTMLElement;
+    expect(box).not.toBeNull();
+    const sig = ensureToolCallSig(CHAT_ID, "orc-1", driverCall);
+    sig.value = { ...driverCall, status: "completed", duration_ms: 1234 };
+    expect(box.querySelector(".subagent-icon")?.classList.contains("is-ok")).toBe(true);
+  });
+});
+
+describe("an empty bubble's row is marked is-empty", () => {
+  it("marks a settled entry that carries no text", () => {
+    const r = render([text("t", 1, "")]);
+    const row = r.body.querySelector(".msg-row") as HTMLElement;
+    expect(row.classList.contains("is-empty")).toBe(true);
+  });
+
+  it("clears the mark when the entry's text lands", async () => {
+    const r = render([text("t", 1, "")]);
+    const row = r.body.querySelector(".msg-row") as HTMLElement;
+    expect(row.classList.contains("is-empty")).toBe(true);
+    update(r, [text("t", 1, "the answer")]);
+    await vi.waitFor(() => {
+      expect(row.classList.contains("is-empty")).toBe(false);
+    });
+  });
+
+  it("never marks a LIVE bubble's row, which is reserved rather than empty", () => {
+    const turnID = nextTurnID();
+    const turn = turnOf(turnID, [], {
+      open: [{ turn: turnID, id: "open-1", lane: "", kind: "text", text: "", n: 1 }],
+    });
+    const body = bodyHost();
+    buildAssistantBody(body, turn, CHAT_ID, true);
+    const row = body.querySelector(".msg-row") as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.classList.contains("is-empty")).toBe(false);
+  });
+});
+
+describe("a mounted entry picks up text that arrived after it mounted", () => {
+  it("brings a mounted run up to the store's text for its member", async () => {
+    const r = render([text("t", 1, "one "), text("t", 2, "two")]);
+    const row = r.body.querySelector(".msg-row") as HTMLElement;
+    // The growth ends on a space: the markdown stream holds a trailing partial token
+    // until a boundary decides it, so a bare last word is not an observable.
+    update(r, [text("t", 1, "one "), text("t", 2, "two THREE ")]);
+    await vi.waitFor(() => {
+      expect(row.textContent).toContain("one two THREE");
+    });
+    expect(r.body.querySelectorAll(".msg-row")).toHaveLength(1);
+  });
+
+  it("adds nothing when the store's text did not grow", async () => {
+    const r = render([text("t", 1, "settled")]);
+    const row = r.body.querySelector(".msg-row") as HTMLElement;
+    await vi.waitFor(() => {
+      expect(row.textContent).toContain("settled");
+    });
+    const before = row.textContent;
+    update(r, [text("t", 1, "settled")]);
+    expect(row.textContent).toBe(before);
+  });
+});
+
+describe("the auto-collapse registry: which arrivals close a tool group", () => {
+  it("folds a group of two once a later entry closes its run", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      callEntry("t", 2, toolCall("tool-b")),
+      text("t", 3, "and so"),
+    ]);
+    const group = r.body.querySelector(".tool-group") as HTMLElement;
+    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(group.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("leaves the run open while nothing has closed it", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      callEntry("t", 2, toolCall("tool-b")),
+    ]);
+    const group = r.body.querySelector(".tool-group") as HTMLElement;
+    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+
+  it("leaves a BARE group open, because its body region IS the lone card", () => {
+    const r = render([callEntry("t", 1, toolCall("tool-a")), text("t", 2, "and so")]);
+    const group = r.body.querySelector(".tool-group") as HTMLElement;
+    expect(group.classList.contains("tool-group-bare")).toBe(true);
+    expect(group.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+});
 
 describe("rendering a superseded run animates nothing", () => {
-  let style: HTMLStyleElement;
-  let host: HTMLElement;
+  it("mounts an already-folded group with zero animations and a committed 0px body", () => {
+    // The verdict is resolved before the group's disclosure is created, so the region is
+    // born closed rather than opened and then animated shut under the reader.
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      callEntry("t", 2, toolCall("tool-b")),
+      text("t", 3, "and so"),
+    ]);
+    const group = r.body.querySelector(".tool-group") as HTMLElement;
+    const region = group.querySelector(".tool-group-body") as HTMLElement;
+    expect(group.getAnimations({ subtree: true })).toHaveLength(0);
+    expect(getComputedStyle(region).height).toBe("0px");
+  });
+});
 
-  beforeEach(async () => {
-    const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
-    style = mountAppCSS();
-    host = document.createElement("div");
-    document.body.appendChild(host);
+describe("legacy internal tool calls are dropped at the dispatcher", () => {
+  it("renders no card for a persisted cloud-config fetch", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-cc", { title: "Fetching your cloud config" })),
+    ]);
+    expect(shape(r.body)).toEqual([]);
+    expect(r.body.textContent).not.toContain("cloud config");
   });
 
-  afterEach(() => {
-    style.remove();
-    host.remove();
-    resetBlockRenders();
-  });
-
-  it("mounts the folded group with zero animations and a committed 0px height", () => {
-    const m = {
-      id: "m-anim",
-      role: "assistant",
-      content: "",
-      blocks: [toolUse("a1"), toolUse("a2"), text("and then some prose")],
-      tool_calls: [call("a1", "Run Command"), call("a2", "Run Command")],
-    } as unknown as Message;
-    buildAssistantBody(host, m, CHAT_ID, false, []);
-
-    const group = host.querySelector<HTMLElement>(".assistant-blocks > .tool-group");
-    expect(group).not.toBeNull();
-    // The run is followed by the text block, so the verdict is COLLAPSED.
-    expect(group?.classList.contains("tool-group-auto-collapsed")).toBe(true);
-
-    const body = group?.querySelector<HTMLElement>(":scope > .tool-group-body");
-    expect(body?.style.height).toBe("0px");
-    // The killing assertion, over the group's whole subtree rather than the region
-    // alone so a tween on any descendant counts. Scoped to the group and NOT to
-    // `document`: this file leaves earlier renders in the page, and mounting the
-    // stylesheet over them starts real transitions that have nothing to do with the
-    // group under test (measured: 4 of them).
-    expect(group?.getAnimations({ subtree: true })).toHaveLength(0);
-
-    // The CONTROL, in the same case rather than a sibling: a zero-animation
-    // assertion passes just as well when the stylesheet did not load, when the
-    // transition was never authored, or when this engine tweens nothing — so
-    // unless a tween can be made to fire here, the zero above proves nothing. A
-    // reader's own toggle is the live path the fix deliberately leaves animated.
-    //
-    // TWO clicks, because the first one on an AUTO-collapsed group converts it to a
-    // USER collapse and it stays closed (`onHeaderClick`), so only the second is the
-    // animated open. One click asserts nothing and reads like a typo.
-    const header = group?.querySelector<HTMLElement>(":scope > .tool-group-header");
-    header?.click();
-    header?.click();
-    expect(group?.getAnimations({ subtree: true }).length).toBeGreaterThan(0);
+  it("drops it as if it never existed, so real neighbours still group", () => {
+    const r = render([
+      callEntry("t", 1, toolCall("tool-a")),
+      callEntry("t", 2, toolCall("tool-cc", { title: "Fetching your cloud config" })),
+      callEntry("t", 3, toolCall("tool-b")),
+    ]);
+    expect(shape(r.body)).toEqual(["group(2)"]);
   });
 });

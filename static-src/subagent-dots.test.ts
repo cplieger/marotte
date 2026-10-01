@@ -15,16 +15,20 @@
 // from the brief's "mock ./store.js": the plan's own requirement is to exercise the
 // real `subagentStatusFor` rather than re-implement the mapping in a fake, and the
 // dependency under test is production's own version bump. A hand-bumped fake signal
-// would assert the fake. So `setSessions` installs the transcript and
-// `upsertToolCall` delivers the update through the same function
-// `handlers/messages.ts` calls, which is what makes the repaint case mean anything.
+// would assert the fake. So the turn is seeded through `openTurn`/`appendEntry` and
+// the settled verdict is delivered as the `tool_result` ENTRY the wire carries it
+// on, through the same operation `handlers/entries.ts` calls — which is what makes
+// the repaint case mean anything.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { signal } from "@cplieger/reactive";
-import { setSessions, upsertToolCall, get } from "./store.js";
+import { appendEntry, defaultUsage, get, openTurn, setSessions } from "./store.js";
+import { toolResultID } from "./entry-ids.js";
 import { subagentRef } from "./tab-materialize.js";
-import type { Message, Session, ToolCall, ToolStatus } from "./types.js";
+import { makeToolCall } from "./__test-helpers__/model.js";
+import type { Session, ToolStatus } from "./types.js";
+import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 
 const m = {
   painted: [] as { id: string; status: string }[],
@@ -67,8 +71,8 @@ function tick(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
 
-function invocation(subtaskID: string, status: ToolStatus, id = `tc-${subtaskID}`): ToolCall {
-  return {
+function invocation(subtaskID: string, status: ToolStatus, id = `tc-${subtaskID}`): EntryToolCall {
+  return makeToolCall({
     id,
     // One of the four titles `tool-schema.ts` `isSubagentInvocation` accepts. The dot
     // resolves through that predicate, so a nested call of the same delegate must
@@ -78,39 +82,80 @@ function invocation(subtaskID: string, status: ToolStatus, id = `tc-${subtaskID}
     status,
     agent_subtask_id: subtaskID,
     ts: 1,
+  });
+}
+
+/** The turn of `chatID`, whose `turn_open` is always `seq` 0. */
+function turnOpen(chatID: string): Entry {
+  return {
+    id: `${chatID}-open`,
+    turn: `t-${chatID}`,
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "prompt", n: 1, prompt: { id: `m-${chatID}`, text: "delegate this" } },
   };
 }
 
-function chatWith(chatID: string, calls: readonly ToolCall[]): Session {
-  const messages: Message[] = [
-    {
-      id: `m-${chatID}`,
-      role: "assistant",
-      ts: 1,
-      content: "",
-      blocks: calls.map((tc) => ({
-        type: "tool_use" as const,
-        tool_call_id: tc.id,
-        agent_subtask_id: tc.agent_subtask_id ?? "",
-      })),
-      tool_calls: [...calls],
-    },
-  ];
+/** An empty session for `chatID`. The turn is seeded separately, so a chat with no
+ *  window at all is expressible — which is what a boot-restored tab has. */
+function emptyChat(chatID: string): Session {
   return {
     id: chatID,
     name: chatID,
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    available_modes: [],
-    available_models: [],
-    usage: { context_pct: 0, context_size: 0, credits: 0, turns: 0, last_turn_ms: 0 },
-    messages,
-    message_count: messages.length,
+    supervised_mode: false,
+    usage: defaultUsage(),
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
-  } as unknown as Session;
+  };
+}
+
+/** Install one empty session per named chat, then seed each one's turn. Two steps
+ *  rather than one fixture object, because a chat row with no window at all is a real
+ *  state (a boot-restored tab whose chat has not been fetched) and the store's own
+ *  operations are the only thing that can produce a turn it will accept. */
+function seedChats(specs: readonly (readonly [string, readonly EntryToolCall[]])[]): void {
+  setSessions(specs.map(([chatID]) => emptyChat(chatID)));
+  for (const [chatID, calls] of specs) {
+    seedTurn(chatID, calls);
+  }
+}
+
+/** Seed `chatID` with one turn holding `calls` as `tool_call` entries in the ISSUER's
+ *  lane, which is where an invocation lives (design 3.4). */
+function seedTurn(chatID: string, calls: readonly EntryToolCall[]): void {
+  openTurn(chatID, turnOpen(chatID));
+  calls.forEach((call, i) => {
+    appendEntry(chatID, {
+      id: call.id,
+      turn: `t-${chatID}`,
+      kind: "tool_call",
+      seq: i + 1,
+      ts: i + 2,
+      payload: call,
+    });
+  });
+}
+
+/** The `tool_result` that SETTLES `call`, paired to it by `<tool_call id>:result`. The
+ *  create frame's status is a starting state; this is the verdict, and it is what a
+ *  running delegate's dot has to follow. */
+function settle(chatID: string, call: EntryToolCall, status: ToolStatus, seq: number): void {
+  appendEntry(chatID, {
+    id: toolResultID(call.id),
+    turn: `t-${chatID}`,
+    kind: "tool_result",
+    seq,
+    ts: seq + 2,
+    payload: { status },
+  });
 }
 
 let installed = false;
@@ -134,7 +179,7 @@ describe("a delegate's tab paints its own invocation's state", () => {
     ["completed", "done"],
     ["failed", "failed"],
   ])("paints %s as %s", (status, want) => {
-    setSessions([chatWith("c1", [invocation("task-1", status as ToolStatus)])]);
+    seedChats([["c1", [invocation("task-1", status as ToolStatus)]]]);
     m.refs.push(subagentRef("c1", "task-1"));
     tabsChanged();
     expect(m.painted.at(-1)).toEqual({ id: `sub:${subagentRef("c1", "task-1")}`, status: want });
@@ -145,7 +190,7 @@ describe("a delegate's tab paints its own invocation's state", () => {
     // boot-restored tab whose chat has not been fetched, or a turn evicted from
     // the paginated window. "" is the honest answer: not knowing is different from
     // knowing nothing is happening, and the reserved slot stays invisible.
-    setSessions([chatWith("c1", [])]);
+    seedChats([["c1", []]]);
     m.refs.push(subagentRef("c1", "task-missing"));
     tabsChanged();
     expect(m.painted.at(-1)).toEqual({
@@ -158,15 +203,15 @@ describe("a delegate's tab paints its own invocation's state", () => {
     // Every call the delegate MADE shares its subtask id; only the invocation
     // carries an invocation title. Without the predicate the dot would report
     // whichever call happened to come first in the array.
-    const nested: ToolCall = {
+    const nested = makeToolCall({
       id: "tc-nested",
       title: "Read file",
       kind: "read",
       status: "in_progress",
       agent_subtask_id: "task-1",
       ts: 1,
-    };
-    setSessions([chatWith("c1", [nested, invocation("task-1", "completed")])]);
+    });
+    seedChats([["c1", [nested, invocation("task-1", "completed")]]]);
     m.refs.push(subagentRef("c1", "task-1"));
     tabsChanged();
     expect(m.painted.at(-1)?.status).toBe("done");
@@ -174,18 +219,18 @@ describe("a delegate's tab paints its own invocation's state", () => {
 });
 
 describe("the launching chat's transcript is the repaint dependency", () => {
-  it("repaints in_progress to failed on a tool_call_update, with no tab mutation", async () => {
-    setSessions([chatWith("c1", [invocation("task-1", "in_progress")])]);
+  it("repaints in_progress to failed when the tool_result lands, with no tab mutation", async () => {
+    seedChats([["c1", [invocation("task-1", "in_progress")]]]);
     m.refs.push(subagentRef("c1", "task-1"));
     tabsChanged();
     expect(m.painted.at(-1)?.status).toBe("working");
     const before = m.painted.length;
 
-    // The real ingest path, through the same function `handlers/messages.ts` calls
-    // for a `tool_call_update` frame. Nothing touches the tab set here, which is
-    // the whole case: without the per-chat version read the dot would sit on
-    // `working` until some unrelated tab mutation happened along.
-    upsertToolCall("c1", "m-c1", invocation("task-1", "failed"), 0);
+    // The real ingest path: a `tool_result` ENTRY is what carries the verdict, and
+    // the create frame's `in_progress` is only a starting state. Nothing touches the
+    // tab set here, which is the whole case — without the per-chat version read the
+    // dot would sit on `working` until some unrelated tab mutation happened along.
+    settle("c1", invocation("task-1", "in_progress"), "failed", 2);
     await tick();
 
     expect(m.painted.length).toBeGreaterThan(before);
@@ -193,18 +238,18 @@ describe("the launching chat's transcript is the repaint dependency", () => {
   });
 
   it("repaints a delegate in a chat the reader is not looking at", async () => {
-    // The property the whole feature rests on: `upsertToolCall` is called for any
-    // chat with a store row, so a background delegate's dot is correct. Two chats,
-    // and the one that moves is not the one that was painted first.
-    setSessions([
-      chatWith("c1", [invocation("task-1", "completed")]),
-      chatWith("c2", [invocation("task-2", "in_progress")]),
+    // The property the whole feature rests on: an entry frame is ingested for any
+    // chat with a store row, with no active-chat gate, so a background delegate's dot
+    // is correct. Two chats, and the one that moves is not the one painted first.
+    seedChats([
+      ["c1", [invocation("task-1", "completed")]],
+      ["c2", [invocation("task-2", "in_progress")]],
     ]);
     m.refs.push(subagentRef("c1", "task-1"), subagentRef("c2", "task-2"));
     tabsChanged();
     m.painted.length = 0;
 
-    upsertToolCall("c2", "m-c2", invocation("task-2", "completed"), 0);
+    settle("c2", invocation("task-2", "in_progress"), "completed", 2);
     await tick();
 
     expect(m.painted).toContainEqual({ id: `sub:${subagentRef("c2", "task-2")}`, status: "done" });
@@ -215,7 +260,7 @@ describe("the launching chat's transcript is the repaint dependency", () => {
     // only there because the delegate's blocks are resident, so the transcript is
     // in place and the tab arrives a round trip later. No transcript change follows
     // it, so the tab-set dependency is the only thing that can paint the row.
-    setSessions([chatWith("c1", [invocation("task-1", "completed")])]);
+    seedChats([["c1", [invocation("task-1", "completed")]]]);
     expect(m.painted).toEqual([]);
 
     m.refs.push(subagentRef("c1", "task-1"));
@@ -231,13 +276,20 @@ describe("the launching chat's transcript is the repaint dependency", () => {
     // unchanged value would leave a row rebuilt since the last write showing
     // whatever the factory painted; suppressing the redundant `dotVersion` bump is
     // `recordDotStatus`'s job, one layer down.
-    setSessions([chatWith("c1", [invocation("task-1", "in_progress")])]);
+    seedChats([["c1", [invocation("task-1", "in_progress")]]]);
     m.refs.push(subagentRef("c1", "task-1"));
     tabsChanged();
     const after = m.painted.length;
 
     // A transcript change that leaves the delegate's own status alone.
-    upsertToolCall("c1", "m-c1", invocation("task-1", "in_progress"), 0);
+    appendEntry("c1", {
+      id: "t-c1-e2",
+      turn: "t-c1",
+      kind: "text",
+      seq: 2,
+      ts: 3,
+      payload: { text: "the chat carried on" },
+    });
     await tick();
 
     expect(m.painted.length).toBeGreaterThan(after);
@@ -247,7 +299,7 @@ describe("the launching chat's transcript is the repaint dependency", () => {
 
 describe("the tab set bounds the work, so nothing has to be swept", () => {
   it("stops painting a closed tab", () => {
-    setSessions([chatWith("c1", [invocation("task-1", "in_progress")])]);
+    seedChats([["c1", [invocation("task-1", "in_progress")]]]);
     m.refs.push(subagentRef("c1", "task-1"));
     tabsChanged();
     expect(m.painted.at(-1)?.status).toBe("working");
@@ -263,9 +315,7 @@ describe("the tab set bounds the work, so nothing has to be swept", () => {
   });
 
   it("paints every open tab of one chat, not just the first", () => {
-    setSessions([
-      chatWith("c1", [invocation("task-1", "in_progress"), invocation("task-2", "failed")]),
-    ]);
+    seedChats([["c1", [invocation("task-1", "in_progress"), invocation("task-2", "failed")]]]);
     m.refs.push(subagentRef("c1", "task-1"), subagentRef("c1", "task-2"));
     tabsChanged();
     expect(m.painted).toContainEqual({
@@ -284,7 +334,7 @@ describe("a ref this client cannot resolve degrades rather than throwing", () =>
     // A ref arrives from the PERSISTED collection, so a bad one can reach any
     // device. `parseSubagentRef` answers two empty halves and the pass skips it —
     // the row keeps the factory's fallback name and its invisible reserved slot.
-    setSessions([chatWith("c1", [invocation("task-1", "completed")])]);
+    seedChats([["c1", [invocation("task-1", "completed")]]]);
     m.refs.push("no-separator-here");
     expect(() => tabsChanged()).not.toThrow();
     expect(m.painted).toEqual([]);
@@ -295,15 +345,15 @@ describe("a ref this client cannot resolve degrades rather than throwing", () =>
     // call is `run_workflow`, which `isSubagentInvocation` rejects, so the scan
     // resolves nothing and the dot degrades to "" rather than reporting a run's
     // state on a row that names a step.
-    const step: ToolCall = {
+    const step = makeToolCall({
       id: "tc-run",
       title: "run_workflow",
       kind: "other",
       status: "in_progress",
       agent_subtask_id: "wf:wf_1:root/iter-1",
       ts: 1,
-    };
-    setSessions([chatWith("c1", [step])]);
+    });
+    seedChats([["c1", [step]]]);
     m.refs.push(subagentRef("c1", "wf:wf_1:root/iter-1"));
     tabsChanged();
     expect(m.painted.at(-1)).toEqual({

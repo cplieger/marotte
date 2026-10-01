@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 	"pgregory.net/rapid"
 )
 

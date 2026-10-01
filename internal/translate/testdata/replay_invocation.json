@@ -1,0 +1,92 @@
+{
+  "note": "One recorded-shape session/load replay of a turn that delegated. KAS persists the invocation as a sub_agent_start record, so the replayed tool_call's id carries the `-sub-agent-start` suffix the LIVE frame does not, while `_meta.kiro.agentSubtaskId` is the delegate uuid on both sides. That is why the merge pairs an invocation on the delegate uuid rather than on the entry id, and why the entry is filed in the ISSUER's lane.",
+  "action_id": "act-1",
+  "replayed_call_id": "act-1-sub-agent-start",
+  "delegate_id": "d-9",
+  "frames": [
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": { "kiro": { "replay": true, "kind": "turn_start", "turnStart": true } }
+      }
+    },
+    {
+      "kind": "agent_message_chunk",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "delegating the sweep" },
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "7c3d-say",
+            "timestamp": "2026-09-15T12:00:01.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "tool_call",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "act-1-sub-agent-start",
+        "title": "Sub-agent: sweeper",
+        "kind": "other",
+        "status": "pending",
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "kind": "agent-subtask",
+            "agentSubtaskId": "d-9",
+            "messageId": "act-1-sub-agent-start-call",
+            "timestamp": "2026-09-15T12:00:02.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "agent_message_chunk",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "swept 3 files" },
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "d9-1-say",
+            "agentSubtaskId": "d-9",
+            "timestamp": "2026-09-15T12:00:05.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "tool_call_update",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "act-1-sub-agent-start",
+        "status": "completed",
+        "content": [{ "type": "content", "content": { "type": "text", "text": "done" } }],
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "act-1-sub-agent-start-result",
+            "timestamp": "2026-09-15T12:00:07.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "kind": "turn_end",
+            "turnEnd": { "stopReason": "end_turn" }
+          }
+        }
+      }
+    }
+  ]
+}

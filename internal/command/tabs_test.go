@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // tabCmd builds a command envelope for one of the four tab types.
@@ -270,6 +270,58 @@ func TestCmdPinTab_RefusesAnAbsentTab(t *testing.T) {
 	}
 }
 
+// TestCmdReparentTab_ValidatesBothIDsAndReturnsTheSubject is the door's
+// vocabulary for the fifth tab command: both ids go through the identifier rule,
+// an absent tab is 404 like a pin, a parent that is not an open chat is 409, and
+// the success body carries the subject with its new parent, because an
+// unchanged parent emits nothing for the client to adopt from.
+func TestCmdReparentTab_ValidatesBothIDsAndReturnsTheSubject(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, _, _ := newTabbedMembership(t, store)
+	chat := createChat(t, mem, "op-chat")
+	spec, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindSpec, Ref: ".kiro/specs/x"}, "op-spec")
+	if err != nil {
+		t.Fatalf("Setup: OpenTab(spec) = %v", err)
+	}
+
+	cases := []struct {
+		desc    string
+		payload marotte.ReparentTabCommand
+		want    int
+	}{
+		{desc: "under an open chat", payload: marotte.ReparentTabCommand{ID: spec.Subject.ID, Parent: chat.Subject.ID, OpID: "op-1"}, want: http.StatusOK},
+		{desc: "a tab that is not open", payload: marotte.ReparentTabCommand{ID: "ghost", Parent: chat.Subject.ID}, want: http.StatusNotFound},
+		{desc: "a parent that is not open", payload: marotte.ReparentTabCommand{ID: spec.Subject.ID, Parent: "ghost"}, want: http.StatusConflict},
+		{desc: "a parent that is not a chat", payload: marotte.ReparentTabCommand{ID: chat.Subject.ID, Parent: spec.Subject.ID}, want: http.StatusConflict},
+		{desc: "an empty id", payload: marotte.ReparentTabCommand{Parent: chat.Subject.ID}, want: http.StatusBadRequest},
+		{desc: "an empty parent", payload: marotte.ReparentTabCommand{ID: spec.Subject.ID}, want: http.StatusBadRequest},
+		{desc: "a parent outside the identifier rule", payload: marotte.ReparentTabCommand{ID: spec.Subject.ID, Parent: "a/b"}, want: http.StatusBadRequest},
+		{desc: "an op_id outside the identifier rule", payload: marotte.ReparentTabCommand{ID: spec.Subject.ID, Parent: chat.Subject.ID, OpID: "op/../x"}, want: http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			body, err := CmdReparentTab(t.Context(), mem, tabCmd(t, marotte.CmdReparentTab, tc.payload))
+
+			if statusOf(err) != tc.want {
+				t.Fatalf("status = %d, want %d (%s)", statusOf(err), tc.want, errText(err))
+			}
+			if tc.want != http.StatusOK {
+				return
+			}
+			subject, ok := bodyField(t, body, "subject").(marotte.TabSubject)
+			if !ok {
+				t.Fatalf("subject is %T, want marotte.TabSubject", bodyField(t, body, "subject"))
+			}
+			if subject.ID != spec.Subject.ID || subject.Parent != chat.Subject.ID {
+				t.Errorf("CmdReparentTab returned subject %+v, want id %q under %q", subject, spec.Subject.ID, chat.Subject.ID)
+			}
+			if _, ok := bodyField(t, body, keyVersion).(uint64); !ok {
+				t.Errorf("version is %T, want uint64", bodyField(t, body, keyVersion))
+			}
+		})
+	}
+}
+
 // TestTabCommands_AnUnwiredStoreIs503 is the shape a build with no config dir
 // has. Answered rather than swallowed: a command whose effect did not happen must
 // not report success.
@@ -295,6 +347,10 @@ func TestTabCommands_AnUnwiredStoreIs503(t *testing.T) {
 		}},
 		{desc: "pin", call: func() (any, error) {
 			return CmdPinTab(t.Context(), mem, tabCmd(t, marotte.CmdPinTab, marotte.PinTabCommand{ID: "t1"}))
+		}},
+		{desc: "reparent", call: func() (any, error) {
+			return CmdReparentTab(t.Context(), mem, tabCmd(t, marotte.CmdReparentTab,
+				marotte.ReparentTabCommand{ID: "t1", Parent: "t2"}))
 		}},
 	}
 	for _, tc := range cases {

@@ -1,0 +1,6 @@
+- [ ] 1. Real task
+  - Verify: the row reads `- [x] 1.1 done` after the tick
+  - Verify: `[ ]` and `[~]` both render
+  - [ ] Verify the thing (a checkbox-shaped note, NOT numbered)
+  - _Requirements: 1.2_
+- [ ] 2. Second real task

@@ -9,10 +9,10 @@ package agent
 // (i) The value test: every SubjectStamp a frame carries takes its Version from a
 // function parameter (or a field of one) or from the return of an allowlisted
 // call, the writers whose critical section minted it. A bare Current(...) or
-// BumpCounter(...) in the stamping function fails. A stamp on chat_created or
-// chat_updated has kind chats; a stamp on message_appended, message_updated or
-// draft_changed has kind chat; and a function that calls Mutate stamps chat at
-// most once, the last-frame rule.
+// BumpCounter(...) in the stamping function fails. A stamp on chat_created,
+// chat_updated or chat_deleted has kind chats; a stamp on subject_changed or
+// draft_changed has kind chat, whenever the stamp names a literal kind at all;
+// and a function that calls Mutate stamps chat at most once, the last-frame rule.
 //
 // (ii) The call-graph test: emit and streamInitialState are the only bodies that
 // publish (Publish) or write to the connection (Writer.Event); emit reaches a
@@ -42,7 +42,7 @@ var stampWalkPackages = []string{
 // the store writers that mint under their lock, the Buffer mutators (each returns
 // the version write minted), and the stamped snapshot helpers.
 var versionSources = []string{
-	"Mutate", "Remove", "setComposer",
+	"Mutate", "Remove", "setComposer", "Reconcile", "stepTurns",
 	"MarkOverCap", "StartTurn", "SplitSegment", "AppendToolCall", "SetToolCall",
 	"SetSteerCarry", "AppendCodeReferences", "SetModel", "SetRefusal",
 	"AppendTextDelta", "AppendThinkingDelta", "AppendToolUseBlock",
@@ -53,12 +53,18 @@ var versionSources = []string{
 
 // mintingBodies are the critical sections themselves: they call BumpCounter or
 // Current legitimately and are the functions the allowlist names, so the value
-// test exempts their bodies and checks everyone who calls them.
+// test exempts their bodies and checks everyone who calls them. The FOUR page
+// builders are snapshot mints: each reads its stamps under the lock that serves
+// the entries, and a live_turn or run_turn version is that turn's newest served
+// seq rather than a counter. turnRange is the run's per-turn page, stamping the
+// seq of the entries it just served under the registry's own lock — the same
+// shape as stepTurns, for one turn instead of a step path.
 var mintingBodies = []string{
 	"Mutate", "broadcastMutation", "setComposer", "Remove",
 	"MergeStamped", "SnapshotStamped", "registry", "statusStamp",
 	"pendingSnapshot", "liveRunRowsStamped", "ModesModelsStamped", "mintPending",
 	"ClearWaiting", "Clear", "SetModes", "SetModels",
+	"Page", "TurnPage", "stepTurns", "turnRange",
 }
 
 // versionReads are the registry reads a stamping function may not perform itself.
@@ -66,7 +72,7 @@ var versionReads = []string{"Current", "BumpCounter"}
 
 var (
 	chatsFrames = []string{"EventChatCreated", "EventChatUpdated", "EventChatDeleted"}
-	chatFrames  = []string{"EventMessageAppended", "EventMessageUpdated", "EventDraftChanged"}
+	chatFrames  = []string{"EventSubjectChanged", "EventDraftChanged"}
 )
 
 type stampSite struct {
@@ -381,12 +387,21 @@ func TestStamping_EveryVersionComesFromItsMint(t *testing.T) {
 					if site.kind == "chat" && site.built != nil {
 						chatStamps[site.built] = true
 					}
-					for _, frame := range site.frames {
-						switch {
-						case slices.Contains(chatsFrames, frame) && site.kind != "chats":
-							t.Errorf("%s: %s stamps %s with kind %q, want chats (the header frame completes the list projection)", file, fn.Name.Name, frame, site.kind)
-						case slices.Contains(chatFrames, frame) && site.kind != "chat":
-							t.Errorf("%s: %s stamps %s with kind %q, want chat", file, fn.Name.Name, frame, site.kind)
+					// The kind checks compare against a LITERAL kind, so a stamp
+					// taken from elsewhere carries none: emit re-uses the refused
+					// frame's own stamp off a parameter's field, and the default
+					// arm above judges such a site by its source. The exempt
+					// population is ONE, sse.go's emit, measured by deleting this
+					// guard, which reports that site and no other. A second exempt
+					// site is justified here rather than inherited.
+					if site.kind != "" {
+						for _, frame := range site.frames {
+							switch {
+							case slices.Contains(chatsFrames, frame) && site.kind != "chats":
+								t.Errorf("%s: %s stamps %s with kind %q, want chats (the header frame completes the list projection)", file, fn.Name.Name, frame, site.kind)
+							case slices.Contains(chatFrames, frame) && site.kind != "chat":
+								t.Errorf("%s: %s stamps %s with kind %q, want chat", file, fn.Name.Name, frame, site.kind)
+							}
 						}
 					}
 				}

@@ -16,16 +16,27 @@ import type { IdentityVerdict } from "../identity.js";
 
 // --- Steering save ---
 
-export const saveSteering = apiAction<{ content: string }>({
+/** PUT the whole global-instructions document, guarded by the validator the GET
+ *  answered, and answering with the validator the write produced.
+ *
+ *  The server refuses a write whose `If-Match` does not name the document on disk
+ *  (409) and one carrying none at all (428), so an EMPTY etag sends no header
+ *  deliberately: that is the answer a server with no validator gives, and
+ *  inventing one turns a working save into a permanent 428. `""` back is its
+ *  explicit "the token could not be read"; the caller keeps whatever it had. */
+export const saveSteering = apiAction<{ content: string; etag: string }, string>({
   name: "settings.save_steering",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   scope: "settings",
-  request: ({ content }) => ({
-    method: "PUT",
-    path: "/api/steering",
-    body: { content },
-  }),
+  request: ({ content, etag }) =>
+    etag === ""
+      ? { method: "PUT", path: "/api/steering", body: { content } }
+      : { method: "PUT", path: "/api/steering", body: { content }, headers: { "If-Match": etag } },
+  decode: (data) => {
+    const etag = (data as { etag?: unknown } | null)?.etag;
+    return typeof etag === "string" ? etag : "";
+  },
   error: "Couldn't save steering",
 });
 

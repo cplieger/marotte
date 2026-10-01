@@ -1,0 +1,83 @@
+{
+  "input_file": "attack-1-number-in-text.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Parent",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "cef92530b0ee015c19bd6724b7068f40cb4aa2d1d5e884a2c3ae4f2a9144aaa5",
+      "detail": "",
+      "children": [
+        {
+          "id": "L2",
+          "line": 2,
+          "indent": 2,
+          "number": "1.1",
+          "text": "1.1 2026 was the year the tool shipped",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "c08e33efec280b166f7277ece53702398196c08961a3e70a226ba05bd0efeda0",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 2,
+          "number": "1.2",
+          "text": "1.2 3 of the 31 kinds are retired",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "29797cdb686e7486e94e461ec43332eebbc0e1a0799b27e043bece5b2f8815b4",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L4",
+          "line": 4,
+          "indent": 2,
+          "number": "1.3",
+          "text": "1.3 1.4 GiB is the corpus size",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "7efc383f428359d0722e184b7ff05e091f0e4b4bf49bacc9356632d2f2154771",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L5",
+          "line": 5,
+          "indent": 2,
+          "number": "1.4",
+          "text": "1.4 0.5 s per file is the budget",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "a93ad89bbb7cac10346971781f81672d45a3461cca0de8af8f5e7fafc81ab9bc",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 4,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 4
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

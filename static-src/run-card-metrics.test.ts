@@ -219,18 +219,9 @@ function runCard(i: number, open: boolean): HTMLElement {
   name.className = "run-name";
   name.textContent = `code-review-${String(i)}`;
 
-  const state = document.createElement("span");
-  state.className = "run-state";
-  state.textContent = "completed";
   const count = document.createElement("span");
   count.className = "run-count";
   count.textContent = "1 step";
-  const clock = document.createElement("span");
-  clock.className = "run-clock";
-  clock.textContent = "1m 4s";
-  const meta = document.createElement("span");
-  meta.className = "run-head-meta";
-  meta.append(state, count, clock);
 
   const toggle = document.createElement("span");
   toggle.className = "run-toggle";
@@ -242,7 +233,7 @@ function runCard(i: number, open: boolean): HTMLElement {
   head.setAttribute("role", "button");
   head.setAttribute("tabindex", "0");
   head.setAttribute("aria-expanded", open ? "true" : "false");
-  head.append(icon, name, meta, toggle);
+  head.append(icon, name, count, toggle);
 
   const alert = document.createElement("div");
   alert.className = "run-alert hidden";
@@ -287,8 +278,8 @@ function runCard(i: number, open: boolean): HTMLElement {
   return root;
 }
 
-/** The production nesting: a fixed-height scroller holding the `.msg-wrap` block
- *  container a turn's cards live in. `.msg-wrap` is a flex column with a gap, and
+/** The production nesting: a fixed-height scroller holding the `.turn-body` block
+ *  container a turn's cards live in. `.turn-body` is a flex column with a gap, and
  *  the gap is the same in all three readings, so it cancels out of the drift while
  *  staying faithful to what the transcript lays out. */
 function mountList(open: boolean): { wrap: HTMLElement; list: HTMLElement } {
@@ -296,7 +287,7 @@ function mountList(open: boolean): { wrap: HTMLElement; list: HTMLElement } {
   wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
 
   const list = document.createElement("div");
-  list.className = "msg-wrap";
+  list.className = "turn-body";
   for (let i = 0; i < CARDS; i++) {
     list.appendChild(runCard(i, open));
   }

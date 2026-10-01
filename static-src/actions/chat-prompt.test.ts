@@ -6,9 +6,12 @@
 //   ack            → "sent" (thinking stays true; SSE owns the turn from here)
 //   plain 409      → "queued" (a steerable turn is in flight; submit.ts steers)
 //   409 "starting" → "starting" (the holder cannot take a steer; thinking is
-//                    retracted so the retry is a PROMPT, not a steer, and the
-//                    outcome latches are restored — no turn started)
-//   anything else  → null (rollback restores thinking + the outcome latches)
+//                    retracted so the retry is a PROMPT, not a steer)
+//   anything else  → null (rollback retracts thinking)
+//
+// `thinking` is the WHOLE of what the optimistic write puts at risk: the tab dot's
+// verdict reads the header's `last_turn_outcome`, which no client path writes, so a
+// refused send is state-neutral on the glance surfaces by construction.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -31,18 +34,16 @@ vi.mock("../transport.js", () => ({
 const { mockGet } = vi.hoisted(() => ({
   mockGet: vi.fn(() => ({ id: "c1", model: "m1" }) as Record<string, unknown> | undefined),
 }));
-// The TOTAL store mock, plus the one reader this file drives: `get` is what the
-// rollback reads the latched outcome off, so each case sets its own return.
-// Browser Mode links real ESM, so every name any module in this graph imports has
-// to be present — which is what the shared helper is for, and what the
+// The TOTAL store mock, plus the one reader this file drives: `get` is the
+// existence check every path takes before it writes, so each case sets its own
+// return. Browser Mode links real ESM, so every name any module in this graph
+// imports has to be present — which is what the shared helper is for, and what the
 // hand-listed factory that used to live here got wrong the moment store.ts gained
 // an export.
 vi.mock("../store.js", async () => ({
   ...(await import("../__test-helpers__/store-mock.js")).storeMock,
   get: mockGet,
   setThinking: vi.fn(),
-  setTurnFailed: vi.fn(),
-  setTurnDone: vi.fn(),
   recordSteerQueued: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
@@ -68,7 +69,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 import { send as transportSend } from "../transport.js";
-import { setThinking, setTurnFailed, setTurnDone, recordSteerQueued } from "../store.js";
+import { setThinking, recordSteerQueued } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { sendPrompt } from "./chat.js";
 
@@ -96,7 +97,7 @@ describe("sendPrompt — the ack is the whole POST", () => {
 
     expect(result).toBe("sent");
     expect(mockSend).toHaveBeenCalledTimes(1);
-    // The turn is running server-side; turn_ended (SSE) clears thinking, so the
+    // The turn is running server-side; turn_closed (SSE) clears thinking, so the
     // success path must not touch it after the optimistic set.
     const calls = vi.mocked(setThinking).mock.calls;
     expect(calls).toContainEqual(["c1", true]);
@@ -153,39 +154,21 @@ describe("sendPrompt — the three-way 409 split", () => {
     expect(setThinking).toHaveBeenLastCalledWith("c1", false);
   });
 
-  it("restores the outcome latches on 'starting' — no turn started", async () => {
-    // The refused send must be state-neutral on the glance surfaces: a red
-    // tab dot from the previous turn's failure stands until the holder's own
-    // turn actually opens (setThinking(true) at that event clears it on every
-    // device together). Leaving the optimistic clear in place erased the
-    // failure mark with a send that did not happen.
-    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy", reason: "starting" });
+  it("returns 'gone' on 409 reason:'chat_not_found' and retracts the optimistic thinking", async () => {
+    // Same error prose as the plain 409 again: only the lifted `reason` decides it. A
+    // tombstoned chat has no turn, so `thinking` left true would offer a steer into nothing.
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "in-flight",
+      reason: "chat_not_found",
+    });
 
-    await sendPrompt.dispatch(args);
+    const result = await sendPrompt.dispatch(args);
 
-    expect(setTurnFailed).toHaveBeenCalledWith("c1");
-    expect(setTurnDone).not.toHaveBeenCalled();
-  });
-
-  it("restores nothing on 'starting' when there was nothing latched", async () => {
-    mockGet.mockReturnValue({ id: "c1", model: "m1" });
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy", reason: "starting" });
-
-    await sendPrompt.dispatch(args);
-
-    expect(setTurnFailed).not.toHaveBeenCalled();
-    expect(setTurnDone).not.toHaveBeenCalled();
-  });
-
-  it("leaves the latches cleared on 'queued' — the live turn's open is the truth", async () => {
-    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
-    mockSend.mockResolvedValue({ ok: false, status: 409, error: "busy" });
-
-    await sendPrompt.dispatch(args);
-
-    expect(setTurnFailed).not.toHaveBeenCalled();
-    expect(setTurnDone).not.toHaveBeenCalled();
+    expect(result).toBe("gone");
+    expect(recordSteerQueued).not.toHaveBeenCalled();
+    expect(setThinking).toHaveBeenLastCalledWith("c1", false);
   });
 
   it("treats a 409 with any OTHER reason as the plain queue signal", async () => {
@@ -194,12 +177,10 @@ describe("sendPrompt — the three-way 409 split", () => {
   });
 });
 
-// The optimistic write is `setThinking(chatID, true)`, and that call CLEARS the
-// two outcome latches — starting a turn is what invalidates the previous turn's
-// verdict. So a rollback that restored `thinking: false` alone erased a failure
-// or a finished-while-away mark the reader had not seen yet, and the erasing
-// event was an ordinary rejected prompt: a 400, a 413, a dead POST.
-describe("sendPrompt — rollback restores what the optimistic write cleared", () => {
+// The rollback retracts `setThinking(chatID, true)`, and that is the whole contract
+// on every failure class: a 400, a 413, a 5xx and a dead POST all leave the chat
+// promptable with no turn claimed.
+describe("sendPrompt — rollback retracts the optimistic thinking", () => {
   it("fails (null) on a pre-ack network death — the POST is short now, so no echo rescue", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 0, code: "network", error: "unreachable" });
 
@@ -214,43 +195,66 @@ describe("sendPrompt — rollback restores what the optimistic write cleared", (
     expect(await sendPrompt.dispatch(args)).toBeNull();
   });
 
-  it("re-latches a failure the rejected send wiped", async () => {
-    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
+  it("retracts the thinking a 400 refused, in that order", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 400, error: "bad request" });
 
     await sendPrompt.dispatch({ ...args, messageID: "m3" });
 
+    // Both halves, and the ORDER: the optimistic set has to be observable before
+    // the retraction, or a rollback that never ran would pass on the last call
+    // alone.
     expect(setThinking).toHaveBeenCalledWith("c1", true);
     expect(setThinking).toHaveBeenLastCalledWith("c1", false);
-    expect(setTurnFailed).toHaveBeenCalledWith("c1");
   });
 
-  it("re-latches a finished-while-away mark the same way", async () => {
-    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_done: true });
+  it("retracts it on a 413 too — the class is every non-ack answer, not one status", async () => {
     mockSend.mockResolvedValue({ ok: false, status: 413, error: "too large" });
 
     await sendPrompt.dispatch({ ...args, messageID: "m4" });
 
-    expect(setTurnDone).toHaveBeenCalledWith("c1");
+    expect(setThinking).toHaveBeenLastCalledWith("c1", false);
   });
 
-  it("re-latches nothing when there was nothing latched", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 400, error: "bad request" });
-
-    await sendPrompt.dispatch({ ...args, messageID: "m5" });
-
-    expect(setTurnFailed).not.toHaveBeenCalled();
-    expect(setTurnDone).not.toHaveBeenCalled();
-  });
-
-  it("re-latches nothing on a send that succeeded", async () => {
-    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
+  it("leaves thinking ON when the send succeeded — the turn is running", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
 
     await sendPrompt.dispatch({ ...args, messageID: "m6" });
 
-    // The turn started, so the cleared verdict is correctly gone: restoring it
-    // here would paint a failure over live work.
-    expect(setTurnFailed).not.toHaveBeenCalled();
+    // The negative control for every case above: without it a rollback that fired
+    // unconditionally would satisfy all of them.
+    expect(vi.mocked(setThinking).mock.calls).not.toContainEqual(["c1", false]);
+  });
+});
+
+/** The payload of the command the transport was handed on the Nth send. */
+function payloadOf(call = 0): { resends?: readonly string[] } {
+  const cmd = mockSend.mock.calls[call]?.[0] as
+    { payload?: { resends?: readonly string[] } } | undefined;
+  return cmd?.payload ?? {};
+}
+
+// THE BODY IS THE GATE, NOT THE ARGS TYPE. `SendPromptArgs` is a closed interface and
+// `run` builds the POST body from NAMED fields, so a field that types but is never
+// copied into the payload reaches nobody — `turn_open.resent_steer_ids` would stay
+// producer-less with the whole client carry in place. So these assert over the
+// transport's captured body; a dispatch-level assertion passes with the payload build
+// untouched and is the shape that cannot see this.
+describe("sendPrompt — the resend ids reach the POST BODY", () => {
+  it("names the re-sent steers in the body's `resends`, in the order given", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+
+    await sendPrompt.dispatch({ ...args, resends: ["steer-2", "steer-1"] });
+
+    expect(payloadOf().resends).toEqual(["steer-2", "steer-1"]);
+  });
+
+  it("omits the field for an empty list, so `[]` never travels", async () => {
+    // The shape `attachments` already uses: an empty array on the wire is a positive
+    // claim that this prompt re-sent nothing, which is not what an absent carry means.
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+
+    await sendPrompt.dispatch({ ...args, messageID: "m7", resends: [] });
+
+    expect(payloadOf().resends).toBeUndefined();
   });
 });

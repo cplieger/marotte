@@ -99,12 +99,12 @@ func FuzzSliceByLines(f *testing.F) {
 }
 
 // TestFsErrorIsRoutine pins the routine-vs-real classification used to
-// decide whether an fs error is worth logging: only the sentinel
-// errIgnored is routine; nil and real errors are not.
+// decide whether an fs error is worth logging: a cap-exceeded rejection is
+// routine; nil and real errors are not.
 func TestFsErrorIsRoutine(t *testing.T) {
 	t.Parallel()
-	if got := fsErrorIsRoutine(errIgnored); !got {
-		t.Errorf("fsErrorIsRoutine(errIgnored) = %v, want true", got)
+	if got := fsErrorIsRoutine(errCapExceeded); !got {
+		t.Errorf("fsErrorIsRoutine(errCapExceeded) = %v, want true", got)
 	}
 	if got := fsErrorIsRoutine(nil); got {
 		t.Errorf("fsErrorIsRoutine(nil) = %v, want false", got)

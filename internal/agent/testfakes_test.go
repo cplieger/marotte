@@ -6,10 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"strconv"
 	"sync"
+	"sync/atomic"
+	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -477,10 +481,57 @@ func (b *fakeBridge) NotifCh() <-chan marotte.Notification { return b.notifCh }
 // newNoopBridge is for benchmarks where the bridge is never called.
 func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan marotte.Notification)} }
 
-// --- Fake ChatStore (delegates to testsupport.RecordingChatStore) ---
+// --- The test chat store: the REAL chat.Store on a per-hub directory ---
 
-type fakeChatStore = testsupport.RecordingChatStore
+// testChatStore is a real chat.Store (the store is a managed dependency and its
+// entry log is what the runtime writes) on its own directory under the package's
+// test root, plus the one counter a test reads that the store does not carry.
+type testChatStore struct {
+	*chat.Store
+	// Gets counts Get calls, for a test whose subject is how OFTEN the store is
+	// read rather than what it answers.
+	Gets atomic.Int64
+}
 
-func newFakeChatStore() *fakeChatStore {
-	return testsupport.NewRecordingChatStore()
+// testChatRoot holds every test hub's chat directory; TestMain creates it and
+// removes it, because newTestHub has no testing.TB to hang a cleanup on.
+var (
+	testChatRoot string
+	testChatSeq  atomic.Int64
+)
+
+func newTestChatStore() *testChatStore {
+	dir := filepath.Join(testChatRoot, strconv.FormatInt(testChatSeq.Add(1), 10))
+	s, err := chat.NewStore(dir)
+	if err != nil {
+		panic("test chat store: " + err.Error())
+	}
+	return &testChatStore{Store: s}
+}
+
+// wire hands the store the runtime's seams the composition root wires after New:
+// the broadcaster and the two registry reads the GET serves.
+func (s *testChatStore) wire(h *Runtime) {
+	chat.WithBroadcaster(h)(s.Store)
+	chat.WithLiveTurn(h.TurnLive)(s.Store)
+	chat.WithOpenTurns(h.OpenTurns)(s.Store)
+}
+
+func (s *testChatStore) Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool) {
+	s.Gets.Add(1)
+	return s.Store.Get(ctx, id)
+}
+
+// seed writes a header for id through Mutate, the one write path a test may take
+// to stage a chat that exists before the runtime touches it.
+func (s *testChatStore) seed(tb testing.TB, id marotte.ChatID, fill func(c *marotte.Chat)) {
+	tb.Helper()
+	if _, err := s.Mutate(tb.Context(), id, func(c *marotte.Chat, _ bool) bool {
+		if fill != nil {
+			fill(c)
+		}
+		return true
+	}); err != nil {
+		tb.Fatalf("seed chat %s: %v", id, err)
+	}
 }

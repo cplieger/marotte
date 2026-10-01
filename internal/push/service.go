@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/ssrf/v4"
-	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/ssrf/v4"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -377,10 +377,10 @@ func (s *Service) writeLoop() {
 	}
 }
 
-// loadPreferences reads per-kind notification toggles from
-// <configDir>/config.json and applies them. Missing file, missing
-// keys, or parse failures fall through to the default state set
-// in New via kindRegistry.
+// loadPreferences reads the notification toggles from <configDir>/config.json —
+// the per-kind ones, then the master — and applies them. Missing file, missing
+// keys, or parse failures fall through to the default state set in New via
+// kindRegistry.
 func (s *Service) loadPreferences(ctx context.Context) {
 	// Build local prefs map without holding mu — settings.Field does disk I/O.
 	local := make(map[marotte.PushKind]bool, len(kindRegistry))
@@ -394,6 +394,19 @@ func (s *Service) loadPreferences(ctx context.Context) {
 			local[kr.Kind] = v
 		} else {
 			local[kr.Kind] = kr.DefaultOn
+		}
+	}
+	// The MASTER switch, applied LAST so nothing above can re-widen it, and read here
+	// so the disk agrees with the settings write path's own arm: turning it off
+	// PATCHes only this key, so the per-kind keys keep their (usually absent,
+	// therefore ON) values and the assignment below would re-arm them.
+	//
+	// ONLY AN EXPLICIT FALSE ZEROES: this key's default is OFF ("the reader has not
+	// opted in") while each kind carries its own, so an absent master read as a
+	// decision would silence every workspace that has never opened Settings.
+	if enabled, ok := settings.Field[bool](ctx, s.dir, settings.KeyNotificationsEnabled); ok && !enabled {
+		for kind := range local {
+			local[kind] = false
 		}
 	}
 	// Single swap under mu — narrows critical section to one map assignment.

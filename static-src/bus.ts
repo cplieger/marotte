@@ -17,18 +17,13 @@ import { createBus } from "@cplieger/reactive";
 import type {
   ServerEvent,
   ChatHeader,
-  Message,
-  MessageChunkPayload,
-  ToolCallPayload,
-  ToolCallUpdatePayload,
-  TurnEndedPayload,
   SteerQueuedPayload,
-  SteerInjectedPayload,
-  SteerClearedPayload,
   AgentNoticePayload,
   PendingSnapshotPayload,
   StatusSnapshotPayload,
   TabsChangedPayload,
+  SpecApprovedPayload,
+  SpecChangedPayload,
   PermissionNeeded,
   ErrorPayload,
   ConnectedPayload,
@@ -41,6 +36,13 @@ import type {
   DecisionSettledPayload,
   DraftChangedPayload,
   OpenExternalURLPayload,
+  TurnOpenedPayload,
+  EntryOpenedPayload,
+  EntryDeltaPayload,
+  EntrySealedPayload,
+  EntryAppendedPayload,
+  TurnClosedPayload,
+  ToolProgressPayload,
   CodeReferencesPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,
@@ -53,7 +55,6 @@ import type {
   TerminalOutputPayload,
   TerminalExitedPayload,
   RunStartedPayload,
-  RunStepPayload,
   RunProgressPayload,
   RunFinishedPayload,
   RunInputNeededPayload,
@@ -71,21 +72,23 @@ export interface SSEPayloads {
   readonly chat_updated: ChatHeader;
   readonly chat_deleted: { readonly id: string };
   readonly chat_status: { readonly status?: string; readonly description?: string };
-  readonly message_appended: Message;
-  readonly message_created: Message;
-  readonly message_updated: Message;
-  readonly message_chunk: MessageChunkPayload;
+  // THE ENTRY LOG, six events plus the two live-only replaces. Each is an
+  // append to the log the window GET reads, a delta into an open entry, or a turn-level
+  // value the `turn_close` carries durably — no event moves, reorders or rewrites an entry,
+  // which is what makes live and reload agree. `turn_opened` always precedes its turn's
+  // first `entry_opened`.
+  readonly turn_opened: TurnOpenedPayload;
+  readonly entry_opened: EntryOpenedPayload;
+  readonly entry_delta: EntryDeltaPayload;
+  readonly entry_sealed: EntrySealedPayload;
+  readonly entry_appended: EntryAppendedPayload;
+  readonly turn_closed: TurnClosedPayload;
+  readonly tool_progress: ToolProgressPayload;
   readonly code_references: CodeReferencesPayload;
-  readonly tool_call: ToolCallPayload;
-  readonly tool_call_update: ToolCallUpdatePayload;
-  readonly turn_ended: TurnEndedPayload;
-  // Mid-turn steering, three signals kept apart on purpose: queued = KAS's
-  // buffer has it, injected = the model has read it, cleared = the turn
-  // boundary dropped it unread. Collapsing them would hide the only
-  // distinction that matters to somebody correcting a running turn.
+  // Mid-turn steering has ONE event: the steer reached KAS's buffer. Whether the
+  // model then read it, or a boundary dropped it unread, is the `steer` entry's own
+  // `state`, which arrives as entry_appended and survives a reload.
   readonly steer_queued: SteerQueuedPayload;
-  readonly steer_injected: SteerInjectedPayload;
-  readonly steer_cleared: SteerClearedPayload;
   // The agent's voice on the steering channel: a workflow step or a subagent
   // reporting progress into the session that launched it. Its own event so no
   // consumer has to decide whose words a steer holds.
@@ -110,6 +113,10 @@ export interface SSEPayloads {
   // closed tabs nobody closed. `version` is the client's only watermark and only
   // an EVENT may advance it; see tabs.ts applyTabsChanged for the three rules.
   readonly tabs_changed: TabsChangedPayload;
+  // A spec directory's files changed on disk, one frame per coalescing
+  // window; the spec tab whose ref matches refetches. Workspace-global.
+  readonly spec_changed: SpecChangedPayload;
+  readonly spec_approved: SpecApprovedPayload;
   readonly permission_needed: PermissionNeeded;
   readonly permissions_changed: PermissionsChangedPayload;
   readonly policy_error: PolicyErrorPayload;
@@ -149,7 +156,6 @@ export interface SSEPayloads {
   readonly run_started: RunStartedPayload;
   readonly run_progress: RunProgressPayload;
   readonly run_finished: RunFinishedPayload;
-  readonly run_step: RunStepPayload;
   // A workflow STEP asking a person a question, and the second run event that
   // carries its payload rather than saying "refetch". It has to: KAS parks the run
   // with one fixed pauseReason literal and an empty pauseDetail, so `inspect` says
@@ -272,6 +278,26 @@ export const BUS_TAB_CHANGED = "tabs:changed" as const;
  *  it opened over a buffer that had not arrived and owes an answer once it has.
  *  On the bus because the loader must not know what a find bar is. */
 export const BUS_EDITOR_FILE_LOADED = "editor:loaded" as const;
+/** A command POST failed, and the failure is the user's to see. Carries the chat
+ *  it belongs to (empty for a workspace-global command) and the server's own prose.
+ *
+ *  On the bus because the notice NAMES and JUMPS TO the affected chat, so
+ *  `failure-notice.ts` reaches the tab store, and the tab store reaches the
+ *  transport to dispatch its own mutations — a direct call from the transport
+ *  would close that ring. The send button remains the error surface for the
+ *  caller's own retry (`send-state.ts`); this is the corner overlay beside it. */
+export const BUS_COMMAND_FAILED = "command:failed" as const;
+/** A structured question the agent asked was ANSWERED, carrying the chat it was
+ *  asked in and the answer text the dock sent.
+ *
+ *  It exists because KAS's spec-mode phase checkpoint hands two of its three
+ *  after-tasks answers to the CLIENT to carry out ("the client carries these
+ *  out. … Then end the turn."), so a surface other than the dock has to act on
+ *  one. On the bus rather than a direct call because the actor is the spec page,
+ *  which mounts a dock of its own and would close the ring, and because a
+ *  listener may not exist at all: no spec tab is open in most sessions, and the
+ *  answer still has to reach KAS unchanged. */
+export const BUS_USER_INPUT_ANSWERED = "user-input:answered" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
@@ -283,6 +309,8 @@ interface BusPayloads {
   readonly [BUS_RUNS_CHANGED]: undefined;
   readonly [BUS_TAB_CHANGED]: { to: string; kind: string | null };
   readonly [BUS_EDITOR_FILE_LOADED]: { path: string };
+  readonly [BUS_COMMAND_FAILED]: { readonly chatID: string; readonly message: string };
+  readonly [BUS_USER_INPUT_ANSWERED]: { readonly chatID: string; readonly answer: string };
 }
 
 // The generic cross-module bus is backed by @cplieger/reactive's createBus

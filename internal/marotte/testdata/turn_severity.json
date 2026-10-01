@@ -74,6 +74,12 @@
       "severity": "stopped",
       "default_reason": "The turn ended for a reason marotte could not read.",
       "_why": "ConcludeStopReason's ruling holds: an unmeasured stop reason says nothing about whether the work succeeded, so grading it broken would report a working turn as failed. Equally not clean — a status mark may fall back to ambiguous, never to reassuring."
+    },
+    {
+      "outcome": "empty",
+      "severity": "stopped",
+      "default_reason": "",
+      "_why": "KAS ended the turn with end_turn and no content: nothing malfunctioned, so not broken, and nothing was answered, so not clean. It SAYS nothing because the footer's own outcome word already reads \"Empty\", and when the retry ran, the second card under it is the fact a sentence would state."
     }
   ]
 }

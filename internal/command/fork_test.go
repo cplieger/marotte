@@ -12,12 +12,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // forkHost answers TWO opens, because a tangent has two bridges: the parent's,
@@ -35,10 +34,9 @@ type forkHost struct {
 	// parent is the chat whose open gets bridgeDeps' bridge; every other chat gets
 	// tangentBridge. Named by the caller so a test forking a differently-named parent
 	// cannot silently route the parent's own resume to the tangent's bridge.
-	parent       marotte.ChatID
-	openChatIDs  []marotte.ChatID
-	openModels   []string
-	awaitChatIDs []marotte.ChatID
+	parent      marotte.ChatID
+	openChatIDs []marotte.ChatID
+	openModels  []string
 }
 
 func (d *forkHost) OpenBridge(ctx context.Context, chatID marotte.ChatID, model string) (Bridge, error) {
@@ -51,11 +49,6 @@ func (d *forkHost) OpenBridge(ctx context.Context, chatID marotte.ChatID, model 
 		return d.tangentBridge, nil
 	}
 	return d.bridgeDeps.OpenBridge(ctx, chatID, model)
-}
-
-func (d *forkHost) AwaitReplayAdopted(ctx context.Context, chatID marotte.ChatID) error {
-	d.awaitChatIDs = append(d.awaitChatIDs, chatID)
-	return d.bridgeDeps.AwaitReplayAdopted(ctx, chatID)
 }
 
 // opensFor counts the opens recorded for one chat, so a test asserting on the
@@ -123,10 +116,7 @@ func seedParent(t *testing.T, store ChatStore, id marotte.ChatID) {
 		c.CurrentModeID = "plan"
 		c.Effort = string(marotte.EffortHigh)
 		c.RecordSession("sess_parent")
-		c.Messages = []marotte.Message{
-			{ID: "u1", Role: marotte.RoleUser, Content: "how does the reaper work", Ts: 100},
-			{ID: "a1", Role: marotte.RoleAssistant, Content: "it keeps the session chain", Ts: 200},
-		}
+		c.TurnCount = 2
 		return true
 	}); err != nil {
 		t.Fatalf("seed parent: %v", err)
@@ -166,8 +156,8 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 	}
 	// Bound means the replay supplies the transcript. Copying messages here would
 	// duplicate what the session already carries.
-	if len(c.Messages) != 0 {
-		t.Errorf("tangent carries %d messages, want 0: the replay supplies them", len(c.Messages))
+	if c.TurnCount != 0 {
+		t.Errorf("tangent carries %d turns, want 0: the replay supplies them", c.TurnCount)
 	}
 	// The chain is what the reaper's keep-list reads, so a forked session must be
 	// IN it or the next sweep deletes the transcript the tangent is reading.
@@ -447,18 +437,15 @@ func TestCmdForkChat_OpensTheParentBridgeBeforeForking(t *testing.T) {
 	}
 }
 
-// replayInto writes the messages a session/load replay projects, standing in for the
-// swap that lands them in the record inside OpenBridge.
+// replayInto writes the turn count a session/load replay's merge leaves on the
+// header, standing in for the swap that lands the turns in the log inside OpenBridge.
 func replayInto(t *testing.T, store ChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	if _, err := store.Mutate(t.Context(), chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
-		c.Messages = []marotte.Message{
-			{ID: "u1", Role: marotte.RoleUser, Content: "how does the reaper work", Ts: 100},
-			{ID: "a1", Role: marotte.RoleAssistant, Content: "it keeps the session chain", Ts: 200},
-		}
+		c.TurnCount = 2
 		return true
 	}); err != nil {
 		t.Fatalf("replay into %q: %v", chatID, err)
@@ -484,8 +471,8 @@ func TestCmdForkChat_LoadsTheForkedHistoryIntoTheNewChat(t *testing.T) {
 	if !ok {
 		t.Fatal("the tangent chat was not created")
 	}
-	if len(c.Messages) != 2 {
-		t.Errorf("the tangent's record holds %d messages, want the parent's 2", len(c.Messages))
+	if c.TurnCount != 2 {
+		t.Errorf("the tangent's record holds %d turns, want the parent's 2", c.TurnCount)
 	}
 	// The HEADER half is load-bearing too: the client's isEmptyChat reads that count, so
 	// a header captured before the swap makes it skip its own fetch and render exactly
@@ -498,15 +485,17 @@ func TestCmdForkChat_LoadsTheForkedHistoryIntoTheNewChat(t *testing.T) {
 	if !ok {
 		t.Fatalf("chat = %T, want marotte.ChatHeader", reply["chat"])
 	}
-	if header.MessageCount != 2 {
-		t.Errorf("the response header reports message_count = %d, want 2", header.MessageCount)
+	if header.TurnCount != 2 {
+		t.Errorf("the response header reports turn_count = %d, want 2", header.TurnCount)
 	}
 }
 
 // The load runs on the TANGENT's own bridge, not the parent's: the replay projection is
 // keyed by chat, so a load on the parent's bridge would rewrite the PARENT's transcript
-// and seat the live untagged frames a load also emits in the parent's turn.
-func TestCmdForkChat_OpensTheTangentsOwnBridgeAndAwaitsItsReplay(t *testing.T) {
+// and seat the live untagged frames a load also emits in the parent's turn. Nothing
+// waits for the replay to be adopted: a late merge lands on its own and the swap's
+// subject_changed tells the client.
+func TestCmdForkChat_OpensTheTangentsOwnBridge(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
@@ -519,48 +508,6 @@ func TestCmdForkChat_OpensTheTangentsOwnBridgeAndAwaitsItsReplay(t *testing.T) {
 	}
 	if got := host.opensFor("c-tangent"); got != 1 {
 		t.Errorf("OpenBridge calls for the tangent = %d, want 1 (all opens: %v)", got, host.openChatIDs)
-	}
-	if !slices.Contains(host.awaitChatIDs, marotte.ChatID("c-tangent")) {
-		t.Errorf("AwaitReplayAdopted chats = %v, want the tangent's", host.awaitChatIDs)
-	}
-	if slices.Contains(host.awaitChatIDs, marotte.ChatID("c-parent")) {
-		t.Errorf("AwaitReplayAdopted chats = %v; the parent's replay is not this command's to wait on",
-			host.awaitChatIDs)
-	}
-}
-
-// A replay that has not landed inside the barrier's budget must not dead-end the
-// gesture: the chat and its tab exist, and the session stays bound.
-func TestCmdForkChat_ReplayBarrierExpiryStillOpensTheTangent(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedParent(t, store, "c-parent")
-	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
-	host := newForkHost(store, br, "c-parent")
-	host.awaitErr = errors.New("session/load replay not adopted within the barrier budget")
-
-	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
-
-	if statusOf(err) != http.StatusOK {
-		t.Fatalf("status = %d, want 200: a slow replay must not refuse the tangent (body %s)",
-			statusOf(err), errText(err))
-	}
-	reply, ok := body.(map[string]any)
-	if !ok {
-		t.Fatalf("body = %T, want map[string]any", body)
-	}
-	if reply["outcome"] != marotte.ForkOutcomeForked {
-		t.Errorf("outcome = %v, want %q: the fork itself succeeded", reply["outcome"], marotte.ForkOutcomeForked)
-	}
-	c, ok := store.Get(t.Context(), "c-tangent")
-	if !ok {
-		t.Fatal("the tangent chat was not created")
-	}
-	if c.ACPSessionID != "sess_tangent" {
-		t.Errorf("acp_session_id = %q, want sess_tangent: an unadopted replay must not detach the session",
-			c.ACPSessionID)
-	}
-	if len(c.Messages) != 0 {
-		t.Errorf("the tangent holds %d messages, want 0: nothing was adopted", len(c.Messages))
 	}
 }
 
@@ -612,8 +559,8 @@ func TestCmdForkChat_AFellThroughResumeReportsFresh(t *testing.T) {
 	if !ok {
 		t.Fatal("the tangent chat was not created")
 	}
-	if len(c.Messages) != 0 {
-		t.Errorf("the tangent holds %d messages, want 0: a fresh session carries no transcript", len(c.Messages))
+	if c.TurnCount != 0 {
+		t.Errorf("the tangent holds %d turns, want 0: a fresh session carries no transcript", c.TurnCount)
 	}
 }
 
@@ -682,9 +629,6 @@ func TestCmdForkChat_AFreshTangentLoadsNothing(t *testing.T) {
 	}
 	if got := host.opensFor("c-tangent"); got != 0 {
 		t.Errorf("OpenBridge calls for the tangent = %d, want 0: a fresh tangent has nothing to load", got)
-	}
-	if len(host.awaitChatIDs) != 0 {
-		t.Errorf("AwaitReplayAdopted chats = %v, want none", host.awaitChatIDs)
 	}
 }
 

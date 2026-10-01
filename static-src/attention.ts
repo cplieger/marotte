@@ -142,7 +142,7 @@ export function isUnseenCue(
 // ---------------------------------------------------------------------------
 
 /** What the fold reads per chat tab. A structural type, so tabs.ts passes its own
- *  projection without this module knowing what else a TabSpec carries. */
+ *  projection without this module knowing what else a TabViewSpec carries. */
 export interface CueCandidate {
   readonly id: string;
   readonly status: string;
@@ -289,9 +289,9 @@ export function iconVariantHref(href: string, variant: string): string | null {
  *  different subject.
  *
  *  It HAS to be remembered, and the reason reaches marotte by a different route
- *  than the reference. `turn_done`, `turn_failed` and `agent_status` are client
- *  latches rebuilt from server state: `handlers/system.ts` refetches the active
- *  chat on `transport:gap`, the connect handshake names every busy chat and
+ *  than the reference. Every input the dot reads is rebuilt from server state:
+ *  `handlers/system.ts` refetches the active
+ *  chat on `BUS_RECONCILE`, the connect handshake names every busy chat and
  *  re-pushes every unanswered decision (which is what makes `input` true again). Without this, a dismissed cue came
  *  back on the next page load — and, since the replay runs on every reconnect,
  *  on a phone simply returning to a backgrounded page.
@@ -457,20 +457,16 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
    *  what lets this be the funnel: the un-acknowledge is idempotent, and
    *  observing a watched chat's cue is a fact about the present, not an event.
    *
-   *  Which branches this leaves: every cue latches regardless of what the reader
-   *  is looking at — `done` (both producers: the `turn_ended` transport verdict
-   *  and `agent_status === "completed"`), `input` (an unanswered decision),
-   *  `waiting` (`waiting_on_user`) and `failed` (`turn_failed`). So the
-   *  acknowledgement path below is what keeps a watched chat out of the count, and
-   *  it is the ONLY thing that does. `done` used to be pre-acknowledged by
-   *  construction, because `handlers/turn.ts` skipped the latch for a watched
-   *  chat; it no longer does (the dot has to be able to turn green while you
-   *  watch), so this pass carries all four. */
+   *  Which branches this leaves: every cue is raised regardless of what the reader
+   *  is looking at — `done` and `failed` (the newest turn's own `turn_close.outcome`,
+   *  graded by `store.ts` `outcomeLatch`), `input` (an unanswered decision) and
+   *  `waiting` (`waiting_on_user`). So the acknowledgement path below is what keeps a
+   *  watched chat out of the count, and it is the ONLY thing that does. */
   function refresh(): void {
     const watchedTab = wiring.pageVisible() ? wiring.activeTabID() : "";
     for (const candidate of wiring.candidates()) {
       if (candidate.status === "") {
-        // NO INFORMATION, not a state. `TabSpec.dotStatus` is absent on a tab
+        // NO INFORMATION, not a state. `TabViewSpec.dotStatus` is absent on a tab
         // whose dot has never been written (the tick between `openTab` and the
         // store effect's first sweep), and `tabStatusFor` answers "" for a chat
         // the store does not know. Neither is evidence that a cue ENDED, so
@@ -546,11 +542,9 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
  *  test: document.hasFocus() is false for a visible-but-unfocused window, where
  *  the chat IS on screen. Same signal notify.ts reads, for the same decision.
  *
- *  There is no `isWatching(chatID)` beside it any more. It existed to give the
- *  `turn_done` latch and this file's acknowledgement pass ONE definition of
- *  "looking at it", and the latch stopped asking the question in 2026-08 — a
- *  finished turn is now `done` whoever is watching, so `refresh` is the only
- *  reader of that condition and derives it from its own injected wiring. */
+ *  There is no `isWatching(chatID)` beside it: a finished turn reads `done` whoever is
+ *  watching, so `refresh` is the only reader of that condition and derives it from its
+ *  own injected wiring. */
 export function pageVisible(): boolean {
   return document.visibilityState !== "hidden";
 }

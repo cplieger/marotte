@@ -77,11 +77,37 @@ const SHELL_THEME: Readonly<Record<string, string>> = {
 const encoder = new TextEncoder();
 
 /** Send bytes to the PTY through the kernel's sanitizing, scroll-snapping
- *  funnel (the v4 handle's supported host path). Used by the code-block
- *  "type in shell" action. No-op until the terminal is created (first panel
- *  open) and after teardown — `handle` is null then. */
+ *  funnel (the v4 handle's supported host path). No-op until the terminal is
+ *  created (first panel open). */
 function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
+}
+
+/** `firstFrame` settles once the terminal has drawn a screen frame. */
+let settleFirstFrame: () => void = () => undefined;
+const firstFrame = new Promise<void>((resolve) => {
+  settleFirstFrame = resolve;
+});
+
+/** Resolve `firstFrame` on the first screen frame that carries rows. Bytes sent
+ *  before the resume is served are lost or doubled: on a fresh session the
+ *  engine's ledger-lost drop empties the outbox, and a send between socket open
+ *  and the resumeAck is replayed by the outbox retransmit. A rows-less frame is
+ *  the pre-ack ED3 forward, a signal rather than a drawn screen, so it does not
+ *  count. */
+function firstFrameGate(): TerminalFeature {
+  return {
+    name: "firstFrameGate",
+    setup(ctx) {
+      return {
+        teardown: ctx.on("wire:screen", (msg) => {
+          if (msg.rows.length > 0) {
+            settleFirstFrame();
+          }
+        }),
+      };
+    },
+  };
 }
 
 // --- Reattaching after the PTY ends ---
@@ -324,12 +350,15 @@ export function initShellPanel(): void {
 
   wireFullscreenToggle();
 
-  // Code-block "type in shell" → the command lands at the prompt and WAITS.
-  // No trailing newline: pressing Enter is the confirmation, and until then the
-  // line is editable in place like anything else the user typed. handle.send
-  // snaps the view to the bottom, so the typed command is visible.
+  // The command and its "\r" ride ONE buffer: the sticky Ctrl transform rewrites a
+  // one-character payload, so a separate CR send becomes a CSI-u sequence.
   setShellRunCallback((cmd: string) => {
-    hostSend(encoder.encode(cmd));
+    if (!shellOpen) {
+      setShellOpen(true, { focus: false });
+    }
+    void firstFrame.then(() => {
+      hostSend(encoder.encode(`${cmd}\r`));
+    });
   });
 
   initShellResize();
@@ -485,7 +514,7 @@ function ensureTerminal(): void {
   handle = createTerminal($.shellTerminal, {
     features: () => {
       keys = mobileToolbar({ externalToggle: true });
-      return [...presetSingle(), keys];
+      return [...presetSingle(), firstFrameGate(), keys];
     },
     layout: "container",
     wsPath: SHELL_WS_PATH,

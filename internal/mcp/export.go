@@ -59,11 +59,10 @@ func copyPairs(in []KeyPair) []KeyPair {
 	return out
 }
 
-// preserveNilSlice keeps the existing value when the update omitted the
-// field entirely (nil patch) and otherwise takes the patch (including an
-// explicit empty slice = clear). Used for auto_approve, which has no
-// dedicated edit UI: a modal edit omits it and must not drop a value set
-// via the raw-JSON panel, while a raw edit can still set or clear it.
+// preserveNilSlice keeps the existing value when the update omitted the field
+// entirely (nil patch) and otherwise takes the patch, so an explicit empty
+// slice is a CLEAR. Both tool lists need that distinction; Store.Update states
+// what a dropped disabled_tools would cost.
 func preserveNilSlice(patch, existing []string) []string {
 	if patch == nil {
 		return append([]string(nil), existing...)

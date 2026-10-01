@@ -1,57 +1,64 @@
 // ---------------------------------------------------------------------------
-// paint() branches on the DECLARED render cause (design §B2): the store says
-// what a version bump was FOR, and the renderer skips exactly the work that
-// cause makes unnecessary.
+// paint() branches on the DECLARED render cause: the store says what a bump was
+// FOR, and the renderer skips exactly the work that cause makes unnecessary.
 //
-//   chunk — a mounted block's signal painted the text; paint is tail
-//           bookkeeping only. No projection, no reconcile, no fold pass, no
-//           per-turn update.
-//   tool  — the owning message's card refreshes through the existing keyed
-//           update; sibling turns are never touched.
-//   shape — the full pass, and it must run even when nothing about the array's
-//           SHAPE says so (gpt R3-H3's case: an in-place same-length
-//           message_updated is invisible to any identity- or length-based
-//           inference, so the store's declaration is the only honest signal).
-//
-// The skip assertions are spy deltas on the real seams paint drives —
-// projectTurns (projection), reconcile (mount/update), isTurnOpen (fold pass),
-// setResidentTurns (rail) and the messages-blocks entry points (per-turn updates) —
-// plus element-identity checks over `#messages`' children, because a reconcile
-// that rebuilt a card would mint new nodes even if it produced equal markup.
-// Everything below drives the REAL store: sessions land through setSessions /
-// appendChunk / upsertToolCall / upsertMessage, and the paint under test is the
-// one the transcript effect runs.
+//   chunk — a MOUNTED entry's own signal painted the text, or the entry is in a
+//           delegate's lane and renders at no position at all.
+//   tool  — one call's update: the owning TURN's keyed refresh, never a mount.
+//   fact  — a fact flipped with the log unchanged, which no inference over the
+//           array can see; the store's declaration is the only signal.
+// ---------------------------------------------------------------------------
+// A skip is asserted as a spy delta on the seams paint drives, plus element
+// identity over the view's children, because a reconcile that rebuilt a card
+// would mint new nodes even for equal markup.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, vi } from "vitest";
-import type { Message, Session, ToolCall } from "./types.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { makeSession } from "./__test-helpers__/model.js";
+import type { SessionOverrides } from "./__test-helpers__/model.js";
+// The two streaming describes wait on REAL frames (a delta reaches a bubble
+// through the reveal cursor, which spreads growth across frames), so both
+// declare their bound in the unit that harness charges.
+import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
+import type { Session } from "./types.js";
+import type { Entry, OpenEntry } from "./wire/types.gen.js";
 
-// The renderer's import graph reaches the shared DOM registry, which throws on
-// a missing app root. These ids have to exist before the import is evaluated
-// (the composer pair because a send-state effect in the graph tracks the active
-// chat and paints the send button on every switch).
+// The renderer's graph reads the shared DOM registry at module scope, and `byId`
+// throws on a missing element, so the hosts exist before any import resolves.
 for (const id of [
-  "messages",
-  "messages-wrap",
-  "messages-wrap-outer",
   "chat-view",
+  "messages-wrap-outer",
+  "messages-wrap",
+  "messages",
   "scroll-bottom",
   "send-btn",
   "prompt-input",
 ]) {
   const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
   d.id = id;
-  document.body.appendChild(d);
+  if (id === "scroll-bottom") {
+    d.appendChild(document.createElement("span"));
+  }
+  if (id === "messages-wrap") {
+    document.getElementById("messages-wrap-outer")?.appendChild(d);
+  } else if (id === "messages") {
+    document.getElementById("messages-wrap")?.appendChild(d);
+  } else {
+    document.body.appendChild(d);
+  }
 }
 
-// The scroller is mocked (the shared helper, so the surface stays total); the
-// paint path only needs its calls to be inert. Everything else is REAL, spied
+// The scroller is mocked through the shared helper so its surface stays total;
+// the paint path only needs its calls inert. Everything else is REAL, spied
 // where a skip has to be proven.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
+// The rail is SPIED, not replaced: `setResidentTurns` is one of the seams a skipped pass
+// must not reach, and the count is the only thing this file reads off it. `{ spy: true }`
+// keeps the real module, so the rail this suite paints through is the shipped one.
+vi.mock("./turn-rail.js", { spy: true });
 vi.mock("./turns.js", { spy: true });
 vi.mock("./reconcile.js", { spy: true });
 vi.mock("./fold-state.js", { spy: true });
-vi.mock("./turn-rail.js", { spy: true });
 vi.mock("./messages-blocks.js", { spy: true });
 
 const store = await import("./store.js");
@@ -63,63 +70,99 @@ const blocksMod = await import("./messages-blocks.js");
 const messages = await import("./messages.js");
 
 messages.mountChatView();
-const messagesEl = document.getElementById("messages")!;
 
-/** The active view's element — the paint root under the multiplexer. */
-function viewRoot(): HTMLElement {
-  return messages.activeTranscriptView() ?? (messagesEl as HTMLElement);
+let seq = 0;
+function freshID(prefix: string): string {
+  return `${prefix}-${String(++seq)}`;
 }
 
-function user(id: string, content: string): Message {
-  return { id, role: "user", ts: 1, content } as Message;
+// --- Fixtures -------------------------------------------------------------------------
+
+function session(id: string, over: SessionOverrides = {}): Session {
+  return makeSession({ id, name: id, ...over });
 }
 
-function assistant(id: string, text: string): Message {
-  return {
+/** A sealed entry of any kind at `seq`. An absent lane is `""`, the transcript's own. */
+function sealed(
+  turnID: string,
+  at: number,
+  kind: Entry["kind"],
+  payload: unknown,
+  id?: string,
+): Entry {
+  return { id: id ?? `${turnID}-e${String(at)}`, turn: turnID, kind, seq: at, ts: at + 1, payload };
+}
+
+function turnOpen(turnID: string, n: number, text = "go"): Entry {
+  return sealed(turnID, 0, "turn_open", {
+    prompt: { id: `${turnID}-p`, text },
+    source: "prompt",
+    n,
+  });
+}
+
+function textEntry(turnID: string, at: number, s: string, id?: string): Entry {
+  return sealed(turnID, at, "text", { text: s }, id);
+}
+
+function toolCall(turnID: string, at: number, id: string): Entry {
+  return sealed(
+    turnID,
+    at,
+    "tool_call",
+    { id, title: "Run command", kind: "execute", status: "in_progress", ts: at + 1 },
     id,
-    role: "assistant",
-    ts: 2,
-    content: text,
-    blocks: [{ type: "text", text }],
-  } as Message;
+  );
 }
 
-/** An assistant message longer than the block budget, so a paint mounts a WINDOW of
- *  it and its head is outside the DOM. */
-function hugeAssistant(id: string, blocks: number): Message {
-  return {
-    id,
-    role: "assistant",
-    ts: 2,
-    content: "",
-    blocks: Array.from({ length: blocks }, (_, i) => ({
-      type: "text",
-      text: `chunk ${String(i)}`,
-    })),
-  } as unknown as Message;
+function turnClose(turnID: string, at: number, outcome = "completed"): Entry {
+  return sealed(turnID, at, "turn_close", { outcome });
 }
 
-function assistantWithTool(id: string, tc: ToolCall): Message {
-  return {
-    id,
-    role: "assistant",
-    ts: 2,
-    content: "",
-    blocks: [{ type: "tool_use", tool_call_id: tc.id }],
-    tool_calls: [tc],
-  } as unknown as Message;
+function open(turnID: string, id: string, text: string): OpenEntry {
+  return { turn: turnID, id, kind: "text", text, n: 1 };
 }
 
-function session(id: string, msgs: Message[], thinking: boolean): Session {
-  return {
-    id,
-    name: id,
-    messages: msgs,
-    message_count: msgs.length,
-    has_more: false,
-    thinking,
-    working_label: "",
-  } as unknown as Session;
+/** A chat holding whole SEALED turns, the shape a page GET lands. */
+function settledChat(
+  id: string,
+  turns: readonly (readonly Entry[])[],
+  over: SessionOverrides = {},
+): Session {
+  const s = session(id, over);
+  for (const entries of turns) {
+    const first = entries[0];
+    if (first === undefined) {
+      continue;
+    }
+    s.turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+    s.turn_order.push(first.turn);
+  }
+  s.turn_count = s.turn_order.length;
+  return s;
+}
+
+/** Mount chats and activate the first, announcing the window as a REPLAY (the cause a
+ *  fetched page carries), so no case inherits an arrival tail from its own seed. */
+function seed(...sessions: Session[]): void {
+  store.setSessions(sessions);
+  const first = sessions[0];
+  if (first !== undefined) {
+    store.setActive(first.id);
+    store.bumpMessages(first.id, "load");
+  }
+}
+
+function viewOf(chatID: string): HTMLElement {
+  const el = messages.transcriptViewFor(chatID);
+  if (el === null) {
+    throw new Error(`no resident view for ${chatID}`);
+  }
+  return el;
+}
+
+function cardsOf(chatID: string): HTMLElement[] {
+  return [...viewOf(chatID).querySelectorAll<HTMLElement>(":scope > .turn")];
 }
 
 /** Call counts on every seam a skipped pass must not touch. */
@@ -134,490 +177,284 @@ function seamCounts(): Record<string, number> {
   };
 }
 
-/** Mount `msgs` as a fresh chat and return the painted turn cards. */
-function mount(chatID: string, msgs: Message[], thinking: boolean): HTMLElement[] {
-  store.setSessions([session(chatID, msgs, thinking)]);
-  store.setActive(chatID);
-  return [...viewRoot().children] as HTMLElement[];
+function sameNodes(after: readonly HTMLElement[], before: readonly HTMLElement[]): void {
+  expect(after).toHaveLength(before.length);
+  // Per element, because `toEqual` over nodes compares them STRUCTURALLY and so passes for
+  // a rebuilt element holding the same markup — the one thing this assertion is for.
+  for (const [i, el] of after.entries()) {
+    expect(el).toBe(before[i]);
+  }
 }
 
-/** One microtask: the per-chat coalescer flushes, and the flush paints. */
+/** One microtask: the store's per-chat coalescer flushes, and the flush paints. */
 async function flushed(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("paint branches on the flushed render cause", () => {
-  // Message ids are chat-prefixed THROUGHOUT: the reconcile is keyed by message
-  // id, so reusing ids across this file's chats would make a chat switch UPDATE
-  // a previous test's cards instead of mounting fresh ones.
-  it(
-    "a chunk flush runs zero projection, reconcile, fold or per-turn work",
-    { timeout: 15_000 },
-    async () => {
-      const chat = "cause-chunk";
-      const kids = mount(chat, [user("ck-u1", "hi"), assistant("ck-a1", "hello")], true);
-      expect(kids.length).toBe(1);
-      const before = seamCounts();
+/** Two frames, for the cold body build the window drains per frame and for a
+ *  `content-visibility: auto` row's first relevance pass. */
+async function settledFrames(): Promise<void> {
+  await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+  await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+}
 
-      store.appendChunk(chat, "ck-a1", " world", false, 0, "");
-      await flushed();
-
-      expect(store.renderCauseOf(chat).cause).toBe("chunk");
-      expect(seamCounts()).toEqual(before);
-      const after = [...viewRoot().children];
-      expect(after.length).toBe(kids.length);
-      expect(after.every((el, i) => el === kids[i])).toBe(true);
-      // The skip lost nothing: the mounted block's own signal carries the text.
-      // The reveal holds the live edge's tail back while the turn is thinking,
-      // so END the turn — the fact flush finalizes and the reveal drains.
-      store.setThinking(chat, false);
-      await flushed();
-      await vi.waitFor(
-        () => {
-          expect(viewRoot().querySelector(".message.assistant")?.textContent).toContain("world");
-        },
-        { timeout: 10_000 },
-      );
-    },
-  );
-
-  it("a delta to an UNMOUNTED block schedules nothing at all", async () => {
-    // The signal-absent fallback exists for a MOUNTED block whose liveness was
-    // misjudged: the full pass re-reads it. For a block outside the window the pass
-    // paints nothing either, so a parked reader would pay one full pass per delta —
-    // which on a streaming run is a pass per frame over the whole transcript.
-    const chat = "cause-unmounted";
-    const kids = mount(chat, [user("cu-u1", "hi"), hugeAssistant("cu-a1", 700)], false);
-    expect(kids.length).toBe(1);
-    await vi.waitFor(() => {
-      expect(viewRoot().querySelectorAll("[data-block-index]").length).toBeGreaterThan(48);
-    });
-    // The case's premise: block 0 is outside the mounted window.
-    expect(viewRoot().querySelector('[data-block-index="0"]')).toBeNull();
-    const before = seamCounts();
-
-    store.appendChunk(chat, "cu-a1", " more", false, 0, "");
-    await flushed();
-
-    expect(seamCounts()).toEqual(before);
-    // And nothing is lost: the text is in the store, and a scroll back mounts it from
-    // there (`block-virtualization.test.ts` pins that half).
-    const blocks = store.get(chat)?.messages.find((m) => m.id === "cu-a1")?.blocks ?? [];
-    expect(blocks[0]?.text).toBe("chunk 0 more");
-  });
-
-  it("a delta to a MOUNTED block with no signal still runs the full pass", async () => {
-    // The other side of the same condition, and the behaviour the fallback is FOR: a
-    // settled message's blocks carry no per-block signal, so the pass is what puts the
-    // text on screen through `syncMountedText`.
-    const chat = "cause-mounted";
-    mount(chat, [user("cm-u1", "hi"), assistant("cm-a1", "hello")], false);
-    await vi.waitFor(() => {
-      expect(viewRoot().querySelector('[data-block-index="0"]')).not.toBeNull();
-    });
-    const before = seamCounts();
-
-    // The delta runs past the assertion below because the bubble's reveal holds its
-    // last characters back behind the caret.
-    store.appendChunk(chat, "cm-a1", " world and then some", false, 0, "");
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("shape");
-    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBeGreaterThan(
-      before["projectTurns"]!,
-    );
-    await vi.waitFor(() => {
-      expect(viewRoot().querySelector('[data-block-index="0"]')?.textContent).toContain("world");
-    });
-  });
-
-  it("a tool flush refreshes only the owning message's card", async () => {
-    const chat = "cause-tool";
-    const tc = {
-      id: "tc-1",
-      title: "Run command",
-      kind: "execute",
-      status: "in_progress",
-    } as unknown as ToolCall;
-    // The tool-bearing message is in the NEWEST turn: the fold policy wants that
-    // turn open, so its card is mounted and its per-tool signal exists — which is
-    // what makes the cause `tool` rather than the signal-absent `shape` fallback.
-    const kids = mount(
-      chat,
-      [
-        user("ct-u1", "one"),
-        assistant("ct-a1", "done"),
-        user("ct-u2", "two"),
-        assistantWithTool("ct-a2", tc),
-      ],
-      false,
-    );
-    expect(kids.length).toBe(2);
-    const before = seamCounts();
-    const refreshBefore = vi.mocked(blocksMod.refreshMessageCard).mock.calls.length;
-
-    store.upsertToolCall(chat, "ct-a2", { ...tc, status: "completed" } as ToolCall, 0);
-    await flushed();
-
-    expect(store.renderCauseOf(chat)).toEqual({ cause: "tool", msgID: "ct-a2" });
-    // The keyed update ran for the one owning message, and it found its render.
-    const refreshCalls = vi.mocked(blocksMod.refreshMessageCard).mock;
-    expect(refreshCalls.calls.length).toBe(refreshBefore + 1);
-    expect(refreshCalls.calls.at(-1)?.[0]).toBe("ct-a2");
-    expect(refreshCalls.results.at(-1)?.value).toBe(true);
-    // No projection, no reconcile, no fold pass — and zero FULL-PATH body
-    // updates: the spy sees only cross-module calls, so the keyed update's own
-    // internal path is exactly the one that does not show here.
-    expect(seamCounts()).toEqual(before);
-    // Sibling turn DOM identity preserved (nothing remounted anywhere).
-    const after = [...viewRoot().children];
-    expect(after.every((el, i) => el === kids[i])).toBe(true);
-  });
-
-  it("an old-turn same-length message_updated classifies shape and repaints that turn", async () => {
-    const chat = "cause-shape";
-    const kids = mount(
-      chat,
-      [
-        user("cs-u1", "first ask"),
-        assistant("cs-a1", "old answer"),
-        user("cs-u2", "next"),
-        assistant("cs-a2", "ok"),
-      ],
-      false,
-    );
-    const oldTurn = kids[0]!;
-    expect(oldTurn.querySelector(".turn-req-text")?.textContent).toBe("first ask");
-    const before = seamCounts();
-
-    // Same LENGTH, different text: invisible to any identity- or length-based
-    // change inference — only the store's declared cause can repaint it.
-    store.upsertMessage(chat, user("cs-u1", "FIRST TASK"));
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("shape");
-    // The full pass ran…
-    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
-    // …and repainted that turn IN PLACE with the new text.
-    expect(viewRoot().children[0]).toBe(oldTurn);
-    expect(oldTurn.querySelector(".turn-req-text")?.textContent).toBe("FIRST TASK");
-  });
-
-  it("a chunk flush over 500 mounted turns is bookkeeping-only", { timeout: 15_000 }, async () => {
-    const chat = "cause-500";
-    const msgs: Message[] = [];
-    for (let i = 0; i < 500; i++) {
-      msgs.push(
-        user(`c5-u${String(i)}`, `ask ${String(i)}`),
-        assistant(`c5-a${String(i)}`, `answer ${String(i)}`),
-      );
-    }
-    const kids = mount(chat, msgs, true);
-    expect(kids.length).toBe(500);
-    const before = seamCounts();
-
-    store.appendChunk(chat, "c5-a499", "!", false, 0, "");
-    await flushed();
-
-    // Bookkeeping only: zero projection, zero reconcile, zero fold-pass reads,
-    // zero rail re-observation, zero per-turn updates…
-    expect(seamCounts()).toEqual(before);
-    // …and the 500 cards are the SAME 500 nodes (a rebuild would mint new ones).
-    const after = [...viewRoot().children];
-    expect(after.length).toBe(500);
-    expect(after.every((el, i) => el === kids[i])).toBe(true);
-  });
+beforeEach(() => {
+  // The multiplexer's registry persists at module scope, so an earlier case's parked view
+  // would otherwise count against the LRU budget of a later one.
+  messages.teardownAll();
+  store.setSessions([]);
+  store.setActive("");
 });
 
+describe(
+  "paint branches on the flushed render cause",
+  { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
+  () => {
+    it("a chunk flush runs zero projection, reconcile, fold or per-turn work", async () => {
+      const a = freshID("c-chunk");
+      const t = `${a}-t1`;
+      const s = session(a, { thinking: true });
+      s.turns.set(t, { entries: [turnOpen(t, 1)], openEntries: new Map() });
+      s.turn_order.push(t);
+      s.turn_count = 1;
+      seed(s);
+      store.openEntry(a, open(t, "say-1", "hello"));
+      // The precondition, asserted rather than assumed: the delta below is only a `chunk`
+      // because a MOUNTED bubble's own signal carries it.
+      await vi.waitFor(() => {
+        expect(viewOf(a).querySelector(".message.assistant")).not.toBeNull();
+      });
+      const kids = [...viewOf(a).children] as HTMLElement[];
+      const before = seamCounts();
+
+      store.applyDelta(a, t, "say-1", "", 2, " world");
+      await flushed();
+
+      expect(store.renderCauseOf(a).cause).toBe("chunk");
+      expect(seamCounts()).toEqual(before);
+      sameNodes([...viewOf(a).children] as HTMLElement[], kids);
+
+      // The skip lost nothing: the entry's signal puts the text on screen. The reveal holds
+      // the live edge's tail back, so CLOSE the turn — the pass that finalizes drains it.
+      store.appendEntry(a, turnClose(t, 1));
+      await vi.waitFor(
+        () => {
+          expect(viewOf(a).querySelector(".message.assistant")?.textContent).toContain("world");
+        },
+        { timeout: FRAME_BUDGET_MS },
+      );
+    });
+
+    it("a delta with no signal cell classifies shape, so the full pass paints it", async () => {
+      // The open tail of a page GET: seated with the window rather than by a live
+      // `entry_opened`, so no signal cell exists and nothing is subscribed to it. The
+      // classification is the subject, so the chat is deliberately not the active one.
+      const bg = freshID("c-nosig");
+      const t = `${bg}-t1`;
+      const s = session(bg);
+      s.turns.set(t, {
+        entries: [turnOpen(t, 1)],
+        openEntries: new Map([["", { turn: t, id: "say-1", kind: "text", text: "hello", n: 1 }]]),
+      });
+      s.turn_order.push(t);
+      s.turn_count = 1;
+      store.setSessions([s]);
+      await flushed();
+
+      store.applyDelta(bg, t, "say-1", "", 2, " world");
+      await flushed();
+
+      expect(store.renderCauseOf(bg).cause).toBe("shape");
+    });
+
+    it("a tool flush refreshes only the owning turn's card", async () => {
+      const a = freshID("c-tool");
+      const t1 = `${a}-t1`;
+      const t2 = `${a}-t2`;
+      // The tool call is in the NEWEST turn: the fold policy wants that turn open, so its
+      // body is mounted and its per-call signal exists — which is what makes the cause
+      // `tool` rather than the signal-absent fallback.
+      seed(
+        settledChat(a, [
+          [turnOpen(t1, 1), textEntry(t1, 1, "done"), turnClose(t1, 2)],
+          [turnOpen(t2, 2), toolCall(t2, 1, "tc-1")],
+        ]),
+      );
+      await vi.waitFor(() => {
+        expect(viewOf(a).querySelector(".tool-call")).not.toBeNull();
+      });
+      const kids = [...viewOf(a).children] as HTMLElement[];
+      const before = seamCounts();
+      const refreshBefore = vi.mocked(blocksMod.refreshMessageCard).mock.calls.length;
+
+      store.applyToolProgress(a, t2, { turn: t2, tool_call_id: "tc-1", status: "completed" });
+      await flushed();
+
+      expect(store.renderCauseOf(a)).toEqual({ cause: "tool", turnID: t2 });
+      const refresh = vi.mocked(blocksMod.refreshMessageCard).mock;
+      expect(refresh.calls.length).toBe(refreshBefore + 1);
+      expect(refresh.calls.at(-1)?.[0]?.id).toBe(t2);
+      // It found its render, which is what lets paint return: an absent one falls through
+      // to the full pass instead, because only the full pass mounts.
+      expect(refresh.results.at(-1)?.value).toBe(true);
+      expect(seamCounts()).toEqual(before);
+      sameNodes([...viewOf(a).children] as HTMLElement[], kids);
+    });
+
+    it("a delta in a delegate's lane is bookkeeping-only for the transcript", async () => {
+      const a = freshID("c-lane");
+      const t = `${a}-t1`;
+      seed(settledChat(a, [[turnOpen(t, 1), textEntry(t, 1, "done"), turnClose(t, 2)]]));
+      await settledFrames();
+      const kids = [...viewOf(a).children] as HTMLElement[];
+      const before = seamCounts();
+
+      store.appendEntry(a, {
+        id: "sub-e1",
+        turn: t,
+        lane: "sub-1",
+        kind: "text",
+        seq: 3,
+        ts: 9,
+        payload: { text: "delegate prose" },
+      });
+      await flushed();
+
+      expect(store.renderCauseOf(a).cause).toBe("chunk");
+      expect(seamCounts()).toEqual(before);
+      sameNodes([...viewOf(a).children] as HTMLElement[], kids);
+      // And nothing of it is on screen, which is what makes the skip free: a laned entry
+      // renders at no position in the transcript's own lane.
+      expect(viewOf(a).textContent).not.toContain("delegate prose");
+    });
+
+    it("a fact flip runs the full pass and repaints its cards in place", async () => {
+      const a = freshID("c-fact");
+      const t = `${a}-t1`;
+      seed(settledChat(a, [[turnOpen(t, 1), textEntry(t, 1, "done"), turnClose(t, 2)]]));
+      await settledFrames();
+      const kids = cardsOf(a);
+      const before = seamCounts();
+
+      // A transcript fact the ARRAY cannot state: no entry was appended, no entry changed
+      // length, so nothing about the log's shape says a repaint is owed.
+      store.setThinking(a, true);
+      await flushed();
+
+      expect(store.renderCauseOf(a).cause).toBe("fact");
+      expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBeGreaterThan(
+        before["projectTurns"] ?? 0,
+      );
+      sameNodes(cardsOf(a), kids);
+    });
+  },
+);
+
 // ---------------------------------------------------------------------------
-// `.is-bodyless` on the turn card mirrors "the card ends with an empty body"
-// for CSS (29-turns.css keys the header's bottom edge on it). buildTurn and
-// updateTurn stamp it after every pass, so it must track both facts it
-// encodes: the body's children AND whether a footer follows.
+// `.is-bodyless` on the turn card mirrors "the card ends with an empty body" for
+// CSS (29-turns.css keys the header's bottom edge on it). It is stamped after
+// every build and update pass, so it must track both facts it encodes: the
+// body's children AND whether a footer follows.
 // ---------------------------------------------------------------------------
 
 describe("the bodyless turn card is marked .is-bodyless", () => {
   it("marks a prompt-only turn and clears it when the reply lands", async () => {
-    const chat = "bodyless-clear";
-    const kids = mount(chat, [user("bl-u1", "hi")], true);
-    expect(kids.length).toBe(1);
-    expect(kids[0]?.classList.contains("is-bodyless")).toBe(true);
+    const a = freshID("c-bl");
+    const t = `${a}-t1`;
+    const s = session(a, { thinking: true });
+    s.turns.set(t, { entries: [turnOpen(t, 1, "hi")], openEntries: new Map() });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s);
+    await settledFrames();
+    const card = cardsOf(a)[0];
+    expect(card?.classList.contains("is-bodyless")).toBe(true);
 
-    store.upsertMessage(chat, assistant("bl-a1", "hello"));
-    await flushed();
-    const card = viewRoot().firstElementChild;
-    expect(card?.querySelector(":scope > .turn-body")?.childElementCount).toBe(1);
-    expect(card?.classList.contains("is-bodyless")).toBe(false);
+    store.appendEntry(a, textEntry(t, 1, "hello"));
+    await settledFrames();
+    const after = cardsOf(a)[0];
+    expect(after?.querySelector(":scope > .turn-body")?.childElementCount).toBe(1);
+    expect(after?.classList.contains("is-bodyless")).toBe(false);
   });
 
   it("paints a reserved slot as a marked row, end to end", async () => {
-    // The msg-row half of the same CSS contract, through the REAL block
-    // callbacks (initBlockCallbacks): an assistant message whose text block is
-    // still empty paints a `.msg-row.is-empty` the stylesheet can hide.
-    const chat = "bodyless-row";
-    mount(chat, [user("br-u1", "go"), assistant("br-a1", "")], false);
-    const row = viewRoot().querySelector(".msg-row");
-    expect(row).not.toBeNull();
-    expect(row?.classList.contains("is-empty")).toBe(true);
-
-    store.appendChunk(chat, "br-a1", "landed", false, 0, "");
-    await flushed();
-    expect(viewRoot().querySelector(".msg-row")?.classList.contains("is-empty")).toBe(false);
+    // The msg-row half of the same CSS contract, through the REAL block callbacks: a text
+    // entry carrying no text paints a `.msg-row.is-empty` the stylesheet hides. The turn is
+    // SETTLED because blank is `!live && nothing rendered` — a live bubble stays visible
+    // for its caret, so a reserved slot is only ever marked on a bubble that is not
+    // streaming (`fundamentals/text-bubble.ts`).
+    const a = freshID("c-blrow");
+    const t = `${a}-t1`;
+    seed(settledChat(a, [[turnOpen(t, 1, "go"), textEntry(t, 1, ""), turnClose(t, 2)]]));
+    await vi.waitFor(() => {
+      expect(viewOf(a).querySelector(".msg-row")).not.toBeNull();
+    });
+    expect(viewOf(a).querySelector(".msg-row")?.classList.contains("is-empty")).toBe(true);
   });
 
   it("clears it when a FOOTER arrives under a still-empty body", async () => {
-    // A second prompt gives the first turn a footer while its body stays empty
-    // (a rewind target, and an outcome to state). The body is no longer the
-    // card's last child, so the header keeps its border and
-    // `.turn-body:empty + .turn-footer` drops the footer's instead — marking
-    // here would erase the only line between the two bands.
-    //
-    // `thinking: true` because a prompt-only turn at the TAIL is a turn whose
-    // reply has not landed, and that is the only shape that reaches this state
-    // in production. It is load-bearing rather than incidental: `deriveOutcome`
-    // reads a settled tail turn with no assistant message as `unknown` (nothing
-    // closed it), whose severity earns a footer of its own — so with the flag
-    // off, neither prompt-only turn here is bodyless and the case cannot
-    // describe the footer half at all. `isLive` is `thinking && last`, so only
-    // the tail is live: turn 1 still settles the moment turn 2 arrives.
-    const chat = "bodyless-footer";
-    const kids = mount(chat, [user("bf-u1", "one")], true);
-    expect(kids[0]?.classList.contains("is-bodyless")).toBe(true);
+    // A closed turn with nothing in its body earns a footer of its own (an outcome to
+    // state, and the next turn's prompt as a rewind target), so the body is no longer the
+    // card's last child: marking here would erase the only line between the two bands.
+    const a = freshID("c-blfoot");
+    const t1 = `${a}-t1`;
+    const t2 = `${a}-t2`;
+    const s = settledChat(
+      a,
+      [[turnOpen(t1, 1, "one"), turnClose(t1, 1, "unknown")], [turnOpen(t2, 2, "two")]],
+      { thinking: true },
+    );
+    seed(s);
+    await settledFrames();
 
-    store.upsertMessage(chat, user("bf-u2", "two"));
-    await flushed();
-    const cards = [...viewRoot().children] as HTMLElement[];
-    expect(cards.length).toBe(2);
+    const cards = cardsOf(a);
+    expect(cards).toHaveLength(2);
     expect(cards[0]?.querySelector(":scope > .turn-footer")).not.toBeNull();
     expect(cards[0]?.querySelector(":scope > .turn-body")?.childElementCount).toBe(0);
     expect(cards[0]?.classList.contains("is-bodyless")).toBe(false);
-    // The new prompt-only turn takes the mark instead.
+    // The prompt-only turn takes the mark instead.
     expect(cards[1]?.classList.contains("is-bodyless")).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// A WORKFLOW STEP's delta needs no structural pass, because the dispatcher DROPS
-// its blocks: there is nothing to mount and nothing to re-type. Nothing is mounted
-// to carry the text either, so it lands in `appendChunk`'s signal-absent arm — the
-// arm that otherwise schedules `shape`, which is a full projection plus reconcile
-// per step delta on the very transcript the drop exists to make cheaper.
-//
-// The pairing is the whole assertion: the same delta with an EMPTY subtask id still
-// classifies `shape`, so the exemption is keyed on the id rather than on the signal
-// being absent.
+// A turn's liveness is the LOG's statement now: `turn_close` absence IS
+// `outcome: "running"`, so nothing composes a client flag against a server one
+// and the defect the composition existed for is unreachable rather than
+// guarded. What survives is the rendering consequence, which is what the reader
+// saw: a turn the log leaves open carries no settled mark.
 // ---------------------------------------------------------------------------
 
-describe("a dropped workflow step's delta is bookkeeping-only", () => {
-  it("classifies chunk and runs zero projection, reconcile or per-turn work", async () => {
-    const chat = "cause-wfstep";
-    const kids = mount(
-      chat,
-      [user("wf-u1", "run the workflow"), assistant("wf-a1", "started")],
-      true,
-    );
-    expect(kids.length).toBe(1);
-    const before = seamCounts();
+describe("a turn's outcome mark follows turn_close, not a liveness flag", () => {
+  it("paints NO settled mark for a turn the log leaves open", async () => {
+    const a = freshID("c-live");
+    const t = `${a}-t1`;
+    const s = session(a);
+    s.turns.set(t, { entries: [turnOpen(t, 1, "do the thing")], openEntries: new Map() });
+    s.turn_order.push(t);
+    s.turn_count = 1;
+    seed(s);
+    await settledFrames();
 
-    // Block index 1: a NEW block of the same message, which is the structural case
-    // — `newBlock` is what used to force `shape`.
-    store.appendChunk(chat, "wf-a1", "step output", false, 1, "wf:wf_1:wf_1/build");
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("chunk");
-    expect(seamCounts()).toEqual(before);
-    const after = [...viewRoot().children];
-    expect(after.length).toBe(kids.length);
-    expect(after.every((el, i) => el === kids[i])).toBe(true);
-    // And nothing of it is on screen, which is what makes the skip free.
-    expect(viewRoot().textContent).not.toContain("step output");
+    const card = cardsOf(a)[0];
+    expect(card, "the turn painted").not.toBeUndefined();
+    // `running`'s treatment already is "no settled mark", which is why the fix was the
+    // derivation rather than a suppression rule in the renderer.
+    expect(card?.querySelector(":scope > .turn-footer .turn-ledger-glyph")).toBeNull();
   });
 
-  it("still classifies shape for the same delta with no subtask id", async () => {
-    const chat = "cause-nostep";
-    mount(chat, [user("ns-u1", "hi"), assistant("ns-a1", "hello")], true);
-    const before = seamCounts();
+  it("paints the neutral mark when the log closed the turn with no readable outcome", async () => {
+    // The direction the derivation must not erase: after a restart nothing closed the turn
+    // readably, so `unknown` is honest and states itself.
+    const a = freshID("c-closed");
+    const t = `${a}-t1`;
+    seed(settledChat(a, [[turnOpen(t, 1, "do the thing"), turnClose(t, 1, "unknown")]]));
+    await settledFrames();
 
-    store.appendChunk(chat, "ns-a1", "parent prose", false, 1, "");
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("shape");
-    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The same exemption on a step's TOOL CALL, which is the frame class that
-// dominates: a workflow-heavy chat measured 2,250 of 2,367 tool calls as step
-// content, each reporting two or three status transitions.
-//
-// The UPDATE arm is the one that carries the weight. No card is mounted for a step's
-// call, so `ensureToolCallSig` is never reached for one and every `tool_call_update`
-// lands in the signal-absent arm at the foot of `upsertToolCall` — where a `shape`
-// runs a full projection plus reconcile to produce no DOM change at all.
-//
-// Two controls, and both are the point rather than symmetry. The same call with an
-// EMPTY subtask id still classifies `shape`, so the exemption is keyed on the id.
-// And a MALFORMED `wf:` id ALSO classifies `shape`, because the dispatcher keys its
-// drop on the PARSE and renders that one as a delegate box — one predicate, one set
-// of ids, checked from the store's side.
-// ---------------------------------------------------------------------------
-
-describe("a dropped workflow step's tool call is bookkeeping-only", () => {
-  const STEP = "wf:wf_1:wf_1/build";
-
-  function stepCall(status: string, subtask: string): ToolCall {
-    return {
-      id: "wf-tc-1",
-      title: "Run command",
-      kind: "execute",
-      status,
-      agent_subtask_id: subtask,
-    } as unknown as ToolCall;
-  }
-
-  /** An assistant message ALREADY carrying `tc` as a `subtask`-stamped tool_use
-   *  block, so the first `upsertToolCall` for it takes the update arm. */
-  function withStepTool(id: string, tc: ToolCall, subtask: string): Message {
-    return {
-      id,
-      role: "assistant",
-      ts: 2,
-      content: "",
-      blocks: [
-        { type: "text", text: "started" },
-        { type: "tool_use", tool_call_id: tc.id, agent_subtask_id: subtask },
-      ],
-      tool_calls: [tc],
-    } as unknown as Message;
-  }
-
-  it("classifies chunk on the FIRST sighting inside a mounted message", async () => {
-    const chat = "cause-wftool-new";
-    const kids = mount(chat, [user("wt-u1", "run it"), assistant("wt-a1", "started")], true);
-    expect(kids.length).toBe(1);
-    const before = seamCounts();
-
-    // Block index 1: a NEW block of an already-mounted message, which is the arm
-    // that used to force `shape` for every one of a run's tool calls.
-    store.upsertToolCall(chat, "wt-a1", stepCall("in_progress", STEP), 1);
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("chunk");
-    expect(seamCounts()).toEqual(before);
-    const after = [...viewRoot().children];
-    expect(after.every((el, i) => el === kids[i])).toBe(true);
-    // And no card of it is on screen, which is what makes the skip free.
-    expect(viewRoot().textContent).not.toContain("Run command");
-  });
-
-  it("classifies chunk on an UPDATE, where no mounted card owns a signal", async () => {
-    const chat = "cause-wftool-upd";
-    const tc = stepCall("in_progress", STEP);
-    mount(chat, [user("wu-u1", "run it"), withStepTool("wu-a1", tc, STEP)], true);
-    // Leave the flushed cause at `shape` first, so the assertion below reads the
-    // UPDATE's own classification rather than a leftover from the create.
-    store.upsertMessage(chat, user("wu-u1", "RUN IT"));
-    await flushed();
-    expect(store.renderCauseOf(chat).cause).toBe("shape");
-    const before = seamCounts();
-
-    store.upsertToolCall(chat, "wu-a1", { ...tc, status: "completed" } as ToolCall, 1);
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("chunk");
-    expect(seamCounts()).toEqual(before);
-  });
-
-  it("still classifies shape for the same call with no subtask id", async () => {
-    const chat = "cause-wftool-none";
-    mount(chat, [user("wn-u1", "run it"), assistant("wn-a1", "started")], true);
-    const before = seamCounts();
-
-    store.upsertToolCall(chat, "wn-a1", stepCall("in_progress", ""), 1);
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("shape");
-    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
-    // It mounted, which is why the pass was needed.
-    expect(viewRoot().textContent).toContain("Run command");
-  });
-
-  it("still classifies shape for a MALFORMED step id, which the dispatcher renders", async () => {
-    const chat = "cause-wftool-bad";
-    mount(chat, [user("wb-u1", "run it"), assistant("wb-a1", "started")], true);
-    const before = seamCounts();
-
-    // `wf:` prefix, no second colon: `parseStepSubtask` returns null, so the
-    // dispatcher takes its delegate-box fallback and the store must NOT skip.
-    store.upsertToolCall(chat, "wb-a1", stepCall("in_progress", "wf:no-node-path"), 1);
-    await flushed();
-
-    expect(store.renderCauseOf(chat).cause).toBe("shape");
-    expect(vi.mocked(turnsMod.projectTurns).mock.calls.length).toBe(before["projectTurns"]! + 1);
-    expect(viewRoot().querySelector(".subagent-block")).not.toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The projection's LIVENESS input, pinned at the composition site.
-//
-// It lives in this file rather than its own because the harness is exactly what the
-// property needs and nothing else has it: the real store, the real `messages.ts`
-// paint, a spy on `projectTurns`, and a mounted view to read the rendered card off.
-//
-// The defect: `thinking` is client memory that starts false, so between
-// `GET /api/chats/{id}` painting and the HELD `connected` frame releasing, a turn
-// whose reply is still in the server's in-memory buffer read "not running". The
-// projection then derived `unknown` — "nothing closed this turn" — and mounted an
-// outcome mark and a `.turn-notice` row for a turn the server knew was running.
-//
-// The store composes the two facts (`turnLive`); this asserts `messages.ts` passes
-// the composition rather than the flag, and that the card goes quiet as a result.
-// ---------------------------------------------------------------------------
-
-/** A session carrying the server's own liveness statement. */
-function liveSession(id: string, msgs: Message[], over: Partial<Session>): Session {
-  return { ...session(id, msgs, false), ...over } as Session;
-}
-
-describe("the transcript passes composed liveness, not the thinking flag", () => {
-  it("paints NO outcome mark for a carrier-less newest turn the SERVER says is open", async () => {
-    // The mid-turn reload record: the prompt persisted, the reply still buffered, so
-    // no assistant message and no carrier. `thinking` is false because no frame has
-    // arrived yet — which is the whole window.
-    const chat = "live-open";
-    store.setSessions([liveSession(chat, [user("lo-u1", "do the thing")], { turn_open: true })]);
-    store.setActive(chat);
-    await flushed();
-
-    const calls = vi.mocked(turnsMod.projectTurns).mock.calls;
-    const last = calls.at(-1);
-    expect(last?.[1], "the projection's liveness input is the composed answer").toBe(true);
-
-    const card = viewRoot().querySelector(".turn");
-    expect(card, "the turn painted").not.toBeNull();
-    // The two surfaces the reported flash was measured on. `running`'s treatment
-    // already is "no settled mark", so this needed no suppression rule — which is
-    // why the fix is the derivation and not the renderer.
-    expect(card?.querySelector(".turn-notice"), "no failure notice on a live turn").toBeNull();
-    expect(
-      card?.querySelector(".turn-footer .turn-ledger-glyph"),
-      "no footer outcome glyph on a live turn",
-    ).toBeNull();
-  });
-
-  it("still paints the neutral mark when the server says NO turn is open", async () => {
-    // The direction the fix must not erase: after a server restart mid-turn no turn
-    // is open, because the process died — so the newest turn genuinely is one nothing
-    // closed, and its notice is honest.
-    const chat = "live-closed";
-    store.setSessions([liveSession(chat, [user("lc-u1", "do the thing")], { turn_open: false })]);
-    store.setActive(chat);
-    await flushed();
-
-    expect(vi.mocked(turnsMod.projectTurns).mock.calls.at(-1)?.[1]).toBe(false);
-    const card = viewRoot().querySelector(".turn");
-    expect(card?.querySelector(".turn-notice"), "an unreadable end still says so").not.toBeNull();
+    const card = cardsOf(a)[0];
+    const footer = card?.querySelector<HTMLElement>(":scope > .turn-footer");
+    expect(footer, "an unreadable end still says so").not.toBeNull();
+    expect(footer?.querySelector(".turn-ledger-glyph")).not.toBeNull();
+    expect(footer?.dataset["severity"]).not.toBe("");
   });
 });

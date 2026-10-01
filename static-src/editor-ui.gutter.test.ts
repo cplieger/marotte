@@ -34,6 +34,17 @@ vi.mock("./dom.js", () => ({
     }
     return el;
   },
+  // Same real-ESM-linking reason as `byId` above: `skeleton.ts` in this graph
+  // imports the name, so an absent export fails the whole FILE at collection.
+  // `setBusy`'s own body rather than `undefined`, because a placeholder marks its
+  // host busy through it.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 
 vi.mock("./highlight.js", () => ({

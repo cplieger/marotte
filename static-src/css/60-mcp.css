@@ -370,11 +370,26 @@
   border-radius: var(--r-sm);
 }
 
+/* A text control, so its hover is the accent ink rather than a fill. */
 .tool-diff-more {
+  align-self: center;
+  border: none;
+  background: none;
+  padding: 2px var(--sp-1) 0;
+  font: inherit;
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
-  text-align: center;
-  padding-top: 2px;
+  cursor: pointer;
+  transition:
+    color var(--dur-micro) var(--ease-standard),
+    transform var(--dur-micro) var(--ease-standard);
+}
+
+@media (any-hover: hover) {
+  .tool-diff-more:hover {
+    color: var(--c-accent);
+    text-decoration: underline;
+  }
 }
 
 /* ---- Editor diff mode pane ---- */
@@ -795,62 +810,15 @@
   gap: var(--sp-3);
 }
 
-/* Same segmented control as `.settings-tab-bar` (17-settings.css) under another
- * name, so it carries the same derivation: the segment keeps its 4px shape and
- * the bar takes 4 + 1 + 4 = 9px, because deriving the segment from a 6px bar with
- * a 4px inset would make it 1px. Rule: web.md "A nested rounded corner". */
-.mcp-modal-tabs {
-  display: flex;
-
-  --seg-inset: 0.25rem;
-  --seg-radius: var(--r-sm);
-
-  gap: var(--seg-inset);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: calc(var(--seg-radius) + 1px + var(--seg-inset));
-  padding: var(--seg-inset);
-  flex-wrap: wrap;
-}
-
-.mcp-modal-tab {
-  /* `flex-wrap: wrap` above only reaches a bar whose items have a base size to
-     exceed it with: under a bare `flex: 1` (basis 0) four segments always fit on
-     one line and shrink to ellipsis instead, which on the phone preset cut three
-     of the four labels ("Search re…", "Remote U…", "npm pack…"). An 8rem basis
-     wraps to two rows of two before any label is cut; `min-width: 0` stays as
-     the floor below that, so ellipsis is the last resort rather than the first. */
+/* The modal's mode switcher is the shared `.seg-bar` (11-page-lists.css) with ONE
+ * layout difference: its segments carry no icon, so the bar's icon-only fit has
+ * nothing to fall back to and the labels have to fit at every width. A basis lets
+ * the bar's `flex-wrap` reach the segments — under the base `flex: 1` (basis 0)
+ * four segments always share one line and ellipsise instead, which on the phone
+ * preset cut three of the four labels. 8rem wraps to two rows of two before any
+ * label is cut. */
+.mcp-modal-tabs > .seg {
   flex: 1 1 8rem;
-  min-width: 0;
-  padding: var(--sp-1) var(--sp-2);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--seg-radius);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
-
-  /* The tab family's shared tinted wash, gated like its siblings, with the press
-     opting out of 03-base.css's floor exactly as `.settings-tab` does. */
-  @media (any-hover: hover) {
-    &:not(.active):hover {
-      background: var(--c-hover-select);
-      color: var(--c-text-primary);
-    }
-  }
-
-  &:not(.active):active {
-    background: var(--c-press-select);
-    color: var(--c-text-primary);
-    box-shadow: none;
-  }
-
-  /* Selected: 70-selection.css. A fourth copy of the segmented control that
-     had already drifted from `.settings-tab.active` by one declaration. */
 }
 
 /* THE PANEL IS THE ONE SCROLLER, and the two added declarations answer a measured
@@ -925,7 +893,7 @@
 }
 
 .mcp-mode-hint {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-form-label);
   color: var(--c-text-secondary);
   line-height: 1.55;
   margin: 0;
@@ -949,6 +917,40 @@
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
   font-weight: var(--fw-medium);
+}
+
+/* The tool list is recorded but NOT IN FORCE, because the security profile in
+   force does not honour it. A hue wash of its state over the section rather than
+   a rung, with the notice's own words as the non-colour channel (WCAG 1.4.1) —
+   the same declaration `.tool-denial` uses in 14-tools.css, which is this app's
+   shipped amber-notice shape, so the two read alike.
+
+   Amber and not red because nothing broke: the grant did not take effect, which
+   is the register a stopped tool row takes. */
+.mcp-list-suspended {
+  padding: var(--sp-2);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  line-height: 1.5;
+}
+
+/* The names stay VISIBLE and read as not-in-force — struck through in tertiary
+   ink, which is this app's own "this is undone" treatment (the deselected
+   turn-approval row). Never hidden: the whole defect being fixed is a grant
+   nobody could see, and hiding the list to say it is suspended would reproduce
+   it one state over.
+
+   Scoped to the LABEL so the remove control keeps its own ink and its strike
+   does not read as a disabled button — the list is still editable, and it
+   applies again on a profile that honours it.
+
+   Keyed on the attribute rather than an id: the treatment is "a suspended MCP
+   form section", and only the section that HAS a posture ever carries it. */
+.mcp-form-section[data-suspended] .chip-label {
+  text-decoration: line-through;
+  color: var(--c-text-tertiary);
 }
 
 /* Clickable known-tool suggestions under the disabled-tools chip editor. */
@@ -1008,6 +1010,15 @@
 .mcp-pair-mark-required {
   border-color: var(--c-warning);
   color: var(--c-warning);
+}
+
+/* Set answers Required on a row whose server is already in mcp.json: the two
+   appear together, so the outcome ink is what separates "you still owe this" from
+   "this is done" at a glance. Measured on `--c-bg-secondary`, the result row's own
+   fill: 9.996:1 dark, 6.205:1 light. */
+.mcp-pair-mark-set {
+  border-color: var(--c-green);
+  color: var(--c-green);
 }
 
 .mcp-pair-desc {

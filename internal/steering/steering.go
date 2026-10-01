@@ -220,8 +220,7 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 //     Generate runs SYNCHRONOUSLY before every bridge spawn while holding g.mu,
 //     so one `mkfifo /workspace/anyrepo/README.md` wedged every session start
 //     of every chat. Measured: the old form was still blocked after 2s against a
-//     2s context, which is the same shape internal/ignore's loadRules was fixed
-//     for. O_NONBLOCK makes it an immediate ErrNotRegular instead.
+//     2s context. O_NONBLOCK makes it an immediate ErrNotRegular instead.
 //   - A symlink at one of those names was an EXFILTRATION primitive, not merely
 //     a confinement leak. readFirstLine writes its result verbatim into
 //     environment.md, so `ln -s /config/mcp-secrets.json <repo>/README.md` put

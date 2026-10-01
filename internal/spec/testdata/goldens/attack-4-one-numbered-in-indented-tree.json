@@ -1,0 +1,98 @@
+{
+  "input_file": "attack-4-one-numbered-in-indented-tree.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "",
+      "text": "Parent A",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "79c8d096657761cbadfdbaccdf5ab9b8165d0e40c41b9cee4e2c48b8448b6f2d",
+      "detail": "",
+      "children": [
+        {
+          "id": "L2",
+          "line": 2,
+          "indent": 2,
+          "number": "",
+          "text": "Child A1",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "df875dc5ff23327341748eb995dcc19f21f18a39a8e6fede429d7967aef32111",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 2,
+          "number": "",
+          "text": "Child A2",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "83120e23dbc25bbf01763af35959a03a33004c3ee37091e8ba3f55f488d3c8c9",
+          "detail": "",
+          "children": [
+            {
+              "id": "L4",
+              "line": 4,
+              "indent": 4,
+              "number": "",
+              "text": "Grandchild A2a",
+              "status": "pending",
+              "queued": false,
+              "optional": false,
+              "hash": "da2586327d6546c7be3cd2862e03a1b6cba265aab65465305e666bbbafb7355c",
+              "detail": "",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "",
+      "text": "Parent B",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "ce27f670e369bbdb664e9af20cb9d492f085b2632a7a8d51680963a551facd4a",
+      "detail": "",
+      "children": [
+        {
+          "id": "L6",
+          "line": 6,
+          "indent": 2,
+          "number": "7.1",
+          "text": "7.1 The one numbered task in the file",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "733a601ceec694b0360180e5cefd476e44dbb721207b48419bf4e379e2194987",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

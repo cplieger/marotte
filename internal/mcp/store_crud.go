@@ -35,8 +35,8 @@ func (s *Store) List(ctx context.Context) []*Server {
 }
 
 // EnabledRaw returns a deep copy of every enabled server with secrets
-// intact. Used when constructing the mcpServers parameter for kiro-cli.
-// Not exposed over HTTP.
+// intact, the input EnabledServers projects for prewarm. Not exposed
+// over HTTP.
 func (s *Store) EnabledRaw(ctx context.Context) []*Server {
 	if ctx.Err() != nil {
 		return nil

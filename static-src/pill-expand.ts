@@ -1,25 +1,21 @@
-// ---------------------------------------------------------------------------
-// Expandable pills: click/keyboard to expand a pill into a detail card
-// anchored to the pill's position. Only one pill can be expanded at a time.
-// Click outside, click the pill, or press Escape to collapse.
+// Expandable pills: click or keyboard to expand a pill into a detail card anchored to
+// the pill's position. One pill open at a time; click outside, click the pill, or press
+// Escape to collapse.
 //
-// The popup lifecycle — outside-click dismissal, Escape, single-open
-// coordination, trigger ARIA (aria-expanded / aria-haspopup), and the
-// enter/leave state classes with transition-end settling — is
-// @cplieger/ui-primitives' createPopup: the non-positioning popup primitive,
-// which is exactly this pattern's shape. The card is a SIBLING of the pill
-// inside .pill-slot, which positions it (marotte.md mandates the
-// expandable-pill pattern over floating popups for pill-row controls, so
-// popover's placement engine is deliberately not involved). Sibling rather
-// than child for two reasons: the pill's press scale would otherwise shrink
-// its own open card, and a card nested in the trigger puts interactive
-// content inside a <button>. This module keeps only the pill-specific glue:
-// the toggle wiring, the .pill-expanded skin class, and the legacy
-// hidden-class normalization. Enter/exit motion stays in 15-input.css, keyed
-// off the library's is-open class on .pill-expand-content.
-// ---------------------------------------------------------------------------
+// The popup lifecycle — outside-click dismissal, Escape, single-open coordination,
+// trigger ARIA (aria-expanded / aria-haspopup), and the enter/leave state classes with
+// transition-end settling — is @cplieger/ui-primitives' createPopup, the
+// non-positioning popup primitive. The card is a SIBLING of the pill inside .pill-slot,
+// which positions it, so popover's placement engine is deliberately not involved;
+// pill-expand.test.ts states what breaks when a card is nested back inside its trigger.
+// What is left here is the pill-specific glue: the toggle wiring, the .pill-expanded
+// skin class, and the legacy hidden-class normalization. Enter/exit motion stays in
+// 15-input.css, keyed off the library's is-open class on .pill-expand-content.
 
 import { closePopupGroup, createPopup } from "@cplieger/ui-primitives/popup";
+
+import type { ViewportBox } from "./viewport-frame.js";
+import { onViewportChange, viewportBox, viewportMoved } from "./viewport-frame.js";
 
 /** Single-open coordination group shared by every expandable pill. */
 const PILL_GROUP = "pill-expand";
@@ -35,6 +31,7 @@ export function makeExpandable(
   },
 ): void {
   const listenerOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
+  let releaseViewport: (() => void) | undefined;
 
   // Normalize the legacy display state: consumers author the card with the
   // `hidden` utility CLASS; the popup primitive drives the `[hidden]`
@@ -59,9 +56,12 @@ export function makeExpandable(
       opts?.onExpand?.();
       // Consumers such as the model and mode pickers build their rows on open;
       // position from that final synchronous width, not the empty card's width.
-      clampToViewport(pill, contentEl);
+      releaseViewport?.();
+      releaseViewport = trackViewport(pill, contentEl);
     },
     onClose: () => {
+      releaseViewport?.();
+      releaseViewport = undefined;
       pill.classList.remove("pill-expanded");
       opts?.onCollapse?.();
     },
@@ -108,6 +108,39 @@ export function makeExpandable(
   });
 }
 
+/** Measure the card's clamp now, then re-measure while it is open; the returned
+ *  function detaches. iOS answers a raised keyboard by shrinking and OFFSETTING the
+ *  visual viewport inside an unchanged layout viewport, which no `dvh` unit sees
+ *  (https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport), and tapping a
+ *  pill blurs the composer, so the open's own read lands mid-dismissal. The gate is
+ *  the frame moving since the last APPLIED pass, not since the last event: two
+ *  sub-pixel steps in one frame each fail a per-event test and never apply. It reads
+ *  the BLOCK axis only, so an inline-only viewport move re-clamps nothing. */
+function trackViewport(pill: HTMLElement, card: HTMLElement): () => void {
+  let applied: ViewportBox = viewportBox();
+  let frame = 0;
+  clampToViewport(pill, card);
+
+  const release = onViewportChange(() => {
+    if (frame !== 0 || !viewportMoved(viewportBox(), applied)) {
+      return;
+    }
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      applied = viewportBox();
+      clampToViewport(pill, card);
+    });
+  });
+
+  return () => {
+    if (frame !== 0) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+    }
+    release();
+  };
+}
+
 /** The smallest block size worth clamping to. Below this a card is unusable
  *  whatever it does, so the floor keeps one row plus its scroll affordance on
  *  screen and lets the overflow do the rest, rather than resolving to a height
@@ -115,38 +148,23 @@ export function makeExpandable(
  *  composer is nearly at the top edge. */
 const MIN_CARD_BLOCK_PX = 96;
 
-/** Keep an expanded card inside the visual viewport, on BOTH axes.
- *
- *  Inline: the card remains a sibling positioned by `.pill-slot`; only its
- *  inline offset moves. The transform origin follows the trigger, so a clamped
- *  card still grows from the pill that opened it rather than from the screen edge.
- *
- *  Block: the card is anchored `bottom: calc(100% + var(--sp-1))` and grows
- *  UPWARD, so the thing that bounds it is the room between the viewport's top
- *  edge and the card's own bottom. That room is measured here and published as
- *  `--pill-max-block` for 15-input.css to cap against, which replaced two
- *  authored caps that could not know it: 16rem on desktop and min(26rem, 55dvh)
- *  under `width <= 48rem`. Both were guesses, and the desktop one was the
- *  stingier of the two despite desktop having the most room — measured on the
- *  chat-actions menu at a 900px viewport, five 60px rows wanted 332px, the cap
- *  allowed 254px, and the card scrolled with 595px of free space above it.
- *
- *  The viewport bound also subsumes what the caps were FOR. The context card's
- *  metering section renders one row per unit kiro-cli reports, which is upstream
- *  data with no bound, so a card does need a ceiling — but the room above the
- *  pill IS that ceiling, and it is the honest one: the card takes the space that
- *  exists and scrolls only once it has run out. On a phone it additionally reads
- *  `visualViewport`, so a raised keyboard shrinks the cap for real where `55dvh`
- *  could only approximate it. */
+/** Keep an expanded card inside the visual viewport, on BOTH axes; `trackViewport` owns
+ *  when this runs. Inline: the card stays a sibling positioned by `.pill-slot`, so only
+ *  its inline offset moves, and the transform origin follows the trigger, which keeps a
+ *  clamped card growing from the pill that opened it. Block: the card is anchored
+ *  `bottom: calc(100% + var(--sp-1))` and grows UPWARD, so what bounds it is the room
+ *  between the viewport's top edge and the card's own bottom, published as
+ *  `--pill-max-block` — 15-input.css owns the two bounds it feeds and why they replaced
+ *  two authored caps. */
 function clampToViewport(pill: HTMLElement, card: HTMLElement): void {
   const slot = pill.parentElement;
   const width = card.offsetWidth;
   if (slot === null || width <= 0) {
     return;
   }
-  const viewport = window.visualViewport;
-  const viewportLeft = viewport?.offsetLeft ?? 0;
-  const viewportRight = viewportLeft + (viewport?.width ?? window.innerWidth);
+  const viewport = viewportBox();
+  const viewportLeft = viewport.offsetLeft;
+  const viewportRight = viewportLeft + viewport.width;
   const margin = popupViewportMargin(card);
   const minLeft = viewportLeft + margin;
   const maxLeft = Math.max(minLeft, viewportRight - margin - width);
@@ -163,8 +181,7 @@ function clampToViewport(pill: HTMLElement, card: HTMLElement): void {
   // The card's own bottom rather than the pill's top, so the `--sp-1` gap between
   // them needs no second reader here. It is stable under the enter animation:
   // `transform-origin` is `bottom`, so the scale leaves that edge where it is.
-  const viewportTop = viewport?.offsetTop ?? 0;
-  const room = card.getBoundingClientRect().bottom - viewportTop - margin;
+  const room = card.getBoundingClientRect().bottom - viewport.offsetTop - margin;
   card.style.setProperty(
     "--pill-max-block",
     `${String(Math.max(Math.round(room), MIN_CARD_BLOCK_PX))}px`,

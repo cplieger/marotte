@@ -91,8 +91,8 @@ type ACPKiroBlock struct {
 	// ReplayID is the id KAS will report as this message's `messageId` when the session
 	// is REPLAYED, and it arrives on the LIVE frame ONLY — a replayed frame carries
 	// `messageId` instead and never this one (measured on kiro-cli 2.21.4: `<uuid>-say`
-	// under both spellings). The AGENT's id space like MessageID below, never marotte's
-	// own Message.ID.
+	// under both spellings). The AGENT's id space like MessageID below, never an id
+	// marotte minted itself.
 	ReplayID string `json:"replayId"`
 	// UserMessageTag marks a user row KAS filed under a PROMPT rather than as steering.
 	// Read for its PRESENCE only and never parsed: 626 of 627 measured tags read
@@ -117,6 +117,12 @@ type ACPKiroBlock struct {
 	// LAUNCHING chat, arriving as a user_message_chunk carrying JSON.
 	Notification struct {
 		Kind string `json:"kind"`
+		// Status is KAS's severity for a notification-kind row (`info`, `success`,
+		// `warning`, `error`), and it is the only place a REPLAY carries it: the live
+		// injected frame carries notificationSeverity instead, and KAS persists the row
+		// with the bare text and the severity here. The entry projection reads it so a
+		// replayed step note keeps the label the live path gave it.
+		Status string `json:"status"`
 	} `json:"notification"`
 	// Workflow is present on every frame of a workflow STEP's session, and is the only
 	// thing on the frame that says so: a step's frames arrive on the launching chat's
@@ -201,21 +207,6 @@ type ACPWorkflowMeta struct {
 	Iteration    int      `json:"iteration"`
 }
 
-// SubtaskID is the per-block attribution key for a step's content. Without one, a
-// step's prose merges into the launching agent's own paragraph: the append extends a
-// block whenever kind and subtask match, and a step's text frame carries an empty
-// agentSubtaskId, so empty matched empty.
-//
-// It reuses agent_subtask_id rather than adding a channel, so a step renders through
-// the grouping the client already has. The format lives in marotte.StepSubtaskID,
-// beside the parse that reads it back; this method only supplies the two segments.
-func (w *ACPWorkflowMeta) SubtaskID() string {
-	if w == nil || w.WorkflowID == "" {
-		return ""
-	}
-	return marotte.StepSubtaskID(w.WorkflowID, runNodePath(w))
-}
-
 // ACPCheckpointMeta is the _meta.kiro.checkpoint object on a file-writing
 // tool_call_update. It arrives only on the update whose status is "completed", which is
 // why it is merged per field rather than set once, and every field is independently
@@ -227,9 +218,11 @@ type ACPCheckpointMeta struct {
 }
 
 // ACPRefusalMeta is the _meta.kiro.refusal block on a refusal explanation
-// chunk. Explanation duplicates the chunk text (KAS falls back to a canned
-// message when absent), so only Category / RecommendedModel flow into the
-// domain marotte.RefusalInfo.
+// chunk. Explanation is the same words KAS streams as the chunk's own text (it
+// falls back to a client-specific canned message when the service supplies
+// none), and all three members flow into the domain marotte.RefusalInfo: the
+// chunk's text is kept OUT of the assistant entry, so this block is where the
+// explanation survives.
 type ACPRefusalMeta struct {
 	Category         string `json:"category"`
 	Explanation      string `json:"explanation"`

@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // stepReplays holds the step replays in flight, keyed by ACP session id. Its zero
@@ -23,10 +23,10 @@ type stepReplays struct {
 
 // stepReplay is one step's accumulating transcript, guarded by stepReplays.mu.
 type stepReplay struct {
-	proj *translate.Projection
+	proj *translate.EntryProjection
 	// settled is the barrier the reader waits on; closed exactly once.
 	settled chan struct{}
-	// frames counts replay frames ingested; zero messages from many is a decoding bug.
+	// frames counts replay frames ingested; zero turns from many is a decoding bug.
 	frames int
 	// drain is the completion condition; last so pointer fields stay ahead (fieldalignment).
 	drain replayDrain
@@ -39,7 +39,7 @@ type stepReplay struct {
 //
 // The caller BUILDS the projection, so this registry needs no workspace root of its
 // own and its zero value stays usable.
-func (sr *stepReplays) open(sessionID string, proj *translate.Projection) bool {
+func (sr *stepReplays) open(sessionID string, proj *translate.EntryProjection) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	if sr.replays == nil {
@@ -85,6 +85,14 @@ func (sr *stepReplays) markLoadedAt(sessionID string, at drainPoint) {
 	sr.settleLocked(sessionID, rep, at.gen, false, settleOnLoad)
 }
 
+// closedBarrier is barrier's answer for a step with no replay open. One value for
+// the whole process: a closed channel is stateless and always ready.
+var closedBarrier = func() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}()
+
 // barrier returns a channel closed once the replay for sessionID has drained, or
 // an already-closed one when no replay is open — so a reader never waits for a
 // load that is not happening.
@@ -129,7 +137,7 @@ func (sr *stepReplays) settleLocked(sessionID string, rep *stepReplay, gen uint6
 // take removes the replay for sessionID and returns what it projected. Runs
 // whether the barrier closed or the budget expired, so an abandoned replay leaks
 // neither an entry nor a waiter.
-func (sr *stepReplays) take(sessionID string) []marotte.Message {
+func (sr *stepReplays) take(sessionID string) []translate.ProjectedTurn {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	rep := sr.replays[sessionID]
@@ -139,7 +147,7 @@ func (sr *stepReplays) take(sessionID string) []marotte.Message {
 	delete(sr.replays, sessionID)
 	// A take on the timeout path leaves a barrier nothing else can close.
 	sr.closeLocked(rep)
-	return rep.proj.Messages()
+	return rep.proj.Turns()
 }
 
 // closeLocked closes a replay's barrier at most once, reporting whether THIS call

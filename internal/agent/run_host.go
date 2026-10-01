@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // Workflow RPC param keys, shared across the five verbs.
@@ -99,6 +99,7 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 		// cannot launch a run bridge on the legacy engine. Same argv today.
 		AgentEngine: resolveAgentEngine(),
 		Presets:     securityPresets(cctx, rs.lifecycle.configDir),
+		IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
 		ToolSearch:  toolSearchEnabled(cctx, rs.lifecycle.configDir),
 		Knowledge:   knowledgeEnabled(cctx, rs.lifecycle.configDir),
 		Memory:      memoryEnabled(cctx, rs.lifecycle.configDir),
@@ -131,7 +132,7 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
 		// The run was created but never started, so nothing is executing.
 		rs.releaseLease(cctx, wfID)
-		rs.coord.CloseBridge(runChatID(wfID))
+		rs.coord.CloseBridge(cctx, runChatID(wfID), marotte.TurnOutcomeInterrupted)
 		return "", "", fmt.Errorf("workflow invoke: %w", err)
 	}
 	// After invoke, so a run that never started leaves no timer; idempotent with
@@ -181,9 +182,15 @@ func (rs *Runs) Delete(ctx context.Context, workflowID string) error {
 	if err := rs.control(ctx, workflowID, methodKiroWorkflowDelete, "workflow delete call", nil); err != nil {
 		return err
 	}
-	rs.coord.CloseBridge(runChatID(workflowID))
+	rs.deleteRunLog(ctx, workflowID)
+	rs.coord.CloseBridge(ctx, runChatID(workflowID), marotte.TurnOutcomeInterrupted)
 	rs.forgetBounds(ctx, workflowID)
 	rs.clearEnd(workflowID)
+	if rs.log != nil {
+		if err := rs.log.RemoveDir(workflowID); err != nil {
+			slog.Warn("run log: remove run directory", "workflow_id", workflowID, "error", err)
+		}
+	}
 	slog.Info("workflow run deleted", "workflow_id", workflowID)
 	return nil
 }
@@ -825,6 +832,7 @@ func (rs *Runs) rehost(
 		Lifetime:    rs.lifecycle.shutdownCtx,
 		AgentEngine: resolveAgentEngine(),
 		Presets:     securityPresets(cctx, rs.lifecycle.configDir),
+		IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
 		ToolSearch:  toolSearchEnabled(cctx, rs.lifecycle.configDir),
 		Knowledge:   knowledgeEnabled(cctx, rs.lifecycle.configDir),
 		Memory:      memoryEnabled(cctx, rs.lifecycle.configDir),
@@ -849,7 +857,7 @@ func (rs *Runs) rehost(
 			rs.boundKeptCarrier(chatID, workflowID, resident)
 			return
 		}
-		rs.coord.CloseBridge(chatID)
+		rs.coord.CloseBridge(ctx, chatID, marotte.TurnOutcomeInterrupted)
 	}, nil
 }
 
@@ -992,7 +1000,7 @@ func (rs *Runs) closeKeptCarrier(
 	}
 	slog.Info("closing a run carrier kept for a verb KAS never took",
 		"workflow_id", workflowID, "status", res.State.Status)
-	rs.coord.CloseBridge(chatID)
+	rs.coord.CloseBridge(rs.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
 	return carrierClosed
 }
 
@@ -1113,8 +1121,10 @@ func (rs *Runs) control(
 //
 // Host requests and the three ASK kinds reuse the chat handlers, keyed by the
 // synthetic id. LIFECYCLE frames go out workspace-global with an EMPTY chat id,
-// because a parentless run is owned by no chat. session/update is PROJECTED as
-// `run_step` and never buffered — there is no transcript to buffer into.
+// because a parentless run is owned by no chat. session/update is APPENDED to the
+// RUN's own log (`runs/<workflowId>/entries.jsonl`) and goes out as the run-scoped
+// entry events; it is never buffered into the synthetic chat id, which has no chat
+// file to buffer into.
 func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID != nil {
 		rt.dispatchRequest(ctx, chatID, msg)
@@ -1137,7 +1147,7 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, msg *mar
 		return
 	}
 	if msg.Method == marotte.MethodSessionUpdate {
-		rt.translator.HandleRunStepFrame(ctx, workflowIDOf(chatID), msg.Params)
+		rt.handleRunStepFrame(ctx, chatID, msg)
 		return
 	}
 	slog.Debug("run bridge: unhandled notification", "method", msg.Method, "chat_id", chatID)
@@ -1198,7 +1208,7 @@ func (rt *Runtime) closeStoppedBridge(chatID marotte.ChatID, msg *marotte.RPCRes
 		if rt.bridge.mgr.get(chatID) != sb {
 			return
 		}
-		go rt.coord.CloseBridge(chatID)
+		go rt.coord.CloseBridge(rt.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
 	})
 }
 

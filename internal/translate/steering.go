@@ -1,37 +1,21 @@
 package translate
 
-// Mid-turn steering, the inbound half.
-//
-// KAS multiplexes three steering signals through session_info_update, and
-// marotte forwards all three as distinct SSE events rather than collapsing them.
-// The distinction is the feature: a steer that has been BUFFERED and a steer the
-// model has actually READ look identical to a user otherwise, and that is the
-// one thing somebody correcting a live turn wants to know.
-//
-//	steering_queued   → EventSteerQueued    the buffer has it
-//	steering_injected → EventSteerInjected  the model has read it
-//	steering_cleared  → EventSteerCleared   the boundary dropped it unread
-//
-// A FOURTH event leaves here, off the queued sub-kind: KAS delivers an agent's
-// own progress notice through the same buffer (it is the only inbound channel
-// into a live turn), distinguishable only by the severity it carries. That
-// becomes EventAgentNotice, because the user's outbound messages and the agent's
-// notices belong on different surfaces. See handleSteeringUpdate.
-//
-// Unlike focus / summarization / contextUsage, these carry no sub-block to key
-// off: KAS's buildSessionInfoUpdate spreads the update flat into _meta.kiro and
-// its legacyFields() returns {} for all three. So this is the one place the
-// cascade dispatches on the kind STRING, and the reason is a measured property
-// of the wire rather than a preference.
+// Mid-turn steering, the inbound half. KAS multiplexes three steering sub-kinds
+// through session_info_update: steering_queued feeds the dock (EventSteerQueued, or
+// EventAgentNotice when a severity marks an agent's own notice), steering_injected
+// appends the steer entry as read, steering_cleared appends the unread ones as
+// dropped. These carry no sub-block to key off (KAS spreads the update flat into
+// _meta.kiro and legacyFields() returns {} for all three), so this is the one place
+// the cascade dispatches on the kind string.
 
 import (
 	"context"
-	"log/slog"
+	"regexp"
 	"strings"
-	"time"
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
 // Steering sub-kind names as they appear in `_meta.kiro.kind`.
@@ -42,145 +26,188 @@ const (
 )
 
 // handleSteeringUpdate forwards a steering sub-kind and reports whether it
-// consumed the frame.
-//
-// Returning a bool rather than being another silent cascade arm keeps the caller
-// honest: a steering frame must not fall through to the usage/unknown-kind tail,
-// where it would be logged as "carries nothing marotte consumes" — which is the
-// opposite of true now.
-//
-// A frame whose kind is one of the three but whose ids are empty is dropped
-// rather than broadcast. It is still consumed (the kind was recognised), because
-// forwarding an event with no id would put a chip on screen that nothing can
-// ever resolve or clear.
+// consumed the frame, so a steering frame never falls through to the unknown-kind
+// tail. A recognised kind whose ids are empty is consumed and dropped: an event
+// with no id would put a chip on screen nothing can resolve or clear.
 func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID marotte.ChatID, u *sessionInfoUpdate) bool {
 	k := &u.Meta.Kiro
 	switch k.Kind {
 	case kindSteeringQueued:
-		if k.MessageID == "" {
-			return true
+		if k.MessageID != "" {
+			t.steeringQueued(ctx, chatID, k)
 		}
-		// KAS multiplexes two different authors onto this one sub-kind, and the
-		// severity is the only thing that separates them: it is set when KAS
-		// sniffed a `[notification/<severity>]` prefix, which marotte refuses to
-		// send (command/steer.go), so a severity here means a workflow step or a
-		// subagent is reporting into this chat rather than the user speaking.
-		//
-		// They leave as different events because their surfaces are different.
-		// A steer belongs on the composer's chip row, which is about messages the
-		// user is waiting for the agent to read; a notice belongs on the
-		// ephemeral stack, because nobody is waiting on it and nobody can
-		// discard it. Forwarding both as one event pushed the deciding onto every
-		// consumer, and the client got it wrong: an agent's own progress line
-		// rendered inside the message box as something the user had typed.
-		if k.NotificationSeverity != "" {
-			t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventAgentNotice, chatID, marotte.AgentNoticePayload{
-				Severity: k.NotificationSeverity,
-				Text:     k.Content,
-			}))
-			return true
-		}
-		queued := marotte.SteerQueuedPayload{
-			SteerID: k.MessageID,
-			Text:    k.Content,
-			Origin:  t.steerOrigin(chatID, k.MessageID),
-		}
-		// RECORDED as well as broadcast, and this is the whole of the reconnect
-		// half: the buffer is KAS's, nothing can read it back, and a client that
-		// missed this frame had its dock empty with the message still queued.
-		// Recorded from the SAME payload the broadcast carries, so a replay and a
-		// live frame are indistinguishable to the client's own reconcile.
-		t.steerBufferWaiting(chatID, queued)
-		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerQueued, chatID, queued))
 		return true
-
 	case kindSteeringInjected:
-		if k.MessageID == "" {
-			return true
+		if k.MessageID != "" {
+			t.steeringInjected(ctx, chatID, k)
 		}
-		origin := t.steerOrigin(chatID, k.MessageID)
-		// No longer waiting: the model has read it, so replaying it would offer a
-		// delivered message back to the dock.
-		t.steerBufferRead(chatID, k.MessageID)
-		// DURABLE before the broadcast, because the broadcast's own surface dies
-		// with the page: see persistSteer.
-		t.persistSteer(ctx, chatID, k.MessageID, k.Content, origin, marotte.SteerStateRead)
-		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerInjected, chatID, marotte.SteerInjectedPayload{
-			SteerID: k.MessageID,
-			Text:    k.Content,
-			Origin:  origin,
-		}))
 		return true
-
 	case kindSteeringCleared:
-		if len(k.MessageIDs) == 0 {
-			// KAS clears at EVERY turn boundary, so an empty list is the normal
-			// case on the vast majority of turns — no steer was outstanding.
-			// Broadcasting it would put one dead event on the wire per turn.
-			return true
+		// KAS clears at EVERY turn boundary, so an empty list is the normal case.
+		if len(k.MessageIDs) > 0 {
+			t.steeringCleared(ctx, chatID, k)
 		}
-		// KAS's buffer no longer holds these, whether the model read them or a
-		// boundary dropped them unread, so nothing may re-offer them. What comes
-		// BACK is the subset the buffer still held, which is exactly the steers
-		// nothing read — an injected frame removed the others above.
-		for _, p := range t.steerBufferForgotten(chatID, k.MessageIDs) {
-			t.persistSteer(ctx, chatID, p.SteerID, p.Text, p.Origin, marotte.SteerStateDropped)
-		}
-		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerCleared, chatID, marotte.SteerClearedPayload{
-			SteerIDs: k.MessageIDs,
-		}))
 		return true
 	}
 	return false
 }
 
-// persistSteer writes the steer's DURABLE row: the two arms above are the only places
-// that know its delivery state, and an F5 on a live bridge replays nothing.
-//
-// IT BROADCASTS NOTHING, deliberately — the client drops a mark whose row is resident,
-// so an echo would replace the live mark with a copy carrying no ack. The next FETCH
-// serves this row, swapProjectedTranscript's discipline. The ID is KAS's own steer id,
-// which the replay stamps too, so the merge PAIRS the two and keeps the state written
-// here; a failure is swallowed, chat.ErrTombstoned being ordinary here.
-func (t *Translator) persistSteer(
-	ctx context.Context,
-	chatID marotte.ChatID,
-	steerID, text string,
-	origin marotte.SteerOrigin,
-	state marotte.SteerState,
-) {
-	if steerID == "" || text == "" {
-		// A boundary row carries no text, and a row with none renders an empty
-		// note — the replay projection drops the same shape for the same reason.
+// steeringQueued broadcasts the queued steer and records it as waiting. KAS
+// multiplexes two authors onto this sub-kind and the severity is what separates
+// them: it is set only when KAS sniffed a `[notification/<sev>]` prefix, which
+// command/steer.go refuses to send, so a severity means a workflow step or a
+// subagent reporting into this chat. A notice goes to the ephemeral stack rather
+// than the chip row, because nobody is waiting on it.
+func (t *Translator) steeringQueued(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
+	if k.NotificationSeverity != "" {
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventAgentNotice, chatID, marotte.AgentNoticePayload{
+			Severity: k.NotificationSeverity,
+			Text:     k.Content,
+		}))
 		return
 	}
-	_, err := t.chats.Mutate(durable.Context(ctx), chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
+	queued := marotte.SteerQueuedPayload{
+		SteerID: k.MessageID,
+		Text:    k.Content,
+		Origin:  t.steerOrigin(chatID, k.MessageID),
+	}
+	// RECORDED as well as broadcast: the buffer is KAS's and nothing can read it
+	// back, so a client that missed this frame is replayed from the same payload.
+	t.steerBufferWaiting(chatID, queued)
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerQueued, chatID, queued))
+}
+
+// steeringInjected appends the read steer's entry and takes it off the waiting set.
+func (t *Translator) steeringInjected(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
+	origin := t.steerOrigin(chatID, k.MessageID)
+	t.steerBufferRead(chatID, k.MessageID)
+	// The bare text: KAS's persisted row and therefore the replay carry it without
+	// the prefix, and the merge would read the two spellings as two steers.
+	text := k.Content
+	if k.NotificationSeverity != "" {
+		text = stripNotificationPrefix(text)
+	}
+	steer := &marotte.EntrySteer{
+		Text: text, Origin: origin, State: marotte.SteerStateRead, Severity: k.NotificationSeverity,
+		Resends: t.steerResends(chatID, k.MessageID),
+	}
+	t.stampRunNotice(chatID, k.MessageID, steer)
+	t.appendSteer(ctx, chatID, k.MessageID, steer)
+}
+
+// steeringCleared appends a dropped entry for every steer the buffer still held
+// (the ones nothing read; an injected frame removed the others). An agent-origin
+// note this process never held is recorded TEXT-LESS, and that entry is itself the
+// signal the next session/load's merge reads: the words it lacks are what the merge
+// fills, so nothing beside it has to say so.
+func (t *Translator) steeringCleared(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
+	held := make(map[string]marotte.SteerQueuedPayload)
+	for _, p := range t.steerBufferForgotten(chatID, k.MessageIDs) {
+		held[p.SteerID] = p
+	}
+	for _, id := range k.MessageIDs {
+		if p, ok := held[id]; ok {
+			t.appendSteer(ctx, chatID, id, &marotte.EntrySteer{
+				Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped,
+				Reason: marotte.SteerReasonBoundary, Resends: t.steerResends(chatID, id),
+			})
+			continue
 		}
-		// Idempotent by id, which is required rather than defensive: a repeat frame
-		// would otherwise stack a second note for one steer. The state is NOT
-		// re-stamped — read is terminal, and the cleared frame that follows an
-		// injected one is housekeeping (see SteerClearedPayload).
-		for i := range c.Messages {
-			if c.Messages[i].ID == steerID {
-				return false
-			}
+		if t.steerOrigin(chatID, id) == marotte.SteerOriginUser {
+			continue
 		}
-		c.Messages = append(c.Messages, marotte.Message{
-			ID:          steerID,
-			Role:        marotte.RoleUser,
-			UserKind:    marotte.UserKindSteer,
-			SteerState:  state,
-			SteerOrigin: origin,
-			Content:     text,
-			Ts:          time.Now().UnixMilli(),
+		steer := &marotte.EntrySteer{
+			Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
+			Reason: marotte.SteerReasonBoundary,
+		}
+		t.stampRunNotice(chatID, id, steer)
+		t.appendSteer(ctx, chatID, id, steer)
+	}
+}
+
+// runNoticeIDPrefix is the id shape KAS mints for a finished run's completion notice
+// (`notify-wf-<uuid>`; emitWorkflowNotification, parent_busy_queued). The uuid is
+// random, so the run it reports is not in the id: RunNotice supplies it.
+const runNoticeIDPrefix = "notify-wf-"
+
+// stampRunNotice writes the provenance of a finished run's notice: its run id and
+// when the run finished, so a notice read long after its run can say so. Any other
+// steer, a step's mid-run send_message included, leaves both absent. Read or dropped,
+// each notice consumes its run: the two queues pair in order.
+func (t *Translator) stampRunNotice(chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
+	if t.runOrigin == nil || !strings.HasPrefix(steerID, runNoticeIDPrefix) {
+		return
+	}
+	if wf, ts, ok := t.runOrigin.RunNotice(chatID); ok {
+		steer.OriginRun, steer.ProducedTs = wf, ts
+	}
+}
+
+// notificationPrefixRe is KAS's own prefix on a notification-kind buffer entry,
+// the shape command/steer.go refuses a user steer for imitating.
+var notificationPrefixRe = regexp.MustCompile(`^\s*\[notification/(info|success|warning|error)\]\s*`)
+
+// stripNotificationPrefix returns the bare text of an injected agent note.
+func stripNotificationPrefix(text string) string {
+	return notificationPrefixRe.ReplaceAllString(text, "")
+}
+
+// appendSteer writes a steer's DURABLE entry, read or dropped: lane-less, into the
+// chat's own turn when one is open (every lane seals first), else after the newest
+// turn's close by the between-turns rule. A steer is the chat's fact whatever
+// session consumed it, so the routing ignores attribution. The id is KAS's own
+// steer id, which the replay stamps too, so the merge pairs the two.
+func (t *Translator) appendSteer(ctx context.Context, chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
+	t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindSteer, steerID, steer,
+		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
+			return turn.Steer(ctx, steerID, steer)
 		})
-		return true
-	})
+}
+
+// steerReadByAck records the read a stripped acknowledgement marker evidences.
+// steering_injected reaches this process only for the execution it owns, so a steer a
+// DELEGATE consumed arrives as the marker alone, and without this the dock shows it
+// waiting until a boundary clear calls it dropped — a steer applied two minutes
+// earlier, labelled unread. The buffer's forget both answers and removes under one
+// lock, which is what makes "nothing has recorded this id yet" decidable here: an
+// injected frame takes the id when it writes its own entry. Taking it is also what
+// leaves a later clear with nothing to drop.
+func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, lane, steerID string) {
+	held := t.steerBufferForgotten(chatID, []string{steerID})
+	if len(held) == 0 {
+		return
+	}
+	p := held[0]
+	steer := &marotte.EntrySteer{
+		Text: p.Text, Origin: p.Origin, State: marotte.SteerStateRead,
+		Resends: t.steerResends(chatID, steerID),
+	}
+	t.stampRunNotice(chatID, steerID, steer)
+	t.appendSteerInLane(ctx, chatID, lane, steerID, steer)
+}
+
+// appendSteerInLane is appendSteer for a steer one lane's own acknowledgement
+// evidenced: in that lane, so the entry says WHICH agent read it, sealing only it.
+func (t *Translator) appendSteerInLane(
+	ctx context.Context, chatID marotte.ChatID, lane, steerID string, steer *marotte.EntrySteer,
+) {
+	if lane == "" {
+		t.appendSteer(ctx, chatID, steerID, steer)
+		return
+	}
+	ctx = durable.Context(ctx)
+	turn, ok := t.turns.OwnTurn(chatID)
+	if !ok {
+		// A lane exists only inside a turn, so a turn that closed under this frame
+		// leaves no lane to record: the entry files lane-less after that close,
+		// which is the fallback the ack beside it takes too.
+		t.appendBetweenTurns(ctx, chatID, marotte.EntryKindSteer, steerID, steer)
+		return
+	}
+	sealed, err := turn.SteerInLane(ctx, lane, steerID, steer)
+	t.publishSealed(ctx, chatScope(chatID), sealed)
 	if err != nil {
-		slog.Warn("steer: persisting the durable row failed",
-			"chat_id", chatID, "steer_id", steerID, "error", err)
+		appendFailed(chatScope(chatID), string(marotte.EntryKindSteer), err)
 	}
 }
 
@@ -207,32 +234,13 @@ func (t *Translator) steerBufferForgotten(chatID marotte.ChatID, steerIDs []stri
 	return t.steerBuffer.SteerForgotten(chatID, steerIDs)
 }
 
-// steerOrigin answers whose words a steer carries.
-//
-// The severity check above cannot stand in for it: that catches the one shape KAS
-// marks (a `[notification/<sev>]` prefix), while the auto-wake nudge carries none
-// and a `send_message` note reaches marotte only on the INJECTED frame.
-//
-// TWO pieces of evidence, and THE ID LEADS because it is structural where the
-// ledger is a cache. KAS mints `steer-<messageID>` by prefixing the messageId a
-// caller sent on `_session/steer`, and CmdSteer is the only caller — the agent's
-// own steering rows take `notify-`, `wf-progress-` or `steering_boundary_`
-// instead. So the prefix is a fact about who sent it, while the ledger is an
-// in-memory map that is TTL'd, bounded, dropped at chat teardown and lost on
-// restart, and whose absence branch answers `agent`. Consulting the cache first
-// made every one of those losses rewrite the user's own words as a workflow
-// report AND drop them from the boundary resend, because the client keys both the
-// note's label and pendingSteerCarry on this field.
-//
-// Measured on chat c-1e22cf4e (2026-09-12): two steers 75s apart, the first
-// labelled the user's and the second the agent's, so the reader's correction
-// rendered as "Workflow result not delivered" and was discarded instead of being
-// carried into the next turn. The TTL had not expired; the ledger write raced
-// KAS's own `steering_queued` frame, which is folded on the bridge's Forward
-// goroutine with nothing serializing the two.
-//
-// The ledger still decides for an id marotte did not derive, which is the case
-// CmdSteer warns about when KAS returns an id other than SteerIDFor's.
+// steerOrigin answers whose words a steer carries. THE ID LEADS because it is
+// structural where the ledger is a cache: KAS mints `steer-<messageID>` from the id
+// CmdSteer sent, and the agent's own rows take `notify-`, `wf-progress-` or
+// `steering_boundary_`; the ledger is TTL'd, bounded, dropped at teardown, lost on
+// restart, and its write races KAS's own steering_queued frame (measured: a user's
+// correction labelled the agent's and dropped from the boundary resend). The
+// ledger still decides for an id marotte did not derive.
 func (t *Translator) steerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin {
 	if strings.HasPrefix(steerID, marotte.SteerIDPrefix) {
 		return marotte.SteerOriginUser
@@ -241,4 +249,13 @@ func (t *Translator) steerOrigin(chatID marotte.ChatID, steerID string) marotte.
 		return marotte.SteerOriginAgent
 	}
 	return t.steers.SteerOrigin(chatID, steerID)
+}
+
+// steerResends answers the dropped steers a steer this server sent re-sends; nil
+// for an agent's steer, an unrecorded id, or a Translator built without the role.
+func (t *Translator) steerResends(chatID marotte.ChatID, steerID string) []string {
+	if t.steers == nil {
+		return nil
+	}
+	return t.steers.SteerResends(chatID, steerID)
 }

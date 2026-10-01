@@ -1,0 +1,56 @@
+{
+  "input_file": "attack2-tilde-block-closed-by-backticks.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Before",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "c1a1eea14184897ef10e510b36f741cb35d3edb797bb14877288ad72f916d232",
+      "detail": "~~~\nan example block\n```",
+      "children": []
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "2",
+      "text": "2. CommonMark: still inside the tilde block",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "3c1e083ddb63e9c669d4e9f41fdfd9508749f7ba7b89d24ad9560197dc6a4cf9",
+      "detail": "~~~",
+      "children": []
+    },
+    {
+      "id": "L7",
+      "line": 7,
+      "indent": 0,
+      "number": "3",
+      "text": "3. CommonMark: the first task after the block",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "a95f078d82caf204b9aa692a5b86eb58c7184f98fb871701c8c4b39c70d8893b",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

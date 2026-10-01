@@ -1,0 +1,43 @@
+{
+  "input_file": "mixed-m9-deep-number-no-intermediate.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L2",
+      "line": 2,
+      "indent": 0,
+      "number": "3",
+      "text": "3 third",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "f0ba2ce698698cafcebf6c622625da09faa9d5d556feeebd8093fe9ed6d7d430",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 0,
+      "number": "3.1.1",
+      "text": "3.1.1 grandchild with no parent 3.1",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "a9fdd76c16ea57e2c2e7cd10cc11fa10e01ad7a5e7a91fc5440e0178799153ab",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 2
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

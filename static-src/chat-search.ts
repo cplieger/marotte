@@ -26,14 +26,11 @@ const EMPTY_ANSWER: SearchResult = { matches: [], scanned: 0, matched: 0, trunca
 
 /** The on-demand body build for ONE hit's turn, injected by messages.ts at mount (a
  *  static import back would cycle: messages.ts imports this module for the folded rows'
- *  hit counts). Inert until wired. The hit's BLOCK crosses rather than its turn-block
- *  ordinal, which is a fact of the residency projection on the other side. */
-let buildRevealedTurn: (
-  chatID: string,
-  turnID: string,
-  messageID: string,
-  blockIndex?: number,
-) => Promise<void> = () => Promise.resolve();
+ *  hit counts). Inert until wired. The hit's ENTRY crosses rather than a position inside
+ *  the turn, because the ordinal the build pins on is that entry's `seq`, which only the
+ *  projection on the other side can resolve. */
+let buildRevealedTurn: (chatID: string, turnID: string, entryID?: string) => Promise<void> = () =>
+  Promise.resolve();
 
 /** The same build for the search-WIDE loop, whose grant is scoped to the reveal
  *  rather than to the one navigation the reader is making. */
@@ -43,7 +40,7 @@ let buildWalkTurn: (chatID: string, turnID: string) => Promise<void> = () => Pro
 let endWalkReveal: (chatID: string) => void = () => undefined;
 
 export function initSearchRevealBuilder(
-  reveal: (chatID: string, turnID: string, messageID: string, blockIndex?: number) => Promise<void>,
+  reveal: (chatID: string, turnID: string, entryID?: string) => Promise<void>,
   forWalk: (chatID: string, turnID: string) => Promise<void>,
   endWalk: (chatID: string) => void,
 ): void {
@@ -112,14 +109,13 @@ export async function runServerSearch(
     countsByTurn.set(h.turn, (countsByTurn.get(h.turn) ?? 0) + 1);
   }
 
-  // Open by the turn's OPENING message id, which the server resolves and sends
-  // alongside the matched one. Neither substitute works: a hit often lands on an
-  // assistant message inside the turn, and the turn NUMBER is session-absolute
-  // on the wire but window-relative in the client's projection.
+  // Open by the TURN the matched entry names, which every hit carries: a fold is a
+  // turn's, and `turn_id` is the same id the fold set, the card's reconcile key and
+  // the store all key on, so no join resolves it.
   const revealTurns = new Set<string>();
   for (const h of hits) {
-    if (h.turn_message_id !== "") {
-      revealTurns.add(h.turn_message_id);
+    if (h.turn_id !== "") {
+      revealTurns.add(h.turn_id);
     }
   }
   for (const id of revealTurns) {
@@ -165,18 +161,18 @@ export function resetServerSearch(): void {
 
 /**
  * Reveal ONE hit's turn on demand: open it for search, build the body around the
- * hit's own block, and repaint. What hit NAVIGATION runs before it can select anything,
+ * hit's own entry, and repaint. What hit NAVIGATION runs before it can select anything,
  * mirroring `runServerSearch`'s reveal per turn — needed again there because a
  * hit can be paged in AFTER the search ran (its turn arrived as a folded stub
  * the original reveal never saw), and a reader can re-fold a revealed turn and
  * then step onto its hit. Idempotent on an already-revealed turn.
  */
 export async function revealHitTurn(chatID: string, hit: Hit): Promise<void> {
-  if (chatID === "" || hit.turn_message_id === "") {
+  if (chatID === "" || hit.turn_id === "") {
     return;
   }
-  openForSearch(chatID, hit.turn_message_id);
-  await buildRevealedTurn(chatID, hit.turn_message_id, hit.message_id, hit.block_index);
+  openForSearch(chatID, hit.turn_id);
+  await buildRevealedTurn(chatID, hit.turn_id, hit.entry_id);
   // Same stated cause as the search-wide reveal: which turns are open and
   // mounted changed. `shape`.
   bumpMessages(chatID, "shape");

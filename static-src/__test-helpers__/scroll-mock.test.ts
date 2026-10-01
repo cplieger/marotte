@@ -37,6 +37,17 @@ vi.mock("../dom.js", () => ({
       },
     },
   ),
+  // `skeleton.ts` in this graph imports the name, and Browser Mode links for real
+  // rather than reading properties off a namespace object — so an absent export
+  // fails the whole FILE at collection. `setBusy`'s own body rather than
+  // `undefined`, because a placeholder marks its host busy through it.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 
 import { scrollMock } from "./scroll-mock.js";

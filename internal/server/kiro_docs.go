@@ -48,6 +48,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -238,25 +239,10 @@ type kiroRoot struct {
 // two endpoints agree about what "in scope" means.
 func (s *Server) kiroRoots() []kiroRoot {
 	workBase := strings.TrimPrefix(s.workDir, "/")
-	var roots []kiroRoot
-	if info, err := os.Stat(filepath.Join(s.workDir, ".kiro")); err == nil && info.IsDir() {
-		roots = append(roots, kiroRoot{
-			fsPath: filepath.Join(s.workDir, ".kiro"),
-			prefix: workBase + "/.kiro",
-		})
-	}
-	entries, err := os.ReadDir(s.workDir)
-	if err != nil {
-		return roots
-	}
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		kd := filepath.Join(s.workDir, e.Name(), ".kiro")
-		if info, sErr := os.Stat(kd); sErr == nil && info.IsDir() {
-			roots = append(roots, kiroRoot{fsPath: kd, prefix: workBase + "/" + e.Name() + "/.kiro"})
-		}
+	specRoots := spec.Roots(s.workDir)
+	roots := make([]kiroRoot, 0, len(specRoots))
+	for _, r := range specRoots {
+		roots = append(roots, kiroRoot{fsPath: r.Dir, prefix: workBase + "/" + r.Rel})
 	}
 	return roots
 }
@@ -493,17 +479,9 @@ func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string, guard pathGua
 
 // specFileRank orders the conventional spec documents ahead of anything else,
 // so a feature group reads requirements → design → tasks → whatever it added.
+// It is spec.Rank so /docs/specs and GET /api/specs/{dir} list one order.
 func specFileRank(p string) int {
-	switch strings.TrimSuffix(path.Base(p), ".md") {
-	case "requirements":
-		return 0
-	case "design":
-		return 1
-	case "tasks":
-		return 2
-	default:
-		return 3
-	}
+	return spec.Rank(p)
 }
 
 // sortSpecDocs groups by feature, then applies specFileRank, then lexical.

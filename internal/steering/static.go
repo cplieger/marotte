@@ -55,7 +55,7 @@ func writeRuntime(b *strings.Builder, configDir string) {
 	if len(rest) > 0 {
 		b.WriteString("- " + strings.Join(rest, ", ") + "\n")
 	}
-	b.WriteString("- `" + configDir + "` is the persistent volume: `chats/` (one JSON per chat), ")
+	b.WriteString("- `" + configDir + "` is the persistent volume: `chats/` (one directory per chat: a `chat.json` header and an `entries.jsonl` turn log), ")
 	b.WriteString("`config.json` (marotte's settings), `tools.json` (tool manifest: what should be installed), ")
 	b.WriteString("`tools-state.json` (what is installed), `tools/` (`bin/`, `opt/<tool>/<version>/`, ")
 	b.WriteString("`go/`, `npm/`, `python/`, `kiro-cli-versions/<version>/`), `home/` (= HOME)\n")
@@ -146,8 +146,8 @@ func writeUIGuide(b *strings.Builder) {
 	b.WriteString("- Chat toolbar (top right): \"Search (Ctrl+F)\", \"File browser\", \"Toggle git\", ")
 	b.WriteString("\"Toggle shell\", \"Kiro docs\", \"History\", \"Settings\". On a phone the ☰ \"Menu\" button ")
 	b.WriteString("opens the sidebar\n")
-	b.WriteString("- Tabs: the strip is server-owned and shared across every device (max 48). Nine kinds: ")
-	b.WriteString("chat, editor, files, run, subagent, settings, git, docs, history. Drag to reorder; × or ")
+	b.WriteString("- Tabs: the strip is server-owned and shared across every device (max 48). Ten kinds: ")
+	b.WriteString("chat, editor, files, run, subagent, spec, settings, git, docs, history. Drag to reorder; × or ")
 	b.WriteString("middle-click closes; right-click gives \"Pin\"/\"Unpin\", \"Export as Markdown\", \"Export as ")
 	b.WriteString("JSON\". Closing a chat tab ends its running turn and keeps the record while retention is ")
 	b.WriteString("on; a run or subagent tab's × closes the view only\n")
@@ -219,8 +219,8 @@ func writeAttachments(b *strings.Builder, uploadDir, workDir string) {
 	b.WriteString("when the clipboard held one); a pasted FILE keeps its own name in `" + uploadDir + "/`; a pasted ")
 	b.WriteString("multi-line TEXT over 50 lines or 10,000 characters becomes `" + uploadDir + "/paste-YYYY-MM-DDTHH-MM-SS.txt` ")
 	b.WriteString("and is attached instead of typed (a single line stays in the box whatever its length). Two ")
-	b.WriteString("pastes inside one second share a name and the second overwrites. Upload limits: 49 MiB per ")
-	b.WriteString("gesture, 25 files\n")
+	b.WriteString("pastes inside one second share a name and the second overwrites. Upload limits: 255 MiB ")
+	b.WriteString("per gesture (the total across every file in one upload), 25 files\n")
 	b.WriteString("- What you receive: `.png/.jpg/.jpeg/.gif/.webp` up to 10 MiB (5 MiB base64, 15 MiB per ")
 	b.WriteString("prompt, at most 16 images since the last compaction) arrive as an inline image block: you ")
 	b.WriteString("SEE the picture, no tool call is needed, and the block carries NO filename. ")
@@ -262,9 +262,9 @@ func writeLimitations(b *strings.Builder) {
 // chat-recovery path.
 func writeCapabilities(b *strings.Builder, configDir string) {
 	b.WriteString("## Capabilities\n\n")
-	b.WriteString("- Chat history is stored in `" + configDir + "/chats/*.json` (one file per chat). In the UI, Ctrl+F ")
+	b.WriteString("- Chat history is stored in `" + configDir + "/chats/<id>/entries.jsonl` (one directory per chat). In the UI, Ctrl+F ")
 	b.WriteString("searches the open chat and History → \"Search conversations…\" searches every chat; from ")
-	b.WriteString("the shell, grep those files\n")
+	b.WriteString("the shell, grep the `entries.jsonl` files\n")
 	b.WriteString("- You can read, write, and edit files in the workspace directly\n")
 	b.WriteString("- Undo is per TURN, not per file: kiro-cli snapshots the files its own edit tools write ")
 	b.WriteString("(never a shell write, never a manual editor save), and the user's \"Rewind\" on a turn ")

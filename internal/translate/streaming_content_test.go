@@ -2,55 +2,18 @@ package translate
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"log/slog"
-	"strconv"
-	"strings"
+	"slices"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 var errBoom = errors.New("persist boom")
-
-// recStore records AppendMessage/Mutate/UpsertTurnPlan calls and returns
-// configurable errors so each write site's persist branches are observable.
-type recStore struct {
-	nopChatRecords
-	appendErr   error
-	mutateErr   error
-	upsertErr   error
-	appendCalls int
-	mutateCalls int
-	upsertCalls int
-}
-
-func (s *recStore) AppendMessage(_ context.Context, _ marotte.ChatID, _ *marotte.Message) error {
-	s.appendCalls++
-	return s.appendErr
-}
-
-func (s *recStore) UpsertTurnPlan(_ context.Context, _ marotte.ChatID, _ *marotte.Message) error {
-	s.upsertCalls++
-	return s.upsertErr
-}
-
-func (s *recStore) Mutate(_ context.Context, _ marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
-	s.mutateCalls++
-	if fn != nil {
-		_ = fn(&marotte.Chat{}, true)
-	}
-	if s.mutateErr != nil {
-		return "", s.mutateErr
-	}
-	return strconv.Itoa(s.mutateCalls), nil
-}
-
-var _ ChatRecords = (*recStore)(nil)
 
 // captureSlog redirects the default slog logger to buf and returns a
 // restore function. Not parallel-safe (mutates the global slog default).
@@ -69,175 +32,40 @@ func captureSlog(buf *bytes.Buffer) func() {
 	}
 }
 
-// chunkProcessed pre-fills the content/reasoning builders to the given
-// byte lengths, sends one text chunk, and reports whether the chunk was
-// processed (a message_chunk event was broadcast) versus dropped by the
-// per-turn maxBufferBytes guard.
-func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) bool {
-	t.Helper()
-	deps, events := newEventCaptureDeps()
-	chatID := marotte.ChatID("cap")
-	buf := deps.bufStore.GetOrInit(chatID)
-	if contentLen > 0 {
-		buf.Content.WriteString(strings.Repeat("a", contentLen))
-	}
-	if reasoningLen > 0 {
-		buf.Reasoning.WriteString(strings.Repeat("b", reasoningLen))
-	}
-	// Pre-start the turn so ensureTurnStarted does not emit message_created;
-	// the only possible broadcast is then the message_chunk on process.
-	buf.Started = true
-	buf.MessageID = "cap-mid"
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "cap-mid" }))
-	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-		"content": map[string]any{"type": marotte.ContentTypeText, "text": text},
-	}), false)
-	// The chunk's OWN text, not merely "some chunk was broadcast": crossing the
-	// cap now emits a one-off truncation notice, and counting that as processed
-	// would make these cases pass whether the text was dropped or not.
-	for _, e := range *events {
-		if e.Type != marotte.EventMessageChunk {
-			continue
-		}
-		if p, ok := e.Payload.(marotte.MessageChunkPayload); ok && p.Delta == text {
-			return true
-		}
-	}
-	return false
-}
-
-// truncationNotice reports whether crossing the cap announced itself, and how
-// many times. Silence here was the defect: the reply stopped mid-sentence with
-// nothing in the transcript to say why.
-func truncationNotices(t *testing.T, contentLen, chunks int) int {
-	t.Helper()
-	const chatID marotte.ChatID = "c1"
-	deps, events, _ := depsWithStore(t, chatID)
-	buf := deps.bufStore.GetOrInit(chatID)
-	buf.Content.WriteString(strings.Repeat("a", contentLen))
-	buf.Started = true
-	buf.MessageID = "cap-mid"
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "cap-mid" }))
-	for range chunks {
-		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-			"content": map[string]any{"type": marotte.ContentTypeText, "text": "a"},
-		}), false)
-	}
-	n := 0
-	for _, e := range *events {
-		if e.Type != marotte.EventMessageChunk {
-			continue
-		}
-		if p, ok := e.Payload.(marotte.MessageChunkPayload); ok && strings.Contains(p.Delta, "Reply truncated") {
-			n++
-		}
-	}
-	return n
-}
-
-// Crossing the cap must SAY so — once. Frames keep arriving after the cap is hit,
-// so a notice per frame would be a worse defect than the silence it replaced.
-func TestBufferCap_AnnouncesTruncationExactlyOnce(t *testing.T) {
-	if n := truncationNotices(t, maxBufferBytes, 5); n != 1 {
-		t.Errorf("five over-cap chunks produced %d truncation notices, want exactly 1", n)
-	}
-}
-
-// And it must stay silent while the turn is within the cap.
-func TestBufferCap_NoNoticeUnderTheCap(t *testing.T) {
-	if n := truncationNotices(t, 0, 3); n != 0 {
-		t.Errorf("three in-budget chunks produced %d truncation notices, want 0", n)
-	}
-}
-
-// TestBufferCap_BoundaryExactMaxIsProcessed pins that a chunk whose
-// running total exactly equals maxBufferBytes is still processed: the
-// cap is an exclusive upper bound, so equality does not drop the chunk.
-func TestBufferCap_BoundaryExactMaxIsProcessed(t *testing.T) {
-	if !chunkProcessed(t, maxBufferBytes-1, 0, "a") {
-		t.Error("chunk at total==maxBufferBytes: processed=false, want true (cap must not fire at equality)")
-	}
-}
-
-// TestBufferCap_OverByOneIsDropped pins that a chunk pushing the running
-// total one byte over the cap is dropped (no message_chunk broadcast).
-func TestBufferCap_OverByOneIsDropped(t *testing.T) {
-	if chunkProcessed(t, maxBufferBytes, 0, "a") {
-		t.Error("chunk at total==maxBufferBytes+1: processed=true, want false (one byte over the cap must drop)")
-	}
-}
-
-// TestBufferCap_ReasoningCountsTowardTotal pins that reasoning bytes
-// count toward the same per-turn cap as content bytes: content=max-1 +
-// reasoning=1 + a 1-byte chunk crosses the cap and drops.
-func TestBufferCap_ReasoningCountsTowardTotal(t *testing.T) {
-	if chunkProcessed(t, maxBufferBytes-1, 1, "a") {
-		t.Error("chunk with content=max-1, reasoning=1: processed=true, want false (reasoning must add to total)")
-	}
-}
-
-// TestHandlePlan_UnmarshalGuard pins that HandlePlan persists only when
-// the plan JSON parses; malformed JSON is skipped without a write.
-//
-// It also pins that ONE store call carries a plan frame: the second write that
-// used to maintain Chat.CurrentPlan is gone, so a frame costs one chat-file
-// rewrite rather than two.
+// TestHandlePlan_UnmarshalGuard pins that a plan frame is one plan entry in the
+// turn when its JSON parses, and nothing at all when it does not: no entry, no
+// frame on the wire, and no header write either way.
 func TestHandlePlan_UnmarshalGuard(t *testing.T) {
-	t.Run("ValidJSONUpsertsOnce", func(t *testing.T) {
-		rec := &recStore{}
-		deps := newBaseDeps()
-		deps.store = rec
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
-		if rec.upsertCalls != 1 {
-			t.Errorf("valid plan JSON: UpsertTurnPlan calls = %d, want 1", rec.upsertCalls)
-		}
-		if rec.appendCalls != 0 || rec.mutateCalls != 0 {
-			t.Errorf("a plan frame must cost one store call: AppendMessage = %d, Mutate = %d, want 0 and 0", rec.appendCalls, rec.mutateCalls)
-		}
-	})
-	t.Run("InvalidJSONSkips", func(t *testing.T) {
-		rec := &recStore{}
-		deps := newBaseDeps()
-		deps.store = rec
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{`))
-		if rec.upsertCalls != 0 {
-			t.Errorf("invalid plan JSON: UpsertTurnPlan calls = %d, want 0", rec.upsertCalls)
-		}
-	})
-}
+	cases := []struct {
+		name      string
+		raw       string
+		wantPlans int
+	}{
+		{name: "ValidJSONIsOnePlanEntry", raw: `{"entries":[]}`, wantPlans: 1},
+		{name: "InvalidJSONSkips", raw: `{`, wantPlans: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const chatID marotte.ChatID = "c1"
+			deps, events := newEventCaptureDeps()
+			store := testsupport.NewRecordingChatStore()
+			deps.store = store
+			tr := New(rolesOf(deps))
 
-// TestHandlePlan_LogsOnlyOnUpsertError pins that HandlePlan logs a
-// persist-plan error only when UpsertTurnPlan fails, and stays silent on
-// success.
-func TestHandlePlan_LogsOnlyOnUpsertError(t *testing.T) {
-	t.Run("ErrorLoggedWhenUpsertFails", func(t *testing.T) {
-		var logbuf bytes.Buffer
-		restore := captureSlog(&logbuf)
-		defer restore()
-		rec := &recStore{upsertErr: errBoom}
-		deps := newBaseDeps()
-		deps.store = rec
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
-		if !strings.Contains(logbuf.String(), "persist plan") {
-			t.Errorf("UpsertTurnPlan error not logged; log=%q, want it to contain %q", logbuf.String(), "persist plan")
-		}
-	})
-	t.Run("NoLogWhenUpsertSucceeds", func(t *testing.T) {
-		var logbuf bytes.Buffer
-		restore := captureSlog(&logbuf)
-		defer restore()
-		rec := &recStore{} // every error field nil
-		deps := newBaseDeps()
-		deps.store = rec
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
-		if strings.Contains(logbuf.String(), "persist plan") {
-			t.Errorf("unexpected error log on UpsertTurnPlan success; log=%q", logbuf.String())
-		}
-	})
+			tr.HandlePlan(t.Context(), chatID, json.RawMessage(tc.raw), FrameAttribution{})
+
+			plans := plansOf(t, deps.chatEntries(chatID))
+			if len(plans) != tc.wantPlans {
+				t.Errorf("HandlePlan(%s): plan entries = %d, want %d", tc.raw, len(plans), tc.wantPlans)
+			}
+			if got := hasEntryAppended(events, marotte.EntryKindPlan); got != (tc.wantPlans == 1) {
+				t.Errorf("HandlePlan(%s): entry_appended{plan} on the wire = %v, want %v", tc.raw, got, tc.wantPlans == 1)
+			}
+			if store.Exists(chatID) {
+				t.Errorf("HandlePlan(%s) wrote the chat header; a plan is an entry of the turn, never a header write", tc.raw)
+			}
+		})
+	}
 }
 
 // TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts pins the H3
@@ -256,7 +84,7 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	// Pre-create the chat so HandleModeUpdate's Mutate sees exists=true.
 	_, _ = store.Mutate(t.Context(), chatID, func(_ *marotte.Chat, _ bool) bool { return true })
 
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+	tr := New(rolesOf(deps))
 	tr.HandleModeUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"currentModeId": "plan",
 	}))
@@ -290,156 +118,334 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	}
 }
 
-// There is no TestHandlePlan_ContextErrGuard any more, and its absence is the
-// point: it pinned a `ctx.Err()` check that sat BETWEEN HandlePlan's two writes,
-// existing only to skip the second one when the frame's context had already
-// expired. One write means there is no second write to skip, so the guard went
-// with Chat.CurrentPlan and the test's whole subject went with it. Whether a
-// cancelled context reaches disk is the store's contract, tested there.
-
 // --- Model refusal (kiro-cli 2.13 _meta.kiro.refusal) ---
 
-func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
-	newChunk := func(meta map[string]any) map[string]any {
-		c := map[string]any{
-			"content": map[string]any{"type": marotte.ContentTypeText, "text": "I can't continue."},
-		}
-		if meta != nil {
-			c["_meta"] = map[string]any{"kiro": meta}
-		}
-		return c
+// refusalChunk is one text chunk, tagged with meta when non-nil.
+func refusalChunk(meta map[string]any) map[string]any {
+	c := map[string]any{
+		"content": map[string]any{"type": marotte.ContentTypeText, "text": "I can't continue."},
 	}
+	if meta != nil {
+		c["_meta"] = map[string]any{"kiro": meta}
+	}
+	return c
+}
 
-	t.Run("tagged text chunk stamps buffer and rides the chunk event", func(t *testing.T) {
+// sealedRefusals is the refusal block on every entry_sealed frame, in wire order.
+// The seal is the LIVE carrier: a tagged chunk opens no entry, it seals the lane's
+// open one, so this reads the frame the refusal branch publishes.
+func sealedRefusals(events []marotte.ServerEvent) []*marotte.RefusalInfo {
+	var out []*marotte.RefusalInfo
+	for _, e := range events {
+		if p, ok := e.Payload.(marotte.EntrySealedPayload); ok {
+			out = append(out, p.Refusal)
+		}
+	}
+	return out
+}
+
+// textsOf is the text of every text entry in entries, in seal order: what a reader
+// would see as assistant prose.
+func textsOf(t *testing.T, entries []marotte.Entry) []string {
+	t.Helper()
+	var out []string
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindText {
+			continue
+		}
+		var p marotte.EntryText
+		if err := json.Unmarshal(entries[i].Payload, &p); err != nil {
+			t.Fatalf("decode text %q: %v", entries[i].ID, err)
+		}
+		out = append(out, p.Text)
+	}
+	return out
+}
+
+// thinkingTextsOf is the text of every thinking entry in entries, in seal order:
+// textsOf's sibling for the reasoning stream.
+func thinkingTextsOf(t *testing.T, entries []marotte.Entry) []string {
+	t.Helper()
+	var out []string
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindThinking {
+			continue
+		}
+		var p marotte.EntryThinking
+		if err := json.Unmarshal(entries[i].Payload, &p); err != nil {
+			t.Fatalf("decode thinking %q: %v", entries[i].ID, err)
+		}
+		out = append(out, p.Text)
+	}
+	return out
+}
+
+// closeChatTurn closes the chat's turn so every open entry seals and the turn_close
+// lands in the log.
+func closeChatTurn(t *testing.T, deps *baseDeps, chatID marotte.ChatID) {
+	t.Helper()
+	turn := deps.turns.chats[chatID]
+	if turn == nil {
+		t.Fatalf("chat %q has no turn to close", chatID)
+	}
+	if _, err := turn.Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// closedRefusal closes the chat's turn and answers the refusal its turn_close
+// recorded: the durable statement of what the turn latched.
+func closedRefusal(t *testing.T, deps *baseDeps, chatID marotte.ChatID) *marotte.RefusalInfo {
+	t.Helper()
+	closeChatTurn(t, deps, chatID)
+	return turnCloseOf(t, deps.chatEntries(chatID)).Refusal
+}
+
+func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
+	t.Run("the tagged chunk's text is not assistant prose", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := marotte.ChatID("rf1")
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
+		tr := New(rolesOf(deps))
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
 			"refusal": map[string]any{
 				"category":         "safety",
-				"explanation":      "dup of the text",
+				"explanation":      "I can't continue.",
 				"recommendedModel": "model-x",
 			},
-		})), false)
+		})), false, FrameAttribution{})
 
-		buf := deps.bufStore.Get(chatID)
-		if buf == nil || buf.Refusal == nil {
-			t.Fatal("buffer refusal not stamped")
-		}
-		if buf.Refusal.Category != "safety" || buf.Refusal.RecommendedModel != "model-x" {
-			t.Errorf("refusal fields: %+v", buf.Refusal)
-		}
-		var chunkPayloads []marotte.MessageChunkPayload
+		// The explanation reaches the reader through the refusal record, so the
+		// chunk must open no entry and emit no text frame of its own.
 		for _, e := range *events {
-			if e.Type == marotte.EventMessageChunk {
-				chunkPayloads = append(chunkPayloads, e.Payload.(marotte.MessageChunkPayload))
+			switch e.Type {
+			case marotte.EventEntryOpened, marotte.EventEntryDelta:
+				t.Errorf("a refusal-tagged chunk emitted %s, want no text frame", e.Type)
 			}
 		}
-		if len(chunkPayloads) != 1 || chunkPayloads[0].Refusal == nil {
-			t.Fatalf("expected one refusal-tagged chunk event, got %+v", chunkPayloads)
+		closeChatTurn(t, deps, chatID)
+		entries := deps.chatEntries(chatID)
+		if texts := textsOf(t, entries); len(texts) != 0 {
+			t.Errorf("text entries = %q, want none: the refusal explanation is not prose", texts)
 		}
-		if chunkPayloads[0].Refusal.Category != "safety" {
-			t.Errorf("chunk payload refusal: %+v", chunkPayloads[0].Refusal)
+		got := turnCloseOf(t, entries).Refusal
+		if got == nil {
+			t.Fatal("turn_close refusal = nil, want the tagged chunk's refusal")
+		}
+		if got.Category != "safety" || got.RecommendedModel != "model-x" {
+			t.Errorf("turn_close refusal = %+v, want category safety and model-x", got)
+		}
+		if got.Explanation != "I can't continue." {
+			t.Errorf("turn_close refusal explanation = %q, want the wire's explanation", got.Explanation)
+		}
+	})
+
+	t.Run("prose before a refusal keeps its own entry and prose after opens a fresh one", func(t *testing.T) {
+		deps, _ := newEventCaptureDeps()
+		chatID := marotte.ChatID("rf1b")
+		tr := New(rolesOf(deps))
+		chunk := func(text string) json.RawMessage {
+			return mustJSON(t, map[string]any{
+				"content": map[string]any{"type": marotte.ContentTypeText, "text": text},
+			})
+		}
+		tr.HandleAssistantChunk(t.Context(), chatID, chunk("before"), false, FrameAttribution{})
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
+			"refusal": map[string]any{"category": "safety", "explanation": "I can't continue."},
+		})), false, FrameAttribution{})
+		// A refusal is not always the last thing in a turn, so what follows it must
+		// not extend the entry that preceded it.
+		tr.HandleAssistantChunk(t.Context(), chatID, chunk("after"), false, FrameAttribution{})
+
+		closeChatTurn(t, deps, chatID)
+		entries := deps.chatEntries(chatID)
+		if got, want := textsOf(t, entries), []string{"before", "after"}; !slices.Equal(got, want) {
+			t.Errorf("text entries = %q, want %q: the seal must split the prose", got, want)
+		}
+		if got := turnCloseOf(t, entries).Refusal; got == nil || got.Explanation != "I can't continue." {
+			t.Errorf("turn_close refusal = %+v, want the explanation recorded", got)
+		}
+	})
+
+	t.Run("a delegate's refusal seals that lane alone", func(t *testing.T) {
+		deps, _ := newEventCaptureDeps()
+		chatID := marotte.ChatID("rf1c")
+		tr := New(rolesOf(deps))
+		laneChunk := func(lane, text string) json.RawMessage {
+			return mustJSON(t, map[string]any{
+				"content": map[string]any{"type": marotte.ContentTypeText, "text": text},
+				"_meta":   map[string]any{"kiro": map[string]any{"agentSubtaskId": lane}},
+			})
+		}
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "parent "},
+		}), false, FrameAttribution{})
+		tr.HandleAssistantChunk(t.Context(), chatID, laneChunk("sub-1", "delegate "), false, FrameAttribution{})
+		// The lane comes off the chunk, so this seals sub-1 and leaves the parent's
+		// open entry to keep accumulating.
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
+			"refusal":        map[string]any{"category": "safety", "explanation": "delegate stopped"},
+			"agentSubtaskId": "sub-1",
+		})), false, FrameAttribution{})
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "prose"},
+		}), false, FrameAttribution{})
+
+		closeChatTurn(t, deps, chatID)
+		entries := deps.chatEntries(chatID)
+		if got, want := textsOf(t, entries), []string{"delegate ", "parent prose"}; !slices.Equal(got, want) {
+			t.Errorf("text entries = %q, want %q: only the delegate's lane is sealed", got, want)
+		}
+		if got := turnCloseOf(t, entries).Refusal; got == nil || got.Explanation != "delegate stopped" {
+			t.Errorf("turn_close refusal = %+v, want the delegate's explanation", got)
+		}
+	})
+
+	t.Run("the seal frame carries the refusal live", func(t *testing.T) {
+		deps, events := newEventCaptureDeps()
+		chatID := marotte.ChatID("rf1d")
+		tr := New(rolesOf(deps))
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "before"},
+		}), false, FrameAttribution{})
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
+			"refusal": map[string]any{
+				"category":         "safety",
+				"explanation":      "I can't continue.",
+				"recommendedModel": "model-x",
+			},
+		})), false, FrameAttribution{})
+
+		// The refusal branch SEALS the lane, so the seal's own frame is the live
+		// carrier: the callout mounts on it rather than waiting for turn_close.
+		got := sealedRefusals(*events)
+		if len(got) != 1 {
+			t.Fatalf("entry_sealed frames = %d, want 1: the refusal seals the open entry", len(got))
+		}
+		if got[0] == nil {
+			t.Fatal("entry_sealed refusal = nil, want the tagged chunk's refusal")
+		}
+		if got[0].Category != "safety" || got[0].RecommendedModel != "model-x" {
+			t.Errorf("entry_sealed refusal = %+v, want category safety and model-x", got[0])
+		}
+		if got[0].Explanation != "I can't continue." {
+			t.Errorf("entry_sealed refusal explanation = %q, want the wire's explanation", got[0].Explanation)
+		}
+	})
+
+	t.Run("an ordinary seal carries no refusal", func(t *testing.T) {
+		deps, events := newEventCaptureDeps()
+		chatID := marotte.ChatID("rf1e")
+		tr := New(rolesOf(deps))
+		// Two lanes' prose, then a kind change sealing one of them: a seal with no
+		// refusal behind it must leave the field absent, or the callout mounts on a
+		// turn nothing refused.
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "prose"},
+		}), false, FrameAttribution{})
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "thought"},
+		}), true, FrameAttribution{})
+
+		got := sealedRefusals(*events)
+		if len(got) == 0 {
+			t.Fatal("entry_sealed frames = 0, want the kind change to seal the text entry")
+		}
+		for _, r := range got {
+			if r != nil {
+				t.Errorf("an untagged seal carried refusal %+v, want none", r)
+			}
 		}
 	})
 
 	t.Run("first refusal wins", func(t *testing.T) {
 		deps, _ := newEventCaptureDeps()
 		chatID := marotte.ChatID("rf2")
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
+		tr := New(rolesOf(deps))
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
 			"refusal": map[string]any{"category": "first"},
-		})), false)
-		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
+		})), false, FrameAttribution{})
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
 			"refusal": map[string]any{"category": "second"},
-		})), false)
-		buf := deps.bufStore.Get(chatID)
-		if buf == nil || buf.Refusal == nil || buf.Refusal.Category != "first" {
-			t.Errorf("expected first refusal kept, got %+v", buf.Refusal)
+		})), false, FrameAttribution{})
+		if got := closedRefusal(t, deps, chatID); got == nil || got.Category != "first" {
+			t.Errorf("turn_close refusal = %+v, want the first chunk's category kept", got)
 		}
 	})
 
-	t.Run("reasoning chunk cannot mark the turn", func(t *testing.T) {
+	t.Run("a tagged reasoning chunk marks the turn and seals its lane", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := marotte.ChatID("rf3")
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
-			"refusal": map[string]any{"category": "safety"},
-		})), true)
-		if buf := deps.bufStore.Get(chatID); buf != nil && buf.Refusal != nil {
-			t.Error("reasoning chunk must not stamp refusal")
+		tr := New(rolesOf(deps))
+		// The tag is a TURN-level fact and the frame's method says only which stream
+		// it arrived on, so a refusal KAS puts on a thought chunk marks the turn like
+		// any other — and its text is dropped rather than opening a thinking entry
+		// the callout would then duplicate.
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "reasoning "},
+		}), true, FrameAttribution{})
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(map[string]any{
+			"refusal": map[string]any{"category": "safety", "explanation": "I can't continue."},
+		})), true, FrameAttribution{})
+
+		if got := sealedRefusals(*events); len(got) != 1 || got[0] == nil || got[0].Category != "safety" {
+			t.Errorf("entry_sealed refusals = %+v, want one carrying category safety", got)
 		}
-		for _, e := range *events {
-			if e.Type == marotte.EventMessageChunk && e.Payload.(marotte.MessageChunkPayload).Refusal != nil {
-				t.Error("reasoning chunk must not carry refusal on the wire")
-			}
+		closeChatTurn(t, deps, chatID)
+		entries := deps.chatEntries(chatID)
+		if got := turnCloseOf(t, entries).Refusal; got == nil || got.Category != "safety" {
+			t.Errorf("turn_close refusal = %+v after a tagged reasoning chunk, want category safety", got)
+		}
+		// The explanation is the turn's metadata, so it is not thinking text either.
+		if got := thinkingTextsOf(t, entries); !slices.Equal(got, []string{"reasoning "}) {
+			t.Errorf("thinking entries = %q, want only the prose that preceded the refusal", got)
 		}
 	})
 
 	t.Run("untagged chunk stays clean", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := marotte.ChatID("rf4")
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(nil)), false)
-		if buf := deps.bufStore.Get(chatID); buf != nil && buf.Refusal != nil {
-			t.Error("untagged chunk must not stamp refusal")
-		}
-		for _, e := range *events {
-			if e.Type == marotte.EventMessageChunk && e.Payload.(marotte.MessageChunkPayload).Refusal != nil {
-				t.Error("untagged chunk must not carry refusal")
+		tr := New(rolesOf(deps))
+		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, refusalChunk(nil)), false, FrameAttribution{})
+		for _, r := range sealedRefusals(*events) {
+			if r != nil {
+				t.Errorf("an untagged chunk put refusal %+v on the wire, want none", r)
 			}
+		}
+		if got := closedRefusal(t, deps, chatID); got != nil {
+			t.Errorf("turn_close refusal = %+v after an untagged chunk, want nil", got)
 		}
 	})
 }
 
-// TestHandleAssistantChunk_AStepsFrameStatesTheRunsTurnSource pins which KIND of
-// turn a fold with no open turn opens.
-//
-// A chat-parented run executes on the LAUNCHING chat's session, so a step's frames
-// fold onto that chat — and its launching turn has already ended, because
-// run_workflow returns as soon as the run is created. Opened as the chat's own
-// engine turn, that turn made every client read the chat as working for the length
-// of the run, with nothing to close it: a step's own turn_end is dropped by the
-// attribution gate above.
-//
-// The FRAME's own `_meta.kiro.workflow` decides, not the dispatcher's attribution:
-// it is self-describing, so it stays right when the step registry is cold after a
-// restart.
-func TestHandleAssistantChunk_AStepsFrameStatesTheRunsTurnSource(t *testing.T) {
-	stepMeta := map[string]any{
-		"kiro": map[string]any{
-			"workflow": map[string]any{
-				"workflowId": "wf-1",
-				"nodePath":   []string{"root", "step"},
-				"type":       "step",
-			},
-		},
-	}
+// TestHandleAssistantChunk_AStepsFrameFoldsIntoTheRunsTurn pins WHOSE turn a
+// content frame folds into. A chat-parented run executes on the LAUNCHING chat's
+// session, so a step's frames arrive on that chat's bridge after its launching
+// turn has ended; folded into the chat's own turn they made the chat read as
+// working for the length of the run. The dispatcher's attribution decides: a Step
+// frame folds into the RUN's turn for its path, the chat's own into the chat's.
+func TestHandleAssistantChunk_AStepsFrameFoldsIntoTheRunsTurn(t *testing.T) {
 	cases := []struct {
-		name string
-		meta map[string]any
-		want marotte.TurnOpenSource
+		name      string
+		attr      FrameAttribution
+		wantRunID string
 	}{
-		{name: "a workflow step's frame", meta: stepMeta, want: marotte.TurnSourceWorkflowStep},
-		{name: "the chat's own frame", meta: nil, want: marotte.TurnSourceWireTurnStart},
+		{name: "a workflow step's frame", attr: FrameAttribution{Step: true, RunID: "wf-1", NodePath: "root/step"}, wantRunID: "wf-1"},
+		{name: "the chat's own frame", attr: FrameAttribution{}, wantRunID: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d := newBaseDeps()
 			tr := New(rolesOf(d))
 			frame := map[string]any{"content": map[string]any{"type": "text", "text": "hi"}}
-			if tc.meta != nil {
-				frame["_meta"] = tc.meta
-			}
 
-			tr.HandleAssistantChunk(t.Context(), "c1", mustJSON(t, frame), false)
+			tr.HandleAssistantChunk(t.Context(), "c1", mustJSON(t, frame), false, tc.attr)
 
-			got, ok := d.lastFoldSource()
+			got, ok := d.lastFold()
 			if !ok {
 				t.Fatal("the frame never reached a fold site, so it landed nowhere")
 			}
-			if got != tc.want {
-				t.Errorf("fold source = %v, want %v", got, tc.want)
+			if got.runID != tc.wantRunID {
+				t.Errorf("fold target run = %q, want %q", got.runID, tc.wantRunID)
 			}
 		})
 	}

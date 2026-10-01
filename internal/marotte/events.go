@@ -84,6 +84,13 @@ const (
 	// is what TurnConclusion.Truncated carries.
 	StopReasonMaxTokens       StopReason = "max_tokens"
 	StopReasonMaxTurnRequests StopReason = "max_turn_requests"
+	// StopReasonUnterminated is marotte's OWN value, never KAS's: the entry log's
+	// store-open closer stamps it on a turn no process could have closed, and the
+	// merge's synthesized closer stamps it on a turn neither side closed. It is a
+	// member of this enum rather than a literal at the closer, because the value
+	// reaches the generated client decoder, which rejects a stop reason outside
+	// this union.
+	StopReasonUnterminated StopReason = "unterminated"
 )
 
 // SSE event type constants. Using these instead of bare string literals
@@ -118,10 +125,6 @@ const (
 	EventMCPFailed         EventType = "mcp_failed"
 	EventMCPOAuthNeeded    EventType = "mcp_oauth_needed"
 	EventMCPPrewarm        EventType = "mcp_prewarm"
-	EventMessageAppended   EventType = "message_appended"
-	EventMessageChunk      EventType = "message_chunk"
-	EventMessageCreated    EventType = "message_created"
-	EventMessageUpdated    EventType = "message_updated"
 	EventModeChanged       EventType = "mode_changed"
 	EventOpenExternalURL   EventType = "open_external_url"
 	// EventPermissionNeeded carries a turn's verdict as well as an individual
@@ -141,29 +144,12 @@ const (
 	EventRunStarted  EventType = "run_started"
 	EventRunProgress EventType = "run_progress"
 	EventRunFinished EventType = "run_finished"
-	// EventRunStep is a PARENTLESS run's step content: one text delta, one
-	// reasoning delta, or one tool call. The fourth run event and the only one
-	// that is not an invalidation, because there is nothing to invalidate — a
-	// step's transcript is not in `inspect` and no endpoint serves it.
-	//
-	// It exists for the runs an agent did not launch. A chat-parented run's step
-	// frames arrive on that chat's bridge and reach its transcript already, keyed
-	// by ACPWorkflowMeta.SubtaskID; a manual or scheduled run has no chat, so its
-	// frames arrived on the run bridge and were dropped, which left the run tab
-	// with the step's captured output and nothing about how it got there.
-	//
-	// Workspace-global (empty chat id), like a parentless run's lifecycle frames,
-	// and EPHEMERAL: nothing persists it, so a reload loses it. That is the
-	// honest shape rather than a shortcoming — the content belongs to a turn
-	// marotte never prompted and therefore never finalizes, and `capturedOutput`
-	// is the durable half.
-	EventRunStep EventType = "run_step"
 	// EventRunInputNeeded is a workflow STEP asking a person a question, and the
-	// FIFTH run event. Like run_step it carries its payload rather than being an
-	// invalidation, and for a stronger reason: the question is on no endpoint at
-	// all. KAS parks the run with one fixed pauseReason literal and an empty
-	// pauseDetail, so a client refetching `inspect` learns that a step wants input
-	// and can never learn what it asked.
+	// FOURTH run event. Unlike the three lifecycle frames above it carries its
+	// payload rather than being an invalidation, and for a stronger reason: the
+	// question is on no endpoint at all. KAS parks the run with one fixed
+	// pauseReason literal and an empty pauseDetail, so a client refetching
+	// `inspect` learns that a step wants input and can never learn what it asked.
 	//
 	// Keyed to the LAUNCHING chat when the run has one and to `run:<workflowId>`
 	// when it does not, so it reaches the parent tab's dock in the first case and
@@ -202,16 +188,23 @@ const (
 	// aggregate frame: the version and the event are one-to-one, and there is no
 	// second channel to race.
 	EventTabsChanged EventType = "tabs_changed"
-	// EventSteerQueued and the two below mirror KAS's own three mid-turn
-	// steering signals rather than collapsing them. Each answers a different
-	// question the chip row asks: queued = it reached the buffer, injected =
-	// the model has actually read it, cleared = the turn boundary dropped
-	// whatever was still unread. A single "steer_changed" event would make
-	// "sent but not yet seen" indistinguishable from "seen", which is the one
-	// distinction a user steering a live turn cares about.
-	EventSteerQueued   EventType = "steer_queued"
-	EventSteerInjected EventType = "steer_injected"
-	EventSteerCleared  EventType = "steer_cleared"
+	// EventSpecChanged says a spec directory's files changed on disk. One frame
+	// per coalescing window, workspace-global, payload names the directory.
+	EventSpecChanged EventType = "spec_changed"
+	// EventSpecApproved says a human approved one phase of a spec. Pure
+	// invalidation, workspace-global, payload names the directory: the client
+	// refetches that spec, exactly as forges_changed and subject_changed do.
+	//
+	// Deliberately NOT a reuse of EventSpecChanged. That one means the FILES
+	// moved and is coalesced workspace-globally by the watcher, and conflating
+	// the two would make an approval look like a document edit — which is the
+	// one thing the badge exists to tell apart.
+	EventSpecApproved EventType = "spec_approved"
+	// EventSteerQueued says a steer reached KAS's buffer, and it is the only
+	// steering EVENT: whether the model then read it or a boundary dropped it is
+	// the `steer` entry's own `state`, which arrives as entry_appended and is
+	// durable, where an event is not.
+	EventSteerQueued EventType = "steer_queued"
 	// A notice the AGENT produced, not the user: a workflow step or a subagent
 	// reporting progress into the session that launched it.
 	//
@@ -228,12 +221,19 @@ const (
 	EventTerminalCreated EventType = "terminal_created"
 	EventTerminalExited  EventType = "terminal_exited"
 	EventTerminalOutput  EventType = "terminal_output"
-	EventToolCall        EventType = "tool_call"
-	EventToolCallUpdate  EventType = "tool_call_update"
 	EventToolJobChanged  EventType = "tool_job_changed"
 	EventToolJobOutput   EventType = "tool_job_output"
-	EventTurnEnded       EventType = "turn_ended"
 	EventWorkingLabel    EventType = "working_label"
+	// The entry log's live path (events_entries.go): every frame is an append to
+	// the log a client can also GET, a delta into an open entry, or a live-only
+	// replace of a turn-level value the turn_close will carry.
+	EventTurnOpened    EventType = "turn_opened"
+	EventEntryOpened   EventType = "entry_opened"
+	EventEntryDelta    EventType = "entry_delta"
+	EventEntrySealed   EventType = "entry_sealed"
+	EventEntryAppended EventType = "entry_appended"
+	EventToolProgress  EventType = "tool_progress"
+	EventTurnClosed    EventType = "turn_closed"
 )
 
 // labelRunning is the working label shared by the running-process kinds

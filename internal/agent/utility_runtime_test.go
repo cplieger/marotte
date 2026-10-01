@@ -940,10 +940,10 @@ func TestCullIdleUtilityBridgeOnce_LeavesARecentlyActiveBridgeAlone(t *testing.T
 func TestUtilityBridge_DeclaresSecretStorageOnlyWhenThisProcessHoldsAStore(t *testing.T) {
 	startedUtilityBridge := func(t *testing.T, opts ...Option) *fakeBridge {
 		t.Helper()
-		cs := newFakeChatStore()
+		cs := newTestChatStore()
 		br := newFakeBridge()
 		h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
-		cs.Bus = h
+		cs.wire(h)
 		h.mcpRegistry.SignalReady()
 		br.callResults = map[string]json.RawMessage{
 			methodKiroGetUsage: json.RawMessage(`{"success":true,"message":"ok"}`),

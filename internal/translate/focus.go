@@ -33,7 +33,7 @@ type focusUpdate struct {
 //
 // Two filters at two depths, because they take different inputs: the door rule is
 // about the string alone and runs here, while the derivation filter needs the chat's
-// own messages and so runs inside applyFocusTitle's Mutate.
+// own prompts and so runs in applyFocusTitle against the log.
 func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatID, f *focusUpdate) {
 	if title := SanitizeTitle(f.Title); title != "" {
 		t.adoptOrRefuseTitle(ctx, chatID, title)
@@ -71,14 +71,24 @@ func (t *Translator) adoptOrRefuseTitle(ctx context.Context, chatID marotte.Chat
 	}
 }
 
-// applyFocusTitle writes an agent-authored title onto the chat. The
-// derivation filter runs inside the Mutate closure because it needs the
-// chat's messages; Mutate broadcasts chat_updated on change, which is what
-// flips the tab label live.
+// applyFocusTitle writes an agent-authored title onto the chat. The derivation
+// filter reads the log's prompts ahead of the header write; Mutate broadcasts
+// chat_updated on change, which is what flips the tab label live.
 func (t *Translator) applyFocusTitle(ctx context.Context, chatID marotte.ChatID, title string) {
+	prompts, err := t.chats.PromptTexts(ctx, chatID)
+	if errors.Is(err, chat.ErrTombstoned) || errors.Is(err, chat.ErrChatNotFound) {
+		return
+	}
+	if err != nil {
+		slog.Error("focus title: prompts unreadable, title dropped", "chat_id", chatID, "error", err)
+		return
+	}
+	if titleIsPromptDerived(title, prompts) {
+		return
+	}
 	renamed := false
-	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
+	_, err = t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if !exists || c.Name == title {
 			return false
 		}
 		c.Name = title
@@ -105,13 +115,9 @@ func (t *Translator) applyFocusTitle(ctx context.Context, chatID marotte.ChatID,
 // adopted "agent focus titles" were derivations a byte-exact filter passed, both
 // differing only by the prompt's lowercase first letter. A title SV had to truncate
 // never reaches here, since the door refuses every "..."-suffixed title.
-func titleIsPromptDerived(title string, c *marotte.Chat) bool {
-	for i := range c.Messages {
-		m := &c.Messages[i]
-		if m.Role != marotte.RoleUser {
-			continue
-		}
-		if kasDerivedTitle(m.Content) == title {
+func titleIsPromptDerived(title string, prompts []string) bool {
+	for _, text := range prompts {
+		if kasDerivedTitle(text) == title {
 			return true
 		}
 	}

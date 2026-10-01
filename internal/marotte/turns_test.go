@@ -26,6 +26,7 @@ var everyTurnOutcome = []TurnOutcome{
 	TurnOutcomeFailed,
 	TurnOutcomeRefused,
 	TurnOutcomeUnknown,
+	TurnOutcomeEmpty,
 }
 
 func loadSeverityFixture(t *testing.T) severityFixture {
@@ -120,38 +121,10 @@ func TestDefaultFailureReason_SpeaksWhereverThereIsSomethingToSay(t *testing.T) 
 			if reason == "" {
 				t.Errorf("DefaultFailureReason(%q) is empty; a turn that ended badly must say something", o)
 			}
-		case TurnOutcomeCancelled, TurnOutcomeCompleted, TurnOutcomeRunning:
+		case TurnOutcomeCancelled, TurnOutcomeCompleted, TurnOutcomeRunning, TurnOutcomeEmpty:
 			if reason != "" {
 				t.Errorf("DefaultFailureReason(%q) = %q, want empty: there is nothing to add", o, reason)
 			}
-		}
-	}
-}
-
-// TestStopMarkerKind_CancelledIsTheOnlySkippedMarker pins both buckets plus the reason
-// the split exists: deriveTurnOutcome answers `interrupted` BEFORE `cancelled` when a
-// turn's body carries both markers, so a cancelled close must leave no EventInterrupted
-// row of its own. EventTurnOutcome is out of range on purpose — it is the clean-close
-// marker and says nothing about a turn that stopped.
-func TestStopMarkerKind_CancelledIsTheOnlySkippedMarker(t *testing.T) {
-	cases := []struct {
-		outcome TurnOutcome
-		want    EventKind
-	}{
-		{outcome: TurnOutcomeCancelled, want: EventCancelled},
-		{outcome: TurnOutcomeInterrupted, want: EventInterrupted},
-		{outcome: TurnOutcomeFailed, want: EventInterrupted},
-	}
-	for _, tc := range cases {
-		t.Run(string(tc.outcome), func(t *testing.T) {
-			if got := StopMarkerKind(tc.outcome); got != tc.want {
-				t.Errorf("StopMarkerKind(%q) = %q, want %q", tc.outcome, got, tc.want)
-			}
-		})
-	}
-	for _, o := range everyTurnOutcome {
-		if got := StopMarkerKind(o); got == EventTurnOutcome {
-			t.Errorf("StopMarkerKind(%q) = %q, which is the clean-close marker", o, got)
 		}
 	}
 }

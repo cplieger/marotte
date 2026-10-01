@@ -1,22 +1,23 @@
 package agent
 
-import (
-	"cmp"
-	"context"
-	"log/slog"
-	"time"
+// A turn has three terminal causes: its own end, the death of the bridge that
+// hosted it, and a marotte crash. The first two close here; the third is the
+// store-open closer in internal/chat.
 
-	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/marotte/internal/buffer"
+import (
+	"context"
+	"errors"
+	"log/slog"
+
 	"github.com/cplieger/marotte/internal/durable"
-	"github.com/cplieger/marotte/internal/sanitize"
-	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/runesafe/v2"
 )
 
-// turnCloser names the local step ending a turn rather than a stop reason: each resolves
-// an in-flight partial in a different direction.
+// turnCloser names the local step ending a turn rather than a stop reason.
 type turnCloser int
 
 const (
@@ -24,45 +25,32 @@ const (
 	closerPromptResponse turnCloser = iota
 	// closerPromptFailure is the prompt call failing before the turn could end.
 	closerPromptFailure
-	// closerModelSwitch is a bridge restart DISCARDING the turn as moot.
-	closerModelSwitch
 	// closerLocalShell is a `!cmd` turn marotte ran itself.
 	closerLocalShell
-	// closerBridgeDeath is the bridge's frame stream ending with a turn still open.
+	// closerBridgeDeath is the bridge's frame stream ending, or a deliberate stop,
+	// with a turn still open.
 	closerBridgeDeath
 	// closerWireEnd is the engine's own turn_end bracket, the ONLY closer setting WireEnded.
 	closerWireEnd
-	// closerWireDisplaced is a turn_start arriving over an open turn with nothing to bind.
-	closerWireDisplaced
-	// closerRunComplete is the workflow RUN owning this turn reaching a terminal state. The
-	// bracket path cannot close a step's turn: the attribution gate drops its turn_end.
-	closerRunComplete
+	// closerBracketLost is a wire turn_start arriving while a bracketed own turn is
+	// still open: its turn_end was lost and the next bracket is the evidence.
+	closerBracketLost
 )
 
-// deathInterruptCause is the divider's label when the bridge's frame stream ended
-// mid-turn. PUBLIC PROSE, and it claims only what marotte observed: nothing on this
-// path reads the process's exit status, so a closed pipe must not be reported as an
-// exit.
+// deathInterruptCause is what a turn says when the bridge's frame stream ended
+// mid-turn. PUBLIC PROSE, and it claims only what marotte observed: nothing on
+// this path reads the process's exit status, so a closed pipe must not be
+// reported as an exit.
 const deathInterruptCause = "The connection to the agent closed before the turn finished."
-
-// displacedTurnCause is what a turn says when a new one started over it.
-const displacedTurnCause = "The agent started a new turn before this one ended."
-
-// stepRunEndedCause is what a turn a workflow step's frames opened says when the run
-// those steps belonged to finished. PUBLIC PROSE: it lands on
-// Message.TurnFailureReason, which the client renders into the turn notice, so it
-// carries no internal machinery vocabulary.
-const stepRunEndedCause = "The workflow run this turn belongs to finished, and the step's own end never arrived."
 
 // maxReasonBytes bounds a persisted failure reason, matching rpcerr.Text: the usual
 // source is upstream text, and a transcript row is no place for a wall of it.
 const maxReasonBytes = 2048
 
-// reasonFor settles what a close SAYS, and is the one place that decision is made:
-// the cause the closer supplied, else the outcome's own default sentence, else
-// nothing for a turn that ended cleanly. Sanitized and capped here rather than at
-// each call site, because every source but the local constants above is untrusted
-// upstream text.
+// reasonFor settles what a close SAYS: the cause the closer supplied, else the
+// outcome's own default sentence, else nothing for a turn that ended cleanly.
+// Sanitized and capped here because every source but the local constants is
+// untrusted upstream text.
 func reasonFor(o marotte.TurnOutcome, supplied string) string {
 	reason := supplied
 	if reason == "" {
@@ -82,111 +70,28 @@ type turnClose struct {
 	// Reason is the user-facing account of the stop. Empty leaves the outcome's
 	// default sentence to speak, rather than inventing wording.
 	Reason string
-	// Stop is the stop the close concludes: the wire's own on closerWireEnd, the command
-	// layer's decision on closerPromptFailure, where the only legal values are
-	// `interrupted` and `cancelled` — a user cancel KAS never acked is not a fault.
+	// Turn names the ONE turn an id-scoped closer may end. Empty only with Own.
+	Turn string
+	// Stop is the stop the close concludes: the wire's own on closerWireEnd, the
+	// command layer's decision on closerPromptFailure and closerBridgeDeath, where
+	// the only legal values are `interrupted` and `cancelled`.
 	Stop marotte.StopReason
-	// Epoch names the ONE turn an epoch-scoped closer may end. Zero only with AnyOpen.
-	Epoch marotte.TurnEpoch
 	// Seq is the read loop position the response arrived at, on closerPromptResponse
 	// only: the settle waits for the folder to reach it. Zero skips the wait.
 	Seq uint64
-	// AnyOpen is the EXPLICIT spelling of "close whatever is open", for a closer that
-	// describes the CHAT. Explicit rather than a zero Epoch, because zero is ALSO what
-	// StartTurn returns when ctx died while the chat was finalizing.
-	AnyOpen bool
-	Closer  turnCloser
+	// Own is the EXPLICIT spelling of "close the chat's own turn", for a closer that
+	// describes the CHAT rather than a turn it holds an id for.
+	Own    bool
+	Closer turnCloser
 }
 
-// turnStats is a finished turn's two measurements, both DERIVED from the record. A
-// struct rather than an adjacent float64 pair: a transposition compiles and is silent.
-type turnStats struct {
-	CreditsDelta float64
-	ElapsedMs    float64
-}
-
-// StartTurn opens chatID's turn at bridge-ready, immediately before the ACP call, so the
-// answering model and the credit baseline its spend is measured against are both stamped
-// with the bridge live. Returns the epoch, on which the caller holds a completion handle
-// until ReleaseTurn; zero means ctx was ALREADY dead, or died while the chat was
-// finalizing, and every caller's zero-epoch branch broadcasts the terminal frame the turn
-// owes. WAITS out a finalize in progress, and a prompt-shaped source finding a turn the
-// ENGINE started CLOSES it first. A DEAD ctx starts NOTHING, and that check leads here
-// rather than sitting in `turns.open` — `marotte.md` "A turn opened on a dead ctx" says why.
-func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) marotte.TurnEpoch {
-	if ctx.Err() != nil {
-		return 0
-	}
-	if source.Acknowledgeable() {
-		if displaced, ok := bc.displaceEngineTurn(ctx, chatID); ok {
-			slog.Info("a prompt displaced a live engine-opened turn",
-				"chat_id", chatID, "displaced_epoch", displaced, "source", source)
-		}
-	}
-	model, credits := bc.turnOpenFacts(ctx, chatID, source)
-	t := bc.turns.open(ctx, chatID, source, model, credits)
-	if t == nil {
-		return 0
-	}
-	if model != "" {
-		// Latched here: the streaming handler stamps it on the first frame, seconds
-		// later, where a fast in-session switch would be picked up instead.
-		t.Buf.SetModel(model)
-	}
-	return t.Epoch
-}
-
-// displaceEngineTurn closes an open turn the ENGINE started, so a local step taking
-// the chat next neither folds into it nor writes a row into its body. Reports the epoch
-// it displaced. closerWireDisplaced rather than the model-switch closer, which DISCARDS
-// the partial: that is right for the user's own turn and wrong for someone else's,
-// whose content is already on every client's screen.
-func (bc *BridgeCoordinator) displaceEngineTurn(ctx context.Context, chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
-	displaced, ok := bc.turns.displaceableEngineTurn(chatID)
-	if !ok {
-		return 0, false
-	}
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, Epoch: displaced})
-	return displaced, true
-}
-
-// AwaitTurn blocks until the turn named by epoch has finalized and reports what it
-// did, so a caller reads the turn's account rather than state the finalize has
-// consumed. It runs on the CALLER's goroutine: deciding inside the finalizer
-// deadlocks against the close it awaits.
-func (bc *BridgeCoordinator) AwaitTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) (marotte.TurnResult, error) {
-	return bc.turns.await(ctx, chatID, epoch)
-}
-
-// ReleaseTurn gives up the completion handle StartTurn issued. The finalized
-// record is dropped when its last handle goes, which is what bounds retention.
-func (bc *BridgeCoordinator) ReleaseTurn(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
-	bc.turns.release(chatID, epoch)
-}
-
-// turnOpenFacts reads the two facts a turn records at open. The model comes from the
-// chat record rather than the bridge: a resumed session's own accessors answer the zero
-// value for whatever session/load omitted, which routinely includes the model.
-func (bc *BridgeCoordinator) turnOpenFacts(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) (string, CreditBaseline) {
-	ch, ok := bc.chatStore.Get(ctx, chatID)
-	if !ok {
-		return "", 0
-	}
-	credits := CreditBaseline(ch.Usage.Credits)
-	if source == marotte.TurnSourceLocalShell {
-		return "", credits
-	}
-	return ch.Model, credits
-}
-
-// finalizeTurn claims chatID's turn and runs one closer's effects. Claim first,
-// effects second, publish third, with the mutex held for none of the effects — so
-// finalizing an epoch twice broadcasts once: the second caller loses the claim.
-func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.ChatID, tc turnClose) {
+// finalizeTurn claims one turn and runs the turn end rule on it. Claim first,
+// effects second, publish third, with the mutex held for none of the effects, so
+// two closers racing one turn produce one set of effects: the second loses the claim.
+func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.ChatID, tc *turnClose) {
 	// The wait comes BEFORE the claim: claiming first puts the chat in turnFinalizing,
 	// where a fold waits, so the settle would block on a folder it had blocked itself.
-	// False means the position is unreachable, so the bridge-death closer owns the turn.
-	if tc.Seq > 0 && !bc.turns.awaitPosition(ctx, chatID, tc.Epoch, tc.Seq) {
+	if tc.Seq > 0 && !bc.turns.awaitPosition(ctx, chatID, tc.Turn, tc.Seq) {
 		return
 	}
 	t, won := bc.claimForCloser(ctx, chatID, tc)
@@ -197,259 +102,109 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.Ch
 	// its only timed escape. Below here the effects are durability, and both doors into
 	// this function are handed a shutdown-cancelled context by construction.
 	ctx = durable.Context(ctx)
-	var result marotte.TurnResult
+	stop, reason := tc.Stop, tc.Reason
 	switch tc.Closer {
 	case closerPromptResponse:
-		result = bc.closeOnPromptResponse(ctx, t, tc.Resp)
-	case closerWireEnd:
-		result = bc.closeOnWireEnd(ctx, t, tc.Stop, tc.Reason)
-	case closerPromptFailure:
-		result = bc.closeAsInterrupted(ctx, t, tc.Stop, tc.Reason)
-	case closerBridgeDeath:
-		result = bc.closeAsInterrupted(ctx, t, marotte.StopReasonInterrupted, deathInterruptCause)
-	case closerWireDisplaced:
-		result = bc.closeWithOutcome(ctx, t, marotte.StopReasonUnknown, closerWireDisplaced, displacedTurnCause)
-	case closerRunComplete:
-		// `unknown` is what marotte knows: the RUN ended and the step's own turn end
-		// never arrived. Deriving one from the run's status is wrong — a run can complete
-		// while a step failed, and one turn can hold several steps' content.
-		result = bc.closeWithOutcome(ctx, t, marotte.StopReasonUnknown, closerRunComplete, stepRunEndedCause)
-	case closerModelSwitch:
-		result = bc.closeAsDiscarded(ctx, t)
+		stop = extractStopReason(tc.Resp)
 	case closerLocalShell:
-		result = bc.closeOnLocalShell(ctx, t)
+		stop = marotte.StopReasonEndTurn
+	case closerBracketLost:
+		stop = marotte.StopReasonUnknown
+	case closerPromptFailure, closerBridgeDeath:
+		// A cause claimed on the turn (the tool-use filter, a user cancel) beats the
+		// closer's own account.
+		if cause := bc.turns.interruptCause(t); cause != "" {
+			reason = string(cause)
+		}
+	case closerWireEnd:
 	}
+	result := bc.closeTurn(ctx, t, stop, reason, tc.Closer)
 	bc.turns.finish(t, result)
 	// Published by the closer that WON: a loser would advance a boundary it did not cross.
 	if bc.onTurnClosed != nil {
-		bc.onTurnClosed(t.Chat, t.Epoch)
+		bc.onTurnClosed(t.Chat, t.ID)
+	}
+	// The pending_model idle arm runs on its own goroutine: it re-reads the idle
+	// predicate under the lifecycle mutex and applies a switch through the bridge,
+	// neither of which belongs inside a closer.
+	if bc.applyPendingModel != nil {
+		go bc.applyPendingModel(ctx, t.Chat)
 	}
 }
 
-// claimForCloser claims the turn a closer is ending: an EPOCH claims exactly that
-// turn, AnyOpen whatever is open. Neither OPENS a turn to close it, or a bracket for
-// an already-closed turn makes a phantom. A ZERO epoch closes nothing, so a prompt
-// failure cannot claim a turn StartTurn never opened.
-func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.ChatID, tc turnClose) (*Turn, bool) {
-	if tc.AnyOpen {
-		// NO AMEND ON THIS BRANCH: claimOpen cannot tell a loss from an absence (both
-		// answer (nil, false), and a bridge death on an idle chat is the common case),
-		// and every AnyOpen closer leaves tc.Reason empty — its cause is applied inside
-		// finalizeTurn's switch, on the WINNING path. In the one race that costs
-		// something the winner's account is also truer: a bridge death losing to a wire
-		// turn_end means the bracket DID arrive and the process exited afterwards.
-		return bc.turns.claimOpen(ctx, chatID)
+// claimForCloser claims the turn a closer is ending: an ID claims exactly that
+// turn, Own the chat's own open turn. Neither OPENS a turn to close it, so a
+// bracket for an already-closed turn makes no phantom. An EMPTY id closes
+// nothing, so a prompt failure cannot claim a turn OpenTurn never appended.
+func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.ChatID, tc *turnClose) (*Turn, bool) {
+	if tc.Own {
+		return bc.turns.claimOwn(ctx, chatID)
 	}
-	if tc.Epoch == 0 {
-		slog.Warn("a turn closer named no epoch, so it closed nothing",
+	if tc.Turn == "" {
+		slog.Warn("a turn closer named no turn, so it closed nothing",
 			"chat_id", chatID, "closer", tc.Closer)
 		return nil, false
 	}
-	t, won := bc.turns.claimEpoch(ctx, chatID, tc.Epoch)
+	t, won := bc.turns.claimTurn(ctx, chatID, tc.Turn)
 	if !won {
-		// A lost claim is the ordinary outcome of two closers racing one fault, so it is
-		// not an error — but it is the one moment a closer's account of the stop can go
-		// nowhere, and the loser is usually the more specific one.
-		bc.amendLostReason(ctx, chatID, tc)
+		// The ordinary outcome of two closers racing one fault: KAS's turn_end and the
+		// prompt response are one cause, and the first to arrive closed the turn.
+		slog.Debug("a turn closer lost its claim", "chat_id", chatID, "closer", tc.Closer, "turn", tc.Turn)
 	}
 	return t, won
 }
 
-// amendLostReason UPGRADES the persisted reason on a turn whose loser knew more than
-// its winner. Epoch-bearing closers only — see claimForCloser's AnyOpen branch.
-//
-// A reason is more specific when a CLOSER SUPPLIED it, not when it is longer: the amend
-// fires only when the loser supplied one and the winner's was DEFAULTED from the
-// outcome. Only the reason moves; outcome, stop reason, truncation and stats stay the
-// winner's.
-func (bc *BridgeCoordinator) amendLostReason(ctx context.Context, chatID marotte.ChatID, tc turnClose) {
-	carrier, found := bc.turns.carrierOf(chatID, tc.Epoch)
-	// One decline message per cause, so each cause's frequency stays separately
-	// measurable; each arm carries only the attrs it actually read.
-	if !found {
-		slog.Warn("a turn closer lost its claim and the winner recorded no carrier, so its reason was not used",
-			"chat_id", chatID, "closer", tc.Closer, "epoch", tc.Epoch,
-			"loser_had_reason", tc.Reason != "")
-		return
-	}
-	if tc.Reason == "" || carrier.ReasonSupplied {
-		slog.Warn("a turn closer lost its claim and its reason was not used",
-			"chat_id", chatID, "closer", tc.Closer, "epoch", tc.Epoch,
-			"loser_had_reason", tc.Reason != "",
-			"winner_reason_supplied", carrier.ReasonSupplied)
-		return
-	}
-	var outcome marotte.TurnOutcome
-	var ran, wrote bool
-	err := bc.chatStore.UpdateMessage(durable.Context(ctx), chatID, carrier.MessageID, func(m *marotte.Message) {
-		// The closure reports that it RAN, which is what separates the two declines
-		// below: UpdateMessage returns nil both when the row is absent (what a rewind
-		// truncation leaves behind) and when the gate declines.
-		ran = true
-		outcome = m.TurnOutcome
-		// THE GATE, evaluated here because this is the only place the carrier's own
-		// outcome is known: a turn that ANSWERED has nothing to explain, so without
-		// this a wire end_turn's loser writes a reason onto a clean turn. Keyed on the
-		// SEVERITY rather than on DefaultFailureReason, which stopped being the same
-		// question when `cancelled` lost its default sentence — a model-switch discard
-		// concludes `cancelled`, and a losing closer holding a real transport error is
-		// still the best account that turn will ever have. So a `stopped` carrier IS
-		// amendable, which is the second way prose reaches a cancelled turn (the first
-		// is closeAsInterrupted's interruptCause override): inert on screen, because
-		// turnFailureText withholds prose for that outcome, and the best thing in the
-		// log either way. The empty-outcome guard is
-		// required: SeverityOf("") answers `stopped`, so without it a carrier with no
-		// outcome at all would become amendable.
-		if m.TurnOutcome == "" {
-			return
-		}
-		switch marotte.SeverityOf(m.TurnOutcome) {
-		case marotte.TurnSeverityClean, marotte.TurnSeverityRunning:
-			return
-		}
-		wrote = true
-		m.TurnFailureReason = reasonFor(m.TurnOutcome, tc.Reason)
-	})
-	if err != nil {
-		slog.Error("amend a lost closer's reason onto the turn's carrier",
-			"chat_id", chatID, "closer", tc.Closer, "epoch", tc.Epoch, "error", err)
-		return
-	}
-	if !ran {
-		// No outcome attr: nothing read one, because the record moved under the amend.
-		slog.Warn("a turn closer lost its claim and the winner's carrier is no longer in the record, so its reason was not used",
-			"chat_id", chatID, "closer", tc.Closer, "epoch", tc.Epoch,
-			"loser_had_reason", tc.Reason != "",
-			"winner_reason_supplied", carrier.ReasonSupplied)
-		return
-	}
-	if !wrote {
-		slog.Warn("a turn closer lost its claim and the winner's turn answered, so its reason was not used",
-			"chat_id", chatID, "closer", tc.Closer, "epoch", tc.Epoch,
-			"loser_had_reason", tc.Reason != "",
-			"winner_reason_supplied", carrier.ReasonSupplied, "outcome", outcome)
-		return
-	}
-	slog.Warn("a turn closer lost its claim, so its reason was upgraded onto the carrier",
-		"chat_id", chatID, "closer", tc.Closer, "epoch", tc.Epoch, "outcome", outcome)
-}
-
-// turnStatsFor derives the turn's spend and duration from its own record.
-func (bc *BridgeCoordinator) turnStatsFor(ctx context.Context, t *Turn) turnStats {
-	st := turnStats{ElapsedMs: float64(time.Since(t.Opened).Milliseconds())}
-	if ch, ok := bc.chatStore.Get(ctx, t.Chat); ok {
-		st.CreditsDelta = ch.Usage.Credits - float64(t.Credits)
-	}
-	return st
-}
-
-// settleBuffer flushes what the steering filter was withholding and THEN takes the
-// turn's content in one guarded read. The ORDER is the invariant: the carry can hold a
-// turn's only final text (a reply ending in `[` looks like the start of a steering
-// acknowledgement), so an emptiness check before the flush reads an ordinary turn as
-// empty and the empty-turn recovery re-prompts an answered question. Nil: no frame arrived.
-func settleBuffer(buf *buffer.Buffer) buffer.TurnContent {
-	if buf == nil {
-		return buffer.TurnContent{EmittedNothing: true}
-	}
-	translate.FlushSteerCarry(buf)
-	return buf.TakeTurn()
-}
-
-// persistTurnReply commits a finalized turn's assistant message where every client
-// already places it, keyed on the turn's SOURCE: an ENGINE-opened turn's content
-// interleaves with the reader's own prompts, so its reply goes AHEAD of the trailing
-// user rows already on disk, while a turn marotte opened must not, because its own
-// trigger row IS that tail. Both routes broadcast message_appended, so only FILE order moves.
-func (bc *BridgeCoordinator) persistTurnReply(ctx context.Context, t *Turn, msg *marotte.Message) {
-	if t.Source.EngineOpened() {
-		bc.persistDisplacedTurn(ctx, t.Chat, msg)
-		return
-	}
-	bc.persistTurn(ctx, t.Chat, msg)
-}
-
-// closeOnPromptResponse finalizes a turn on the response that settled it: the LOCAL
-// fallback, so its outcome is never richer than end_turn or cancelled.
-func (bc *BridgeCoordinator) closeOnPromptResponse(ctx context.Context, t *Turn, resp *marotte.RPCResponse) marotte.TurnResult {
-	// No reason of its own: the response carries a stop reason and no prose.
-	return bc.closeWithOutcome(ctx, t, extractStopReason(resp), closerPromptResponse, "")
-}
-
-// closeOnWireEnd finalizes a turn the ENGINE closed: same effects as the local
-// fallback, but the outcome came off the wire, so WireEnded is set. `details` is the
-// wire's own stopDetails, empty on every build that sends none.
-func (bc *BridgeCoordinator) closeOnWireEnd(ctx context.Context, t *Turn, stop marotte.StopReason, details string) marotte.TurnResult {
-	return bc.closeWithOutcome(ctx, t, stop, closerWireEnd, details)
-}
-
-// closeWithOutcome persists the turn's assistant message with its DURABLE outcome,
-// announces the end with the turn's stats, and pushes. It takes the CLOSER rather than a
-// bare wireEnded flag because two of its phases read which local step is ending the turn.
-func (bc *BridgeCoordinator) closeWithOutcome(
-	ctx context.Context,
-	t *Turn,
-	stopReason marotte.StopReason,
-	closer turnCloser,
-	reason string,
-) marotte.TurnResult {
-	// NOT widened for closerRunComplete: that closer keys on a RUN-level frame rather
-	// than the turn's own bracket, and WireEnded's only reader is the empty-turn
-	// recovery's arming gate, which is about a prompt this closer never touches.
-	wireEnded := closer == closerWireEnd || closer == closerWireDisplaced
-	// Both DERIVED from values already in hand, so no call site threads an argument:
-	// a parameter here would recreate the bare flag this function's doc comment
-	// records as having been replaced by taking the closer.
-	superseded := closer == closerWireDisplaced
-	workflowStep := t.Source == marotte.TurnSourceWorkflowStep
+// closeTurn runs the turn end rule on a claimed turn: the accumulator seals every
+// lane, aborts every unsettled call and appends the turn_close carrying its
+// aggregate; each sealed entry is announced, the header's turn_count and
+// last_turn_outcome follow from the index, and the off-screen push fires. The
+// footer's credits and elapsed are the accumulator's own, fed by Meter, so nothing
+// here reads the chat record for them.
+func (bc *BridgeCoordinator) closeTurn(ctx context.Context, t *Turn, stop marotte.StopReason, reason string, closer turnCloser) marotte.TurnResult {
 	chatID := t.Chat
-	c := bc.concludeStop(chatID, stopReason, reason)
+	c := bc.concludeStop(chatID, stop, reason)
 	statusDesc := bc.turns.statusDescription(t)
-	stats := bc.turnStatsFor(ctx, t)
-
-	snap := bc.settleTurnContent(ctx, t)
-	p := bc.persistTurnContent(ctx, t, &snap, c, stats)
-	// One fact set, whichever event carries it, so the footer survives a reload.
-	facts := turnOutcomeFacts{
-		ChangedFiles: p.ChangedFiles,
-		Conclusion:   c,
-		Model:        p.Model,
-		Stats:        stats,
+	sealed, err := t.Log.Close(ctx, c)
+	translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+	switch {
+	case errors.Is(err, turnlog.ErrClosed):
+		// The store-open closer or a between-turns synthesis wrote the turn_close
+		// first; the registry record still has to finish, so this is not an error.
+		slog.Warn("a turn closer found the turn_close already on disk", "chat_id", chatID, "turn", t.ID, "closer", closer)
+	case err != nil:
+		slog.Error("close a turn in the entry log", "chat_id", chatID, "turn", t.ID, "closer", closer, "error", err)
 	}
-	persisted := bc.recordTurnCarrier(ctx, t, p, &facts, stopReason, reason != "")
-
-	// TWO questions, not one: whether a row carries the outcome, and whether the END
-	// belongs to this chat. They part for a KAS auto-wake that carried nothing: no
-	// carrier, and the end is still this chat's — see announcesEmptyEnd.
-	if persisted || announcesEmptyEnd(t) {
-		if _, stillExists := bc.chatStore.Get(ctx, chatID); stillExists {
-			bc.broadcast(ctx, marotte.NewEvent(marotte.EventTurnEnded, chatID, marotte.TurnEndedPayload{
-				Outcome:      c.Outcome,
-				StopReason:   stopReason,
-				Truncated:    c.Truncated,
-				Refusal:      p.Refusal,
-				Model:        p.Model,
-				CreditsDelta: stats.CreditsDelta,
-				ElapsedMs:    stats.ElapsedMs,
-				ChangedFiles: p.ChangedFiles,
-				Superseded:   superseded,
-				WorkflowStep: workflowStep,
-			}))
-		}
+	if err := bc.chatStore.WriteCounters(ctx, chatID); err != nil {
+		slog.Warn("turn closed but the header's counters did not follow", "chat_id", chatID, "turn", t.ID, "error", err)
 	}
-	bc.pushTurnOutcome(ctx, chatID, c, statusDesc)
-	return marotte.TurnResult{Stop: stopReason, EmittedNothing: snap.EmittedNothing, WireEnded: wireEnded}
+	// The push reads the outcome the turn_close carries, so a silent end_turn
+	// graded `empty` by the seal is not announced as a clean finish.
+	bc.pushTurnOutcome(ctx, chatID, c.WithContent(t.Log.Emitted()), statusDesc)
+	return marotte.TurnResult{
+		Stop:           stop,
+		Interrupt:      bc.turns.interruptCause(t),
+		EmittedNothing: !t.Log.Emitted(),
+		WireEnded:      closer == closerWireEnd,
+	}
 }
+
+// broadcastFunc adapts the coordinator's broadcast closure to the translator's
+// Broadcaster role, so the sealed-entry announcement has one owner.
+type broadcastFunc func(ctx context.Context, e marotte.ServerEvent)
+
+// Broadcast publishes e.
+func (f broadcastFunc) Broadcast(ctx context.Context, e marotte.ServerEvent) { f(ctx, e) }
 
 // concludeStop grades the stop and settles what the close SAYS: the reason travels ON
-// the conclusion, so every carrier stamps it from one field. An unmapped stop logs ONCE
-// per distinct value, so an unseen wire is discoverable without a line per turn.
+// the conclusion, so the turn_close stamps it from one field. An unmapped stop logs
+// ONCE per distinct value, so an unseen wire is discoverable without a line per turn.
 func (bc *BridgeCoordinator) concludeStop(
 	chatID marotte.ChatID,
 	stop marotte.StopReason,
 	reason string,
 ) marotte.TurnConclusion {
 	c := marotte.ConcludeStopReason(stop)
+	c.EmptyIfSilent = stop == marotte.StopReasonEndTurn
 	if !c.Known {
 		if _, seen := bc.unknownStops.LoadOrStore(stop, struct{}{}); !seen {
 			slog.Warn("a turn ended on a stop reason marotte does not map",
@@ -466,100 +221,6 @@ func (bc *BridgeCoordinator) concludeStop(
 	return c
 }
 
-// settleTurnContent settles the tool calls nothing can still settle and THEN takes the
-// turn's content. The order is the invariant: a card persisted `in_progress` renders as a
-// permanent spinner on every later reload.
-//
-// A CLOSE settles what it makes unsettleable, whatever the stop reason: the buffer is
-// taken here, and HandleToolCallUpdate drops any later frame because the turn buffer is
-// no longer open.
-func (bc *BridgeCoordinator) settleTurnContent(ctx context.Context, t *Turn) buffer.TurnContent {
-	if buf := t.Buf; buf != nil {
-		bc.abortInFlightTools(ctx, t.Chat, buf)
-	}
-	return settleBuffer(t.Buf)
-}
-
-// persistedTurn is what a close committed, plus the facts read from the same
-// snapshot that the turn_ended payload reports.
-type persistedTurn struct {
-	// ChangedFiles is the TURN's map, cumulative across segments, nil when it touched nothing.
-	ChangedFiles map[string]*marotte.FileChange
-	// Refusal is the model's own refusal metadata, which only a carried turn has.
-	Refusal *marotte.RefusalInfo
-	// MessageID names the assistant row this persisted, empty when it persisted none.
-	MessageID string
-	// Model is the model that ANSWERED, falling back to the record's value at open.
-	Model string
-	// Carried is whether an assistant message holds the outcome. Not `!EmittedNothing`:
-	// a fully-withheld turn still persists an empty message, and that is the carrier.
-	Carried bool
-	// Segmented is whether a compaction seal already left a row for this turn. Carried is
-	// false then and the turn is still not empty on disk, which is why both are needed.
-	Segmented bool
-}
-
-// persistTurnContent commits whatever the turn produced and reports the facts the payload
-// needs from the same read. The segmented arm exists because a turn SPLIT at a compaction
-// point can end with nothing after the split while its changed-file map spans every
-// segment; both arms read the buffer's latched model, the model that ANSWERED.
-func (bc *BridgeCoordinator) persistTurnContent(
-	ctx context.Context,
-	t *Turn,
-	snap *buffer.TurnContent,
-	c marotte.TurnConclusion,
-	stats turnStats,
-) persistedTurn {
-	p := persistedTurn{Model: t.Model}
-	switch {
-	case snap.Started:
-		p.ChangedFiles = snap.ChangedFiles
-		p.Refusal = snap.Refusal
-		p.Model = cmp.Or(snap.Model, t.Model)
-		p.MessageID = snap.MessageID
-		msg := assistantTurnMessage(snap, stats, p.Model, c)
-		bc.persistTurnReply(ctx, t, &msg)
-		p.Carried = true
-	case snap.Segmented:
-		p.ChangedFiles = snap.ChangedFiles
-		p.Model = cmp.Or(snap.Model, t.Model)
-		p.Segmented = true
-	}
-	return p
-}
-
-// recordTurnCarrier records WHICH persisted row carries this turn's outcome, minting a
-// marker when no row does, and reports whether one was persisted at all. The carrier is
-// what lets a closer that LOST the claim amend its reason (amendLostReason), and
-// `reasonSupplied` is that rule's specificity test. The bool is false ONLY where
-// persistsEmptyCarrier declines, never for an append that failed.
-func (bc *BridgeCoordinator) recordTurnCarrier(
-	ctx context.Context,
-	t *Turn,
-	p persistedTurn,
-	facts *turnOutcomeFacts,
-	stopReason marotte.StopReason,
-	reasonSupplied bool,
-) bool {
-	carrier := turnCarrier{MessageID: p.MessageID, ReasonSupplied: reasonSupplied}
-	persisted := p.Carried
-	switch {
-	case stopReason == stopReasonCancelled:
-		cancelID := bc.appendEventMessage(ctx, t.Chat, marotte.EventCancelled, "", carrierFor(facts, p.Carried))
-		persisted = true
-		if !p.Carried {
-			carrier.MessageID = cancelID
-		}
-	case !p.Carried && persistsEmptyCarrier(t, p.Segmented):
-		// No assistant message to stamp, so a marker carries the outcome. Skipped for a
-		// cancel, whose own event message is already this turn's marker.
-		carrier.MessageID = bc.persistOutcomeMarker(ctx, t, facts)
-		persisted = true
-	}
-	bc.turns.recordCarrier(t, carrier)
-	return persisted
-}
-
 // pushTurnOutcome sends the off-screen notification a finished turn earns, reading the
 // SEVERITY so it cannot claim success over a failure. The client half
 // (static-src/handlers/turn.ts) reads the same table the shared severity fixture pins, so
@@ -573,19 +234,10 @@ func (bc *BridgeCoordinator) pushTurnOutcome(
 ) {
 	// The chat's TURN ended; its WORK has not, if a run this chat launched is still on
 	// the wire. `run_workflow` returns as soon as the run is created, so the launching
-	// turn concludes cleanly while the run carries on — and a push saying the agent
-	// finished is then the one channel an off-screen reader has, telling them the
-	// opposite of the truth.
-	//
-	// Ahead of the severity switch, so a BROKEN turn is withheld too: a failed turn
-	// that launched a still-running run is the same class of claim.
-	//
-	// The run's own terminal transition already pushes `run_outcome`
-	// (`notifyRunOutcome`), keyed on the RUN and gated by its own settings key, so this
-	// side DEFERS and deliberately does not re-fire — synthesising a second
-	// `agent_finished` when the last lease released would announce one completion twice
-	// on the same device. The browser's own deferred cue
-	// (`static-src/agent-finished-cue.ts`) is what covers a reader with the tab open.
+	// turn concludes cleanly while the run carries on, and a push saying the agent
+	// finished would tell an off-screen reader the opposite of the truth. The run's
+	// own terminal transition pushes `run_outcome` (`notifyRunOutcome`), so this side
+	// defers rather than re-firing.
 	if bc.chatHasLiveRun != nil && bc.chatHasLiveRun(chatID) {
 		slog.Debug("withholding agent_finished: a run this chat launched is still live",
 			"chat_id", chatID, "outcome", c.Outcome)
@@ -600,283 +252,4 @@ func (bc *BridgeCoordinator) pushTurnOutcome(
 		// A cancel is what the reader asked for and an unreadable end reports nothing,
 		// so neither earns an off-screen notification. `running` cannot reach a close.
 	}
-}
-
-// turnOutcomeFacts is what a turn-boundary event stamps when THAT event is the turn's
-// carrier: how the turn ended, plus the footer numbers no assistant message is left to
-// hold. One type because the set travels together under a single rule — exactly one
-// persisted message per turn may carry it, since its presence closes the turn for both
-// projections.
-type turnOutcomeFacts struct {
-	// ChangedFiles is the turn's cumulative map, nil when an assistant message carries it.
-	ChangedFiles map[string]*marotte.FileChange
-	// Model is which model answered. A footer fact like the two below, because the
-	// client's turn ledger reads it off every row in the turn's body.
-	Model      string
-	Conclusion marotte.TurnConclusion
-	// Stats are the turn's credits and duration, left zero by a caller whose footer is
-	// deliberately empty — an interrupted turn has no spend to attribute.
-	Stats turnStats
-}
-
-// persistsEmptyCarrier reports whether a turn that carried NOTHING may leave a row saying how
-// it ended. An engine-opened turn leaves none: with no trigger row the marker IS the turn, and
-// its card renders nothing. `segmented` is the exception, because segmentMessage's sealed row
-// stamps no outcome, credits, changed files or model, so there the marker holds them. Cost:
-// the skip is outcome-blind, so an engine turn that ends `error` or `refusal` leaves no
-// durable record of its verdict. Not the announcement axis: announcesEmptyEnd owns that, and
-// merging them strands the client's latches.
-func persistsEmptyCarrier(t *Turn, segmented bool) bool {
-	return segmented || !t.Source.EngineOpened()
-}
-
-// announcesEmptyEnd reports whether a turn that persisted NO carrier must still announce its
-// end. A STEP's end belongs to its run rather than to the launching chat, whose own last turn
-// did not end; every other source's end is this chat's own. Withholding the frame latches the
-// client instead: `connected.busy_chats` sets thinking at connect and GET /api/chats/{id}
-// reports turn_open, and only a settled turn_ended or a transport gap retracts either.
-func announcesEmptyEnd(t *Turn) bool {
-	return t.Source != marotte.TurnSourceWorkflowStep
-}
-
-// persistOutcomeMarker records how a turn that emitted NOTHING ended: with no assistant
-// message this is the outcome's only carrier. Its caller skips it for ONE shape alone, a
-// turn no persisted row represents (persistsEmptyCarrier) — so where a trigger row DOES
-// stand for the turn, an absent carrier MEANS nothing closed it, which is what lets
-// deriveTurnOutcome answer `unknown` instead of reading a turn a restart killed as
-// `completed`. Cost: one invisible EventTurnOutcome row per clean empty prompted turn.
-func (bc *BridgeCoordinator) persistOutcomeMarker(ctx context.Context, t *Turn, f *turnOutcomeFacts) string {
-	return bc.appendEventMessage(ctx, t.Chat, marotte.EventTurnOutcome, "", f)
-}
-
-// carrierFor answers which marker carries the turn's outcome: none when an
-// assistant message already did.
-func carrierFor(f *turnOutcomeFacts, alreadyCarried bool) *turnOutcomeFacts {
-	if alreadyCarried {
-		return nil
-	}
-	return f
-}
-
-// closeAsInterrupted finalizes a turn that stopped without the engine answering it,
-// KEEPING the partial (invariant 1). `reason` becomes the divider's label, and a cause
-// claimed on the turn beats it. A PRIME persists and broadcasts nothing at all. A model
-// switch takes closeAsDiscarded instead, which resolves the partial the other way and
-// concludes a different outcome.
-//
-// `stop` is which of the two stops this close concludes, because the resolution of the
-// partial is the same for both while the VERDICT is not: a fault grades `interrupted`
-// and BROKEN, a user's unacked cancel grades `cancelled` and STOPPED. The marker's event
-// kind is DERIVED from the resulting outcome rather than passed alongside it, so the two
-// cannot disagree. deriveTurnOutcome returns on the first stamped carrier, so this close's
-// own carrier is what grades the turn; the marker decides only for a legacy or un-stamped
-// one, where `interrupted` outranks `cancelled`.
-func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, stop marotte.StopReason, reason string) marotte.TurnResult {
-	chatID := t.Chat
-	cause := bc.turns.interruptCause(t)
-	if cause != "" {
-		reason = string(cause)
-	} else {
-		cause = marotte.InterruptCause(reason)
-	}
-	c := marotte.ConcludeStopReason(stop)
-	markerKind := marotte.StopMarkerKind(c.Outcome)
-	// The same prose the divider carries, ALSO stamped on the carrier: a divider is
-	// skipped whenever the turn already carried its outcome, and only the client's
-	// collapsed face reads it, so a reason living only there is unreachable from an
-	// OPEN turn's body.
-	c.Reason = reasonFor(c.Outcome, reason)
-	result := marotte.TurnResult{
-		Stop:           stop,
-		Interrupt:      cause,
-		EmittedNothing: true,
-	}
-
-	buf := t.Buf
-	// Flush before measuring, and before the message below is built from it; see settleBuffer.
-	snap := settleBuffer(buf)
-	result.EmittedNothing = snap.EmittedNothing
-	if !snap.Started {
-		if !persistsEmptyCarrier(t, snap.Segmented) {
-			// This close persists nothing and the buffer left nothing, so the footer argument
-			// below has no carrier to ride. The END is a separate question, asked below.
-			if announcesEmptyEnd(t) {
-				bc.announceConclusion(ctx, chatID, c, t.Source)
-			}
-			return result
-		}
-		// Nothing streamed, so there is no partial to persist -- but the divider still lands
-		// AND the turn still ends: without a marker the client's deriveOutcome reads the turn
-		// as `completed` and suppresses its footer, so a rate-limited turn renders
-		// indistinguishably from a clean short answer. No stats, for the reason the persisted
-		// partial below carries none; the changed files and the model ARE carried, because a
-		// SPLIT turn always takes this branch.
-		dividerID := bc.appendEventMessage(ctx, chatID, markerKind, reason, &turnOutcomeFacts{
-			ChangedFiles: snap.ChangedFiles,
-			Conclusion:   c,
-			Model:        cmp.Or(snap.Model, t.Model),
-		})
-		bc.turns.recordCarrier(t, turnCarrier{MessageID: dividerID, ReasonSupplied: reason != ""})
-		bc.announceConclusion(ctx, chatID, c, t.Source)
-		return result
-	}
-	// Settle the in-flight tool calls and RE-READ the content, or the persisted turn
-	// carries running tool cards that a reload renders as permanent spinners.
-	bc.abortInFlightTools(ctx, chatID, buf)
-	snap = buf.TakeTurn()
-
-	// No stats: an interrupted turn has no credit delta to attribute.
-	msg := assistantTurnMessage(&snap, turnStats{}, cmp.Or(snap.Model, t.Model), c)
-	bc.persistTurnReply(ctx, t, &msg)
-	bc.turns.recordCarrier(t, turnCarrier{MessageID: msg.ID, ReasonSupplied: reason != ""})
-
-	// The divider does NOT re-carry the outcome: the message above already did, and
-	// two carriers in one turn open a spurious segment.
-	bc.appendEventMessage(ctx, chatID, markerKind, reason, nil)
-	bc.announceConclusion(ctx, chatID, c, t.Source)
-	return result
-}
-
-// announceConclusion tells every client a LOCALLY closed turn is over, and is the ONE
-// place the interrupted and discarded ends are broadcast: an `error` frame touches no turn
-// state, so a path that skips this leaves `thinking`, Cancel, the banners and the rail live
-// indefinitely. The stop reason comes off the CONCLUSION rather than being a literal here,
-// which is what lets one site serve both closers. It takes the turn's SOURCE because
-// closeAsInterrupted is reachable for a STEP turn, and a bridge death over a live step
-// turn must not arrive as this chat's own turn ending.
-func (bc *BridgeCoordinator) announceConclusion(
-	ctx context.Context,
-	chatID marotte.ChatID,
-	c marotte.TurnConclusion,
-	source marotte.TurnOpenSource,
-) {
-	bc.broadcast(ctx, marotte.NewEvent(marotte.EventTurnEnded, chatID,
-		marotte.TurnEndedPayload{
-			Outcome:      c.Outcome,
-			StopReason:   c.RawStop,
-			WorkflowStep: source == marotte.TurnSourceWorkflowStep,
-		}))
-}
-
-// closeAsDiscarded finalizes a turn a MODEL SWITCH threw away: the reader asked for a
-// different answer, so the partial is moot and none of it is persisted.
-//
-// It concludes `cancelled` rather than `interrupted` because both channels must agree and
-// `interrupted` grades BROKEN, which marks a switch the reader asked for as a fault. A
-// marker IS persisted so a reload reads the same verdict; EventCancelled renders as a
-// skip, so it adds no visible row.
-func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) marotte.TurnResult {
-	c := marotte.ConcludeStopReason(marotte.StopReasonCancelled)
-	c.Reason = reasonFor(c.Outcome, "")
-	// TurnResult.Stop stays `interrupted`: its one reader is recoverEmptyTurn's
-	// `== StopReasonEndTurn` gate, false either way, so moving it would change a
-	// field no consumer reads.
-	result := marotte.TurnResult{Stop: marotte.StopReasonInterrupted, EmittedNothing: true}
-	// Nothing is persisted here, so only the BROADCAST matters: the discarded message stays
-	// in every client's store, so its cards need the terminal frame. Before settleBuffer,
-	// which clears the tool calls that broadcast reads.
-	if buf := t.Buf; buf != nil {
-		bc.abortInFlightTools(ctx, t.Chat, buf)
-	}
-	// Flush before measuring; see settleBuffer. The content is TAKEN and dropped,
-	// which is what discarding means — the next turn must not extend these blocks.
-	snap := settleBuffer(t.Buf)
-	result.EmittedNothing = snap.EmittedNothing
-	if !snap.Started {
-		// A switch with nothing in flight persists and announces nothing: the chat was
-		// idle and the restart is invisible.
-		return result
-	}
-	markerID := bc.appendEventMessage(ctx, t.Chat, marotte.EventCancelled, "", &turnOutcomeFacts{
-		ChangedFiles: snap.ChangedFiles,
-		Conclusion:   c,
-		Model:        cmp.Or(snap.Model, t.Model),
-	})
-	// Without a recorded carrier every amend against a model-switch winner declines with
-	// `winner_carrier=false`, and a losing closer's transport error goes nowhere.
-	// ReasonSupplied is false because `c.Reason` above is DEFAULTED from the outcome,
-	// which is the shape amendLostReason upgrades.
-	bc.turns.recordCarrier(t, turnCarrier{MessageID: markerID, ReasonSupplied: false})
-	bc.announceConclusion(ctx, t.Chat, c, t.Source)
-	return result
-}
-
-// closeOnLocalShell finalizes a `!cmd` turn. The output is already persisted by
-// the interception itself, so the end is all that is left to announce — and it
-// settles nothing, because marotte runs the command before anything reaches the
-// agent, so the buffer holds no tool calls to abort.
-func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) marotte.TurnResult {
-	bc.broadcast(ctx, marotte.NewEvent(marotte.EventTurnEnded, t.Chat,
-		marotte.TurnEndedPayload{
-			Outcome:      marotte.TurnOutcomeCompleted,
-			StopReason:   marotte.StopReasonEndTurn,
-			WorkflowStep: t.Source == marotte.TurnSourceWorkflowStep,
-		}))
-	return marotte.TurnResult{Stop: marotte.StopReasonEndTurn}
-}
-
-// abortInFlightTools settles the buffer's running tool calls as aborted and tells every
-// client, so a reload does not render permanent spinners for work that stopped. The
-// message id comes back WITH the changed calls rather than being read off the
-// buffer: this runs on the settling goroutine, not the dispatch loop.
-func (bc *BridgeCoordinator) abortInFlightTools(ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer) {
-	messageID, changed, version := buf.MarkInFlightToolsAborted()
-	for i := range changed {
-		// The status is the only thing that moved, so the frame carries the id and
-		// the status and nothing else — the buffer already holds the rest, and a
-		// reconnecting client refetches it through GET /api/chats/{id}.
-		frame := marotte.NewEvent(marotte.EventToolCallUpdate, chatID,
-			marotte.ToolCallUpdatePayload{
-				MessageID:  messageID,
-				ToolCallID: changed[i].ID,
-				Status:     changed[i].Status,
-			})
-		// One write, several frames: only the LAST carries the stamp, so a client
-		// that loses the stream mid-burst still reads changed on its next digest.
-		if i == len(changed)-1 {
-			frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
-		}
-		bc.broadcast(ctx, frame)
-	}
-}
-
-// appendEventMessage records a turn-boundary event on the transcript, carrying the
-// turn's outcome when carries is non-nil. For EventInterrupted the content is the
-// divider's label, the transcript's only account of the stop that survives a
-// reload. It reports the id it minted, so a caller writing the turn's CARRIER can
-// record which message that is.
-//
-// EXACTLY ONE persisted message per turn may carry TurnOutcome: its presence closes
-// the turn for both projections, so a second one opens a spurious segment.
-func (bc *BridgeCoordinator) appendEventMessage(
-	ctx context.Context,
-	chatID marotte.ChatID,
-	kind marotte.EventKind,
-	content string,
-	carries *turnOutcomeFacts,
-) string {
-	evt := marotte.Message{
-		ID:        newMessageID(),
-		Role:      marotte.RoleEvent,
-		Ts:        time.Now().UnixMilli(),
-		EventKind: kind,
-		Content:   content,
-	}
-	if carries != nil {
-		evt.TurnOutcome = carries.Conclusion.Outcome
-		evt.TurnStopReasonRaw = carries.Conclusion.RawStop
-		evt.TurnTruncated = carries.Conclusion.Truncated
-		evt.TurnFailureReason = carries.Conclusion.Reason
-		evt.TurnCredits = carries.Stats.CreditsDelta
-		evt.TurnElapsedMs = carries.Stats.ElapsedMs
-		evt.ChangedFiles = carries.ChangedFiles
-		evt.TurnModel = carries.Model
-	}
-	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
-		slog.Error("persist turn boundary event", "chat_id", chatID, "kind", kind, "error", err)
-		// No id on disk names the row, so an amend keyed on one would rewrite nothing —
-		// or a row some later append happens to mint the same way.
-		return ""
-	}
-	return evt.ID
 }

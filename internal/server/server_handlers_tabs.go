@@ -5,8 +5,8 @@ import (
 	"strconv"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/webhttp/v3"
 )
 

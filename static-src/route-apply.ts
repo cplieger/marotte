@@ -8,6 +8,7 @@ import {
   setSettingsTab,
   setGitTab,
   setDocsTab,
+  setHistoryTab,
 } from "./tabs.js";
 import { replaceRoute } from "./router.js";
 import type { RouteOrigin } from "./router.js";
@@ -124,9 +125,21 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
         .catch(() => {
           /* noop */
         });
-    case "history":
-      void openTab({ kind: "history" });
-      break;
+    case "history": {
+      // The docs arm's shape: the pane is forced BEFORE the open, because this tab's
+      // refresh loads the ACTIVE pane. Hoisted for the reason the git arm hoists `pr`.
+      const tab = route.tab ?? "chats";
+      return import("./history.js")
+        .then(({ forceHistoryTab }) => {
+          forceHistoryTab(tab);
+          void openTab({ kind: "history" }).then(() => {
+            setHistoryTab(tab);
+          });
+        })
+        .catch(() => {
+          /* noop */
+        });
+    }
     case "run":
       // RETURNED rather than voided: the router's claim on this location stands until it
       // resolves, so no unrelated projection emit can write the URL while the chunk loads.
@@ -143,6 +156,16 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
           // open is a server round trip.
           await openRunView(route.id, route.id, "", route.node ?? "");
         })
+        .catch(() => {
+          /* noop */
+        });
+    case "spec":
+      // RETURNED for the run arm's reason: the claim on this location stands until the
+      // open settles, and the open is a server round trip. A deep link names no parent
+      // chat, so the tab opens parentless; `openTab` activates an already-open subject,
+      // which is what a history entry onto an open spec tab means.
+      return openTab({ kind: "spec", ref: route.dir, owns: false })
+        .then(() => undefined)
         .catch(() => {
           /* noop */
         });

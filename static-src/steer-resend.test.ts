@@ -24,8 +24,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  sendPromptTo: vi.fn((_chatID: string, _text: string, _opts?: { messageID?: string }) =>
-    Promise.resolve<"sent" | "queued" | "starting" | "failed">("sent"),
+  sendPromptTo: vi.fn(
+    (_chatID: string, _text: string, _opts?: { messageID?: string; resends?: readonly string[] }) =>
+      Promise.resolve<"sent" | "queued" | "starting" | "gone" | "failed">("sent"),
   ),
   clearDispatch: vi.fn(() => Promise.resolve(true)),
   restoreFailedSend: vi.fn(),
@@ -148,7 +149,7 @@ describe("the armed slot", () => {
     expect(sentText()).toBe("first\n\nsecond");
   });
 
-  // It runs on every settled turn_ended of every chat, so the empty case is the
+  // It runs on every settled turn_closed of every chat, so the empty case is the
   // common one and must cost nothing.
   it("sends nothing when nothing is armed", () => {
     runArmedResend(CHAT);
@@ -197,7 +198,14 @@ describe("the armed slot", () => {
   it("sends it as a new turn under its own message id", async () => {
     noteBoundaryDrop(CHAT, rows("one"));
     await fire();
-    expect(sendPromptTo).toHaveBeenCalledWith(CHAT, "one", { messageID: "m-resend" });
+    // The id is this case's oracle; the batch's own ids ride the same opts and have
+    // their own cases below, so an exact-object assertion here would fail on them
+    // rather than on a lost message id.
+    expect(sendPromptTo).toHaveBeenCalledWith(
+      CHAT,
+      "one",
+      expect.objectContaining({ messageID: "m-resend" }),
+    );
   });
 });
 
@@ -256,6 +264,20 @@ describe("a chat that is busy again", () => {
     expect(sendPromptTo).toHaveBeenCalledTimes(1);
   });
 
+  // A tombstoned chat is terminal like a hard failure: no later boundary will ever
+  // carry the text, so re-arming would hold it in the air for a chat that is gone.
+  it("treats a gone chat as terminal and spends no retry", async () => {
+    sendPromptTo.mockResolvedValue("gone");
+    noteBoundaryDrop(CHAT, rows("one"));
+    await fire();
+    await vi.waitFor(() => {
+      expect(restoreFailedSend).toHaveBeenCalledWith(CHAT, "one");
+    });
+    expect(reportSendRefused).toHaveBeenCalledTimes(1);
+    runArmedResend(CHAT);
+    expect(sendPromptTo).toHaveBeenCalledTimes(1);
+  });
+
   // The retry budget is per STALL, not per chat for the page's life: a send that
   // lands clears it, so a later refusal gets its own retry.
   it("clears the retry budget once a send lands", async () => {
@@ -282,5 +304,54 @@ describe("a chat that is busy again", () => {
       expect(sendPromptTo).toHaveBeenCalledTimes(4);
     });
     expect(String(sendPromptTo.mock.calls[3]?.[1])).toBe("two");
+  });
+});
+
+/** The `resends` the send primitive was handed on the Nth call. `undefined` and `[]`
+ *  are different answers here — the first means the carry dropped the ids, the second
+ *  means it carried an empty batch — so the helper preserves both. */
+function sentResends(call = 0): readonly string[] | undefined {
+  const opts = sendPromptTo.mock.calls[call]?.[2] as { resends?: readonly string[] } | undefined;
+  return opts?.resends;
+}
+
+// THE IDS ARE THE OTHER HALF OF THE CARRY, and the server has been waiting for them:
+// `EntrySteer.Resends` and `turn_open.resent_steer_ids` are documented wire fields with
+// a complete consumer chain (the ledger, the merge's union rule, the note's `resent?`
+// flag) and no producer, because the capture stored the joined TEXT and discarded the
+// pairs it was handed. Carrying them is what lets one intent re-sent across a boundary
+// draw ONE note with its own provenance instead of two unrelated ones.
+describe("the armed slot carries the ids, not just the text", () => {
+  beforeEach(() => {
+    forgetSteerResend(CHAT);
+    vi.clearAllMocks();
+    sendPromptTo.mockResolvedValue("sent");
+  });
+
+  it("names every dropped steer, in the order the send's own text is in", async () => {
+    // Same ordering the text takes: the arrow's row leads, so the ids and the words
+    // cannot disagree about which message came first.
+    preferSteerFirst(CHAT, "steer-2");
+    noteBoundaryDrop(CHAT, rows("first", "second", "third"));
+    await fire();
+
+    expect(sentText()).toBe("second\n\nfirst\n\nthird");
+    expect(sentResends()).toEqual(["steer-2", "steer-1", "steer-3"]);
+  });
+
+  it("re-arms the ids with the text when a busy chat refuses the send", async () => {
+    // The retry re-offers the SAME batch at the next boundary, so a refusal must not
+    // strip the provenance off it — that would make the second attempt produce a note
+    // the first would not have.
+    sendPromptTo.mockResolvedValueOnce("queued");
+    noteBoundaryDrop(CHAT, rows("one", "two"));
+    await fire();
+
+    sendPromptTo.mockResolvedValue("sent");
+    runArmedResend(CHAT);
+    await vi.waitFor(() => {
+      expect(sendPromptTo).toHaveBeenCalledTimes(2);
+    });
+    expect(sentResends(1)).toEqual(["steer-1", "steer-2"]);
   });
 });

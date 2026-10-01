@@ -1,0 +1,83 @@
+{
+  "input_file": "mixed-m3-digit-leading-prose-with-children.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L2",
+      "line": 2,
+      "indent": 0,
+      "number": "12",
+      "text": "12 label pairs exceed the budget, trim them",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "bdd96639cf57c499242a2903729c362634da50001412d5e4ac8604d26cbdceba",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 2,
+      "number": "",
+      "text": "child A",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "63016af4072641f19a981471cda1dc9f72649e6dd19efaa821acb4afa5469fae",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L4",
+      "line": 4,
+      "indent": 2,
+      "number": "",
+      "text": "child B",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "3ae9d28ddeb6b714ff169a67af5f8dfc628c06ff2fcc73447269c8e210b22df8",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "",
+      "text": "another top level",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "95bc20e7bed673391214a60f94c638e788142bbc8ba7775ebbe795dec1b6328b",
+      "detail": "",
+      "children": [
+        {
+          "id": "L6",
+          "line": 6,
+          "indent": 2,
+          "number": "",
+          "text": "child C",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "608286bf9f8a9c0550cbf573213d477f573b37631741b11eeb4dac09e7f11d8c",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 4,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 4
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

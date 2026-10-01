@@ -6,7 +6,26 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
+
+// plansOf decodes every plan entry in entries, in file order, beside the turn each
+// one landed in.
+func plansOf(t *testing.T, entries []marotte.Entry) (turns []string, plans []marotte.EntryPlan) {
+	t.Helper()
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindPlan {
+			continue
+		}
+		var p marotte.EntryPlan
+		if err := json.Unmarshal(entries[i].Payload, &p); err != nil {
+			t.Fatalf("decode plan %q: %v", entries[i].ID, err)
+		}
+		turns = append(turns, entries[i].Turn)
+		plans = append(plans, p)
+	}
+	return turns, plans
+}
 
 func BenchmarkHandleAssistantChunk(b *testing.B) {
 	shortChunk, _ := json.Marshal(map[string]any{
@@ -39,78 +58,70 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for b.Loop() {
-				h.translator.HandleAssistantChunk(b.Context(), "bench", tc.raw, tc.isReasoning)
+				h.translator.HandleAssistantChunk(b.Context(), "bench", tc.raw, tc.isReasoning, translate.FrameAttribution{})
 			}
 		})
 	}
 }
 
-// Two plan frames for one turn leave ONE row, carrying the newest entries.
-//
-// ACP resends the whole entries array per update, so an append per frame left N
-// snapshots of one plan in the transcript and the client drew N cards, each stuck
-// at a different stage. The id is minted per frame and the store discards it on
-// the update path, so the surviving row keeps the FIRST frame's id — which is what
-// lets the client merge by id instead of mounting a second card.
-func TestHandlePlan_OneRowPerTurnCarryingTheNewestEntries(t *testing.T) {
+// A plan frame is one plan entry in the open turn, and a repeat of it seals
+// nothing: ACP resends the whole entries array per update, so a frame equal to the
+// turn's newest plan is no new state, while a changed one appends the next state.
+// The client renders a turn's newest plan, so the log carrying every state costs
+// no second card.
+func TestHandlePlan_ARepeatedFrameSealsNothingAndAChangedOneAppends(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	pending := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"pending"},{"content":"step 2","priority":"medium","status":"pending"}]}`)
-	h.translator.HandlePlan(t.Context(), "c1", pending)
+	h.translator.HandlePlan(t.Context(), "c1", pending, translate.FrameAttribution{})
+	h.translator.HandlePlan(t.Context(), "c1", pending, translate.FrameAttribution{})
 
-	c, _ := cs.Get(t.Context(), "c1")
-	if len(c.Messages) != 1 {
-		t.Fatalf("messages = %d, want 1", len(c.Messages))
-	}
-	firstID := c.Messages[0].ID
-	if len(c.Messages[0].Plan) != 2 {
-		t.Errorf("plan entries = %d, want 2", len(c.Messages[0].Plan))
+	_, plans := plansOf(t, logOf(t, cs, "c1"))
+	if len(plans) != 1 || len(plans[0].Entries) != 2 {
+		t.Fatalf("plan entries after two equal frames = %+v, want one plan holding 2 entries", plans)
 	}
 
 	done := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"completed"},{"content":"step 2","priority":"medium","status":"completed"}]}`)
-	h.translator.HandlePlan(t.Context(), "c1", done)
+	h.translator.HandlePlan(t.Context(), "c1", done, translate.FrameAttribution{})
 
-	c, _ = cs.Get(t.Context(), "c1")
-	if len(c.Messages) != 1 {
-		t.Fatalf("messages = %d after a second plan frame, want 1: a plan update must overwrite the turn's row, not append a second", len(c.Messages))
+	_, plans = plansOf(t, logOf(t, cs, "c1"))
+	if len(plans) != 2 {
+		t.Fatalf("plan entries after a changed frame = %d, want 2: the new state appends", len(plans))
 	}
-	if got := c.Messages[0].ID; got != firstID {
-		t.Errorf("plan row id = %q, want the first frame's %q; the client merges by id, so a new id mounts a second card", got, firstID)
-	}
-	for i, e := range c.Messages[0].Plan {
+	for i, e := range plans[1].Entries {
 		if e.Status != marotte.PlanCompleted {
-			t.Errorf("entry %d status = %q, want %q: the row must carry the NEWEST entries", i, e.Status, marotte.PlanCompleted)
+			t.Errorf("newest plan entry %d status = %q, want %q", i, e.Status, marotte.PlanCompleted)
 		}
 	}
 }
 
-// A user message opens a turn, so a plan after one is that turn's first plan and
-// appends rather than overwriting the previous turn's row. Without the boundary
-// every plan in a chat would fold onto the first one ever recorded.
-func TestHandlePlan_AUserMessageStartsANewTurnsPlan(t *testing.T) {
+// A plan folds into the chat's OWN open turn, so a plan streamed in a later turn
+// lands in that turn and the earlier turn keeps its own. Without the fold every
+// plan in a chat would land in whatever turn came first.
+func TestHandlePlan_EachTurnKeepsItsOwnPlan(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	ctx := t.Context()
 
+	one, _ := h.stagePromptTurn(t, "c1")
 	first := json.RawMessage(`{"entries":[{"content":"turn one","priority":"high","status":"pending"}]}`)
-	h.translator.HandlePlan(t.Context(), "c1", first)
+	h.translator.HandlePlan(ctx, "c1", first, translate.FrameAttribution{})
+	resp := &marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
+	h.SettleTurnOnResponse(ctx, "c1", one, 0, resp)
 
-	_ = cs.AppendMessage(t.Context(), "c1", &marotte.Message{
-		ID: "m-user", Role: marotte.RoleUser, Content: "next thing please",
-	})
-
+	two, _ := h.stagePromptTurn(t, "c1")
 	second := json.RawMessage(`{"entries":[{"content":"turn two","priority":"high","status":"pending"}]}`)
-	h.translator.HandlePlan(t.Context(), "c1", second)
+	h.translator.HandlePlan(ctx, "c1", second, translate.FrameAttribution{})
 
-	c, _ := cs.Get(t.Context(), "c1")
-	if len(c.Messages) != 3 {
-		t.Fatalf("messages = %d, want 3 (plan, user, plan)", len(c.Messages))
+	turns, plans := plansOf(t, logOf(t, cs, "c1"))
+	if len(plans) != 2 {
+		t.Fatalf("plan entries = %d, want 2 (one per turn)", len(plans))
 	}
-	if got := c.Messages[0].Plan[0].Content; got != "turn one" {
-		t.Errorf("first turn's plan = %q, want %q: a later turn must not overwrite it", got, "turn one")
+	if turns[0] != one || plans[0].Entries[0].Content != "turn one" {
+		t.Errorf("first plan = %q in turn %q, want %q in %q", plans[0].Entries[0].Content, turns[0], "turn one", one)
 	}
-	if got := c.Messages[2].Plan[0].Content; got != "turn two" {
-		t.Errorf("second turn's plan = %q, want %q", got, "turn two")
+	if turns[1] != two || plans[1].Entries[0].Content != "turn two" {
+		t.Errorf("second plan = %q in turn %q, want %q in %q", plans[1].Entries[0].Content, turns[1], "turn two", two)
 	}
 }
 

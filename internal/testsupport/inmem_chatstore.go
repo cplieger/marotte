@@ -136,53 +136,5 @@ func (s *InMemoryChatStore) Delete(_ context.Context, id marotte.ChatID) error {
 	return nil
 }
 
-// AppendMessage appends a message to the stored chat and broadcasts message_appended.
-func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	var appended bool
-	version, err := s.Mutate(context.Background(), chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		c.Messages = append(c.Messages, *msg)
-		appended = true
-		return true
-	})
-	if err != nil || !appended || s.Bus == nil {
-		return err
-	}
-	s.Bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
-	return nil
-}
-
-// UpsertTurnPlan overwrites this turn's plan row, or appends msg when the turn
-// carries none. Mirrors (*chat.Store).UpsertTurnPlan; the turn boundary is the
-// first user message walking back from the tail.
-func (s *InMemoryChatStore) UpsertTurnPlan(_ context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	return upsertTurnPlan(s.Mutate, s.Bus, chatID, msg)
-}
-
-// UpdateMessage applies mutate to the message identified by msgID within the stored chat.
-func (s *InMemoryChatStore) UpdateMessage(_ context.Context, chatID marotte.ChatID, msgID string, mutate func(*marotte.Message)) error {
-	var updated *marotte.Message
-	version, err := s.Mutate(context.Background(), chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		for i := range c.Messages {
-			if c.Messages[i].ID == msgID {
-				mutate(&c.Messages[i])
-				updated = &c.Messages[i]
-				return true
-			}
-		}
-		return false
-	})
-	if err != nil || updated == nil || s.Bus == nil {
-		return err
-	}
-	s.Bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
-	return nil
-}
-
 // Compile-time assertion.
 var _ chatStoreUnion = (*InMemoryChatStore)(nil)

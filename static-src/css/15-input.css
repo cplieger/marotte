@@ -64,13 +64,9 @@
   --pill-inset: var(--sp-1);
 
   /* THE ROW'S INLINE PADDING, one declaration per tier, read by BOTH icon-only
-     controls so their boxes cannot drift apart. `.pill` spends it directly and
-     `.send-btn` spends it plus half its glyph deficit (see that rule), which is what
-     makes "Send is the same box as `#chat-options-btn`" structural rather than two
-     numbers that happen to agree. It was a literal in each of them, and the phone
-     override reached `.pill` alone, which is how Send ended up 32 wide against 46.
-     Wider on a phone because the labelled pills need the room; the value moves at
-     48rem rather than on the pointer tier, which is a product call the mobile block
+     controls so their boxes cannot drift apart rather than agreeing by coincidence.
+     Wider on a phone because the labelled pills need the room; it moves at 48rem
+     rather than on the pointer tier, which is a product call the mobile block
      records rather than a height defect. */
   --pill-pad-inline: var(--sp-2);
 
@@ -314,6 +310,11 @@
   align-items: center;
   gap: var(--sp-1);
 
+  /* The × 's box, declared HERE rather than on the button, because the pill's trailing
+     well below is derived from it and a custom property inherits down. `.attachment-close`
+     reads it for its own `inline-size`/`block-size`, so the two cannot disagree. */
+  --close-box: 1.5rem;
+
   /* THE BOX'S ONE CONTROL HEIGHT, so the chip row cannot disagree with the pill row
      under it or the textarea over it — the derivation `--composer-ctl-h` on
      `#prompt-form` states, applied to the one control in this box that was left
@@ -346,6 +347,31 @@
   transition:
     background var(--dur-micro) var(--ease-standard),
     border-color var(--dur-micro) var(--ease-standard);
+
+  /* THE TRAILING RUNG IS THE ×'s OWN WELL WHENEVER THERE IS A ×, which is `.tab`'s
+     asymmetric-inline-padding rule (10-shell-app.css) applied to this chip. `--sp-2`
+     is authored for TEXT at both ends; the trailing child here is a button that paints
+     a box on hover and on press, so its distance from the border is a visible
+     relationship and it wants the same well it has above and below. The well is the
+     block inset `align-items: center` already produces, so this is that arithmetic and
+     not a second number: `(content height - box) / 2`, 3px on a mouse and 5px on a
+     finger. Measured at 1440 fine before it, the border sat 9px from the leading
+     emoji's ink and 15px from the ×'s, which is the reported defect.
+
+     GATED ON THE BUTTON EXISTING, and that is forced rather than tidy:
+     `buildAttachmentPill` builds no × for a read-only pill (a sent turn's header,
+     `onRemove` omitted), where the trailing child is the ELLIPSISED LABEL — text, which
+     is what `--sp-2` is the rung for. Verified unmoved at 9px both ends.
+
+     The height term restates `block-size`'s expression rather than reading a shared
+     property, because that declaration's own form is pinned by
+     `composer-row-height-css.test.ts` ("the same EXPRESSION the box declares"); the 2px
+     is this chip's two borders. */
+  &:has(> .attachment-close) {
+    padding-inline-end: calc(
+      (var(--composer-ctl-h, max(2rem, var(--ctl-h-sm))) - 2px - var(--close-box)) / 2
+    );
+  }
 }
 
 .attachment-pill:hover {
@@ -441,15 +467,33 @@
      reaching into the label's target. */
   min-width: 0;
   min-height: 0;
-  inline-size: 1.5rem;
-  block-size: 1.5rem;
+  inline-size: var(--close-box);
+  block-size: var(--close-box);
   position: relative;
 
-  /* The ladder's rung for that box, exactly as `.native-rule-remove` (17-settings.css)
-   * pairs the two: `--r-sm` is reserved for a 16-24px box, and `icon-btn` declares
-   * `--r` for its own 28px. Dropping it with the rest of the hand-rolled skin left a
-   * 24px box wearing a 28px box's 6px corner. `radius-nesting.test.ts` lists this
-   * class for that reason. */
+  /* The well this box sits in is the PILL's (`.attachment-pill:has()` above); nothing
+     about the inset is stated here, because the pill is what knows its own height. */
+
+  /* THE LADDER'S RUNG, character for character with every other close button in the
+     app — `.tab-close`, `.shell-header-btn`, `.turn-action-btn`, `.native-rule-remove`
+     are all `--r-sm` on a 24px box, and `radius-nesting.test.ts` holds the population
+     together. A circle shipped here for one build and was reported: it is the app's
+     only circular control, and one × that is not the shape of every other × is a
+     worse defect than the geometric residual below.
+
+     THE RESIDUAL, stated because `radius-audit.mjs` reports it and the next run should
+     read it as ruled rather than as drift: with the box inset equally (above) the
+     corner nests isotropically at a 4px gap on a mouse and 6px on a finger, so the
+     CONCENTRIC radius would be `--r` - 1px - gap = 2px and 0px. Neither is a rung, one
+     of them is a hard square, and both are further from the rest of the app's close
+     buttons than 4px is — so the rung wins and the corner is reported `too-round`.
+     `.tab-close` carries the same ruling in prose ("centred in a 36px row rather than
+     sitting in the tab's corner, so the concentric rule does not bind here … the rung
+     is the whole answer") and escapes the audit only because its 8px trailing padding
+     puts its gap past the tab's arc. This pill cannot buy that: it is 32px tall by the
+     composer's control-height contract and the box is 24px by WCAG 2.5.8, so 3px is
+     the whole well there is. Closing it needs the composer's row height or the pill's
+     own `--r` to move, which is a decision above this rule. */
   border-radius: var(--r-sm);
   opacity: 0.5;
   transition:
@@ -460,6 +504,31 @@
 .attachment-close:hover,
 .attachment-pill:hover .attachment-close {
   opacity: 1;
+}
+
+/* THE FILL IS THE LADDER'S WASH, because `icon-btn`'s is the rung this pill's own
+   hover already occupies. Both spell `--c-bg-tertiary` — `.attachment-pill:hover`
+   above and `:is(.icon-btn):hover` (10-shell-app.css) — and reaching the × means
+   hovering its pill, so the two composited to 1.000:1 and pointing at the × changed
+   NOTHING: the recede is already spent by `.attachment-pill:hover` one rule up, so
+   the ink was at 1 too. 11-page-lists.css states the same defect for a row's own
+   `.icon-btn`s.
+
+   A WASH rather than a rung, so it lifts whatever the pill is painting instead of
+   agreeing with it, which is the app's one hover recipe (`marotte-ui.md`). It wins
+   `icon-btn`'s declaration on SOURCE ORDER, not specificity: both score (0,2,0) and
+   10-shell-app.css sorts earlier in `MANIFEST`. Preferred over the
+   `background-image: var(--layer-hover)` form the `.entry` row uses for the same
+   collision, because a layer over a fill is DISCRETE while this transitions under
+   the `background` the rule above already declares.
+
+   UNGATED, unlike every other hover in this file's neighbours, and the reason is
+   local: `any-hover` exists so a tap cannot latch a hover state, and activating this
+   control REMOVES the element, so there is nothing left to latch. Its two
+   neighbours are ungated too, so gating only this one would leave a touch tap on the
+   × painting `icon-btn`'s invisible rung. */
+.attachment-close:hover {
+  background: var(--c-hover);
 }
 
 /* --- Pill row (bottom of prompt box) --- */
@@ -913,14 +982,14 @@
      an `overflow-y` beside a `visible` inline axis computes that axis to `auto`
      anyway, and then nothing says which was meant. */
   /* TWO bounds, and they answer different questions. `--pill-max-block` is the
-     ROOM between the viewport's top edge and this card's own bottom, measured and
-     published by `pill-expand.ts` on open (26rem is only the pre-JS fallback);
-     it is the hard bound, because a card may never overflow the viewport it is
-     anchored inside. `60dvh` is the SHAPE bound: a menu that fills the screen
-     reads as a modal, which is the thing the expandable-pill pattern exists to
-     avoid (marotte.md mandates it over floating popups for pill-row controls).
-     Measured at a 900px viewport with the room alone as the cap: the mode list
-     rendered 839px tall from y=12 and still scrolled.
+     ROOM between the viewport's top edge and this card's own bottom, which
+     `pill-expand.ts` measures on open and re-measures on every viewport change while
+     the card is open (26rem is only the pre-JS fallback); it is the hard bound,
+     because a card may never overflow the viewport it is anchored inside. `60dvh` is
+     the SHAPE bound: a menu that fills the screen reads as a modal, which is the thing
+     the expandable-pill pattern exists to avoid (marotte.md mandates it over floating
+     popups for pill-row controls). Measured at a 900px viewport with the room alone
+     as the cap: the mode list rendered 839px tall from y=12 and still scrolled.
 
      This replaced a single authored 16rem, which could know neither. It was also
      the stingier of the two caps it replaced despite desktop having the most
@@ -1979,12 +2048,6 @@
   --send-hue: var(--c-accent);
   --send-depth: 38%;
 
-  /* This glyph's BOX, normalised to the row's INK rather than to the row's nominal
-     icon size. 14/20 is the house ink band over this path's own; the `& svg` rule
-     below carries the measurement and the reason it is scoped here. Named once so the
-     padding correction above and the glyph itself cannot disagree. */
-  --send-glyph: calc(var(--icon-ui) * 14 / 20);
-
   /* The edge, at the hue's full strength. border-box is global, so adding it kept
      the declared height that matches `.pill` beside it. */
   border: 1px solid var(--send-hue);
@@ -2022,27 +2085,15 @@
      taller box, which is what makes opting out safe. */
   block-size: var(--composer-ctl-h);
 
-  /* THE ROW'S PADDING, OR WHATEVER KEEPS THIS BUTTON WIDER THAN TALL, whichever is
-     larger. Wider than tall is the ratified shape (the surplus width is free touch
-     area), and the row's own value does not always deliver it: this glyph's box is
-     deliberately smaller than `--icon-ui` (see `& svg` below — its Lucide path draws
-     edge to edge, so an equal box paints 43% more ink), so on the mouse tier
-     `--sp-2` around an 11.2px glyph yields 29.2px against a 32px height. The second
-     arm is that inequality solved for the padding, plus 1px so it is strict.
-     Measured: 12px each side at 390 coarse for a 40x36 box, 10.4px at 1440 fine for
-     34x32. Both terms are the row's own, so neither can drift from it.
-
-     BOX-IDENTICAL TO `#chat-options-btn` WAS TRIED AND REVERTED, and the reason is
-     worth keeping. Padding the whole glyph deficit back (`+ (--icon-ui -
-     --send-glyph) / 2`) made the two icon-only controls measure the same 46x36, which
-     is a stronger reading of "aligned" — and it cost 6px of a row that had 4px of
-     slack, so `.prompt-pills` overflowed its box by 2px at 390px and
-     `text-field-scale-css.test.ts` caught it. The ink match below is what the report
-     was about; an equal box was an inference on top of it, and it is not worth a
-     row that does not fit. */
+  /* The row's padding, or whatever keeps this button wider than tall (the ratified
+     shape — the surplus width is free touch area), whichever is larger. The second
+     arm is that inequality solved for the padding, plus 1px so it is strict; it does
+     not bind at either tier today, and it is what keeps the property structural if
+     `--icon-ui` or `--pill-pad-inline` moves. Both terms are the row's own, so
+     neither can drift from it, and the result is the box `#chat-options-btn` has. */
   padding-inline: max(
     var(--pill-pad-inline),
-    calc((var(--composer-ctl-h) - 2px - var(--send-glyph)) / 2 + 1px)
+    calc((var(--composer-ctl-h) - 2px - var(--icon-ui)) / 2 + 1px)
   );
   min-width: 0;
   min-height: 0;
@@ -2055,29 +2106,15 @@
     border-color var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 
-  /* THE GLYPH IS NORMALISED TO THE ROW'S INK, not to the row's nominal icon size,
-     and the two are not the same thing for this drawing. `--icon-ui` sizes the
-     glyph's BOX; what the eye compares is the INK inside it, and Lucide draws this
-     arrow edge to edge — measured with `getBBox()`, PATH_SEND's ink spans 20 of the
-     24 viewBox units against 14 for `PATH_PLUS` next to it, so at an identical 20px
-     box it painted 16.7px of ink against the `+`'s 11.7px. That 43% is the reported
-     "the icon is too large", and it is a property of the PATH rather than of the
-     size: the icon set genuinely runs 12 to 20 units (PATH_X 12, PATH_PLUS 14,
-     PATH_PENCIL and PATH_SEND 20), so the arrow is not an outlier upstream and
-     redrawing it here would diverge from Lucide for every other consumer
-     (`fundamentals/steer-note.ts` and `git-branch-switcher.ts` also draw it).
-
-     So the correction is scoped to the ONE site where two icon-only buttons sit side
-     by side and the mismatch is visible, and it is a DERIVATION rather than a
-     literal: 14/20 is the house ink band over this path's, so the ink lands on
-     11.7px — the `+`'s exactly — and it does so on BOTH tiers because it still reads
-     `--icon-ui`. That is what answers the objection the previous version of this
-     comment recorded: a hard `1rem` here at (0,1,0) beat `.ic-ui`'s zero-specificity
-     rule (03-base.css), so when the coarse tier's icon scale moved 18 -> 20 every
-     sibling followed and Send stayed at 16. A multiple of the token cannot lag it. */
+  /* The TOKEN, not a literal: a hard `1rem` at (0,1,0) beats `.ic-ui`'s
+     zero-specificity rule (03-base.css), so the coarse tier would leave Send behind.
+     Every face takes it — a per-path size cannot live on a control that swaps paths.
+     Do NOT express a per-face size as `transform: scale()`: `icon-crisp.ts` re-arms
+     its settle whenever an element's rect disagrees with its computed `inlineSize`,
+     so a static scale on an `.ic-*` glyph spins that loop for the element's life. */
   & svg {
-    width: var(--send-glyph);
-    height: var(--send-glyph);
+    width: var(--icon-ui);
+    height: var(--icon-ui);
     flex-shrink: 0;
     transition: transform var(--dur-micro) var(--ease-standard);
   }

@@ -3,11 +3,8 @@
 //
 // Scoped to the ACTIVE chat's rendered messages (`#messages`).
 //
-// THE DOM_MESSAGE_CAP CLAIM THIS COMMENT USED TO MAKE WAS FALSE. It said the
-// list is "DOM-capped at 50 nodes (see scroll.ts DOM_MESSAGE_CAP)"; no such
-// constant has ever existed and scroll.ts never trims the DOM. The 50 was
-// store-load.ts's PAGE SIZE — pagination, not eviction — and the wrong
-// provenance propagated out of here into a design document before it was caught.
+// The list is paginated (store-load.ts's page size), never DOM-trimmed, so a
+// match can sit in a page that is not loaded yet.
 //
 // The WALKER itself is find-engine.ts now, shared with the editor's find over a
 // diff pane or rendered markdown — the same problem, one implementation. What
@@ -55,12 +52,11 @@ import { $, byId } from "./dom.js";
 import { jumpTo, onTranscriptMutate } from "./scroll.js";
 import { runServerSearch, resetServerSearch, revealHitTurn } from "./chat-search.js";
 import { getActive, getActiveId } from "./store.js";
-import { blockElement } from "./messages-blocks.js";
+import { runOffsetOf } from "./messages-blocks.js";
 import { loadMessages } from "./store-load.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { createSearchShell, searchIconButton } from "./search-shell.js";
-import { parseStepSubtask } from "./step-subtask.js";
 import { FindEngine } from "./find-engine.js";
 import { classify, cursorCount, emptyNote, scanNote } from "./textsearch/copy.js";
 import type { Nouns, Tally } from "./textsearch/copy.js";
@@ -172,7 +168,7 @@ let navBusy = false;
  *  it, which is why it stays a plain boolean rather than carrying the identity. */
 let crossTabJump = false;
 /** The hit the reader left on, as a `@cplieger/keyenc` join of
- *  `[message_id, block_index ?? -1, segment_kind, offset]` — an IDENTITY rather
+ *  `[turn_id, entry_id, segment_kind, offset]` — an IDENTITY rather
  *  than the index, because the chat can grow while the reader is away and every
  *  index would move. Spent by the next open's re-run, in `render`, which clears it
  *  whether or not it resolved; a key naming no hit in the fresh `stepOrder` resets
@@ -186,17 +182,17 @@ let landOnResume = false;
 
 /** The walk order for one answer, partitioned ONCE by destination.
  *
- *  The key is `agent_subtask_id`, a property of the hit that never changes and the
+ *  The key is the entry's `lane`, a property of the hit that never changes and the
  *  same predicate `navigateToHit` already routes on — the client's own ROUTING
- *  rather than a claim about what the transcript renders. So an INVOCATION hit,
- *  which is drawn in the transcript as the delegate's card, is phase 2 like every
- *  other hit carrying that id: that is today's routing and nothing here changes it.
+ *  rather than a claim about what the transcript renders. An INVOCATION hit is lane
+ *  `""` (the call is the ISSUER's entry, and only the delegate's own entries carry
+ *  its uuid), so it stays phase 1 and lands on the card the transcript draws for it.
  *
  *  `serverHits` is deliberately NOT sorted in place — every other consumer counts
  *  that list — and this runs once per answer rather than per press, so the cursor
  *  means the same thing across a re-render of the same answer. */
 function buildStepOrder(hits: Hit[]): Hit[] {
-  const isLocal = (h: Hit): boolean => (h.agent_subtask_id ?? "") === "";
+  const isLocal = (h: Hit): boolean => (h.lane ?? "") === "";
   const local = hits.filter(isLocal);
   localCount = local.length;
   return [...local, ...hits.filter((h) => !isLocal(h))];
@@ -216,7 +212,7 @@ function resumeIndex(): number {
 
 /** The hit's identity, for the cross-tab resume. */
 function hitKey(hit: Hit): string {
-  return join(hit.message_id, String(hit.block_index ?? -1), hit.segment_kind, String(hit.offset));
+  return join(hit.turn_id, hit.entry_id, hit.segment_kind, String(hit.offset));
 }
 
 /** Open state lives on the popup and NOWHERE ELSE.
@@ -257,9 +253,12 @@ function ensureBuilt(): void {
   }
   engine = new FindEngine(findRoot());
 
-  const count = el("span", {
+  // A DIV rather than a span, and `search-status` beside its own class: the
+  // counter is a LINE under the controls (24-find.css `.search-status`), which
+  // collapses to zero height while empty, so it needs a block box of its own.
+  const count = el("div", {
     id: "chat-find-count",
-    className: "chat-find-count",
+    className: "chat-find-count search-status",
     role: "status",
     "aria-live": "polite",
     "aria-atomic": "true",
@@ -292,14 +291,18 @@ function ensureBuilt(): void {
     // keeps intrinsic height while empty.
     note: true,
     noteClass: "chat-find-note",
+    // THE COUNTER IS A SIBLING OF THE ROW, not an item inside it: it holds
+    // sentences as well as a cursor, and beside four fixed-width buttons a
+    // sentence painted over them (24-find.css `.search-status` carries the
+    // measurement). Its own line wraps and grows the box instead.
     compose: ({ input, caseButton, closeButton, note }) => [
       el(
         "div",
         { className: "chat-find-row" },
         input,
-        count,
         el("div", { className: "chat-find-nav" }, caseButton, prevBtn, nextBtn, closeButton),
       ),
+      count,
       note,
     ],
     query: async (query, ctx) => {
@@ -714,17 +717,17 @@ function landOnHit(hit: Hit): void {
  *  pipeline run.
  *
  *  It succeeds only where nothing has to be fetched, revealed or opened: the hit is
- *  this client's to answer in place, it names a span rather than a whole message,
+ *  this client's to answer in place, it names a span rather than a whole entry,
  *  its element is mounted, and one of the marks ALREADY inside that element is
  *  credibly this occurrence. Everything else is the existing path, unchanged. */
 function landInPlace(hit: Hit): boolean {
   if (engine === null || shell === null) {
     return false;
   }
-  if ((hit.agent_subtask_id ?? "") !== "" || hit.segment_kind === "message") {
+  if ((hit.lane ?? "") !== "" || hit.segment_kind === "entry") {
     return false;
   }
-  const target = resolveSegmentEl(hit);
+  const target = entryElement(hit.turn_id, hit.entry_id);
   if (target === null) {
     return false;
   }
@@ -857,20 +860,21 @@ async function navigateToHit(hit: Hit): Promise<void> {
   if (chatID === "" || engine === null) {
     return;
   }
-  // A WORKFLOW STEP's hit goes to the RUN TAB, the only surface that renders it: the
-  // transcript's dispatcher drops a step's blocks, so there is no DOM segment for
-  // `resolveSegmentEl` to find. Skipping `ensureHitResident` and `revealHitTurn` is the
-  // point — the destination is another tab. The predicate is the renderer's own
-  // `parseStepSubtask`, so a malformed `wf:` id falls to the DELEGATE branch below.
-  const step = parseStepSubtask(hit.agent_subtask_id ?? "");
-  if (step !== null) {
+  // A DELEGATE's hit goes to that delegate's TAB, the only surface that renders its
+  // entries: the transcript draws the invocation card and drops the lane, so there is
+  // no DOM segment here for `entryElement` to find. Skipping `ensureHitResident` and
+  // `revealHitTurn` is the point — the destination is another tab. There is no step
+  // arm beside it: a run's steps are entries of the RUN's own log, so no hit in a
+  // chat's log can name one.
+  const lane = hit.lane ?? "";
+  if (lane !== "") {
     // Painted BEFORE the open, with the DESTINATION and, on the crossing, the
     // boundary sentence: on success the tab switch tears the overlay down
     // (BUS_TAB_CHANGED -> closeChatFind), so anything said afterwards is said to
     // nobody, and on a refused open this is the accurate position for a reader
     // still on the transcript. Through the existing role=status counter, so it is
     // spoken as well as shown.
-    paintHitPosition(takeBoundaryNotice, "opening the run tab");
+    paintHitPosition(takeBoundaryNotice, "opening the delegate's page");
     // BOTH resume values, immediately before the lazy import, because the switch
     // this open causes is what tears the overlay down: `teardown` therefore has to
     // EXEMPT them (it runs in the same turn), and the subscriber only reads the
@@ -879,31 +883,8 @@ async function navigateToHit(hit: Hit): Promise<void> {
     crossTabJump = true;
     resumeKey = hitKey(hit);
     try {
-      // Lazily imported, the shape `messages-blocks.ts` uses for the run card's own
-      // opener: a static import would pull `exec-view/**`, `run-exec-source` and
-      // `actions/runs` into the main bundle for a branch that is rarely taken.
-      const { openRunView } = await import("./run-view.js");
-      // Name "" so the tab factory derives the label from the run store — find has
-      // no better one than the factory does.
-      void openRunView(step.workflowID, "", chatID, step.nodePath);
-    } catch {
-      if (isOpen()) {
-        showHitNotice("could not be opened");
-      }
-    }
-    return;
-  }
-  // A DELEGATE's hit goes to that delegate's TAB, for the same reason and by the same
-  // route. Every non-empty subtask id that is not a step is a delegate, malformed `wf:`
-  // ids included, which is where the renderer sends them too.
-  const subtask = hit.agent_subtask_id ?? "";
-  if (subtask !== "") {
-    paintHitPosition(takeBoundaryNotice, "opening the delegate's page");
-    crossTabJump = true;
-    resumeKey = hitKey(hit);
-    try {
       const { openSubagentView } = await import("./subagent-view.js");
-      void openSubagentView(chatID, subtask);
+      void openSubagentView(chatID, lane);
     } catch {
       if (isOpen()) {
         showHitNotice("could not be opened");
@@ -933,7 +914,7 @@ async function navigateToHit(hit: Hit): Promise<void> {
   // AFTER residency and the reveal, though: a turn paged out of the window has no
   // card to select, and paging it in is what makes one exist.
   if (hit.segment_kind === "turn_failure" || hit.segment_kind === "attachment") {
-    const card = turnCardEl(hit.turn_message_id);
+    const card = turnCardEl(hit.turn_id);
     if (card === null) {
       // The same sentence the row path answers, for the same reason: the surface
       // this hit names is not on screen and navigation cannot invent it.
@@ -950,22 +931,21 @@ async function navigateToHit(hit: Hit): Promise<void> {
     await landOrNotice(region ?? card, hit, region !== null);
     return;
   }
-  const row = messageRowEl(hit.message_id);
-  if (row === null) {
+  const target = entryElement(hit.turn_id, hit.entry_id);
+  if (target === null) {
     showHitNotice("could not be shown");
     return;
   }
-  // A `message` hit locates the message, not a span in it: container
-  // navigation, scroll + brief highlight. Routing here is what makes the
-  // ranker's segment_len division unreachable for this kind — its
-  // segment_len is 0 by contract, and no zero-guard below has to know that.
-  if (hit.segment_kind === "message") {
-    selectContainer(row);
+  // An `entry` hit locates the entry, not a span in it: container navigation,
+  // scroll + brief highlight. Routing here is what makes the ranker's
+  // segment_len division unreachable for this kind — its segment_len is 0 by
+  // contract, and no zero-guard below has to know that.
+  if (hit.segment_kind === "entry") {
+    selectContainer(target);
     updateCounter(shell.value);
     return;
   }
-  const target = resolveSegmentEl(hit) ?? row;
-  openDisclosureChain(row, target, hit);
+  openDisclosureChain(target, hit);
   // A preview-less diff card loads its diff FROM THE OPEN, so the text this hit
   // names does not exist until the bulk lands. Bounded, and `null` for every other
   // shape — including a card already showing its preview, which therefore takes no
@@ -986,7 +966,7 @@ async function navigateToHit(hit: Hit): Promise<void> {
   // the element exists from the mount but holds no text until that open. Either
   // way, narrowing before the open answers a mark-free element for every closed
   // card — the common case, and exactly the case the narrowing is for.
-  const narrowed = narrowToolTarget(target, hit) ?? narrowRowTarget(row, hit);
+  const narrowed = narrowToolTarget(target, hit);
   await landOrNotice(narrowed ?? target, hit, narrowed !== null);
 }
 
@@ -1095,90 +1075,63 @@ function nextRender(): Promise<boolean> {
   });
 }
 
-/** Page older history in until the hit's message is resident. Bounded by the
- *  server's own `has_more`, a no-progress check, and a page cap. */
+/** Page older history in until the hit's TURN is resident. Bounded by the server's
+ *  own `has_more`, a no-progress check, and a page cap.
+ *
+ *  The window pages by TURN and holds whole turns, so residency is one map lookup and
+ *  the cursor it pages from is the oldest resident turn id — the same value
+ *  `?before=` takes. */
 async function ensureHitResident(chatID: string, hit: Hit): Promise<boolean> {
-  const resident = (): boolean =>
-    getActive()?.messages.some((m) => m.id === hit.message_id) === true;
+  const resident = (): boolean => getActive()?.turns.has(hit.turn_id) === true;
   for (let pages = 0; !resident(); pages++) {
     const session = getActive();
     if (session?.has_more !== true || session.id !== chatID || pages >= HIT_PAGE_CAP) {
       return false;
     }
-    const oldest = session.messages[0]?.id;
+    const oldest = session.turn_order[0];
     if (!(await loadMessages(chatID, oldest))) {
       return false;
     }
     // No progress: the server answered but the window's edge did not move, so
     // more requests would loop on the same answer.
-    if (getActive()?.messages[0]?.id === oldest) {
+    if (getActive()?.turn_order[0] === oldest) {
       return false;
     }
   }
   return true;
 }
 
-/** The rendered row for a message id: reconcile keys message rows by id inside
- *  each turn card's body. */
-function messageRowEl(messageID: string): HTMLElement | null {
-  return findRoot().querySelector<HTMLElement>(
-    `.turn-body > [data-reconcile-key="${CSS.escape(messageID)}"]`,
-  );
+/** The rendered TURN CARD for a turn id, which every hit carries and which is the
+ *  outer reconcile's own key. Null when that turn is not mounted in the active
+ *  view. */
+function turnCardEl(turnID: string): HTMLElement | null {
+  return findRoot().querySelector<HTMLElement>(`.turn[data-reconcile-key="${CSS.escape(turnID)}"]`);
 }
 
-/** The rendered TURN CARD for a turn's opening message id, which is what the two
- *  turn-level kinds resolve from.
+/** The rendered element of the hit's ENTRY, inside its own turn card. Null means the entry is
+ *  not mounted here — a turn the reveal could not build, or an entry the window dropped.
  *
- *  One query mirroring `messageRowEl`, keyed the same way one level up: a turn card
- *  is the OUTER reconcile's element and its key is the turn's opening message id,
- *  which is exactly the `turn_message_id` already on the wire. Null when that turn
- *  is not mounted in the active view. */
-function turnCardEl(turnMessageID: string): HTMLElement | null {
-  return findRoot().querySelector<HTMLElement>(
-    `.turn[data-reconcile-key="${CSS.escape(turnMessageID)}"]`,
-  );
-}
-
-/** The rendered container of the hit's SEGMENT, from the renderer's own per-block map. NOT scoped
- *  to the hit's row: a run card holds every later message's steps, so a mounted card can sit in an
- *  EARLIER message's row. Every kind the transcript MOUNTS is stamped, so null means nothing is
- *  mounted here and the caller falls back to the row.
+ *  TWO stamps, because a prose RUN is one element for several entries: `data-entry-id` is its
+ *  first member's, `data-entries` the rest, which `writeRunEntries` (messages-blocks.ts) owns.
  *
- *  It does not answer for every segment kind, and four whole populations resolve ELSEWHERE rather
- *  than through this map. A hit carrying a subtask id is answered by another TAB (a `wf:` id by the
- *  run tab, everything else by the delegate's page). `turn_failure` and `attachment` are answered by
- *  the TURN CARD, ahead of the row lookup, because neither renders inside the row. A `message`-kind
- *  hit names the message rather than a span in it. And `plan` resolves to the row and is narrowed
- *  from there by `narrowRowTarget`, because a plan carries no block index either.
- *
- *  A TOOL kind's answer here is the whole `.tool-call`; the region inside it is
- *  `narrowToolTarget`'s, after the disclosure has opened.
- *
- *  It answers the whole `.tool-call` for a tool block, and per-kind narrowing does
- *  NOT belong here: the regions those kinds narrow to are built or filled by the
- *  card's first open, so an arm here would answer a mark-free element for every
- *  closed card. `narrowToolTarget` runs after `openDisclosureChain` instead. */
-function resolveSegmentEl(hit: Hit): HTMLElement | null {
-  const bi = hit.block_index;
-  if (bi === undefined) {
+ *  A TOOL kind's answer is the whole `.tool-call`; the region inside it is
+ *  `narrowToolTarget`'s, after the disclosure has opened. */
+function entryElement(turnID: string, entryID: string): HTMLElement | null {
+  const card = turnCardEl(turnID);
+  if (card === null) {
     return null;
   }
-  const block = getActive()?.messages.find((m) => m.id === hit.message_id)?.blocks?.[bi];
-  if (block === undefined) {
+  const id = CSS.escape(entryID);
+  const stamped =
+    card.querySelector<HTMLElement>(`[data-entry-id="${id}"]`) ??
+    card.querySelector<HTMLElement>(`[data-entries~="${id}"]`);
+  if (stamped === null) {
     return null;
   }
-  const stamped = blockElement(hit.message_id, bi);
-  // A map can name an element that has LEFT the document, where the subtree query this
-  // replaced could not; `navigateToHit` exits silently on one, so decline it here.
-  if (stamped?.isConnected !== true) {
-    return null;
-  }
-  // A top-level text block is stamped on its ROW — that is what a window drop
-  // removes — so both shapes answer with the bubble, which is what every consumer
-  // downstream flashes, walks and jumps to.
-  return hit.segment_kind === "content"
-    ? (stamped.querySelector<HTMLElement>(":scope > .message") ?? stamped)
-    : stamped;
+  // A prose run is stamped on its ROW — that is what a window drop removes — so both
+  // shapes answer with the bubble, which is what every consumer downstream flashes,
+  // walks and jumps to.
+  return stamped.querySelector<HTMLElement>(":scope > .message") ?? stamped;
 }
 
 /** Which region inside a tool card each tool kind's text is RENDERED in. A kind
@@ -1213,20 +1166,6 @@ function narrowToolTarget(target: HTMLElement, hit: Hit): HTMLElement | null {
   }
   const card = target.closest<HTMLElement>(".tool-call") ?? target;
   return card.querySelector<HTMLElement>(selector);
-}
-
-/** The region inside the hit's ROW that holds a MESSAGE-level kind's text, or null
- *  when there is none. Only `plan` has one: `mountPlan` appends the plan card to
- *  the message's own wrap — which IS the row `messageRowEl` selects — and finds it
- *  back with this same selector.
- *
- *  Here rather than in `resolveSegmentEl`, which opens with a block-index guard a
- *  message-level hit can never pass: an arm there would be unreachable dead code,
- *  and its named test would fail with nothing pointing at the cause. */
-function narrowRowTarget(row: HTMLElement, hit: Hit): HTMLElement | null {
-  return hit.segment_kind === "plan"
-    ? row.querySelector<HTMLElement>(":scope > .plan-message")
-    : null;
 }
 
 /** The one-line remark for a hit whose second walk found no credible mark.
@@ -1316,16 +1255,16 @@ function activateQuietly(control: HTMLElement): void {
   }
 }
 
-/** Open every closed disclosure between the hit's container and its row, so the walker
- *  can reach the text: reasoning `<details>` through the platform API, tool groups by
- *  ACTIVATING their real header, so the controller behind it keeps agreeing with the DOM.
- *  A hit whose kind lives inside `.tool-details` also opens its card's own disclosure.
+/** Open every closed disclosure between the hit's element and its turn body, so the
+ *  walker can reach the text: reasoning `<details>` through the platform API, tool groups
+ *  by ACTIVATING their real header, so the controller behind it keeps agreeing with the
+ *  DOM. A hit whose kind lives inside `.tool-details` also opens its card's own disclosure.
  *
- *  The card is resolved with `closest` rather than by testing `target` itself, so
- *  the walk survives a future caller that passes a REGION inside the card: no
- *  caller does today, because the narrowing happens after this returns. */
-function openDisclosureChain(row: HTMLElement, target: HTMLElement, hit: Hit): void {
-  for (let cur: HTMLElement | null = target; cur !== null && cur !== row.parentElement;) {
+ *  It stops at `.turn-body` because an entry's element IS a card, note or row that body holds,
+ *  so every disclosure that can hide one is BETWEEN the two. The card is resolved with
+ *  `closest` rather than from `target`, so a caller passing a REGION inside it still works. */
+function openDisclosureChain(target: HTMLElement, hit: Hit): void {
+  for (let cur: HTMLElement | null = target; cur !== null; cur = cur.parentElement) {
     if (cur instanceof HTMLDetailsElement && !cur.open) {
       cur.open = true;
     }
@@ -1335,10 +1274,9 @@ function openDisclosureChain(row: HTMLElement, target: HTMLElement, hit: Hit): v
         activateQuietly(header);
       }
     }
-    if (cur === row) {
+    if (cur.classList.contains("turn-body")) {
       break;
     }
-    cur = cur.parentElement;
   }
   const card = OPENS_TOOL_DETAILS.has(hit.segment_kind)
     ? target.closest<HTMLElement>(".tool-call")
@@ -1462,13 +1400,13 @@ function waitForDiffPreview(card: HTMLElement): Promise<void> {
  * The nearest-match ranking over the target's marks, as the engine index of
  * the winner (-1 = no credible mark). Excerpt similarity first — the server
  * matched raw markdown and the DOM holds rendered text, so ordinals cannot be
- * trusted across the two — then relative position (`offset / segment_len`
- * against the mark's offset in the target's text), ties to the lowest index.
+ * trusted across the two — then relative position (`wantFraction` against the
+ * mark's offset in the target's text), ties to the lowest index.
  */
 function pickNearestMark(target: HTMLElement, hit: Hit): number {
   const excerptTokens = tokenSet(hit.excerpt);
   const offsets = markOffsets(target);
-  const want = hit.offset / hit.segment_len;
+  const want = wantFraction(hit);
   let best = -1;
   let bestSim = -1;
   let bestDist = Infinity;
@@ -1491,6 +1429,22 @@ function pickNearestMark(target: HTMLElement, hit: Hit): number {
     }
   }
   return bestSim >= SIM_FLOOR ? best : -1;
+}
+
+/** The hit's position as a fraction of the text the walk MEASURES, which is the
+ *  element's and not the segment's.
+ *
+ *  A prose RUN is one element for several entries, so `offset` — relative to
+ *  the entry's own segment — is re-based through that run's offset table. An entry
+ *  rendering its own element has nothing to re-base, and its segment IS that text. Zero
+ *  when the server reports no segment: an `entry`-kind hit takes the container path and
+ *  never reaches here, and a divide by it would rank every mark at NaN. */
+function wantFraction(hit: Hit): number {
+  const run = runOffsetOf(hit.turn_id, hit.entry_id);
+  if (run !== undefined && run.total > 0) {
+    return (run.offset + hit.offset) / run.total;
+  }
+  return hit.segment_len > 0 ? hit.offset / hit.segment_len : 0;
 }
 
 /** The target's full text in document order plus each mark's start offset in

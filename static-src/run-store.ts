@@ -5,7 +5,8 @@
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
-import { observeStamp } from "./subject-versions.js";
+import { forgetSubject, observeStamp } from "./subject-versions.js";
+import type { Entry, OpenEntry, TurnState } from "./types.js";
 import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
 import type { ConnectedPayload, LiveRun, RunControlsResponse } from "./wire/types.gen.js";
 import {
@@ -522,6 +523,8 @@ export function forgetRun(workflowID: string): void {
   controlsInFlight.delete(workflowID);
   controlsStale.delete(workflowID);
   launchedBy.delete(workflowID);
+  runLogs.delete(workflowID);
+  logVersions.delete(workflowID);
 }
 
 /** What this run is CALLED, or `""` when nothing has been fetched for it yet: the
@@ -652,8 +655,9 @@ export function runChatID(workflowID: string): string {
 // two questions — marotte-client.md "The run store".
 
 /** One live run: the chat that launched it ("" for a parentless run), and whether
- *  it is still EXECUTING as opposed to parked. `executing` is
- *  `hasExecutingRunForChat`'s alone; every other reader takes the whole row. */
+ *  it is still EXECUTING as opposed to parked. `executing` is read by the chat row's
+ *  workflow mark as its floor for a run whose fetched cell has not arrived
+ *  (`chat-run-dots.ts`); every other reader takes the whole row. */
 export interface LiveRunRow {
   readonly chat: string;
   readonly executing: boolean;
@@ -703,18 +707,9 @@ export function noteRunSettled(workflowID: string): void {
   bumpLiveRuns();
 }
 
-/** Whether this chat has a run that is still EXECUTING — the store-eviction
- *  exemption, and the only reader that filters on `executing`. It asks "are frames
- *  still arriving into this chat's transcript", which a PARKED run answers no to.
- *  Why the narrowing: marotte-client.md "The run store". */
-export function hasExecutingRunForChat(chatID: string): boolean {
-  return anyRunForChat(chatID, (r) => r.executing);
-}
-
-/** Whether this chat has ANY live run, parked ones included — a DIFFERENT question
- *  from the one above, which is why these are two predicates rather than one
- *  filtered. Its consumer is the ask sweep in `handlers/run.ts`; narrowing it to
- *  `executing` would strand a parked run's ask. marotte-client.md has the rest. */
+/** Whether this chat has ANY live run, parked ones included — a parked run's ask is
+ *  precisely the one that must survive, so narrowing this to `executing` would strand
+ *  it. Its consumer is the ask sweep in `handlers/run.ts`. */
 export function hasLiveRunForChat(chatID: string): boolean {
   return anyRunForChat(chatID, () => true);
 }
@@ -834,6 +829,281 @@ export function adoptConnectRuns(p: ConnectedPayload): void {
     return;
   }
   adoptLiveRuns(p.live_runs ?? []);
+}
+
+// --- The run's entry log ---
+//
+// A run owns its record, so its steps' entries arrive as the six entry events with an
+// EMPTY chat id and land here rather than in a chat's transcript. `store.ts` owns POSITION
+// and every hole rule for a chat's log and this owns them for a run's.
+
+/** One run's log: the turns by id, in the order their steps opened, plus the turns a `seq`
+ *  gap or a lost `turn_opened` left incomplete. */
+interface RunLog {
+  turns: Map<string, TurnState>;
+  order: string[];
+  holes: Set<string>;
+}
+
+const runLogs = new Map<string, RunLog>();
+
+/** Per-run log versions, beside the state cells rather than inside them: a step's entries
+ *  and the run's tree move on different clocks, so a reader of one must not repaint for the
+ *  other. */
+const logVersions = new Map<string, Signal<number>>();
+
+function logCell(workflowID: string): Signal<number> {
+  let c = logVersions.get(workflowID);
+  if (c === undefined) {
+    c = signal(0);
+    logVersions.set(workflowID, c);
+  }
+  return c;
+}
+
+function log(workflowID: string): RunLog {
+  let l = runLogs.get(workflowID);
+  if (l === undefined) {
+    l = { turns: new Map(), order: [], holes: new Set() };
+    runLogs.set(workflowID, l);
+  }
+  return l;
+}
+
+function bumpLog(workflowID: string): void {
+  const c = logCell(workflowID);
+  c.value = c.peek() + 1;
+}
+
+/** Subscribe to a run's log: the turns it holds in the order they opened. The pane reads
+ *  the turn whose `turn_open.node_path` is the step it renders. */
+export function runTurns(workflowID: string): readonly [string, TurnState][] {
+  touch(logCell(workflowID));
+  const l = runLogs.get(workflowID);
+  if (l === undefined) {
+    return [];
+  }
+  return l.order.flatMap((id) => {
+    const t = l.turns.get(id);
+    return t === undefined ? [] : [[id, t] as [string, TurnState]];
+  });
+}
+
+/** The turns this run's log is missing entries for. The pane re-reads such a turn through the
+ *  step GET, which serves the whole turn; the digest's own repair is the range read
+ *  (`run-turn-range.ts`), and both clear the marker through `clearRunHole`. */
+export function runTurnHoles(workflowID: string): readonly string[] {
+  touch(logCell(workflowID));
+  return [...(runLogs.get(workflowID)?.holes ?? [])];
+}
+
+/** The newest `seq` this client holds for one step turn, which is what a `run_turn` repair
+ *  asks past. `entries[i].seq === i` is the log's invariant, so the length answers it; a turn
+ *  the store does not hold answers `undefined`, which asks for the WHOLE turn. UNTRACKED on
+ *  purpose: its callers are the SSE adapter and the range read, neither of which is an
+ *  effect, and a tracked read there would subscribe a handler to every append. */
+export function runTurnHeldSeq(workflowID: string, turnID: string): number | undefined {
+  const state = runLogs.get(workflowID)?.turns.get(turnID);
+  return state === undefined || state.entries.length === 0 ? undefined : state.entries.length - 1;
+}
+
+/** Retire a hole the reader's own repair closed. The chat store's twin restores residency
+ *  when no repair is left out; here the range read and the pane's step GET are the repairs,
+ *  so the reader that adopts that answer is what says the turn is whole again. */
+export function clearRunHole(workflowID: string, turnID: string): void {
+  const l = runLogs.get(workflowID);
+  if (!l?.holes.delete(turnID)) {
+    return;
+  }
+  bumpLog(workflowID);
+}
+
+/** The `run_turn` digest ref for one open step turn. The server spells it
+ *  `<workflowID>/<turn>` (`internal/subject`), split on the FIRST separator. */
+function runTurnRef(workflowID: string, turnID: string): string {
+  return `${workflowID}/${turnID}`;
+}
+
+/** Record where this client stands on an OPEN step turn. The version is spelled
+ *  `<turn>:<newest sealed seq>`, which is what the server answers for both turn kinds
+ *  (`internal/agent` `turnVersion`), so a held stamp can be current. */
+function stampRunTurn(workflowID: string, turnID: string, state: TurnState): void {
+  if (state.closeAt !== undefined) {
+    return;
+  }
+  observeStamp({
+    kind: "run_turn",
+    ref: runTurnRef(workflowID, turnID),
+    version: `${turnID}:${String(state.entries.length - 1)}`,
+  });
+}
+
+/** The range read a hole needs, injected because this module never fetches this route:
+ *  `run-turn-range.ts` owns the read and this module owns the detection, which is the seam
+ *  `store.ts` and `store-load.ts` already use for the chat's twin. */
+let repairRunTurn: ((workflowID: string, turnID: string, afterSeq?: number) => void) | undefined;
+
+export function registerRunTurnRepair(
+  fn: (workflowID: string, turnID: string, afterSeq?: number) => void,
+): void {
+  repairRunTurn = fn;
+}
+
+/** Mark a turn this client cannot complete from the stream, and ask for the repair.
+ *
+ *  The marker stays for the pane, whose step GET serves the whole turn and is what a reader
+ *  looking at that step reaches; the READ asked for here is the range read, past whatever
+ *  this client holds. The stamp is left standing either way, so a repair that never lands is
+ *  named again by the next digest. */
+function markRunHole(workflowID: string, turnID: string): void {
+  log(workflowID).holes.add(turnID);
+  repairRunTurn?.(workflowID, turnID, runTurnHeldSeq(workflowID, turnID));
+}
+
+/** Create the turn a run-scoped `turn_opened` announced, with its `turn_open` as
+ *  `entries[0]`. Idempotent by turn id, like the chat store's. */
+export function openRunTurn(workflowID: string, entry: Entry): void {
+  const l = log(workflowID);
+  if (l.turns.has(entry.turn)) {
+    return;
+  }
+  const state: TurnState = { entries: [entry], openEntries: new Map() };
+  l.turns.set(entry.turn, state);
+  l.order.push(entry.turn);
+  stampRunTurn(workflowID, entry.turn, state);
+  bumpLog(workflowID);
+}
+
+/** Append one sealed entry of a run's log at the position its `seq` claims. Same three
+ *  answers as the chat store: the next `seq` appends, a `seq` already held under the same
+ *  id is a redelivery and is dropped, anything else is a hole. */
+export function appendRunEntry(workflowID: string, entry: Entry): void {
+  const l = log(workflowID);
+  const state = l.turns.get(entry.turn);
+  if (state === undefined) {
+    markRunHole(workflowID, entry.turn);
+    bumpLog(workflowID);
+    return;
+  }
+  if (entry.seq !== state.entries.length) {
+    if (state.entries[entry.seq]?.id === entry.id) {
+      return;
+    }
+    markRunHole(workflowID, entry.turn);
+    bumpLog(workflowID);
+    return;
+  }
+  state.entries.push(entry);
+  if (entry.kind === "turn_close") {
+    state.closeAt = entry.seq;
+    // The step's turn is settled, so its ref no longer exists: dropping the stamp is what
+    // stops the digest naming a turn nothing will append to again.
+    forgetSubject("run_turn", runTurnRef(workflowID, entry.turn));
+  } else {
+    stampRunTurn(workflowID, entry.turn, state);
+  }
+  bumpLog(workflowID);
+}
+
+/** Seat a lane's open entry of a run's turn. */
+export function openRunEntry(workflowID: string, open: OpenEntry): void {
+  const state = runLogs.get(workflowID)?.turns.get(open.turn);
+  if (state === undefined) {
+    markRunHole(workflowID, open.turn);
+    bumpLog(workflowID);
+    return;
+  }
+  const lane = open.lane ?? "";
+  state.openEntries.set(lane, { ...open, lane });
+  bumpLog(workflowID);
+}
+
+/** Replace one turn's open tails with the ones a WHOLE-TURN read answered, which is
+ *  authoritative about them: a tail whose entry has since sealed is absent from it, and seating
+ *  without replacing leaves that stale tail beside the sealed entry it became for as long as the
+ *  pane lives, because no later frame addresses its lane. `store-load.ts` `applyTurnRange`
+ *  states the same rule over the chat's log. Run it AFTER the seats: a turn the answer opened
+ *  does not exist here yet, and one this store holds not at all is left to `openRunEntry`,
+ *  which marks the hole that says so. */
+export function adoptRunOpenEntries(
+  workflowID: string,
+  turnID: string,
+  open: readonly OpenEntry[],
+): void {
+  const state = runLogs.get(workflowID)?.turns.get(turnID);
+  if (state === undefined) {
+    return;
+  }
+  state.openEntries = new Map();
+  for (const o of open) {
+    if (o.turn !== turnID) {
+      continue;
+    }
+    const lane = o.lane ?? "";
+    state.openEntries.set(lane, { ...o, lane });
+  }
+  bumpLog(workflowID);
+}
+
+/** Extend a lane's open entry by one delta. `n` is the running count AFTER the delta, so
+ *  `open.n + 1` is the only admissible value. */
+export function applyRunDelta(
+  workflowID: string,
+  turnID: string,
+  entryID: string,
+  lane: string,
+  n: number,
+  delta: string,
+): void {
+  const state = runLogs.get(workflowID)?.turns.get(turnID);
+  if (state === undefined) {
+    markRunHole(workflowID, turnID);
+    bumpLog(workflowID);
+    return;
+  }
+  const open = state.openEntries.get(lane);
+  if (open?.id !== entryID || n !== open.n + 1) {
+    markRunHole(workflowID, turnID);
+    bumpLog(workflowID);
+    return;
+  }
+  state.openEntries.set(lane, { ...open, text: open.text + delta, n });
+  bumpLog(workflowID);
+}
+
+/** Seal a lane's open entry: build the `Entry` from the open state and hand it to
+ *  `appendRunEntry`, so the hole check applies to the seal's own `seq`. */
+export function sealRunEntry(
+  workflowID: string,
+  turnID: string,
+  entryID: string,
+  lane: string,
+  seq: number,
+  ts: number,
+  n: number,
+): void {
+  const state = runLogs.get(workflowID)?.turns.get(turnID);
+  if (state === undefined) {
+    markRunHole(workflowID, turnID);
+    bumpLog(workflowID);
+    return;
+  }
+  const open = state.openEntries.get(lane);
+  if (open?.id !== entryID || n !== open.n) {
+    markRunHole(workflowID, turnID);
+    bumpLog(workflowID);
+    return;
+  }
+  state.openEntries.delete(lane);
+  appendRunEntry(workflowID, {
+    id: open.id,
+    turn: turnID,
+    lane,
+    kind: open.kind,
+    payload: { text: open.text },
+    seq,
+    ts,
+  });
 }
 
 // Derived reads: functions over the cached value, never stored beside it — a second

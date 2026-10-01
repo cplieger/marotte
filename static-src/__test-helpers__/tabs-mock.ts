@@ -41,6 +41,7 @@ export function tabsMock(): Record<string, unknown> {
     openTab: vi.fn(async () => "opened"),
     closeTab: vi.fn(async () => {}),
     setTabPinned: vi.fn(async () => {}),
+    setTabParent: vi.fn(async () => false),
     openEditorView: vi.fn(async () => {}),
     openRunTab: vi.fn(async () => {}),
     openSubagentTab: vi.fn(async () => {}),
@@ -68,6 +69,7 @@ export function tabsMock(): Record<string, unknown> {
     setSettingsTab: vi.fn(),
     setGitTab: vi.fn(),
     setDocsTab: vi.fn(),
+    setHistoryTab: vi.fn(),
     setFilesRoute: vi.fn(),
 
     // Readers, each answering "nothing".
@@ -92,6 +94,7 @@ export function tabsMock(): Record<string, unknown> {
     // released under it.
     openSubagentRefs: vi.fn(() => []),
     openRunRefs: vi.fn(() => []),
+    openSpecRefs: vi.fn(() => []),
     openTabSubjects: vi.fn(() => []),
     cueCandidates: vi.fn(() => []),
 

@@ -18,11 +18,13 @@ import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 /** Repeated rows in a list. Each is floored. */
 const LIST_ROWS = [
   ["list-row", ["list-row-title", "list-row-name"]],
-  ["docs-row", ["docs-row-name"]],
   ["popup-item", []],
   ["mcp-row", ["mcp-row-name"]],
   ["git-file-row", ["git-file-path"]],
-  ["history-table-row", ["list-row-title"]],
+  // The page-list row (History, and the configuration browser): its height is
+  // the `--row-h` tier outright rather than a floor, so it moves with the pointer
+  // for the same reason and by a larger step.
+  ["entry", ["entry-body", "entry-line", "entry-name", "entry-title"]],
   ["pill-model-item", []],
   ["pill-role-item", []],
   ["forge-account-repo-row", []],

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -440,4 +441,164 @@ func TestEmittedEntry_RefusesAnAmbiguousMetafile(t *testing.T) {
 	if err != nil || got != "/chunks/sse-worker-AB.js" {
 		t.Errorf("emittedEntry(one) = %q, %v; want /chunks/sse-worker-AB.js, nil", got, err)
 	}
+}
+
+// fontBundleCSS is the shape css/00-fonts.css produces: the overlay named four times
+// for its four descriptor sets, one text face, and mixed quoting because the bundle
+// concatenates the published UI's CSS beside marotte's own.
+const fontBundleCSS = `@font-face{font-family:"Monaspace Neon NF";src:url("/vendor/fonts/MonaspaceNeonNF-Regular.woff2") format("woff2")}
+@font-face{font-family:"Web Terminal Glyphs";src:url('/vendor/fonts/WebTerminalGlyphs.woff2');font-weight:400}
+@font-face{font-family:"Web Terminal Glyphs";src:url('/vendor/fonts/WebTerminalGlyphs.woff2');font-weight:700}
+`
+
+func readBundle(t *testing.T, dir string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(dir, outDir, "style.css"))
+	if err != nil {
+		t.Fatalf("Setup: read bundle: %v", err)
+	}
+	return string(body)
+}
+
+// TestFingerprintFonts_StampsEachFaceOnceAndRewritesTheBundle covers the whole contract
+// in one pass: a face named twice is renamed once, the licence file beside it keeps its
+// name (assetCachePolicy would otherwise promise a year on bytes nothing pins), and no
+// upstream spelling survives in the bundle — one left behind would 404 at runtime.
+func TestFingerprintFonts_StampsEachFaceOnceAndRewritesTheBundle(t *testing.T) {
+	dir := stageOut(t, map[string]string{
+		"style.css": fontBundleCSS,
+		"vendor/fonts/MonaspaceNeonNF-Regular.woff2": "wOF2-text",
+		"vendor/fonts/WebTerminalGlyphs.woff2":       "wOF2-overlay",
+		"vendor/fonts/MonaspaceNeonNF-LICENSE":       "OFL",
+	})
+	if err := fingerprintFonts(); err != nil {
+		t.Fatalf("fingerprintFonts() = %v", err)
+	}
+	css := readBundle(t, dir)
+	for _, upstream := range []string{"MonaspaceNeonNF-Regular.woff2", "WebTerminalGlyphs.woff2"} {
+		if strings.Contains(css, fontURLPrefix+upstream) {
+			t.Errorf("the bundle still names %s un-stamped, which would 404", upstream)
+		}
+	}
+	fonts := filepath.Join(dir, outDir, "vendor", "fonts")
+	entries, err := os.ReadDir(fonts)
+	if err != nil {
+		t.Fatalf("Setup: read fonts dir: %v", err)
+	}
+	var stamped, plain []string
+	for _, e := range entries {
+		if stampedFontName.MatchString(e.Name()) {
+			stamped = append(stamped, e.Name())
+			continue
+		}
+		plain = append(plain, e.Name())
+	}
+	if len(stamped) != 2 {
+		t.Errorf("stamped %v, want the two faces renamed once each", stamped)
+	}
+	if !slices.Equal(plain, []string{"MonaspaceNeonNF-LICENSE"}) {
+		t.Errorf("un-stamped %v, want only the licence text", plain)
+	}
+	for _, name := range stamped {
+		if !strings.Contains(css, fontURLPrefix+name) {
+			t.Errorf("the bundle does not name the stamped %s", name)
+		}
+	}
+}
+
+// TestFingerprintFonts_IsANoOpOnASecondRun pins the idempotence the dev loop needs:
+// buildCSS regenerates the bundle naming the upstream face while the tree holds the
+// stamped one, so a repeat must re-hash what it stamped rather than report it missing.
+func TestFingerprintFonts_IsANoOpOnASecondRun(t *testing.T) {
+	dir := stageOut(t, map[string]string{
+		"style.css":                                  fontBundleCSS,
+		"vendor/fonts/WebTerminalGlyphs.woff2":       "wOF2-overlay",
+		"vendor/fonts/MonaspaceNeonNF-Regular.woff2": "wOF2-text",
+	})
+	if err := fingerprintFonts(); err != nil {
+		t.Fatalf("first fingerprintFonts() = %v", err)
+	}
+	first := readBundle(t, dir)
+	// buildCSS runs before every fingerprint pass, so the bundle is back to upstream names.
+	if err := os.WriteFile(filepath.Join(dir, outDir, "style.css"), []byte(fontBundleCSS), 0o600); err != nil {
+		t.Fatalf("Setup: rewrite bundle: %v", err)
+	}
+	if err := fingerprintFonts(); err != nil {
+		t.Fatalf("second fingerprintFonts() = %v", err)
+	}
+	if second := readBundle(t, dir); second != first {
+		t.Errorf("second pass produced a different bundle:\n%s\nwant:\n%s", second, first)
+	}
+}
+
+// TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne pins the asymmetry:
+// `go run ./cmd/bundle` must work before scripts/dev-fonts.sh has ever run, while a tree
+// that exists and lacks a named face is a fetch that half-failed.
+func TestFingerprintFonts_SkipsAnUnfetchedTreeAndRefusesAHalfFetchedOne(t *testing.T) {
+	t.Run("no font tree", func(t *testing.T) {
+		dir := stageOut(t, map[string]string{"style.css": fontBundleCSS})
+		if err := fingerprintFonts(); err != nil {
+			t.Fatalf("fingerprintFonts() = %v, want the unfetched tree skipped", err)
+		}
+		if css := readBundle(t, dir); css != fontBundleCSS {
+			t.Errorf("the bundle was rewritten:\n%s\nwant it untouched", css)
+		}
+	})
+	t.Run("a named face is missing", func(t *testing.T) {
+		stageOut(t, map[string]string{
+			"style.css":                            fontBundleCSS,
+			"vendor/fonts/WebTerminalGlyphs.woff2": "wOF2-overlay",
+		})
+		// The message is asserted, not merely the error: hashFile refuses an absent
+		// path too, so an outcome-only check passes with this refusal deleted.
+		err := fingerprintFonts()
+		if err == nil || !strings.Contains(err.Error(), "MonaspaceNeonNF-Regular.woff2, which the font tree does not hold") {
+			t.Errorf("fingerprintFonts() = %v, want a refusal naming the absent face", err)
+		}
+	})
+	t.Run("the bundle names no font", func(t *testing.T) {
+		stageOut(t, map[string]string{"style.css": "body{color:red}\n"})
+		if err := fingerprintFonts(); err == nil {
+			t.Error("fingerprintFonts() = nil, want a refusal: a bundle naming no face is a broken CSS assembly")
+		}
+	})
+	// 00-fonts.css's own header names the path in prose, and a scan matching it read a
+	// face out of the comment, which then failed the build on an asset nothing fetched.
+	// Both shapes are here: the path followed by prose, and a retired face still named.
+	t.Run("a prose mention is not a face", func(t *testing.T) {
+		stageOut(t, map[string]string{
+			"style.css": "/* Paths match what the Dockerfile writes into static/vendor/fonts/ and what\n" +
+				"   the server serves; the overlay replaced /vendor/fonts/Iosevka.woff2 here. */\n" + fontBundleCSS,
+			"vendor/fonts/WebTerminalGlyphs.woff2":       "wOF2-overlay",
+			"vendor/fonts/MonaspaceNeonNF-Regular.woff2": "wOF2-text",
+		})
+		if err := fingerprintFonts(); err != nil {
+			t.Errorf("fingerprintFonts() = %v, want the prose mentions ignored", err)
+		}
+	})
+	// An unquoted url() with whitespace inside it is legal CSS, so the name is bounded on
+	// both sides: without that the space is read into the name and the face reads absent.
+	t.Run("an unquoted url with whitespace", func(t *testing.T) {
+		dir := stageOut(t, map[string]string{
+			"style.css":                            "@font-face{src:url( /vendor/fonts/WebTerminalGlyphs.woff2 ) format(\"woff2\")}",
+			"vendor/fonts/WebTerminalGlyphs.woff2": "wOF2-overlay",
+		})
+		if err := fingerprintFonts(); err != nil {
+			t.Fatalf("fingerprintFonts() = %v", err)
+		}
+		css := readBundle(t, dir)
+		if want := regexp.MustCompile(`url\( /vendor/fonts/WebTerminalGlyphs\.[0-9a-f]{8}\.woff2 \) format`); !want.MatchString(css) {
+			t.Errorf("bundle = %s, want the face stamped with the surrounding whitespace intact", css)
+		}
+	})
+	t.Run("a url names a path", func(t *testing.T) {
+		stageOut(t, map[string]string{
+			"style.css":                            `@font-face{src:url("/vendor/fonts/../../etc/passwd")}`,
+			"vendor/fonts/WebTerminalGlyphs.woff2": "wOF2-overlay",
+		})
+		err := fingerprintFonts()
+		if err == nil || !strings.Contains(err.Error(), "names a path") {
+			t.Errorf("fingerprintFonts() = %v, want the path-shaped url refused", err)
+		}
+	})
 }

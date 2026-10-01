@@ -50,8 +50,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/webhttp/v3"
 )
 

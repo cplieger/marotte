@@ -18,11 +18,9 @@ import (
 // TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead is the claim that a
 // write which cannot read what is already there does not write at all.
 //
-// Both arms of the one switch are covered, because they are eight lines apart and
-// the whole point of the read returning an error is that neither can quietly keep
-// the old reading. And both PATCH cases the file browser reaches are covered:
-// navigating it PATCHes fb_path, so the destructive sequence needed no deliberate
-// act from the user at all.
+// PATCH is the only method that reaches the write, and the case the file browser
+// reaches is covered: navigating it PATCHes fb_path, so the destructive sequence
+// needed no deliberate act from the user at all.
 //
 // If the read is reverted to answering "nothing is stored" for these files, every
 // case fails on the SECOND assertion rather than the first: the request answers
@@ -57,8 +55,8 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 			},
 		},
 		{
-			desc:   "PUT over an unparseable document",
-			method: http.MethodPut,
+			desc:   "PATCH over a truncated document",
+			method: http.MethodPatch,
 			seed: func(t *testing.T, path string) string {
 				t.Helper()
 				const broken = `{`
@@ -147,40 +145,69 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 
 // TestSettingsWrite_StillMergesAReadableDocument is the control the refusals above
 // need: without it a handler that answered 500 unconditionally would pass every
-// case in that table. It also pins the merge itself in both arms — the keys the
-// request does not name survive, which is the behaviour the refusal exists to
-// protect.
+// case in that table. It also pins the merge itself — the keys the request does not
+// name survive, which is the behaviour the refusal exists to protect.
 func TestSettingsWrite_StillMergesAReadableDocument(t *testing.T) {
-	for _, method := range []string{http.MethodPatch, http.MethodPut} {
+	dir := t.TempDir()
+	path := filepath.Join(dir, settings.Filename)
+	if err := os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/settings", bytes.NewReader([]byte(`{"last_model":"opus"}`)))
+	rec := httptest.NewRecorder()
+	s.handleSettingsWrite(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH /api/settings = %d, want %d; body %s", rec.Code, http.StatusOK, rec.Body)
+	}
+	got, err := readStoredSettings(path)
+	if err != nil {
+		t.Fatalf("read back %s: %v", path, err)
+	}
+	if string(got[settings.KeyLastModel]) != `"opus"` {
+		t.Errorf("%s = %s, want \"opus\"", settings.KeyLastModel, got[settings.KeyLastModel])
+	}
+	if string(got[settings.KeyTheme]) != `"dark"` {
+		t.Errorf("%s = %s, want \"dark\" (the merge dropped a key the request did not name)",
+			settings.KeyTheme, got[settings.KeyTheme])
+	}
+}
+
+// TestHandleSettings_RefusesEveryMethodButGETAndPATCH is driven through
+// handleSettings rather than handleSettingsWrite, because the
+// refusal IS the method gate: calling the write helper would bypass the thing under
+// test. The stored document is compared afterwards, so a handler that answered 405
+// after already merging would fail on the second assertion.
+func TestHandleSettings_RefusesEveryMethodButGETAndPATCH(t *testing.T) {
+	const stored = `{"chat_retention_days":-1,"security_profile":"unrestricted"}`
+
+	for _, method := range []string{http.MethodPut, http.MethodPost, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, settings.Filename)
-			// theme is server-managed, so it survives both arms by different
-			// mechanisms — PATCH merges the whole stored document, PUT carries the
-			// managed keys the body omits — and both mechanisms sit behind the read
-			// this test proves still succeeds.
-			if err := os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(stored), 0o600); err != nil {
 				t.Fatalf("write %s: %v", path, err)
 			}
 			s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
 
-			req := httptest.NewRequest(method, "/api/settings", bytes.NewReader([]byte(`{"last_model":"opus"}`)))
+			req := httptest.NewRequest(method, "/api/settings", bytes.NewReader([]byte(`{"last_model":"new"}`)))
 			rec := httptest.NewRecorder()
-			s.handleSettingsWrite(rec, req)
+			s.handleSettings(rec, req)
 
-			if rec.Code != http.StatusOK {
-				t.Fatalf("%s /api/settings = %d, want %d; body %s", method, rec.Code, http.StatusOK, rec.Body)
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("%s /api/settings = %d, want 405", method, rec.Code)
 			}
-			got, err := readStoredSettings(path)
+			if got := rec.Header().Get("Allow"); got != "GET, PATCH" {
+				t.Errorf("Allow = %q, want %q", got, "GET, PATCH")
+			}
+			after, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatalf("read back %s: %v", path, err)
 			}
-			if string(got[settings.KeyLastModel]) != `"opus"` {
-				t.Errorf("%s = %s, want \"opus\"", settings.KeyLastModel, got[settings.KeyLastModel])
-			}
-			if string(got[settings.KeyTheme]) != `"dark"` {
-				t.Errorf("%s = %s, want \"dark\" (the merge dropped a key the request did not name)",
-					settings.KeyTheme, got[settings.KeyTheme])
+			if string(after) != stored {
+				t.Errorf("config.json after a refused %s =\n%s\nwant it untouched:\n%s", method, after, stored)
 			}
 		})
 	}

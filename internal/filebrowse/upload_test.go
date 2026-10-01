@@ -3,14 +3,18 @@ package filebrowse
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -223,5 +227,119 @@ func TestHandleUpload_SuccessBodyListsEveryName(t *testing.T) {
 	_, uploaded := uploadBody(t, rec)
 	if len(uploaded) != 2 || uploaded[0] != "a.txt" || uploaded[1] != "b.txt" {
 		t.Errorf("uploaded = %v, want [a.txt b.txt]", uploaded)
+	}
+}
+
+// respondUploadError is the upload path's whole mapping, and a full volume must
+// reach 507 rather than the generic 500 while still reporting which files did
+// land. ENOSPC cannot be induced without mounting a filesystem, so the errno is
+// handed over in the shape atomicfile produces (see
+// TestIsOutOfSpace_MatchesThroughAtomicfileWrapping for that chain).
+func TestRespondUploadError_Statuses(t *testing.T) {
+	enospc := &atomicfile.WriteError{
+		Phase: atomicfile.PhaseTempWrite,
+		Err:   &os.PathError{Op: "write", Path: "/uploads/.atomicfile-1.tmp", Err: syscall.ENOSPC},
+	}
+	edquot := &atomicfile.WriteError{
+		Phase: atomicfile.PhaseTempWrite,
+		Err:   &os.PathError{Op: "write", Path: "/uploads/.atomicfile-1.tmp", Err: syscall.EDQUOT},
+	}
+	cases := []struct {
+		name      string
+		err       error
+		wantCode  int
+		wantError string
+	}{
+		{"invalid filename", errInvalidFilename, http.StatusBadRequest, "invalid filename"},
+		{"per-file cap", atomicfile.ErrFileTooLarge, http.StatusRequestEntityTooLarge, "upload too large"},
+		{"volume full", enospc, http.StatusInsufficientStorage, errNoSpaceLeft},
+		{"quota exhausted", edquot, http.StatusInsufficientStorage, errNoSpaceLeft},
+		{"anything else", errors.New("disk on fire"), http.StatusInternalServerError, "upload failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			respondUploadError(rec, "/uploads", []string{"landed.txt"}, tc.err)
+			if rec.Code != tc.wantCode {
+				t.Errorf("respondUploadError(%v) status = %d, want %d", tc.err, rec.Code, tc.wantCode)
+			}
+			var body struct {
+				Error    string   `json:"error"`
+				Uploaded []string `json:"uploaded"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal %s: %v", rec.Body.String(), err)
+			}
+			if !strings.Contains(body.Error, tc.wantError) {
+				t.Errorf("error = %q, want it to contain %q", body.Error, tc.wantError)
+			}
+			// Every branch keeps the names that DID land, the 507 included.
+			if !slices.Equal(body.Uploaded, []string{"landed.txt"}) {
+				t.Errorf("uploaded = %v, want [landed.txt] (a partial batch is not rolled back)", body.Uploaded)
+			}
+		})
+	}
+}
+
+// The upload precheck refuses the WHOLE batch, which is the property it exists
+// for: the batch is not atomic, so without it a full volume leaves the earlier
+// files on disk and answers "3 of 5 uploaded".
+func TestHandleUpload_NoSpaceRefusesTheWholeBatchBeforeWriting(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	stubAvailableBytes(t, 4, nil) // below the 16-byte batch built here
+
+	req := multipartUpload(t, prefix, map[string][]byte{
+		"a.txt": []byte("aaaaaaaa"),
+		"b.txt": []byte("bbbbbbbb"),
+	})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("status = %d, want 507; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error    string   `json:"error"`
+		Uploaded []string `json:"uploaded"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal %s: %v", rec.Body.String(), err)
+	}
+	if !strings.Contains(body.Error, errNoSpaceLeft) {
+		t.Errorf("error = %q, want it to contain %q", body.Error, errNoSpaceLeft)
+	}
+	if len(body.Uploaded) != 0 {
+		t.Errorf("uploaded = %v, want none: the refusal precedes every write", body.Uploaded)
+	}
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s exists (stat err = %v), want it absent: no file may land before the refusal", name, err)
+		}
+	}
+}
+
+// An unanswerable free-space probe must NOT refuse an upload that would have
+// worked; the write path stays authoritative. Mirrors the copy path's posture.
+func TestHandleUpload_UnknownFreeSpaceStillUploads(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	stubAvailableBytes(t, 0, syscall.ENOSYS)
+
+	req := multipartUpload(t, prefix, map[string][]byte{"a.txt": []byte("hi")})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if err != nil {
+		t.Fatalf("read uploaded file: %v", err)
+	}
+	if string(got) != "hi" {
+		t.Errorf("content = %q, want %q", got, "hi")
 	}
 }

@@ -408,6 +408,87 @@ func TestSetPinned_BumpsOnceAndIsIdempotent(t *testing.T) {
 // TestList_ReturnsACopy is the reason List clones: the store's slice IS the order,
 // so handing it out would let a caller reorder the collection through the value it
 // was given, with no mutation, no version bump and no event.
+// TestReparent_MovesTheRowBehindTheNewParentsChildren is the rule the spec
+// sub-tab door depends on: a tab opened parentless and then hung under a chat
+// must sit where an open under that chat would have put it, and the file must
+// say so.
+func TestReparent_MovesTheRowBehindTheNewParentsChildren(t *testing.T) {
+	s, dir := newTestStore(t)
+	parent := mustOpen(t, s, chatSpec("c-parent"))
+	kid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf-1", Parent: parent.ID})
+	other := mustOpen(t, s, chatSpec("c-other"))
+	spec := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindSpec, Ref: ".kiro/specs/x"})
+	_, before := s.List()
+
+	version, err := s.Reparent(t.Context(), spec.ID, parent.ID)
+	if err != nil {
+		t.Fatalf("Reparent(%q, %q) = %v", spec.ID, parent.ID, err)
+	}
+	if version != before+1 {
+		t.Errorf("Reparent(%q, %q) = version %d, want %d: one mutation, one bump", spec.ID, parent.ID, version, before+1)
+	}
+	tabs, _ := s.List()
+	names := map[string]string{parent.ID: "parent", kid.ID: "kid", other.ID: "other", spec.ID: "spec"}
+	if got := idsOf(tabs); !slices.Equal(got, []string{parent.ID, kid.ID, spec.ID, other.ID}) {
+		t.Errorf("List() order after Reparent = %v, want %v", labels(tabs, names), []string{"parent", "kid", "spec", "other"})
+	}
+	if i := indexOfID(tabs, spec.ID); i < 0 {
+		t.Fatalf("List() lost %q after Reparent", spec.ID)
+	} else if tabs[i].Parent != parent.ID {
+		t.Errorf("List()[spec].Parent = %q, want %q", tabs[i].Parent, parent.ID)
+	}
+
+	reloaded, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore(%q) after Reparent: %v", dir, err)
+	}
+	stored, storedVersion := reloaded.List()
+	if storedVersion != version {
+		t.Errorf("reloaded version = %d, want %d", storedVersion, version)
+	}
+	if i := indexOfID(stored, spec.ID); i < 0 || stored[i].Parent != parent.ID || i != 2 {
+		t.Errorf("reloaded List() = %v with spec at %d, want spec at 2 under %q", labels(stored, names), i, parent.ID)
+	}
+}
+
+// TestReparent_IsIdempotentAndRefusesWhatItCannotDo covers the three no-change
+// cases in one store: an unchanged parent bumps nothing, an id that is not
+// open is ErrNotOpen (a reparent is a statement about a tab, unlike a pin), and
+// a parent inside the tab's own closure is ErrCycle.
+func TestReparent_IsIdempotentAndRefusesWhatItCannotDo(t *testing.T) {
+	s, _ := newTestStore(t)
+	parent := mustOpen(t, s, chatSpec("c-parent"))
+	kid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindSpec, Ref: ".kiro/specs/x", Parent: parent.ID})
+	grandkid := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/w/a.ts", Parent: kid.ID})
+	_, before := s.List()
+
+	same, err := s.Reparent(t.Context(), kid.ID, parent.ID)
+	if err != nil || same != before {
+		t.Errorf("Reparent to the current parent = (v%d, %v), want (v%d, nil) unchanged", same, err, before)
+	}
+
+	_, err = s.Reparent(t.Context(), "not-open", parent.ID)
+	if !errors.Is(err, ErrNotOpen) {
+		t.Errorf("Reparent(not-open) = %v, want ErrNotOpen", err)
+	}
+
+	cycles := map[string]string{"itself": kid.ID, "its own child": grandkid.ID}
+	for desc, target := range cycles {
+		_, err = s.Reparent(t.Context(), kid.ID, target)
+		if !errors.Is(err, ErrCycle) {
+			t.Errorf("Reparent(kid under %s) = %v, want ErrCycle", desc, err)
+		}
+	}
+
+	tabs, after := s.List()
+	if after != before {
+		t.Errorf("version went %d -> %d across three refusals and one no-op, want it unchanged", before, after)
+	}
+	if got := idsOf(tabs); !slices.Equal(got, []string{parent.ID, kid.ID, grandkid.ID}) {
+		t.Errorf("List() order = %v, want the fixture untouched", got)
+	}
+}
+
 func TestList_ReturnsACopy(t *testing.T) {
 	s, _ := newTestStore(t)
 	a := mustOpen(t, s, chatSpec("c-a"))

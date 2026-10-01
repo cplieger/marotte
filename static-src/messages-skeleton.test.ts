@@ -12,6 +12,8 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { TurnState } from "./types.js";
+import type { Entry } from "./wire/types.gen.js";
 
 // The render graph reaches the shared DOM registry, which throws on a missing app
 // root. Every id has to exist before the imports below are evaluated.
@@ -37,8 +39,14 @@ const { setSessions, setActive, bumpMessages } = await import("./store.js");
 
 const messagesEl = document.getElementById("messages") as HTMLElement;
 
-/** A session carrying `messages`, seeded into the real store and activated. */
-function activate(messages: unknown[]): void {
+/** A session carrying `turnIDs` as its resident window, seeded into the real store
+ *  and activated. One `TurnState` per turn, keyed by turn id, with the ids also in
+ *  `turn_order` because that array is what the paint reads for FILE order. */
+function activate(turnIDs: readonly string[]): void {
+  const turns = new Map<string, TurnState>();
+  turnIDs.forEach((id, i) => {
+    turns.set(id, { entries: drawnTurn(id, i + 1), openEntries: new Map() });
+  });
   setSessions([
     {
       id: "c-1",
@@ -51,8 +59,9 @@ function activate(messages: unknown[]): void {
       effort_levels: [],
       effort_active: "",
       usage: { context_size: 0 },
-      message_count: messages.length,
-      messages,
+      turns,
+      turn_order: [...turnIDs],
+      turn_count: turnIDs.length,
       has_more: false,
       thinking: false,
       working_label: "Thinking",
@@ -61,9 +70,16 @@ function activate(messages: unknown[]): void {
   setActive("c-1");
 }
 
-/** An `event` message: the cheapest thing that projects to a real turn. */
-function event(id: string): unknown {
-  return { id, role: "event", content: "", event_kind: "cancelled", blocks: [] };
+/** The cheapest DRAWN turn: an agent-initiated `turn_open` at ordinal `n`, one text
+ *  entry so the body clause admits it, and its close. */
+function drawnTurn(id: string, n: number): Entry[] {
+  const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry =>
+    ({ id: `${id}-e${String(seq)}`, turn: id, kind, seq, ts: seq + 1, payload }) as Entry;
+  return [
+    at(0, "turn_open", { source: "agent", n }),
+    at(1, "text", { text: `reply ${String(n)}` }),
+    at(2, "turn_close", { outcome: "completed" }),
+  ];
 }
 
 beforeEach(() => {
@@ -88,7 +104,7 @@ describe("the transcript's loading placeholder", () => {
     view?.appendChild(chatSkeleton());
     expect(document.getElementById(CHAT_SKELETON_ID)).not.toBeNull();
 
-    activate([event("m1")]);
+    activate(["m1"]);
     bumpMessages("c-1");
 
     expect(document.getElementById(CHAT_SKELETON_ID)).toBeNull();
@@ -104,7 +120,7 @@ describe("the transcript's loading placeholder", () => {
     const view = activeTranscriptView();
     expect(view).not.toBeNull();
     view?.appendChild(chatSkeleton());
-    activate([event("m1"), event("m2")]);
+    activate(["m1", "m2"]);
     bumpMessages("c-1");
 
     const first = view?.firstElementChild;

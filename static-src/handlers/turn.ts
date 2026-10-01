@@ -8,16 +8,15 @@
 
 import { onSSE } from "../bus.js";
 import {
+  appendEntry,
   setWorkingLabel,
-  setTurnSummary,
   get,
   getActiveId,
   setTurnOpen,
-  outcomeLatch,
-  applyLatch,
   dropSteers,
   pendingSteerCarry,
 } from "../store.js";
+import { payloadOf } from "../turns.js";
 import { noteBoundaryDrop, runArmedResend } from "../steer-resend.js";
 import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
 import { askTarget } from "../push-subject.js";
@@ -31,10 +30,10 @@ import { openSetting } from "../settings-highlight.js";
 import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
-import { clearTurnState, retractStaleThinking } from "../turn-teardown.js";
+import { clearTurnState } from "../turn-teardown.js";
 import { refreshTurnRail } from "../turn-rail.js";
 import { severityOf, defaultFailureReason } from "../turn-severity.js";
-import type { TurnEndedPayload, TurnOutcome } from "../wire/types.gen.js";
+import type { TurnOutcome } from "../wire/types.gen.js";
 export { ERROR_ROUTES };
 
 // The per-kind switch, the replay dedup and the settle test all live in
@@ -62,84 +61,52 @@ function notifyBodyFor(outcome: TurnOutcome | undefined, name: string): string {
   }
 }
 
-/** Whose turn a `turn_ended` frame speaks for. */
-type TurnFrameScope = "chat" | "displaced" | "run";
-
-/** Which turn's end is this frame reporting?
- *
- *  The payload carries no turn identity, so its two markers ARE the identity: `superseded`
- *  means a replacement displaced this turn on the same chat, `workflow_step` means a run's
- *  step opened it rather than the reader. Absent means the chat's own turn, which is what an
- *  older server's frame keeps meaning. `outcome` decides nothing here, which is the fix — a
- *  `closerWireEnd` whose stop reason was unmeasured arrives as `unknown` too, and that end
- *  settles the chat's turn like any other. */
-function scopeOf(p: TurnEndedPayload): TurnFrameScope {
-  if (p.superseded === true) {
-    return "displaced";
-  }
-  if (p.workflow_step === true) {
-    return "run";
-  }
-  return "chat";
-}
-
 onSSE("working_label", (chatID, p) => {
   setWorkingLabel(chatID, p.label);
 });
 
-onSSE("turn_ended", (chatID, p) => {
-  const scope = scopeOf(p);
-  if (scope === "displaced") {
-    // NONE of the gated effects: the replacement turn is running right now, so every one of
-    // them would tear down THAT turn's state. The line is A6's revisit instrument for the
-    // declined ClearAtTurnEnd gate, priced on how often this arm reaches a chat whose own
-    // `thinking` was set.
-    if (get(chatID)?.thinking === true) {
-      console.warn("[turn_ended] displaced frame over a live turn", chatID, p.outcome ?? "");
-    }
-  } else if (scope === "run") {
-    // A RUN's turn ended, and this frame says nothing about the chat's own turn, which may be
-    // live right now: `clearTurnState`'s other four effects would damage it, above all
-    // `clearLiveTurnMessage`, whose loss deletes the streaming reply on the next newest-page
-    // `loadMessages`.
-    const live = get(chatID)?.thinking === true;
-    // The re-derivation inside reads the RESIDENT transcript, which for a step turn that
-    // carried content holds that step's own carrier — so it MAY land the step's verdict,
-    // accepted because a reload gives the same answer. What this arm refuses is
-    // `applyLatch(outcomeLatch(p.outcome))`, which would latch it with NO carrier resident.
-    retractStaleThinking(chatID);
-    // A6's third line. A concurrent live turn holds the re-derived `done` dot until its next
-    // `markTurnLive`, which fires from `message_appended`'s opensTurn arm and `message_chunk`
-    // only — so inside a long tool call that is the length of the call, not one chunk.
-    console.warn("[turn_ended] run frame retracted stale thinking", chatID, "own turn live:", live);
+/** Does the store hold another turn of this chat that has no `turn_close`?
+ *
+ *  The settle question, asked AFTER this close is appended. A prompt's turn is in the store
+ *  from its `turn_opened` at admission, so an agent-initiated turn closing while that prompt
+ *  waits for its bracket must leave the chat live rather than tearing down the state the
+ *  prompt's turn is about to stream into. Reads the log and nothing this client remembers. */
+function anotherTurnOpen(chatID: string, closedTurn: string): boolean {
+  const s = get(chatID);
+  if (s === undefined) {
+    return false;
   }
-  const settles = scope === "chat";
-  // Every ask this turn raised is over — a workflow run's ask survives, since it outlives
-  // the turn that launched it. Before the dot is re-derived, or a stale ask decides the
-  // state one last time. Gated with the rest because the sweep keeps only RUN-scoped asks,
-  // so on a frame reporting another turn's end it would retire the asks of a turn that is
-  // still running and strand a live JSON-RPC request, which `handlers/run.ts` guards its own
-  // copy against. The cost: a DISPLACED turn's unanswerable asks survive until the next
-  // settled `turn_ended`, and `tabStatusFor` ranks `input` first, so that chat's dot reads
-  // "blocked on you" instead of "working" for the length of the displacing turn.
+  for (const [id, state] of s.turns) {
+    if (id !== closedTurn && state.closeAt === undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ONE arm. The frame names its turn in the entry and every turn a chat's log holds is the
+// chat's, so there is nothing left to scope. What decides whether this close SETTLES the
+// chat is the log itself — whether any other turn of it is still open.
+onSSE("turn_closed", (chatID, p) => {
+  // A RUN's turn, which `handlers/run.ts` owns: it carries an empty chat id, so without this
+  // the settle below would run a chat teardown against "".
+  if (p.workflow_id !== undefined && p.workflow_id !== "") {
+    return;
+  }
+  // An APPEND like any other, so the store's `seq` check applies and a close that does not
+  // fit asks for the turn's range read rather than settling off a frame in the wrong place.
+  appendEntry(chatID, p.entry);
+  const close = payloadOf(p.entry, "turn_close");
+  const outcome = close?.outcome;
+  const settles = !anotherTurnOpen(chatID, p.entry.turn);
+  // Every ask this turn raised is over; a workflow run's survives, since it outlives the
+  // turn that launched it. Gated with the rest because the sweep keeps only RUN-scoped asks,
+  // so on a close leaving another turn open it would strand a live JSON-RPC request.
   if (settles) {
     dropTurnDecisions(chatID);
-  }
-  // The turn's own verdict, latched even for the chat the reader is watching: skipping it
-  // there hid the "I am done" state at the exact moment it happened. Cleared only by the
-  // next turn's progress.
-  //
-  // Outcome decides, not stop reason, and `outcomeLatch` is the one table that says which
-  // outcome latches what — the same call every RE-derivation makes. A hand-written mapping
-  // here disagreed with them on `interrupted`, so one turn showed idle's hollow ring live
-  // and a solid failed dot after the next reload.
-  if (settles) {
-    applyLatch(chatID, outcomeLatch(p.outcome));
-    // A closer RAN, so the record is final: the carrier's own `message_appended`
-    // echo is already on its way. Written at the CALL SITE rather than inside
-    // `clearTurnState`, deliberately — that function also runs on `transport:gap`,
-    // where dropping the server's last liveness statement at the exact moment
-    // `thinking` is also cleared is the gap-path flash `turnLive` exists to remove.
+    // Written at the CALL SITE rather than inside `clearTurnState`, deliberately — that
+    // function also runs on `BUS_RECONCILE`, where dropping the server's last liveness
+    // statement while `thinking` is also cleared is the gap-path flash `turnLive` removes.
     setTurnOpen(chatID, false);
     clearTurnState(chatID);
   }
@@ -148,49 +115,21 @@ onSSE("turn_ended", (chatID, p) => {
   void refreshTurnRail(chatID);
   clearAgentDown();
   refreshGitBadge();
-  // Anything still in the dock at a boundary was never read: `dropSteers` marks
-  // it and the resend carries the text into a new turn.
-  //
-  // Ordering is load-bearing — the capture reads the dock `dropSteers` empties,
-  // and the fire comes last so it sends against a settled turn. The one firing
-  // point (steer-resend.ts).
+  // Anything still in the dock at a boundary was never read, and this is the leave a bridge
+  // death owes: KAS writes no `steer{dropped}` entry for a steer it was holding. A row whose
+  // entry DID arrive already left inside `appendEntry`, so the two leaves cannot double up.
+  // Ordering is load-bearing — the capture reads the rows `dropSteers` removes, and the fire
+  // comes last so it sends against a settled turn.
   if (settles) {
     noteBoundaryDrop(chatID, pendingSteerCarry(chatID));
     dropSteers(chatID);
     runArmedResend(chatID);
   }
 
-  // Inside the `settles` branch, and AFTER the writes above: the cue is a statement
-  // about a turn this handler has settled, and `chatSettled` reads the turn state
-  // those writes produce. Outside it, a displaced or run frame — reporting the end of a
-  // turn that is NOT this chat's own — could raise a cue for work still in flight.
+  // Inside the `settles` branch and AFTER the writes above: the cue is a statement about a
+  // turn this handler settled, and `chatSettled` reads the turn state those writes produce.
   if (settles) {
-    noteAgentFinished(chatID, notifyBodyFor(p.outcome, get(chatID)?.name ?? "Chat"));
-  }
-
-  // Turn summary (credits · elapsed · files changed), stamped onto the last
-  // assistant message; the renderer projects it into a keyed `.turn-footer`.
-  // Unconditional so a background turn's footer is present on switch.
-  const summary: {
-    credits?: number;
-    elapsedMs?: number;
-    changedFiles?: typeof p.changed_files;
-    model?: string;
-  } = {};
-  if (p.credits_delta !== undefined) {
-    summary.credits = p.credits_delta;
-  }
-  if (p.elapsed_ms !== undefined) {
-    summary.elapsedMs = p.elapsed_ms;
-  }
-  if (p.changed_files !== undefined) {
-    summary.changedFiles = p.changed_files;
-  }
-  if (p.model !== undefined) {
-    summary.model = p.model;
-  }
-  if (settles) {
-    setTurnSummary(chatID, summary);
+    noteAgentFinished(chatID, notifyBodyFor(outcome, get(chatID)?.name ?? "Chat"));
   }
 });
 
@@ -295,8 +234,8 @@ function toastActionFor(action: ErrorAction | undefined): ToastRetry | undefined
   }
 }
 
-// This handler touches no turn state: the server ends every turn exactly once
-// via `turn_ended`, so an error is a report only.
+// This handler touches no turn state: the server closes every turn exactly once
+// with a `turn_close` entry, so an error is a report only.
 onSSE("error", (chatID, p) => {
   const code = p.code;
   const msg = p.message;

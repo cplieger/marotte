@@ -15,7 +15,12 @@ type bridgeManager struct {
 	spawnSF singleflight.Group
 	bridges map[marotte.ChatID]*sharedBridge
 	factory ACPBridgeFactory
-	mu      sync.Mutex
+	// hostsLiveRun reports whether the chat's bridge hosts an open step turn of a
+	// chat-parented run. Such a bridge is BUSY to a retire whatever its prompt slot
+	// says: a run's steps never take the slot, so the launching chat reads idle for
+	// the whole time its workflow runs. Nil means no run registry, never busy.
+	hostsLiveRun func(marotte.ChatID) bool
+	mu           sync.Mutex
 }
 
 func newBridgeManager(factory ACPBridgeFactory) *bridgeManager {
@@ -137,10 +142,12 @@ func (bm *bridgeManager) drain() []*sharedBridge {
 	return out
 }
 
-// retireChatBridges closes idle chat bridges and marks busy ones for the next
-// bridge open. Run bridges are durable work and rely on the relay's own token
-// refresh, so an account change does not interrupt them.
-func (bm *bridgeManager) retireChatBridges() (closed, marked int) {
+// retireChatBridges stops idle chat bridges and marks busy ones for the next
+// bridge open, answering the stopped bridges' chat ids so the caller can close the
+// turns they hosted. Run bridges are durable work and rely on the relay's own
+// token refresh, so an account change does not interrupt them; a chat bridge
+// hosting a live run is busy for the same reason.
+func (bm *bridgeManager) retireChatBridges() (closed []marotte.ChatID, marked int) {
 	var victims []*sharedBridge
 	bm.mu.Lock()
 	for chatID, sb := range bm.bridges {
@@ -148,10 +155,10 @@ func (bm *bridgeManager) retireChatBridges() (closed, marked int) {
 			continue
 		}
 		sb.mu.Lock()
-		if sb.state == bridgeIdle {
+		if sb.state == bridgeIdle && !bm.hostsRun(chatID) {
 			delete(bm.bridges, chatID)
 			victims = append(victims, sb)
-			closed++
+			closed = append(closed, chatID)
 		} else if !sb.retire {
 			sb.retire = true
 			marked++
@@ -165,16 +172,24 @@ func (bm *bridgeManager) retireChatBridges() (closed, marked int) {
 	return closed, marked
 }
 
-// closeIfRetired removes and stops sb only after its active turn has released
-// the prompt slot.
-func (bm *bridgeManager) closeIfRetired(chatID marotte.ChatID, sb *sharedBridge) bool {
+// hostsRun is hostsLiveRun with the nil case answered.
+func (bm *bridgeManager) hostsRun(chatID marotte.ChatID) bool {
+	return bm.hostsLiveRun != nil && bm.hostsLiveRun(chatID)
+}
+
+// closeIfRetired removes and stops sb only after its active turn has released the
+// prompt slot and its hosted runs have closed their last step turn. reopen is
+// whether the caller must open a fresh bridge; stopped is whether THIS call stopped
+// sb, the one case that owes closeTurnsOnRetire (a map holding a different bridge
+// stops nothing).
+func (bm *bridgeManager) closeIfRetired(chatID marotte.ChatID, sb *sharedBridge) (reopen, stopped bool) {
 	bm.mu.Lock()
 	if bm.bridges[chatID] != sb {
 		bm.mu.Unlock()
-		return true
+		return true, false
 	}
 	sb.mu.Lock()
-	ready := sb.retire && sb.state == bridgeIdle
+	ready := sb.retire && sb.state == bridgeIdle && !bm.hostsRun(chatID)
 	if ready {
 		delete(bm.bridges, chatID)
 	}
@@ -183,5 +198,5 @@ func (bm *bridgeManager) closeIfRetired(chatID marotte.ChatID, sb *sharedBridge)
 	if ready {
 		sb.bridge.Stop()
 	}
-	return ready
+	return ready, ready
 }

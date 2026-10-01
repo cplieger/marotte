@@ -6,14 +6,13 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // bufferedEvent is one decoded SSE envelope. Payload stays RAW: the two cases that
@@ -91,13 +90,14 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 }
 
 // TestRunDispatch_StepContentIsProjected pins the run bridge's content door, both halves.
-// The frame REACHES the client as a workspace-global `run_step` naming the node it came
-// from, which is what makes a run whose only surface is the run tab watchable. And it does
-// NOT open an assistant buffer for the synthetic chat id, because that is the phantom chat
-// invariant 3 exists to prevent; the content goes to the run's watchers, not a transcript.
+// A step's first chunk OPENS the run's turn for its node path and streams into it
+// under the run scope, workspace-global with the workflow id on every frame, which
+// is what makes a run whose only surface is the run tab watchable. And it opens NO
+// chat turn for the synthetic chat id, because that is the phantom chat invariant 3
+// exists to prevent; the content goes to the run's record, not a transcript.
 func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	logs := captureLogs(t)
-	h, _, _ := newTestHub()
+	h := newBudgetRuntime(t)
 
 	h.dispatch(t.Context(), "run:wf_1", runNotif(marotte.MethodSessionUpdate, map[string]any{
 		"sessionId": "sess_step",
@@ -114,33 +114,40 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	}))
 
 	events := bufferedEvents(h)
-	if len(events) != 1 {
-		t.Fatalf("a step chunk produced %d events, want 1: %+v", len(events), events)
+	if len(events) != 2 {
+		t.Fatalf("a step chunk produced %d events, want 2 (turn_opened, entry_opened): %+v", len(events), events)
 	}
-	if events[0].Type != string(marotte.EventRunStep) {
-		t.Errorf("type = %q, want run_step", events[0].Type)
+	if events[0].Type != string(marotte.EventTurnOpened) || events[1].Type != string(marotte.EventEntryOpened) {
+		t.Errorf("types = [%s %s], want [turn_opened entry_opened]", events[0].Type, events[1].Type)
 	}
-	// Workspace-global, like the lifecycle frames beside it: a parentless run is
-	// owned by no chat, and the client routes by workflow id.
-	if events[0].ChatID != "" {
-		t.Errorf("chat_id = %q, want empty (workspace-global)", events[0].ChatID)
-	}
-	// The NODE PATH, not the node id: a repeat's iterations share an id, so an id
-	// cannot address one execution of a step.
-	payload := marshalPayload(t, events[0].Payload)
-	for field, want := range map[string]string{
-		"workflow_id": "wf_1",
-		"node_path":   "seq/coder",
-		"kind":        "text",
-		"delta":       "step says",
-	} {
-		if got := payload[field]; got != want {
-			t.Errorf("%s = %q, want %q", field, got, want)
+	for i, e := range events {
+		// Workspace-global, like the lifecycle frames beside it: a parentless run is
+		// owned by no chat, and the client routes by workflow id.
+		if e.ChatID != "" {
+			t.Errorf("event %d chat_id = %q, want empty (workspace-global)", i, e.ChatID)
+		}
+		var scoped struct {
+			WorkflowID string `json:"workflow_id"`
+		}
+		if err := json.Unmarshal(e.Payload, &scoped); err != nil || scoped.WorkflowID != "wf_1" {
+			t.Errorf("event %d workflow_id = %q (err %v), want wf_1", i, scoped.WorkflowID, err)
 		}
 	}
-	// No transcript, which is the half the drop got right.
-	if h.liveTurnBuffer("run:wf_1") != nil {
-		t.Error("a step chunk opened an assistant buffer for the synthetic chat id")
+	var opened marotte.EntryOpenedPayload
+	if err := json.Unmarshal(events[1].Payload, &opened); err != nil {
+		t.Fatalf("decode entry_opened: %v", err)
+	}
+	if opened.Open.Text != "step says" || opened.Open.N != 1 {
+		t.Errorf("entry_opened = %+v, want the chunk's text as delta 1", opened.Open)
+	}
+	// The NODE PATH keys the run turn, not the node id: a repeat's iterations share
+	// an id, so an id cannot address one execution of a step.
+	if h.runs.log.Turn("wf_1", "seq/coder") == nil {
+		t.Error("the step chunk opened no run turn for its node path")
+	}
+	// No chat turn, which is the half the drop got right.
+	if h.liveTurn("run:wf_1") != nil {
+		t.Error("a step chunk opened a chat turn for the synthetic chat id")
 	}
 	// Still silent on the unhandled-notification line: that line is how a frame
 	// marotte genuinely does not recognise gets noticed, and a step's content
@@ -313,73 +320,6 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	}
 	if got := h.bridge.mgr.get("run:wf_1"); got != first {
 		t.Error("the original entry did not survive the refused insert")
-	}
-}
-
-// epochStub is a controllable turn-epoch reader. A chat absent from the map, or
-// holding zero, is idle.
-type epochStub struct {
-	cur map[marotte.ChatID]marotte.TurnEpoch
-}
-
-func (e *epochStub) read(chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
-	epoch := e.cur[chatID]
-	return epoch, epoch != 0
-}
-
-// TestKillForTurn_ScopedToTheOpenTurn pins the interrupt gate's scope: a cancel
-// kills the CURRENT turn's terminals and leaves a background command an earlier
-// turn started alone. The boundary is a turn CLOSING and another OPENING, which the
-// epoch expresses and the prompt-advanced ordinal it replaced could not.
-func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
-	ep := &epochStub{cur: map[marotte.ChatID]marotte.TurnEpoch{"c1": 7, "c2": 3}}
-	at := newAgentTerminals(nil, nil, nil, ep.read)
-	add := func(id string, chat marotte.ChatID) {
-		epoch := at.turnEpochOf(chat)
-		at.mu.Lock()
-		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
-		term.epoch = epoch
-		at.terms[id] = term
-		at.byChatID[chat] = append(at.byChatID[chat], id)
-		at.mu.Unlock()
-	}
-
-	add("t1-old", "c1") // turn 7's background command
-	ep.cur["c1"] = 8    // turn 7 closed and turn 8 opened
-	add("t2-cur", "c1") // turn 8, the open turn
-	add("t2-cur-b", "c1")
-	add("other-chat", "c2")
-
-	at.KillForTurn("c1")
-
-	at.mu.Lock()
-	defer at.mu.Unlock()
-	if _, ok := at.terms["t1-old"]; !ok {
-		t.Error("an earlier turn's terminal was killed — that background command was not the cancel's to take")
-	}
-	if _, ok := at.terms["t2-cur"]; ok {
-		t.Error("the open turn's terminal survived the interrupt")
-	}
-	if _, ok := at.terms["t2-cur-b"]; ok {
-		t.Error("the open turn's second terminal survived the interrupt")
-	}
-	if _, ok := at.terms["other-chat"]; !ok {
-		t.Error("another chat's terminal was killed")
-	}
-	if got := len(at.byChatID["c1"]); got != 1 {
-		t.Errorf("c1's index holds %d ids, want 1 (the survivor)", got)
-	}
-}
-
-// TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals (the
-// overwhelmingly common case) touches nothing.
-func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
-	at := newAgentTerminals(nil, nil, nil, (&epochStub{}).read) // every chat idle
-	at.KillForTurn("c1")                                        // must not panic or create entries
-	at.mu.Lock()
-	defer at.mu.Unlock()
-	if len(at.terms) != 0 || len(at.byChatID["c1"]) != 0 {
-		t.Errorf("no-op kill mutated the registry: %d terms", len(at.terms))
 	}
 }
 
@@ -590,7 +530,7 @@ func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	if !h.runs.claimTermination(id) {
 		t.Fatal("the fixture could not take the claim it needs to hold")
 	}
-	h.runs.recordEnd(id, runEndStepCap)
+	h.runs.recordEnd(id, runEndOverran)
 
 	if err := h.runs.Cancel(t.Context(), id); err != nil {
 		t.Errorf("Cancel on an already-terminating run = %v, want nil", err)
@@ -598,7 +538,7 @@ func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Error("a second cancel went out for a run already being cancelled")
 	}
-	if got := h.runs.endReason(id); got != runEndStepCap {
+	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("the row reads %q; the losing cancel overwrote the winner's reason", got)
 	}
 }
@@ -821,7 +761,7 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 // on every ordinary close instead, which buries it.
 func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 	const chatID marotte.ChatID = "c1"
-	seed := func(t *testing.T, cs *fakeChatStore) {
+	seed := func(t *testing.T, cs *testChatStore) {
 		t.Helper()
 		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"

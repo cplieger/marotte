@@ -262,9 +262,30 @@ export function restoreAll(s: EffectiveSettings): void {
   // the payload lands so the server's choice replaces the paint cache.
   initPermissionsUI(s);
   initNativePolicyUI();
-  initDebugLogsToggle(s);
-  initAgentCapabilities(s);
-  initChatRetention(s);
+  applyGeneralPanel(s);
+}
+
+/** Seed the General panel's controls from a settings payload. Called at boot AND
+ *  from the `settings_updated` arm, so a value chosen on another device reaches
+ *  this screen's controls rather than only its behaviour.
+ *
+ *  Seeding only. The listeners are registered once, by
+ *  `initGeneralPanelControls`, because re-registering them per call is how one
+ *  click becomes N identical writes. */
+export function applyGeneralPanel(s: EffectiveSettings): void {
+  serverRetentionDays = s.chat_retention_days;
+  applyChatRetention(s);
+  applyAgentCapabilities(s);
+  applyDebugLogs(s);
+}
+
+/** Register the General panel's `change` listeners. Once per page, from `initUI`:
+ *  every one of them reads its control's own state at fire time, so none needs a
+ *  payload. */
+export function initGeneralPanelControls(): void {
+  initChatRetentionControls();
+  initAgentCapabilityControls();
+  initDebugLogsControl();
 }
 
 // --- Chat retention (marotte-owned; /api/settings chat_retention_days) ---
@@ -283,25 +304,50 @@ export function restoreAll(s: EffectiveSettings): void {
 // goes through the `.hidden` utility rather than the `hidden` attribute:
 // `.section-option` declares `display: flex`, which beats the UA
 // `[hidden] { display: none }` rule.
-export function initChatRetention(s: EffectiveSettings): void {
+
+/** The retention value the server last stated. Module state because the
+ *  Keep-forever listener is registered once and still has to fall back to the
+ *  SERVER's number for this key — not a constant restated here — when the day
+ *  box holds empty or non-numeric text. */
+let serverRetentionDays = 0;
+
+function retentionEls(): {
+  daysInput: HTMLInputElement;
+  daysRow: HTMLElement | null;
+  foreverInput: HTMLInputElement;
+} | null {
   const daysInput = document.getElementById("chat-retention-days") as HTMLInputElement | null;
-  const daysRow = document.getElementById("chat-retention-days-row");
   const foreverInput = document.getElementById("chat-retention-forever") as HTMLInputElement | null;
   if (daysInput === null || foreverInput === null) {
+    return null;
+  }
+  return { daysInput, daysRow: document.getElementById("chat-retention-days-row"), foreverInput };
+}
+
+function applyChatRetention(s: EffectiveSettings): void {
+  const els = retentionEls();
+  if (els === null) {
     return;
   }
-  const showDaysRow = (forever: boolean): void => {
-    daysRow?.classList.toggle("hidden", forever);
-  };
   // No coalesce: the field is required on the payload and the server resolved
   // its default. The mirror that used to sit here is why this change exists.
   const current = s.chat_retention_days;
-  foreverInput.checked = current === -1;
-  showDaysRow(current === -1);
-  if (current >= 0) {
-    daysInput.value = String(current);
+  els.foreverInput.checked = current === -1;
+  els.daysRow?.classList.toggle("hidden", current === -1);
+  // Not while the reader is in the box: a remote change to any other key
+  // re-seeds the whole panel, and rewriting a half-typed number under the caret
+  // is the one way that costs them work.
+  if (current >= 0 && document.activeElement !== els.daysInput) {
+    els.daysInput.value = String(current);
   }
+}
 
+function initChatRetentionControls(): void {
+  const els = retentionEls();
+  if (els === null) {
+    return;
+  }
+  const { daysInput, daysRow, foreverInput } = els;
   const persist = (value: number, input: HTMLInputElement): void => {
     void patchSettings({ chat_retention_days: value }, input);
   };
@@ -314,17 +360,13 @@ export function initChatRetention(s: EffectiveSettings): void {
     persist(!isNaN(n) && n >= 0 ? n : 0, daysInput);
   });
   foreverInput.addEventListener("change", () => {
-    showDaysRow(foreverInput.checked);
+    daysRow?.classList.toggle("hidden", foreverInput.checked);
     if (foreverInput.checked) {
       persist(-1, foreverInput);
       return;
     }
     const n = parseInt(daysInput.value, 10);
-    // Input validation rather than an absent-key fallback: the box can hold
-    // empty or non-numeric text when Keep-forever is unchecked. The value it
-    // falls back to is the one the SERVER sent for this key, not a constant
-    // restated here.
-    persist(!isNaN(n) && n >= 0 ? n : s.chat_retention_days, foreverInput);
+    persist(!isNaN(n) && n >= 0 ? n : serverRetentionDays, foreverInput);
   });
 }
 
@@ -378,6 +420,7 @@ export function initUI(): void {
     instructions: loadInstructionsPanel,
   });
   initSteeringEditor();
+  initGeneralPanelControls();
   initLogoutButton();
   initNotificationToggles();
   initDiagnostics();
@@ -706,9 +749,9 @@ function setAuthLine(text: string): void {
  *  returning `{key, value}`, and each one cost its own spawn with its own 3 s
  *  budget — three of them, concurrently, every time this panel opened.
  *
- *  Values stay STRINGS, so the reading below is unchanged: an absent key and an
- *  unreadable one both read as "", which the unset-means-on rule renders as the
- *  control's default. */
+ *  Values stay STRINGS, and "" means both an absent key and a read the server
+ *  could not make, which is why each row states its own default rather than
+ *  sharing one rule. */
 interface KiroSettingsPayload {
   settings?: Record<string, string>;
 }
@@ -741,14 +784,22 @@ interface KiroSettingsPayload {
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
+  /** What the control shows when the endpoint answers "" for this key. Per row,
+   *  because the three polarities are not uniform and the entrypoint's seed is
+   *  best-effort — a boot whose seed spawn failed, and any read failure, both
+   *  arrive as "". */
+  defaultOn: boolean;
   inverted?: boolean;
 }[] = [
-  { key: "hooks.showStatus", inputID: "flag-hooks-status" },
-  { key: "telemetry.enabled", inputID: "flag-telemetry" },
+  { key: "hooks.showStatus", inputID: "flag-hooks-status", defaultOn: true },
+  { key: "telemetry.enabled", inputID: "flag-telemetry", defaultOn: false },
   // Checked = disable inheritance of default steering/skills/AGENTS.md by
   // custom agents (kiro-cli 2.10+). Not inverted: on = true = disabled.
-  // Seeded false in entrypoint so the unset->on fallback doesn't mis-render.
-  { key: "chat.disableInheritingDefaultResources", inputID: "flag-disable-inherit-resources" },
+  {
+    key: "chat.disableInheritingDefaultResources",
+    inputID: "flag-disable-inherit-resources",
+    defaultOn: false,
+  },
 ];
 
 /** Which read of the experimental flags is the newest. The panel's loader is reached
@@ -757,12 +808,22 @@ const experimentalFlags: readonly {
  *  be discarded rather than painted over a newer one. */
 let togglesGen = 0;
 
+/** The signal this generation of flag listeners is attached with, aborted and
+ *  replaced by the next call. The loader runs on every General-tab activation, so
+ *  without it each activation stacked another `change` listener on every
+ *  checkbox — and one click then cost N identical PUTs, each a `kiro-cli
+ *  settings` spawn. */
+let togglesAC: AbortController | null = null;
+
 export function initExperimentalToggles(): void {
   const inputs = experimentalFlags.map(
     (flag) => document.getElementById(flag.inputID) as HTMLInputElement | null,
   );
   const wanted = experimentalFlags.map((flag) => flag.key).join(",");
   const gen = ++togglesGen;
+  togglesAC?.abort();
+  togglesAC = new AbortController();
+  const { signal } = togglesAC;
   void apiGet<KiroSettingsPayload>(`/api/kiro-settings?keys=${encodeURIComponent(wanted)}`).then(
     (payload) => {
       if (gen !== togglesGen) {
@@ -777,7 +838,7 @@ export function initExperimentalToggles(): void {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const flag = experimentalFlags[i]!;
         const v = values[flag.key] ?? "";
-        const isOn = v === "" || v === "true";
+        const isOn = v === "" ? flag.defaultOn : v === "true";
         input.checked = flag.inverted ? !isOn : isOn;
       }
     },
@@ -789,16 +850,20 @@ export function initExperimentalToggles(): void {
     if (input === null) {
       continue;
     }
-    input.addEventListener("change", () => {
-      const wireValue = flag.inverted
-        ? input.checked
-          ? "false"
-          : "true"
-        : input.checked
-          ? "true"
-          : "false";
-      dispatchKiroSetting(flag.key, wireValue, input);
-    });
+    input.addEventListener(
+      "change",
+      () => {
+        const wireValue = flag.inverted
+          ? input.checked
+            ? "false"
+            : "true"
+          : input.checked
+            ? "true"
+            : "false";
+        dispatchKiroSetting(flag.key, wireValue, input);
+      },
+      { signal },
+    );
   }
 }
 
@@ -835,13 +900,21 @@ const agentCapabilities: readonly {
   { key: "memory_enabled", inputID: "flag-memory" },
 ];
 
-function initAgentCapabilities(initial: EffectiveSettings): void {
+function applyAgentCapabilities(s: EffectiveSettings): void {
+  for (const cap of agentCapabilities) {
+    const input = document.getElementById(cap.inputID) as HTMLInputElement | null;
+    if (input !== null) {
+      input.checked = s[cap.key];
+    }
+  }
+}
+
+function initAgentCapabilityControls(): void {
   for (const cap of agentCapabilities) {
     const input = document.getElementById(cap.inputID) as HTMLInputElement | null;
     if (input === null) {
       continue;
     }
-    input.checked = initial[cap.key];
     input.addEventListener("change", () => {
       void patchSettings({ [cap.key]: input.checked }, input);
     });
@@ -864,12 +937,18 @@ function initAgentCapabilities(initial: EffectiveSettings): void {
 // endpoint. When on, server-side logs include slog.Debug entries;
 // read them with `docker logs marotte`.
 
-function initDebugLogsToggle(initial: EffectiveSettings): void {
+function applyDebugLogs(s: EffectiveSettings): void {
+  const input = document.getElementById("flag-debug-logs") as HTMLInputElement | null;
+  if (input !== null) {
+    input.checked = s.debug_logs;
+  }
+}
+
+function initDebugLogsControl(): void {
   const input = document.getElementById("flag-debug-logs") as HTMLInputElement | null;
   if (input === null) {
     return;
   }
-  input.checked = initial.debug_logs;
   input.addEventListener("change", () => {
     void patchSettings({ debug_logs: input.checked }, input);
   });

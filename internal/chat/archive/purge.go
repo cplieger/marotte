@@ -6,17 +6,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/parallel"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// purgeEntry is a chat file's (id, full path) pair gathered during a scan.
+// purgeEntry is a chat's (id, header path) pair gathered during a scan.
 type purgeEntry struct {
 	name string
 	path string
@@ -93,19 +92,16 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	return res
 }
 
-// collectPurgeEntries filters a directory listing down to chat files whose
-// trimmed name is a valid chat id.
+// collectPurgeEntries filters a directory listing down to chat directories whose
+// name is a valid chat id; the path is the header inside, whose mtime is the age
+// fallback for a chat that cannot be read.
 func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 	var valid []purgeEntry
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), chatFileSuffix) {
+		if !e.IsDir() || !ids.ValidChatID(e.Name()) {
 			continue
 		}
-		name := strings.TrimSuffix(e.Name(), chatFileSuffix)
-		if !ids.ValidChatID(name) {
-			continue
-		}
-		valid = append(valid, purgeEntry{name: name, path: filepath.Join(dir, e.Name())})
+		valid = append(valid, purgeEntry{name: e.Name(), path: filepath.Join(dir, e.Name(), headerFileName)})
 	}
 	return valid
 }

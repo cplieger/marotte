@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // TestUnattendedBudget_MatchesTheDisclaimer pins a cross-language constant.

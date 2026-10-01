@@ -38,9 +38,8 @@
 // `disabled`, because a dropped SSE stream says nothing about the command POST
 // (different connection, usually still lands, and the reconnect replay catches the
 // transcript up), and a bridge that failed to start is retried by the next prompt.
-// prompt-input.ts's header carries the full reasoning. The state used to be
-// `blocked` and disabled the textarea, which turned one throttled turn into a
-// dead thread.
+// The state used to be `blocked` and disabled the textarea, which turned one
+// throttled turn into a dead thread.
 //
 // There used to be a `queued` state between streaming and idle, and its removal
 // is the point rather than a simplification: a prompt typed mid-turn is a STEER
@@ -89,7 +88,7 @@ effect(() => {
 // Clear a stale send-blocked state when the active chat changes. The signal
 // is global but it is raised for ONE chat: a bridge that could not start (or an
 // admission refusal) belongs to the chat that asked, and the next chat may be
-// perfectly sendable. The errors that set it emit no turn_ended to clear it, so
+// perfectly sendable. The errors that set it emit no turn_closed to clear it, so
 // without this one chat's dead bridge decorates the button on every chat.
 let sendBlockedActiveID = "";
 effect(() => {

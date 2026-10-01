@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/runesafe/v2"
 	"golang.org/x/sync/errgroup"
 )
 

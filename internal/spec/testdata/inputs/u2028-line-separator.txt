@@ -1,0 +1,4 @@
+- [ ] 1 Before
+- [ ] 1.1 text with a line separator inside is not a task
+- [ ] 1.2 text with a paragraph separator inside is not a task either
+- [x] 2 After

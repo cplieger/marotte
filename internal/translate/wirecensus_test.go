@@ -350,7 +350,7 @@ func TestSessionInfoUpdate_CensusRunsOnTheRealFrame(t *testing.T) {
 	defer captureSlog(&logbuf)()
 
 	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	tr.HandleSessionInfoUpdate(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 		"_meta": map[string]any{"kiro": map[string]any{
 			"kind": "turn_end", "brandNewBlock": map[string]any{"x": 1},

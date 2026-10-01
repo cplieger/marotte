@@ -54,6 +54,6 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "wire-codegen: %v\n", err)
 		return 1
 	}
-	fmt.Println("wire-codegen: generated " + outDir + "/{types,decoders,registry}.gen.ts")
+	fmt.Println("wire-codegen: generated " + outDir + "/{types,decoders,registry,arbitraries}.gen.ts")
 	return 0
 }

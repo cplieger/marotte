@@ -34,7 +34,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string)
 	// through the root, stats the OPEN HANDLE, requires a regular file, and
 	// opens non-blocking so a FIFO under a granted root cannot wedge the
 	// handler.
-	data, err := atomicfile.ReadBoundedInRoot(ctx, l.m.root, l.rel(), maxFileSize)
+	data, err := atomicfile.ReadBoundedInRoot(ctx, l.m.root, l.rel(), MaxFileSize)
 	if err != nil {
 		readFileError(w, l, err)
 		return
@@ -118,11 +118,6 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "cannot download directory")
 		return
 	}
-	if info.Size() > maxCopySize {
-		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			httpreply.ErrorJSON("file too large to download"))
-		return
-	}
 	name := filepath.Base(l.abs)
 	ct := cmp.Or(mime.TypeByExtension(filepath.Ext(name)), "application/octet-stream")
 	w.Header().Set("Content-Type", ct)
@@ -153,6 +148,8 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// this line ships to Loki. http.ServeContent serves from the already-
 	// open, confined fd (handles Range requests + conditional headers too).
 	slog.Debug("filebrowse: download", "path", logsafe.Field(l.abs), "size", info.Size())
+	// Deliberately UNCAPPED: a size guard here runs before ServeContent reads
+	// the Range header, so it answered 413 to the cheapest request there is.
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 

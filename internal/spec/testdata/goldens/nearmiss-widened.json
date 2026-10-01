@@ -1,0 +1,69 @@
+{
+  "input_file": "nearmiss-widened.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1 A real task",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "7f97feb747bb08f23f693fab8ce244824fcb540ca7499647a1fd9b2d91e77739",
+      "detail": "- [] bare box\n- [\t] tab in the box\n1. [ ] ordered-list marker\n1) [ ] ordered paren marker\n- [ ]no space after the box\n- [ ] ",
+      "children": []
+    },
+    {
+      "id": "L8",
+      "line": 8,
+      "indent": 2,
+      "number": "",
+      "text": "indented star, real",
+      "status": "completed",
+      "queued": false,
+      "optional": false,
+      "hash": "fa02372d2930e3c06605932909340cadbdb7dcb280e78e4d7f1f521859c6cb0d",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L9",
+      "line": 9,
+      "indent": 0,
+      "number": "",
+      "text": "escaped optional, real",
+      "status": "pending",
+      "queued": false,
+      "optional": true,
+      "hash": "b3179d497cbc4d6f6a96c7fe0c6c04127b2b8d17648628143ba540d1b4bdfb7a",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L10",
+      "line": 10,
+      "indent": 0,
+      "number": "",
+      "text": "queued, real",
+      "status": "pending",
+      "queued": true,
+      "optional": false,
+      "hash": "0f5a198b79d0a828509fcdc986eddb96b8e0ef2596e3cfb93e2908cdaa8b9fc8",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 1,
+    "queued": 1,
+    "total": 3
+  },
+  "unreadable_lines": 8,
+  "truncated": null
+}

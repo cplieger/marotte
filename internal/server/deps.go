@@ -38,7 +38,7 @@ type routeHandler interface {
 // and /api/command, it is the fan-out this package broadcasts a settings change
 // through, and it is what the shutdown path drains. *agent.Runtime satisfies it.
 //
-// 4 methods against a *agent.Runtime that exports well over a hundred. Exported
+// 5 methods against a *agent.Runtime that exports well over a hundred. Exported
 // methods on the concrete type this package must NOT reach — bridge
 // coordination, the utility runtime, the MCP registry, run hosting — are the
 // reason the narrow spelling matters here more than anywhere else in the file.
@@ -52,6 +52,12 @@ type chatEngine interface {
 	Shutdown(ctx context.Context) error
 	// Epoch is the SSE hub's current epoch, stamped on the tabs envelope.
 	Epoch() string
+	// PushAgentIgnoreFiles tells every live bridge which ignore files kiro-cli
+	// should enforce, for a settings write that changed the list. It is here
+	// rather than in the agent's own settings path because a PATCH is the only
+	// thing that changes the value, and the value is per BRIDGE: kiro-cli scopes
+	// it to the connection, so a chat already open learns of an edit no other way.
+	PushAgentIgnoreFiles(ctx context.Context)
 }
 
 // pushService is the push surface this package serves: mount the subscription
@@ -116,6 +122,18 @@ type policyProvider interface {
 // policy, so there is nothing to call for those.
 type policyReloader interface {
 	RestartUtilitySession()
+}
+
+// mcpRenderer re-renders KAS's MCP config file, so a security-profile change
+// reaches the auto-approve lists it suspends or restores. *mcp.Store satisfies it.
+//
+// Its OWN 1-method contract beside policyReloader rather than a method on it: that
+// one recycles a SESSION and this one rewrites a FILE, and the two are satisfied by
+// different types. It carries no posture argument, because the decision has one
+// owner — the store resolves the rung from the persisted setting itself, and a
+// posture passed through here would be a second source for one fact.
+type mcpRenderer interface {
+	RenderKASConfig(ctx context.Context) error
 }
 
 // utilityPrompter is AI-backed text generation for the two endpoints this

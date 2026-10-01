@@ -4,11 +4,10 @@
 // ---------------------------------------------------------------------------
 
 import { signal, subscribe } from "@cplieger/reactive";
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 import { pushRoute } from "./router.js";
 import type { GitTab } from "./route-path.js";
 import { setGitTab as setGitTabRoute } from "./tabs.js";
-import { fitTabBar } from "./tab-bar-fit.js";
+import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 
 // GitTab lives in route-path.ts (the URL source of truth, alongside SettingsTab);
@@ -67,7 +66,7 @@ export function readGitTab(): GitTab {
 /** Externally force the active sub-tab WITHOUT pushing a URL — used by the
  *  router when back/forward navigation lands on a /git/<tab> URL. Mirrors
  *  forceSettingsTab. Safe to call before the git view tab exists (the
- *  TabSpec route sync is a no-op then; openTab sets the route directly). */
+ *  TabViewSpec route sync is a no-op then; openTab sets the route directly). */
 export function forceGitTab(tab: GitTab): void {
   setGitTabRoute(tab);
   activeTab.value = tab;
@@ -81,26 +80,22 @@ export function initGitTabs(): void {
     return;
   }
 
-  for (const tab of GIT_TABS) {
-    const btn = bar.querySelector<HTMLButtonElement>(`[data-git-tab="${tab}"]`);
-    btn?.addEventListener("click", () => {
-      setGitTab(tab);
-    });
-  }
-
-  // Drop every label only when one cannot fit.
-  fitTabBar(bar);
-
-  rovingFocus(bar, "[data-git-tab]", { orientation: "horizontal" });
+  const paint = initSegmentedBar(bar, {
+    attr: "data-git-tab",
+    idPrefix: "git",
+    tabs: GIT_TABS.map((id) => ({ id, label: GIT_TAB_LABELS[id] })),
+    onSelect: setGitTab,
+  });
 
   onGitTabChange((tab) => {
-    for (const t of GIT_TABS) {
-      const btn = bar.querySelector<HTMLButtonElement>(`[data-git-tab="${t}"]`);
-      btn?.classList.toggle("active", t === tab);
-      btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
-    }
+    paint(tab);
+    // The panel half of the pairing the controller's `aria-controls` writes.
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-git-panel]")) {
-      panel.classList.toggle("hidden", panel.dataset["gitPanel"] !== tab);
+      const panelTab = panel.dataset["gitPanel"] ?? "";
+      panel.classList.toggle("hidden", panelTab !== tab);
+      panel.setAttribute("role", "tabpanel");
+      panel.id = `git-panel-${panelTab}`;
+      panel.setAttribute("aria-labelledby", `git-tab-${panelTab}`);
     }
     setPageSubtitle("git", GIT_TAB_LABELS[tab]);
   });

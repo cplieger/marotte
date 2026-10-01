@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // TestPermissionKindHasNoSettingsKey is the structural half of the

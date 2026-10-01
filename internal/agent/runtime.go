@@ -14,20 +14,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/sse"
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/marotte/internal/ignore"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/liveness"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/secretstore"
+	"github.com/cplieger/marotte/internal/spec"
+	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/sse"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -40,6 +41,10 @@ var keepaliveInterval = liveness.Keepalive
 // keepaliveEventName is pinned by every running bundle's SSE_HEARTBEAT_EVENT
 // listener: renaming it silences their silence watchdog.
 const keepaliveEventName = "heartbeat"
+
+// specChangedWindow is the spec_changed coalescing window: marks inside it
+// collapse into one broadcast when it closes.
+const specChangedWindow = 500 * time.Millisecond
 
 const (
 	replayBufSize = 1024
@@ -181,6 +186,7 @@ type Runtime struct {
 	authReadiness      *command.AuthReadiness
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[marotte.ACPUpdateKind]sessionUpdateHandler
+	runStepHandlers    map[marotte.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
@@ -189,9 +195,13 @@ type Runtime struct {
 	config *Settings
 	// runs owns the workflow-run surface (run_plane.go); Runtime reaches it like
 	// any collaborator.
-	runs          *Runs
-	runRoutes     *runRoutes
-	inbound       *inbound
+	runs      *Runs
+	runRoutes *runRoutes
+	inbound   *inbound
+	// specs coalesces spec-directory marks into spec_changed broadcasts; the
+	// bridge producers reach it through inbound and the phaseCheckpoint handler
+	// through here.
+	specs         *spec.Notifier
 	replay        *replay
 	utility       *utilityLease
 	sessionReaper *kirosession.Reaper
@@ -214,6 +224,10 @@ type Runtime struct {
 	// unavailable. The runtime holds the coordinator only to hand it to retention.
 	tabs       *tabs.Store
 	membership *command.Membership
+
+	// specApprovals is the spec-phase approval record; nil when no store is wired,
+	// which the approve command answers as unavailable.
+	specApprovals *specapproval.Store
 
 	// steerLedger records the mid-turn steers this server sent, which is the only
 	// thing that tells the user's own words from a workflow reporting into the same
@@ -264,6 +278,13 @@ func WithRunLeases(st *runlease.Store) Option {
 // command answers unavailable and a create writes its chat record with no tab.
 func WithTabs(st *tabs.Store) Option {
 	return func(h *Runtime) { h.tabs = st }
+}
+
+// WithSpecApprovals wires the spec-phase approval record, which is what makes
+// approve_spec_phase live. Absent, that command answers unavailable and the spec
+// GET carries no approvals.
+func WithSpecApprovals(st *specapproval.Store) Option {
+	return func(h *Runtime) { h.specApprovals = st }
 }
 
 // WithVersions wires the shared subject registry. Absent, the runtime mints into a
@@ -379,6 +400,8 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		chats:     chatStore,
 		perms:     sseP,
 		bus:       sseP,
+
+		cancelRetryBase: defaultCancelRetryBase,
 	}
 
 	h := &Runtime{
@@ -417,21 +440,35 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		projections: map[marotte.ChatID]*loadProjection{},
 		broadcast:   sseP.Broadcast,
 	}
+	if lc.configDir != "" {
+		runs.log = newRunLog(lc.configDir)
+		bridgeP.mgr.hostsLiveRun = runs.hostsLiveRun
+	}
 	h.coord = newBridgeCoordinator(h)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
 	sseP.retractPush = h.coord.RetractPush
 	// Built here rather than in the struct literal because two of its collaborators
 	// (coord, and the ignore matcher installed below) do not exist yet at that point.
+	// Workspace-global rather than per session: the orchestrator and its
+	// subagents write one spec from several sessions, and a per-session window
+	// would emit once per writer. Broadcast ignores its ctx (sse.go).
+	h.specs = spec.NewNotifier(specChangedWindow, func(dir string) {
+		sseP.Broadcast(context.Background(), marotte.NewEvent(marotte.EventSpecChanged, "", marotte.SpecChangedPayload{Dir: dir}))
+	})
 	h.inbound = &inbound{
 		lifetime: lc, coord: h.coord, chats: chatStore,
-		bus: sseP,
+		bus: sseP, specs: h.specs,
 	}
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
-	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast, h.coord.turns.currentEpoch)
+	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast, h.coord.turns.currentTurn)
+	runs.terminals = h.agentTerms
 	// Assigned here rather than in the struct literal because it is a method value
 	// on the fully-built Runtime; see load_projection.go.
 	h.replay.onProjection = h.replay.swapProjectedTranscript
+	h.replay.underLifecycle = func(ctx context.Context, chatID marotte.ChatID, fn func() error) error {
+		return h.coord.turns.withLifecycle(ctx, chatID, func(*chatLifecycle) error { return fn() })
+	}
 	// The LEASE's own accessor, not a Runtime method value, so neither collaborator
 	// holds a reference to the Runtime.
 	runs.utility = h.utility.get
@@ -447,7 +484,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.registerCommandHandlers()
 	h.initDispatch()
 	if lc.configDir != "" {
-		h.inbound.ignore = ignore.NewMatcher(lc.configDir, workDir)
 		// Best-effort: a nil store means bridges do NOT declare
 		// `_meta.kiro.secretStorage`, so KAS never asks and MCP OAuth re-registers.
 		secrets, err := secretstore.New(lc.configDir)
@@ -646,7 +682,7 @@ const bridgeIdleTimeout = 30 * time.Minute
 //
 // The one forward to the bus that survives: it is the APP-FACING door.
 // Every caller INSIDE this package uses h.bus.Broadcast directly. Used by
-// the chat store and by the runtime itself for turn_ended / permission_needed
+// the chat store and by the runtime itself for turn_closed / permission_needed
 // / error.
 func (rt *Runtime) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	rt.bus.emit(evt)

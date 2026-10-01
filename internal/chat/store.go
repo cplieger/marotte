@@ -1,8 +1,9 @@
-// Package chat implements per-chat persistence: one JSON file per chat under
-// <dir>/<chat_id>.json, atomically rewritten on every mutation via
-// write-temp-then-rename. The directory listing is the index, and the store is the
-// single source of truth for chat state. A chat's ACP session id lives in the chat
-// file's header so a container restart can resume via session/load.
+// Package chat implements per-chat persistence: one directory per chat under
+// <dir>/<chat_id>/ holding chat.json, the header, and entries.jsonl, the turn log.
+// The header is atomically replaced on every mutation; the log is appended one sealed
+// entry at a time. The directory listing is the index, and the store is the single
+// source of truth for chat state. A chat's ACP session id lives in the header so a
+// container restart can resume via session/load.
 package chat
 
 import (
@@ -19,8 +20,8 @@ import (
 	"github.com/cplieger/marotte/internal/chat/archive"
 	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -37,8 +38,8 @@ var (
 	errBadAttachmentPath  = errors.New("chat: attachment path is empty or too long")
 )
 
-// broadcaster is the SSE fan-out this store emits chat lifecycle and message
-// events through. *agent.Runtime satisfies it.
+// broadcaster is the SSE fan-out this store emits chat lifecycle events through.
+// *agent.Runtime satisfies it.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
@@ -49,15 +50,22 @@ var _ archive.StoreAccess = (*Store)(nil)
 // fileMode is the on-disk mode for chat files. The parent dir uses 0o700 because
 // chat content may contain secrets the user pasted into prompts.
 const (
-	fileMode       = 0o600
-	dirMode        = 0o700
-	chatFileSuffix = ".json"
+	fileMode = 0o600
+	dirMode  = 0o700
 )
 
+// OpenTurnTail is one open turn of a chat as the runtime holds it: the turn id and
+// the entries still coalescing, which the GET serves beside the log's window.
+type OpenTurnTail struct {
+	ID      string
+	Entries []marotte.OpenEntry
+}
+
 // Store owns the chat directory. Each chat has its own mutex so different chats
-// never block each other; same-chat mutations serialize. A short-TTL tombstone set
-// closes the delete-during-turn race: without it, an AppendMessage arriving after a
-// concurrent Delete would re-create the chat file as a ghost row.
+// never block each other; same-chat mutations serialize, header writes and log
+// appends alike. A short-TTL tombstone set closes the delete-during-turn race:
+// without it, an append arriving after a concurrent Delete would re-create the chat
+// directory as a ghost row.
 type Store struct {
 	broadcast   broadcaster
 	versions    *subject.Versions
@@ -66,11 +74,12 @@ type Store struct {
 	onPurge     func(chatID marotte.ChatID, sessionChain []string)
 	isLive      func(chatID marotte.ChatID) bool
 	hasOpenTab  func(chatID marotte.ChatID) bool
-	turnOpen    func(chatID marotte.ChatID) marotte.TurnOpenState
-	liveTurn    func(chatID marotte.ChatID) (marotte.LiveTurn, bool)
+	live        func(chatID marotte.ChatID) bool
+	openTurns   func(chatID marotte.ChatID) []OpenTurnTail
 	tombstone   map[marotte.ChatID]time.Time
 	archive     *archive.Service
 	locks       sync.Map
+	logs        sync.Map
 	dir         string
 	index       searchIndex
 	fileCap     chatFileCap
@@ -126,7 +135,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 type StoreOption func(*Store)
 
 // WithBroadcaster sets the SSE broadcaster used by the store to emit
-// chat_created / chat_updated / chat_deleted / message_* events.
+// chat_created / chat_updated / chat_deleted events.
 func WithBroadcaster(b broadcaster) StoreOption {
 	return func(s *Store) { s.broadcast = b }
 }
@@ -158,54 +167,35 @@ func WithOpenTab(fn func(chatID marotte.ChatID) bool) StoreOption {
 	return func(s *Store) { s.hasOpenTab = fn }
 }
 
-// WithTurnOpen registers the runtime's turn-in-flight predicate, so this package's
-// HTTP surface can STATE whether a chat has a turn open — and whose it is — instead of
-// leaving a reader to infer either from an absent carrier. Injected post-construction
-// because the agent runtime needs the store, so the store cannot import it.
-func WithTurnOpen(fn func(chatID marotte.ChatID) marotte.TurnOpenState) StoreOption {
-	return func(s *Store) { s.turnOpen = fn }
+// WithLiveTurn registers the runtime's turn-in-flight predicate, so this package's
+// HTTP surface can STATE whether the chat's own turn is live rather than infer it
+// from the log. Injected post-construction because the agent runtime needs the
+// store, so the store cannot import it.
+func WithLiveTurn(fn func(chatID marotte.ChatID) bool) StoreOption {
+	return func(s *Store) { s.live = fn }
 }
 
-// TurnOpen reports whether chatID has a turn in flight and whose it is, or the zero
-// state when no predicate was injected.
-//
-// NIL-TOLERANT so an unwired Store reads as it did before the predicate existed:
-// the record is taken as final. That is the safe direction — a client told "no turn
-// is open" derives the outcome the record supports rather than inventing one.
-func (s *Store) TurnOpen(chatID marotte.ChatID) marotte.TurnOpenState {
-	if s.turnOpen == nil {
-		return marotte.TurnOpenState{}
+// WithOpenTurns registers the runtime's reader of a chat's open turns and their
+// still-coalescing entries, the content half of what WithLiveTurn states: the GET
+// serves them as open_entries beside the log's window, and stamps one live_turn
+// subject per open turn it serves.
+func WithOpenTurns(fn func(chatID marotte.ChatID) []OpenTurnTail) StoreOption {
+	return func(s *Store) { s.openTurns = fn }
+}
+
+// Live reports whether the chat's own turn is open, a prompt is admitted and
+// awaiting its bracket, or the admission slot is held. False when no predicate was
+// injected: an unwired Store reads the record as final, the safe direction.
+func (s *Store) Live(chatID marotte.ChatID) bool {
+	if s.live == nil {
+		return false
 	}
-	return s.turnOpen(chatID)
-}
-
-// WithLiveTurn registers the runtime's in-flight-turn READER, the content half of what
-// WithTurnOpen states. Without it this package's HTTP surface can say a turn is running
-// and carry nothing that describes it — and it is the ONE channel for that content, the
-// SSE connect carrying `busy_chats` and no turn transcript — so a client that finds a
-// chat busy at connect renders the prompt over an empty body.
-//
-// Injected post-construction for WithTurnOpen's reason: the agent runtime needs the store,
-// so the store cannot import it. The signature carries only internal/marotte types
-// deliberately — internal/chat imports no internal/buffer and must not start.
-func WithLiveTurn(fn func(chatID marotte.ChatID) (marotte.LiveTurn, bool)) StoreOption {
-	return func(s *Store) { s.liveTurn = fn }
-}
-
-// LiveTurn returns the chat's in-flight turn as accumulated so far, or false when no turn
-// is open — or when no reader was injected, which is the same NIL-TOLERANCE TurnOpen
-// carries: an unwired Store serves exactly what it served before this field existed, so a
-// wiring mistake costs a missing carrier rather than a nil dereference.
-func (s *Store) LiveTurn(chatID marotte.ChatID) (marotte.LiveTurn, bool) {
-	if s.liveTurn == nil {
-		return marotte.LiveTurn{}, false
-	}
-	return s.liveTurn(chatID)
+	return s.live(chatID)
 }
 
 // WithOnPurge registers a callback fired after a retention purge removes a chat.
 // sessionChain carries every KAS session the chat ran on, captured before the chat
-// file was removed, so the purge can reap its own session directories.
+// directory was removed, so the purge can reap its own session directories.
 func WithOnPurge(fn func(chatID marotte.ChatID, sessionChain []string)) StoreOption {
 	return func(s *Store) { s.onPurge = fn }
 }
@@ -215,7 +205,7 @@ func chatIDPattern(id marotte.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 
-// Get returns the full chat at chatID, or false if it does not exist.
+// Get returns the chat's header at chatID, or false if it does not exist.
 func (s *Store) Get(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
 	c, _, ok := s.GetStamped(ctx, chatID)
 	return c, ok
@@ -232,7 +222,7 @@ func (s *Store) GetStamped(ctx context.Context, chatID marotte.ChatID) (*marotte
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	c, err := s.load(chatID)
+	c, err := s.load(ctx, chatID)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Error("chat get", "chat_id", chatID, "error", err)
@@ -252,18 +242,18 @@ func (s *Store) restStamp(kind subject.Kind, ref, version string) *marotte.Subje
 	return stamp
 }
 
-// Mutate is the single mutation primitive: load → apply → save → broadcast. The
-// mutator runs under the per-chat mutex on the current chat, or on a fresh
+// Mutate is the header's mutation primitive: load → apply → save → broadcast. The
+// mutator runs under the per-chat mutex on the current header, or on a fresh
 // zero-value chat when it does not exist; returning false aborts without side
 // effects. A write to a recently deleted id is refused with ErrTombstoned.
 //
-// A mutator must not overwrite c.ID — that retargets the save to another file under
-// the wrong per-chat mutex, so Mutate refuses it. c.CreatedAt is snapshotted and
-// restored, so a zero-value overwrite cannot corrupt the sidebar sort order.
+// A mutator must not overwrite c.ID — that retargets the save to another directory
+// under the wrong per-chat mutex, so Mutate refuses it. c.CreatedAt is snapshotted
+// and restored, so a zero-value overwrite cannot corrupt the sidebar sort order.
 //
 // The returned version is the `chat:<id>` version this save minted, bumped under
-// the per-chat mutex so the transcript frame the caller broadcasts next can carry
-// it. A mutator that declines returns "" and moves no counter.
+// the per-chat mutex so a frame the caller broadcasts next can carry it. A mutator
+// that declines returns "" and moves no counter.
 func (s *Store) Mutate(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -271,17 +261,22 @@ func (s *Store) Mutate(ctx context.Context, chatID marotte.ChatID, mutate func(c
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	c, err := s.load(chatID)
+	return s.mutateLocked(ctx, chatID, mutate)
+}
+
+// mutateLocked is Mutate's body, for a caller already holding the chat's lock.
+func (s *Store) mutateLocked(ctx context.Context, chatID marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error) {
+	c, err := s.load(ctx, chatID)
 	exists := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
 	if !exists {
-		// Delete-during-turn race: a concurrent Delete may have removed the file
-		// while a late AppendMessage is about to resurrect it as a ghost row. The
-		// refusal is NAMED rather than reported as success, because a caller that
-		// cannot tell it from a persisted write spawns a bridge and spends credits
-		// for output discarded at persist.
+		// Delete-during-turn race: a concurrent Delete may have removed the
+		// directory while a late write is about to resurrect it as a ghost row.
+		// The refusal is NAMED rather than reported as success, because a caller
+		// that cannot tell it from a persisted write spawns a bridge and spends
+		// credits for output discarded at persist.
 		if s.isTombstoned(chatID) {
 			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", chatID)
 			return "", ErrTombstoned
@@ -302,29 +297,26 @@ func (s *Store) Mutate(ctx context.Context, chatID marotte.ChatID, mutate func(c
 	if err := validateChatUTF8(c); err != nil {
 		return "", err
 	}
-	if err := s.save(chatID, c); err != nil {
+	if err := s.save(ctx, chatID, c); err != nil {
 		return "", err
 	}
+	// The cross-chat filter indexes the title, so a header write invalidates it.
+	s.index.drop(chatID)
 	version := s.versions.BumpCounter(subject.KindChat, string(chatID))
 	s.broadcastMutation(ctx, chatID, c, exists)
 	slog.Debug("chat mutate", "chat_id", chatID, "existed", exists)
 	return version, nil
 }
 
-// validateChatUTF8 returns errInvalidUTF8 when the chat name, the composer draft or
-// any message content is not valid UTF-8 — content that would not round-trip through
-// the JSON storage format.
+// validateChatUTF8 returns errInvalidUTF8 when the chat name or the composer draft
+// is not valid UTF-8 — content that would not round-trip through the JSON storage
+// format.
 func validateChatUTF8(c *marotte.Chat) error {
 	if !utf8.ValidString(c.Name) {
 		return errInvalidUTF8
 	}
 	if !utf8.ValidString(c.Draft) {
 		return errInvalidUTF8
-	}
-	for i := range c.Messages {
-		if !utf8.ValidString(c.Messages[i].Content) {
-			return errInvalidUTF8
-		}
 	}
 	return nil
 }
@@ -368,7 +360,7 @@ func (s *Store) SetDraft(ctx context.Context, chatID marotte.ChatID, text string
 	if !utf8.ValidString(text) {
 		return nil, errInvalidUTF8
 	}
-	return s.setComposer(chatID, "chat draft", func(c *marotte.Chat) bool {
+	return s.setComposer(ctx, chatID, "chat draft", func(c *marotte.Chat) bool {
 		if c.Draft == text {
 			return false
 		}
@@ -401,7 +393,7 @@ func (s *Store) SetAttachments(ctx context.Context, chatID marotte.ChatID, paths
 		// nil rather than empty: `omitempty` keeps the field out of the chat file.
 		next = nil
 	}
-	return s.setComposer(chatID, "chat attachments", func(c *marotte.Chat) bool {
+	return s.setComposer(ctx, chatID, "chat attachments", func(c *marotte.Chat) bool {
 		if slices.Equal(c.Attachments, next) {
 			return false
 		}
@@ -413,28 +405,28 @@ func (s *Store) SetAttachments(ctx context.Context, chatID marotte.ChatID, paths
 // setComposer is the shared body of the two composer writers: load under the chat's
 // own lock, apply, write only when something moved, and report the state that
 // landed. `what` names the caller in the mismatch log.
-func (s *Store) setComposer(chatID marotte.ChatID, what string, apply func(*marotte.Chat) bool) (*marotte.ComposerState, error) {
+func (s *Store) setComposer(ctx context.Context, chatID marotte.ChatID, what string, apply func(*marotte.Chat) bool) (*marotte.ComposerState, error) {
 	m := s.lock(chatID)
 	m.Lock()
 	defer m.Unlock()
-	c, err := s.load(chatID)
+	c, err := s.load(ctx, chatID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	// This file claims to be a different chat, so nothing about it can be persisted
-	// under this id's lock.
+	// This record claims to be a different chat, so nothing about it can be
+	// persisted under this id's lock.
 	if c.ID != string(chatID) {
-		slog.Error(what+": chat file holds another chat's id",
+		slog.Error(what+": chat header holds another chat's id",
 			"chat_id", chatID, "stored_id", c.ID)
 		return nil, errChatIDMismatch(chatID, c.ID)
 	}
 	if !apply(c) {
 		return nil, nil
 	}
-	if err := s.writeChat(chatID, c); err != nil {
+	if err := s.writeHeader(ctx, chatID, c); err != nil {
 		return nil, err
 	}
 	state := c.Composer()
@@ -446,7 +438,7 @@ func (s *Store) setComposer(chatID marotte.ChatID, what string, apply func(*maro
 	return &state, nil
 }
 
-// Delete removes the chat file and broadcasts chat_deleted. Records a
+// Delete removes the chat directory and broadcasts chat_deleted. Records a
 // tombstone first so a concurrent Mutate cannot resurrect the id.
 func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) error {
 	if err := ctx.Err(); err != nil {
@@ -474,110 +466,5 @@ func (s *Store) Delete(ctx context.Context, chatID marotte.ChatID) error {
 		s.tombMu.Unlock()
 		slog.Debug("chat delete", "chat_id", chatID, "tombstones", tombCount)
 	}
-	return nil
-}
-
-// AppendMessage adds one message through Mutate, broadcasting message_appended in
-// addition to the usual chat_updated — after the save succeeds, so a failed write
-// emits no phantom event referencing content that was never persisted.
-func (s *Store) AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	var appended bool
-	version, err := s.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		if msg.Ts == 0 {
-			msg.Ts = time.Now().UnixMilli()
-		}
-		c.Messages = append(c.Messages, *msg)
-		appended = true
-		return true
-	})
-	if err != nil || !appended || s.broadcast == nil {
-		return err
-	}
-	frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
-	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
-	s.broadcast.Broadcast(ctx, frame)
-	slog.Debug("chat append", "chat_id", chatID, "msg_id", msg.ID, "role", msg.Role)
-	return nil
-}
-
-// UpsertTurnPlan records the agent's plan for the turn in flight: it overwrites this
-// turn's existing plan row, or appends msg when there is none, broadcasting
-// message_updated or message_appended to match.
-//
-// ONE row per turn, because the wire resends the WHOLE entries array on every update, so
-// an append per frame persists N snapshots of one plan. "This turn" is the tail up to the
-// first PROMPT, matching projectTurns' rule that a prompt opens a turn while a steer joins
-// the one running. Ts is NOT restamped: it marks where the plan entered the chat.
-func (s *Store) UpsertTurnPlan(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	var updated *marotte.Message
-	var appended bool
-	version, err := s.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		for i := len(c.Messages) - 1; i >= 0; i-- {
-			if c.Messages[i].IsPrompt() {
-				break // turn boundary: this turn carries no plan row yet
-			}
-			if len(c.Messages[i].Plan) == 0 {
-				continue
-			}
-			c.Messages[i].Plan = msg.Plan
-			updated = &c.Messages[i]
-			return true
-		}
-		if msg.Ts == 0 {
-			msg.Ts = time.Now().UnixMilli()
-		}
-		c.Messages = append(c.Messages, *msg)
-		appended = true
-		return true
-	})
-	if err != nil || s.broadcast == nil {
-		return err
-	}
-	stamp := marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
-	switch {
-	case updated != nil:
-		frame := marotte.NewEvent(marotte.EventMessageUpdated, chatID, updated)
-		frame.Subject = stamp
-		s.broadcast.Broadcast(ctx, frame)
-		slog.Debug("chat plan update", "chat_id", chatID, "msg_id", updated.ID, "entries", len(updated.Plan))
-	case appended:
-		frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
-		frame.Subject = stamp
-		s.broadcast.Broadcast(ctx, frame)
-		slog.Debug("chat plan append", "chat_id", chatID, "msg_id", msg.ID, "entries", len(msg.Plan))
-	}
-	return nil
-}
-
-// UpdateMessage mutates an existing message by ID and broadcasts message_updated
-// after the save succeeds. No-op when the message is not found.
-func (s *Store) UpdateMessage(ctx context.Context, chatID marotte.ChatID, msgID string, mutate func(*marotte.Message)) error {
-	var updated *marotte.Message
-	version, err := s.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		for i := range c.Messages {
-			if c.Messages[i].ID == msgID {
-				mutate(&c.Messages[i])
-				updated = &c.Messages[i]
-				return true
-			}
-		}
-		return false
-	})
-	if err != nil || updated == nil || s.broadcast == nil {
-		return err
-	}
-	frame := marotte.NewEvent(marotte.EventMessageUpdated, chatID, updated)
-	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
-	s.broadcast.Broadcast(ctx, frame)
-	slog.Debug("chat update_message", "chat_id", chatID, "msg_id", msgID)
 	return nil
 }

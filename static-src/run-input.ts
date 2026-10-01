@@ -27,8 +27,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { attachClamp } from "./clamp-text.js";
-import { RUN_INPUT_FALLBACK } from "./decision-dock.js";
+import { askActions, askEditor, askHead, RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import type { RunInputNeededPayload } from "./types.js";
 
 /** `null` is "continue without answering"; a string is the answer. */
@@ -37,13 +36,6 @@ type SubmitFn = (text: string | null) => void;
 /** Hand the question to the agent that launched this run. Rejects when the
  *  hand-off did not go out, which is what re-enables the button. */
 type DeferFn = () => void | Promise<void>;
-
-/** Lines the question shows before its opener. FOUR, the count `.steer-text`
- *  already uses one region down the same bar and for the same reason: the bar
- *  grows UPWARD into the transcript, so a question the agent wrote at length
- *  costs the reader the conversation it is about. The stylesheet clamps to this
- *  same count (`clamp-line-count.test.ts` holds the two together). */
-const CLAMP_LINES = 4;
 
 /** Build the dock card for one parked workflow step.
  *
@@ -73,17 +65,7 @@ export function buildRunInputCard(
   // An EMPTY question is the post-restart case rather than a malformed frame, so
   // it gets a sentence of its own instead of a blank heading. Shared with the
   // dock's own one-line label so the card and the run card's alert agree.
-  const question = payload.question === "" ? RUN_INPUT_FALLBACK : payload.question;
-  const text = el("strong", { className: "run-input-question" }, question);
-  // A SIBLING of the clamped element, or the clamp would hide its own opener.
-  // `attachClamp` hides it until measurement says the text overflows, and the
-  // dock releases it when the card leaves (`releaseClampsIn` in `swap`).
-  const more = el("button", {
-    className: "run-input-more",
-    type: "button",
-  }) as HTMLButtonElement;
-  const body = el("div", { className: "run-input-body" }, text, more);
-  attachClamp(text, more, { lines: CLAMP_LINES });
+  const { body } = askHead(payload.question === "" ? RUN_INPUT_FALLBACK : payload.question);
 
   const who = stepLabel(payload);
   if (who !== "") {
@@ -102,15 +84,12 @@ export function buildRunInputCard(
     );
   }
 
-  const input = el("textarea", {
-    className: "run-input-text",
+  const { editor, input } = askEditor({
     rows: "3",
     placeholder: "Type your answer\u2026",
-    "aria-label": "Your answer to the workflow step",
-  }) as HTMLTextAreaElement;
-  // A property write rather than an attribute, which is what a textarea's value is
-  // after first paint; "" is the ordinary case and writes the same empty box.
-  input.value = held;
+    label: "Your answer to the workflow step",
+    value: held,
+  });
 
   const send = el(
     "button",
@@ -138,7 +117,7 @@ export function buildRunInputCard(
     }
   });
 
-  const actions = el("div", { className: "run-input-actions" }, send);
+  const actions = askActions(send);
 
   if (onDefer !== undefined) {
     actions.appendChild(deferButton(onDefer));
@@ -164,13 +143,7 @@ export function buildRunInputCard(
     actions.appendChild(skip);
   }
 
-  return el(
-    "div",
-    { className: "dock-card dock-run-input" },
-    body,
-    el("div", { className: "run-input-editor" }, input),
-    actions,
-  );
+  return el("div", { className: "dock-card dock-run-input" }, body, editor, actions);
 }
 
 /** Ask the launching agent instead, on a CHAT-PARENTED ask. The node-id gate

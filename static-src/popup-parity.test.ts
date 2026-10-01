@@ -352,8 +352,8 @@ describe("every popup answers one geometry", () => {
 });
 
 describe("no popup text is below the mobile floor on a coarse pointer", () => {
-  // 12px is the floor the app already keeps under a finger: `--fs-popup-meta`
-  // resolves to `--fs-sm` there, and the effort tiers sit on it deliberately.
+  // 12px is the floor the app keeps under a finger; a caption reads
+  // `--fs-popup-meta`, which resolves one rung above it on the coarse tier.
   const FLOOR_PX = 12;
 
   it.each(POPUPS.map((p) => [p.name, p] as const))("%s", (_name, popup) => {
@@ -404,8 +404,8 @@ describe("no popup text is below the mobile floor on a coarse pointer", () => {
       meta: getComputedStyle(meta as HTMLElement).fontSize,
     };
 
-    expect(fine).toEqual({ body: "13px", meta: "11px" });
-    expect(coarse).toEqual({ body: "14px", meta: "12px" });
+    expect(fine).toEqual({ body: "13px", meta: "12px" });
+    expect(coarse).toEqual({ body: "14px", meta: "13px" });
   });
 
   it("keeps a caption UNDER its row, so it cannot outsize what it labels", () => {

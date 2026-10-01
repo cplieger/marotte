@@ -1,0 +1,69 @@
+{
+  "note": "One recorded-shape session/load replay of a turn whose say carries the `[STEERING steer-x: ...]` acknowledgement KAS never scrubs out of its own log. Split across two chunks on purpose: the marker is what a chunk boundary can cut in half, so a filter that only matched a whole chunk would leave half of it on screen.",
+  "steer_id": "steer-x",
+  "frames": [
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": { "kiro": { "replay": true, "kind": "turn_start", "turnStart": true } }
+      }
+    },
+    {
+      "kind": "user_message_chunk",
+      "update": {
+        "sessionUpdate": "user_message_chunk",
+        "content": { "type": "text", "text": "switch to tabs" },
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "steer-x",
+            "timestamp": "2026-09-15T11:00:00.000Z",
+            "source": "steer"
+          }
+        }
+      }
+    },
+    {
+      "kind": "agent_message_chunk",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "Reindented the file. [STEERING steer-x" },
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "1a2b-say",
+            "timestamp": "2026-09-15T11:00:04.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "agent_message_chunk",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": ": switched the indentation to tabs]" },
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "1a2b-say",
+            "timestamp": "2026-09-15T11:00:05.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "kind": "turn_end",
+            "turnEnd": { "stopReason": "end_turn" }
+          }
+        }
+      }
+    }
+  ]
+}

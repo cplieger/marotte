@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/sse/ssetest"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/sse/ssetest"
 )
 
 // dataFrames parses a recorded stream into its data-bearing frames, the hello

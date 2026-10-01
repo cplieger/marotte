@@ -28,7 +28,7 @@ export interface AssistantBubble {
   setText(full: string): void;
   /** Stop the text: no more growth is coming. On a live bubble the reveal
    *  keeps running until it catches up, so the caret and streaming wash
-   *  outlive `turn_ended` by the reveal's lag. */
+   *  outlive `turn_closed` by the reveal's lag. */
   end(): void;
   /** end(), minus the wait: reveal the remainder in one write and finalize
    *  now — for a bubble being discarded, or any caller needing settled DOM

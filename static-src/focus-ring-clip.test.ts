@@ -1,46 +1,11 @@
-// The focus ring on a control its clipping card does not clear, and the clip
-// every one of those cards applies to it.
+// The focus ring on a control its clipping card does not clear: `40-a11y.css` moves the
+// ring INSIDE the border box for the members below, and the criterion is its reach
+// (`outline-width + outline-offset`, 3px) against the control's distance to the clip box.
 //
-// `40-a11y.css` floors every focusable at `outline: var(--focus-ring)` with
-// `--focus-offset` (+1px), so the 2px band sits 1..3px OUTSIDE the border box —
-// 3px of REACH. EIGHT of this app's boxes declare an `overflow` with no padding
-// of their own — seven with `hidden`, plus the POPUP CARD with `overflow: auto`,
-// which clips at the same padding box — and between them they hold TEN controls the
-// clip reaches: the
-// criterion is that measured reach against the distance from the control's border box
-// to the clip box, which is wider than being flush. Seven members are flush on the
-// edges they lose, a code block's action button sits 2px in and loses 1px of its top
-// band, and an account's repo-list `summary` is flush on both inline edges. Where the
-// control is the WHOLE card (a delegate as born, a run step) the clip takes all four
-// edges at once, which fails WCAG 2.4.7 rather than degrading 2.4.11.
-//
-// FOUR KINDS OF CLAIM, and none is sufficient alone.
-//
-// GEOMETRIC, against the real assembled cascade (`mountAppCSS`, `css/MANIFEST`
-// order) with `:focus-visible` armed by a REAL `userEvent.tab()` — a programmatic
-// `focus()` does not set the flag, and a synthetic event drives no style recalc.
-// The instrument is the outline box (`rect ± (outline-width + outline-offset)`)
-// against the clipper's PADDING box, which is where `overflow` clips. It reports
-// numbers per edge rather than a boolean, so a failure says how far.
-//
-// SOURCE, because computed style cannot answer it: that ONE rule serves every
-// member, that its body is the same body for all of them, and that it declares the
-// OFFSET only — the ring's width and colour keep their single owner in the floor.
-//
-// CLEARANCE, the other half of moving the ring inward: the band now lands inside the
-// border box, so each member's own padding has to keep it off that member's content,
-// on all four edges rather than the two the ring reaches first.
-//
-// EXCLUSIONS, so the rule cannot have widened and cannot need to. There are two ways
-// a focusable inside a clipper stays out, and both are pinned as a number: its measured
-// inset CLEARS the reach, or it declares the inset offset itself so the reach is 0
-// (`.turn-file-row`, flush against its clipper on the inline edges). Plus a control
-// outside every card keeping the floor's outside ring.
-//
-// One trap for anyone extending this: `.subagent-block`, `.run-card` and
-// `.tool-group` mount with `animation: vk-slide-up`, a 6px translate. It cancels
-// out of an overflow measurement (the clipper and its child move together) and not
-// out of an absolute one, so the fixtures disable it.
+// Two traps for anyone extending this. `:focus-visible` needs a REAL `userEvent.tab()`, a
+// programmatic `focus()` does not set the flag. And `.subagent-block`, `.run-card` and
+// `.tool-group` mount with a 6px `vk-slide-up` translate that cancels out of an overflow
+// measurement and not out of an absolute one, so the fixtures disable it.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { userEvent } from "vitest/browser";
 
@@ -264,23 +229,25 @@ function subagentCard(opts: { foot: boolean }): {
   if (opts.foot) {
     const footer = node("div", "turn-footer subagent-footer", { role: "note" });
     const summary = node("button", "turn-ledger-summary", { type: "button" });
-    // The trigger as `buildTurnFooter` assembles it since the info panel landed:
-    // caret, glyph, the outcome LEAD WORD (not a composed ledger string), the `i`,
-    // and the `.sr-only` span that is the button's whole accessible name on a clean
-    // turn. The icon is the child that could have cost this button its clearance,
-    // which is why the fixture carries a real `--icon-ui` box rather than an empty
-    // span.
+    // The trigger as `buildTurnFooter` assembles it: the `i`, the outcome glyph, the
+    // outcome LEAD WORD (not a composed ledger string), the turn's lead fact, and the
+    // `.sr-only` span that is the button's whole accessible name on a clean turn. The
+    // icon is the child that could have cost this button its clearance, which is why
+    // the fixture carries a real `--icon-ui` box rather than an empty span.
     const info = node("span", "turn-ledger-info");
     info.appendChild(glyph());
-    // The `i` LEADS, which is the order buildTurnFooter appends in and the reason its
-    // own comment gives: the affordance's position must not depend on whether the turn
-    // carries an outcome word. It is also the child the inset band reaches first, so
-    // an order that trailed it would clear the wrong edge.
+    // The `i` LEADS THE PAINTED content, which is the order buildTurnFooter appends in
+    // and the reason its own comment gives: the affordance's position must not depend on
+    // whether the turn carries an outcome word. It is also the child the inset band
+    // reaches first, so an order that trailed it would clear the wrong edge.
+    const fact = node("span", "turn-fact");
+    fact.textContent = "3 commands";
     summary.append(
+      span("sr-only", "Turn details"),
       info,
       node("span", "turn-ledger-glyph"),
       span("turn-ledger-text", "Cancelled"),
-      span("sr-only", "Turn details"),
+      fact,
     );
     footer.appendChild(summary);
     foot.appendChild(footer);
@@ -307,7 +274,7 @@ function subagentContainer(): { clipper: HTMLElement; head: HTMLElement } {
  *  edge is not the card's. */
 function runCard(): { clipper: HTMLElement; head: HTMLElement } {
   const head = node("div", "run-head", { role: "button", tabindex: "0" });
-  head.append(span("run-name", "recipe"), node("span", "run-head-meta"));
+  head.append(span("run-name", "recipe"), span("run-count", "step 1 of 3"));
   const body = node("div", "run-body");
   body.appendChild(node("div", "run-step")).textContent = "a step row";
   const clipper = node("div", "run-card");
@@ -319,7 +286,7 @@ function runCard(): { clipper: HTMLElement; head: HTMLElement } {
  *  one of the two tightest clearances in this population. */
 function runCardWithFoot(): { clipper: HTMLElement; open: HTMLElement } {
   const head = node("div", "run-head", { role: "button", tabindex: "0" });
-  head.append(span("run-name", "recipe"), node("span", "run-head-meta"));
+  head.append(span("run-name", "recipe"), span("run-count", "step 1 of 3"));
   const body = node("div", "run-body");
   body.appendChild(node("div", "run-step")).textContent = "a step row";
   const foot = node("div", "run-foot");
@@ -421,15 +388,13 @@ function gitRepoSectionPRs(): {
   return { clipper: mount(clipper), head, newBtn };
 }
 
-/** One configured forge account, as `forge-auth.ts` paints its row: the identity and
- *  its actions, then the repo-list `details`. That `details` carries no padding and no
- *  inline border, so its `summary` — a focusable by construction — spans the clip box
- *  edge to edge, and is the card's last box while it is closed.
- *
- *  The `Manage` link is built and deliberately not returned: it is what puts `Sign out`
- *  at the row's trailing edge, and it carries no geometry of its own — same flex row,
- *  same control height, looser on the inline axis — so `Sign out`'s pinned 8px IS its
- *  clearance and a case of its own could only fail when that one does. */
+/** One configured forge account, as `forge-auth.ts` paints its row. The repo-list
+ *  `details` carries no padding and no inline border, so its `summary` — a focusable by
+ *  construction — spans the clip box edge to edge and is the card's last box while it is
+ *  closed. The `Manage` link is built and deliberately not returned: it carries no
+ *  geometry of its own — same flex row, same control height, looser on the inline axis —
+ *  so `Sign out`'s pinned 8px IS its clearance and a case of its own could only fail
+ *  when that one does. */
 function forgeAccountRow(): {
   clipper: HTMLElement;
   details: HTMLDetailsElement;
@@ -586,17 +551,12 @@ function mcpRow(): { clipper: HTMLElement; del: HTMLElement } {
 }
 
 /** A turn footer with its INFO PANEL open, which is the only state that panel has a
- *  box in: closed it is `display: none`. The panel is a clipper of its own —
- *  `overflow: clip` rather than the `hidden` every card above uses — over a file row
- *  nested two levels down, inside the Work section's `<ul class="turn-ledger-files">`.
- *  The transition is off because `@starting-style` animates the panel's block-size up
- *  from 0 on the frame it first renders open, so a box measured during it is partial.
- *
- *  THE NESTING IS THE PREMISE THAT MOVED. Before the panel the `<ul>` WAS the
- *  clipper and the row was its only child, so the row was flush on all four edges.
- *  Now the clipper is the panel, and above the list sits the section's own `<h4>`
- *  heading — so the block-start edge has real clearance while the inline edges are
- *  still flush, because neither the panel nor the section declares inline padding. */
+ *  box in: closed it is `display: none`. The panel is the clipper — `overflow: clip`
+ *  rather than the `hidden` every card above uses — over a file row nested two levels
+ *  down, inside the Work section's `<ul class="turn-ledger-files">`, so the row clears
+ *  the panel's own ink gutter plus that section's `<h4>`. The transition is off because
+ *  `@starting-style` animates the panel's block-size up from 0 on the frame it first
+ *  renders open, so a box measured during it is partial. */
 function turnInfoPanel(): { clipper: HTMLElement; row: HTMLElement } {
   const row = node("button", "turn-file-row", { type: "button" });
   row.append(span("turn-file-path", "static-src/app.ts"), node("span", "turn-file-delta"));
@@ -611,10 +571,14 @@ function turnInfoPanel(): { clipper: HTMLElement; row: HTMLElement } {
   panel.style.transition = "none";
   panel.appendChild(section);
   const summary = node("button", "turn-ledger-summary", { type: "button" });
-  summary.append(node("span", "turn-ledger-glyph"), span("turn-ledger-text", ""));
   summary.appendChild(span("sr-only", "Turn details"));
+  summary.append(
+    node("span", "turn-ledger-glyph"),
+    span("turn-ledger-text", ""),
+    span("turn-fact", "2m 14s"),
+  );
   const footer = node("div", "turn-footer", { role: "note", "data-info": "open" });
-  footer.append(summary, span("turn-fact", "2m 14s"), panel);
+  footer.append(summary, panel);
   mount(footer);
   return { clipper: panel, row };
 }
@@ -729,18 +693,19 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("leaf head", head, clipper);
   });
 
-  it("on a delegate's FOOT ledger, flush on three edges of the same card", async () => {
-    // The other end of the card whose head is two cases above, and it joined this rule
-    // when the card feet stopped padding their own band: the button IS the band now, so
-    // the clip reaches it on the block-end and both inline edges. `bottom` is the one
-    // that matters — the foot is the card's last region.
+  it("on a delegate's FOOT ledger, flush on the edge the row does not pad", async () => {
+    // The other end of the card whose head is two cases above. INLINE-START is what
+    // decides it: the row declares no leading padding, so the button's border box starts
+    // on the card's clip box. The BLOCK edges are not the criterion here — the control
+    // paints a box shorter than the band and centres in it (29-turns.css), so on the fine
+    // tier it clears the reach at the bottom by a pixel and on the coarse one it is
+    // flush, and the member has to keep the inset ring either way.
     const { clipper, ledger } = subagentCard({ foot: true });
     if (ledger === null) {
       throw new Error("the fixture built no ledger button");
     }
     await focusByTab(ledger);
     const flush = inset(ledger, clipper);
-    expect(flush.bottom, `foot ledger: bottom is not flush (${flush.bottom}px)`).toBeLessThan(1.5);
     expect(flush.left, `foot ledger: inline-start is not flush (${flush.left}px)`).toBeLessThan(
       1.5,
     );
@@ -919,8 +884,8 @@ describe("the inset band clears the content it now sits over", () => {
 
 describe("the inset band clears the content it now sits over, on the two card feet", () => {
   // The sweep above reads `firstElementChild` / `lastElementChild`, and for these two
-  // that names the wrong child: the ledger button ends in its `.sr-only` name (1px,
-  // clipped, so its rect answers nothing) and `.run-open` LEADS with a text node, so
+  // that names the wrong child: the ledger button LEADS with its `.sr-only` name (1px,
+  // clipped, so its rect answers nothing) and `.run-open` leads with a text node, so
   // its only element child is the trailing icon. Both are measured against their real
   // ink instead.
   it("clears the delegate ledger's `i` on the edge the gutter moved for", async () => {
@@ -1037,11 +1002,8 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     // `position: absolute` inside `.tool-header`, so its inline clearance is a declared
     // `inset-inline-start` and its block clearance is half the header's spare room —
     // which moves with that row's HEIGHT (a `min-height`, a font-size) rather than with
-    // anything a reader would check as padding.
-    //
-    // LEADING since 2026-09 (chevron.ts: a disclosure chevron leads and rotates, and
-    // only a navigating one trails), so this reads the START inset where it used to
-    // read the END one.
+    // anything a reader would check as padding. It LEADS (chevron.ts owns that rule), so
+    // the START inset is the one to read.
     const { clipper, disclosure } = toolCard();
     await focusByTab(disclosure);
     const gap = inset(disclosure, clipper);
@@ -1101,42 +1063,24 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
 describe("the exclusion that is not a clearance: a row already on the inset token", () => {
   it("keeps `.turn-file-row`'s band inside the panel that clips it", async () => {
     // `.turn-info-panel` clips over a row that spans it, so on the floor's reach that
-    // row would lose its band on the inline edges. It stays out of the one rule
-    // because `29-turns.css` declares the same inset offset for it, taking its reach
-    // to 0 — and THAT is the invariant, asserted last: the ring is inside the clip
-    // box whatever the clearance turns out to be.
-    //
-    // THE PREMISE WAS RE-DERIVED rather than the assertion loosened. This case used
-    // to assert the row flush on all FOUR edges, which was true while the file `<ul>`
-    // was itself the clipper and the row its only child. The list is now nested in
-    // the Work section of a panel that clips, under that section's `<h4>` heading, so
-    // the block-start edge has real clearance while the inline edges are still flush
-    // — neither the panel nor the section declares inline padding, deliberately, so
-    // that a zero-reach row keeps its band. MEASURED in this container's Chromium:
-    // `{ top: 17, bottom: 0, left: 0, right: 0 }` — 17px being the `<h4>`'s own box
-    // (15px at `--fs-xs`) plus the section's 2px gap, and the block-END edge still
-    // flush because the list is the section's last child and the section the panel's.
-    // The inline pair is what the exclusion rests on, so it is asserted exactly; the
-    // block pair is asserted as clearance, which is the honest shape of a gap.
+    // row would lose its band. It stays out of the one rule because `29-turns.css`
+    // declares the same inset offset for it, taking its reach to 0 — and THAT is the
+    // invariant, asserted last: the ring is inside the clip box whatever the clearance
+    // turns out to be. Three edges carry a gutter and the TRAILING one is flush, because
+    // the panel's trailing inset lives on the footer's own `padding-inline-end` instead
+    // (`29-turns.css`), which is outside this clip box. Exact rather than dropped: 0 is
+    // what the row's reach of 0 has to be safe at.
     const { clipper, row } = turnInfoPanel();
     await focusByTab(row);
     expect(getComputedStyle(clipper).overflow, "the info panel clips").toBe("clip");
     const gap = inset(row, clipper);
-    for (const edge of ["left", "right"] as const) {
-      expect(gap[edge], `turn file row: ${edge} edge is not flush (${gap[edge]}px)`).toBeLessThan(
-        0.5,
-      );
-    }
-    for (const edge of ["top", "bottom"] as const) {
+    for (const edge of ["top", "bottom", "left"] as const) {
       expect(
         gap[edge],
-        `turn file row: ${edge} edge is outside the clip box`,
-      ).toBeGreaterThanOrEqual(0);
+        `turn file row: ${edge} edge is outside the clip box (${gap[edge]}px)`,
+      ).toBeGreaterThan(0);
     }
-    expect(
-      gap.top,
-      "the section heading is above the list, so there IS block clearance",
-    ).toBeGreaterThan(0);
+    expect(gap.right, "turn file row: flush with the clip box on the trailing edge").toBe(0);
     expect(reachOf(row), "the row's own offset cancels the ring's reach").toBe(0);
     expectRingInside("turn file row", row, clipper);
   });

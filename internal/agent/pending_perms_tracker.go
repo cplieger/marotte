@@ -6,8 +6,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // pendingPermsTracker tracks unresolved permission_needed events, keyed by CHAT

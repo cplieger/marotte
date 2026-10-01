@@ -13,15 +13,18 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeEngine is the SSE fan-out as this handler uses it: it records what was
 // broadcast so a test can assert the client was told, which is the difference
 // between a profile that changed and one that changed invisibly.
-type fakeEngine struct{ events []marotte.ServerEvent }
+type fakeEngine struct {
+	events []marotte.ServerEvent
+	pushes int
+}
 
 func (f *fakeEngine) RegisterRoutes(*http.ServeMux) {}
 func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
@@ -29,6 +32,10 @@ func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 }
 func (f *fakeEngine) Shutdown(context.Context) error { return nil }
 func (f *fakeEngine) Epoch() string                  { return "fake-epoch" }
+
+// pushes counts the agent-ignore fan-outs so the settings PATCH test can assert
+// KAS was told; this handler never calls it.
+func (f *fakeEngine) PushAgentIgnoreFiles(context.Context) { f.pushes++ }
 
 // fakeReload records whether the profile change asked for a session recycle.
 type fakeReload struct{ restarts int }

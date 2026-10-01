@@ -134,11 +134,17 @@ export class RollingOutput {
     this.bar.classList.add("hidden");
   }
 
+  /** The last 4 SOURCE lines, in a `.rolling-output-text` child that is the
+   *  clipped box. The wrapper is load-bearing: the bar draws the chrome and the
+   *  child carries the line clamp, because a clip and a padded box cannot be one
+   *  element (14-tools.css holds the measurement). A bare text node here means
+   *  nothing is capped, so the bar grows with every wrapped line. The expand
+   *  hint stays a direct child — it is `position: absolute` against the bar. */
   append(text: string): void {
     this.full += (this.full !== "" ? "\n" : "") + text;
     const lines = this.full.split("\n").filter((l) => l.trim() !== "");
-    const textNode = document.createTextNode(lines.slice(-4).join("\n"));
-    this.bar.replaceChildren(textNode, document.importNode(EXPAND_HINT_NODE, true));
+    const view = el("div", { className: "rolling-output-text" }, lines.slice(-4).join("\n"));
+    this.bar.replaceChildren(view, document.importNode(EXPAND_HINT_NODE, true));
     this.bar.classList.remove("hidden");
   }
 

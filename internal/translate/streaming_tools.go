@@ -10,64 +10,70 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/marotte/internal/buffer"
-	"github.com/cplieger/marotte/internal/sanitize"
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/pathinside/v2"
 )
 
-// HandleToolCall adds a tool call to the current assistant message buffer and
-// broadcasts it, threading AgentSubtaskID so the client can nest a subagent's
-// chunks (which carry the same id) under its card.
+// HandleToolCall appends a tool_call entry in the lane fixed for the call's whole
+// life and announces it: the create frame's agent_subtask_id for an ordinary
+// call, and for a subagent invocation the ISSUER's lane, with the delegate's uuid
+// in the payload as the lane it opens.
 func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tc ACPToolCallWire
 	if json.Unmarshal(raw, &tc) != nil {
 		return
 	}
-	// Must stay ABOVE every guard below: those are RENDERING decisions and this is
-	// ENFORCEMENT, so sat under them a display preference decides a cancellation.
-	// Deliberately apart from countStepTurn, which needs a step key this does not.
-	t.reportRunProgress(tc.Meta.Kiro.Workflow)
-	// Internal engine bookkeeping never reaches the transcript. Dropped before
-	// TurnFoldTarget, which would open a wire turn and split the user's own — the
+	tc.gate()
+	// Internal engine bookkeeping never reaches the transcript. Dropped before the
+	// fold target, which would open a wire turn and split the user's own: the
 	// cloud-config fetch runs during session creation, before the prompt's turn.
 	if isInternalTool(tc.Meta.Kiro.ToolID) {
 		return
 	}
-	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
-	t.ensureTurnStarted(ctx, chatID, buf)
-	// A step's tool frames carry KAS's own agentSubtaskId while the step's TEXT is
-	// keyed by nodePath, so without this override one step's work fragments in two.
-	subtask := tc.Meta.Kiro.AgentSubtaskID
-	if wf := tc.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
-		subtask = wf
-		t.countStepTurn(tc.Meta.Kiro.Workflow, wf)
+	if tc.Meta.Kiro.AgentInitiated && !attr.Step {
+		t.bracket.ReviseTurnBinding(ctx, chatID)
+	}
+	turn, sc, ok := t.foldTarget(ctx, chatID, attr)
+	if !ok {
+		return
 	}
 	// The create frame deliberately does NOT adopt content.output: the initial
 	// tool_call has never fed Output, and folding it in would double-render
 	// whatever the following update repeats.
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
-	diffs := content.diffs
-	call := toolCallFromWire(&tc, subtask, attr.SubSessionID, content, time.Now().UnixMilli())
-	idx, _ := buf.AppendToolCall(&call)
-	turn := idx + 1
-	// Always a new block: back-to-back tool calls each get their own.
-	blockIndex, _ := buf.AppendToolUseBlock(call.ID, subtask)
-	// The frame carries the LAST write's version: the buffer's state the client
-	// reaches after applying it is the state that version names.
-	version := buf.RecordToolStart(tc.ToolCallID)
-	if len(diffs) > 0 {
-		isNew := tc.Kind == marotte.ToolKindEdit && tc.Status == marotte.ToolPending
-		version = buf.TrackFileChanges(diffs, isNew)
-		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
+	call := toolCallFromWire(&tc, tc.Meta.Kiro.AgentSubtaskID, content, time.Now().UnixMilli())
+	entry := marotte.EntryToolCallOf(&call)
+	var sealed []turnlog.Sealed
+	var err error
+	if tc.Meta.Kiro.Kind == subagentInvocationKind {
+		sealed, err = turn.Invocation(ctx, turn.IssuerLane(), tc.Meta.Kiro.AgentSubtaskID, &entry)
+	} else {
+		sealed, err = turn.ToolCall(ctx, call.AgentSubtaskID, &entry)
 	}
-	frame := marotte.NewEvent(marotte.EventToolCall, chatID,
-		marotte.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex})
-	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
-	t.bus.Broadcast(ctx, frame)
+	t.publishSealed(ctx, sc, sealed)
+	if err != nil {
+		appendFailed(sc, "tool_call", err)
+		return
+	}
+	if len(content.diffs) > 0 {
+		isNew := tc.Kind == marotte.ToolKindEdit && tc.Status == marotte.ToolPending
+		t.trackFileChanges(turn, content.diffs, isNew)
+		t.lines.RecordFromDiffs(chatID, content.diffs, recency(), string(tc.Kind))
+	}
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID,
 		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, tc.Title)}))
+}
+
+// trackFileChanges folds a tool call's diffs into the turn's changed-files
+// aggregate, one line delta per path.
+func (t *Translator) trackFileChanges(turn *turnlog.Turn, diffs []marotte.ToolDiff, isNew bool) {
+	for _, d := range diffs {
+		added, removed := buffer.LineDelta(d.OldText, d.NewText)
+		turn.ChangedFile(d.Path, added, removed, isNew)
+	}
 }
 
 // toolCallFromWire builds the domain tool call a `tool_call` frame describes.
@@ -78,7 +84,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, 
 // projection carried. ts is the CALLER's, because a replayed call must keep the frame's
 // own timestamp or a resumed transcript claims it ran just now.
 func toolCallFromWire(
-	tc *ACPToolCallWire, subtask, subSessionID string, content toolUpdateContent, ts int64,
+	tc *ACPToolCallWire, subtask string, content toolUpdateContent, ts int64,
 ) marotte.ToolCall {
 	return marotte.ToolCall{
 		ID:             tc.ToolCallID,
@@ -86,7 +92,6 @@ func toolCallFromWire(
 		Kind:           tc.Kind,
 		Status:         tc.Status,
 		Input:          tc.RawInput,
-		SubSessionID:   subSessionID,
 		AgentSubtaskID: subtask,
 		TerminalID:     content.terminalID,
 		Locations:      tc.Locations,
@@ -97,43 +102,86 @@ func toolCallFromWire(
 	}
 }
 
-// HandleToolCallUpdate mutates an in-flight tool call's status and appends any new
-// output chunks.
+// HandleToolCallUpdate folds an update into the call's in-flight value. A
+// non-terminal frame is announced as tool_progress, the delta between the value
+// before and after the fold; a terminal one seals the settled value as the
+// tool_result entry.
 func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
+	tu.gate()
 	content := t.parseToolUpdateContent(tu.ToolCallID, tu.Content)
+	sc := scopeOf(chatID, attr)
 	// An update never OPENS a turn: the create it updates is what opens one, so a
-	// frame arriving with no open turn is an orphan, and folding it would materialize
-	// a headless turn card. It is also what drops a suppressed internal tool's
-	// completion, whose create was never buffered, with no set to remember it by.
-	buf, ok := t.buffers.OpenTurnBuffer(chatID)
+	// frame arriving with no open turn is an orphan for a chat, and for a step it
+	// is a late frame for a path whose turn closed, filed by the between-turns rule.
+	turn, ok := t.updateTarget(chatID, attr)
+	if !ok {
+		t.lateStepResult(ctx, chatID, attr, &tu, content)
+		return
+	}
+	open, ok := turn.OpenCallFor(tu.ToolCallID)
 	if !ok {
 		return
 	}
 	// Folded on a COPY and written back: the fold reaches the terminal registry, the
-	// line tracker and the event bus, none of which may run under the buffer's mutex.
-	tc, idx, ok := buf.ToolCall(tu.ToolCallID)
-	if !ok {
+	// line tracker and the event bus.
+	before := open.Call
+	tc := open.Call
+	t.applyToolCallUpdate(ctx, chatID, turn, &open, &tc, &tu, content)
+	if !tc.Status.Terminal() {
+		turn.SetOpenCall(tu.ToolCallID, &tc)
+		p := toolProgress(turn.ID(), &before, &tc)
+		p.WorkflowID = sc.runID
+		t.bus.Broadcast(ctx, sc.event(marotte.EventToolProgress, p))
 		return
 	}
-	// The pre-fold value, kept so the frame can carry the fold's INPUTS rather than
-	// its result: comparing before against after derives the delta from the fold
-	// instead of restating the fold's rules here — including the one a pure-append
-	// wire cannot express, adoptTerminalOutput replacing the output at completion. A
-	// struct copy is enough: every field the fold writes is replaced or appended to.
-	before := tc
-	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
-	version := buf.SetToolCall(idx, &tc)
-	frame := marotte.NewEvent(marotte.EventToolCallUpdate, chatID,
-		toolCallDelta(buf.MessageID, &before, &tc))
-	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
-	t.bus.Broadcast(ctx, frame)
+	res := marotte.EntryToolResultOf(&tc)
+	sealed, err := turn.ToolResult(ctx, tu.Meta.Kiro.AgentSubtaskID, tu.ToolCallID, &res)
+	t.publishSealed(ctx, sc, sealed)
+	if err != nil {
+		appendFailed(sc, "tool_result", err)
+	}
 }
 
-// toolCallDelta describes what one fold changed about a tool call.
+// updateTarget is the open turn an update folds into: the run's turn for the step
+// path, else the chat's own turn. Neither is opened here.
+func (t *Translator) updateTarget(chatID marotte.ChatID, attr FrameAttribution) (*turnlog.Turn, bool) {
+	if attr.Step {
+		return t.runs.RunFoldTarget(context.Background(), attr.RunID, attr.NodePath, attr.SessionID, chatID)
+	}
+	return t.turns.OwnTurn(chatID)
+}
+
+// lateStepResult files a terminal update for a step path whose turn already
+// closed after that turn's close: the call was aborted by the close, and this is
+// KAS's own account of how it ended. A non-terminal late frame is progress on a
+// call nothing holds and is dropped.
+func (t *Translator) lateStepResult(ctx context.Context, chatID marotte.ChatID, attr FrameAttribution, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
+	if !attr.Step || !tu.Status.Terminal() {
+		return
+	}
+	tc := marotte.ToolCall{ID: tu.ToolCallID, Title: displayText(tu.Title), Kind: tu.Kind}
+	applyToolCallOutput(&tc, tu, content)
+	tc.Status = tu.Status
+	tc.Diffs = content.diffs
+	tc.Locations = tu.Locations
+	tc.TerminalID = content.terminalID
+	t.adoptTerminalOutput(chatID, &tc)
+	mergeCheckpoint(&tc, tu.Meta.Kiro.Checkpoint)
+	mergeToolMeta(&tc, tu)
+	e := marotte.Entry{Kind: marotte.EntryKindToolResult, ID: marotte.ToolResultID(tu.ToolCallID), Lane: tu.Meta.Kiro.AgentSubtaskID}
+	setPayload(&e, marotte.EntryToolResultOf(&tc))
+	if err := t.runs.RunAppendAfterClosed(ctx, attr.RunID, attr.NodePath, &e); err != nil {
+		appendFailed(runScope(attr.RunID), "late tool_result", err)
+		return
+	}
+	t.publishAppended(ctx, runScope(attr.RunID), &e)
+}
+
+// toolProgress describes what one fold changed about an in-flight tool call.
 //
 // Sending the whole accumulated ToolCall re-sent output and diffs on every later
 // frame for it — megabytes behind a few open tabs — and Input is not here at all,
@@ -141,8 +189,8 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.Ch
 //
 // Every omitted field means "unchanged", so applying this to `before` reconstructs
 // `after` exactly. That is what lets the client keep no accumulation rules.
-func toolCallDelta(messageID string, before, after *marotte.ToolCall) marotte.ToolCallUpdatePayload {
-	d := marotte.ToolCallUpdatePayload{MessageID: messageID, ToolCallID: after.ID}
+func toolProgress(turn string, before, after *marotte.ToolCall) marotte.ToolProgressPayload {
+	d := marotte.ToolProgressPayload{Turn: turn, ToolCallID: after.ID}
 	if after.Title != before.Title {
 		d.Title = after.Title
 	}
@@ -163,7 +211,7 @@ func toolCallDelta(messageID string, before, after *marotte.ToolCall) marotte.To
 
 // deltaContent carries the three collections. Only Diffs accumulates; the other
 // two are absolute and go entire whenever they change.
-func deltaContent(d *marotte.ToolCallUpdatePayload, before, after *marotte.ToolCall) {
+func deltaContent(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
 	if !slices.Equal(after.OutputSpans, before.OutputSpans) {
 		d.OutputSpans = after.OutputSpans
 	}
@@ -180,12 +228,9 @@ func deltaContent(d *marotte.ToolCallUpdatePayload, before, after *marotte.ToolC
 // deltaAttachments carries the four late identity ids and the three metadata
 // blocks. Every one is adopted once and never overwritten, so each appears on at
 // most one frame per call — which is what makes a set-if-present fold correct.
-func deltaAttachments(d *marotte.ToolCallUpdatePayload, before, after *marotte.ToolCall) {
+func deltaAttachments(d *marotte.ToolProgressPayload, before, after *marotte.ToolCall) {
 	if after.TerminalID != before.TerminalID {
 		d.TerminalID = after.TerminalID
-	}
-	if after.SubSessionID != before.SubSessionID {
-		d.SubSessionID = after.SubSessionID
 	}
 	if after.AgentSubtaskID != before.AgentSubtaskID {
 		d.AgentSubtaskID = after.AgentSubtaskID
@@ -308,10 +353,9 @@ type toolUpdateContent struct {
 	diffs      []marotte.ToolDiff
 }
 
-// applyToolCallUpdate folds a parsed tool_call_update into the buffered tool call
-// at idx: status, appended output, replaced locations, appended diffs with line
-// tracking, and a first-seen subsession id.
-func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer, tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
+// applyToolCallUpdate folds a parsed tool_call_update into the in-flight tool call:
+// status, appended output, replaced locations, appended diffs with line tracking.
+func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.ChatID, turn *turnlog.Turn, open *turnlog.OpenCall, tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	// KAS sends title and kind nullish on an update, so apply only when present or
 	// an update that omits them wipes the initial tool_call's values.
 	if tu.Title != "" {
@@ -326,22 +370,15 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.Cha
 	if tc.TerminalID == "" && content.terminalID != "" {
 		tc.TerminalID = content.terminalID
 	}
-	t.applyToolCallStatus(ctx, chatID, buf, tc, tu)
+	t.applyToolCallStatus(ctx, chatID, open.StartedTs, tc, tu)
 	applyToolCallOutput(tc, tu, content)
 	if len(tu.Locations) > 0 {
 		tc.Locations = tu.Locations
 	}
-	t.applyToolCallDiffs(chatID, buf, tc, content.diffs)
-	if tc.SubSessionID == "" && subSessionID != "" {
-		tc.SubSessionID = subSessionID
-	}
-	if tc.AgentSubtaskID == "" {
-		// Late adoption mirrors the create path, workflow identity first.
-		if wf := tu.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
-			tc.AgentSubtaskID = wf
-		} else if tu.Meta.Kiro.AgentSubtaskID != "" {
-			tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
-		}
+	t.applyToolCallDiffs(chatID, turn, tc, content.diffs)
+	if tu.Meta.Kiro.AgentSubtaskID != "" && tu.Meta.Kiro.AgentSubtaskID != open.Lane {
+		slog.Warn("tool_call_update lane disagrees with its call's lane; folding where the call is",
+			"chat_id", chatID, "tool_call_id", tc.ID, "call_lane", open.Lane, "update_lane", tu.Meta.Kiro.AgentSubtaskID)
 	}
 	// AFTER the two folds above, and the order is load-bearing: applyToolCallStatus
 	// has set `completed` and applyToolCallOutput has written the sentence, so this
@@ -417,7 +454,7 @@ func applyToolCallOutput(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, conten
 // applyToolCallStatus folds an update's status in, and on a terminal status stamps
 // the duration and takes the terminal's output for keeping.
 func (t *Translator) applyToolCallStatus(
-	ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer,
+	ctx context.Context, chatID marotte.ChatID, startedTs int64,
 	tc *marotte.ToolCall, tu *ACPToolCallUpdateWire,
 ) {
 	if tu.Status == "" {
@@ -427,12 +464,10 @@ func (t *Translator) applyToolCallStatus(
 	if tu.Status != marotte.ToolCompleted && tu.Status != marotte.ToolFailed {
 		return
 	}
-	// KAS can send several terminal status frames for one tool call, and
-	// ComputeDuration CONSUMES its start time, so the second read answers 0.
-	// Assigning it unconditionally wrote that 0 over a correct duration, which the
-	// markdown export then dropped. The sibling read below is non-destructive too.
-	if tc.DurationMs == 0 {
-		tc.DurationMs, _ = buf.ComputeDuration(tu.ToolCallID)
+	// KAS can send several terminal status frames for one tool call; the first
+	// one's measurement stands, so a later frame cannot write 0 over a duration.
+	if tc.DurationMs == 0 && startedTs > 0 {
+		tc.DurationMs = int(time.Now().UnixMilli() - startedTs)
 	}
 	t.adoptTerminalOutput(chatID, tc)
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID,
@@ -446,7 +481,7 @@ func (t *Translator) applyToolCallStatus(
 // every streaming frame, so tracking each arrival would count partial streams and
 // claim a file changed when the write failed. The card keeps every diff regardless.
 func (t *Translator) applyToolCallDiffs(
-	chatID marotte.ChatID, buf *buffer.Buffer, tc *marotte.ToolCall, diffs []marotte.ToolDiff,
+	chatID marotte.ChatID, turn *turnlog.Turn, tc *marotte.ToolCall, diffs []marotte.ToolDiff,
 ) {
 	if len(diffs) == 0 {
 		return
@@ -455,8 +490,15 @@ func (t *Translator) applyToolCallDiffs(
 	if tc.Status != marotte.ToolCompleted {
 		return
 	}
-	buf.TrackFileChanges(diffs, false)
-	t.lines.RecordFromDiffs(chatID, diffs, buf.ToolCallCount(), string(tc.Kind))
+	t.trackFileChanges(turn, diffs, false)
+	t.lines.RecordFromDiffs(chatID, diffs, recency(), string(tc.Kind))
+}
+
+// recency is the line tracker's eviction key for a change recorded now: it orders
+// a chat's touched files oldest-first, so a wall-clock stamp serves where the
+// message model passed a per-turn tool-call ordinal.
+func recency() int {
+	return int(time.Now().UnixMilli())
 }
 
 // adoptTerminalOutput copies a finished terminal's output onto its tool call, so
@@ -603,25 +645,4 @@ func relPathIn(workDir, ref string) string {
 		return abs
 	}
 	return filepath.ToSlash(rel)
-}
-
-// ensureTurnStarted initializes the buffer for a new turn if not already started:
-// assigns the message id and broadcasts message_created.
-//
-// It owns no crash durability: a turn interrupted mid-flight is rebuilt from KAS's
-// own log by the session/load replay projection.
-func (t *Translator) ensureTurnStarted(ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer) {
-	if opened, _ := buf.StartTurn(t.newMsgID()); !opened {
-		return
-	}
-	// Fallback attribution only: a prompt latches the model at dispatch. This read
-	// stays for turns nobody dispatched, where the chat record is the only evidence
-	// of what is answering.
-	if !buf.HasModel() {
-		if c, ok := t.chats.Get(ctx, chatID); ok {
-			buf.SetModel(c.Model)
-		}
-	}
-	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMessageCreated, chatID,
-		marotte.Message{ID: buf.MessageID, Role: marotte.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

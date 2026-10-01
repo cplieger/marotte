@@ -1,0 +1,5 @@
+- [ ] 1. Parent
+  - [ ] 1.1 2026 was the year the tool shipped
+  - [ ] 1.2 3 of the 31 kinds are retired
+  - [ ] 1.3 1.4 GiB is the corpus size
+  - [ ] 1.4 0.5 s per file is the budget

@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -35,15 +35,24 @@ var errStepUnknown = errors.New("this run has no step at that path")
 // collapsing them would blame the caller for a wire change.
 var errRunStateUndecodable = errors.New("this run's state could not be decoded")
 
-// StepTranscript reads one step's transcript out of KAS. Three-valued: `ready` with the
-// messages, `gone` when KAS no longer holds the session (or the step never started), and
-// `unavailable` when the read could not be completed. Only the last is worth retrying.
+// StepTranscript reads one step's transcript: out of the run's own log when it holds
+// a turn for the path (`source: log`, readable while the step is open, with the open
+// tails and one run_turn stamp per open turn), else out of KAS's replay of the step's
+// session (`source: replay`). Three-valued: `ready` with the entries, `gone` when KAS
+// no longer holds the session (or the step never started), and `unavailable` when the
+// read could not be completed. Only the last is worth retrying.
 func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string) (marotte.RunStepTranscript, error) {
 	out := marotte.RunStepTranscript{
-		Messages:   []marotte.Message{},
-		WorkflowID: workflowID,
-		NodePath:   nodePath,
-		State:      marotte.RunStepTranscriptUnavailable,
+		Entries:     []marotte.Entry{},
+		OpenEntries: []marotte.OpenEntry{},
+		Subject:     []*marotte.SubjectStamp{},
+		WorkflowID:  workflowID,
+		NodePath:    nodePath,
+		State:       marotte.RunStepTranscriptUnavailable,
+		Source:      marotte.RunStepTranscriptSourceReplay,
+	}
+	if rs.log != nil && rs.fromRunLog(ctx, &out) {
+		return out, nil
 	}
 	raw, err := rs.rawInspect(ctx, workflowID)
 	if err != nil {
@@ -76,10 +85,10 @@ func (rs *Runs) StepTranscript(ctx context.Context, workflowID, nodePath string)
 		return out, nil
 	}
 
-	msgs, state := rs.replayStepSession(ctx, sessionID)
+	turns, state := rs.replayStepSession(ctx, sessionID)
 	out.State = state
-	if len(msgs) > 0 {
-		out.Messages = msgs
+	for i := range turns {
+		out.Entries = append(out.Entries, turns[i].Entries...)
 	}
 	return out, nil
 }
@@ -104,8 +113,8 @@ func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 // projected. A RAW `session/load` Call rather than bridge.Start: Start's load path calls
 // adoptLoadedSession, which REBINDS the bridge's sessionID, so a step's id would be
 // reported as the utility session's own and take it out of the orphan reaper's keep-list.
-func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]marotte.Message, marotte.RunStepTranscriptState) {
-	if !rs.stepReplays.open(sessionID, translate.NewProjection(newMessageID, rs.workDir)) {
+func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]translate.ProjectedTurn, marotte.RunStepTranscriptState) {
+	if !rs.stepReplays.open(sessionID, translate.NewEntryProjection(newMessageID, rs.workDir)) {
 		// Refused rather than joined: two readers of one barrier is a lifecycle this
 		// registry does not carry, and the retry meets a settled registry a moment later.
 		slog.Debug("step transcript: a read of this session is already in flight", "session_id", sessionID)
@@ -153,26 +162,40 @@ func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]maro
 		return nil, marotte.RunStepTranscriptUnavailable
 	}
 
-	return stepTranscriptRows(rs.stepReplays.take(sessionID)), marotte.RunStepTranscriptReady
+	// The projected turn_open carries the step's instruction as its prompt; the pane
+	// reads the fallback's turn_open for its node_path and n and ignores the prompt.
+	return rs.stepReplays.take(sessionID), marotte.RunStepTranscriptReady
 }
 
-// stepTranscriptRows drops the first user row because KAS persists a step's
-// instruction first and the pane already renders it. Later user rows are human
-// interventions; this is positional because KAS exposes no durable discriminator.
-// Event rows stay out because a step has no turn card to badge.
-func stepTranscriptRows(msgs []marotte.Message) []marotte.Message {
-	out := make([]marotte.Message, 0, len(msgs))
-	instructionSeen := false
-	for i := range msgs {
-		switch msgs[i].Role {
-		case marotte.RoleAssistant:
-			out = append(out, msgs[i])
-		case marotte.RoleUser:
-			if instructionSeen {
-				out = append(out, msgs[i])
-			}
-			instructionSeen = true
-		}
+// TurnRange reads one step turn's tail out of the run's own log, the repair read the
+// run pane runs on a `run_turn` stamp mismatch or a seq hole. There is no replay
+// fallback: a replayed session carries no turn ids, so a turn this log never held is
+// not addressable in that source, which is why the verdict is found-or-not rather
+// than StepTranscript's three states. found is false for a run with no log.
+func (rs *Runs) TurnRange(ctx context.Context, workflowID, turn string, from uint64) (entries []marotte.Entry, open []marotte.OpenEntry, stamps []*marotte.SubjectStamp, found bool, err error) {
+	if rs.log == nil {
+		return nil, nil, nil, false, nil
 	}
-	return out
+	return rs.log.turnRange(ctx, workflowID, turn, from)
+}
+
+func (rs *Runs) fromRunLog(ctx context.Context, out *marotte.RunStepTranscript) bool {
+	entries, open, stamps, found, err := rs.log.stepTurns(ctx, out.WorkflowID, out.NodePath)
+	if err != nil {
+		slog.Warn("step transcript: run log unreadable", "workflow_id", out.WorkflowID,
+			"node_path", out.NodePath, "error", err)
+		return true
+	}
+	if !found {
+		return false
+	}
+	out.State, out.Source = marotte.RunStepTranscriptReady, marotte.RunStepTranscriptSourceLog
+	out.Entries = entries
+	if open != nil {
+		out.OpenEntries = open
+	}
+	if stamps != nil {
+		out.Subject = stamps
+	}
+	return true
 }

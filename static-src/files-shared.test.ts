@@ -1,9 +1,8 @@
 // Unit tests for files-shared.ts — pure functions, no DOM dependency.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import { formatSize, joinPath, parentPath, sortEntries } from "./files-shared.js";
 import { isSafeUrl } from "./utils-url.js";
-import { relativeTime } from "./utils-format.js";
 
 describe("formatSize", () => {
   const cases: [number, string][] = [
@@ -171,59 +170,6 @@ describe("sortEntries", () => {
     const copy = [...original];
     sortEntries(original);
     expect(original).toEqual(copy);
-  });
-});
-
-describe("relativeTime", () => {
-  it("returns 'just now' for timestamps less than 60s ago", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
-    expect(relativeTime(Date.now() - 30_000)).toBe("just now");
-    expect(relativeTime(Date.now() - 59_000)).toBe("just now");
-    vi.useRealTimers();
-  });
-
-  it("returns minutes for timestamps 1-59 minutes ago", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
-    expect(relativeTime(Date.now() - 60_000)).toBe("1m ago");
-    expect(relativeTime(Date.now() - 5 * 60_000)).toBe("5m ago");
-    expect(relativeTime(Date.now() - 59 * 60_000)).toBe("59m ago");
-    vi.useRealTimers();
-  });
-
-  it("returns hours for timestamps 1-23 hours ago", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
-    expect(relativeTime(Date.now() - 3600_000)).toBe("1h ago");
-    expect(relativeTime(Date.now() - 12 * 3600_000)).toBe("12h ago");
-    expect(relativeTime(Date.now() - 23 * 3600_000)).toBe("23h ago");
-    vi.useRealTimers();
-  });
-
-  it("returns days for timestamps 1-29 days ago", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
-    expect(relativeTime(Date.now() - 86400_000)).toBe("1d ago");
-    expect(relativeTime(Date.now() - 7 * 86400_000)).toBe("7d ago");
-    expect(relativeTime(Date.now() - 29 * 86400_000)).toBe("29d ago");
-    vi.useRealTimers();
-  });
-
-  it("returns months for timestamps 30-364 days ago", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
-    expect(relativeTime(Date.now() - 30 * 86400_000)).toBe("1mo ago");
-    expect(relativeTime(Date.now() - 90 * 86400_000)).toBe("3mo ago");
-    vi.useRealTimers();
-  });
-
-  it("returns years for timestamps 365+ days ago", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
-    expect(relativeTime(Date.now() - 365 * 86400_000)).toBe("1y ago");
-    expect(relativeTime(Date.now() - 730 * 86400_000)).toBe("2y ago");
-    vi.useRealTimers();
   });
 });
 

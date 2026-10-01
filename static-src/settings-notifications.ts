@@ -39,8 +39,12 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 
 /** The DOM input holding each keyed kind's toggle. Separate from
  *  KEYED_PUSH_KINDS (which pairs a kind with its SETTINGS key) because the two
- *  answer different questions and only one of them is the server's. */
-const KIND_INPUT_IDS: Readonly<Record<string, string>> = {
+ *  answer different questions and only one of them is the server's.
+ *
+ *  Exported for the key-set guard in `push-kinds.test.ts`: `kindRows` SKIPS a kind
+ *  with no entry here, which is the right degradation for a kind whose markup is
+ *  late and a silent one for a kind nobody ever gave a row. */
+export const KIND_INPUT_IDS: Readonly<Record<string, string>> = {
   agent_finished: "notify-finished-toggle",
   pr_status: "notify-pr-status-toggle",
   run_outcome: "notify-run-outcome-toggle",

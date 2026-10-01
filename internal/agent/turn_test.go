@@ -4,113 +4,77 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// openTestTurn opens a turn on reg and returns it, failing when the open was
-// refused. A helper that can fail, so it marks t.Helper() and t.Fatals itself.
+// openTestTurn records a prompt turn on reg's lifecycle for chatID, at the registry
+// alone: no store append, because these tests are about the registry's own state
+// machine. The id is minted per call so two opens on one chat never collide.
 func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *Turn {
 	t.Helper()
-	turn := reg.open(t.Context(), chatID, marotte.TurnSourcePrompt, "", 0)
-	if turn == nil {
-		t.Fatalf("open(%q) was refused", chatID)
+	id := "t-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	lc := reg.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if !lc.slotFreeLocked(marotte.TurnSourcePrompt) {
+		t.Fatalf("open(%q) was refused: the prompt slot is held", chatID)
 	}
-	return turn
+	return lc.openLocked(chatID, &marotte.Entry{ID: id}, marotte.TurnSourcePrompt, "", turnlog.Open(id, nil))
 }
 
-// TestTurnRegistry_InterruptIsFirstWinsPerEpoch pins both guards on the cause a turn ends
-// with. FIRST-WINS because two writers reach one turn — a user pressing Cancel and
-// kiro-cli's tool-use filter — and neither may relabel the other. EPOCH-SCOPED because a
-// cause offered for a finished epoch must land nowhere; while it lived on the bridge,
-// turn A's cause survived into turn B.
-func TestTurnRegistry_InterruptIsFirstWinsPerEpoch(t *testing.T) {
+// TestTurnRegistry_InterruptIsFirstWinsPerTurn pins both guards on the cause a turn
+// ends with. FIRST-WINS because two writers reach one turn — a user pressing Cancel
+// and kiro-cli's tool-use filter — and neither may relabel the other. ID-SCOPED
+// because a cause offered for a finished turn must land nowhere; while it lived on
+// the bridge, turn A's cause survived into turn B.
+func TestTurnRegistry_InterruptIsFirstWinsPerTurn(t *testing.T) {
 	reg := newTurnRegistry()
 	turn := openTestTurn(t, reg, "c1")
 
-	if !reg.interrupt("c1", turn.Epoch, "the filter stopped it") {
+	if !reg.interrupt("c1", turn.ID, "the filter stopped it") {
 		t.Fatal("the first cause on an open turn must be taken")
 	}
-	if reg.interrupt("c1", turn.Epoch, "a later cause") {
+	if reg.interrupt("c1", turn.ID, "a later cause") {
 		t.Error("a second cause was taken; the turn's cause is already decided")
 	}
 	if got := reg.interruptCause(turn); got != "the filter stopped it" {
 		t.Errorf("cause = %q, want the FIRST one to win", got)
 	}
 
-	// The turn ends and another opens. The old epoch names a turn that is over,
-	// so a cause armed for it must not reach the new one.
+	// The turn ends and another opens. The old id names a turn that is over, so a
+	// cause armed for it must not reach the new one.
 	reg.finish(turn, marotte.TurnResult{})
 	next := openTestTurn(t, reg, "c1")
-	if reg.interrupt("c1", turn.Epoch, "stale cause") {
-		t.Error("a cause for a finished epoch was accepted")
+	if reg.interrupt("c1", turn.ID, "stale cause") {
+		t.Error("a cause for a finished turn was accepted")
 	}
 	if got := reg.interruptCause(next); got != "" {
 		t.Errorf("the new turn carries %q; a previous turn's cause must not survive into it", got)
 	}
 }
 
-// TestTurnRegistry_StagedSummaryAccumulatesWithinOneTurn is why the metering summary is
-// staged on the record: several turn_completion frames can describe one turn, so last-wins
-// threw earlier measurements away. The TURN is also what bounds the sum — one count per
-// turn rather than per frame, restarting when the next turn opens.
-func TestTurnRegistry_StagedSummaryAccumulatesWithinOneTurn(t *testing.T) {
-	reg := newTurnRegistry()
-	turn := openTestTurn(t, reg, "c1")
-
-	total, first := reg.stageTurnSummary("c1", 1200)
-	if total != 1200 || !first {
-		t.Errorf("first frame = (%v, %v), want (1200, true)", total, first)
-	}
-	total, first = reg.stageTurnSummary("c1", 300)
-	if total != 1500 {
-		t.Errorf("second frame total = %v, want 1500 (both frames describe this turn)", total)
-	}
-	if first {
-		t.Error("the second frame reported itself first; the turn would be counted twice")
-	}
-
-	reg.finish(turn, marotte.TurnResult{})
-	openTestTurn(t, reg, "c1")
-	total, first = reg.stageTurnSummary("c1", 700)
-	if total != 700 || !first {
-		t.Errorf("first frame of the next turn = (%v, %v), want (700, true) — the previous "+
-			"turn's duration must not carry over", total, first)
-	}
-}
-
-// TestTurnRegistry_StagedSummaryWithNoTurnOpen keeps the interim honest: a frame
-// arriving for a turn marotte never opened has nothing to stage onto, so it
-// stands alone and is counted.
-func TestTurnRegistry_StagedSummaryWithNoTurnOpen(t *testing.T) {
-	reg := newTurnRegistry()
-
-	total, first := reg.stageTurnSummary("c1", 900)
-	if total != 900 || !first {
-		t.Errorf("stageTurnSummary with no turn open = (%v, %v), want (900, true)", total, first)
-	}
-}
-
-// TestTurnRegistry_ClaimIsFirstWins pins the exclusion the finalizer rests on: two closers
-// reaching one turn persist and announce it once. The loser WAITS rather than being refused
-// — the winner's persistence and broadcast run with no lock held, so the loser observes the
-// result of that work rather than a half-finalized turn.
+// TestTurnRegistry_ClaimIsFirstWins pins the exclusion the finalizer rests on: two
+// closers reaching one turn persist and announce it once. The loser WAITS rather than
+// being refused — the winner's persistence and broadcast run with no lock held, so the
+// loser observes the result of that work rather than a half-finalized turn.
 func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	reg := newTurnRegistry()
 	openTestTurn(t, reg, "c1")
 
-	turn, won := reg.claimOpen(t.Context(), "c1")
+	turn, won := reg.claimOwn(t.Context(), "c1")
 	if !won {
 		t.Fatal("claiming an open turn must be taken")
 	}
 
 	second := make(chan bool, 1)
 	go func() {
-		_, ok := reg.claimOpen(context.WithoutCancel(t.Context()), "c1")
+		_, ok := reg.claimOwn(context.WithoutCancel(t.Context()), "c1")
 		second <- ok
 	}()
 	select {
@@ -131,22 +95,31 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 }
 
 // TestTurnRegistry_FinalizeWakesAParkedOpen is the normal-path deadlock guard, and the
-// reason the waitable is a channel closed on EVERY state change: armed only where a frame
-// folds, a finalize woke nobody and the user's next prompt parked in StartTurn forever.
+// reason the waitable is a channel closed on EVERY state change: armed only where a
+// frame folds, a finalize woke nobody and the user's next prompt parked in its open
+// forever. withLifecycle is the one door an open goes through.
 func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	reg := newTurnRegistry()
 	first := openTestTurn(t, reg, "c1")
-	if _, won := reg.claimOpen(t.Context(), "c1"); !won {
+	if _, won := reg.claimOwn(t.Context(), "c1"); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
 	opened := make(chan *Turn, 1)
 	go func() {
-		opened <- reg.open(context.WithoutCancel(t.Context()), "c1", marotte.TurnSourcePrompt, "", 0)
+		var next *Turn
+		err := reg.withLifecycle(context.WithoutCancel(t.Context()), "c1", func(lc *chatLifecycle) error {
+			next = lc.openLocked("c1", &marotte.Entry{ID: "t-next"}, marotte.TurnSourcePrompt, "", turnlog.Open("t-next", nil))
+			return nil
+		})
+		if err != nil {
+			next = nil
+		}
+		opened <- next
 	}()
 
 	// The parked open must not proceed while the chat is finalizing: that is what
-	// keeps the next epoch unobservable until the previous turn's persistence and
+	// keeps the next turn unobservable until the previous one's persistence and
 	// broadcast have completed.
 	select {
 	case <-opened:
@@ -160,28 +133,36 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 		if turn == nil {
 			t.Fatal("the woken open was refused")
 		}
-		if turn.Epoch == first.Epoch {
-			t.Errorf("the woken open reused epoch %d instead of minting the next one", turn.Epoch)
+		if turn.Seq <= first.Seq {
+			t.Errorf("the woken open took seq %d after seq %d; the open sequence must advance", turn.Seq, first.Seq)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("a finalize did not wake the parked open; the next prompt never reaches KAS")
 	}
 }
 
-// TestTurnRegistry_OpenIsCancellable pins the other half of choosing a channel
-// over a sync.Cond: a waiter can be given up on. Cond.Wait composes with no
-// cancellation at all, so a chat wedged in finalizing held its caller for good.
+// TestTurnRegistry_OpenIsCancellable pins the other half of choosing a channel over a
+// sync.Cond: a waiter can be given up on. Cond.Wait composes with no cancellation at
+// all, so a chat wedged in finalizing held its caller for good.
 func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 	reg := newTurnRegistry()
 	openTestTurn(t, reg, "c1")
-	if _, won := reg.claimOpen(t.Context(), "c1"); !won {
+	if _, won := reg.claimOwn(t.Context(), "c1"); !won {
 		t.Fatal("claiming the open turn must be taken")
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if turn := reg.open(ctx, "c1", marotte.TurnSourcePrompt, "", 0); turn != nil {
-		t.Error("open on a cancelled context returned a turn")
+	ran := false
+	err := reg.withLifecycle(ctx, "c1", func(*chatLifecycle) error {
+		ran = true
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("withLifecycle on a cancelled ctx = %v, want context.Canceled", err)
+	}
+	if ran {
+		t.Error("the open body ran on a cancelled context while the chat was finalizing")
 	}
 }
 
@@ -193,61 +174,58 @@ func TestTurnRegistry_ForgetDropsTheChat(t *testing.T) {
 
 	reg.forget("c1")
 
-	if _, open := reg.openEpoch("c1"); open {
-		t.Error("a forgotten chat still reports an open turn")
+	if reg.live("c1") {
+		t.Error("a forgotten chat still reports a live turn")
 	}
 	reg.mu.Lock()
 	n := len(reg.chats)
 	reg.mu.Unlock()
-	// openEpoch recreates the lifecycle on read, so the count is 1 rather than 0;
-	// what must be gone is the TURN.
-	if n != 1 {
-		t.Errorf("registry holds %d lifecycles, want 1 (the one openEpoch just recreated)", n)
+	if n != 0 {
+		t.Errorf("registry holds %d lifecycles after forget, want 0", n)
 	}
 }
 
-// stubMeteringStore is a bridgeChatRecords whose Mutate fails with a chosen
-// error, so the metering write's error handling can be driven without a real
-// store.
-type stubMeteringStore struct{ mutateErr error }
-
-func (s stubMeteringStore) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) {
-	return nil, false
-}
-func (s stubMeteringStore) BuildHistory(context.Context, marotte.ChatID) string { return "" }
-func (s stubMeteringStore) AppendMessage(context.Context, marotte.ChatID, *marotte.Message) error {
-	return nil
+// failingUsageStore answers every Mutate with one chosen error and is asked nothing
+// else, which is what lets the embedded interface stay nil: a real persist failure has
+// no store-side seam, so the metering write's error handling is driven from here.
+type failingUsageStore struct {
+	bridgeChatRecords
+	err error
 }
 
-func (s stubMeteringStore) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
-	return "", s.mutateErr
+func (s failingUsageStore) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
+	return "", s.err
 }
 
-func (s stubMeteringStore) UpdateMessage(context.Context, marotte.ChatID, string, func(*marotte.Message)) error {
-	return nil
-}
-
-// TestMutateUsage_TombstonedRefusalIsNotAnError pins the drop the tombstone was designed
-// for. ErrTombstoned means the write was DECLINED for a chat id deleted inside the window,
-// so nothing reached disk — and a metering frame lands once per turn on every chat, so
-// surfacing it would put an ERROR line in the log for the mechanism working as intended.
+// TestMutateUsage_TombstonedRefusalIsNotAnError pins the drop the tombstone was
+// designed for. ErrTombstoned means the write was DECLINED for a chat id deleted inside
+// the window, so nothing reached disk — and a metering frame lands once per turn on
+// every chat, so surfacing it would put an ERROR line in the log for the mechanism
+// working as intended. Driven through the REAL store's tombstone, not a stub's error.
 func TestMutateUsage_TombstonedRefusalIsNotAnError(t *testing.T) {
-	bc := &BridgeCoordinator{chatStore: stubMeteringStore{mutateErr: chat.ErrTombstoned}, turns: newTurnRegistry()}
+	h, cs, _ := newTestHub()
+	cs.seed(t, "c1", nil)
+	if err := cs.Delete(t.Context(), "c1"); err != nil {
+		t.Fatalf("Delete(c1) = %v", err)
+	}
 	logs := captureLogs(t)
 
-	bc.AccumulateSpend(t.Context(), "c1", 0.5)
-	bc.StageConversationTurnSummary(t.Context(), "c1", 1200)
+	h.coord.AccumulateSpend(t.Context(), "c1", 0.5)
+	h.coord.StageConversationTurnSummary(t.Context(), "c1", 1200)
 
 	if out := logs.String(); strings.Contains(out, `"level":"ERROR"`) {
 		t.Errorf("a tombstoned metering write logged an error: %s", out)
 	}
+	if _, ok := cs.Get(t.Context(), "c1"); ok {
+		t.Error("a metering write resurrected the deleted chat")
+	}
 }
 
-// TestMutateUsage_OtherErrorsStillLog is the other half, and it is what keeps the
-// drop narrow: matching the sentinel must not swallow a real persist failure — a
-// full disk, a permission fault, a corrupt chat file.
+// TestMutateUsage_OtherErrorsStillLog is the other half, and it is what keeps the drop
+// narrow: matching the sentinel must not swallow a real persist failure — a full disk,
+// a permission fault, a corrupt chat file.
 func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
-	bc := &BridgeCoordinator{chatStore: stubMeteringStore{mutateErr: errors.New("disk full")}, turns: newTurnRegistry()}
+	bc := &BridgeCoordinator{chatStore: failingUsageStore{err: errors.New("disk full")}, turns: newTurnRegistry()}
 	logs := captureLogs(t)
 
 	bc.AccumulateSpend(t.Context(), "c1", 0.5)
@@ -257,23 +235,22 @@ func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
 	}
 }
 
-// A chat forgotten mid-finalize still has its turn published on the lifecycle its waiters
-// are parked on. Re-resolving from the chat id creates a FRESH lifecycle on a miss, so a
-// finish in flight after a forget set that one idle and left the old one in turnFinalizing
-// forever — parking Forward's own goroutine there for the life of the process, with no
-// seal, no replay-projection settle and no exit tail. The turn carries its lifecycle now.
+// A chat forgotten mid-finalize still has its turn published on the lifecycle its
+// waiters are parked on. Re-resolving from the chat id creates a FRESH lifecycle on a
+// miss, so a finish in flight after a forget set that one idle and left the old one in
+// turnFinalizing forever — parking Forward's own goroutine there for the life of the
+// process, with no seal, no replay-projection settle and no exit tail. The turn carries
+// its lifecycle now.
 func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
 
 	lc := r.lifecycleFor(chatID)
-	if r.open(ctx, chatID, marotte.TurnSourcePrompt, "", 0) == nil {
-		t.Fatal("open returned no turn")
-	}
-	claimed, won := r.claimOpen(ctx, chatID)
+	openTestTurn(t, r, chatID)
+	claimed, won := r.claimOwn(ctx, chatID)
 	if !won {
-		t.Fatal("claimOpen lost the claim on a freshly opened turn")
+		t.Fatal("claimOwn lost the claim on a freshly opened turn")
 	}
 
 	// The chat goes away while its turn is finalizing.
@@ -298,17 +275,18 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 			"on a channel nothing will close")
 	}
 	lc.mu.Lock()
-	state, cur := lc.state, lc.cur
+	state, own := lc.state, lc.own
 	lc.mu.Unlock()
-	if state != turnIdle || cur != nil {
-		t.Errorf("the forgotten lifecycle is state %v with cur %v, want idle and nil: the finalize "+
-			"published somewhere else", state, cur)
+	if state != turnIdle || own != nil {
+		t.Errorf("the forgotten lifecycle is state %v with own %v, want idle and nil: the finalize "+
+			"published somewhere else", state, own)
 	}
 }
 
-// busyChatIDs is the CHAT's-own-turn population, narrower than openTurnState's `Open`: it
-// excludes a workflow STEP turn, because a step's own frames latch nothing on any client,
-// so the launching chat must be in the RETRACTED set. turn_open_test.go pins the pair.
+// busyChatIDs is live's population — an own turn, a pending turn owed its bracket, or a
+// held admission slot — because it is the only set a client's stale-`thinking`
+// retraction may be withheld from, and the handshake and the transcript GET must not
+// disagree about it.
 func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	busySet := func(t *testing.T, r *turnRegistry) map[marotte.ChatID]bool {
 		t.Helper()
@@ -321,21 +299,11 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 
 	t.Run("a prompt turn is busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
-		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+		id, _ := h.stagePromptTurn(t, "c1")
+		t.Cleanup(func() { h.coord.ReleaseTurn("c1", id) })
 		if !busySet(t, h.coord.turns)["c1"] {
 			t.Error("a chat running its own prompt turn is absent from busy_chats, so a " +
 				"reconnect would retract `thinking` under a live turn")
-		}
-	})
-
-	t.Run("a workflow STEP turn is NOT busy", func(t *testing.T) {
-		h, _, _ := newTestHub()
-		epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
-		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
-		if busySet(t, h.coord.turns)["c1"] {
-			t.Error("a workflow step names its launching chat busy, so the retraction is " +
-				"withheld from exactly the population it was designed to reach")
 		}
 	})
 
@@ -356,10 +324,10 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	// so the turn has to be finalized for the chat to be idle.
 	t.Run("a settled chat is not busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
-		turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
+		h.stagePromptTurn(t, "c1")
+		turn, won := h.coord.turns.claimOwn(t.Context(), "c1")
 		if !won {
-			t.Fatal("claimOpen lost the claim on a freshly opened turn")
+			t.Fatal("claimOwn lost the claim on a freshly opened turn")
 		}
 		h.coord.turns.finish(turn, marotte.TurnResult{})
 		if busySet(t, h.coord.turns)["c1"] {

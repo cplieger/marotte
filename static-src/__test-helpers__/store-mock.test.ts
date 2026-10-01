@@ -19,6 +19,7 @@
 import { describe, it, expect } from "vitest";
 
 import { storeMock } from "./store-mock.js";
+import { makeSession } from "./model.js";
 import * as store from "../store.js";
 import type { Session } from "../types.js";
 
@@ -47,7 +48,7 @@ describe("the store.js mock helper stays total", () => {
 // old one with both suites green. This is the behaviour half of the guard.
 describe("the mock's re-derived rules agree with the real ones", () => {
   function session(fields: Partial<Session>): Session {
-    return { id: "c1", messages: [], ...fields } as unknown as Session;
+    return { ...makeSession({ id: "c1" }), ...fields };
   }
 
   it("derivedHasMore", () => {
@@ -61,24 +62,26 @@ describe("the mock's re-derived rules agree with the real ones", () => {
     }
   });
 
-  it("turnBaseOf", () => {
-    for (const s of [
-      session({}),
-      session({ turn_offset: 0, turn_segment_closed: false }),
-      session({ turn_offset: 12, turn_segment_closed: true }),
-    ]) {
-      expect(storeMock.turnBaseOf(s)).toEqual(store.turnBaseOf(s));
+  function turns(...closeAts: readonly (number | undefined)[]): Session["turns"] {
+    const m = new Map<string, unknown>();
+    for (const [i, closeAt] of closeAts.entries()) {
+      m.set(`t-${String(i)}`, { closeAt });
     }
-  });
+    return m as Session["turns"];
+  }
 
   it("turnLive", () => {
     for (const s of [
-      session({ thinking: false }),
-      session({ thinking: true }),
-      session({ thinking: false, turn_open: true }),
+      session({ turns: turns() }),
+      // A resident turn with no `turn_close`: liveness is the LOG, so this term alone
+      // answers and `thinking` may not outrank it.
+      session({ turns: turns(undefined), thinking: false }),
+      session({ turns: turns(4), thinking: true }),
+      // The header's own `live`, for a chat whose window is not resident.
+      session({ turns: turns(4), turn_open: true }),
       // The boot snapshot's row, which states neither input. Without it this guard
       // cannot see a drift in the third term.
-      session({ thinking: false, provisional: true }),
+      session({ turns: turns(4), provisional: true }),
     ]) {
       expect(storeMock.turnLive(s)).toBe(store.turnLive(s));
     }

@@ -35,8 +35,7 @@ import {
   indexOfSession,
   setModel,
   setCurrentMode,
-  setTurnFailed,
-  setTurnDone,
+  turnLive,
   recordSteerSent,
   recordSteerQueued,
   forgetSteer,
@@ -279,7 +278,7 @@ export const compactChat = transportAction<{ chatID: string }>({
  *
  *  `error: false`: submit.ts owns the failure surface. */
 export const steerChat = defineAction<
-  { chatID: string; text: string; messageID: string },
+  { chatID: string; text: string; messageID: string; resends?: readonly string[] },
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- run consumes the POST body itself, no result for a caller
   void,
   { chatID: string; steerID: string }
@@ -289,11 +288,20 @@ export const steerChat = defineAction<
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
   error: false,
-  run: async ({ chatID, text, messageID }, signal, ctx) => {
+  run: async ({ chatID, text, messageID, resends }, signal, ctx) => {
     const cmd: Parameters<typeof transportSend>[0] = {
       type: "steer",
       chat_id: chatID,
-      payload: { text, message_id: messageID },
+      payload: {
+        text,
+        message_id: messageID,
+        // A conditional spread rather than `: undefined`, because this literal is
+        // checked against the TYPED command (the prompt's is checked against the loose
+        // `Command`, whose payload takes an undefined value) and
+        // `exactOptionalPropertyTypes` refuses one there. Same bytes on the wire:
+        // an empty batch sends no field at all.
+        ...(resends !== undefined && resends.length > 0 ? { resends } : {}),
+      },
     };
     if (ctx?.idempotencyKey !== undefined) {
       (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD] = ctx.idempotencyKey;
@@ -523,7 +531,10 @@ export const switchModel = defineAction<
   retry: RETRY_STANDARD,
   optimistic: ({ chatID, model }) => {
     const session = get(chatID);
-    if (session === undefined) {
+    // A pick made during a turn becomes `pending_model` and the turn keeps running on
+    // the old model, so an optimistic write asserts a switch the server did not make
+    // and the header echo flips the pill back. The badge carries the pending pick.
+    if (session === undefined || turnLive(session)) {
       return undefined;
     }
     const prev = session.model;
@@ -564,7 +575,8 @@ export const switchModel = defineAction<
 // standard API timeout; turn completion is SSE-anchored. Returns "sent" on
 // ack, "queued" on plain 409 (steerable turn in flight), "starting" on 409
 // reason:"starting" (admission holder is a spawn, a shell command or a workflow
-// step, none of which can receive a steer), or null on any other error.
+// step, none of which can receive a steer), "gone" on 409 reason:"chat_not_found"
+// (a tombstoned chat), or null on any other error.
 //
 // `error: false`: failure-notice.ts already raises the toast via
 // transport.send's reportSendState.
@@ -575,48 +587,28 @@ interface SendPromptArgs {
   messageID: string;
   model: string;
   attachments?: readonly unknown[];
+  resends?: readonly string[];
 }
-
-/** Latch snapshots for in-flight sends, keyed by message id. The `starting`
- *  arm returns a VALUE (framework rollback never runs for it), so this
- *  restores what rollback would: the previous turn's verdict stands. */
-const latchSnapshots = new Map<string, { turnFailed: boolean; turnDone: boolean }>();
 
 export const sendPrompt = defineAction<
   SendPromptArgs,
-  "sent" | "queued" | "starting",
-  { chatID: string; turnFailed: boolean; turnDone: boolean }
+  "sent" | "queued" | "starting" | "gone",
+  { chatID: string }
 >({
   name: "chat.send_prompt",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
-  optimistic: ({ chatID, messageID }) => {
-    // Captured because setThinking(true) clears these latches; a rollback
-    // must restore a failure/done mark the reader had not yet seen.
-    const s = get(chatID);
-    const snapshot = {
-      chatID,
-      turnFailed: s?.turn_failed === true,
-      turnDone: s?.turn_done === true,
-    };
-    latchSnapshots.set(messageID, { turnFailed: snapshot.turnFailed, turnDone: snapshot.turnDone });
+  optimistic: ({ chatID }) => {
     setThinking(chatID, true);
-    return snapshot;
+    return { chatID };
   },
-  rollback: (args, op) => {
-    latchSnapshots.delete(args.messageID);
+  rollback: (_args, op) => {
     if (op !== undefined) {
       setThinking(op.chatID, false);
-      if (op.turnFailed) {
-        setTurnFailed(op.chatID);
-      }
-      if (op.turnDone) {
-        setTurnDone(op.chatID);
-      }
     }
   },
   run: async (args, signal, ctx) => {
-    const { chatID, text, messageID, model, attachments } = args;
+    const { chatID, text, messageID, model, attachments, resends } = args;
     const r = await transportSend(
       {
         type: "prompt",
@@ -632,38 +624,31 @@ export const sendPrompt = defineAction<
           model,
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
+          resends: resends !== undefined && resends.length > 0 ? resends : undefined,
         },
       },
       { signal, reportSendState: true, timeoutMs: API_TIMEOUT_MS },
     );
     if (r.ok) {
-      latchSnapshots.delete(messageID);
       return "sent";
     }
     if (r.status === 409) {
       if (r.reason === "starting") {
-        // The admission holder is a cold spawn, a shell command or a workflow
-        // step — none of which can receive a steer — so this is a POST-PERSIST
-        // failure class: the user row is already persisted and rendered (persist
-        // precedes reservation server-side). Returned as a VALUE so the caller
-        // can branch on it, which means the framework's rollback never runs; the
-        // full optimistic write is undone here instead. Thinking retracted,
-        // because thinking left true would turn the user's retry into a steer,
-        // and the latches restored so the previous turn's verdict stands until
-        // the holder's own turn opens.
+        // The admission holder is a cold spawn, a shell command or a workflow step — none of
+        // which can receive a steer. Returned as a VALUE so the caller can branch on it, which
+        // means the framework's rollback never runs and the optimistic write is undone here:
+        // `thinking` left true would turn the user's retry into a steer. The dot then reads
+        // whatever the log says, which for the previous turn is its own `turn_close`.
         setThinking(chatID, false);
-        const snap = latchSnapshots.get(messageID);
-        if (snap?.turnFailed === true) {
-          setTurnFailed(chatID);
-        }
-        if (snap?.turnDone === true) {
-          setTurnDone(chatID);
-        }
-        latchSnapshots.delete(messageID);
         return "starting";
       }
+      if (r.reason === "chat_not_found") {
+        // A tombstoned chat: there is no turn to steer into and no record to prompt, so this is
+        // neither "queued" nor a transport failure. Keyed on the reason, never the error text.
+        setThinking(chatID, false);
+        return "gone";
+      }
       // A steerable turn is in flight; caller (submit.ts) converts to a steer.
-      latchSnapshots.delete(messageID);
       return "queued";
     }
     throw new ActionError(r.error ?? "send failed", {

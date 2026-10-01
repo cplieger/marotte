@@ -11,23 +11,22 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
-import { adoptThemeFromSettings, syncSettings } from "../settings.js";
+import { adoptThemeFromSettings, applyGeneralPanel, syncSettings } from "../settings.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { setWorkspaceRoot } from "../workspace.js";
 import {
   getSessions,
   setAgentStatus,
   setCurrentMode,
+  setThinking,
   forgetSteers,
-  clearTurnFailed,
-  clearTurnDone,
 } from "../store.js";
 import { refreshActiveView } from "../tabs.js";
 import { dropDecisions, dropRunDecisions } from "../decision-dock.js";
 import { closeNotificationsExcept } from "../notify.js";
 import { askTarget, chatTarget, pushTargetTag, runTarget } from "../push-subject.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
-import { clearTurnState, retractStaleThinking } from "../turn-teardown.js";
+import { clearTurnState } from "../turn-teardown.js";
 import { refreshRetention } from "../retention.js";
 import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 import { fetchCatalog } from "../session-catalog.js";
@@ -44,44 +43,67 @@ onSSE("connected", (_chatID, p) => {
   if (typeof p.workspace === "string" && p.workspace !== "") {
     setWorkspaceRoot(p.workspace);
   }
-  retractUnconfirmedThinking(p);
-  // OUTSIDE the retraction's own gate on purpose: the inventory is workspace-global, so
+  reconcileThinking(p);
+  // OUTSIDE the reconcile's own gate on purpose: the inventory is workspace-global, so
   // it is not scoped by the chat filter and carries its own completeness flag, and an
-  // early return inside the retraction must not swallow it.
+  // early return inside the reconcile must not swallow it.
   adoptConnectRuns(p);
 });
 
-/** Stop believing a `thinking` the server does not confirm.
+/** Reconcile every chat's `thinking` against the busy set the handshake states.
  *
- *  Never writes `setTurnOpen`, which keeps that field at ONE writer (the newest-page window
- *  GET) and would read false for a step turn that is genuinely streaming; the residual, shared
- *  with A2's `run` arm, is a chat whose window was fetched while a step turn was open reading
- *  LIVE until its next fetch. ORDERING: on a RECONNECT this lands before `loadList`, on the
- *  FIRST connect it does not (`transport.ts` holds every frame while `!hydrated`), and
- *  `relatchTurnVerdict`'s header fallback is what buys the order-independence. */
-function retractUnconfirmedThinking(p: ConnectedPayload): void {
+ *  `busy_chats` is a statement in BOTH directions while `busy_stated`: the chats it names
+ *  hold a turn in flight of their own, and the chats it omits do not. So this door clears a
+ *  latch the server does not confirm AND adopts one no stream is going to re-announce.
+ *  `thinking` is latched from streamed frames alone (`markTurnLive`, and the optimistic
+ *  send), and a page load replays neither, so without the adopt arm a chat that was working
+ *  before a reload reads `idle` or `done` until its agent's next delta — across a long tool
+ *  call, minutes of a dot claiming the turn had ended.
+ *
+ *  Never writes `setTurnOpen`, which keeps that field at ONE writer, the newest-page window
+ *  GET. Order-independent against `loadList` (a RECONNECT lands before it, the FIRST connect
+ *  after it, since `sse-adapter.ts` holds every frame until `markHydrated`): the dot is derived
+ *  from the log plus the header's own outcome, so neither order leaves a verdict behind. */
+function reconcileThinking(p: ConnectedPayload): void {
   // A scoped or over-cap list states NOTHING about the chats it omits, so the flag is what
-  // bounds the blast radius rather than making a clear over a live turn merely unlikely.
+  // bounds the blast radius rather than making a clear over a live turn merely unlikely. It
+  // gates the ADOPT arm for the same reason read from the other side: a withheld list is
+  // withheld whole, so it names no chat and adopting from it would latch nothing while
+  // reading as a complete answer.
   if (!p.busy_stated) {
     return;
   }
   const busy = new Set(p.busy_chats ?? []);
   let cleared = 0;
+  let adopted = 0;
   for (const s of getSessions()) {
-    if (!s.thinking || busy.has(s.id)) {
+    if (busy.has(s.id)) {
+      // On the TRANSITION only, like `markTurnLive`: `setThinking(true)` clears the previous
+      // turn's verdicts, which is what a `done` chat that is working again needs, and running
+      // it over a live latch would re-clear them on every reconnect.
+      if (!s.thinking) {
+        setThinking(s.id, true);
+        adopted++;
+      }
       continue;
     }
-    // The NARROW retraction, never `healSettledChat`: `busy_chats` deliberately omits a chat
-    // whose only open turn is a workflow STEP, so a chat reached here may still have one
-    // streaming — and a busy-but-UNDECLARED chat gets the bare busy signal with no `message`,
-    // so nothing would re-note the live-turn marker a full teardown drops.
-    retractStaleThinking(s.id);
+    if (!s.thinking) {
+      continue;
+    }
+    // `busy_chats` names a chat with a turn of its OWN in flight, so an omitted chat's
+    // `thinking` is this client's memory of a stream the server does not confirm.
+    clearTurnState(s.id);
     cleared++;
   }
   if (cleared > 0) {
     console.warn(
       `[connect] cleared ${String(cleared)} stale thinking latches the server does not confirm`,
     );
+  }
+  if (adopted > 0) {
+    // Debug rather than warn: any reload while a chat is working reaches this, so it is the
+    // ordinary case rather than a disagreement with the server.
+    console.debug(`[connect] adopted ${String(adopted)} turns the server reports in flight`);
   }
 }
 
@@ -99,6 +121,11 @@ onSSE("settings_updated", () => {
     // A theme chosen on another device lands here. Safe against a loop:
     // syncSettings already seeded the write tracker from this payload.
     adoptThemeFromSettings(s);
+    // The General panel's own CONTROLS. `refreshRetention` below and the three
+    // spawn-time capability reads carry the EFFECT; without this the checkboxes
+    // on a second device kept showing the old value under an effect that had
+    // already changed. `syncSettings` does the same for the notification rows.
+    applyGeneralPanel(s);
   });
   void refreshRetention();
 });
@@ -110,8 +137,6 @@ onBus(BUS_RECONCILE, ({ cause, signal }) => {
   // here knows how anything finished.
   const sessions = getSessions();
   for (const s of sessions) {
-    clearTurnFailed(s.id);
-    clearTurnDone(s.id);
     clearTurnState(s.id);
   }
   console.warn(`[reconcile:${cause}] tore down`, sessions.length, "sessions");
@@ -240,9 +265,9 @@ onBus(BUS_PAGE_RESUMED, () => {
 // steering to attachment) and none is invocable — see marotte.md "Slash
 // commands". Skills are discoverable instead, on the /docs Skills tab.
 
-// compaction_started is advisory only: `thinking` is already true (set by
-// the prompt send), and completion persists as a `compacted` event message
-// through the normal message_appended path.
+// compaction_started is advisory only: `thinking` is already true (set by the prompt send),
+// and the durable record is the `compaction` ENTRY, appended where the compaction happened —
+// which is also what marks the dock's rows (`handlers/entries.ts`).
 onSSE("compaction_started", () => {
   // intentional no-op
 });

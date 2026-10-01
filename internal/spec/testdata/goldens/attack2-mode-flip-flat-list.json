@@ -1,0 +1,56 @@
+{
+  "input_file": "attack2-mode-flip-flat-list.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "",
+      "text": "Set up the module",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "d739610bad36eea8a31472de4a632d9c15cc5b47bb5b3aaba89a011406e2e57a",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L2",
+      "line": 2,
+      "indent": 0,
+      "number": "2024",
+      "text": "2024 baseline numbers go in the notes",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "062b7a8c28c02393996459a0bbfd9738bada896cf6300273143da46620201e60",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 0,
+      "number": "",
+      "text": "Land the change",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "ddc0a636297dcc3e689f350c961380d9b5b1f9cee131d432103cdb671e9bb725",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

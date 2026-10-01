@@ -1,6 +1,6 @@
 package translate
 
-// A steer's DURABLE row: what a page reload rebuilds the note from.
+// A steer's DURABLE entry: what a page reload rebuilds the note from.
 //
 // The dock rows and the transcript marks both die with the page, and a plain F5 on
 // a live bridge triggers no session/load, so before these the only writer of a
@@ -10,28 +10,32 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// steerRows returns the chat's persisted steer rows, in file order.
-func steerRows(t *testing.T, store *testsupport.InMemoryChatStore, chatID marotte.ChatID) []marotte.Message {
+// steerRow is one steer entry: its id and its decoded payload.
+type steerRow struct {
+	marotte.EntrySteer
+	ID string
+}
+
+// steerRows returns the chat's steer entries in append order: sealed in its open
+// turn, then filed after its newest close.
+func steerRows(t *testing.T, deps *baseDeps, chatID marotte.ChatID) []steerRow {
 	t.Helper()
-	c, ok := store.Get(t.Context(), chatID)
-	if !ok {
-		t.Fatalf("chat %q not in the store", chatID)
-	}
-	var out []marotte.Message
-	for i := range c.Messages {
-		if c.Messages[i].UserKind == marotte.UserKindSteer {
-			out = append(out, c.Messages[i])
+	var out []steerRow
+	for _, entries := range [][]marotte.Entry{deps.chatEntries(chatID), deps.between[chatID]} {
+		for i := range entries {
+			if entries[i].Kind == marotte.EntryKindSteer {
+				out = append(out, steerRow{ID: entries[i].ID, EntrySteer: decodePayload[marotte.EntrySteer](t, &entries[i])})
+			}
 		}
 	}
 	return out
 }
 
 func TestSteeringInjected_PersistsAReadSteerRow(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+	deps, _, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-1": true}
 	tr := New(rolesOf(deps))
 
@@ -41,30 +45,24 @@ func TestSteeringInjected_PersistsAReadSteerRow(t *testing.T) {
 			"content":   "use tabs",
 		}), FrameAttribution{})
 
-	rows := steerRows(t, store, "c1")
+	rows := steerRows(t, deps, "c1")
 	if len(rows) != 1 {
-		t.Fatalf("persisted %d steer rows, want 1 — a read steer must survive a reload", len(rows))
+		t.Fatalf("persisted %d steer entries, want 1 — a read steer must survive a reload", len(rows))
 	}
 	row := rows[0]
 	// The id is KAS's own steer id, which is also the id the replay projection
-	// stamps, so a later session/load dedupes on it rather than doubling the note.
+	// stamps, so a later session/load pairs on it rather than doubling the note.
 	if row.ID != "steer-1" {
 		t.Errorf("ID = %q, want the steer id", row.ID)
 	}
-	if row.Role != marotte.RoleUser {
-		t.Errorf("Role = %q, want %q", row.Role, marotte.RoleUser)
+	if row.Text != "use tabs" {
+		t.Errorf("Text = %q, want the steer's text", row.Text)
 	}
-	if row.Content != "use tabs" {
-		t.Errorf("Content = %q, want the steer's text", row.Content)
+	if row.State != marotte.SteerStateRead {
+		t.Errorf("State = %q, want %q", row.State, marotte.SteerStateRead)
 	}
-	if row.SteerState != marotte.SteerStateRead {
-		t.Errorf("SteerState = %q, want %q", row.SteerState, marotte.SteerStateRead)
-	}
-	if row.SteerOrigin != marotte.SteerOriginUser {
-		t.Errorf("SteerOrigin = %q, want %q", row.SteerOrigin, marotte.SteerOriginUser)
-	}
-	if row.TurnOutcome != "" {
-		t.Errorf("TurnOutcome = %q, want empty — a steer row must not close a turn", row.TurnOutcome)
+	if row.Origin != marotte.SteerOriginUser {
+		t.Errorf("Origin = %q, want %q", row.Origin, marotte.SteerOriginUser)
 	}
 }
 
@@ -72,7 +70,7 @@ func TestSteeringInjected_PersistsAReadSteerRow(t *testing.T) {
 // after a reload as though it had landed is a false statement about the user's
 // own message, which is worse than the note being absent.
 func TestSteeringCleared_PersistsAnUndeliveredSteerRow(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+	deps, _, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-1": true}
 	tr := New(rolesOf(deps))
 
@@ -88,15 +86,15 @@ func TestSteeringCleared_PersistsAnUndeliveredSteerRow(t *testing.T) {
 			"messageIds": []string{"steer-1"},
 		}), FrameAttribution{})
 
-	rows := steerRows(t, store, "c1")
+	rows := steerRows(t, deps, "c1")
 	if len(rows) != 1 {
-		t.Fatalf("persisted %d steer rows, want 1", len(rows))
+		t.Fatalf("persisted %d steer entries, want 1", len(rows))
 	}
-	if rows[0].Content != "use tabs" {
-		t.Errorf("Content = %q, want the steer's text", rows[0].Content)
+	if rows[0].Text != "use tabs" {
+		t.Errorf("Text = %q, want the steer's text", rows[0].Text)
 	}
-	if rows[0].SteerState != marotte.SteerStateDropped {
-		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, marotte.SteerStateDropped)
+	if rows[0].State != marotte.SteerStateDropped {
+		t.Errorf("State = %q, want %q", rows[0].State, marotte.SteerStateDropped)
 	}
 }
 
@@ -104,7 +102,7 @@ func TestSteeringCleared_PersistsAnUndeliveredSteerRow(t *testing.T) {
 // model already read. That arrival is housekeeping, and reading it as a drop would
 // overwrite a delivered steer with "never read".
 func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	for _, f := range []struct {
@@ -118,12 +116,12 @@ func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
 		tr.HandleSessionInfoUpdate(t.Context(), "c1", steerFrame(t, f.kind, f.fields), FrameAttribution{})
 	}
 
-	rows := steerRows(t, store, "c1")
+	rows := steerRows(t, deps, "c1")
 	if len(rows) != 1 {
-		t.Fatalf("persisted %d steer rows, want 1 — the clear is housekeeping", len(rows))
+		t.Fatalf("persisted %d steer entries, want 1 — the clear is housekeeping", len(rows))
 	}
-	if rows[0].SteerState != marotte.SteerStateRead {
-		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, marotte.SteerStateRead)
+	if rows[0].State != marotte.SteerStateRead {
+		t.Errorf("State = %q, want %q", rows[0].State, marotte.SteerStateRead)
 	}
 }
 
@@ -140,7 +138,7 @@ func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
 // The ledger is left empty deliberately: that is every one of its loss modes at
 // once (the queued-frame race, TTL expiry, cap eviction, chat teardown, restart).
 func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	const id = "steer-m-mtyaeheu-i481u605rb5m5u2c1y"
 
@@ -154,16 +152,16 @@ func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
 			"messageIds": []string{id},
 		}), FrameAttribution{})
 
-	rows := steerRows(t, store, "c1")
+	rows := steerRows(t, deps, "c1")
 	if len(rows) != 1 {
-		t.Fatalf("persisted %d steer rows, want 1", len(rows))
+		t.Fatalf("persisted %d steer entries, want 1", len(rows))
 	}
-	if rows[0].SteerOrigin != marotte.SteerOriginUser {
-		t.Errorf("SteerOrigin = %q, want %q — a %q id is one this server sent",
-			rows[0].SteerOrigin, marotte.SteerOriginUser, marotte.SteerIDPrefix)
+	if rows[0].Origin != marotte.SteerOriginUser {
+		t.Errorf("Origin = %q, want %q — a %q id is one this server sent",
+			rows[0].Origin, marotte.SteerOriginUser, marotte.SteerIDPrefix)
 	}
-	if rows[0].SteerState != marotte.SteerStateDropped {
-		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, marotte.SteerStateDropped)
+	if rows[0].State != marotte.SteerStateDropped {
+		t.Errorf("State = %q, want %q", rows[0].State, marotte.SteerStateDropped)
 	}
 }
 
@@ -171,7 +169,7 @@ func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
 // workflow's report is something the reader typed — the defect SteerOrigin exists
 // to prevent, which the durable row would otherwise reintroduce on every reload.
 func TestSteeringInjected_PersistsTheAgentOrigin(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
@@ -180,12 +178,12 @@ func TestSteeringInjected_PersistsTheAgentOrigin(t *testing.T) {
 			"content":   "A workflow you launched completed.",
 		}), FrameAttribution{})
 
-	rows := steerRows(t, store, "c1")
+	rows := steerRows(t, deps, "c1")
 	if len(rows) != 1 {
-		t.Fatalf("persisted %d steer rows, want 1", len(rows))
+		t.Fatalf("persisted %d steer entries, want 1", len(rows))
 	}
-	if rows[0].SteerOrigin != marotte.SteerOriginAgent {
-		t.Errorf("SteerOrigin = %q, want %q", rows[0].SteerOrigin, marotte.SteerOriginAgent)
+	if rows[0].Origin != marotte.SteerOriginAgent {
+		t.Errorf("Origin = %q, want %q", rows[0].Origin, marotte.SteerOriginAgent)
 	}
 }
 
@@ -193,21 +191,21 @@ func TestSteeringInjected_PersistsTheAgentOrigin(t *testing.T) {
 // write. Two shapes reach it: the housekeeping clear above, and a clear for a
 // steer queued before this process started.
 func TestSteeringCleared_UnknownIDPersistsNothing(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+	deps, _, _ := depsWithStore(t, "c1")
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
 			"messageIds": []string{"steer-never-seen"},
 		}), FrameAttribution{})
 
-	if rows := steerRows(t, store, "c1"); len(rows) != 0 {
-		t.Errorf("persisted %d steer rows, want 0", len(rows))
+	if rows := steerRows(t, deps, "c1"); len(rows) != 0 {
+		t.Errorf("persisted %d steer entries, want 0", len(rows))
 	}
 }
 
-// Idempotent by id: a frame arriving twice is one row, or a reconnect or a repeat
-// would stack duplicate notes in the transcript.
-func TestSteeringInjected_IsIdempotentByID(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+// Keyed by id: every write of a steer takes KAS's steer id, the identity the replay
+// merge pairs on, so a frame delivered twice never mints a second one.
+func TestSteeringInjected_WritesUnderTheSteerIDEveryTime(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	frame := steerFrame(t, "steering_injected", map[string]any{
 		"messageId": "steer-1",
@@ -217,7 +215,52 @@ func TestSteeringInjected_IsIdempotentByID(t *testing.T) {
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", frame, FrameAttribution{})
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", frame, FrameAttribution{})
 
-	if rows := steerRows(t, store, "c1"); len(rows) != 1 {
-		t.Errorf("persisted %d steer rows, want 1", len(rows))
+	rows := steerRows(t, deps, "c1")
+	if len(rows) == 0 {
+		t.Fatal("persisted no steer entry")
+	}
+	for i, row := range rows {
+		if row.ID != "steer-1" {
+			t.Errorf("entry %d ID = %q, want the steer id every time", i, row.ID)
+		}
+	}
+}
+
+// ADDENDUM 8 (a): a finished run's notice is read in whatever turn the reader
+// prompts next, and the entry must say WHICH run and WHEN it finished, or an
+// hours-old result reads as news. A step's mid-run note and a user steer carry
+// neither, and a notice with no recorded run is written without a guess.
+func TestSteeringInjected_ARunNoticeCarriesItsRunsProvenance(t *testing.T) {
+	deps, _, _ := depsWithStore(t, "c1")
+	deps.userSteers = map[string]bool{"steer-1": true}
+	deps.runNotices = map[marotte.ChatID][]stagedRunNotice{"c1": {{workflowID: "wf_1", producedTs: 1_700_000_000_000}}}
+	tr := New(rolesOf(deps))
+
+	for _, f := range []struct {
+		id, text string
+	}{
+		{"notify-wf-7d2c", `A workflow you launched ("nightly") completed.`},
+		{"notify-step-9", "[notification/warning] a step is waiting"},
+		{"steer-1", "use tabs"},
+		{"notify-wf-e01a", `A workflow you launched ("weekly") failed.`},
+	} {
+		tr.HandleSessionInfoUpdate(t.Context(), "c1",
+			steerFrame(t, "steering_injected", map[string]any{"messageId": f.id, "content": f.text}), FrameAttribution{})
+	}
+
+	rows := steerRows(t, deps, "c1")
+	if len(rows) != 4 {
+		t.Fatalf("persisted %d steer entries, want 4", len(rows))
+	}
+	if rows[0].OriginRun != "wf_1" || rows[0].ProducedTs != 1_700_000_000_000 {
+		t.Errorf("run notice provenance = (%q, %d), want (wf_1, 1700000000000)", rows[0].OriginRun, rows[0].ProducedTs)
+	}
+	for _, i := range []int{1, 2} {
+		if rows[i].OriginRun != "" || rows[i].ProducedTs != 0 {
+			t.Errorf("%s carries provenance (%q, %d), want none: only a run's notice is late-able", rows[i].ID, rows[i].OriginRun, rows[i].ProducedTs)
+		}
+	}
+	if rows[3].OriginRun != "" || rows[3].ProducedTs != 0 {
+		t.Errorf("a notice with no recorded run carries (%q, %d), want none rather than a guess", rows[3].OriginRun, rows[3].ProducedTs)
 	}
 }

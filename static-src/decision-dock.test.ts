@@ -50,6 +50,7 @@ vi.mock("./toast.js", () =>
 );
 
 import {
+  mountChatDecisionDock,
   mountDecisionDock,
   mountRunDecisionDock,
   rerenderDocks,
@@ -59,11 +60,12 @@ import {
   collapseSettledDecision,
   collapseSettledRunInput,
   dropRunAsks,
-  RUN_INPUT_FALLBACK,
   DOCK_PHASE_MS,
   runPendingAsks,
   _resetForTest,
 } from "./decision-dock.js";
+import { BUS_USER_INPUT_ANSWERED, onBus } from "./bus.js";
+import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import { clampObservationCount } from "./clamp-text.js";
 // Not reachable through `loadCSS`: its glob is `../css/*.css`, and the MANIFEST
@@ -84,12 +86,12 @@ function session(id: string): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: 0,
-    messages: [],
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -346,6 +348,67 @@ describe("turn approval", () => {
   });
 });
 
+describe("the spec page's dock", () => {
+  function mountSpecHost(chat: () => string): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "hidden";
+    document.body.appendChild(el);
+    mountChatDecisionDock(el, chat);
+    return el;
+  }
+
+  it("renders the named chat's ask, whether or not that chat is active", () => {
+    // The composer's own dock filters on the ACTIVE chat; this one filters on
+    // the chat its host was mounted for, so a spec page whose chat is in the
+    // background still shows the checkpoint it is waiting on.
+    setSessions([session("c1"), session("c2")]);
+    setActive("c2");
+    const specHost = mountSpecHost(() => "c1");
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      requestID: 21,
+      payload: perm({ request_id: 21 }),
+      submit: vi.fn(),
+    });
+    expect(specHost.classList.contains("hidden")).toBe(false);
+    expect(liveCard(specHost)).not.toBeNull();
+    // And the composer's dock, pointed at c2, shows nothing.
+    expect(host().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows nothing for another chat's ask", () => {
+    const specHost = mountSpecHost(() => "c1");
+    pushDecision({
+      kind: "permission",
+      chatID: "c-other",
+      requestID: 22,
+      payload: perm({ request_id: 22 }),
+      submit: vi.fn(),
+    });
+    expect(specHost.classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows nothing while its getter answers empty, and re-keys when it fills", () => {
+    // The getter is a getter because re-parenting changes the id during the
+    // host's life; an empty answer must match no decision at all rather than
+    // matching every chat-less one.
+    let shown = "";
+    const specHost = mountSpecHost(() => shown);
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      requestID: 23,
+      payload: perm({ request_id: 23 }),
+      submit: vi.fn(),
+    });
+    expect(specHost.classList.contains("hidden")).toBe(true);
+    shown = "c1";
+    rerenderDocks();
+    expect(specHost.classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("the run tab's dock", () => {
   function mountRunHost(run: () => string): HTMLElement {
     const el = document.createElement("div");
@@ -585,7 +648,7 @@ describe("a workflow step's question", () => {
   }
 
   function textarea(h: HTMLElement = host()): HTMLTextAreaElement | null {
-    return liveCard(h)?.querySelector<HTMLTextAreaElement>(".run-input-text") ?? null;
+    return liveCard(h)?.querySelector<HTMLTextAreaElement>(".dock-ask-text") ?? null;
   }
 
   it("renders in the PARENT TAB, keyed to the launching chat", () => {
@@ -764,7 +827,7 @@ describe("a workflow step's question", () => {
       const runHost = mountRunHost(() => "wf_1");
       pushAsk("run:wf_1");
       const labels = [
-        ...(liveCard(runHost)?.querySelectorAll(".run-input-actions button") ?? []),
+        ...(liveCard(runHost)?.querySelectorAll(".dock-ask-actions button") ?? []),
       ].map((b) => b.textContent);
       expect(labels).toEqual(["Send answer", "Continue without answering"]);
     });
@@ -1045,6 +1108,103 @@ describe("a decision another surface answered", () => {
 
     expect(runHost.classList.contains("hidden")).toBe(true);
     expect(host().classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("an answered agent question on the bus", () => {
+  // The dock is the only surface that sees an answer to `_kiro/userInput`, and a
+  // spec page has to carry out the two Run answers of KAS's phase checkpoint. It
+  // announces rather than calling anything: `spec-view.ts` already imports this
+  // module for its own dock host, so the reverse edge would close a cycle.
+
+  function pushAsk(chatID = "c1", submit = vi.fn()): typeof submit {
+    pushDecision({
+      kind: "user_input",
+      chatID,
+      requestID: 7,
+      payload: {
+        request_id: 7,
+        question: "The spec is ready to implement. Run the tasks now?",
+        options: [
+          { title: "Run required tasks" },
+          { title: "Run required and optional tasks" },
+          { title: "Not now" },
+        ],
+      },
+      submit,
+    });
+    return submit;
+  }
+
+  function clickOption(title: string): void {
+    const scope = liveCard();
+    const btn = [...(scope?.querySelectorAll<HTMLButtonElement>(".user-input-option") ?? [])].find(
+      (b) => b.querySelector(".user-input-option-title")?.textContent === title,
+    );
+    btn?.click();
+  }
+
+  it("carries the chat and the answer verbatim, after the answer went out", () => {
+    const seen: { chatID: string; answer: string }[] = [];
+    const order: string[] = [];
+    const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => {
+      order.push("bus");
+      seen.push(p);
+    });
+    // The composer's dock shows the ACTIVE chat's queue, so a card for a chat
+    // other than c1 needs the active chat moved or nothing renders to click.
+    setActive("c2");
+    const submit = pushAsk(
+      "c2",
+      vi.fn(() => order.push("submit")),
+    );
+
+    clickOption("Run required and optional tasks");
+    off();
+
+    // Verbatim: the page matches the option's own title, so a reworded copy here
+    // would silently stop matching.
+    expect(seen).toEqual([{ chatID: "c2", answer: "Run required and optional tasks" }]);
+    expect(submit).toHaveBeenCalledWith("answered", "Run required and optional tasks");
+    // The agent has the answer before any consumer acts on it.
+    expect(order).toEqual(["submit", "bus"]);
+  });
+
+  it("announces nothing for a dismissal", () => {
+    const seen: unknown[] = [];
+    const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => seen.push(p));
+    const submit = pushAsk();
+
+    clickButton("Skip");
+    off();
+
+    // Skip means the agent advances by itself; there is no answer to carry.
+    expect(submit).toHaveBeenCalledWith("dismissed", undefined);
+    expect(seen).toEqual([]);
+  });
+
+  it("announces once however many times the answered card is clicked", () => {
+    // The answered card stays on screen for the length of the leaving phase with
+    // its listeners intact, so a second click reaches the callback and `settle`
+    // is what refuses it. The emit sits INSIDE that callback for exactly this:
+    // hoisted out, a second click would carry a second Run all to the agent.
+    const seen: unknown[] = [];
+    const off = onBus(BUS_USER_INPUT_ANSWERED, (p) => seen.push(p));
+    const submit = pushAsk();
+    const btn = [
+      ...(liveCard()?.querySelectorAll<HTMLButtonElement>(".user-input-option") ?? []),
+    ][0];
+    if (btn === undefined) {
+      throw new Error("no option button");
+    }
+
+    btn.click();
+    btn.click();
+    off();
+
+    expect(btn.isConnected).toBe(true);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(seen).toHaveLength(1);
   });
 });
 
@@ -1407,11 +1567,11 @@ function longAsk(chatID: string, submit: (text: string | null) => void = vi.fn()
 }
 
 function question(h: HTMLElement = host()): HTMLElement | null {
-  return liveCard(h)?.querySelector<HTMLElement>(".run-input-question") ?? null;
+  return liveCard(h)?.querySelector<HTMLElement>(".dock-ask-question") ?? null;
 }
 
 function opener(h: HTMLElement = host()): HTMLButtonElement | null {
-  return liveCard(h)?.querySelector<HTMLButtonElement>(".run-input-more") ?? null;
+  return liveCard(h)?.querySelector<HTMLButtonElement>(".dock-ask-more") ?? null;
 }
 
 describe("a question longer than the card", () => {
@@ -1468,7 +1628,7 @@ describe("a question longer than the card", () => {
 
     // Answered rather than merely clicked: an empty box focuses itself and sends
     // nothing, so a bare click would settle no decision and release nothing.
-    const box = liveCard()?.querySelector<HTMLTextAreaElement>(".run-input-text");
+    const box = liveCard()?.querySelector<HTMLTextAreaElement>(".dock-ask-text");
     if (box === null || box === undefined) {
       throw new Error("no answer box");
     }
@@ -1535,8 +1695,8 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     longAsk("c1");
     opener(h)?.click();
     const card = liveCard(h);
-    const body = card?.querySelector<HTMLElement>(".run-input-body");
-    const actions = card?.querySelector<HTMLElement>(".run-input-actions");
+    const body = card?.querySelector<HTMLElement>(".dock-ask-body");
+    const actions = card?.querySelector<HTMLElement>(".dock-ask-actions");
     if (
       card === null ||
       card === undefined ||
@@ -1594,7 +1754,7 @@ describe("the card's ceiling keeps the answer row on screen", () => {
       submit: vi.fn(),
     });
     const card = liveCard(h);
-    const actions = card?.querySelector<HTMLElement>(".user-input-actions");
+    const actions = card?.querySelector<HTMLElement>(".dock-ask-actions");
     const options = card?.querySelector<HTMLElement>(".user-input-options");
     if (
       card === null ||
@@ -1616,10 +1776,20 @@ describe("the card's ceiling keeps the answer row on screen", () => {
     // its own automatic minimum size is 0 and shrinking it to nothing is exactly
     // what the pressure would do; a hit test is the honest reading of "the reader
     // can still type here".
-    const box = card.querySelector<HTMLTextAreaElement>(".user-input-text");
+    //
+    // SCROLLED INTO VIEW FIRST, because `elementFromPoint` answers `null` for a
+    // point outside the VIEWPORT and that is not the container this case is about.
+    // The outer `beforeEach` mounts the dock once into `#decision-dock` and
+    // `boundedHost` mounts it again, so two 396px cards stack and this one starts
+    // at y=402 in a 720px viewport — leaving whether the box's centre is on screen
+    // a function of the card's internal rhythm rather than of the clipping the
+    // ceiling does. It passed by 32px until the user-input card's regions stopped
+    // carrying margins and the freed height went to the option list.
+    const box = card.querySelector<HTMLTextAreaElement>(".dock-ask-text");
     if (box === null) {
       throw new Error("no answer box");
     }
+    card.scrollIntoView({ block: "center" });
     const r = box.getBoundingClientRect();
     expect(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)).toBe(box);
   });

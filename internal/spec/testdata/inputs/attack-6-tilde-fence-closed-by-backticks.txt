@@ -1,0 +1,5 @@
+- [ ] 1. Before
+~~~
+example
+```
+- [ ] 2. After the mismatched close

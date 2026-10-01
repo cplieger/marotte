@@ -1,11 +1,10 @@
 package agent
 
-// The per-chat ADMISSION slot. A reservation is minted synchronously, before
-// any bridge exists, so a prompt is admitted or refused while the Turn record
-// — model, metering baselines, opened-at — is stamped only at StartTurn, with
-// the bridge live. The reservation is NOT a Turn: the priming turn's own
-// open/finalize runs between reservation and StartTurn untouched, and a
-// wire-started turn holds no reservation at all.
+// The per-chat ADMISSION slot. A reservation is minted synchronously, before any
+// bridge exists, so a prompt is admitted or refused before its turn_open is
+// appended; OpenTurn then creates the Turn record and StartTurn stamps the model
+// and the metering baseline with the bridge live. The reservation is NOT a Turn,
+// and a wire-started turn holds no reservation at all.
 
 import (
 	"context"
@@ -25,16 +24,21 @@ func (lc *chatLifecycle) reserveLocked(source marotte.TurnOpenSource) bool {
 	return true
 }
 
-// holderSourceLocked names the admission holder. The OPEN turn wins over the
-// reservation: an engine-opened turn (a wire turn_start, a workflow step's
-// frames) holds no reservation of its own, so it is invisible to a refusal that
-// reads the reservation alone. Caller holds mu.
+// holderSourceLocked names the admission holder: the prompt-class turn owed its
+// bracket, else the reservation, else the own turn. The prompt side wins because
+// a prompt is admitted BESIDE an open wire_turn_start turn, and a second prompt
+// must read that prompt as the holder (Busy) rather than the wire turn (Starting);
+// own comes last so a wire turn with nothing reserved is still visible to a
+// refusal. Caller holds mu.
 func (lc *chatLifecycle) holderSourceLocked() (marotte.TurnOpenSource, bool) {
-	if facts, open := lc.openFactsLocked(); open {
-		return facts.Source, true
+	if lc.pending != nil {
+		return lc.pending.Source, true
 	}
 	if lc.reserved {
 		return lc.reservedSource, true
+	}
+	if lc.own != nil {
+		return lc.own.Source, true
 	}
 	return 0, false
 }
@@ -84,16 +88,6 @@ func (r *turnRegistry) admissionHolder(chatID marotte.ChatID) (marotte.TurnOpenS
 	return lc.holderSourceLocked()
 }
 
-// wakeChat wakes every waiter parked on chatID without moving any state: the
-// bridge-ready wake, so a parked prompt answers on the state the bridge's
-// arrival created rather than on whatever changes next.
-func (r *turnRegistry) wakeChat(chatID marotte.ChatID) {
-	lc := r.lifecycleFor(chatID)
-	lc.mu.Lock()
-	lc.wakeLocked()
-	lc.mu.Unlock()
-}
-
 // TryReserveTurn takes the chat's admission slot iff it is free, minting NO
 // Turn. The shell door reserves through this (a `!cmd` during any held slot
 // refuses immediately), and the empty-turn recovery re-reserves through it (a
@@ -119,11 +113,10 @@ func (bc *BridgeCoordinator) AdmissionHolderSource(chatID marotte.ChatID) (marot
 // ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up
 // to wait while it is held; at most one waiter acquires per wake.
 //
-// The refusal arm keys on the HOLDER'S SOURCE, not bridge liveness alone: a
-// prompt-class holder with a live bridge answers Busy immediately (the client's
-// 409→steer conversion works, so waiting buys nothing); every other holder parks
-// the waiter and answers Starting at the budget. A dead ctx also answers
-// Starting: nothing reads the answer.
+// The refusal arm keys on the HOLDER'S SOURCE: a prompt-class holder answers Busy
+// immediately, bridge live or not, because CmdSteer parks a steer for a spawning
+// prompt; a local_shell holder parks the waiter and answers Starting at the
+// budget. A dead ctx also answers Starting: nothing reads the answer.
 func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID marotte.ChatID, wait time.Duration) command.AdmissionOutcome {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -132,7 +125,7 @@ func (bc *BridgeCoordinator) ReserveTurnForPrompt(ctx context.Context, chatID ma
 		if ok {
 			return command.AdmissionAcquired
 		}
-		if holder.PromptClass() && bc.bridgeLive(chatID) {
+		if holder.PromptClass() {
 			return command.AdmissionBusy
 		}
 		select {
@@ -153,7 +146,7 @@ func (bc *BridgeCoordinator) expiredAdmission(chatID marotte.ChatID) command.Adm
 	if ok {
 		return command.AdmissionAcquired
 	}
-	if holder.PromptClass() && bc.bridgeLive(chatID) {
+	if holder.PromptClass() {
 		return command.AdmissionBusy
 	}
 	return command.AdmissionStarting

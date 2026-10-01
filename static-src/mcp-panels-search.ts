@@ -19,6 +19,8 @@ import type { DebouncedDispatch } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { chevronEl } from "./chevron.js";
 import { emptyNote, type Nouns } from "./textsearch/copy.js";
+import { configuredServers } from "./mcp-state.js";
+import type { KeyPair, Server } from "./mcp-state.js";
 import { el } from "@cplieger/reactive";
 
 // --- Types ---
@@ -371,7 +373,10 @@ export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
   }
 
   const actions = el("div", { className: "mcp-result-actions" });
-  for (const option of installOptions(entry)) {
+  // One snapshot for the whole row, so two install paths of one entry cannot
+  // disagree about what is already in mcp.json.
+  const configured = configuredServers();
+  for (const option of installOptions(entry, configured)) {
     actions.appendChild(option.btn);
     body.appendChild(option.detail);
   }
@@ -398,11 +403,18 @@ interface InstallOption {
 
 /** Every path the publisher declared, in registry order: a package runs locally
  *  under `npx`, a remote is a hosted URL. */
-function installOptions(entry: RegistryEntry): InstallOption[] {
+function installOptions(entry: RegistryEntry, configured: readonly Server[]): InstallOption[] {
   const out: InstallOption[] = [];
   for (const pkg of entry.packages ?? []) {
     out.push(
-      renderInstallOption(entry, pkg.registry_type, pkg.identifier, pkg.env_vars ?? [], "env"),
+      renderInstallOption(
+        entry,
+        pkg.registry_type,
+        pkg.identifier,
+        pkg.env_vars ?? [],
+        "env",
+        configured,
+      ),
     );
   }
   for (const rem of entry.remotes ?? []) {
@@ -418,10 +430,50 @@ function installOptions(entry: RegistryEntry): InstallOption[] {
           secret: h.secret,
         })),
         "header",
+        configured,
       ),
     );
   }
   return out;
+}
+
+/** The configured server this install path would land on, or null.
+ *
+ *  A remote's URL is matched FIRST and exactly, because an endpoint names one
+ *  server whatever the reader called the row, and the field-satisfaction claim
+ *  below is only true of the server actually holding that endpoint. The name
+ *  fallback is what the install button would write (`simplifyName`), matched
+ *  case-insensitively because `mcp.json` is hand-editable. */
+function matchConfigured(
+  configured: readonly Server[],
+  entry: RegistryEntry,
+  identifier: string,
+  fieldKind: "env" | "header",
+): Server | null {
+  if (fieldKind === "header") {
+    const byURL = configured.find((s) => s.url === identifier);
+    if (byURL !== undefined) {
+      return byURL;
+    }
+  }
+  const slug = simplifyName(entry.name).toLowerCase();
+  return configured.find((s) => s.name.toLowerCase() === slug) ?? null;
+}
+
+/** Whether the record holds a value under this declared field's name.
+ *
+ *  NAMES only: a saved secret comes back as `SECRET_MASK`, so a value compare
+ *  would read every stored credential as unset. Header names are matched
+ *  case-insensitively (HTTP says they are), env names are not (the shell says
+ *  they are not). A declared header is never satisfied by an env var, which is
+ *  why the pair is chosen by `fieldKind` rather than searched across both. */
+function fieldIsSet(server: Server, fieldKind: "env" | "header", name: string): boolean {
+  const pairs: readonly KeyPair[] = (fieldKind === "env" ? server.env : server.headers) ?? [];
+  const want = fieldKind === "env" ? name : name.toLowerCase();
+  return pairs.some((p) => {
+    const have = p.name.trim();
+    return (fieldKind === "env" ? have : have.toLowerCase()) === want;
+  });
 }
 
 /** One install path: the button, plus what installing it will ask for.
@@ -435,13 +487,18 @@ function renderInstallOption(
   identifier: string,
   fields: InstallField[],
   fieldKind: "env" | "header",
+  configured: readonly Server[],
 ): InstallOption {
   const detail = el(
     "div",
     { className: "mcp-install-option" },
     el("code", { className: "mcp-install-id" }, `${kind}: ${identifier}`),
   ) as HTMLDivElement;
-  const preview = renderRequirements(fields, fieldKind);
+  const preview = renderRequirements(
+    fields,
+    fieldKind,
+    matchConfigured(configured, entry, identifier, fieldKind),
+  );
   if (preview !== null) {
     detail.appendChild(preview);
   }
@@ -449,19 +506,30 @@ function renderInstallOption(
 }
 
 /** The declared env vars / headers of one install path. Null when the publisher
- *  declared none, which is the honest reading of "needs nothing configured". */
+ *  declared none, which is the honest reading of "needs nothing configured".
+ *
+ *  `configured` is the server this path would land on, when one is already in
+ *  `mcp.json`. It changes the LABEL and marks the satisfied rows, and it changes
+ *  nothing else: a reader who already owns the server is asking "what is still
+ *  missing", not "what will this ask me for", and the unconfigured wording
+ *  answered the wrong one of those. The declared list is still shown whole,
+ *  because a field the record does not hold is the actionable row. */
 function renderRequirements(
   fields: InstallField[],
   fieldKind: "env" | "header",
+  configured: Server | null,
 ): HTMLElement | null {
   if (fields.length === 0) {
     return null;
   }
-  const required = fields.filter((f) => f.required === true).length;
+  const noun = fieldKind === "env" ? "environment variables" : "headers";
+  const requiredFields = fields.filter((f) => f.required === true);
   const label =
-    required > 0
-      ? `Needs ${required} of ${fields.length} ${fieldKind === "env" ? "environment variables" : "headers"}`
-      : `Optional ${fieldKind === "env" ? "environment variables" : "headers"} (${fields.length})`;
+    configured !== null
+      ? configuredLabel(requiredFields, fieldKind, noun, configured)
+      : requiredFields.length > 0
+        ? `Needs ${requiredFields.length} of ${fields.length} ${noun}`
+        : `Optional ${noun} (${fields.length})`;
 
   const list = el("ul", { className: "mcp-requires-list" });
   for (const f of fields) {
@@ -473,6 +541,9 @@ function renderRequirements(
     }
     if (f.secret === true) {
       item.appendChild(el("span", { className: "mcp-pair-mark" }, "Secret"));
+    }
+    if (configured !== null && fieldIsSet(configured, fieldKind, f.name)) {
+      item.appendChild(el("span", { className: "mcp-pair-mark mcp-pair-mark-set" }, "Set"));
     }
     const desc = (f.description ?? "").trim();
     if (desc !== "") {
@@ -486,6 +557,24 @@ function renderRequirements(
     el("p", { className: "mcp-requires-label" }, label),
     list,
   );
+}
+
+/** The label for a path whose server is already configured. Counts are over the
+ *  REQUIRED fields alone, because an unset optional field is not something the
+ *  reader has to do; the per-row `Set` marks report the rest. */
+function configuredLabel(
+  requiredFields: InstallField[],
+  fieldKind: "env" | "header",
+  noun: string,
+  configured: Server,
+): string {
+  if (requiredFields.length === 0) {
+    return "Already configured";
+  }
+  const missing = requiredFields.filter((f) => !fieldIsSet(configured, fieldKind, f.name)).length;
+  return missing === 0
+    ? `Already configured — all required ${noun} set`
+    : `Already configured — ${missing} of ${requiredFields.length} required ${noun} still missing`;
 }
 
 function renderInstallBtn(

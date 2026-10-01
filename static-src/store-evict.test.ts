@@ -1,15 +1,13 @@
 // ---------------------------------------------------------------------------
-// Eviction and residency: the idle sweep that reclaims a background chat's
-// message window, the five exemptions that each alone prevent it, the
-// residency tri-state the next activation keys its refetch on, and the
-// signal-leak half — removeChat and eviction must clear the per-message
-// streaming signals that only teardownAll (last chat closed) used to drop.
+// Eviction and residency: the idle sweep that reclaims a background chat's turn
+// window, the exemptions that each alone prevent it, the residency tri-state the
+// next activation keys its refetch on, and what leaves with the window: the
+// per-turn signals and the freshness record.
 //
-// The sweep is driven with fake timers (Date is faked with them, so the idle
-// clock and the interval agree), and the external exemptions go through the
-// registration seam exactly as the composition root wires them — store.ts is a
-// leaf and must not import tabs.ts or run-store.ts, so the seam IS the
-// production shape, not a test convenience.
+// The sweep is driven with fake timers (Date is faked with them, so the idle clock
+// and the interval agree). The external exemptions go through the registration
+// seam exactly as the composition root wires them: store.ts is a leaf, so the seam
+// IS the production shape.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -17,63 +15,97 @@ import {
   setSessions,
   setActive,
   get,
-  appendMessage,
-  appendChunk,
-  upsertToolCall,
+  openTurn,
+  appendEntry,
+  openEntry,
   setThinking,
   removeChat,
   recordSteerQueued,
-  promoteSteer,
   steerCount,
   evictChatMessages,
   registerEvictionExemption,
   startEvictionSweep,
   stopEvictionSweep,
+  defaultUsage,
   EVICT_SWEEP_MS,
   EVICT_IDLE_MS,
 } from "./store.js";
-import { hasExecutingRunForChat, noteRunLive, noteRunSettled } from "./run-store.js";
 import {
-  blockTextSigs,
-  blockThinkingSigs,
-  blockKey,
-  ensureBlockTextSig,
-  ensureBlockThinkingSig,
+  entryTextSig,
+  laneSig,
+  laneSigs,
+  laneKey,
   ensureToolCallSig,
-  toolCallSigs,
-  toolCallSigKey,
+  peekToolCallSig,
+  clearAllEntrySigs,
 } from "./store-signals.js";
 import { _resetForTest as resetFreshness, observeStamp } from "./subject-versions.js";
 import { viewStale } from "./view-freshness.js";
-import type { Message, Session, ToolCall } from "./types.js";
+import type { Session, ToolCall } from "./types.js";
+import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 
 function session(id: string, over: Partial<Session> = {}): Session {
-  return {
+  const base: Session = {
     id,
     name: id,
     model: "",
     acp_session_id: "",
     current_mode_id: "",
     supervised_mode: false,
-    usage: {
-      context_pct: 0,
-      context_size: 0,
-      credits: 0,
-      turn_count: 0,
-      last_turn_ms: 0,
-      has_real_data: false,
-    },
-    message_count: 0,
-    messages: [],
+    usage: defaultUsage(),
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
-    ...over,
-  } as Session;
+  };
+  return Object.assign(base, over);
 }
 
-function msg(id: string): Message {
-  return { id, role: "assistant", ts: 1, content: "hi" } as Message;
+function turnOpen(turnID: string, n = 1): Entry {
+  return {
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "prompt", n, prompt: { id: `p-${turnID}`, text: "go" } },
+  };
+}
+
+function textEntry(turnID: string, seq: number): Entry {
+  return {
+    id: `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind: "text",
+    seq,
+    ts: 2,
+    payload: { text: "hi" },
+  };
+}
+
+function toolCallEntry(turnID: string, seq: number, callID: string): Entry {
+  const call: EntryToolCall = {
+    id: callID,
+    title: "Run Command",
+    status: "in_progress",
+    kind: "execute",
+    ts: 1,
+  };
+  return { id: callID, turn: turnID, kind: "tool_call", seq, ts: 2, payload: call };
+}
+
+/** Seed a chat holding one turn with one sealed text entry. */
+function resident(id: string): Session {
+  const s = session(id);
+  s.turns.set(`t-${id}`, {
+    entries: [turnOpen(`t-${id}`), textEntry(`t-${id}`, 1)],
+    openEntries: new Map(),
+  });
+  s.turn_order.push(`t-${id}`);
+  s.turn_count = 1;
+  return s;
 }
 
 const unregisters: (() => void)[] = [];
@@ -83,6 +115,7 @@ function exempt(fn: (chatID: string) => boolean): void {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  clearAllEntrySigs();
 });
 
 afterEach(() => {
@@ -95,17 +128,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Seed two chats, make `active` the active one, land one message on each
- *  (which stamps their activity), then age everything past the idle bound. */
+/** Seed two chats, make `active` the active one, open one turn on each (which stamps
+ *  their activity), then age everything past the idle bound. */
 function seedIdlePair(active: string, background: string): void {
   setSessions([session(active), session(background)]);
   setActive(active);
-  appendMessage(active, msg(`m-${active}`));
-  appendMessage(background, msg(`m-${background}`));
+  openTurn(active, turnOpen(`t-${active}`));
+  openTurn(background, turnOpen(`t-${background}`));
   vi.advanceTimersByTime(EVICT_IDLE_MS + 1);
 }
 
-/** One sweep tick. */
 function tick(): void {
   vi.advanceTimersByTime(EVICT_SWEEP_MS);
 }
@@ -117,38 +149,32 @@ describe("the idle sweep", () => {
     tick();
 
     const s = get("c-bg");
-    expect(s, "the session ROW must survive eviction — header data stays").toBeDefined();
-    expect(s?.messages).toEqual([]);
+    expect(s, "the session ROW must survive eviction").toBeDefined();
+    expect(s?.turns.size).toBe(0);
+    expect(s?.turn_order).toEqual([]);
     expect(s?.residency).toBe("evicted");
-    // The skeleton arm keys on messages.length === 0, so an evicted chat
-    // re-opens onto the skeleton rather than a stale window.
-    expect(s?.messages.length).toBe(0);
-    // has_more re-derives from the server count so pagination stays honest.
+    // has_more re-derives from the record's turn count so the Load-older door stays honest.
     expect(s?.has_more).toBe(true);
-    expect(s?.message_count).toBe(1);
-    // Header data survives.
+    expect(s?.turn_count).toBe(1);
     expect(s?.name).toBe("c-bg");
   });
 
   it("does not run before the idle bound", () => {
     setSessions([session("c-act"), session("c-bg")]);
     setActive("c-act");
-    appendMessage("c-bg", msg("m1"));
+    openTurn("c-bg", turnOpen("t1"));
     startEvictionSweep();
-    // Many sweep ticks, but the chat was active more recently than the bound.
     vi.advanceTimersByTime(EVICT_IDLE_MS - EVICT_SWEEP_MS);
     expect(get("c-bg")?.residency).toBeUndefined();
-    expect(get("c-bg")?.messages).toHaveLength(1);
+    expect(get("c-bg")?.turn_order).toEqual(["t1"]);
   });
 
   it("errs toward keeping a chat whose activity it never observed", () => {
-    // A chat with resident messages but no recorded activity (seeded wholesale,
-    // never stamped): the sweep must not treat unknown as ancient.
-    setSessions([session("c-act"), session("c-unknown", { messages: [msg("m1")] })]);
+    setSessions([session("c-act"), resident("c-unknown")]);
     setActive("c-act");
     startEvictionSweep();
     vi.advanceTimersByTime(EVICT_IDLE_MS * 3);
-    expect(get("c-unknown")?.messages).toHaveLength(1);
+    expect(get("c-unknown")?.turn_order).toEqual(["t-c-unknown"]);
     expect(get("c-unknown")?.residency).toBeUndefined();
   });
 
@@ -159,7 +185,7 @@ describe("the idle sweep", () => {
     tick();
     tick();
     expect(get("c-bg")?.residency, "a hidden tab must reclaim nothing").toBeUndefined();
-    expect(get("c-bg")?.messages).toHaveLength(1);
+    expect(get("c-bg")?.turn_order).toEqual(["t-c-bg"]);
 
     hidden.mockReturnValue(false);
     tick();
@@ -167,263 +193,144 @@ describe("the idle sweep", () => {
   });
 });
 
-describe("the five exemptions, each alone", () => {
+describe("the exemptions, each alone", () => {
   it("never evicts the ACTIVE chat", () => {
     seedIdlePair("c-act", "c-bg");
     startEvictionSweep();
     tick();
-    // The background sibling went (the sweep ran), the active one stayed.
     expect(get("c-bg")?.residency).toBe("evicted");
     expect(get("c-act")?.residency).toBeUndefined();
-    expect(get("c-act")?.messages).toHaveLength(1);
+    expect(get("c-act")?.turn_order).toEqual(["t-c-act"]);
   });
 
   it("never evicts a BUSY chat, however idle its clock reads", () => {
     seedIdlePair("c-act", "c-busy");
     setThinking("c-busy", true);
-    // setThinking stamps activity, so age it past the bound again: the
-    // exemption itself must hold, not the recency it implies.
+    // setThinking stamps activity, so age it past the bound again: the exemption itself
+    // must hold, not the recency it implies.
     vi.advanceTimersByTime(EVICT_IDLE_MS + 1);
     startEvictionSweep();
     tick();
     expect(get("c-busy")?.residency).toBeUndefined();
-    expect(get("c-busy")?.messages).toHaveLength(1);
+    expect(get("c-busy")?.turn_order).toEqual(["t-c-busy"]);
   });
 
-  it("never evicts a chat a registered LIVE-RUN predicate names", () => {
-    // The seam the composition root wires hasExecutingRunForChat through; the
-    // predicate's own behavior (event-fed, rebuilt, degrade rules) is
-    // run-store.test.ts's subject.
-    seedIdlePair("c-act", "c-run");
-    exempt((chatID) => chatID === "c-run");
-    startEvictionSweep();
-    tick();
-    expect(get("c-run")?.residency).toBeUndefined();
-    expect(get("c-run")?.messages).toHaveLength(1);
-  });
-
-  // The REAL predicate through the real sweep, because each half is green while the
-  // other is wrong: the case above registers a synthetic one, and run-store.test.ts
-  // reads the real one's return value with no sweep behind it. What neither pins is
-  // the sentence both imply — a chat with a run in flight keeps its window.
-  it("keeps the window of a chat with an EXECUTING run, and lets a PARKED one go", () => {
-    seedIdlePair("c-act", "c-live");
-    exempt(hasExecutingRunForChat);
-    noteRunLive("wf-e2e", "c-live", true);
-    startEvictionSweep();
-    tick();
-    expect(get("c-live")?.messages, "frames are still arriving into this window").toHaveLength(1);
-
-    // A park writes nothing into the transcript, so the exemption lapses.
-    noteRunLive("wf-e2e", "c-live", false);
-    tick();
-    expect(get("c-live")?.residency).toBe("evicted");
-    noteRunSettled("wf-e2e");
-  });
-
-  it("never evicts a chat a registered PARKED-VIEW predicate names", () => {
-    // Parked views land in a later task; the exemption is the injectable
-    // predicate, defaulting to false when nothing registers (the sibling cases
-    // above evict fine with no registration).
-    seedIdlePair("c-act", "c-parked");
-    exempt((chatID) => chatID === "c-parked");
-    startEvictionSweep();
-    tick();
-    expect(get("c-parked")?.residency).toBeUndefined();
-  });
-
-  it("never evicts a chat a registered SUBAGENT-TAB predicate names", () => {
-    seedIdlePair("c-act", "c-sub");
-    exempt((chatID) => chatID === "c-sub");
-    startEvictionSweep();
-    tick();
-    expect(get("c-sub")?.residency).toBeUndefined();
-  });
-
-  it("an unregistered exemption stops exempting", () => {
-    seedIdlePair("c-act", "c-bg");
-    const un = registerEvictionExemption((chatID) => chatID === "c-bg");
-    startEvictionSweep();
-    tick();
-    expect(get("c-bg")?.residency).toBeUndefined();
-    un();
+  it("never evicts a chat a registered predicate names, and evicts its sibling", () => {
+    setSessions([session("c-act"), session("c-kept"), session("c-bg")]);
+    setActive("c-act");
+    openTurn("c-kept", turnOpen("t-kept"));
+    openTurn("c-bg", turnOpen("t-bg"));
     vi.advanceTimersByTime(EVICT_IDLE_MS + 1);
+    exempt((chatID) => chatID === "c-kept");
+    startEvictionSweep();
     tick();
+    expect(get("c-kept")?.residency).toBeUndefined();
     expect(get("c-bg")?.residency).toBe("evicted");
   });
-});
 
-describe("residency", () => {
-  it("background ingest on an evicted chat marks it PARTIAL, never loaded", () => {
-    setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
-    evictChatMessages("c1");
-    expect(get("c1")?.residency).toBe("evicted");
-
-    // A remote append lands (SSE on a background chat).
-    appendMessage("c1", msg("m2"));
-    expect(get("c1")?.residency).toBe("partial");
-    expect(get("c1")?.messages.map((m) => m.id)).toEqual(["m2"]);
-  });
-
-  it("a chunk that beats its message_created on an evicted chat marks PARTIAL too", () => {
-    setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
-    evictChatMessages("c1");
-    appendChunk("c1", "m-live", "hello", false, 0, "");
-    expect(get("c1")?.residency).toBe("partial");
-  });
-
-  it("a background tool_call creating its message on an evicted chat marks PARTIAL too", () => {
-    setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
-    evictChatMessages("c1");
-    upsertToolCall(
-      "c1",
-      "m-tools",
-      { id: "t1", kind: "execute", status: "pending" } as ToolCall,
-      0,
-    );
-    expect(get("c1")?.residency).toBe("partial");
-  });
-
-  it("ingest on a chat that is not evicted claims nothing", () => {
-    setSessions([session("c1")]);
-    appendMessage("c1", msg("m1"));
-    // Only a successful newest-page load may set `loaded`; plain ingest on a
-    // never-loaded chat leaves the state absent.
-    expect(get("c1")?.residency).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Eviction and the two steer fields: the DISPROVEN hypothesis, pinned so it
-// cannot quietly become true.
-//
-// "Leaving the tab for a while loses my steers" reads like eviction — the sweep
-// is the one time-based mechanism in the store, and a steer in flight looks
-// exactly like state that must survive one. It is not: the sweep clears the
-// MESSAGE WINDOW and its side tables, and neither steer field is among them.
-// Eviction is still implicated, but only through the window it empties, which the
-// next activation refetches — and a mark's anchor names a message that refetch may
-// not carry (store.ts `steerMarks`, messages-steer-note.test.ts).
-// ---------------------------------------------------------------------------
-
-describe("eviction and the two steer fields", () => {
-  it("cannot evict a chat holding a waiting steer, because such a chat is busy", () => {
+  it("never evicts a chat holding a waiting steer, because such a chat is busy", () => {
     seedIdlePair("c-act", "c-steer");
-    // A waiting steer implies a live turn implies `thinking`, so the busy
-    // exemption already covers it by a route nobody wrote for it. Asserted
-    // through the exemption rather than trusted: if the invariant ever breaks,
-    // this is where the reader finds out.
     setThinking("c-steer", true);
     recordSteerQueued("c-steer", { id: "steer-1", text: "waiting", origin: "user" });
     vi.advanceTimersByTime(EVICT_IDLE_MS + 1);
     startEvictionSweep();
     tick();
-
     expect(get("c-steer")?.residency).toBeUndefined();
     expect(steerCount("c-steer")).toBe(1);
   });
+});
 
-  it("leaves both steer fields intact when it does evict a window", () => {
-    setSessions([
-      session("c1", {
-        messages: [
-          { id: "u-1", role: "user", ts: 1, content: "go" } as Message,
-          {
-            id: "a-1",
-            role: "assistant",
-            ts: 2,
-            content: "",
-            blocks: [{ type: "text", text: "hi" }],
-          } as unknown as Message,
-        ],
-        message_count: 2,
-      }),
-    ]);
+describe("residency", () => {
+  it("a turn opened on an evicted chat marks it PARTIAL, never loaded", () => {
+    setSessions([resident("c1")]);
+    evictChatMessages("c1");
+    expect(get("c1")?.residency).toBe("evicted");
+
+    openTurn("c1", turnOpen("t-late", 2));
+    expect(get("c1")?.residency).toBe("partial");
+    expect(get("c1")?.turn_order).toEqual(["t-late"]);
+  });
+
+  it("an entry appended on an evicted chat marks it PARTIAL too", () => {
+    setSessions([resident("c1")]);
+    evictChatMessages("c1");
+    openTurn("c1", turnOpen("t-late", 2));
+    appendEntry("c1", textEntry("t-late", 1));
+    expect(get("c1")?.residency).toBe("partial");
+  });
+
+  it("ingest on a chat that is not evicted claims nothing", () => {
+    setSessions([session("c1")]);
+    openTurn("c1", turnOpen("t1"));
+    appendEntry("c1", textEntry("t1", 1));
+    expect(get("c1")?.residency).toBeUndefined();
+  });
+
+  it("leaves the steer dock intact when it evicts a window", () => {
+    setSessions([resident("c1")]);
     setActive("c1");
-    recordSteerQueued("c1", { id: "steer-read", text: "read one", origin: "user" });
-    promoteSteer("c1", "steer-read", "read one", "user");
     recordSteerQueued("c1", { id: "steer-waiting", text: "still waiting", origin: "user" });
 
     evictChatMessages("c1");
 
-    expect(get("c1")?.messages, "the window goes").toHaveLength(0);
+    expect(get("c1")?.turns.size, "the window goes").toBe(0);
     expect(get("c1")?.residency).toBe("evicted");
     expect(steerCount("c1"), "the dock stays").toBe(1);
-    expect(
-      get("c1")?.steer_marks?.map((m) => m.id),
-      "and so does the record, anchor and all",
-    ).toEqual(["steer-read"]);
-    expect(get("c1")?.steer_marks?.[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 1 });
   });
 });
 
-describe("the signal leak", () => {
-  it("eviction clears every per-message streaming signal the window minted", () => {
-    const withTool: Message = {
-      ...msg("m1"),
-      tool_calls: [{ id: "t1", kind: "execute", status: "pending" } as ToolCall],
-    };
-    setSessions([session("c1", { messages: [withTool, msg("m2")], message_count: 2 })]);
-    ensureBlockTextSig("m1", 0, "x");
-    ensureBlockThinkingSig("m1", 1, "y");
-    ensureBlockTextSig("m2", 0, "z");
-    ensureToolCallSig("c1", "t1", { id: "t1" } as ToolCall);
+describe("the signals the window minted", () => {
+  function seedSignals(chatID: string): void {
+    setSessions([session(chatID)]);
+    openTurn(chatID, turnOpen("t1"));
+    appendEntry(chatID, toolCallEntry("t1", 1, "call-1"));
+    openEntry(chatID, { turn: "t1", id: "open-1", lane: "", kind: "text", text: "x", n: 1 });
+    ensureToolCallSig(chatID, "call-1", { id: "call-1" } as ToolCall);
+    expect(entryTextSig("t1", "open-1")).toBeDefined();
+    expect(laneSigs.get(laneKey("t1", ""))).toBeDefined();
+  }
 
+  it("eviction clears the streaming, lane and tool-call signals", () => {
+    seedSignals("c1");
     evictChatMessages("c1");
-
-    expect(blockTextSigs.get(blockKey("m1", 0))).toBeUndefined();
-    expect(blockThinkingSigs.get(blockKey("m1", 1))).toBeUndefined();
-    expect(blockTextSigs.get(blockKey("m2", 0))).toBeUndefined();
-    expect(toolCallSigs.get(toolCallSigKey("c1", "t1"))).toBeUndefined();
+    expect(entryTextSig("t1", "open-1")).toBeUndefined();
+    expect(laneSigs.get(laneKey("t1", ""))).toBeUndefined();
+    expect(peekToolCallSig("c1", "call-1")).toBeUndefined();
   });
 
   it("removeChat clears them too, without waiting for a render pass", () => {
-    const withTool: Message = {
-      ...msg("m1"),
-      tool_calls: [{ id: "t1", kind: "execute", status: "pending" } as ToolCall],
-    };
-    setSessions([session("c1", { messages: [withTool] })]);
-    ensureBlockTextSig("m1", 0, "x");
-    ensureBlockThinkingSig("m1", 0, "y");
-    ensureToolCallSig("c1", "t1", { id: "t1" } as ToolCall);
-
+    seedSignals("c1");
     removeChat("c1");
-
-    expect(blockTextSigs.get(blockKey("m1", 0))).toBeUndefined();
-    expect(blockThinkingSigs.get(blockKey("m1", 0))).toBeUndefined();
-    expect(toolCallSigs.get(toolCallSigKey("c1", "t1"))).toBeUndefined();
+    expect(entryTextSig("t1", "open-1")).toBeUndefined();
+    expect(laneSigs.get(laneKey("t1", ""))).toBeUndefined();
+    expect(peekToolCallSig("c1", "call-1")).toBeUndefined();
   });
 
-  it("clearing one message's signals leaves a sibling chat's alone", () => {
-    setSessions([session("c1", { messages: [msg("m1")] }), session("c2", { messages: [] })]);
-    ensureBlockTextSig("m1", 0, "x");
-    ensureBlockTextSig("m-other", 0, "y");
+  it("clearing one chat's signals leaves a sibling chat's alone", () => {
+    setSessions([session("c1"), session("c2")]);
+    openTurn("c1", turnOpen("t1"));
+    openTurn("c2", turnOpen("t2"));
+    laneSig("t2", "");
+    ensureToolCallSig("c2", "call-2", { id: "call-2" } as ToolCall);
 
     evictChatMessages("c1");
 
-    expect(blockTextSigs.get(blockKey("m1", 0))).toBeUndefined();
-    expect(blockTextSigs.get(blockKey("m-other", 0))).toBeDefined();
-    blockTextSigs.clear(blockKey("m-other", 0));
+    expect(laneSigs.get(laneKey("t1", ""))).toBeUndefined();
+    expect(laneSigs.get(laneKey("t2", ""))).toBeDefined();
+    expect(peekToolCallSig("c2", "call-2")).toBeDefined();
   });
 });
 
-// ---------------------------------------------------------------------------
-// The freshness ledger's WINDOW-death door.
-//
-// A ledger record describes the message window, so the window's death drops it —
-// and that is what makes the dispatcher's `viewStale`-only gate equivalent to
-// `transcriptStale` for every residency state the app can reach. Without the drop,
-// an evicted chat whose record still matched the epoch would be SKIPPED on its next
-// activation and never refetch.
-// ---------------------------------------------------------------------------
-
+// A ledger record describes the window, so the window's death drops it; that is what makes
+// the dispatcher's `viewStale`-only gate equivalent to `transcriptStale`. Without the drop an
+// evicted chat whose record still matched would be skipped on its next activation.
 describe("the ledger record eviction drops", () => {
   beforeEach(() => {
     resetFreshness();
   });
 
   it("evictChatMessages drops the record, so a re-activation refetches", () => {
-    setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
+    setSessions([resident("c1")]);
     observeStamp({ kind: "chat", ref: "c1", version: "1" });
     expect(viewStale("chat", "c1")).toBe(false);
 
@@ -432,8 +339,8 @@ describe("the ledger record eviction drops", () => {
     expect(viewStale("chat", "c1")).toBe(true);
   });
 
-  it("removeChat drops it too — the subject is gone, not just its window", () => {
-    setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
+  it("removeChat drops it too: the subject is gone, not just its window", () => {
+    setSessions([resident("c1")]);
     observeStamp({ kind: "chat", ref: "c1", version: "1" });
 
     removeChat("c1");

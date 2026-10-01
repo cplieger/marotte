@@ -27,11 +27,13 @@ export function createBusMock(extras: Record<string, unknown> = {}): Record<stri
     BUS_RECONCILE: undefined,
     decodeEnvelope: undefined,
     BUS_PAGE_RESUMED: undefined,
+    BUS_USER_INPUT_ANSWERED: undefined,
     BUS_KEYS_ESCAPE: undefined,
     BUS_ACTIVATE_CHAT: undefined,
     BUS_RUNS_CHANGED: undefined,
     BUS_TAB_CHANGED: undefined,
     BUS_EDITOR_FILE_LOADED: undefined,
+    BUS_COMMAND_FAILED: undefined,
     onSSE: vi.fn((event: string, handler: SSEHandler) => {
       sseHandlers.set(event, handler);
     }),

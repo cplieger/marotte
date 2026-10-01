@@ -1,0 +1,12 @@
+- [ ] 1 A real task
+- [] bare box
+- [	] tab in the box
+1. [ ] ordered-list marker
+1) [ ] ordered paren marker
+- [ ]no space after the box
+- [ ] 
+  * [X] indented star, real
+- [ ]\* escaped optional, real
+- [~] queued, real
+- [ab] two letters in the box
+- [x]

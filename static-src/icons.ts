@@ -29,7 +29,13 @@ const PATH_X = '<path d="M18 6L6 18M6 6l12 12"/>';
 const PATH_PLUS = '<path d="M12 5v14M5 12h14"/>';
 const PATH_TRASH =
   '<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>';
-const PATH_SEND = '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>';
+/** Optically centred, which its bounding box is not: the dart's painted mass sits
+ *  1.93 x 2.03 viewBox units upper-right of the box centre. The `favicon.svg` wrapper
+ *  pattern, capped by the viewBox — its ink spans 21 of 24 units, so the full
+ *  correction clips and this is the largest shift that does not. A CSS `translate`
+ *  cannot carry it: `icon-crisp.ts` owns that property on every `.ic-*`. */
+const PATH_SEND =
+  '<g transform="translate(-1.25 1.25)"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></g>';
 /** The pin's outline and its filled twin share this path: `fill` is the only
  *  difference, which is what makes the state read as the same mark, filled. */
 const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>';

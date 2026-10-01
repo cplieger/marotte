@@ -16,8 +16,8 @@ import (
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // keyVersion is the response field carrying the collection version a
@@ -137,6 +137,27 @@ func CmdPinTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand)
 		return nil, err
 	}
 	return responseWith(map[string]any{keyVersion: version}), nil
+}
+
+// CmdReparentTab hangs an open tab under an open chat tab. Idempotent when
+// the parent is unchanged. The response carries the subject as it now reads,
+// because an unchanged parent emits no event for the client to adopt from.
+func CmdReparentTab(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.ReparentTabCommand
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	if !validTabID(p.ID) || p.ID == "" || !validTabID(p.Parent) || p.Parent == "" || !ValidIdent(p.OpID) {
+		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	subject, version, err := mem.Reparent(ctx, p.ID, p.Parent, p.OpID)
+	if err != nil {
+		return nil, err
+	}
+	return responseWith(map[string]any{
+		"subject":  subject,
+		keyVersion: version,
+	}), nil
 }
 
 // tabsMaxOrderIDs is deliberately not a constant here: the bound a reorder

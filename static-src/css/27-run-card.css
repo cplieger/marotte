@@ -11,9 +11,11 @@
    (`.run-status`, `.run-tree`, `.run-node-*`, `.run-output`) and two components
    sharing a class name is how one page's tweak silently restyles another. Those
    rules are GONE — the page renders this card now — so the scoping is ordinary
-   hygiene again rather than a guard. The one genuine collision it did catch is
-   still visible in the TS: the head's status pill is `.run-state`, not
-   `.run-status`, because the page had that name first.
+   hygiene again rather than a guard.
+
+   The head is the run's IDENTITY row (name plus step counter) and the foot its
+   OUTCOME row (steps, failures, status word, elapsed). One fact, one row: the head
+   carried the word and the clock too, 44px above the foot saying both.
 
    Nesting is THREE boxes now, not four: a turn card holds this card, this card
    holds a step row, and the row holds only its own spans. So the radius ladder
@@ -124,54 +126,27 @@
   color: var(--c-red);
 }
 
+/* A ZERO flex basis, which is what makes this the only item in the row that yields:
+   it absorbs all the free space, so `.run-count` keeps its content width and never
+   has to ellipsize — which it could not do. `flex: 1; min-width: 0` is
+   `.tool-title`'s spelling (14-tools.css). */
 .run-name {
   color: var(--c-accent);
   font-weight: var(--fw-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* The meta group takes the leftover width and ends at the chevron, so the run's
-   name keeps its own space and the counters ellipsize before it does. */
-.run-head-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
   flex: 1;
   min-width: 0;
-  justify-content: flex-end;
+}
+
+/* Tabular digits because the counter changes under the reader's eye. It declares no
+   flex and no `white-space`: `.run-name` above absorbs the row's free space, so this
+   sits at its content width. */
+.run-count {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
-
-  /* The clock and the step counter both change under the reader's eye once a
-     second; proportional digits would make the row twitch as glyph widths
-     change. */
   font-variant-numeric: tabular-nums;
-}
-
-.run-state {
-  text-transform: lowercase;
-}
-
-.run-card[data-status="failed"] .run-state {
-  color: var(--c-red);
-}
-
-.run-card[data-status="paused"] .run-state {
-  color: var(--c-blue);
-}
-
-/* Last, so it beats the two above: the run's status is not the thing to read while
-   somebody owes it an answer. */
-.run-card[data-asking="true"] .run-state {
-  color: var(--c-yellow);
-}
-
-.run-count,
-.run-clock {
-  white-space: nowrap;
 }
 
 .run-toggle {
@@ -411,11 +386,15 @@
   border-color: var(--c-blue);
 }
 
+/* Shrinkable, or the row overflows and `.run-step`'s clip eats `.run-step-dur`:
+   `.run-step-meta` is `flex: 1`, so once it has given back its grown width a zero
+   flex basis leaves it nothing more to absorb. That ordering is why no shrink
+   weighting is needed — the meta yields first, this name only once it must. */
 .run-step-name {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
-  flex-shrink: 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

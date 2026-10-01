@@ -1,504 +1,653 @@
-// The residency planner, on its own: which ORDINALS a paint may mount around the
-// reader's own position, given a block and tool-card budget.
+// The residency planner and the coordinate space it plans in: which ENTRIES a paint may
+// mount around the reader's own position, given an entry and tool-card budget. One `seq`
+// space serves the plan and the renderer, because a turn's entries are one flat list.
 //
-// In the NODE project deliberately, and that placement is AC5's whole assertion:
-// the planner's graph has no DOM, so a DOM import anywhere in it throws at module
-// load and this file fails loudly instead of drifting. Pure, so every case states
-// the whole input. The renderer's half of the contract — a turn the window does
-// not reach renders as a stub — is turn-residency.test.ts's.
+// In the NODE project deliberately, and that placement is its own assertion: this graph has
+// no DOM, so a DOM import anywhere in it throws at module load and this file fails loudly
+// instead of drifting. Pure, so every case states the whole input.
+
 import { describe, it, expect } from "vitest";
+import { toolResultID } from "./entry-ids.js";
 import {
+  OVERSCAN_ENTRIES,
+  RESIDENT_ENTRIES,
+  RESIDENT_TOOL_CALLS,
+  effectiveRunID,
+  entryAt,
+  entryRenders,
+  firstPlanSeq,
   planResidency,
+  proseRunAt,
   runCardOwners,
+  runResults,
   sliceTurn,
-  supersededMessages,
   turnCost,
   turnOrdinalOf,
-  OVERSCAN_BLOCKS,
-  RESIDENT_BLOCKS,
-  RESIDENT_TOOL_CALLS,
+  turnSpan,
+  type EntryRange,
   type ResidencyAnchor,
   type ResidencyPlan,
-  type TurnRange,
 } from "./block-window.js";
 import type { Turn } from "./turns.js";
-import type { Message } from "./types.js";
+import type { Entry } from "./wire/types.gen.js";
 
-/** One assistant message carrying `blocks` text blocks and `tools` tool calls. */
-function msg(id: string, blocks: number, tools = 0): Message {
-  return {
-    id,
-    role: "assistant",
-    ts: 2,
-    blocks: Array.from({ length: blocks }, (_, i) => ({ type: "text", text: `b${String(i)}` })),
-    tool_calls: Array.from({ length: tools }, (_, i) => ({
-      id: `${id}-tc${String(i)}`,
-      title: "Read file",
-      kind: "read",
-      status: "completed",
-    })),
-  } as unknown as Message;
+// --- Fixtures ---------------------------------------------------------------
+//
+// A `Turn` is built directly rather than projected, because this module reads only `id` and
+// `body` and a projection would put `turns.ts`'s rules between the case and its subject.
+// `body` is the turn's entries PAST the `turn_open`, and the invariant this space rests on is
+// `body[i].seq === i + 1`.
+
+function entry(
+  seq: number,
+  kind: Entry["kind"],
+  payload: unknown = {},
+  opts: { readonly id?: string; readonly lane?: string } = {},
+): Entry {
+  const base: Entry = {
+    id: opts.id ?? `e${String(seq)}`,
+    turn: "t1",
+    kind,
+    seq,
+    ts: seq,
+    payload,
+  };
+  return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
 }
 
-/** One assistant message of `n` TOOL CARDS: `n` `tool_use` blocks, each with the
- *  call it references. The window charges the BLOCK, so a fixture for the tool
- *  budget has to carry the blocks and not only the calls. */
-function toolMsg(id: string, n: number): Message {
-  const ids = Array.from({ length: n }, (_, i) => `${id}-tc${String(i)}`);
-  return {
-    id,
-    role: "assistant",
-    ts: 2,
-    blocks: ids.map((tc) => ({ type: "tool_use", tool_call_id: tc })),
-    tool_calls: ids.map((tc) => ({
-      id: tc,
-      title: "Read file",
-      kind: "read",
-      status: "completed",
-    })),
-  } as unknown as Message;
+function text(seq: number, lane?: string): Entry {
+  return entry(seq, "text", { text: `p${String(seq)}` }, lane === undefined ? {} : { lane });
 }
 
-/** Newest LAST in every fixture, the order `projectTurns` produces. */
-function turn(id: string, body: Message[]): Turn {
+function call(
+  seq: number,
+  opts: {
+    readonly id?: string;
+    readonly title?: string;
+    readonly run?: string;
+    readonly lane?: string;
+  } = {},
+): Entry {
+  const id = opts.id ?? `c${String(seq)}`;
+  const payload = {
+    id,
+    title: opts.title ?? "Run Command",
+    kind: "execute",
+    status: "completed",
+    ts: 1,
+    ...(opts.run !== undefined && { workflow_id: opts.run }),
+  };
+  return entry(seq, "tool_call", payload, {
+    id,
+    ...(opts.lane !== undefined && { lane: opts.lane }),
+  });
+}
+
+/** The settled value of `callID`, keyed `<call>:result` — which is the join
+ *  `effectiveRunID` makes with no table behind it. */
+function result(
+  seq: number,
+  callID: string,
+  opts: { readonly run?: string; readonly lane?: string } = {},
+): Entry {
+  return entry(
+    seq,
+    "tool_result",
+    { status: "completed", ...(opts.run !== undefined && { workflow_id: opts.run }) },
+    { id: toolResultID(callID), ...(opts.lane !== undefined && { lane: opts.lane }) },
+  );
+}
+
+/** A turn whose body is `body`, with the seqs re-stamped so the caller may list kinds
+ *  without counting. Ids and lanes are preserved. */
+function turn(id: string, body: readonly Entry[]): Turn {
   return {
     id,
     n: 1,
-    trigger: { id: `${id}-trigger`, role: "user", ts: 1 } as unknown as Message,
-    body,
+    trigger: undefined,
+    body: body.map((e, i) => Object.assign({ ...e }, { seq: i + 1, turn: id })),
+    openEntries: new Map(),
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,
   };
 }
 
-function spanOf(plan: ResidencyPlan, turnID: string): number {
-  const range = plan.get(turnID);
-  return range === undefined ? 0 : range.to - range.from;
+/** `n` consecutive `text` entries, the cheapest thing that fills a budget. */
+function texts(n: number): Entry[] {
+  return Array.from({ length: n }, (_, i) => text(i + 1));
 }
 
-describe("turnCost", () => {
-  it("counts blocks and tool calls across the body", () => {
-    expect(turnCost(turn("t", [msg("a", 3, 1), msg("b", 5, 2)]))).toEqual({
-      blocks: 8,
-      toolCalls: 3,
-    });
+/** `n` consecutive `tool_call` entries. */
+function calls(n: number): Entry[] {
+  return Array.from({ length: n }, (_, i) => call(i + 1, { id: `c${String(i)}` }));
+}
+
+function spanOf(plan: ResidencyPlan, turnID: string): number {
+  const r = plan.get(turnID);
+  return r === undefined ? 0 : r.to - r.from;
+}
+
+// --- The coordinate space ---------------------------------------------------
+
+describe("the entry space", () => {
+  it("indexes the body from seq 1, leaving 0 for the turn_open", () => {
+    const t = turn("t1", [text(1), call(2)]);
+    expect(entryAt(t, 1)?.kind).toBe("text");
+    expect(entryAt(t, 2)?.kind).toBe("tool_call");
   });
 
-  it("counts a blockless message as one row", () => {
-    // The reconcile unit is the message, so an event or a legacy message with no
-    // blocks array is still a row the paint has to build.
-    const bare = { id: "bare", role: "assistant", ts: 2 } as unknown as Message;
-    expect(turnCost(turn("t", [bare, bare]))).toEqual({ blocks: 2, toolCalls: 0 });
+  it("answers nothing at 0 and past the turn", () => {
+    // 0 is the `turn_open`, which is not in `body`; past the turn there is no entry.
+    const t = turn("t1", [text(1)]);
+    expect(entryAt(t, 0)).toBeUndefined();
+    expect(entryAt(t, 2)).toBeUndefined();
   });
 
-  it("does not count the trigger — the header renders it whether or not the turn is resident", () => {
-    expect(turnCost(turn("t", []))).toEqual({ blocks: 0, toolCalls: 0 });
-  });
-});
-
-describe("the ordinal space", () => {
-  it("addresses a block by its message's base plus its own index", () => {
-    const t = turn("t", [msg("a", 3), msg("b", 4)]);
-    expect(turnOrdinalOf(t, "a", 0)).toBe(0);
-    expect(turnOrdinalOf(t, "a", 2)).toBe(2);
-    expect(turnOrdinalOf(t, "b", 0)).toBe(3);
-    expect(turnOrdinalOf(t, "b", 3)).toBe(6);
+  it("counts the turn_open's own ordinal in the span", () => {
+    // `seq` is the space and the header's entry holds a place in it, so a two-entry body
+    // spans three ordinals. A span short by one would let a window's edge fall off the tail.
+    expect(turnSpan(turn("t1", [text(1), text(2)]))).toBe(3);
+    expect(turnSpan(turn("t1", []))).toBe(1);
   });
 
-  it("answers a message's FIRST ordinal when no block index is given", () => {
-    expect(turnOrdinalOf(turn("t", [msg("a", 3), msg("b", 4)]), "b")).toBe(3);
+  it("turnOrdinalOf answers the entry's OWN seq", () => {
+    const t = turn("t1", [text(1), call(2, { id: "the-call" }), text(3)]);
+    expect(turnOrdinalOf(t, "the-call")).toBe(2);
   });
 
-  it("prices a blockless message at one ordinal, so the row after it is not overlapped", () => {
-    const bare = { id: "bare", role: "assistant", ts: 2 } as unknown as Message;
-    const t = turn("t", [bare, msg("b", 2)]);
-    expect(turnOrdinalOf(t, "bare")).toBe(0);
-    expect(turnOrdinalOf(t, "b", 0)).toBe(1);
+  it("turnOrdinalOf answers the turn's first ordinal for an absent id", () => {
+    const t = turn("t1", [text(1)]);
+    expect(turnOrdinalOf(t)).toBe(0);
+    expect(turnOrdinalOf(t, "")).toBe(0);
   });
 
-  it("answers undefined for a message the turn does not hold", () => {
-    expect(turnOrdinalOf(turn("t", [msg("a", 2)]), "gone")).toBeUndefined();
+  it("turnOrdinalOf answers undefined for an id this turn does not hold", () => {
+    // A caller branches on "not in this turn" rather than guessing at an ordinal.
+    expect(turnOrdinalOf(turn("t1", [text(1)]), "nope")).toBeUndefined();
   });
 
-  it("clamps an index past its message's own span into that message", () => {
-    // A search hit's block index can outlive the block it named; the answer has to
-    // stay inside the message that owns it rather than naming the next row's.
-    expect(turnOrdinalOf(turn("t", [msg("a", 3), msg("b", 4)]), "a", 99)).toBe(2);
-  });
-
-  it("slices a turn range into MESSAGE-LOCAL ranges, in body order", () => {
-    const t = turn("t", [msg("a", 3), msg("b", 4), msg("c", 2)]);
-    expect([...sliceTurn(t, { from: 2, to: 8 })]).toEqual([
-      ["a", { from: 2, to: 3 }],
-      ["b", { from: 0, to: 4 }],
-      ["c", { from: 0, to: 1 }],
-    ]);
-  });
-
-  it("leaves a message the range does not touch ABSENT, which is how its row is not mounted", () => {
-    const t = turn("t", [msg("a", 3), msg("b", 4)]);
-    expect([...sliceTurn(t, { from: 3, to: 7 }).keys()]).toEqual(["b"]);
-  });
-
-  it("gives a blockless message the range touches an EMPTY range", () => {
-    const bare = { id: "bare", role: "assistant", ts: 2 } as unknown as Message;
-    const t = turn("t", [msg("a", 2), bare]);
-    expect(sliceTurn(t, { from: 0, to: 3 }).get("bare")).toEqual({ from: 0, to: 0 });
-  });
-
-  it("round-trips an ordinal through sliceTurn back to the block it names", () => {
-    const t = turn("t", [msg("a", 3), msg("b", 4)]);
-    const at = turnOrdinalOf(t, "b", 2) ?? -1;
-    expect([...sliceTurn(t, { from: at, to: at + 1 })]).toEqual([["b", { from: 2, to: 3 }]]);
+  it("round-trips an id through its ordinal back to the entry", () => {
+    const t = turn("t1", [text(1), call(2, { id: "the-call" }), text(3)]);
+    const seq = turnOrdinalOf(t, "the-call");
+    expect(seq).not.toBeUndefined();
+    expect(entryAt(t, seq as number)?.id).toBe("the-call");
   });
 });
 
-describe("planResidency", () => {
-  it("keeps every turn at its full range when the whole window fits", () => {
-    const turns = [turn("t1", [msg("a1", 4)]), turn("t2", [msg("a2", 4)])];
-    expect([...planResidency(turns, undefined)]).toEqual([
-      ["t1", { from: 0, to: 4 }],
-      ["t2", { from: 0, to: 4 }],
-    ]);
+// --- The ONE render predicate ----------------------------------------------
+
+describe("entryRenders", () => {
+  it.each(["turn_open", "turn_close", "turn_bind", "tool_result", "reconciled"] as const)(
+    "refuses a %s, which renders elsewhere",
+    (kind) => {
+      // The header, the footer, nothing, and its call's own card. A budget that charged for
+      // one of these would disagree with the spacer that prices them, which is the whole
+      // reason this predicate is exported rather than spelled twice.
+      expect(entryRenders(entry(1, kind), "", -1)).toBe(false);
+    },
+  );
+
+  it.each([
+    "text",
+    "thinking",
+    "tool_call",
+    "steer",
+    "steer_ack",
+    "compaction",
+    "model_switched",
+    "mode_switched",
+    "turn_revert",
+  ] as const)("draws a %s at its own position", (kind) => {
+    expect(entryRenders(entry(1, kind), "", -1)).toBe(true);
   });
 
-  it("windows a SINGLE over-budget turn to its TAIL at the live edge, which a turn count could not reach", () => {
-    // AC1. The measured shape: one turn holding 580 blocks / 353 tool cards.
-    // `TURNS_WARM = 5` mounted it whole; a turn-set budget made it a stub with no
-    // route in but the toggle. The live edge is where a RUNNING turn's anchor
-    // sits, so its window is its tail and its newest block is always in it.
-    const turns = [turn("huge", [msg("a", RESIDENT_BLOCKS + 1)])];
-    expect(planResidency(turns, undefined).get("huge")).toEqual({
-      from: 1,
-      to: RESIDENT_BLOCKS + 1,
-    });
+  it("draws only the FIRST plan of the lane, every later one folding into its card", () => {
+    expect(entryRenders(entry(3, "plan"), "", 3)).toBe(true);
+    expect(entryRenders(entry(7, "plan"), "", 3)).toBe(false);
   });
 
-  it("names an INTERIOR range for a turn the reader is parked inside", () => {
-    // AC2. The anchor is the reader's own ordinal, so the window has ordinals to
-    // spend on BOTH sides of it and the range touches neither end of the turn.
-    const anchor: ResidencyAnchor = { turnID: "huge", at: 500 };
-    const range = planResidency([turn("huge", [msg("a", 1000)])], anchor).get("huge");
-    expect(range).toEqual({ from: 340, to: 660 });
-  });
-
-  it("grows both sides of an interior anchor by at least one overscan", () => {
-    // What sizes a demand grant: a grant handed over on arrival must land in a
-    // region at least as large, or the reader sees blocks leave as they get there.
-    const anchor: ResidencyAnchor = { turnID: "huge", at: 500 };
-    const range = planResidency([turn("huge", [msg("a", 1000)])], anchor).get("huge");
-    expect(anchor.at - (range?.from ?? 0)).toBeGreaterThanOrEqual(OVERSCAN_BLOCKS);
-    expect((range?.to ?? 0) - anchor.at).toBeGreaterThanOrEqual(OVERSCAN_BLOCKS);
-  });
-
-  it("spends the budget from the live edge back", () => {
-    const turns = [
-      turn("old", [msg("a1", 200)]),
-      turn("mid", [msg("a2", 200)]),
-      turn("new", [msg("a3", 200)]),
-    ];
-    // The tail latches at the sequence end, so the head spends the whole budget:
-    // `new` whole, then 120 ordinals of `mid`, and nothing reaches `old`.
-    const plan = planResidency(turns, undefined);
-    expect(plan.get("old")).toBeUndefined();
-    expect(plan.get("mid")).toEqual({ from: 80, to: 200 });
-    expect(plan.get("new")).toEqual({ from: 0, to: 200 });
-  });
-
-  it("cuts the window at the TOOL budget, short of what the block budget would allow", () => {
-    const turns = [turn("t", [toolMsg("a", RESIDENT_TOOL_CALLS + 8)])];
-    // Every ordinal is a tool card, so 96 of them is the whole window — far short
-    // of the 320 blocks the block budget alone would have admitted.
-    expect(spanOf(planResidency(turns, undefined), "t")).toBe(RESIDENT_TOOL_CALLS);
-  });
-
-  it("is contiguous: a cheap turn behind an over-budget one gets no ordinal", () => {
-    const turns = [
-      turn("cheap", [msg("a1", 1)]),
-      turn("huge", [msg("a2", RESIDENT_BLOCKS + 1)]),
-      turn("newest", [msg("a3", 1)]),
-    ];
-    // Without per-side latching from one seed `cheap` would fit in what `huge` did
-    // not spend, and the reader would get a mounted turn between two holes.
-    const plan = planResidency(turns, undefined);
-    expect(plan.get("cheap")).toBeUndefined();
-    expect(plan.get("huge")).toEqual({ from: 2, to: RESIDENT_BLOCKS + 1 });
-    expect(plan.get("newest")).toEqual({ from: 0, to: 1 });
-  });
-
-  it("keeps the newest turn's ordinals when a 580-ordinal turn is left out of the sequence", () => {
-    // AC34, from the planner's side. Foldedness is not a fact this function can see —
-    // `computeFoldPlan` decides it and passes the surviving turns — so what is checkable
-    // here is the COST of including one: handed the sequence a fold has been filtered out
-    // of, both open turns keep their ordinals; handed the raw one, the bulky turn in the
-    // middle spends the whole budget and the newest turn gets nothing.
-    const anchor: ResidencyAnchor = { turnID: "reading", at: 0 };
-    const reading = turn("reading", [msg("a-read", 4)]);
-    const bulky = turn("bulky", [msg("a-bulky", 580)]);
-    const newest = turn("newest", [msg("a-new", 4)]);
-
-    expect([...planResidency([reading, newest], anchor)]).toEqual([
-      ["reading", { from: 0, to: 4 }],
-      ["newest", { from: 0, to: 4 }],
-    ]);
-
-    const raw = planResidency([reading, bulky, newest], anchor);
-    expect(raw.get("newest")).toBeUndefined();
-    expect(spanOf(raw, "bulky")).toBe(RESIDENT_BLOCKS - 4);
-  });
-
-  it("holds ONE contiguous run across three turns that each exceed the budget", () => {
-    // AC3. Both halves of contiguity at once: each turn's range is a single run,
-    // and the turns holding ordinals are adjacent in the sequence.
-    const turns = [
-      turn("t1", [msg("a1", RESIDENT_BLOCKS + 1)]),
-      turn("t2", [msg("a2", RESIDENT_BLOCKS + 1)]),
-      turn("t3", [msg("a3", RESIDENT_BLOCKS + 1)]),
-    ];
-    const plan = planResidency(turns, { turnID: "t2", at: 200 });
-    expect(plan.get("t1")).toBeUndefined();
-    expect(plan.get("t2")).toEqual({ from: 40, to: RESIDENT_BLOCKS + 1 });
-    expect(plan.get("t3")).toEqual({ from: 0, to: 39 });
-  });
-
-  it("bounds a 700-block turn to the same order of blocks as a 20-block turn", () => {
-    // AC4. The point of the whole feature: what a paint costs stops tracking how
-    // big the turn the reader is looking at happens to be.
-    const big = planResidency([turn("big", [msg("a", 700)])], { turnID: "big", at: 350 });
-    const small = planResidency([turn("small", [msg("a", 20)])], { turnID: "small", at: 10 });
-    expect(spanOf(big, "big")).toBe(RESIDENT_BLOCKS);
-    expect(spanOf(small, "small")).toBe(20);
-  });
-
-  it("takes the budget as a parameter, so a caller can state a different one", () => {
-    const turns = [turn("t1", [msg("a1", 4)]), turn("t2", [msg("a2", 4)])];
-    expect([...planResidency(turns, undefined, { blocks: 4, toolCalls: 8 })]).toEqual([
-      ["t2", { from: 0, to: 4 }],
-    ]);
-  });
-
-  it("clamps an anchor whose ordinal is outside its own turn", () => {
-    const turns = [turn("t1", [msg("a1", 4)]), turn("t2", [msg("a2", 4)])];
-    const plan = planResidency(turns, { turnID: "t1", at: 99 }, { blocks: 2, toolCalls: 8 });
-    expect([...plan]).toEqual([["t1", { from: 2, to: 4 }]]);
-  });
-
-  it("falls back to the live edge for an anchor naming a turn the sequence does not hold", () => {
-    // A stale id — a rewind or a page eviction between the read and the pass. It
-    // has no position in this sequence, so there is no nearest turn to step to.
-    const turns = [turn("t1", [msg("a1", 4)]), turn("t2", [msg("a2", 4)])];
-    const plan = planResidency(turns, { turnID: "gone", at: 0 }, { blocks: 2, toolCalls: 8 });
-    expect([...plan]).toEqual([["t2", { from: 2, to: 4 }]]);
-  });
-
-  it("seeds at the NEXT turn's first ordinal for an anchor on a turn holding no ordinal", () => {
-    // A bodyless card has no ordinal of its own to seed on, and the reader is
-    // looking at it where it sits — so the window must open around that position
-    // rather than being thrown to the live edge.
-    const turns = [turn("t1", [msg("a1", 4)]), turn("waiting", []), turn("t2", [msg("a2", 4)])];
-    const plan = planResidency(turns, { turnID: "waiting", at: 0 }, { blocks: 3, toolCalls: 8 });
-    expect([...plan]).toEqual([
-      ["t1", { from: 3, to: 4 }],
-      ["t2", { from: 0, to: 2 }],
-    ]);
-  });
-
-  it("keeps the seed inside the sequence for an anchor on a TRAILING turn holding no ordinal", () => {
-    // The same turn with nothing after it: its base is one PAST the last ordinal,
-    // and the answer is the live edge rather than an ordinal that does not exist.
-    const turns = [turn("t1", [msg("a1", 4)]), turn("waiting", [])];
-    const plan = planResidency(turns, { turnID: "waiting", at: 0 }, { blocks: 2, toolCalls: 8 });
-    expect([...plan]).toEqual([["t1", { from: 2, to: 4 }]]);
-  });
-
-  it("gives no entry to anything holding no ordinal", () => {
-    // A zero-length entry would tell the renderer to mount a body with no rows;
-    // absence is what leaves the card a header with nothing under it.
-    const nothing: ResidencyPlan = planResidency([], undefined);
-    expect(nothing.size).toBe(0);
-    const waiting = planResidency([turn("waiting", []), turn("t", [msg("a", 4)])], undefined);
-    expect([...waiting.keys()]).toEqual(["t"]);
-  });
-
-  it("answers ranges the renderer can slice without subtracting a base itself", () => {
-    // The two coordinate spaces meet here and nowhere else: what the plan hands
-    // back is turn-local, which is exactly what `sliceTurn` takes.
-    const t = turn("t", [msg("a", 4), msg("b", 4)]);
-    const range = planResidency([t], undefined, { blocks: 3, toolCalls: 8 }).get("t") as TurnRange;
-    expect(range).toEqual({ from: 5, to: 8 });
-    expect([...sliceTurn(t, range)]).toEqual([["b", { from: 1, to: 4 }]]);
+  it("refuses an entry of any lane but the VIEW's root", () => {
+    // `lane` is the view's root: `""` for the transcript, a delegate's uuid for its own page.
+    expect(entryRenders(text(1, "sub-A"), "", -1)).toBe(false);
+    expect(entryRenders(text(1, "sub-A"), "sub-A", -1)).toBe(true);
+    expect(entryRenders(text(1), "sub-A", -1)).toBe(false);
   });
 });
 
-describe("supersededMessages", () => {
-  /** An assistant message whose every block is a WORKFLOW STEP's, so the transcript
-   *  renders none of it. Measured on the live volume as 11 real body messages, one of
-   *  them 603 blocks long — the population a bare "is there a later row" test gets
-   *  wrong. */
-  function stepMsg(id: string, n: number): Message {
-    return {
-      id,
-      role: "assistant",
-      ts: 2,
-      blocks: Array.from({ length: n }, (_, i) => ({
-        type: "text",
-        text: `step ${String(i)}`,
-        agent_subtask_id: "wf:wk-1:seq/step",
-      })),
-      tool_calls: [],
-    } as unknown as Message;
-  }
-
-  function eventMsg(id: string): Message {
-    return { id, role: "event", ts: 2, event_kind: "compacted" } as unknown as Message;
-  }
-
-  it("names every message a later one renders content after", () => {
-    const ids = supersededMessages([turn("t1", [msg("a", 2), msg("b", 2), msg("c", 2)])]);
-    expect([...ids].sort()).toEqual(["a", "b"]);
+describe("firstPlanSeq", () => {
+  it("names the first plan of the given lane", () => {
+    const t = turn("t1", [text(1), entry(2, "plan"), entry(3, "plan")]);
+    expect(firstPlanSeq(t, "")).toBe(2);
   });
 
-  it("leaves the turn's last message alone", () => {
-    expect(supersededMessages([turn("t1", [msg("only", 3)])]).has("only")).toBe(false);
+  it("is per LANE, so a delegate's plan is not the transcript's first", () => {
+    const t = turn("t1", [entry(1, "plan", {}, { lane: "sub-A" }), entry(2, "plan")]);
+    expect(firstPlanSeq(t, "")).toBe(2);
+    expect(firstPlanSeq(t, "sub-A")).toBe(1);
   });
 
-  it("does not let a message the transcript renders NOTHING for supersede one", () => {
-    // The whole reason the predicate is not "is there a later row": those blocks are
-    // dropped by the dispatcher, so folding `a` would fold it behind nothing visible.
-    expect(supersededMessages([turn("t1", [msg("a", 2), stepMsg("wf", 603)])]).has("a")).toBe(
-      false,
-    );
+  it("answers -1 for a turn holding no plan, which no seq can equal", () => {
+    expect(firstPlanSeq(turn("t1", [text(1)]), "")).toBe(-1);
+  });
+});
+
+// --- A run's card owner ----------------------------------------------------
+
+describe("effectiveRunID", () => {
+  it("prefers the call's OWN workflow id", () => {
+    const t = turn("t1", [call(1, { id: "c1", run: "w-own" }), result(2, "c1", { run: "w-res" })]);
+    expect(effectiveRunID(t.body[0] as Entry, runResults(t))).toBe("w-own");
   });
 
-  it("counts an EVENT row as content, because a badge is a row of its own", () => {
-    expect(supersededMessages([turn("t1", [msg("a", 2), eventMsg("e")])]).has("a")).toBe(true);
+  it("falls back to the call's own tool_result, joined on the entry id", () => {
+    const t = turn("t1", [call(1, { id: "c1" }), result(2, "c1", { run: "w-1" })]);
+    expect(effectiveRunID(t.body[0] as Entry, runResults(t))).toBe("w-1");
   });
 
-  it("looks past a renders-nothing message to a real one behind it", () => {
-    const ids = supersededMessages([turn("t1", [msg("a", 2), stepMsg("wf", 4), msg("c", 1)])]);
-    expect([...ids].sort()).toEqual(["a", "wf"]);
+  it("answers empty when neither carries one", () => {
+    const t = turn("t1", [call(1, { id: "c1" }), result(2, "c1")]);
+    expect(effectiveRunID(t.body[0] as Entry, runResults(t))).toBe("");
   });
 
-  it("scopes the verdict to one turn", () => {
-    // The newest turn's own tail is not superseded by an OLDER turn, and nothing in an
-    // older turn is superseded by a newer turn's content — that axis is the turn card's
-    // own fold (`fold-state.ts`), not this one.
-    const ids = supersededMessages([turn("t1", [msg("a", 2)]), turn("t2", [msg("b", 2)])]);
-    expect([...ids]).toEqual([]);
+  it("does not take ANOTHER call's result", () => {
+    // The join is the id, so a run-bearing result in the same turn cannot lend its id to a
+    // call it does not settle.
+    const t = turn("t1", [
+      call(1, { id: "c1" }),
+      call(2, { id: "c2" }),
+      result(3, "c2", { run: "w-2" }),
+    ]);
+    expect(effectiveRunID(t.body[0] as Entry, runResults(t))).toBe("");
+    expect(effectiveRunID(t.body[1] as Entry, runResults(t))).toBe("w-2");
   });
 });
 
 describe("runCardOwners", () => {
-  interface RunCall {
-    readonly id: string;
-    readonly run: string;
-    /** Non-empty makes the block a STEP's or a delegate's, which `placeBlock` drops. */
-    readonly subtask?: string;
-    readonly title?: string;
-  }
-
-  /** One assistant message whose blocks are tool cards, each naming a run. The BLOCK
-   *  is what the dispatcher gates on, so a fixture for this has to carry both halves. */
-  function runMsg(id: string, calls: readonly RunCall[]): Message {
-    return {
-      id,
-      role: "assistant",
-      ts: 2,
-      blocks: calls.map((c) => ({
-        type: "tool_use",
-        tool_call_id: c.id,
-        ...(c.subtask === undefined ? {} : { agent_subtask_id: c.subtask }),
-      })),
-      tool_calls: calls.map((c) => ({
-        id: c.id,
-        title: c.title ?? "Run Workflow",
-        kind: "other",
-        status: "completed",
-        workflow_id: c.run,
-      })),
-    } as unknown as Message;
-  }
-
   it("names the FIRST call of a run and no other", () => {
-    // The defect this closes: `inspect_workflow` echoes the same `workflow_id`, and
-    // before the owner rule BOTH calls took the run-card branch — the inspect's block
-    // was seated on the card's element and its status clobbered the launch's.
-    const owners = runCardOwners([
-      turn("t1", [runMsg("m1", [{ id: "launch", run: "wf_1" }])]),
-      turn("t2", [runMsg("m2", [{ id: "inspect", run: "wf_1", title: "Inspect Workflow" }])]),
+    // A later mention of one run (an `inspect_workflow`, an `update_workflow` echo) renders
+    // as an ordinary tool row; the two are indistinguishable on the wire, so POSITION is the
+    // rule and the client owns it outright.
+    const t = turn("t1", [
+      call(1, { id: "launch", run: "w-1" }),
+      call(2, { id: "inspect", run: "w-1" }),
     ]);
-    expect(owners.get("wf_1")).toBe("launch");
+    expect(runCardOwners([t])).toEqual(new Map([["w-1", "launch"]]));
   });
 
-  it("resolves both calls of ONE message, in block order", () => {
-    // The case a live registry cannot answer: `indexGroups` and `placeBlock` are two
-    // passes over this message, so a registry written by the paint answers "no host
-    // yet, I host" to both and posts the box twice.
-    const owners = runCardOwners([
-      turn("t1", [
-        runMsg("m1", [
-          { id: "launch", run: "wf_1" },
-          { id: "inspect", run: "wf_1", title: "Inspect Workflow" },
-        ]),
+  it("resolves both calls of one turn, in seq order", () => {
+    const t = turn("t1", [call(1, { id: "a", run: "w-1" }), call(2, { id: "b", run: "w-2" })]);
+    expect(runCardOwners([t])).toEqual(
+      new Map([
+        ["w-1", "a"],
+        ["w-2", "b"],
       ]),
-    ]);
-    expect(owners.get("wf_1")).toBe("launch");
+    );
   });
 
-  it("names one owner per run", () => {
-    const owners = runCardOwners([
-      turn("t1", [
-        runMsg("m1", [
-          { id: "a", run: "wf_1" },
-          { id: "b", run: "wf_2" },
-        ]),
-      ]),
-    ]);
-    expect([...owners]).toEqual([
-      ["wf_1", "a"],
-      ["wf_2", "b"],
-    ]);
+  it("names one owner per run across several turns, oldest first", () => {
+    const older = turn("t1", [call(1, { id: "first", run: "w-1" })]);
+    const newer = turn("t2", [call(1, { id: "second", run: "w-1" })]);
+    expect(runCardOwners([older, newer])).toEqual(new Map([["w-1", "first"]]));
   });
 
-  it("skips a block the dispatcher drops, so no owner names an unrenderable call", () => {
-    // `placeBlock`'s run branch requires an EMPTY subtask, so a nested run launched by
-    // a workflow step is dropped there. An owner naming it would leave the run with a
-    // designated host that builds nothing and every later mention a plain tool row.
-    const owners = runCardOwners([
-      turn("t1", [
-        runMsg("m1", [
-          { id: "nested", run: "wf_1", subtask: "wf:wf_0:seq/step" },
-          { id: "launch", run: "wf_1" },
-        ]),
-      ]),
+  it("skips an entry this view does not render, so no owner names an undrawn call", () => {
+    const t = turn("t1", [
+      call(1, { id: "delegate", run: "w-1", lane: "sub-A" }),
+      call(2, { id: "own", run: "w-1" }),
     ]);
-    expect(owners.get("wf_1")).toBe("launch");
+    expect(runCardOwners([t])).toEqual(new Map([["w-1", "own"]]));
   });
 
   it("skips an internal-titled call, matching the dispatcher's own early return", () => {
-    const owners = runCardOwners([
-      turn("t1", [
-        runMsg("m1", [
-          { id: "internal", run: "wf_1", title: "Fetching your cloud config" },
-          { id: "launch", run: "wf_1" },
-        ]),
-      ]),
+    const t = turn("t1", [
+      call(1, { id: "internal", run: "w-1", title: "Fetching your cloud config" }),
+      call(2, { id: "real", run: "w-1" }),
     ]);
-    expect(owners.get("wf_1")).toBe("launch");
+    expect(runCardOwners([t])).toEqual(new Map([["w-1", "real"]]));
   });
 
-  it("names nothing for a message whose calls carry no run", () => {
-    expect([...runCardOwners([turn("t1", [msg("a", 3, 2)])])]).toEqual([]);
+  it("names nothing for a turn whose calls carry no run", () => {
+    expect(runCardOwners([turn("t1", [call(1), text(2)])])).toEqual(new Map());
   });
 
-  it("ignores a call with no block of its own", () => {
-    // A tool call the window holds without its block is not a mention the transcript
-    // renders, so it cannot be the host.
-    const m = runMsg("m1", [{ id: "launch", run: "wf_1" }]) as unknown as {
-      blocks: unknown[];
-    };
-    m.blocks = [];
-    expect([...runCardOwners([turn("t1", [m as unknown as Message])])]).toEqual([]);
+  it("plans a DELEGATE's page against that lane's own calls", () => {
+    const t = turn("t1", [
+      call(1, { id: "own", run: "w-1" }),
+      call(2, { id: "delegate", run: "w-2", lane: "sub-A" }),
+    ]);
+    expect(runCardOwners([t], "sub-A")).toEqual(new Map([["w-2", "delegate"]]));
+  });
+});
+
+// --- What a turn costs -----------------------------------------------------
+
+describe("turnCost", () => {
+  it("counts the entries it draws, and how many of those are tool calls", () => {
+    const t = turn("t1", [text(1), call(2), text(3), call(4)]);
+    expect(turnCost(t)).toEqual({ entries: 4, toolCalls: 2 });
+  });
+
+  it("charges nothing for an entry that renders elsewhere", () => {
+    // The `turn_close` feeds the footer and the `tool_result` its call's card, so a body of
+    // one text plus those two costs one entry. The span is 4 and the COST is 1: the two
+    // numbers are different questions, which is why `turnSpan` is its own function.
+    const t = turn("t1", [text(1), entry(2, "tool_result"), entry(3, "turn_close")]);
+    expect(turnCost(t)).toEqual({ entries: 1, toolCalls: 0 });
+    expect(turnSpan(t)).toBe(4);
+  });
+
+  it("charges nothing for a delegate's entries when the view's root is the transcript", () => {
+    const t = turn("t1", [text(1), text(2, "sub-A"), call(3, { lane: "sub-A" })]);
+    expect(turnCost(t)).toEqual({ entries: 1, toolCalls: 0 });
+    expect(turnCost(t, "sub-A")).toEqual({ entries: 2, toolCalls: 1 });
+  });
+
+  it("charges one plan and not the rest", () => {
+    const t = turn("t1", [entry(1, "plan"), entry(2, "plan"), entry(3, "plan")]);
+    expect(turnCost(t)).toEqual({ entries: 1, toolCalls: 0 });
+  });
+});
+
+// --- The prose-run snap ----------------------------------------------------
+
+describe("sliceTurn", () => {
+  it("clamps a range into the turn's span", () => {
+    const t = turn("t1", [text(1), text(2)]);
+    expect(sliceTurn(t, { from: -5, to: 99 })).toEqual({ from: 0, to: 3 });
+  });
+
+  it("keeps an empty range empty rather than snapping it open", () => {
+    const t = turn("t1", texts(4));
+    expect(sliceTurn(t, { from: 2, to: 2 })).toEqual({ from: 2, to: 2 });
+  });
+
+  it("snaps an edge INSIDE a prose run out to the whole run", () => {
+    // A run is one `.msg-row` holding one markdown stream, so an edge inside one would mount
+    // it as two rows with two parsers and a visible seam.
+    const t = turn("t1", texts(6));
+    expect(sliceTurn(t, { from: 3, to: 5 })).toEqual({ from: 1, to: 7 });
+  });
+
+  it("stops the snap at an entry that RENDERS, which is where the run ends", () => {
+    // 8.5's run: consecutive `text` entries of one lane with nothing that renders between
+    // them. The tool call at seq 3 is a card between two paragraphs, so it bounds both runs.
+    const t = turn("t1", [text(1), text(2), call(3), text(4), text(5)]);
+    expect(sliceTurn(t, { from: 4, to: 5 })).toEqual({ from: 4, to: 6 });
+  });
+
+  it("steps OVER an entry that renders nothing, which does not break a run", () => {
+    // A `tool_result` renders on its call's card, so it is not between two paragraphs in any
+    // sense the reader can see and the run continues across it.
+    const t = turn("t1", [text(1), entry(2, "tool_result"), text(3)]);
+    expect(sliceTurn(t, { from: 3, to: 4 })).toEqual({ from: 1, to: 4 });
+  });
+
+  it("does not join two runs across a DELEGATE's entry for the delegate's own view", () => {
+    // Symmetry with the transcript: whichever lane is the view's root, an entry of that lane
+    // that renders is a run boundary and an entry of any other lane is not.
+    const t = turn("t1", [text(1, "sub-A"), text(2), text(3, "sub-A")]);
+    expect(sliceTurn(t, { from: 3, to: 4 }, "sub-A")).toEqual({ from: 1, to: 4 });
+    expect(sliceTurn(t, { from: 2, to: 3 }, "sub-A")).toEqual({ from: 2, to: 3 });
+  });
+
+  it("leaves a range whose edges are already run boundaries alone", () => {
+    const t = turn("t1", [text(1), text(2), call(3)]);
+    expect(sliceTurn(t, { from: 1, to: 3 })).toEqual({ from: 1, to: 3 });
+  });
+
+  it("takes a hoisted firstPlan, so a caller in a loop needs no re-scan", () => {
+    // The plan at seq 2 renders, so it bounds the run either way; what the parameter proves
+    // is that the caller's own answer is the one used.
+    const t = turn("t1", [text(1), entry(2, "plan"), text(3)]);
+    expect(sliceTurn(t, { from: 3, to: 4 }, "", 2)).toEqual({ from: 3, to: 4 });
+  });
+});
+
+describe("proseRunAt", () => {
+  it("answers the run's whole range for one of its members", () => {
+    const t = turn("t1", [text(1), text(2), call(3)]);
+    expect(proseRunAt(t, 2, "", -1)).toEqual({ from: 1, to: 3 });
+  });
+
+  it("answers null for a seq that is not prose this view draws", () => {
+    // The MOUNT's door onto the same rule the window snap applies, so an edge and a bubble
+    // cannot disagree about where a run begins.
+    const t = turn("t1", [text(1), call(2), text(3, "sub-A")]);
+    expect(proseRunAt(t, 2, "", -1)).toBeNull();
+    expect(proseRunAt(t, 3, "", -1)).toBeNull();
+    expect(proseRunAt(t, 0, "", -1)).toBeNull();
+  });
+
+  it("agrees with sliceTurn on the run it names", () => {
+    const t = turn("t1", texts(5));
+    const run = proseRunAt(t, 3, "", -1) as EntryRange;
+    expect(sliceTurn(t, { from: 3, to: 4 })).toEqual(run);
+  });
+
+  it("breaks a run at a turn_revert and steps over an entry that renders nothing", () => {
+    // The rewind boundary's second half of the fold contract. `entry_fold.json` pins that a
+    // turn_revert RENDERS in both languages, and a rendering entry ends a prose run, so text
+    // on either side of the cut is two paragraphs rather than one the boundary is drawn
+    // through. The fixture's own log cannot produce that shape — a revert record always lands
+    // at the file's tail, inside the newest surviving turn — so it is pinned here over a
+    // synthetic turn instead. No production edit backs this: `entryRenders` accepts the kind
+    // through its default, which is the right answer for it.
+    const cut = turn("t1", [
+      text(1),
+      entry(2, "turn_revert", { from: "t-9", from_n: 9, through: "t-9", cause: "rewind" }),
+      text(3),
+    ]);
+    expect(proseRunAt(cut, 1, "", -1)).toEqual({ from: 1, to: 2 });
+    expect(proseRunAt(cut, 3, "", -1)).toEqual({ from: 3, to: 4 });
+
+    // The control, because two runs is also what a walk breaking at EVERY entry answers: a
+    // turn_bind renders nothing, so the walk steps over it and the same two text entries stay
+    // ONE run.
+    const bound = turn("t1", [
+      text(1),
+      entry(2, "turn_bind", { kas_message_id: "kas-1", session_id: "sess-1" }),
+      text(3),
+    ]);
+    expect(proseRunAt(bound, 1, "", -1)).toEqual({ from: 1, to: 4 });
+  });
+});
+
+// --- The plan --------------------------------------------------------------
+
+describe("planResidency", () => {
+  it("keeps every turn at its full span when the whole window fits", () => {
+    const turns = [turn("t1", texts(3)), turn("t2", texts(3))];
+    const plan = planResidency(turns, undefined, "");
+    expect(plan.get("t1")).toEqual({ from: 0, to: 4 });
+    expect(plan.get("t2")).toEqual({ from: 0, to: 4 });
+  });
+
+  it("windows a single over-budget turn to its TAIL at the live edge", () => {
+    // A turn count could not reach this: there is one turn, and it is the one that has to be
+    // cut. Prose so the snap is exercised too, which is why the head is not exactly the
+    // budget.
+    const t = turn("t1", texts(RESIDENT_ENTRIES + 40));
+    const plan = planResidency([t], undefined, "");
+    const r = plan.get("t1") as EntryRange;
+    expect(r.to).toBe(turnSpan(t));
+    expect(r.from).toBeGreaterThan(0);
+    expect(spanOf(plan, "t1")).toBeLessThanOrEqual(turnSpan(t));
+  });
+
+  it("names an INTERIOR range for a turn the reader is parked inside", () => {
+    const t = turn("t1", calls(RESIDENT_TOOL_CALLS + 60));
+    const anchor: ResidencyAnchor = { turnID: "t1", at: 30 };
+    const r = planResidency([t], anchor, "").get("t1") as EntryRange;
+    expect(r.from).toBeLessThanOrEqual(30);
+    expect(r.to).toBeGreaterThan(30);
+    expect(r.to).toBeLessThan(turnSpan(t));
+  });
+
+  it("grows both sides of an interior anchor by at least one overscan", () => {
+    // The floor is asserted ON the window rather than fed in as an input, which is what makes
+    // `OVERSCAN_ENTRIES` one name for one distance.
+    const t = turn("t1", calls(RESIDENT_TOOL_CALLS + 200));
+    const at = 150;
+    const r = planResidency([t], { turnID: "t1", at }, "").get("t1") as EntryRange;
+    expect(at - r.from).toBeGreaterThanOrEqual(OVERSCAN_ENTRIES);
+    expect(r.to - at).toBeGreaterThanOrEqual(OVERSCAN_ENTRIES);
+  });
+
+  it("spends the budget from the live edge back", () => {
+    // Oldest turn first: the newest is whole, the middle partial, the oldest absent.
+    const turns = [
+      turn("t1", texts(200)),
+      turn("t2", texts(200)),
+      turn("t3", texts(RESIDENT_ENTRIES - 20)),
+    ];
+    const plan = planResidency(turns, undefined, "");
+    expect(plan.get("t3")).toEqual({ from: 0, to: turnSpan(turns[2] as Turn) });
+    expect(spanOf(plan, "t2")).toBeGreaterThan(0);
+    expect(plan.has("t1")).toBe(false);
+  });
+
+  it("cuts at the TOOL budget, short of what the entry budget would allow", () => {
+    // Two budgets, because a tool card is a whole disclosure where a text entry is part of a
+    // row: whichever runs out first ends the side that asked.
+    const t = turn("t1", calls(RESIDENT_TOOL_CALLS + 50));
+    const plan = planResidency([t], undefined, "");
+    expect(spanOf(plan, "t1")).toBeLessThanOrEqual(RESIDENT_TOOL_CALLS + 1);
+    expect(spanOf(plan, "t1")).toBeLessThan(RESIDENT_ENTRIES);
+  });
+
+  it("is CONTIGUOUS: a cheap turn behind an over-budget one gets no ordinal", () => {
+    // One seed, one ordinal per side per step, which is what makes an island unrepresentable
+    // — the alternative would mount a turn with a gap of unrendered history above it.
+    const turns = [turn("t1", texts(2)), turn("t2", texts(RESIDENT_ENTRIES + 50))];
+    const plan = planResidency(turns, undefined, "");
+    expect(plan.has("t1")).toBe(false);
+    expect(spanOf(plan, "t2")).toBeGreaterThan(0);
+  });
+
+  it("holds ONE contiguous run across three turns that each exceed the budget", () => {
+    const turns = [
+      turn("t1", texts(RESIDENT_ENTRIES)),
+      turn("t2", texts(RESIDENT_ENTRIES)),
+      turn("t3", texts(RESIDENT_ENTRIES)),
+    ];
+    const plan = planResidency(turns, { turnID: "t2", at: 160 }, "");
+    // The middle turn is reached; the two edges are either partial or absent, and no turn
+    // between two reached turns may be missing.
+    expect(spanOf(plan, "t2")).toBeGreaterThan(0);
+    const reached = ["t1", "t2", "t3"].map((id) => plan.has(id));
+    expect(reached.slice(reached.indexOf(true), reached.lastIndexOf(true) + 1)).not.toContain(
+      false,
+    );
+  });
+
+  it("bounds a huge turn to the order of the budget when its prose runs are short", () => {
+    // Prose broken by tool cards, which is what a long working turn looks like, so the two
+    // boundary runs the snap may overspend are two entries each rather than the whole turn.
+    const body: Entry[] = [];
+    for (let i = 0; i < 350; i++) {
+      body.push(text(0), call(0, { id: `c${String(i)}` }));
+    }
+    const plan = planResidency([turn("t1", body)], undefined, "");
+    expect(spanOf(plan, "t1")).toBeLessThanOrEqual(RESIDENT_ENTRIES + OVERSCAN_ENTRIES * 2 + 4);
+  });
+
+  it("MOUNTS A TURN THAT IS ONE PROSE RUN WHOLE, over the budget", () => {
+    // The bound is the budget plus the two BOUNDARY RUNS, not a constant, and a turn of
+    // uninterrupted prose is one run — so the budget cannot cut it anywhere. That is the
+    // snap's own cost, stated where a reader will look for it rather than left to be
+    // discovered as a memory surprise: a run may not be mounted as two rows with two
+    // markdown streams, so the whole run is the smallest thing the window can hold.
+    // `from` is 1 rather than 0 because the run's own first member is seq 1: ordinal 0 is the
+    // `turn_open`, which is not prose, so the snap stops there — and the header renders
+    // whether or not the turn is resident, which is why `turnCost` charges nothing for it.
+    const t = turn("t1", texts(RESIDENT_ENTRIES + 200));
+    const plan = planResidency([t], undefined, "");
+    expect(plan.get("t1")).toEqual({ from: 1, to: turnSpan(t) });
+  });
+
+  it("takes the budget as a parameter, so a caller can state a different one", () => {
+    // Tool calls rather than prose: the snap only moves an edge inside a text run, so this
+    // states the budget's own effect with nothing else in the way.
+    const t = turn("t1", calls(50));
+    const plan = planResidency([t], undefined, "", { entries: 10, toolCalls: 10 });
+    expect(spanOf(plan, "t1")).toBeLessThan(20);
+  });
+
+  it("charges a FREE ordinal nothing and takes it unconditionally", () => {
+    // An ordinal this view renders nothing at buys the reader nothing, so spending budget on
+    // one would cut the window short of what it can actually show. The span therefore
+    // exceeds the entry budget when the turn is padded with results.
+    const body: Entry[] = [];
+    for (let i = 0; i < 30; i++) {
+      body.push(call(0, { id: `c${String(i)}` }), result(0, `c${String(i)}`));
+    }
+    const t = turn("t1", body);
+    const plan = planResidency([t], undefined, "", { entries: 10, toolCalls: 10 });
+    const r = plan.get("t1") as EntryRange;
+    // Ten calls plus the ten results interleaved with them: the results are free.
+    expect(r.to - r.from).toBeGreaterThan(10);
+  });
+
+  it("clamps an anchor whose ordinal is outside its own turn", () => {
+    const t = turn("t1", texts(10));
+    const low = planResidency([t], { turnID: "t1", at: -50 }, "").get("t1");
+    const high = planResidency([t], { turnID: "t1", at: 9999 }, "").get("t1");
+    expect(low).toEqual({ from: 0, to: 11 });
+    expect(high).toEqual({ from: 0, to: 11 });
+  });
+
+  it("falls back to the live edge for an anchor naming a turn the sequence does not hold", () => {
+    const turns = [turn("t1", texts(RESIDENT_ENTRIES)), turn("t2", texts(20))];
+    const plan = planResidency(turns, { turnID: "gone", at: 5 }, "");
+    expect(plan.get("t2")).toEqual({ from: 0, to: 21 });
+  });
+
+  it("seeds at the NEXT turn's first ordinal for an anchor on a turn holding no ordinal", () => {
+    // A zero-span turn's own base IS the next turn's first ordinal, so the seed lands
+    // forward rather than off the sequence.
+    const turns = [turn("t1", texts(RESIDENT_ENTRIES + 50)), turn("t2", []), turn("t3", texts(5))];
+    const plan = planResidency(turns, { turnID: "t2", at: 0 }, "");
+    expect(plan.has("t3")).toBe(true);
+  });
+
+  it("keeps the seed inside the sequence for an anchor on a TRAILING empty turn", () => {
+    // Its base is past the end, so only the clamp answers it.
+    const turns = [turn("t1", texts(5)), turn("t2", [])];
+    const plan = planResidency(turns, { turnID: "t2", at: 0 }, "");
+    expect(plan.get("t1")).toEqual({ from: 0, to: 6 });
+  });
+
+  it("returns nothing for a sequence holding no ordinal at all", () => {
+    expect(planResidency([], undefined, "")).toEqual(new Map());
+  });
+
+  it("answers TURN-LOCAL ranges, so the renderer subtracts no base itself", () => {
+    const turns = [turn("t1", texts(4)), turn("t2", texts(4))];
+    const plan = planResidency(turns, undefined, "");
+    for (const id of ["t1", "t2"]) {
+      const r = plan.get(id) as EntryRange;
+      expect(r.from).toBe(0);
+      expect(r.to).toBe(5);
+    }
+  });
+
+  it("plans a DELEGATE's page over that lane, not the transcript's", () => {
+    // No default for `lane`, and this is why: a silent `""` would plan the window over the
+    // transcript while the spacers priced a delegate's.
+    const t = turn("t1", [text(1), text(2, "sub-A"), text(3, "sub-A")]);
+    const own = planResidency([t], undefined, "", { entries: 1, toolCalls: 1 });
+    const delegate = planResidency([t], undefined, "sub-A", { entries: 1, toolCalls: 1 });
+    // The transcript's budget of one is spent on seq 1 and the two delegate ordinals are
+    // free; the delegate's is spent on seq 3 and seq 1 is free to it.
+    expect(own.get("t1")?.from).toBe(0);
+    expect(delegate.get("t1")?.to).toBe(4);
+  });
+
+  it("returns a range every consumer can hand to sliceTurn unchanged", () => {
+    // The plan already applied the snap, so no consumer can hold an unsnapped range.
+    const t = turn("t1", texts(RESIDENT_ENTRIES + 30));
+    const r = planResidency([t], { turnID: "t1", at: 100 }, "").get("t1") as EntryRange;
+    expect(sliceTurn(t, r)).toEqual(r);
   });
 });

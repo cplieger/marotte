@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 // lineRec is a recording LineRecorder capturing RecordFromDiffs
@@ -17,28 +18,24 @@ import (
 type lineRec struct {
 	lastDiffs []marotte.ToolDiff
 	calls     int
-	// lastTurn is the turn number the tracker was handed. Recorded because it
-	// is the tracker's eviction key and the number the editor's gutter groups
-	// by: a call that records the right ranges under the wrong turn is a
-	// silent corruption the diff assertions cannot see.
-	lastTurn int
+	// lastRecency is the eviction key the tracker was handed, a wall-clock stamp
+	// that orders a chat's touched files oldest-first.
+	lastRecency int
 }
 
-func (r *lineRec) RecordFromDiffs(_ marotte.ChatID, diffs []marotte.ToolDiff, turn int, _ string) {
+func (r *lineRec) RecordFromDiffs(_ marotte.ChatID, diffs []marotte.ToolDiff, recency int, _ string) {
 	r.calls++
 	r.lastDiffs = diffs
-	r.lastTurn = turn
+	r.lastRecency = recency
 }
 
-// lineDeps wraps baseDeps and records the line-tracking calls. It overrides
-// RecordFromDiffs directly; it used to override a LineTracker() getter, and that
-// getter is gone with the role composites.
+// lineDeps wraps baseDeps and records the line-tracking calls.
 type lineDeps struct {
 	*baseDeps
 	rec *lineRec
 	// primed is the tool call primeToolCall created, kept because it clears the
 	// event stream afterwards: the delta oracle needs the value the deltas fold
-	// ONTO, and the create frame that carried it is gone by then.
+	// ONTO, and the tool_call entry frame that carried it is gone by then.
 	primed marotte.ToolCall
 }
 
@@ -83,7 +80,7 @@ func newLineCaptureDeps() (*lineDeps, *lineRec, *[]marotte.ServerEvent) {
 func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]marotte.ServerEvent, marotte.ChatID) {
 	t.Helper()
 	deps, rec, events := newLineCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
@@ -94,7 +91,7 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]marotte.S
 	stashCreatedThenClear(t, deps, events)
 	rec.calls = 0
 	rec.lastDiffs = nil
-	rec.lastTurn = 0
+	rec.lastRecency = 0
 	return tr, rec, deps, events, chatID
 }
 
@@ -107,41 +104,60 @@ func stashCreatedThenClear(t *testing.T, deps *lineDeps, events *[]marotte.Serve
 	*events = nil
 }
 
-// lastToolCallUpdate folds every tool_call_update DELTA onto the tool call the buffer
-// started from and returns the reconstructed whole, because no single event carries it.
-// The fold is also the ORACLE for the delta shape — it is toolCallDelta's inverse, and
-// the cross-check against the buffer's own accumulated value is what keeps it from
-// being the emitter's rules agreeing with themselves.
+// lastToolCallUpdate folds every tool_progress DELTA onto the call its tool_call
+// entry carried, then the tool_result entry's settled value once the call settled,
+// and returns the reconstructed whole, because no single frame carries it. While
+// the call is open the fold is the ORACLE for the delta shape — toolProgress's
+// inverse, cross-checked against the turn's own in-flight value so it is not the
+// emitter's rules agreeing with themselves. A settled call has left the turn, and
+// its tool_result entry is the whole.
 func lastToolCallUpdate(t *testing.T, deps *lineDeps, events *[]marotte.ServerEvent) (marotte.ToolCall, bool) {
 	t.Helper()
-	// Seeded from the create primeToolCall consumed. A create frame still in the
+	// Seeded from the create primeToolCall consumed. A tool_call entry still in the
 	// stream overrides it, so a test that primes its own call needs no seed.
 	folded, ok := foldToolCallUpdates(t, deps.primed, events)
 	if !ok {
 		return marotte.ToolCall{}, false
 	}
-	held, _, found := deps.bufStore.GetOrInit("c1").ToolCall(folded.ID)
-	if !found {
-		t.Fatalf("the buffer holds no tool call %q, so the delta stream cannot be checked", folded.ID)
+	turn := deps.turns.chats["c1"]
+	if turn == nil {
+		t.Fatalf("chat c1 has no turn, so the tool call %q cannot be checked", folded.ID)
 	}
-	if !reflect.DeepEqual(folded, held) {
-		t.Fatalf("the delta stream reconstructs\n  %+v\nbut the buffer holds\n  %+v\n"+
-			"— a field the fold changed is missing from the wire", folded, held)
+	open, live := turn.OpenCallFor(folded.ID)
+	if folded.Status.Terminal() {
+		if live {
+			t.Fatalf("tool call %q settled on the wire but the turn still holds it open", folded.ID)
+		}
+		return folded, true
+	}
+	if !live {
+		t.Fatalf("the turn holds no open tool call %q, so the delta stream cannot be checked", folded.ID)
+	}
+	if !reflect.DeepEqual(folded, open.Call) {
+		t.Fatalf("the delta stream reconstructs\n  %+v\nbut the turn holds\n  %+v\n"+
+			"— a field the fold changed is missing from the wire", folded, open.Call)
 	}
 	return folded, true
 }
 
-// foldToolCallUpdates replays the delta stream: the create frame's whole ToolCall
-// plus every later delta for that id, in order.
+// foldToolCallUpdates replays the stream: the tool_call entry's whole ToolCall, every
+// later tool_progress delta for it in order, and the tool_result entry that settled it.
 func foldToolCallUpdates(t *testing.T, seed marotte.ToolCall, events *[]marotte.ServerEvent) (marotte.ToolCall, bool) {
 	t.Helper()
 	out := seed
 	sawUpdate := false
 	for _, e := range *events {
 		switch p := e.Payload.(type) {
-		case marotte.ToolCallPayload:
-			out = p.ToolCall
-		case marotte.ToolCallUpdatePayload:
+		case marotte.EntryAppendedPayload:
+			switch p.Entry.Kind {
+			case marotte.EntryKindToolCall:
+				call := decodePayload[marotte.EntryToolCall](t, &p.Entry)
+				out = marotte.ToolCallOfEntry(&call)
+			case marotte.EntryKindToolResult:
+				sawUpdate = true
+				applyToolResult(&out, decodePayload[marotte.EntryToolResult](t, &p.Entry))
+			}
+		case marotte.ToolProgressPayload:
 			sawUpdate = true
 			applyToolCallDelta(&out, p)
 		}
@@ -149,9 +165,41 @@ func foldToolCallUpdates(t *testing.T, seed marotte.ToolCall, events *[]marotte.
 	return out, sawUpdate
 }
 
-// applyToolCallDelta is the client's fold, in Go: the inverse of toolCallDelta.
+// decodePayload is the entry's payload as T.
+func decodePayload[T any](t *testing.T, e *marotte.Entry) T {
+	t.Helper()
+	var v T
+	if err := json.Unmarshal(e.Payload, &v); err != nil {
+		t.Fatalf("decode %s %q: %v", e.Kind, e.ID, err)
+	}
+	return v
+}
+
+// applyToolResult is the client's settle, in Go: the result carries every field the
+// progress frames folded as it stands at the settle, so each one is replaced.
+func applyToolResult(tc *marotte.ToolCall, r marotte.EntryToolResult) {
+	tc.Title = r.Title
+	tc.Kind = r.Kind
+	tc.Status = r.Status
+	tc.Output = r.Output
+	tc.TerminalID = r.TerminalID
+	tc.WorkflowID = r.WorkflowID
+	tc.OutputSpans = r.OutputSpans
+	tc.Diffs = r.Diffs
+	tc.Locations = r.Locations
+	tc.DurationMs = r.DurationMs
+	tc.Checkpoint = r.Checkpoint
+	tc.Disclosed = r.Disclosed
+	tc.Denial = r.Denial
+	tc.Truncated = r.Truncated
+	tc.OutputBytes = r.OutputBytes
+	tc.HasFull = r.HasFull
+	tc.Declined = r.Declined
+}
+
+// applyToolCallDelta is the client's fold, in Go: the inverse of toolProgress.
 // An absent field means unchanged.
-func applyToolCallDelta(tc *marotte.ToolCall, d marotte.ToolCallUpdatePayload) {
+func applyToolCallDelta(tc *marotte.ToolCall, d marotte.ToolProgressPayload) {
 	tc.ID = d.ToolCallID
 	if d.Title != "" {
 		tc.Title = d.Title
@@ -183,9 +231,6 @@ func applyToolCallDelta(tc *marotte.ToolCall, d marotte.ToolCallUpdatePayload) {
 	if d.TerminalID != "" {
 		tc.TerminalID = d.TerminalID
 	}
-	if d.SubSessionID != "" {
-		tc.SubSessionID = d.SubSessionID
-	}
 	if d.AgentSubtaskID != "" {
 		tc.AgentSubtaskID = d.AgentSubtaskID
 	}
@@ -215,14 +260,18 @@ func hasWorkingLabel(events *[]marotte.ServerEvent) bool {
 	return false
 }
 
-// hasToolCallEvent reports whether any tool_call event was broadcast.
-func hasToolCallEvent(events *[]marotte.ServerEvent) bool {
-	for _, e := range *events {
-		if e.Type == marotte.EventToolCall {
-			return true
-		}
+// closedChangedFiles closes the chat's turn and returns the changed-files aggregate
+// its turn_close carries, the only read of what the tool calls tracked.
+func closedChangedFiles(t *testing.T, deps *baseDeps, chatID marotte.ChatID) map[string]*marotte.FileChange {
+	t.Helper()
+	turn := deps.turns.chats[chatID]
+	if turn == nil {
+		t.Fatalf("chat %q has no turn to close", chatID)
 	}
-	return false
+	if _, err := turn.Close(t.Context(), marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted}); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	return turnCloseOf(t, deps.chatEntries(chatID)).ChangedFiles
 }
 
 // TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting: a pre-tool-use hook's
@@ -244,23 +293,23 @@ func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 	t.Run("ShownWhenStatusDisabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), FrameAttribution{})
-		if !hasToolCallEvent(events) {
-			t.Error("hook-ask tool call broadcast no tool_call event with hooks.showStatus off; want shown (the ask is ungated)")
+		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
+			t.Error("hook-ask tool call appended no tool_call entry with hooks.showStatus off; want shown (the ask is ungated)")
 		}
-		if n := len(base.bufStore.GetOrInit(chatID).ToolCalls); n != 1 {
-			t.Errorf("buffered tool calls = %d, want 1 (the ask must be buffered so its answer update lands)", n)
+		if n := len(toolCallsOf(t, base.chatEntries(chatID))); n != 1 {
+			t.Errorf("sealed tool_call entries = %d, want 1 (the ask must be sealed so its answer update lands)", n)
 		}
 	})
 
 	t.Run("ShownWhenStatusEnabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: true}
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, hookAsk), FrameAttribution{})
-		if !hasToolCallEvent(events) {
+		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
 			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
 		}
 	})
@@ -268,14 +317,14 @@ func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 	t.Run("NonHookAskShownWhenStatusDisabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"title":      "readFile",
 			"kind":       "read",
 			"status":     "pending",
 		}), FrameAttribution{})
-		if !hasToolCallEvent(events) {
+		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
 			t.Error("normal tool call suppressed with hooks.showStatus off; want shown (only hook-ask cards are gated)")
 		}
 	})
@@ -287,7 +336,7 @@ func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithDiffRecordsLineChanges", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff",
 			"title":      "writeFile",
@@ -300,15 +349,14 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 		if rec.calls != 1 {
 			t.Errorf("with diff: RecordFromDiffs calls = %d, want 1", rec.calls)
 		}
-		// The first tool call of a chat is turn 1, not turn 0 and not a negative:
-		// the number is the tracker's eviction key and what the editor's
-		// changed-line gutter groups by, so an off-by-one files every range
-		// under a turn no card claims.
-		if rec.lastTurn != 1 {
-			t.Errorf("with diff: RecordFromDiffs turn = %d, want 1 (the chat's first tool call)", rec.lastTurn)
+		// The recency is the tracker's eviction key, so a zero files every range
+		// under one bucket the tracker evicts first.
+		first := rec.lastRecency
+		if first <= 0 {
+			t.Errorf("with diff: RecordFromDiffs recency = %d, want a positive wall-clock stamp", first)
 		}
-		// A second diffed call in the same chat advances to 2, which is what
-		// makes the number a turn rather than a constant.
+		// A second diffed call in the same chat never records behind the first,
+		// which is what makes the key an ordering rather than a constant.
 		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff-2",
 			"title":      "writeFile",
@@ -318,13 +366,13 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 				{"type": "diff", "path": "y.go", "oldText": "a", "newText": "b"},
 			},
 		}), FrameAttribution{})
-		if rec.lastTurn != 2 {
-			t.Errorf("second diffed call: RecordFromDiffs turn = %d, want 2", rec.lastTurn)
+		if rec.lastRecency < first {
+			t.Errorf("second diffed call: RecordFromDiffs recency = %d, want at least the first call's %d", rec.lastRecency, first)
 		}
 	})
 	t.Run("WithoutDiffSkipsLineTracker", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-nodiff",
 			"title":      "readFile",
@@ -347,7 +395,7 @@ func TestToolCallUpdate_StatusApplied(t *testing.T) {
 	}), FrameAttribution{})
 	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if tc.Status != marotte.ToolCompleted {
 		t.Errorf("ToolCall.Status = %q, want %q (non-empty status must be applied)", tc.Status, marotte.ToolCompleted)
@@ -393,7 +441,7 @@ func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 	}), FrameAttribution{})
 	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if tc.Output != "hello\n" {
 		t.Errorf("ToolCall.Output = %q, want %q (output must be appended when content present)", tc.Output, "hello\n")
@@ -413,7 +461,7 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 		}), FrameAttribution{})
 		tc, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
-			t.Fatal("no tool_call_update event emitted")
+			t.Fatal("no tool_progress or tool_result frame emitted")
 		}
 		if len(tc.Locations) != 1 || tc.Locations[0].Path != "f.go" {
 			t.Errorf("ToolCall.Locations = %+v, want one location path=f.go", tc.Locations)
@@ -428,7 +476,7 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 		}), FrameAttribution{})
 		tc, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
-			t.Fatal("no tool_call_update event emitted")
+			t.Fatal("no tool_progress or tool_result frame emitted")
 		}
 		if tc.Locations != nil {
 			t.Errorf("ToolCall.Locations = %+v (len %d), want nil (empty locations must not be assigned)", tc.Locations, len(tc.Locations))
@@ -445,35 +493,16 @@ func TestToolCallUpdate_NoDiffSkipsLineTracker(t *testing.T) {
 		"status":     "in_progress",
 	}), FrameAttribution{})
 	if _, ok := lastToolCallUpdate(t, deps, events); !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if rec.calls != 0 {
 		t.Errorf("update without diffs: RecordFromDiffs calls = %d, want 0", rec.calls)
 	}
 }
 
-// TestToolCallUpdate_IndexBoundaryGuard pins that an index equal to
-// len(ToolCalls) is treated as out of range: the update returns early
-// and broadcasts nothing, guarding against an out-of-bounds index.
-func TestToolCallUpdate_IndexBoundaryGuard(t *testing.T) {
-	tr, _, deps, events, chatID := primeToolCall(t)
-	buf := deps.bufStore.GetOrInit(chatID)
-	buf.ToolCallIndex["tc-1"] = len(buf.ToolCalls)
-	*events = nil
-	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-		"toolCallId": "tc-1",
-		"status":     "completed",
-	}), FrameAttribution{})
-	for _, e := range *events {
-		if e.Type == marotte.EventToolCallUpdate {
-			t.Error("idx==len: tool_call_update emitted, want early return (no event)")
-		}
-	}
-}
-
 // TestToolCallUpdate_DiffPresentRecordsAndAppends pins the ledger gate: a diff
 // always lands on the card, and only a `completed` tool feeds the changed-file
-// ledger and the line tracker. Dropping the status check makes the in-progress
+// aggregate and the line tracker. Dropping the status check makes the in-progress
 // case record, which is what counted a streaming write's partial diffs.
 func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 	t.Run("InProgressAppendsWithoutRecording", func(t *testing.T) {
@@ -485,18 +514,20 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 				{"type": "diff", "path": "a.go", "oldText": "x", "newText": "y\n"},
 			},
 		}), FrameAttribution{})
-		buf := deps.bufStore.GetOrInit(chatID)
-		idx := buf.ToolCallIndex["tc-1"]
-		if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
-			t.Fatalf("in_progress: ToolCalls[%d].Diffs len = %d, want 1 (diff must be appended when present)", idx, got)
+		open, ok := deps.turns.chats[chatID].OpenCallFor("tc-1")
+		if !ok {
+			t.Fatal("in_progress: the turn no longer holds tc-1 open; a non-terminal update must not settle the call")
 		}
-		if got := buf.ToolCalls[idx].Diffs[0].Path; got != "a.go" {
+		if got := len(open.Call.Diffs); got != 1 {
+			t.Fatalf("in_progress: open call Diffs len = %d, want 1 (diff must be appended when present)", got)
+		}
+		if got := open.Call.Diffs[0].Path; got != "a.go" {
 			t.Errorf("in_progress: Diffs[0].Path = %q, want %q", got, "a.go")
 		}
 		if rec.calls != 0 {
 			t.Errorf("in_progress: RecordFromDiffs calls = %d, want 0 (only a completed tool changed a file)", rec.calls)
 		}
-		if _, ok := buf.ChangedFiles["a.go"]; ok {
+		if _, ok := closedChangedFiles(t, deps.baseDeps, chatID)["a.go"]; ok {
 			t.Error("in_progress: ChangedFiles[a.go] present, want absent (nothing has reached disk yet)")
 		}
 	})
@@ -509,10 +540,12 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 				{"type": "diff", "path": "a.go", "oldText": "x\n", "newText": "y\n"},
 			},
 		}), FrameAttribution{})
-		buf := deps.bufStore.GetOrInit(chatID)
-		idx := buf.ToolCallIndex["tc-1"]
-		if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
-			t.Fatalf("completed: ToolCalls[%d].Diffs len = %d, want 1", idx, got)
+		results := toolResultsOf(t, deps.chatEntries(chatID))
+		if len(results) != 1 {
+			t.Fatalf("completed: tool_result entries = %d, want 1 (a terminal update settles the call)", len(results))
+		}
+		if got := len(results[0].Diffs); got != 1 {
+			t.Fatalf("completed: tool_result Diffs len = %d, want 1", got)
 		}
 		if rec.calls != 1 {
 			t.Errorf("completed: RecordFromDiffs calls = %d, want 1 (must record when the tool succeeded)", rec.calls)
@@ -520,7 +553,7 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 		if got := len(rec.lastDiffs); got != 1 {
 			t.Errorf("completed: RecordFromDiffs received %d diffs, want 1", got)
 		}
-		fc, ok := buf.ChangedFiles["a.go"]
+		fc, ok := closedChangedFiles(t, deps.baseDeps, chatID)["a.go"]
 		if !ok {
 			t.Fatal("completed: ChangedFiles[a.go] missing; the diff was not tracked")
 		}
@@ -539,47 +572,18 @@ func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 				{"type": "diff", "path": "locked.go", "oldText": "", "newText": "package x\n"},
 			},
 		}), FrameAttribution{})
-		buf := deps.bufStore.GetOrInit(chatID)
-		idx := buf.ToolCallIndex["tc-1"]
-		if got := len(buf.ToolCalls[idx].Diffs); got != 1 {
-			t.Fatalf("failed: ToolCalls[%d].Diffs len = %d, want 1 (the card still shows what it tried)", idx, got)
+		results := toolResultsOf(t, deps.chatEntries(chatID))
+		if len(results) != 1 {
+			t.Fatalf("failed: tool_result entries = %d, want 1 (a terminal update settles the call)", len(results))
+		}
+		if got := len(results[0].Diffs); got != 1 {
+			t.Fatalf("failed: tool_result Diffs len = %d, want 1 (the card still shows what it tried)", got)
 		}
 		if rec.calls != 0 {
 			t.Errorf("failed: RecordFromDiffs calls = %d, want 0", rec.calls)
 		}
-		if _, ok := buf.ChangedFiles["locked.go"]; ok {
+		if _, ok := closedChangedFiles(t, deps.baseDeps, chatID)["locked.go"]; ok {
 			t.Error("failed: ChangedFiles[locked.go] present, want absent (the write failed)")
-		}
-	})
-}
-
-// TestToolCallUpdate_SubSessionGate pins that SubSessionID is set from
-// the incoming value only when the stored one is empty; a non-empty
-// stored SubSessionID is never overwritten.
-func TestToolCallUpdate_SubSessionGate(t *testing.T) {
-	t.Run("SetWhenEmptyAndIncomingNonEmpty", func(t *testing.T) {
-		tr, _, deps, _, chatID := primeToolCall(t)
-		buf := deps.bufStore.GetOrInit(chatID)
-		idx := buf.ToolCallIndex["tc-1"]
-		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-			"toolCallId": "tc-1",
-			"status":     "in_progress",
-		}), FrameAttribution{SubSessionID: "sub-9"})
-		if got := buf.ToolCalls[idx].SubSessionID; got != "sub-9" {
-			t.Errorf("SubSessionID = %q, want %q (empty existing + non-empty incoming must set it)", got, "sub-9")
-		}
-	})
-	t.Run("NotOverwrittenWhenExistingNonEmpty", func(t *testing.T) {
-		tr, _, deps, _, chatID := primeToolCall(t)
-		buf := deps.bufStore.GetOrInit(chatID)
-		idx := buf.ToolCallIndex["tc-1"]
-		buf.ToolCalls[idx].SubSessionID = "existing"
-		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-			"toolCallId": "tc-1",
-			"status":     "in_progress",
-		}), FrameAttribution{SubSessionID: "sub-9"})
-		if got := buf.ToolCalls[idx].SubSessionID; got != "existing" {
-			t.Errorf("SubSessionID = %q, want %q (non-empty existing must not be overwritten)", got, "existing")
 		}
 	})
 }
@@ -629,7 +633,7 @@ func TestRelPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deps := &workDirDeps{baseDeps: newBaseDeps(), workDir: tt.workDir}
-			tr := New(rolesOf(deps), withIDGenerator(func() string { return "mid" }))
+			tr := New(rolesOf(deps))
 			if got := tr.relPath(tt.abs); got != tt.want {
 				t.Errorf("relPath(%q) [workDir=%q] = %q, want %q", tt.abs, tt.workDir, got, tt.want)
 			}
@@ -643,7 +647,7 @@ func TestRelPath(t *testing.T) {
 func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	t.Run("PendingEditMarksNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-new",
@@ -654,8 +658,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 				{"type": "diff", "path": "new.go", "oldText": "", "newText": "package x\n"},
 			},
 		}), FrameAttribution{})
-		buf := deps.bufStore.GetOrInit(chatID)
-		fc, ok := buf.ChangedFiles["new.go"]
+		fc, ok := closedChangedFiles(t, deps.baseDeps, chatID)["new.go"]
 		if !ok {
 			t.Fatal("ChangedFiles[new.go] missing; the diff was not tracked")
 		}
@@ -665,7 +668,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	})
 	t.Run("CompletedEditIsNotNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("c2")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-existing",
@@ -676,8 +679,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 				{"type": "diff", "path": "existing.go", "oldText": "a\n", "newText": "b\n"},
 			},
 		}), FrameAttribution{})
-		buf := deps.bufStore.GetOrInit(chatID)
-		fc, ok := buf.ChangedFiles["existing.go"]
+		fc, ok := closedChangedFiles(t, deps.baseDeps, chatID)["existing.go"]
 		if !ok {
 			t.Fatal("ChangedFiles[existing.go] missing; the diff was not tracked")
 		}
@@ -726,7 +728,7 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 			}), FrameAttribution{})
 			tc, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
-				t.Fatal("no tool_call_update event emitted")
+				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if tc.Checkpoint == nil {
 				t.Fatalf("ToolCall.Checkpoint = nil, want %+v (is the _meta.kiro.checkpoint tag path right?)", tt.want)
@@ -755,7 +757,7 @@ func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 
 	tc, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	want := marotte.ToolCheckpoint{Original: "orig-uri", Modified: "mod-uri-2", Local: "local-uri"}
 	if tc.Checkpoint == nil || *tc.Checkpoint != want {
@@ -786,7 +788,7 @@ func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, frame), FrameAttribution{})
 			tc, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
-				t.Fatal("no tool_call_update event emitted")
+				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if tc.Checkpoint != nil {
 				t.Errorf("ToolCall.Checkpoint = %+v, want nil (no file was written)", *tc.Checkpoint)
@@ -829,7 +831,7 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 
 			got, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
-				t.Fatal("no tool_call_update event emitted")
+				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if got.Title != tc.wantTitle {
 				t.Errorf("ToolCall.Title after an update %v = %q, want %q", tc.update, got.Title, tc.wantTitle)
@@ -841,38 +843,16 @@ func TestToolCallUpdate_TitleAndKindAppliedOnlyWhenPresent(t *testing.T) {
 	}
 }
 
-// A subtask attribution can arrive on an UPDATE, so it is adopted late — into an empty
-// slot only, and workflow identity outranks the plain id. All three rules keep a step's
-// card under the step: adopting over a held value re-parents it mid-flight, refusing to
-// adopt leaves it in the parent's block, and the plain id files it under a uuid the
-// workflow view cannot address.
-func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
-	workflowMeta := map[string]any{
-		"workflow": map[string]any{"workflowId": "wf_1", "nodeId": "build"},
-	}
+// A call's lane is fixed at the create (the invocation rule): an id arriving on an
+// UPDATE is never adopted, because re-laning a call mid-flight re-parents its card,
+// and a step's work reaches the run's log by attribution rather than by an id on
+// a frame. A disagreeing update is folded where the call is and logged, so the
+// wire drift is visible without moving anything.
+func TestToolCallUpdate_ALaneOnAnUpdateIsNeverAdopted(t *testing.T) {
+	const msg = "tool_call_update lane disagrees with its call's lane; folding where the call is"
 
-	t.Run("workflow_identity_wins_over_the_plain_id", func(t *testing.T) {
-		tr, _, deps, events, chatID := primeToolCall(t)
-		meta := map[string]any{"agentSubtaskId": "uuid-plain"}
-		maps.Copy(meta, workflowMeta)
-
-		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-			"toolCallId": "tc-1",
-			"status":     "completed",
-			"_meta":      map[string]any{"kiro": meta},
-		}), FrameAttribution{})
-
-		got, ok := lastToolCallUpdate(t, deps, events)
-		if !ok {
-			t.Fatal("no tool_call_update event emitted")
-		}
-		if got.AgentSubtaskID != "wf:wf_1:build" {
-			t.Errorf("ToolCall.AgentSubtaskID after an update carrying both ids = %q, want %q",
-				got.AgentSubtaskID, "wf:wf_1:build")
-		}
-	})
-
-	t.Run("the_plain_id_is_adopted_when_no_workflow_rides_along", func(t *testing.T) {
+	t.Run("an_id_the_create_did_not_carry_is_logged_not_adopted", func(t *testing.T) {
+		rec := capture.Default(t)
 		tr, _, deps, events, chatID := primeToolCall(t)
 
 		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -883,17 +863,23 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 
 		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
-			t.Fatal("no tool_call_update event emitted")
+			t.Fatal("no tool_progress or tool_result frame emitted")
 		}
-		if got.AgentSubtaskID != "uuid-plain" {
-			t.Errorf("ToolCall.AgentSubtaskID after an update carrying only the plain id = %q, want %q",
-				got.AgentSubtaskID, "uuid-plain")
+		if got.AgentSubtaskID != "" {
+			t.Errorf("ToolCall.AgentSubtaskID after an update carrying an id = %q, want the create's empty lane", got.AgentSubtaskID)
+		}
+		results := deps.chatEntries(chatID)
+		if len(results) == 0 || results[len(results)-1].Kind != marotte.EntryKindToolResult || results[len(results)-1].Lane != "" {
+			t.Errorf("tool_result entry = %+v, want it filed in the call's own lane (empty)", results)
+		}
+		if rec.CountExact(msg) != 1 || !rec.HasAttr(msg, "update_lane", "uuid-plain") {
+			t.Errorf("got %d %q lines naming update_lane=uuid-plain, want 1", rec.CountExact(msg), msg)
 		}
 	})
 
 	t.Run("a_held_id_survives_a_later_frame", func(t *testing.T) {
 		deps, _, events := newLineCaptureDeps()
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
+		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -912,10 +898,10 @@ func TestToolCallUpdate_SubtaskAdoptedLateIntoAnEmptySlot(t *testing.T) {
 
 		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
-			t.Fatal("no tool_call_update event emitted")
+			t.Fatal("no tool_progress or tool_result frame emitted")
 		}
 		if got.AgentSubtaskID != "uuid-first" {
-			t.Errorf("ToolCall.AgentSubtaskID after a second id arrived = %q, want %q (late adoption never overwrites)",
+			t.Errorf("ToolCall.AgentSubtaskID after a second id arrived = %q, want %q (the lane is the create's)",
 				got.AgentSubtaskID, "uuid-first")
 		}
 	})
@@ -957,7 +943,7 @@ func TestToolCallUpdate_WorkflowIDFromRawOutput(t *testing.T) {
 
 			got, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
-				t.Fatal("no tool_call_update event emitted")
+				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if got.WorkflowID != c.want {
 				t.Errorf("ToolCall.WorkflowID from rawOutput %v = %q, want %q", c.raw, got.WorkflowID, c.want)
@@ -983,7 +969,7 @@ func TestToolCallUpdate_WorkflowIDIsAdoptedOnce(t *testing.T) {
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if got.WorkflowID != "wf_first" {
 		t.Errorf("ToolCall.WorkflowID after a second id arrived = %q, want %q", got.WorkflowID, "wf_first")
@@ -1029,7 +1015,7 @@ func TestToolCallUpdate_RefusedWorkflowUpdateReadsAsDeclined(t *testing.T) {
 
 			got, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
-				t.Fatal("no tool_call_update event emitted")
+				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if got.Declined != c.wantDeclined {
 				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v", c.raw, got.Declined, c.wantDeclined)
@@ -1057,7 +1043,7 @@ func TestToolCallUpdate_DeclinedOnlyGradesASettledCall(t *testing.T) {
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if got.Declined {
 		t.Error("ToolCall.Declined on an in_progress frame = true, want false")
@@ -1083,7 +1069,7 @@ func TestToolCallUpdate_DeclinedIsNeverCleared(t *testing.T) {
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if !got.Declined {
 		t.Error("ToolCall.Declined after a verdict-free frame followed the refusal = false, want true")
@@ -1133,7 +1119,7 @@ func TestToolCallUpdate_AnUpdateCallDoesNotAdoptTheWorkflowID(t *testing.T) {
 
 			got, ok := lastToolCallUpdate(t, deps, events)
 			if !ok {
-				t.Fatal("no tool_call_update event emitted")
+				t.Fatal("no tool_progress or tool_result frame emitted")
 			}
 			if got.WorkflowID != c.want {
 				t.Errorf("ToolCall.WorkflowID from rawOutput %v = %q, want %q", c.raw, got.WorkflowID, c.want)
@@ -1165,7 +1151,7 @@ func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if got.Output != remoteJSONSchemaReason {
 		t.Errorf("ToolCall.Output on a failed edit = %q, want the reason %q", got.Output, remoteJSONSchemaReason)
@@ -1175,9 +1161,8 @@ func TestHandleToolCallUpdate_FailedTakesReasonFromRawOutput(t *testing.T) {
 	if len(got.Diffs) != 0 {
 		t.Errorf("ToolCall.Diffs = %+v, want none (a diff with no path names no file)", got.Diffs)
 	}
-	buf := deps.bufStore.GetOrInit(chatID)
-	if len(buf.ChangedFiles) != 0 {
-		t.Errorf("ChangedFiles = %v, want empty (the write threw before it reached a path)", buf.ChangedFiles)
+	if changed := closedChangedFiles(t, deps.baseDeps, chatID); len(changed) != 0 {
+		t.Errorf("ChangedFiles = %v, want empty (the write threw before it reached a path)", changed)
 	}
 }
 
@@ -1198,7 +1183,7 @@ func TestHandleToolCallUpdate_FailedKeepsExistingOutput(t *testing.T) {
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if got.Output != "FAIL: 2 tests failed\n" {
 		t.Errorf("ToolCall.Output = %q, want the command's own output alone", got.Output)
@@ -1220,7 +1205,7 @@ func TestHandleToolCallUpdate_CompletedStringRawOutputKeepsContent(t *testing.T)
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if got.Output != "wrote 3 lines\n" {
 		t.Errorf("ToolCall.Output with string rawOutput and content = %q, want one content copy", got.Output)
@@ -1246,7 +1231,7 @@ func TestHandleToolCallUpdate_CompletedTakesMessageFromStringifiedObjectOutput(t
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if got.Output != message+"\n" {
 		t.Errorf("ToolCall.Output from a stringified object = %q, want %q", got.Output, message+"\n")
@@ -1269,7 +1254,7 @@ func TestHandleToolCallUpdate_CompletedKeepsDifferentContentOverObjectMessage(t 
 
 	got, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event emitted")
+		t.Fatal("no tool_progress or tool_result frame emitted")
 	}
 	if got.Output != "ordinary tool output\n" {
 		t.Errorf("ToolCall.Output with distinct content and object rawOutput = %q, want the content block", got.Output)
@@ -1331,7 +1316,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 
 		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
-			t.Fatal("no tool_call_update event emitted")
+			t.Fatal("no tool_progress or tool_result frame emitted")
 		}
 		if got.Disclosed == nil {
 			t.Fatalf("ToolCall.Disclosed after an update carrying disclosedContext = nil, want the skill")
@@ -1356,7 +1341,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 
 		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
-			t.Fatal("no tool_call_update event emitted")
+			t.Fatal("no tool_progress or tool_result frame emitted")
 		}
 		if got.Denial == nil {
 			t.Fatalf("ToolCall.Denial after an update carrying policyDenial = nil, want the refusal")
@@ -1368,7 +1353,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 
 	t.Run("values_held_from_the_create_survive_a_later_frame", func(t *testing.T) {
 		deps, _, events := newLineCaptureDeps()
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
+		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
@@ -1393,7 +1378,7 @@ func TestToolCallUpdate_DisclosureAndDenialAdoptedLate(t *testing.T) {
 
 		got, ok := lastToolCallUpdate(t, deps, events)
 		if !ok {
-			t.Fatal("no tool_call_update event emitted")
+			t.Fatal("no tool_progress or tool_result frame emitted")
 		}
 		if got.Disclosed == nil || got.Disclosed.DisplayName != "first" {
 			t.Errorf("ToolCall.Disclosed after a second disclosure arrived = %+v, want the one held from the create (%q)",
@@ -1562,7 +1547,7 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got := toolCallFromWire(
 				&ACPToolCallWire{ToolCallID: "tc", Title: tc.in},
-				"", "", toolUpdateContent{}, 0,
+				"", toolUpdateContent{}, 0,
 			)
 			if got.Title != tc.want {
 				t.Errorf("toolCallFromWire(title %q).Title = %q, want %q", tc.in, got.Title, tc.want)
@@ -1576,7 +1561,7 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 // where nothing else caps it.
 func TestToolCallTitle_IsBounded(t *testing.T) {
 	long := strings.Repeat("x", 4096)
-	got := toolCallFromWire(&ACPToolCallWire{ToolCallID: "tc", Title: long}, "", "", toolUpdateContent{}, 0)
+	got := toolCallFromWire(&ACPToolCallWire{ToolCallID: "tc", Title: long}, "", toolUpdateContent{}, 0)
 	// The preset carries its "..." marker OUTSIDE the cap, so a truncated value is
 	// maxDisplayTextBytes+3 bytes.
 	if maxLen := maxDisplayTextBytes + len("..."); len(got.Title) > maxLen {

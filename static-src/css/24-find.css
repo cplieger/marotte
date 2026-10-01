@@ -90,11 +90,11 @@
   inset-inline-end: var(--sp-3);
   display: flex;
 
-  /* A COLUMN, because the note is a second line under the controls. It carries
-     no `gap` for `.page-find`'s reason one section down — a column gap applies
-     whatever the note's height is, which is what made an empty box 4px taller
-     than its own contents — so the row's own `align-items`/`gap` live on
-     `.chat-find-row` and the note pays for its spacing with its own margin. */
+  /* A COLUMN, because the counter and the note are LINES UNDER THE CONTROLS. It
+     carries no `gap` for `.page-find`'s reason one section down — a column gap
+     applies whatever those lines' heights are, which is what made an empty box 4px
+     taller than its own contents — so the row's own `align-items`/`gap` live on
+     `.chat-find-row` and each line pays for its spacing with its own margin. */
   flex-direction: column;
 
   /* A MAX rather than `.page-find`'s fixed `inline-size`, and the divergence is
@@ -286,9 +286,8 @@
    40-a11y.css's global duration override, and nothing here waits on
    transitionend. */
 .chat-find-note,
-.page-find-note {
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-xs);
+.page-find-note,
+.search-status {
   overflow: clip;
   block-size: 0;
   min-block-size: 0;
@@ -300,9 +299,65 @@
     opacity var(--dur-exit) var(--ease-exit);
 }
 
-/* Shown: the note's own height, plus the gap the column no longer carries. */
+.chat-find-note,
+.page-find-note {
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+}
+
+/* THE MATCH COUNTER OF BOTH FIND BARS, and it is a LINE UNDER THE CONTROLS rather
+   than a slot between the field and the buttons — which is what it was, in two
+   byte-identical rules (`.chat-find-count` here and `.editor-find-count` in
+   20-editor.css), each `min-inline-size: 4.5rem` + `white-space: nowrap`.
+
+   THAT PAIR IS WHY THE TEXT PAINTED OVER THE BUTTONS. Both writers put whole
+   SENTENCES in this element, not just a cursor: `domCounter` prints an
+   `emptyNote` for an empty walk ("No matches in 1,204 messages; not everything
+   was searched") and `paintHitPosition` appends `·`-joined per-press notices to
+   the cursor ("… · the rest are in delegate pages and run tabs · only in this
+   call's diff, which did not load"). A DECLARED `min-inline-size` REPLACES a flex
+   item's automatic minimum size, so 4.5rem let the box shrink to 72px under its
+   own text while `nowrap` refused to wrap it and the default `overflow: visible`
+   painted it straight across the four buttons and out through the popup's border.
+   Measured on the real box at 1440, fine pointer: `1 of 200 · 347 in chat` was
+   116px of ink in a 78px box, 34px over the `Aa` button; the empty-state sentence
+   was 342px of ink over ALL FOUR buttons and 55px past the border; the worst
+   composed string 600px of ink, 291px past it. The editor's bar has the same two
+   declarations and reached the same state from ~480px of bar width down (3 buttons
+   at 480, 4 at 360). Neither was width-dependent in the way it looked: the first
+   case overlaps at 1440 and not at 390, because the field's own shrink is what
+   frees the room.
+
+   So the fix is the LINE, not a bigger floor: on its own row nothing fixed-width
+   sits beside it, it wraps instead of overflowing, and the box grows — the same
+   collapse-and-grow the note above uses, shared by adding this class to that pair
+   rather than by a third mechanism. `interpolate-size: allow-keywords` (01-tokens)
+   is what makes `block-size: 0 → auto` interpolate; `min-block-size: 0` is what
+   lets it reach zero at all.
+
+   `:empty` therefore keeps the RESTING bar one row: `domCounter` answers "" for an
+   empty query, so a box just opened costs exactly its controls row, and the second
+   line arrives with the first keystroke.
+
+   The one hazard the note's own comment names — a height transition on content
+   that changes faster than the animation — does not reach this line either, for a
+   different reason: this text is rewritten per debounce AND per step, but a step
+   only moves digits inside one line, and `block-size: auto` resolves to the same
+   height, so nothing transitioned moves. Only a WRAP change animates.
+
+   `text-align` is the default START, where the slot centred its cursor in 4.5rem:
+   a wrapping sentence has to read as a line of text, and it lines up with the note
+   under it. `tabular-nums` stays, so stepping does not jiggle the digits. */
+.search-status {
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shown: the line's own height, plus the gap the column no longer carries. */
 .chat-find-note:not(:empty),
-.page-find-note:not(:empty) {
+.page-find-note:not(:empty),
+.search-status:not(:empty) {
   block-size: auto;
   margin-block-start: var(--sp-1);
   opacity: 1;
@@ -388,14 +443,8 @@
   border-color: var(--c-accent);
 }
 
-.chat-find-count {
-  min-inline-size: 4.5rem;
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  white-space: nowrap;
-}
+/* `.chat-find-count` carries only the no-results tint below; its shape is
+   `.search-status` above, shared with the editor's counter. */
 
 .chat-find-nav {
   display: flex;

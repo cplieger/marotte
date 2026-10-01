@@ -14,10 +14,10 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// The former handleModels (`kiro-cli chat --list-models` shell-out behind
-// GET /api/models) was replaced by the runtime's GET /api/config-template,
-// which serves the same catalog — plus the mode list — from kiro-cli
-// 2.14's session-less _kiro/config/template over the utility bridge.
+// There is no models handler here and no GET /api/models: the model catalog is
+// the runtime's GET /api/config-template, which serves it — plus the mode list —
+// from kiro-cli 2.14's session-less _kiro/config/template over the utility
+// bridge, so a shell-out to `kiro-cli chat --list-models` has no caller.
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
@@ -42,8 +42,12 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	// output so a runaway diagnostic dump can't bloat the HTTP response.
 	out, truncated, err := s.cliRunner.RunStdoutCapped(ctx, diagnosticsMaxBytes, "diagnostic", "--force", "--format", "json-pretty")
 	if err != nil {
+		// 502, not 200-with-an-error-body: this route has no 200-with-error wire
+		// contract to honour, and the client's action framework classifies by
+		// STATUS — kiro-cli is the upstream here and it declined.
 		slog.Warn("diagnostics: kiro-cli exec failed", "error", err)
-		webhttp.WriteJSON(w, httpreply.ErrorJSON("diagnostic command failed"))
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
+			httpreply.ErrorJSON("diagnostic command failed"))
 		return
 	}
 	// Sanitize (ANSI + hidden Unicode) before the report reaches the browser.

@@ -63,7 +63,7 @@ function mountSkipped(selector: string): HTMLElement {
     host.innerHTML = `<div class="subagent-body"><div class="message assistant">prose</div></div>`;
   } else if (selector.startsWith(".transcript-view")) {
     host.className = "transcript-view";
-    host.innerHTML = `<div class="msg-wrap"><div class="message assistant">prose</div></div>`;
+    host.innerHTML = `<div class="turn-body"><div class="message assistant">prose</div></div>`;
   } else {
     // A fall-through built the parked-view shape, so a SKIPPED entry whose shape
     // nobody wrote still matched the parked-view rule and passed for the wrong

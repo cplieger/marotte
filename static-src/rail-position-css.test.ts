@@ -8,12 +8,13 @@
 //
 // FIVE CLAIMS, and each of the last four has a control that makes it falsifiable:
 //
-//  - `--rail-at` lands a marker where `markerPosition` says, both ends inside.
-//  - a session shorter than the track is spread from the TOP at the relaxed pitch,
-//    and only one that cannot fit at it reaches the foot of the travel.
+//  - `--rail-at` lands a marker where `slotPosition` says, both ends inside.
+//  - a set shorter than the track is spread from the TOP at the relaxed pitch, and
+//    only one that cannot fit at it reaches the foot of the travel.
 //  - the track's reserved foot clears the docked control's TARGET by `--sp-2`, at both
 //    pointer tiers, and that foot is derived from `--hit-floor` rather than `--btn-h`.
-//  - two markers stay `pitchPx` apart at both tiers, the pitch read off the tier.
+//  - the shown set fills the track's capacity at ONE gap of at least `pitchPx`, at
+//    both tiers, the pitch read off the tier.
 //  - a marker paints `--rail-mark` and answers a `--hit-floor` pointer, which is a hit
 //    test rather than a style read, because an expander has no box to measure.
 //
@@ -28,8 +29,9 @@ import {
   railMetrics,
   railSpan,
   relaxedPitch,
-  markerPosition,
+  maxMarkers,
   selectMarkers,
+  slotPosition,
 } from "./rail-select.js";
 import type { TurnSummary } from "./rail-merge.js";
 
@@ -153,14 +155,14 @@ afterEach(() => {
   delete document.documentElement.dataset["pointer"];
 });
 
-/** One marker, positioned the way `render()` positions it: the turn's own fraction of
- *  the span the session's size resolves to, never a bare 0..1 ramp. */
-function marker(r: Rail, n: number, total: number): HTMLElement {
+/** One marker, positioned the way `render()` positions it: its slot's fraction of
+ *  the span the shown set's size resolves to, never a bare 0..1 ramp. */
+function marker(r: Rail, slot: number, slots: number, label = slot + 1): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "rail-marker";
   btn.type = "button";
-  btn.textContent = String(n);
-  btn.style.setProperty("--rail-at", String(railAt(n, total, spanFor(r, total))));
+  btn.textContent = String(label);
+  btn.style.setProperty("--rail-at", String(railAt(slot, slots, spanFor(r, slots))));
   r.rail.appendChild(btn);
   return btn;
 }
@@ -181,16 +183,16 @@ function trackOf(r: Rail): number {
   return px;
 }
 
-/** The span `render()` would resolve for a session of `total` turns on this track. */
-function spanFor(r: Rail, total: number): number {
-  return railSpan(total, trackOf(r), r.markerPx);
+/** The span `render()` would resolve for a set of `slots` markers on this track. */
+function spanFor(r: Rail, slots: number): number {
+  return railSpan(slots, trackOf(r), r.markerPx);
 }
 
-/** A turn count too large to fit at the relaxed pitch, so the set takes the whole
+/** A slot count too large to fit at the relaxed pitch, so the set takes the whole
  *  travel. DERIVED from the real track, because the crossover moves with the tier and
  *  with the reserved foot, and a hard-coded count would sit on the wrong side of it
  *  after a retune of either. */
-function stretchedTotal(r: Rail): number {
+function filledSlots(r: Rail): number {
   return Math.ceil(trackOf(r) / relaxedPitch(r.markerPx)) + 2;
 }
 
@@ -234,14 +236,13 @@ describe("the two pixel numbers come off the pointer tier", () => {
   });
 });
 
-describe("a marker's position is its turn's own number", () => {
+describe("a marker's position is its slot in the shown set", () => {
   it("turns --rail-at into the top the pure arithmetic computes", () => {
     const r = buildRail("fine");
-    const els = [1, 2, 3].map((n) => marker(r, n, 3));
+    const els = [0, 1, 2].map((i) => marker(r, i, 3));
 
     els.forEach((el, i) => {
-      const n = i + 1;
-      near(topIn(r, el), markerPosition(n, 3, r.track(), r.markerPx), `marker ${String(n)}`);
+      near(topIn(r, el), slotPosition(i, 3, r.track(), r.markerPx), `slot ${String(i)}`);
     });
   });
 
@@ -249,12 +250,12 @@ describe("a marker's position is its turn's own number", () => {
     // The travel span is the track minus one marker box, which is what stops the
     // last marker hanging half out of the column.
     const r = buildRail("fine");
-    const total = stretchedTotal(r);
-    // The premise: this many turns cannot fit at the relaxed pitch, so the last
-    // marker really is meant to reach the foot of the track.
-    expect(spanFor(r, total)).toBe(1);
-    const first = marker(r, 1, total);
-    const last = marker(r, total, total);
+    const slots = filledSlots(r);
+    // The premise: this many markers cannot fit at the relaxed pitch, so the last
+    // one really is meant to reach the foot of the track.
+    expect(spanFor(r, slots)).toBe(1);
+    const first = marker(r, 0, slots);
+    const last = marker(r, slots - 1, slots);
 
     near(topIn(r, first), 0, "first marker's top");
     near(topIn(r, last) + last.getBoundingClientRect().height, r.track(), "last marker's bottom");
@@ -265,8 +266,8 @@ describe("a marker's position is its turn's own number", () => {
     // foot of the track, one marker box above the resume control, with the whole axis
     // empty between the two markers.
     const r = buildRail("fine");
-    const first = marker(r, 1, 2);
-    const second = marker(r, 2, 2);
+    const first = marker(r, 0, 2);
+    const second = marker(r, 1, 2);
 
     near(topIn(r, first), 0, "first marker's top");
     near(topIn(r, second), relaxedPitch(r.markerPx), "second marker's top");
@@ -286,7 +287,7 @@ describe("the track's reserved foot clears the resume control", () => {
       const r = buildRail(tier);
       // One marker, because `.turn-rail:empty` hides the rail and a hidden track
       // has no bottom edge to measure the clearance from.
-      marker(r, 1, 1);
+      marker(r, 0, 1);
 
       const railBottom = r.rail.getBoundingClientRect().bottom;
       // TARGET to target, not paint to paint. The track's own bottom IS the last
@@ -302,7 +303,7 @@ describe("the track's reserved foot clears the resume control", () => {
       // the rail's column is the tier's hit floor, so a `--btn-h`-based foot
       // over-reserves by 12px on a fine pointer.
       const r = buildRail(tier);
-      marker(r, 1, 1);
+      marker(r, 0, 1);
 
       // The control paints the column's row box and grows its target to the floor, so
       // the reservation clears the target: `--sp-3` plus the paint plus one overhang.
@@ -319,15 +320,14 @@ describe("the track's reserved foot clears the resume control", () => {
   }
 });
 
-describe("two markers never overlap at the tier's own floor", () => {
+describe("the shown set fills the track at one gap, never overlapping at the tier's floor", () => {
   // THE COARSE CASE IS THE CONTROL, and the separation is measured against the TARGET
   // resolved from the token rather than against `railMetrics`' answer: comparing a
   // selection made at one pitch against that same pitch is a tautology, and it stays
   // green against a hard-coded 28 (measured). The target is what may not overlap, and
   // on a coarse pointer it is 44px while the box the marker PAINTS is 24 — so reading
-  // the rendered box here, which is what this case used to do, would compare the
-  // separation against a floor 20px too small and pass for a pitch that packs targets
-  // 16px inside each other.
+  // the rendered box here would compare the separation against a floor 20px too small
+  // and pass for a pitch that packs targets 16px inside each other.
   for (const tier of ["fine", "coarse"] as const) {
     it(`on a ${tier} pointer, at the density the track allows`, () => {
       const r = buildRail(tier);
@@ -337,12 +337,18 @@ describe("two markers never overlap at the tier's own floor", () => {
 
       expect(shown.length).toBeGreaterThan(2);
       expect(shown.length).toBeLessThan(all.length);
+      // Every slot the track holds is spent, so a dropped turn cannot leave a hole.
+      expect(shown.length).toBe(maxMarkers(trackOf(r), r.pitchPx));
 
-      const tops = shown.map((s) => topIn(r, marker(r, s.n, 60)));
+      const tops = shown.map((s, i) => topIn(r, marker(r, i, shown.length, s.n)));
+      const first = (tops[1] ?? 0) - (tops[0] ?? 0);
       for (let i = 1; i < tops.length; i++) {
+        const gap = (tops[i] ?? 0) - (tops[i - 1] ?? 0);
         // STRICTLY greater: two conforming targets need a clear between them, not
         // merely edges that touch.
-        expect((tops[i] ?? 0) - (tops[i - 1] ?? 0)).toBeGreaterThan(target);
+        expect(gap).toBeGreaterThan(target);
+        // EQUIDISTANT: one pitch for every consecutive pair, in rendered pixels.
+        near(gap, first, `gap ${String(i)}`);
       }
     });
   }
@@ -354,7 +360,7 @@ describe("a marker paints a control rung and grows its target to the tier's floo
   // whether it exists or not.
   /** One marker mid-track, where its expander cannot run off either end. */
   function midMarker(r: Rail): HTMLElement {
-    return marker(r, 5, 9);
+    return marker(r, 4, 9);
   }
 
   for (const [tier, paint, floor] of [

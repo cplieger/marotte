@@ -14,71 +14,82 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// storeWith returns a store holding one chat with these messages.
-func storeWith(t *testing.T, msgs []marotte.Message) *Store {
+// storeWith returns a store holding one chat whose one turn carries the tool_call
+// and, when res is non-nil, its tool_result, both appended through the store so
+// the store's own bound runs before the preview ever sees them.
+func storeWith(t *testing.T, call marotte.EntryToolCall, res *marotte.EntryToolResult) *Store {
 	t.Helper()
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Messages = msgs
-		return true
-	})
+	turn := openPromptTurn(t, s, "c1", "m-1")
+	if err := s.Append(t.Context(), "c1", entryOf(turn, "", call.ID, marotte.EntryKindToolCall, call)); err != nil {
+		t.Fatalf("Setup: append tool_call: %v", err)
+	}
+	if res != nil {
+		if err := s.Append(t.Context(), "c1", entryOf(turn, "", marotte.ToolResultID(call.ID), marotte.EntryKindToolResult, *res)); err != nil {
+			t.Fatalf("Setup: append tool_result: %v", err)
+		}
+	}
 	return s
 }
 
-// windowedCall serves the newest transcript page and returns its one tool call.
-func windowedCall(t *testing.T, msgs []marotte.Message) marotte.ToolCall {
+// windowedCall serves the newest transcript page and returns its one tool call's
+// previewed halves: the create's payload, and the result's when one was seeded.
+func windowedCall(t *testing.T, call marotte.EntryToolCall, res *marotte.EntryToolResult) (marotte.EntryToolCall, marotte.EntryToolResult) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(storeWith(t, msgs)).handleOne(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Setup: transcript code = %d, body = %s", rec.Code, rec.Body.String())
+	page := getPage(t, storeWith(t, call, res), "c1", "")
+	var gotCall marotte.EntryToolCall
+	var gotRes marotte.EntryToolResult
+	calls, results := 0, 0
+	for i := range page.Entries {
+		switch page.Entries[i].Kind {
+		case marotte.EntryKindToolCall:
+			calls++
+			if err := json.Unmarshal(page.Entries[i].Payload, &gotCall); err != nil {
+				t.Fatalf("Setup: decode tool_call: %v", err)
+			}
+		case marotte.EntryKindToolResult:
+			results++
+			if err := json.Unmarshal(page.Entries[i].Payload, &gotRes); err != nil {
+				t.Fatalf("Setup: decode tool_result: %v", err)
+			}
+		default:
+		}
 	}
-	var got struct {
-		Messages []marotte.Message `json:"messages"`
+	if calls != 1 || (res != nil) != (results == 1) {
+		t.Fatalf("Setup: want one tool_call and %d tool_result, got %d and %d", boolToInt(res != nil), calls, results)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("Setup: unmarshal: %v", err)
-	}
-	if len(got.Messages) != 1 || len(got.Messages[0].ToolCalls) != 1 {
-		t.Fatalf("Setup: want one message with one tool call, got %d messages", len(got.Messages))
-	}
-	return got.Messages[0].ToolCalls[0]
+	return gotCall, gotRes
 }
 
-// callMessage wraps one tool call in an assistant message.
-func callMessage(tc marotte.ToolCall) marotte.Message {
-	return marotte.Message{
-		ID:        "m1",
-		Role:      marotte.RoleAssistant,
-		Ts:        100,
-		ToolCalls: []marotte.ToolCall{tc},
+func boolToInt(b bool) int {
+	if b {
+		return 1
 	}
+	return 0
+}
+
+// settled is a completed tool_result carrying output.
+func settled(output string) *marotte.EntryToolResult {
+	return &marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: output}
 }
 
 // TestTranscript_SmallToolCallIsSentWhole is the case the preview must not
 // touch: the great majority of tool calls are small, and paying a second round
 // trip for one would make the ladder cost more than it saves.
 func TestTranscript_SmallToolCallIsSentWhole(t *testing.T) {
-	in := marotte.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
-		Status: marotte.ToolCompleted,
-		Output: "all done\n",
-		Input:  json.RawMessage(`{"command":"ls"}`),
+	in := marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Input: json.RawMessage(`{"command":"ls"}`)}
+	call, res := windowedCall(t, in, settled("all done\n"))
+	if call.HasFull || res.HasFull {
+		t.Errorf("has_full = %v/%v, want false for a %d-byte output", call.HasFull, res.HasFull, len(res.Output))
 	}
-	got := windowedCall(t, []marotte.Message{callMessage(in)})
-	if got.HasFull {
-		t.Errorf("has_full = true, want false for a %d-byte output", len(in.Output))
+	if res.Output != "all done\n" {
+		t.Errorf("output = %q, want %q", res.Output, "all done\n")
 	}
-	if got.Output != in.Output {
-		t.Errorf("output = %q, want %q", got.Output, in.Output)
+	if string(call.Input) != string(in.Input) {
+		t.Errorf("input = %s, want %s", call.Input, in.Input)
 	}
-	if string(got.Input) != string(in.Input) {
-		t.Errorf("input = %s, want %s", got.Input, in.Input)
-	}
-	if got.OutputBytes != 0 {
-		t.Errorf("output_bytes = %d, want 0 when the value is whole", got.OutputBytes)
+	if res.OutputBytes != 0 {
+		t.Errorf("output_bytes = %d, want 0 when the value is whole", res.OutputBytes)
 	}
 }
 
@@ -99,10 +110,7 @@ func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 		b.WriteString(strings.Repeat("m", 60) + "\n")
 	}
 	full := b.String()
-	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
-		Status: marotte.ToolCompleted, Output: full,
-	})})
+	_, got := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled(full))
 
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true for a windowed output")
@@ -134,10 +142,7 @@ func TestTranscript_BigOutputIsWindowedFromBothEnds(t *testing.T) {
 // volume holds a 9.1 MB single message and a 3.8 MB single message.
 func TestTranscript_OneEnormousLineIsStillBounded(t *testing.T) {
 	full := strings.Repeat("y", 200_000)
-	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
-		Status: marotte.ToolCompleted, Output: full,
-	})})
+	_, got := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled(full))
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true")
 	}
@@ -151,12 +156,11 @@ func TestTranscript_OneEnormousLineIsStillBounded(t *testing.T) {
 // are absolute UTF-16 offsets into the whole output, so a windowed output ships
 // plain and the bulk brings the styled text back with them.
 func TestTranscript_PreviewedOutputCarriesNoSpans(t *testing.T) {
-	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
-		Status:      marotte.ToolCompleted,
-		Output:      strings.Repeat("z", 20_000),
-		OutputSpans: []marotte.TextSpan{{Start: 0, End: 5, Attrs: 1}},
-	})})
+	_, got := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute},
+		&marotte.EntryToolResult{
+			Status: marotte.ToolCompleted, Output: strings.Repeat("z", 20_000),
+			OutputSpans: []marotte.TextSpan{{Start: 0, End: 5, Attrs: 1}},
+		})
 	if len(got.OutputSpans) != 0 {
 		t.Errorf("output_spans = %v, want none on a windowed output", got.OutputSpans)
 	}
@@ -170,14 +174,11 @@ func TestTranscript_OversizeDiffIsDroppedWholesale(t *testing.T) {
 	// PREVIEW is the layer that drops one. The store's own drop is
 	// TestStoreBound_OversizeDiffIsDroppedNotTruncated.
 	half := previewBudget.diffBytes
-	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Edit", Kind: marotte.ToolKindEdit,
-		Status: marotte.ToolCompleted,
-		Diffs: []marotte.ToolDiff{
+	_, got := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Edit", Kind: marotte.ToolKindEdit},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{
 			{Path: "small.go", OldText: "a", NewText: "b"},
 			{Path: "big.go", OldText: strings.Repeat("o", half), NewText: strings.Repeat("n", half)},
-		},
-	})})
+		}})
 	if !got.HasFull {
 		t.Fatal("has_full = false, want true")
 	}
@@ -201,10 +202,7 @@ func TestTranscript_InputKeepsItsSmallMembers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
-	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite,
-		Status: marotte.ToolCompleted, Input: in,
-	})})
+	got, _ := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite, Input: in}, nil)
 	// Over BOTH budgets, so the store dropped `text` first and the preview found
 	// nothing left to cut. Either layer keeps the claim line, which is the point.
 	if got.Truncated == nil || got.Truncated.InputBytes != len(in) {
@@ -250,10 +248,7 @@ func TestTranscript_AWideInputIsBoundedInAggregate(t *testing.T) {
 			"or this test asserts nothing", len(in), previewBudget.inputTotal)
 	}
 
-	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite,
-		Status: marotte.ToolCompleted, Input: in,
-	})})
+	got, _ := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite, Input: in}, nil)
 
 	if !got.HasFull {
 		t.Fatal("has_full = false for an input the transcript did not carry whole")
@@ -300,10 +295,7 @@ func TestTranscript_TheAggregateBudgetChargesJSONsOwnSyntax(t *testing.T) {
 		t.Fatalf("Setup: marshal input: %v", err)
 	}
 
-	got := windowedCall(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite,
-		Status: marotte.ToolCompleted, Input: in,
-	})})
+	got, _ := windowedCall(t, marotte.EntryToolCall{ID: "tc1", Title: "Write", Kind: marotte.ToolKindWrite, Input: in}, nil)
 
 	if !got.HasFull {
 		t.Fatal("has_full = false for an input the transcript did not carry whole")
@@ -362,12 +354,12 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 	// so the ladder's second rung has something to serve.
 	full := strings.Repeat("q", previewBudget.outputBytes+1_000)
 	in := json.RawMessage(`{"command":"build"}`)
-	s := storeWith(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute,
-		Status: marotte.ToolCompleted, Output: full, Input: in,
-		OutputSpans: []marotte.TextSpan{{Start: 0, End: 3, Attrs: 2}},
-		Diffs:       []marotte.ToolDiff{{Path: "a.go", NewText: "x"}},
-	})})
+	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Input: in},
+		&marotte.EntryToolResult{
+			Status: marotte.ToolCompleted, Output: full,
+			OutputSpans: []marotte.TextSpan{{Start: 0, End: 3, Attrs: 2}},
+			Diffs:       []marotte.ToolDiff{{Path: "a.go", NewText: "x"}},
+		})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
@@ -399,9 +391,7 @@ func TestToolBulk_ServesTheWholeCall(t *testing.T) {
 // TestToolBulk_Rejections pins the boundary: an unknown call and a malformed id
 // answer differently, because one is a miss and the other is a bad request.
 func TestToolBulk_Rejections(t *testing.T) {
-	s := storeWith(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
-	})})
+	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled("ok"))
 	cases := []struct {
 		name string
 		path string
@@ -429,9 +419,7 @@ func TestToolBulk_Rejections(t *testing.T) {
 
 // TestToolBulk_RejectsNonGet keeps the sub-resource read-only.
 func TestToolBulk_RejectsNonGet(t *testing.T) {
-	s := storeWith(t, []marotte.Message{callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute, Status: marotte.ToolCompleted,
-	})})
+	s := storeWith(t, marotte.EntryToolCall{ID: "tc1", Title: "Execute", Kind: marotte.ToolKindExecute}, settled("ok"))
 	req := httptest.NewRequest(http.MethodPost, "/api/chats/c1/tools/tc1", nil)
 	rec := httptest.NewRecorder()
 	NewRouter(s).handleOne(rec, req)
@@ -619,16 +607,15 @@ func unescapeUnicode(t *testing.T, raw json.RawMessage) json.RawMessage {
 	return out
 }
 
-// TestPreviewMessage_LeavesASmallMessageAlone pins the copy-on-write: the
-// conversations that were never the problem pay one pass and no allocation.
-func TestPreviewMessage_LeavesASmallMessageAlone(t *testing.T) {
-	m := callMessage(marotte.ToolCall{
-		ID: "tc1", Title: "Read", Kind: marotte.ToolKindRead,
-		Status: marotte.ToolCompleted, Output: "two lines\nhere\n",
-	})
-	got := previewMessage(&m)
-	if &got.ToolCalls[0] != &m.ToolCalls[0] {
-		t.Error("previewMessage copied a message that needed no cutting")
+// TestPreviewEntry_LeavesASmallEntryAlone pins the copy-on-write: the
+// conversations that were never the problem pay one decode and no re-encode.
+func TestPreviewEntry_LeavesASmallEntryAlone(t *testing.T) {
+	e := entryOf("t-1", "", "tc1:result", marotte.EntryKindToolResult,
+		marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "two lines\nhere\n"})
+	got := *e
+	previewEntry(&got)
+	if &got.Payload[0] != &e.Payload[0] {
+		t.Error("previewEntry re-encoded an entry that needed no cutting")
 	}
 }
 

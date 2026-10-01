@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 func decodeStamp(t *testing.T, raw any) marotte.SubjectStamp {
@@ -47,7 +47,7 @@ func TestGetChat_SubjectIsTheStoresChatVersionWithTheEpoch(t *testing.T) {
 	seedMidTurn(t, s, "c1")
 	seedMidTurn(t, s, "c1") // a second save, so the version is not trivially "1"
 
-	got := decodeStamp(t, getChat(t, s, "c1")["subject"])
+	got := decodeStamp(t, chatStampOf(t, getChat(t, s, "c1")))
 	current, _ := v.Current(subject.KindChat, "c1")
 	want := marotte.SubjectStamp{Kind: "chat", Ref: "c1", Version: current, Epoch: "epoch-7"}
 	if got != want {
@@ -72,7 +72,7 @@ func TestGetChat_NeverMutatedThisProcessStampsUnminted(t *testing.T) {
 		t.Fatalf("NewStore after restart: %v", err)
 	}
 
-	got := decodeStamp(t, getChat(t, restarted, "c1")["subject"])
+	got := decodeStamp(t, chatStampOf(t, getChat(t, restarted, "c1")))
 	want := marotte.SubjectStamp{Kind: "chat", Ref: "c1", Version: subject.Unminted, Epoch: "e2"}
 	if got != want {
 		t.Errorf("subject = %+v, want %+v", got, want)

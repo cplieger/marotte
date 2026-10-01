@@ -8,7 +8,7 @@
 import type { TabKind, TabSubject } from "./types.js";
 import type { Route } from "./route-path.js";
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
-import { get, subagentStatusFor } from "./store.js";
+import { get, subagentStatusFor, turnLive } from "./store.js";
 import { runLabelOf } from "./run-store.js";
 import { FALLBACK_SUBAGENT_NAME, subagentLabel } from "./roles.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
@@ -50,11 +50,20 @@ interface SubagentTabOpener {
   refresh: (chatID: string, subtaskID: string) => void;
 }
 
+/** Spec behaviour, from spec-view.ts. No `close` half for the subagent opener's
+ *  reason: the page is a view over documents Kiro writes on disk, so closing it
+ *  stops nothing, and every door opens it with `owns: false`. */
+interface SpecTabOpener {
+  show: (dir: string) => void;
+  refresh: (dir: string) => void;
+}
+
 export interface TabOpeners {
   readonly chat: ChatTabOpener;
   readonly editor: EditorTabOpener;
   readonly run: RunTabOpener;
   readonly subagent: SubagentTabOpener;
+  readonly spec: SpecTabOpener;
 }
 
 let openers: TabOpeners | null = null;
@@ -111,6 +120,13 @@ function chatName(chatID: string): string {
 function runName(workflowID: string): string {
   const label = runLabelOf(workflowID);
   return label === "" ? FALLBACK_RUN_NAME : label;
+}
+
+/** A spec's tab label: the spec directory's last segment, which is the feature
+ *  name Kiro wrote it under. */
+function specName(dir: string): string {
+  const name = dir.replace(/\/+$/, "").split("/").pop() ?? dir;
+  return name === "" ? dir : name;
 }
 
 /** A file's tab label: its last path segment. Identical to what openEditorView
@@ -178,12 +194,18 @@ function subagentTabFacts(
   chatID: string,
   subtaskID: string,
 ): { name: string; dot: TabDotStatus | "" } {
-  const tc =
-    chatID === "" ? undefined : findSubagentInvocation(get(chatID)?.messages ?? [], subtaskID);
+  const session = chatID === "" ? undefined : get(chatID);
+  const tc = session === undefined ? undefined : findSubagentInvocation(session, subtaskID);
   if (tc === undefined) {
     return { name: FALLBACK_SUBAGENT_NAME, dot: "" };
   }
-  return { name: subagentLabel(tc), dot: subagentStatusFor(tc.status) };
+  // The delegate's SECOND input, the same one `subagent-dots.ts` passes: its chat's own
+  // turn liveness, so a row seeded from a resident invocation cannot paint a stale spinner
+  // the effect would immediately correct.
+  // `session` is non-undefined wherever `tc` is, which the compiler cannot see through the
+  // conditional above; the absent arm answers the claim-nothing direction either way.
+  const live = session === undefined || turnLive(session);
+  return { name: subagentLabel(tc), dot: subagentStatusFor(tc.status, live) };
 }
 
 // --- Pass-through subject facts ---
@@ -322,6 +344,23 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         },
       };
     }
+    case "spec": {
+      const dir = subject.ref;
+      return {
+        name: specName(dir),
+        icon: TAB_ICONS.spec,
+        view: TAB_VIEWS.spec,
+        route: { kind: "spec", dir },
+        owns: false,
+        ...parentOf(subject),
+        onShow: () => {
+          reg.spec.show(dir);
+        },
+        refresh: () => {
+          reg.spec.refresh(dir);
+        },
+      };
+    }
     case "subagent": {
       const { chatID, subtaskID } = parseSubagentRef(subject.ref);
       const facts = subagentTabFacts(chatID, subtaskID);
@@ -433,7 +472,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         name: "History",
         icon: TAB_ICONS.history,
         view: TAB_VIEWS.history,
-        route: { kind: "history" },
+        route: { kind: "history", tab: "chats" },
         owns: subject.owns,
         ...parentOf(subject),
         onShow: () => {
@@ -490,7 +529,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
 
 /** The subject a URL route names: which tab kind, and which ref. The inverse of the
  *  `route` each case above produces, beside them so a new kind is ONE compile error
- *  covering both directions. Total over the nine kinds, no default branch.
+ *  covering both directions. Total over the ten kinds, no default branch.
  *
  *  A singleton's sub-position is DROPPED (`/settings/tools` and `/settings` name one
  *  tab), because applyRoute corrects it after the activation. A FILES ref is the tab's
@@ -508,6 +547,8 @@ export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
       return { kind: "run", ref: route.id };
     case "subagent":
       return { kind: "subagent", ref: subagentRef(route.chat, route.id) };
+    case "spec":
+      return { kind: "spec", ref: route.dir };
     case "settings":
       return { kind: "settings", ref: "" };
     case "git":

@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/chat"
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest is the whole resolver

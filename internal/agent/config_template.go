@@ -11,16 +11,17 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/webhttp/v3"
 )
 
 // configTemplateTimeout bounds the template round-trip: the first call may lazily
 // spin up the utility bridge, so this matches hookCallTimeout rather than a bare
-// read timeout. The CLIENT's bound (fetchModelsFromREST in static-src/app.ts) is
-// deliberately LONGER, or this budget can never be spent — the library's 30s
-// default aborted every cold start. Move the two together.
+// read timeout. The CLIENT's bound (CATALOG_REQUEST_TIMEOUT_MS in
+// static-src/model-catalog.ts, 50s) is deliberately LONGER, or this budget can
+// never be spent — the library's 30s default aborted every cold start. Move the
+// two together.
 const configTemplateTimeout = 45 * time.Second
 
 // kasConfigTemplate is the _kiro/config/template result shape. ConfigOptions

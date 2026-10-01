@@ -4,19 +4,19 @@
 // KAS flags a completion that reproduces a recognizable chunk of a referenced
 // open-source file (when the account's code-reference tracker is enabled). The
 // wire carries {license_name, repository, url} per reference — no content span,
-// so an attribution can't map to a specific message region; it annotates the
-// whole assistant turn. We render a compact, collapsible footnote at the bottom
+// so an attribution can't map to one region of the turn; it annotates the whole
+// turn. We render a compact, collapsible footnote at the bottom
 // of the turn: a scale glyph + count summary that expands to license + source
 // link per reference.
 //
-// syncCodeReferences is idempotent and cheap: it's called on every assistant
-// paint (once per streaming chunk), so it no-ops unless the reference count
-// changed. Driven off Message.code_references (persisted), so it renders the
-// same on live SSE and on reload.
+// syncCodeReferences is idempotent and cheap: it's called on every paint of the
+// turn card (once per streaming chunk), so it no-ops unless the count changed. It
+// takes the RESOLVED list — `turn_close.code_references` durable, store.ts's
+// `codeReferencesFor` live until that entry exists — so the precedence has one home.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import type { Message, CodeReference } from "./types.js";
+import type { CodeReference } from "./types.js";
 import { isSafeURL } from "./url-safety.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_SCALE, ICON_EXTERNAL } from "./icons.js";
@@ -24,29 +24,29 @@ import { featureDisabled } from "./governance.js";
 
 const CLS = "code-refs";
 
-/** Ensure `wrap`'s licensed-code footnote matches `m.code_references`.
+/** Ensure `wrap`'s licensed-code footnote matches the turn's attributions.
  *  Appends the footnote when references exist, removes it when they don't,
  *  and rebuilds only when the count changed (so repeated streaming paints
  *  are a no-op). Preserves the open/closed state across rebuilds. */
-export function syncCodeReferences(wrap: HTMLElement, m: Message): void {
+export function syncCodeReferences(wrap: HTMLElement, refs?: readonly CodeReference[]): void {
   const existing = wrap.querySelector<HTMLDetailsElement>(`:scope > .${CLS}`);
   // Gate on the org/account policy: when governance is KNOWN and the
   // code-reference tracker is off, never surface the attribution chip — the
   // feature is disabled server-side, so any hint would imply a capability the
   // account doesn't have. (KAS won't emit references then, but this keeps the
   // UI honest even against a stray persisted one.)
-  const refs = featureDisabled("code_reference_tracker") ? [] : (m.code_references ?? []);
-  if (refs.length === 0) {
+  const shown = featureDisabled("code_reference_tracker") ? [] : (refs ?? []);
+  if (shown.length === 0) {
     existing?.remove();
     return;
   }
   // Count is a safe signature: the server sends a monotonically-growing
   // deduped list, so equal length means equal content.
-  if (existing !== null && existing.dataset["count"] === String(refs.length)) {
+  if (existing !== null && existing.dataset["count"] === String(shown.length)) {
     return;
   }
   const wasOpen = existing?.open ?? false;
-  const built = buildCodeRefs(refs, wasOpen);
+  const built = buildCodeRefs(shown, wasOpen);
   if (existing === null) {
     wrap.appendChild(built);
   } else {

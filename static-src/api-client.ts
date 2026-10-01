@@ -59,6 +59,29 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T |
   return collapse(await fx.apiGetRaw<T>(path, reqOpts({}, signal)), "GET", path);
 }
 
+/** A collapsed GET plus the response headers. */
+export interface HeaderedGet<T> {
+  data: T | null;
+  headers: Headers | null;
+}
+
+/** GET `path` and hand back the parsed body WITH the response headers, for a
+ *  caller whose contract lives in a header rather than in the body. The steering
+ *  document's `ETag` validator is the one consumer: it is what the save's
+ *  `If-Match` carries, so the read has to see it. `data` is null on any failure,
+ *  logged like `apiGet`'s. */
+export async function apiGetWithHeaders<T>(
+  path: string,
+  signal?: AbortSignal,
+): Promise<HeaderedGet<T>> {
+  const r = await fx.apiGetRaw<T>(path, reqOpts({}, signal));
+  if (r.ok) {
+    return { data: r.data ?? null, headers: r.headers };
+  }
+  logApiError(r, "GET", path);
+  return { data: null, headers: r.headers ?? null };
+}
+
 /** POST `body` as JSON to `path`, return parsed JSON response or null. */
 export async function apiPost<T>(
   path: string,
@@ -129,6 +152,38 @@ export async function apiGetTypedOrError<T>(
   signal?: AbortSignal,
 ): Promise<ApiResult<T>> {
   return toApiResult(await fx.apiGetRaw<T>(path, reqOpts({ decoder }, signal)));
+}
+
+/** A conditional GET's answer. `status` is 0 on a transport failure or an abort,
+ *  304 when the validator matched (no body), and the real status otherwise;
+ *  `etag` is the response's validator, "" when it carried none. */
+export interface ConditionalGet<T> {
+  status: number;
+  data: T | null;
+  etag: string;
+}
+
+/** GET `path` with `If-None-Match: etag` (omitted when `etag` is ""), decoding a
+ *  2xx body with `decoder`. The spec page's poll is the consumer: a 304 keeps its
+ *  last reply and a 404 is the directory's own answer, so neither is logged; a
+ *  decoder rejection and every other failure log like `apiGetTyped`'s. */
+export async function apiGetConditional<T>(
+  path: string,
+  etag: string,
+  decoder: Decoder<T>,
+  signal?: AbortSignal,
+): Promise<ConditionalGet<T>> {
+  const base: RequestOptions<T> =
+    etag === "" ? { decoder } : { decoder, headers: { "If-None-Match": etag } };
+  const r = await fx.apiGetRaw<T>(path, reqOpts(base, signal));
+  const tag = r.headers?.get("ETag") ?? "";
+  if (r.ok) {
+    return { status: r.status, data: r.data ?? null, etag: tag };
+  }
+  if (r.status !== 304 && r.status !== 404) {
+    logApiError(r, "GET", path);
+  }
+  return { status: r.status, data: null, etag: tag };
 }
 
 /** POST variant of apiGetTyped: validates the 2xx response body via the

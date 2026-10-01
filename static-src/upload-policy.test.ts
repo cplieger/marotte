@@ -35,7 +35,7 @@ describe("the client budget against the server ceiling", () => {
   // Under-promising is the only honest direction for a limit a user reads
   // before choosing a file.
   it("is strictly below the server's whole-request ceiling", () => {
-    expect(MAX_UPLOAD_BYTES).toBe(50 * 1024 * 1024);
+    expect(MAX_UPLOAD_BYTES).toBe(256 * 1024 * 1024);
     expect(MAX_UPLOAD_TOTAL_BYTES).toBeLessThan(MAX_UPLOAD_BYTES);
     expect(MAX_UPLOAD_TOTAL_BYTES).toBeGreaterThan(0);
   });
@@ -51,11 +51,11 @@ describe("the client budget against the server ceiling", () => {
 });
 
 describe("uploadLimitHint", () => {
-  // The hint states the TOTAL, and states it exactly. "Up to 50 MB per file"
-  // described no request the server accepts.
+  // The hint states the TOTAL, and states it exactly. A hint naming the raw
+  // server ceiling per file described no request the server accepts.
   it("names the enforced total in round megabytes", () => {
-    expect(uploadLimitHint()).toBe("Up to 49 MB per upload, all files together");
-    expect(MAX_UPLOAD_TOTAL_BYTES).toBe(49 * 1024 * 1024);
+    expect(uploadLimitHint()).toBe("Up to 255 MB per upload, all files together");
+    expect(MAX_UPLOAD_TOTAL_BYTES).toBe(255 * 1024 * 1024);
   });
 
   // A hint that promised more than the pre-flight allows is the defect this
@@ -91,17 +91,19 @@ describe("preflightUploads", () => {
   it("refuses a file one byte over, before any bytes leave", () => {
     const r = preflightUploads([sized("big.zip", MAX_UPLOAD_TOTAL_BYTES + 1)]);
     expect(r.accepted).toEqual([]);
-    expect(r.rejected).toEqual([{ name: "big.zip", reason: "over the 49 MB limit" }]);
+    expect(r.rejected).toEqual([{ name: "big.zip", reason: "over the 255 MB limit" }]);
   });
 
   // The batch case the per-file-only check let through: two files each well
   // under the limit whose combined request is over it. Both used to pass
   // pre-flight and then fail together against the one limit the server applies.
+  // Sized from the const rather than a literal, so raising the cap cannot turn
+  // this into a batch that fits and stop exercising the total.
   it("refuses the file that would take the batch over the total", () => {
-    const thirty = 30 * 1024 * 1024;
-    const r = preflightUploads([sized("a.bin", thirty), sized("b.bin", thirty)]);
+    const each = Math.floor(MAX_UPLOAD_TOTAL_BYTES * 0.6);
+    const r = preflightUploads([sized("a.bin", each), sized("b.bin", each)]);
     expect(r.accepted.map((f) => f.name)).toEqual(["a.bin"]);
-    expect(r.rejected).toEqual([{ name: "b.bin", reason: "over the 49 MB total for one upload" }]);
+    expect(r.rejected).toEqual([{ name: "b.bin", reason: "over the 255 MB total for one upload" }]);
   });
 
   // A batch that exactly fills the budget is legal: the reserve is what pays
@@ -161,17 +163,17 @@ describe("preflightMessage", () => {
   });
 
   it("names the single refusal and its reason", () => {
-    expect(preflightMessage([{ name: "big.zip", reason: "over the 49 MB limit" }])).toBe(
-      "Skipped big.zip: over the 49 MB limit",
+    expect(preflightMessage([{ name: "big.zip", reason: "over the 255 MB limit" }])).toBe(
+      "Skipped big.zip: over the 255 MB limit",
     );
   });
 
   it("counts a multi-file refusal and names the first", () => {
     expect(
       preflightMessage([
-        { name: "a.zip", reason: "over the 49 MB limit" },
-        { name: "b.zip", reason: "over the 49 MB limit" },
+        { name: "a.zip", reason: "over the 255 MB limit" },
+        { name: "b.zip", reason: "over the 255 MB limit" },
       ]),
-    ).toBe("Skipped 2 files, starting with a.zip: over the 49 MB limit");
+    ).toBe("Skipped 2 files, starting with a.zip: over the 255 MB limit");
   });
 });

@@ -237,7 +237,7 @@ export function initChangesTab(): void {
       void refreshChanges();
     }, 300);
   };
-  onSSE("turn_ended", debouncedRefresh);
+  onSSE("turn_closed", debouncedRefresh);
   onSSE("forges_changed", debouncedRefresh);
 }
 

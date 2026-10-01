@@ -5,19 +5,23 @@
 import { onSSE, emitBus, BUS_RUNS_CHANGED } from "../bus.js";
 import { info, success, error } from "../toast.js";
 import {
+  applyRunDelta,
   applyRunProgress,
+  appendRunEntry,
   invalidateRun,
   invalidateRunControls,
   noteRunChat,
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
+  openRunEntry,
+  openRunTurn,
   runChatID,
+  sealRunEntry,
 } from "../run-store.js";
 import { submitPrompt } from "../submit.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { applyRunStep } from "../run-view.js";
 import {
   pushDecision,
   collapseSettledRunInput,
@@ -111,7 +115,7 @@ onSSE("run_finished", (chatID, p) => {
     // `run_id` arrived EMPTY (the step-session registry had not seen its
     // sub-session). Every run-scoped remover keys on `runID`, so such an ask is
     // reachable only by the turn-scoped sweep — and its one other trigger,
-    // `turn_ended` on this chat, never fires for a step-driven turn, because the
+    // `turn_closed` on this chat, never fires for a step-driven turn, because the
     // attribution gate drops that turn's `turn_end`.
     //
     // A run's terminal frame is the turn-boundary-equivalent moment for it: the
@@ -141,16 +145,59 @@ onSSE("run_finished", (chatID, p) => {
   toastCompletion(p.status, p.name);
 });
 
-// A parentless run's step content — the one run event that is not an
-// invalidation, since a step's transcript is not in `inspect` and no
-// endpoint serves it. Reaches exactly one surface: the run tab's DETAIL PANE,
-// which hosts a transcript per node path.
+// --- The run's LOG: the six entry events, scoped to a run ---
 //
-// A chat-parented run raises none of these: its steps travel as ordinary
-// blocks on the launching chat's connection, keyed by `_meta.kiro.workflow`.
-onSSE("run_step", (_chatID, p) => {
-  applyRunStep(p);
+// Each is one call into a run-store operation behind the workflow-id guard, the mirror
+// of `handlers/entries.ts`'s own, so two subscribers over one registration partition
+// every frame between them.
+
+onSSE("turn_opened", (_chatID, p) => {
+  const runID = forRun(p);
+  if (runID !== "") {
+    openRunTurn(runID, p.entry);
+  }
 });
+
+onSSE("entry_opened", (_chatID, p) => {
+  const runID = forRun(p);
+  if (runID !== "") {
+    openRunEntry(runID, p.open);
+  }
+});
+
+onSSE("entry_delta", (_chatID, p) => {
+  const runID = forRun(p);
+  if (runID !== "") {
+    applyRunDelta(runID, p.turn, p.entry_id, p.lane, p.n, p.delta);
+  }
+});
+
+onSSE("entry_sealed", (_chatID, p) => {
+  const runID = forRun(p);
+  if (runID !== "") {
+    sealRunEntry(runID, p.turn, p.entry_id, p.lane, p.seq, p.ts, p.n);
+  }
+});
+
+onSSE("entry_appended", (_chatID, p) => {
+  const runID = forRun(p);
+  if (runID !== "") {
+    appendRunEntry(runID, p.entry);
+  }
+});
+
+onSSE("turn_closed", (_chatID, p) => {
+  const runID = forRun(p);
+  if (runID !== "") {
+    // A step reads settled from its own `turn_close` rather than from a flag.
+    appendRunEntry(runID, p.entry);
+  }
+});
+
+/** The workflow id a run-scoped frame carries, or `""` for a chat's own log. */
+function forRun(p: { workflow_id?: string }): string {
+  return p.workflow_id ?? "";
+}
 
 /** Ask the agent that launched this run to answer its open question.
  *
@@ -202,10 +249,10 @@ onSSE("run_input_needed", (chatID, p) => {
   // both "" and the synthetic `run:` prefix, so a non-empty answer here means this
   // run was launched from a conversation AND names it.
   const parentChat = runChatID(p.workflow_id);
-  // Live but PARKED: a run waiting on a person writes nothing, so the eviction
-  // exemption `hasExecutingRunForChat` keeps answering no rather than pinning that
-  // chat's window until somebody answers. `parentChat` because that getter has
-  // already refused both spellings of "no launching chat".
+  // Live but PARKED: a run waiting on a person writes nothing, so `executing` is
+  // false and the chat row's mark withholds rather than claiming work is moving.
+  // `parentChat` because that getter has already refused both spellings of "no
+  // launching chat".
   noteRunLive(p.workflow_id, parentChat, false);
   notifyIfHidden(
     NOTIFY_TITLE,

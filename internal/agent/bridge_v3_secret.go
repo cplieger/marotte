@@ -19,8 +19,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/cplieger/marotte/internal/secretstore"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/secretstore"
 )
 
 // secretKeyParams is the shape of a get/delete request: `{key}`.

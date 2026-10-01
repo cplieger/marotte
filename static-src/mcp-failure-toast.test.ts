@@ -16,6 +16,13 @@ vi.mock("./toast.js", () => ({
       /* dismiss */
     };
   },
+  // The graph reaches these by name even though this file never calls them, and ESM is
+  // linked for real here, so a missing export fails the whole file at link time.
+  success: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  errorWithAction: vi.fn(),
+  _resetForTest: vi.fn(),
 }));
 
 // mcp-ui.ts reaches the DOM registry and the action framework at module scope
@@ -30,6 +37,7 @@ vi.mock("./dom.js", () => ({
   maybeEl: () => null,
   setBusy: () => undefined,
   setControlBusy: () => undefined,
+  forceReflow: () => 0,
 }));
 
 const { announceMCPFailure, mcpFailureText } = await import("./mcp-ui.js");

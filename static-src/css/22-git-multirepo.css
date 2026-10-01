@@ -2,10 +2,9 @@
    Git multi-repo dashboard
    ========================================================================== */
 
-/* Note: the page header (title + tab bar) reuses the existing
- * .settings-header / .settings-tab-bar / .settings-tab classes from
- * 17-settings.css for visual consistency with the Settings view. We
- * don't redeclare those here. */
+/* Note: the page shell and its header (`.page-shell`, `.page-header`) and the
+ * tab bar (`.seg-bar` / `.seg`) are the shared page-list system's
+ * (11-page-lists.css). We don't redeclare those here. */
 
 .git-panel {
   flex: 1;

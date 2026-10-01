@@ -15,10 +15,10 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/workspace"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/errgroup"
 )

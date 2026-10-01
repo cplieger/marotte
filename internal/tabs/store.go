@@ -225,6 +225,33 @@ func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) (uint64, 
 	})
 }
 
+// Reparent hangs the tab under parent and moves its row behind parent's existing
+// children by insert's rule. The row travels alone: its own descendants keep
+// their positions and their Parent, because the one caller reparents leaves.
+// Idempotent when Parent already equals parent (no version bump).
+//
+// Returns ErrNotOpen when id is not open and ErrCycle when parent is id or one
+// of its descendants; a parent that is not open is promoted to top level like
+// Open. Nothing is applied on error.
+func (s *Store) Reparent(ctx context.Context, id, parent string) (uint64, error) {
+	return s.mutate(ctx, func(st *state) (bool, error) {
+		i := indexOfID(st.tabs, id)
+		if i < 0 {
+			return false, fmt.Errorf("%w: %q", ErrNotOpen, id)
+		}
+		if st.tabs[i].Parent == parent {
+			return false, nil
+		}
+		if _, cycle := closure(st.tabs, id)[parent]; cycle {
+			return false, fmt.Errorf("%w: %q is %q or descends from it", ErrCycle, parent, id)
+		}
+		sub := st.tabs[i]
+		sub.Parent = parent
+		st.tabs = insert(slices.Delete(st.tabs, i, i+1), &sub)
+		return true, nil
+	})
+}
+
 // List returns the set in order plus the version it reflects, captured in ONE
 // critical section so a caller cannot pair a stale set with a fresh version.
 //

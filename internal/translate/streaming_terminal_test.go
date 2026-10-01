@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -208,58 +207,48 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 // subscribe to the live stream from its first paint rather than after an update.
 func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	deps, _, events := newLineCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
+	tr := New(rolesOf(deps))
 	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
 		"toolCallId": "tc-9", "title": "run", "kind": "execute", "status": "in_progress",
 		"content": []map[string]any{{"type": "terminal", "terminalId": "term-9"}},
 	}), FrameAttribution{})
 
 	for _, e := range *events {
-		if e.Type != marotte.EventToolCall {
+		p, ok := e.Payload.(marotte.EntryAppendedPayload)
+		if !ok || p.Entry.Kind != marotte.EntryKindToolCall {
 			continue
 		}
-		p, ok := e.Payload.(marotte.ToolCallPayload)
-		if !ok {
-			t.Fatalf("tool_call payload = %T", e.Payload)
-		}
-		if p.ToolCall.TerminalID != "term-9" {
-			t.Errorf("terminal_id = %q, want %q on the create frame", p.ToolCall.TerminalID, "term-9")
+		call := decodePayload[marotte.EntryToolCall](t, &p.Entry)
+		if call.TerminalID != "term-9" {
+			t.Errorf("terminal_id = %q, want %q on the create's own entry", call.TerminalID, "term-9")
 		}
 		return
 	}
-	t.Fatal("no tool_call event was broadcast")
+	t.Fatalf("no entry_appended{tool_call} frame was broadcast: %v", eventTypes(*events))
 }
 
-// buffer.ComputeDuration CONSUMES its start time, so it answers 0 on a second
-// read, and KAS can send more than one terminal status frame for one tool call.
-// Assigning it unconditionally writes that 0 over a correct duration, which the
-// turn-end persist then makes durable.
-//
-// The start time is staged rather than slept for, so the expectation is a fixed
-// number rather than whatever the clock did.
-func TestApplyToolCallStatus_SecondTerminalFrameKeepsTheFirstDuration(t *testing.T) {
+// KAS can send more than one terminal status frame for one tool call. The first
+// settles the call: its tool_result carries the duration measured from the call's
+// own start stamp, and the second frame finds no open call, so it seals nothing and
+// announces nothing — the settled result is the durable one.
+func TestHandleToolCallUpdate_ASecondTerminalFrameForASettledCallAppendsNothing(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
-	buf := deps.bufStore.GetOrInit(chatID)
-	buf.ToolStartTimes["tc-1"] = time.Now().UnixMilli() - 5000
 
 	completed := mustJSON(t, map[string]any{"toolCallId": "tc-1", "status": "completed"})
 	tr.HandleToolCallUpdate(t.Context(), chatID, completed, FrameAttribution{})
 
 	first, ok := lastToolCallUpdate(t, deps, events)
 	if !ok {
-		t.Fatal("no tool_call_update event for the first terminal frame")
+		t.Fatal("no tool_result for the first terminal frame")
 	}
-	if first.DurationMs < 5000 {
-		t.Fatalf("first DurationMs = %d, want >= 5000", first.DurationMs)
-	}
+	*events = nil
 
 	tr.HandleToolCallUpdate(t.Context(), chatID, completed, FrameAttribution{})
 
-	second, ok := lastToolCallUpdate(t, deps, events)
-	if !ok {
-		t.Fatal("no tool_call_update event for the second terminal frame")
+	if len(*events) != 0 {
+		t.Errorf("second terminal frame broadcast %v, want nothing: the call is settled", eventTypes(*events))
 	}
-	if second.DurationMs != first.DurationMs {
-		t.Errorf("second DurationMs = %d, want %d kept from the first frame", second.DurationMs, first.DurationMs)
+	if results := toolResultsOf(t, deps.chatEntries(chatID)); len(results) != 1 || results[0].DurationMs != first.DurationMs {
+		t.Errorf("tool_result entries = %+v, want the one settled result kept from the first frame", results)
 	}
 }

@@ -117,6 +117,17 @@ vi.mock("./dom.js", () => {
       editorMarkdown: make("div"),
       editorImage: make("img"),
     },
+    // `skeleton.ts` in this graph imports the name, and Browser Mode links for real,
+    // so an absent export fails the whole FILE at collection. `setBusy`'s own body
+    // rather than `undefined`, because the open path reaches an admitted
+    // `paintPlaceholder`, which marks its host busy through it.
+    setBusy: (el: Element, busy: boolean) => {
+      if (busy) {
+        el.setAttribute("aria-busy", "true");
+      } else {
+        el.removeAttribute("aria-busy");
+      }
+    },
   };
 });
 

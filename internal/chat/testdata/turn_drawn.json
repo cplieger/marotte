@@ -1,0 +1,150 @@
+{
+  "doc": [
+    "The shared oracle for the ONE drawn predicate: does this turn draw a card, and therefore",
+    "does the rail hold a row for it. The server half is internal/chat's drawnBy (asked through",
+    "EntryLog.RailRows) and the client half is static-src/turns.ts turnIsDrawn; each reader builds",
+    "its own rows from these cases, which is the disagreement the fixture exists to catch.",
+    "",
+    "owner is per case because one clause has no server twin: an open entry never reaches the log,",
+    "so a client-only case is skipped by the Go reader and every skip is counted, or a reader that",
+    "silently ignored rows would read as agreement.",
+    "",
+    "body lists every entry after the turn_open, in order, including the turn_close where the case",
+    "has one. lane is \"\" for the turn's own agent and a delegate uuid otherwise.",
+    "",
+    "The plans clause is deliberately UNASSERTED. Both halves refuse a plan that is not the turn's",
+    "first, and neither refusal can change a turn-level verdict: the first lane-\"\" plan draws the",
+    "turn, so a later one is only ever reached on a turn already drawn. A shape that would separate",
+    "them (a delegate-lane plan before a lane-\"\" one) is not produced by any writer -- turnlog's",
+    "Turn.Plan appends laneless and the replay projection emits no plan at all -- so asserting it",
+    "would pin a divergence over an input nothing can send."
+  ],
+  "cases": [
+    {
+      "name": "a prompt turn draws on its header alone",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "prompt", "prompt": { "id": "m-1", "text": "ask something" } },
+      "body": [{ "kind": "turn_close", "lane": "" }]
+    },
+    {
+      "name": "a local_shell turn draws on its header alone",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "local_shell", "prompt": { "id": "m-2", "text": "!ls" } },
+      "body": [{ "kind": "turn_close", "lane": "" }]
+    },
+    {
+      "name": "an empty_retry turn draws on its header alone",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "empty_retry", "prompt": { "id": "m-3", "text": "ask something" } },
+      "body": []
+    },
+    {
+      "name": "an agent-initiated turn with an empty body draws nothing",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [{ "kind": "turn_close", "lane": "" }]
+    },
+    {
+      "name": "a bind renders at no position of its own",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "turn_bind", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a tool_result is charged at its tool_call and draws nothing itself",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "tool_result", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "an ack-only turn IS drawn, because an ack is agent words at its own position",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "steer_ack", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "the turn's first plan draws it",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "plan", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a delegate lane's prose draws no turn in the issuer's view",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "text", "lane": "d1" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "the invocation in the issuer's lane draws the turn its delegate runs in",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "tool_call", "lane": "", "agent_subtask_id": "d1" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a laned ack draws nothing, because it renders in the delegate's own view",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "steer_ack", "lane": "d1" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a reconciled record renders at no position of its own",
+      "owner": "both",
+      "drawn": false,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "reconciled", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "a turn_revert draws the turn carrying it, because it IS the boundary row",
+      "owner": "both",
+      "drawn": true,
+      "open": { "source": "wire_turn_start" },
+      "body": [
+        { "kind": "turn_revert", "lane": "" },
+        { "kind": "turn_close", "lane": "" }
+      ]
+    },
+    {
+      "name": "an open entry in lane \"\" draws the turn it is streaming into",
+      "owner": "client",
+      "drawn": true,
+      "open": { "source": "wire_turn_start" },
+      "body": [],
+      "open_entries": [""]
+    }
+  ]
+}

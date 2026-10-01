@@ -18,7 +18,8 @@
 
 import { describe, it, expect, afterAll, beforeAll, beforeEach } from "vitest";
 import { framesBudgetMs, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
-import type { Message, Session } from "./types.js";
+import type { Entry, TurnState } from "./types.js";
+import { makeSession } from "./__test-helpers__/model.js";
 
 // NESTED as the shipped page nests them (static/index.html): `#messages-wrap` is
 // `position: absolute; inset: 0` inside the outer wrapper, so it is the
@@ -164,45 +165,67 @@ const MAX_CALLS_PER_SITE = 8;
 
 let seq = 0;
 
-function transcript(): Message[] {
-  const out: Message[] = [];
-  for (let t = 0; t < TURNS; t++) {
-    out.push({
-      id: `t${String(t)}`,
-      role: "user",
-      ts: 1,
-      content: `prompt ${String(t)}`,
-    } as Message);
-    out.push({
-      id: `t${String(t)}-a`,
-      role: "assistant",
-      ts: 2,
-      content: "",
-      blocks: Array.from({ length: BLOCKS }, (_, i) => ({
-        type: "text",
-        text: `turn ${String(t)} block ${String(i)} of some prose long enough to wrap on a narrow measure`,
-      })),
-    } as unknown as Message);
+/** One sealed entry of `turnID`, at `seq`. */
+function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
+  return {
+    id: `${turnID}-e${String(at)}`,
+    turn: turnID,
+    lane: "",
+    kind,
+    seq: at,
+    ts: at + 1,
+    payload,
+  } as Entry;
+}
+
+/** One prompt-opened turn: its `turn_open` header, `BLOCKS` paragraphs of prose, and
+ *  its close. Consecutive `text` entries of one lane are ONE prose run, so the
+ *  paragraphs land in a single bubble — the same wrapped-text volume per card the
+ *  loop is measured over. */
+function turnEntries(t: number): Entry[] {
+  const id = `t${String(t)}`;
+  const out: Entry[] = [
+    sealed(id, 0, "turn_open", {
+      prompt: { id: `${id}-p`, text: `prompt ${String(t)}` },
+      source: "prompt",
+      n: t + 1,
+    }),
+  ];
+  for (let i = 0; i < BLOCKS; i++) {
+    out.push(
+      sealed(id, i + 1, "text", {
+        text: `turn ${String(t)} block ${String(i)} of some prose long enough to wrap on a narrow measure\n\n`,
+      }),
+    );
   }
+  out.push(sealed(id, BLOCKS + 1, "turn_close", { outcome: "completed" }));
   return out;
 }
 
 function paint(): void {
   seq++;
   const id = `c-ro-${String(seq)}`;
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (let t = 0; t < TURNS; t++) {
+    const entries = turnEntries(t);
+    const first = entries[0];
+    if (first === undefined) {
+      continue;
+    }
+    turns.set(first.turn, { entries, openEntries: new Map() });
+    order.push(first.turn);
+  }
   setSessions([
     {
-      id,
-      name: "c",
-      messages: transcript(),
-      message_count: TURNS * 2,
-      has_more: false,
-      thinking: false,
-      working_label: "",
+      ...makeSession({ id, name: "c" }),
+      turns,
+      turn_order: order,
+      turn_count: order.length,
     },
-  ] as unknown as Session[]);
+  ]);
   setActive(id);
-  bumpMessages(id);
+  bumpMessages(id, "load");
 }
 
 /** Frames the settle waits for: the deferred write lands on the next one, the

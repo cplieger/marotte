@@ -38,6 +38,7 @@ import {
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
   ICON_TAB_DOCS,
+  ICON_TAB_SPEC,
 } from "./icons.js";
 
 /** The view element each tab kind shows. Callers can omit `view` from a spec
@@ -63,6 +64,7 @@ export const TAB_VIEWS: Readonly<Record<TabKind, string>> = {
   docs: "#docs-view",
   run: "#run-view",
   subagent: "#subagent-view",
+  spec: "#spec-view",
 };
 
 /** The leading glyph each tab kind renders.
@@ -86,6 +88,7 @@ export const TAB_ICONS: Readonly<Record<TabKind, string>> = {
   docs: ICON_TAB_DOCS,
   run: ICON_TAB_RUN,
   subagent: ICON_TAB_AGENT,
+  spec: ICON_TAB_SPEC,
 };
 
 /** The activity dot's states. Six come from a chat's live state (derived by
@@ -142,7 +145,7 @@ export interface TabViewSpec {
    *  kind cannot opt out of being refreshable.
    *
    *  Called by tabs.ts `refreshRow` gated on `viewStale`, never by this kind's own
-   *  `onShow` — the gate is asked in one place for all nine kinds. It writes no
+   *  `onShow` — the gate is asked in one place for all ten kinds. It writes no
    *  projection state and pushes no route. */
   readonly refresh: () => void;
   /** Called when the tab is closed.

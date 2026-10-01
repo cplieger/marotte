@@ -48,7 +48,7 @@
 // ---------------------------------------------------------------------------
 
 import { pushRoute } from "./router.js";
-import type { Route, SettingsTab, GitTab, DocsTab } from "./route-path.js";
+import type { Route, SettingsTab, GitTab, DocsTab, HistoryTab } from "./route-path.js";
 // The nine tab kinds have ONE definition and it is the Go const block in
 // internal/marotte/domain_tabs.go, emitted here by wire-codegen as a registered
 // enum. It was a hand-written union derived from TAB_VIEWS' keys, which is two
@@ -86,6 +86,7 @@ import {
   openTabCommand,
   closeTabCommand,
   pinTabCommand,
+  reparentTabCommand,
   reorderTabsCommand,
   REORDER_STALE,
 } from "./actions/tabs.js";
@@ -98,11 +99,13 @@ import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
 import { attachDrag, DRAG_THRESHOLD_PX, isDragHandled, setReorderCallback } from "./tabs-drag.js";
+import type { ViewportBox } from "./viewport-frame.js";
+import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
 import { getActiveId, getSessions, setActive } from "./store.js";
-import { relativeTime } from "./utils-format.js";
+import { relativeTime } from "./relative-time.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info, error as toastError } from "./toast.js";
 import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
@@ -123,9 +126,10 @@ export type { TabDotStatus };
  *
  *  `subject` is the truth and is replaced wholesale by every frame that carries
  *  it, so nothing here can disagree with the collection. `spec` is a SNAPSHOT
- *  taken at materialization — safe because every subject fact it copies (`owns`,
- *  `parentId`) is immutable after open, which is exactly why `pinned` is not
- *  among them and is read from the subject instead.
+ *  taken at materialization — safe because `owns` is immutable after open and
+ *  `parentId` is read by nothing here (every reader takes the parent from the
+ *  subject, which `reparent_tab` may reassign), which is exactly why `pinned` is
+ *  not among them and is read from the subject instead.
  *
  *  `name`, `dotStatus` and `runDot` are the three mutable local fields, and
  *  each has a reason. A name because six run sites and two chat sites
@@ -355,6 +359,23 @@ function subjectKey(kind: TabKind, ref: string): string {
 
 function rowOfID(id: string): TabRow | undefined {
   return state.tabs.find((t) => t.subject.id === id);
+}
+
+/** How many parents a row sits under: 0 for a top-level tab, 1 for a child, 2 for
+ *  a grandchild. Walks the SUBJECT's parent chain through the current rows and
+ *  stops at an orphan, so a hand-edited cycle cannot spin it. */
+function depthOf(row: TabRow): number {
+  let depth = 0;
+  let parent = row.subject.parent;
+  while (parent !== "" && depth < state.tabs.length) {
+    const next = rowOfID(parent);
+    if (next === undefined) {
+      break;
+    }
+    depth++;
+    parent = next.subject.parent;
+  }
+  return depth;
 }
 
 // --- The name a row renders ---
@@ -644,11 +665,12 @@ function apply(delta: TabsChangedPayload, local: boolean): void {
  *  adopted open finds the row already right and changes nothing, which is what
  *  makes the adoption idempotent against its own echo.
  *
- *  An existing row's SUBJECT is replaced wholesale — a pin, or any later field
- *  the server grows — while the spec, the name override and the dot stay.
- *  Nothing here may re-materialize: `owns` and `parent` are immutable after
- *  open, so the spec cannot have gone stale, and rebuilding it would re-run
- *  onShow wiring for a tab that only changed its pin. */
+ *  An existing row's SUBJECT is replaced wholesale — a pin, a reparent, or any
+ *  later field the server grows — while the spec, the name override and the dot
+ *  stay. Nothing here may re-materialize: `owns` is immutable after open and
+ *  every reader of the parent takes it from the subject, so the spec cannot have
+ *  gone stale, and rebuilding it would re-run onShow wiring for a tab that only
+ *  changed its pin. */
 function upsertSubject(subject: TabSubject): void {
   const existing = rowOfID(subject.id);
   if (existing === undefined) {
@@ -697,7 +719,7 @@ function revealActiveView(): void {
 }
 
 /** Ask the freshness question for one row and spend the answer. THE one caller of
- *  `viewStale`, so all nine kinds are gated in one place and none can answer it by
+ *  `viewStale`, so all ten kinds are gated in one place and none can answer it by
  *  accident from its own `onShow`. */
 function refreshRow(row: TabRow): void {
   if (viewStale(row.subject.kind, row.subject.ref)) {
@@ -1136,6 +1158,31 @@ export async function setTabPinned(id: string, pinned: boolean): Promise<void> {
   await pinTabCommand.dispatch({ id, pinned, opID });
 }
 
+/** Hang an open tab under an open chat tab: the one mutation that reassigns
+ *  `parent`. Resolves true when the tab now sits under `parent`.
+ *
+ *  The returned subject is adopted the way an open's is, so the indent lands
+ *  with the response; the frame's `order` then places the row, and on an
+ *  unchanged parent no frame comes because nothing committed. */
+export async function setTabParent(id: string, parent: string): Promise<boolean> {
+  const row = rowOfID(id);
+  if (row === undefined || parent === "") {
+    return false;
+  }
+  if (row.subject.parent === parent) {
+    return true;
+  }
+  const opID = newOpID();
+  markLocalOp(opID);
+  const outcome = await reparentTabCommand.dispatch({ id, parent, opID }).outcome;
+  if (outcome.status !== "success") {
+    return false;
+  }
+  upsertSubject(outcome.value);
+  emit();
+  return true;
+}
+
 /** Publish the arrangement a drag committed.
  *
  *  ON COMMIT ONLY, never per pointer move: an order is a whole-collection write,
@@ -1195,6 +1242,7 @@ const DOT_SUBJECT: Readonly<Record<TabKind, string>> = {
   files: "file browser",
   history: "history",
   docs: "docs",
+  spec: "spec",
 };
 
 /** The five states that say nothing about a subject, so one wording serves every
@@ -1579,6 +1627,15 @@ export function openRunRefs(): string[] {
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   stateVersion.value;
   return state.tabs.filter((t) => t.subject.kind === "run").map((t) => t.subject.ref);
+}
+
+/** The spec tabs' refs, as a TRACKED read like `openRunRefs`. A ref is the
+ *  workspace-relative spec directory the page fetches by and the `spec_changed`
+ *  frame names. */
+export function openSpecRefs(): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  stateVersion.value;
+  return state.tabs.filter((t) => t.subject.kind === "spec").map((t) => t.subject.ref);
 }
 
 /** The open tab set, in projection order, for `boot-snapshot.ts` to persist.
@@ -2036,6 +2093,10 @@ function renderDOM(): void {
     // than only at creation so a pin applied to an already-rendered tab shows as
     // soon as its frame lands.
     node.classList.toggle("tab-child", row.subject.parent !== "");
+    // The indent is per generation, not per child: a grandchild (a spec under a
+    // tangent) steps in once more than its parent. Written beside the class so the
+    // two cannot disagree.
+    node.style.setProperty("--tab-depth", String(depthOf(row)));
     node.classList.toggle("tab-pinned", row.subject.pinned);
     // The parent id rides the row for ONE reader: the exit above, which has to
     // know whether this row's parent is still open at a moment when the row is no
@@ -2252,8 +2313,20 @@ function createTabEl(row: TabRow): HTMLElement {
 // activation and the × — have to answer for the same one. There is no reset on
 // `pointercancel` deliberately: a cancelled gesture delivers no release to
 // suppress, and the next `pointerdown` is what clears the verdict.
+//
+// The origin is RE-BASELINED when the visual viewport has moved under the press
+// rather than read as travel; `viewport-frame.ts` owns why that happens. Dropping
+// the verdict instead is not available here: the failure is a REFUSED activation,
+// so declaring a drag would deny the click the reader made. No held-button gate,
+// unlike `tabs-drag.ts`, whose failure is the opposite: a wrong verdict there drops
+// a real drag's arm. A stale verdict IS readable here — the move handler reads no
+// button, and a release can arrive on a row whose own pointerdown never fired (press
+// the strip's background, travel over a row, release) — but every real tap begins
+// with that row's pointerdown, which resets it, and refusing a gesture that began
+// off-row is the answer either way.
 let gestureOriginX = 0;
 let gestureOriginY = 0;
+let gestureFrame: ViewportBox = { offsetLeft: 0, offsetTop: 0, width: 0, height: 0 };
 let gestureIsDrag = false;
 
 /** Whether the primary gesture in flight has travelled far enough to be a drag —
@@ -2271,10 +2344,18 @@ function attachTapGuard(node: HTMLElement): void {
     }
     gestureOriginX = e.clientX;
     gestureOriginY = e.clientY;
+    gestureFrame = viewportBox();
     gestureIsDrag = false;
   });
   node.addEventListener("pointermove", (e) => {
     if (!e.isPrimary || gestureIsDrag) {
+      return;
+    }
+    const frame = viewportBox();
+    if (viewportMoved(frame, gestureFrame)) {
+      gestureOriginX = e.clientX;
+      gestureOriginY = e.clientY;
+      gestureFrame = frame;
       return;
     }
     if (
@@ -2486,6 +2567,11 @@ export async function openFilesView(openAt: string): Promise<void> {
 
 export async function toggleHistoryView(): Promise<void> {
   await toggleSingleton("history");
+}
+
+/** Switch the History page's pane route. No-op when it isn't open. */
+export function setHistoryTab(tab: HistoryTab): void {
+  setTabRoute(tabIdFor("history"), { kind: "history", tab });
 }
 
 /** Switch the docs browser's sub-tab route. No-op when it isn't open. */

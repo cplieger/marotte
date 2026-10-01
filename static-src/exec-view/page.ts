@@ -48,8 +48,11 @@ export interface ExecPageOpts {
 const CLAMP = { lines: 3, fallbackChars: 220 } as const;
 
 /** The results clamp, same shape: `.ev-r-text`'s stylesheet line count plus the
- *  pre-layout character guess. */
-const RESULT_CLAMP = { lines: 12, fallbackChars: 900 } as const;
+ *  pre-layout character guess, plus the line SNAP. This is the app's only clamp
+ *  over a markdown bubble's block children, so it is the only one whose stylesheet
+ *  cap cannot land on a line boundary by itself — `31-exec-view.css`
+ *  `.ev-r-text[data-clamped]` carries the measurement. */
+const RESULT_CLAMP = { lines: 12, fallbackChars: 900, snapToLine: true } as const;
 
 export interface ExecPageView {
   readonly root: HTMLElement;

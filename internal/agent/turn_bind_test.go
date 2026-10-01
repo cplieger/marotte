@@ -1,189 +1,199 @@
 package agent
 
-// The five open sources, provisional acknowledgement, and the wire's brackets.
+// The open sources, provisional acknowledgement, and the wire's brackets.
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// A wire turn_start binds to the pending pre-open rather than closing it and
+// ownID is the id of the chat's own open turn, read the way the lifecycle holds
+// it rather than by claiming it.
+func ownID(h *Runtime, chatID marotte.ChatID) (string, bool) {
+	t, ok := h.coord.turns.ownTurn(chatID)
+	if !ok {
+		return "", false
+	}
+	return t.ID, true
+}
+
+// pendingID is the id of the chat's unacknowledged prompt turn, read the way the
+// lifecycle holds it rather than by consuming it: bindPending RETIRES what it
+// binds, so a test that called it to ask the question would answer it and change
+// it in one step.
+func pendingID(h *Runtime, chatID marotte.ChatID) (string, bool) {
+	lc := h.coord.turns.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.pending == nil {
+		return "", false
+	}
+	return lc.pending.ID, true
+}
+
+// ownSource is the source of the chat's own open turn.
+func ownSource(h *Runtime, chatID marotte.ChatID) marotte.TurnOpenSource {
+	lc := h.coord.turns.lifecycleFor(chatID)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.own.Source
+}
+
+// openText is the text still coalescing in the chat's own turn, in the agent's
+// own lane: where the next delta would land.
+func openText(h *Runtime, chatID marotte.ChatID) string {
+	log := h.liveTurn(chatID)
+	if log == nil {
+		return ""
+	}
+	open, _ := log.Open("")
+	return open.Text
+}
+
+// A wire turn_start binds to the pending prompt turn rather than closing it and
 // opening a turn of its own.
 //
-// Without the binding, every prompt would produce TWO turns: the pre-open the
-// prompt is holding, closed `unknown` by its own bracket, and a wireTurnStart turn
-// the prompt has no handle on — so the prompt's outcome would land on a turn
-// nothing was waiting for.
+// Without the binding, every prompt would produce TWO turns: the prompt's own,
+// closed by its own bracket, and a wire_turn_start turn the prompt has no handle
+// on, so the prompt's outcome would land on a turn nothing was waiting for.
 func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	defer h.ReleaseTurn(chatID, epoch)
+	id, _ := h.stagePromptTurn(t, chatID)
+	defer h.coord.ReleaseTurn(chatID, id)
 
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
-	if h.coord.TurnOpenedAfter(chatID, epoch) {
-		t.Error("the bracket opened a SECOND turn instead of binding to the pre-open")
+	if h.coord.TurnOpenedAfter(chatID, id) {
+		t.Error("the bracket opened a SECOND turn instead of binding to the prompt's")
 	}
-	if open, _ := h.coord.turns.openEpoch(chatID); open != epoch {
-		t.Errorf("open epoch = %d, want the pre-open %d", open, epoch)
+	if own, _ := ownID(h, chatID); own != id {
+		t.Errorf("own turn = %q, want the prompt's %q", own, id)
 	}
-	if got := turnEndedStops(t, h); len(got) != 0 {
-		t.Errorf("the bracket announced an end: %v", got)
+	if pending, ok := pendingID(h, chatID); ok {
+		t.Errorf("turn %q is still pending after its bracket, so the NEXT turn_start would bind it again", pending)
+	}
+	if got := closesOf(t, logOf(t, cs, chatID)); len(got) != 0 {
+		t.Errorf("the bracket closed a turn: %+v", got)
 	}
 }
 
 // A turn_start arriving with a turn already open and NOTHING pending means the
-// previous turn's end never came. It is closed `unknown` and a wireTurnStart turn
-// opens in its place — the agent-initiated class, and it needs no timer.
+// previous turn's end never came. It is closed `unknown` and a wire_turn_start turn
+// opens in its place: the agent-initiated class, and it needs no timer.
 func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	startedTurnOn(t, h, cs, chatID, "the first turn's reply")
-	first, _ := h.coord.turns.openEpoch(chatID)
+	first, _ := streamingPromptTurn(t, h, chatID, "the first turn's reply")
 	// Acknowledge it, so the next bracket has nothing pending to bind.
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonUnknown)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one %q", got, marotte.StopReasonUnknown)
+	closes := closesOf(t, logOf(t, cs, chatID))
+	if len(closes) != 1 || closes[0].Outcome != marotte.TurnOutcomeUnknown || closes[0].StopReasonRaw != string(marotte.StopReasonUnknown) {
+		t.Errorf("turn_close entries = %+v, want exactly one unknown/unknown", closes)
 	}
-	second, open := h.coord.turns.openEpoch(chatID)
+	second, open := ownID(h, chatID)
 	if !open {
 		t.Fatal("no turn is open after the second bracket, so the agent's turn has no record")
 	}
 	if second == first {
-		t.Errorf("the second bracket reused epoch %d instead of opening its own turn", first)
+		t.Errorf("the second bracket reused turn %q instead of opening its own", first)
 	}
-	c, _ := cs.Get(ctx, chatID)
-	if !hasAssistantContent(c, "the first turn's reply") {
-		t.Errorf("the displaced turn's reply was not persisted; messages = %+v", c.Messages)
+	if !cs.hasText(t, chatID, "the first turn's reply") {
+		t.Error("the lost turn's reply was not sealed into the log")
 	}
 }
 
 // A frame carrying agentInitiated revises a provisional binding: the started turn
-// was the AGENT's, and the pre-open is owed its own bracket after all.
+// was the AGENT's, and the prompt turn is owed its own bracket after all.
 //
-// This is the only discriminator on the wire — the flag rides content frames and
-// never the bracket — so what the test pins is the handover: the agent's turn
-// keeps the buffer the frames were already folded into, and the pre-open comes
-// back with a fresh one.
-func TestReviseTurnBinding_HandsTheBufferToTheAgentsTurn(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
+// This is the only discriminator on the wire (the flag rides content frames and
+// never the bracket), so what the test pins is the handover: the agent's turn
+// holds the text the frame folded, and the prompt turn is pending again.
+func TestReviseTurnBinding_HandsTheLogToTheAgentsTurn(t *testing.T) {
+	h, _, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	preOpen := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	defer h.ReleaseTurn(chatID, preOpen)
+	preOpen, _ := h.stagePromptTurn(t, chatID)
+	defer h.coord.ReleaseTurn(chatID, preOpen)
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
 	h.translateACPEvent(chatID, newAgentInitiatedChunkMsg("the agent woke itself"))
 
-	agentTurn, open := h.coord.turns.openEpoch(chatID)
+	agentTurn, open := ownID(h, chatID)
 	if !open {
 		t.Fatal("no turn is open after the revision")
 	}
 	if agentTurn == preOpen {
-		t.Fatal("the agent's content is still folding into the pre-open, so the binding was never revised")
+		t.Fatal("the agent's content is still folding into the prompt's turn, so the binding was never revised")
 	}
-	if agentTurn <= preOpen {
-		t.Errorf("the agent's turn is epoch %d, want a LATER epoch than the pre-open's %d: "+
-			"the empty-turn gate's structural clause reads exactly that ordering", agentTurn, preOpen)
+	if !h.coord.TurnOpenedAfter(chatID, preOpen) {
+		t.Error("the agent's turn does not follow the prompt's in the open sequence, which the empty-turn gate's structural clause reads")
 	}
-	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "the agent woke itself" {
-		t.Error("the agent's turn does not hold the content that was folded before the revision")
+	if got := openText(h, chatID); got != "the agent woke itself" {
+		t.Errorf("the agent's turn holds %q, want the content folded before the revision", got)
 	}
-	// The pre-open is pending again, with nothing folded into it.
-	if pending, ok := pendingEpoch(h, chatID); !ok || pending != preOpen {
-		t.Errorf("pending epoch = (%d, %v), want the pre-open %d back in the set: "+
-			"its own bracket has nothing to bind to otherwise", pending, ok, preOpen)
+	if pending, ok := pendingID(h, chatID); !ok || pending != preOpen {
+		t.Errorf("pending turn = (%q, %v), want the prompt's %q back: its own bracket has nothing to bind to otherwise", pending, ok, preOpen)
 	}
 }
 
-// pendingEpoch is the epoch of the chat's unacknowledged pre-open, read the way
-// the lifecycle holds it rather than by consuming it: bindPending RETIRES what it
-// binds, so a test that called it to ask the question would answer it and change
-// it in one step.
-func pendingEpoch(h *Runtime, chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
-	lc := h.coord.turns.lifecycleFor(chatID)
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if lc.pending == nil {
-		return 0, false
-	}
-	return lc.pending.Epoch, true
-}
-
-// A pre-open whose call fails LOCALLY is retired, so the next prompt's bracket
+// A prompt turn whose call fails LOCALLY is retired, so the next prompt's bracket
 // binds to the next prompt's turn.
 //
-// Without retirement the dead pre-open stays the binding candidate forever: the
-// next prompt's turn_start acknowledges a finished turn, that prompt's own turn
-// never receives a bracket, and it closes on the prompt response's outcome — which
-// can only ever be end_turn or cancelled, so a refusal or an error would persist
-// as `completed`.
+// Without retirement the dead turn stays the binding candidate forever: the next
+// prompt's turn_start acknowledges a finished turn, that prompt's own turn never
+// receives a bracket, and it closes on the prompt response's outcome, which can
+// only ever be end_turn or cancelled, so a refusal or an error would persist as
+// `completed`.
 func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
+	h, _, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	failed, _ := h.stagePromptTurn(t, chatID)
+	h.coord.AbandonInFlightTurn(t.Context(), chatID, failed, marotte.StopReasonInterrupted, "the pipe died")
+	h.coord.ReleaseTurn(chatID, failed)
 
-	failed := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	h.AbandonInFlightTurn(ctx, chatID, failed, marotte.StopReasonInterrupted, "the pipe died")
-	h.ReleaseTurn(chatID, failed)
-
-	if _, ok := pendingEpoch(h, chatID); ok {
-		t.Fatal("a finalized pre-open is still the binding candidate, so the NEXT prompt's " +
-			"bracket would acknowledge a dead turn")
+	if _, ok := pendingID(h, chatID); ok {
+		t.Fatal("a finalized prompt turn is still the binding candidate, so the NEXT prompt's bracket would acknowledge a dead turn")
 	}
 
 	// The next prompt gets its own bracket and the wire's own outcome.
-	next := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	defer h.ReleaseTurn(chatID, next)
+	next, _ := h.stagePromptTurn(t, chatID)
+	defer h.coord.ReleaseTurn(chatID, next)
 	h.translateACPEvent(chatID, newTurnStartMsg())
 	h.translateACPEvent(chatID, newChunkMsg("the second answer"))
 	h.translateACPEvent(chatID, newTurnEndMsg("refusal"))
 
-	result, err := h.AwaitTurn(ctx, chatID, next)
+	result, err := h.coord.AwaitTurn(t.Context(), chatID, next)
 	if err != nil {
 		t.Fatalf("AwaitTurn: %v", err)
 	}
-	if !result.WireEnded || result.Stop != "refusal" {
-		t.Errorf("the next prompt's turn = {wire:%v stop:%q}, want the wire's own refusal",
-			result.WireEnded, result.Stop)
+	if !result.WireEnded || result.Stop != marotte.StopReasonRefusal {
+		t.Errorf("the next prompt's turn = {wire:%v stop:%q}, want the wire's own refusal", result.WireEnded, result.Stop)
 	}
 }
 
-// A turn_end for a chat with NO open turn persists nothing.
+// A turn_end for a chat with NO open turn records nothing.
 //
 // Without the no-op, a cancel-grace expiry that closed its turn locally would meet
-// the later wire bracket, and the fold-with-no-open-turn rule would manufacture a
-// spurious empty persisted turn out of it — an extra turn in the index, with an
-// outcome, that the user never took.
+// the later wire bracket, and manufacturing a turn out of it would put a phantom in
+// the log: an extra turn in the rail, with an outcome, that the user never took.
 func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
 
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
 
-	c, _ := cs.Get(ctx, chatID)
-	if len(c.Messages) != 0 {
-		t.Errorf("messages = %+v, want none: a bracket for a turn nobody opened is a no-op", c.Messages)
+	if got := logOf(t, cs, chatID); len(got) != 0 {
+		t.Errorf("entries = %+v, want none: a bracket for a turn nobody opened is a no-op", got)
 	}
-	if got := turnEndedStops(t, h); len(got) != 0 {
-		t.Errorf("turn_ended stops = %v, want none", got)
+	if got := closedBroadcasts(t, h); len(got) != 0 {
+		t.Errorf("turn_closed broadcasts = %+v, want none", got)
 	}
-	if _, open := h.coord.turns.openEpoch(chatID); open {
+	if _, open := ownID(h, chatID); open {
 		t.Error("the bracket opened a turn in order to close it")
 	}
 }
@@ -192,267 +202,106 @@ func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 //
 // KAS replays a whole transcript on session/load as ordinary session/update
 // notifications, so without the per-frame replay gate a resume would close the
-// turn that resume is happening during. This passed before the brackets were
-// wired, because nothing consumed them; it has to keep passing now that something
-// does.
+// turn that resume is happening during.
 func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const chatID marotte.ChatID = "c1"
-	startedTurnOn(t, h, cs, chatID, "a live reply")
-	epoch, _ := h.coord.turns.openEpoch(chatID)
+	id, _ := streamingPromptTurn(t, h, chatID, "a live reply")
 
 	h.translateACPEvent(chatID, newReplayedTurnEndMsg("end_turn"))
 
-	open, stillOpen := h.coord.turns.openEpoch(chatID)
-	if !stillOpen || open != epoch {
-		t.Errorf("open epoch = (%d, %v), want the live turn %d still open", open, stillOpen, epoch)
+	if own, open := ownID(h, chatID); !open || own != id {
+		t.Errorf("own turn = (%q, %v), want the live turn %q still open", own, open, id)
 	}
-	if got := turnEndedStops(t, h); len(got) != 0 {
-		t.Errorf("turn_ended stops = %v, want none: stored history is not something happening now", got)
+	if got := closesOf(t, logOf(t, cs, chatID)); len(got) != 0 {
+		t.Errorf("turn_close entries = %+v, want none: stored history is not something happening now", got)
 	}
 }
 
-// A fold with no open turn OPENS one, rather than lazily creating a bare buffer.
-//
-// The buffer used to be created on the first frame and keyed by chat, so a turn
-// marotte did not prompt had content and no record: nothing to end it, nothing to
-// account for it, and its buffer left behind for the next turn's frames to extend.
+// A fold with no open turn OPENS one: a turn marotte did not prompt needs a record
+// like any other, or its content has nothing to end it, nothing to account for it,
+// and the next turn's frames to extend it.
 func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
 
 	h.translateACPEvent(chatID, newChunkMsg("nobody prompted this"))
 
-	epoch, open := h.coord.turns.openEpoch(chatID)
+	id, open := ownID(h, chatID)
 	if !open {
 		t.Fatal("a fold with no open turn opened no turn, so this content belongs to nothing")
 	}
-	lc := h.coord.turns.lifecycleFor(chatID)
-	lc.mu.Lock()
-	source := lc.cur.Source
-	lc.mu.Unlock()
-	if source != marotte.TurnSourceWireTurnStart {
-		t.Errorf("turn %d source = %v, want wireTurnStart", epoch, source)
+	if source := ownSource(h, chatID); source != marotte.TurnSourceWireTurnStart {
+		t.Errorf("turn %q source = %v, want wire_turn_start", id, source)
 	}
-	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "nobody prompted this" {
-		t.Error("the fold did not land in the turn's own buffer")
+	if got := openText(h, chatID); got != "nobody prompted this" {
+		t.Errorf("the turn's open text = %q, want the folded chunk", got)
+	}
+	entries := logOf(t, cs, chatID)
+	if len(entries) != 1 || entries[0].Kind != marotte.EntryKindTurnOpen || entries[0].ID != id {
+		t.Errorf("entries = %+v, want the turn_open alone on disk while the text coalesces", entries)
 	}
 }
 
 // A local shell turn REFUSES while another turn is open: a shell turn cannot begin
-// during an agent turn.
-//
-// The prompt-slot guard catches the turns marotte itself prompted; this catches the
-// ones it did not, which is the class with no slot to hold. Running anyway would
-// fold the command's output into the agent's live turn.
-func TestStartTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
+// during an agent turn. The admission slot catches the turns marotte itself
+// prompted; this catches the ones it did not, which is the class with no slot to
+// hold. Running anyway would fold the command's output into the agent's live turn.
+func TestOpenTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	// A turn the ENGINE started, so no prompt slot is held.
+	cs.seed(t, chatID, func(c *marotte.Chat) { c.Name = "A" })
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
-	if epoch := h.StartTurn(ctx, chatID, marotte.TurnSourceLocalShell); epoch != 0 {
-		t.Errorf("StartTurn(localShell) = %d, want 0 (refused) while an agent turn is open", epoch)
+	if id, err := h.coord.OpenTurn(t.Context(), chatID, marotte.TurnSourceLocalShell,
+		&marotte.EntryPrompt{ID: "m-shell", Text: "!ls"}, nil); err == nil {
+		t.Errorf("OpenTurn(local_shell) = %q, want a refusal while an agent turn is open", id)
 	}
-	// And it is allowed once that turn ends.
+
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
-	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourceLocalShell)
-	if epoch == 0 {
-		t.Error("StartTurn(localShell) still refuses on an idle chat")
-	}
-	h.ReleaseTurn(chatID, epoch)
+	id := shellTurn(t, h, chatID)
+	h.coord.ReleaseTurn(chatID, id)
 }
 
-// After a revised binding the pre-open receives its OWN bracket through the wire,
-// becomes the folding turn again, and its reply is attributed to it.
-//
-// This is the whole scenario the design's verification list asks for ("the pre-open
-// still gets its own bracket") and it was delivered in name only: reclassify hands
-// cur to the agent's turn, the agent's turn_end then leaves the chat idle with the
-// pre-open referenced by pending alone, and a bind that only cleared pending made
-// that record reachable by NOTHING. The next fold minted a THIRD turn that owned the
-// prompt's whole reply, AwaitTurn answered ErrNoSuchTurn to the handle holder, and
-// on reload the two replies were attributed to each other's turns.
+// The full handover, both directions. After a revision the prompt turn is pending
+// again, so the agent's turn_end closes the agent's turn, the NEXT turn_start binds
+// the prompt turn, and the prompt's reply folds into the turn the prompt is
+// holding rather than opening a third.
 func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
 	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	preOpen := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	defer h.ReleaseTurn(chatID, preOpen)
-
-	// The agent's own turn arrives first, mis-binds, is revised by its content, and
-	// then ends — all through the wire, which is the part no test crossed.
+	preOpen, _ := h.stagePromptTurn(t, chatID)
+	defer h.coord.ReleaseTurn(chatID, preOpen)
 	h.translateACPEvent(chatID, newTurnStartMsg())
 	h.translateACPEvent(chatID, newAgentInitiatedChunkMsg("the agent woke itself"))
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
 
-	// Now the prompt's own bracket, and its reply.
 	h.translateACPEvent(chatID, newTurnStartMsg())
 	h.translateACPEvent(chatID, newChunkMsg("the answer to the prompt"))
 
-	open, isOpen := h.coord.turns.openEpoch(chatID)
-	if !isOpen || open != preOpen {
-		t.Fatalf("open epoch = (%d, %v), want the pre-open %d: its bracket bound a turn "+
-			"nothing can reach, so the fold opened a third one", open, isOpen, preOpen)
+	if own, open := ownID(h, chatID); !open || own != preOpen {
+		t.Fatalf("own turn = (%q, %v), want the prompt's %q: its bracket bound a turn nothing can reach, so the fold opened a third one", own, open, preOpen)
 	}
-	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "the answer to the prompt" {
-		t.Error("the prompt's reply did not fold into the turn the prompt is holding")
+	if got := openText(h, chatID); got != "the answer to the prompt" {
+		t.Errorf("the prompt's turn holds %q, want the prompt's reply", got)
 	}
 
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
-
-	result, err := h.AwaitTurn(ctx, chatID, preOpen)
+	result, err := h.coord.AwaitTurn(t.Context(), chatID, preOpen)
 	if err != nil {
-		t.Fatalf("AwaitTurn on the epoch this caller opened: %v — P1 says a handle holder "+
-			"can never be told its own turn does not exist", err)
+		t.Fatalf("AwaitTurn on the turn this caller opened: %v; a handle holder can never be told its own turn does not exist", err)
 	}
 	if !result.WireEnded {
-		t.Error("the pre-open closed without a wire bracket, so its own turn_end reached something else")
+		t.Error("the prompt's turn closed without a wire bracket, so its own turn_end reached something else")
 	}
-	c, _ := cs.Get(ctx, chatID)
-	if !hasAssistantContent(c, "the answer to the prompt") {
-		t.Errorf("the prompt's reply is not persisted under its own turn; messages = %+v", c.Messages)
+	if !cs.hasText(t, chatID, "the answer to the prompt") {
+		t.Error("the prompt's reply is not sealed under its own turn")
 	}
-	if !hasAssistantContent(c, "the agent woke itself") {
-		t.Errorf("the agent's reply is not persisted; messages = %+v", c.Messages)
+	if !cs.hasText(t, chatID, "the agent woke itself") {
+		t.Error("the agent's reply is not sealed")
 	}
-}
-
-// A prompt-shaped open finding a LIVE agent-initiated turn closes it first, rather
-// than displacing it silently.
-//
-// The design asserted a prompt source cannot encounter an open turn because
-// admission control refuses a second prompt. That premise is false: a wireTurnStart
-// turn holds no prompt slot. Displacing it lost data outright — the turn is in no
-// set a closer can claim, so it was never finalized and never persisted, while its
-// content had already been streamed to every client and its tail folded into the
-// user's turn.
-func TestStartTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	// A turn the ENGINE started, streaming: no prompt slot, nothing pending.
-	h.translateACPEvent(chatID, newTurnStartMsg())
-	h.translateACPEvent(chatID, newChunkMsg("the auto-wake got this far"))
-	agentTurn, _ := h.coord.turns.openEpoch(chatID)
-
-	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	defer h.ReleaseTurn(chatID, epoch)
-
-	c, _ := cs.Get(ctx, chatID)
-	if !hasAssistantContent(c, "the auto-wake got this far") {
-		t.Errorf("the displaced turn's streamed content was not persisted, so it vanishes on "+
-			"the next reload; messages = %+v", c.Messages)
-	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonUnknown)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one %q: the displaced turn's end was "+
-			"never announced", got, marotte.StopReasonUnknown)
-	}
-	if open, _ := h.coord.turns.openEpoch(chatID); open != epoch {
-		t.Errorf("open epoch = %d, want the prompt's %d (the agent's was %d)", open, epoch, agentTurn)
-	}
-	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "" {
-		t.Error("the prompt's turn did not get a fresh buffer, so the agent's tail folds into it")
-	}
-}
-
-// A WORKFLOW STEP's frames open a turn attributed to the RUN, not to the chat.
-//
-// A chat-parented run executes on the LAUNCHING chat's session, so its steps' frames
-// arrive on that chat's connection and fold here — and the launching turn has
-// already ended by then, because run_workflow returns as soon as the run is created.
-// Opened as an ordinary wireTurnStart turn, that made the launching chat read as
-// working for the whole run: the client latches `thinking` off the resulting frames,
-// and nothing ever closes such a turn, because a step's own turn_end is dropped by
-// the workflow attribution gate.
-func TestFold_AStepsFrameOpensTheRunsTurnRatherThanTheChats(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	h.translateACPEvent(chatID, newStepChunkMsg("the step wrote this", "wf-1", "root/step"))
-
-	epoch, open := h.coord.turns.openEpoch(chatID)
-	if !open {
-		t.Fatal("a step's fold opened no turn, so the step's content belongs to nothing")
-	}
-	lc := h.coord.turns.lifecycleFor(chatID)
-	lc.mu.Lock()
-	source := lc.cur.Source
-	lc.mu.Unlock()
-	if source != marotte.TurnSourceWorkflowStep {
-		t.Errorf("turn %d source = %v, want workflowStep: the chat would read as working "+
-			"for the whole run", epoch, source)
-	}
-	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "the step wrote this" {
-		t.Error("the step's fold did not land in the turn's own buffer")
-	}
-}
-
-// A step's frame arriving while the CHAT's own turn is open folds into it and does
-// NOT reclassify it. The source is read on the open only: a run launched mid-turn
-// streams its first step before the launching turn ends, and reclassifying there
-// would make the chat's own live turn read as the run's.
-func TestFold_AStepsFrameDoesNotReclassifyTheChatsOpenTurn(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	defer h.ReleaseTurn(chatID, epoch)
-
-	h.translateACPEvent(chatID, newStepChunkMsg("a step of a run this turn launched", "wf-1", "root/step"))
-
-	lc := h.coord.turns.lifecycleFor(chatID)
-	lc.mu.Lock()
-	source := lc.cur.Source
-	lc.mu.Unlock()
-	if source != marotte.TurnSourcePrompt {
-		t.Errorf("open turn source = %v, want prompt: the chat's own live turn was reclassified", source)
-	}
-}
-
-// A prompt DISPLACES a step-driven turn rather than opening over it, exactly as it
-// does an agent-initiated one. Both are engine-opened and hold no admission slot,
-// so no closer can claim one — and opening over it would drop content already
-// broadcast to every client. This is the ordinary case rather than an edge: a
-// chat-parented run's steps hold the chat for minutes after its own turn ended, so
-// the next prompt meets one.
-func TestStartTurn_PromptDisplacesAStepDrivenTurn(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
-	h.translateACPEvent(chatID, newStepChunkMsg("the step got this far", "wf-1", "root/step"))
-	stepTurn, _ := h.coord.turns.openEpoch(chatID)
-
-	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
-	defer h.ReleaseTurn(chatID, epoch)
-
-	c, _ := cs.Get(ctx, chatID)
-	if !hasAssistantContent(c, "the step got this far") {
-		t.Errorf("the displaced step turn's content was not persisted, so it vanishes on the "+
-			"next reload; messages = %+v", c.Messages)
-	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonUnknown)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one %q", got, marotte.StopReasonUnknown)
-	}
-	if open, _ := h.coord.turns.openEpoch(chatID); open != epoch {
-		t.Errorf("open epoch = %d, want the prompt's %d (the step's was %d)", open, epoch, stepTurn)
-	}
-	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "" {
-		t.Error("the prompt's turn did not get a fresh buffer, so the step's tail folds into it")
+	if got := closesOf(t, logOf(t, cs, chatID)); len(got) != 2 {
+		t.Errorf("turn_close entries = %d, want two: the agent's and the prompt's", len(got))
 	}
 }

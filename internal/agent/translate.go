@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // chatHandler is the notification handler type; a global handler gets an empty chatID.
@@ -30,7 +30,7 @@ func (rt *Runtime) initDispatch() {
 	rt.chatHandlers = map[string]chatHandler{
 		marotte.MethodSessionUpdate: rt.handleSessionUpdate,
 		// Refused on a short budget for a SCHEDULED run rather than parking it forever.
-		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.translator.HandlePermissionRequest),
+		marotte.MethodRequestPermission: rt.runs.permissionWithUnattendedFloor(rt.askReportsStepProgress(rt.translator.HandlePermissionRequest)),
 		marotte.MethodElicitationCreate: rt.translator.HandleElicitationCreate,
 		// Gated on the _meta.kiro.userInput initialize capability (bridge.go).
 		marotte.MethodKiroUserInput: rt.translator.HandleUserInput,
@@ -55,6 +55,8 @@ func (rt *Runtime) initDispatch() {
 		// A workflow step's question, and the only frame carrying it. Registered on the
 		// run bridge's door too — see (*Runtime).dispatch.
 		methodKiroSessionNotify: rt.runs.handleSessionNotify,
+		// A spec document written in-process by a spec-mode session (spec_checkpoint.go).
+		methodV3SpecPhaseCheckpoint: rt.handleSpecPhaseCheckpoint,
 	}
 	for method, kind := range map[string]marotte.RunProgressKind{
 		methodWFNodeStart:     marotte.RunProgressNodeStart,
@@ -86,21 +88,33 @@ func (rt *Runtime) initDispatch() {
 	}
 	// Eager: several bridge goroutines call sessionUpdateHandlers() concurrently.
 	rt.sessUpdateHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
-		marotte.ACPUpdateAgentChunk: ignoreAttribution(func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
-			rt.translator.HandleAssistantChunk(ctx, chatID, raw, false)
-		}),
-		marotte.ACPUpdateThoughtChunk: ignoreAttribution(func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
-			rt.translator.HandleAssistantChunk(ctx, chatID, raw, true)
-		}),
+		marotte.ACPUpdateAgentChunk: func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
+			rt.translator.HandleAssistantChunk(ctx, chatID, raw, false, attr)
+		},
+		marotte.ACPUpdateThoughtChunk: func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
+			rt.translator.HandleAssistantChunk(ctx, chatID, raw, true, attr)
+		},
 		marotte.ACPUpdateToolCall:   rt.translator.HandleToolCall,
 		marotte.ACPUpdateToolUpdate: rt.translator.HandleToolCallUpdate,
-		marotte.ACPUpdatePlan:       ignoreAttribution(rt.translator.HandlePlan),
+		marotte.ACPUpdatePlan:       rt.translator.HandlePlan,
 		marotte.ACPUpdateModeChange: ignoreAttribution(rt.translator.HandleModeUpdate),
 		// The metadata channels.
 		marotte.ACPUpdateSessionInfo: rt.translator.HandleSessionInfoUpdate,
 		marotte.ACPUpdateUsage:       ignoreAttribution(rt.translator.HandleUsageUpdate),
 		// The only frame telling marotte that KAS moved the effort level itself.
-		marotte.ACPUpdateConfigOption: rt.coord.healEffort(ignoreAttribution(rt.translator.HandleConfigOptionUpdate)),
+		marotte.ACPUpdateConfigOption: rt.coord.healEffort(rt.translator.HandleConfigOptionUpdate),
+	}
+	// A parentless run bridge folds content into the run record and reads a step's
+	// metering; every chat-only kind (steering, plan, mode, usage, config) is
+	// dropped, because the synthetic run:<id> chat has no record to write.
+	rt.runStepHandlers = map[marotte.ACPUpdateKind]sessionUpdateHandler{
+		marotte.ACPUpdateAgentChunk:   rt.sessUpdateHandlers[marotte.ACPUpdateAgentChunk],
+		marotte.ACPUpdateThoughtChunk: rt.sessUpdateHandlers[marotte.ACPUpdateThoughtChunk],
+		marotte.ACPUpdateToolCall:     rt.translator.HandleToolCall,
+		marotte.ACPUpdateToolUpdate:   rt.translator.HandleToolCallUpdate,
+		marotte.ACPUpdateSessionInfo: func(ctx context.Context, _ marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
+			rt.translator.HandleStepInfoUpdate(ctx, attr, raw)
+		},
 	}
 }
 
@@ -190,6 +204,27 @@ func (rt *Runtime) routeInboundRequest(ctx context.Context, chatID marotte.ChatI
 	return false
 }
 
+// askReportsStepProgress reports a step's permission ask as progress ahead of the
+// handler: a request carries no workflow meta, so it is attributed over its session id,
+// through the run bridge's own key when the ask arrived on one.
+func (rt *Runtime) askReportsStepProgress(inner chatHandler) chatHandler {
+	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+		var params struct {
+			SessionID string `json:"sessionId"`
+		}
+		if json.Unmarshal(msg.Params, &params) == nil {
+			var attr translate.FrameAttribution
+			if runID := workflowIDOf(chatID); runID != "" {
+				attr = rt.translator.StepAttribution(runID, params.SessionID, nil)
+			} else {
+				attr = rt.translator.Attribute(chatID, params.SessionID, nil)
+			}
+			rt.translator.ReportStepProgress(attr)
+		}
+		inner(ctx, chatID, msg)
+	}
+}
+
 // --- Session-update sub-dispatcher ---
 
 // handleSessionUpdate decodes the `update` envelope and fans out to the sub-handler for
@@ -209,7 +244,7 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 	// The ONE shared classifier, also used by deriveSubSession, so a step frame classifies
 	// the same whichever door it came through. A STEP carries an empty SubSessionID and
 	// Step true, because a non-empty id means "a subagent did this".
-	attr := rt.translator.Attribute(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil)
+	attr := rt.translator.Attribute(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow)
 
 	// A REPLAYED frame is stored history and must not reach the live handlers: ungated, it
 	// opens a PHANTOM turn with no session/prompt response to end it. The frames build the
@@ -223,9 +258,36 @@ func (rt *Runtime) handleSessionUpdate(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 
+	// After the replay gate: stored history is not progress.
+	rt.translator.ReportStepProgress(attr)
+
 	// Sub-kinds without a handler fall through silently, user_message_chunk deliberately
 	// among them: marotte persists user messages itself, so KAS's echo would double-render.
 	fn, ok := rt.sessionUpdateHandlers()[base.Kind]
+	if !ok {
+		return
+	}
+	fn(ctx, chatID, env.Params.Update, attr)
+}
+
+// handleRunStepFrame is a parentless run bridge's session/update door: every frame
+// on it is a step's, attributed to the run the bridge hosts, so it folds into the
+// run record the way a chat-parented step's does. A replayed frame is stored history
+// and is dropped.
+func (rt *Runtime) handleRunStepFrame(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
+	var env struct {
+		Params translate.ACPSessionUpdateEnvelope `json:"params"`
+	}
+	if json.Unmarshal(msg.Params, &env.Params) != nil || env.Params.Update == nil {
+		return
+	}
+	var base translate.ACPSessionUpdateBase
+	if json.Unmarshal(env.Params.Update, &base) != nil || base.Meta.Kiro.Replay {
+		return
+	}
+	attr := rt.translator.StepAttribution(workflowIDOf(chatID), env.Params.SessionID, base.Meta.Kiro.Workflow)
+	rt.translator.ReportStepProgress(attr)
+	fn, ok := rt.runStepHandlers[base.Kind]
 	if !ok {
 		return
 	}

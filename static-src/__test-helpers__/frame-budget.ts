@@ -5,7 +5,9 @@
 // clean 16.7ms for the first ~49 files and then a flat 1016ms for every file
 // after, while the page still reports `visibility: visible` — a throttle, not
 // contention, which is why the number is dead flat rather than noisy. It does not
-// reproduce with a subset, so no single test causes it and no test can undo it.
+// reproduce with a subset, so no single test causes it and no test can undo it —
+// but a launch flag does: `vitest.config.ts` passes Chromium
+// `--disable-frame-rate-limit`, which removes it (measured; mechanism unverified).
 //
 // The consequence is only ever a BOUND. A ResizeObserver re-measure, a reveal
 // cadence, an animation restart and a scheduled retry all still happen; they take

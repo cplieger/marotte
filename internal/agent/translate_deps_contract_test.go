@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/buffer"
-	"github.com/cplieger/marotte/internal/translate"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // TranslateRolesContractTest exercises every method of every translate role
@@ -83,13 +83,16 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		r.Push.NotifyPush(t.Context(), "test body", marotte.PushKindPermission, "")
 	})
 
-	t.Run("buffers_and_lines_are_wired", func(t *testing.T) {
+	t.Run("turns_runs_and_lines_are_wired", func(t *testing.T) {
 		r := newRoles(t)
-		if r.Buffers.TurnFoldTarget(t.Context(), "c1", marotte.TurnSourceWireTurnStart) == nil {
-			t.Error("Buffers.TurnFoldTarget returned nil")
+		if r.Turns.TurnFoldTarget(t.Context(), "c1") == nil {
+			t.Error("Turns.TurnFoldTarget returned nil")
 		}
-		if _, ok := r.Buffers.OpenTurnBuffer("no-such-chat"); ok {
-			t.Error("Buffers.OpenTurnBuffer opened a turn")
+		if _, ok := r.Turns.OwnTurn("no-such-chat"); ok {
+			t.Error("Turns.OwnTurn opened a turn")
+		}
+		if r.Runs == nil || r.Bracket == nil {
+			t.Errorf("Runs = %v, Bracket = %v; want both wired", r.Runs, r.Bracket)
 		}
 		r.Lines.RecordFromDiffs("c1", nil, 0, "")
 	})
@@ -109,16 +112,18 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		}
 	})
 
-	t.Run("StepTurnCapExceeded_does_not_panic", func(t *testing.T) {
+	t.Run("RunMadeProgress_does_not_panic", func(t *testing.T) {
 		r := newRoles(t)
-		r.RunBounds.StepTurnCapExceeded("wf-never-launched", "node-1", 99)
+		r.RunBounds.RunMadeProgress("wf-never-launched")
 	})
 }
 
 func TestHub_TranslateRolesContract(t *testing.T) {
 	TranslateRolesContractTest(t, func(t *testing.T) *translate.Roles {
 		t.Helper()
-		h, _, _ := newTestHub()
+		h, cs, _ := newTestHub()
+		// A wire turn opens against the chat's record, so the fold target needs one.
+		cs.seed(t, "c1", nil)
 		// The production wiring itself, not a copy of it: a copy keeps passing
 		// after the real one changes.
 		return h.translateRoles()

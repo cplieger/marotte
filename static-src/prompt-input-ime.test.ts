@@ -33,7 +33,29 @@ vi.mock("./pill-expand.js", () => ({ collapseAll: vi.fn() }));
 const { PRIOR_PROMPT } = vi.hoisted(() => ({ PRIOR_PROMPT: "the prompt before this one" }));
 vi.mock("./store.js", () => ({
   getActive: () => ({
-    messages: [{ id: "m1", role: "user", content: PRIOR_PROMPT, ts: 1 }],
+    // ONE prompt-opened turn, in the shape the appender writes it: the
+    // `turn_open` is `entries[0]` and carries the prompt, which is where
+    // `userPrompts()` reads a past prompt from.
+    turn_order: ["t1"],
+    turns: new Map([
+      [
+        "t1",
+        {
+          entries: [
+            {
+              id: "t1-open",
+              turn: "t1",
+              lane: "",
+              kind: "turn_open",
+              seq: 0,
+              ts: 1,
+              payload: { source: "prompt", n: 1, prompt: { id: "m1", text: PRIOR_PROMPT } },
+            },
+          ],
+          openEntries: new Map(),
+        },
+      ],
+    ]),
   }),
   getActiveId: () => "c1",
   // Present-but-inert so real-ESM linking succeeds: the tab projection widened

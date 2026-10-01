@@ -7,107 +7,104 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// bindPending binds an unacknowledged wire turn_start to this chat's single pending
-// pre-open, reporting whether one took it and, when it did not, the epoch of a
-// DIFFERENT turn the caller must close first. The pre-open leaves the pending set and
-// BECOMES the folding turn, so clearing pending alone would orphan that record.
-func (r *turnRegistry) bindPending(chatID marotte.ChatID) (bound bool, displaced marotte.TurnEpoch) {
+// withLifecycle runs fn with the chat's mutex HELD, after waiting out a finalizing
+// own turn, and reports ctx.Err() when ctx died first. It is the one door through
+// which a turn_open append and its registry record become one operation: fn
+// appends through the store and then calls openLocked, so lock order is lifecycle
+// then store and no fold can open a turn between the two.
+func (r *turnRegistry) withLifecycle(ctx context.Context, chatID marotte.ChatID, fn func(lc *chatLifecycle) error) error {
 	lc := r.lifecycleFor(chatID)
-	lc.mu.Lock()
+	if !lc.awaitNotFinalizing(ctx) {
+		return ctx.Err()
+	}
 	defer lc.mu.Unlock()
-	p := lc.pending
-	if p == nil || p.acked {
-		return false, 0
-	}
-	if lc.cur != nil && lc.cur != p {
-		return false, lc.cur.Epoch
-	}
-	p.acked = true
-	lc.pending = nil
-	if lc.cur == nil {
-		lc.cur = p
+	return fn(lc)
+}
+
+// bindPending binds an unacknowledged wire turn_start to this chat's pending turn,
+// reporting whether one took it and, when it did not, the id of a DIFFERENT
+// bracketed own turn whose turn_end was lost and which the caller closes first. The
+// pending turn leaves that slot and BECOMES own. An empty lost id with bound false
+// means the chat holds no turn for the bracket, and the caller opens one. It waits
+// out a finalizing own turn like every other door, so a finalizing turn is absent
+// by the time the three cases are read; false on both when ctx died first.
+func (r *turnRegistry) bindPending(ctx context.Context, chatID marotte.ChatID) (bound bool, lost string) {
+	err := r.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
+		p := lc.pending
+		if p == nil || p.acked || p.finalizing {
+			if lc.own != nil && lc.own.acked {
+				lost = lc.own.ID
+			}
+			return nil
+		}
+		if lc.own != nil && lc.own != p {
+			lost = lc.own.ID
+			return nil
+		}
+		p.acked = true
+		lc.pending = nil
+		lc.own = p
 		lc.setStateLocked(turnOpen)
+		bound = true
+		return nil
+	})
+	if err != nil {
+		return false, ""
 	}
-	return true, 0
+	return bound, lost
 }
 
-// displaceableEngineTurn reports the epoch of an open turn the ENGINE started, which a
-// prompt-shaped open must close before taking the chat: no closer can claim it through
-// the BRACKET path, and displacing it without closing loses content already broadcast
-// to every client. A workflow step's turn is the ordinary case rather than an edge — a
-// chat-parented run's steps fold onto the launching chat for minutes after the
-// launching turn ended.
-func (r *turnRegistry) displaceableEngineTurn(chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
+// foldTarget is the own turn's accumulator, or false when the chat has none. False
+// also for a turn mid-finalize, so the caller opens a wire_turn_start turn rather
+// than folding into one whose closer already took its content.
+func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if lc.state != turnOpen || lc.cur == nil {
-		return 0, false
-	}
-	if !lc.cur.Source.EngineOpened() {
-		return 0, false
-	}
-	return lc.cur.Epoch, true
-}
-
-// foldTarget is the open turn's buffer, or false when the chat has none. False also for
-// a chat mid-finalize, so the caller falls through to openWire rather than folding into
-// a turn whose closer already took its content.
-func (r *turnRegistry) foldTarget(chatID marotte.ChatID) (*buffer.Buffer, bool) {
-	lc := r.lifecycleFor(chatID)
-	lc.mu.Lock()
-	defer lc.mu.Unlock()
-	if lc.state != turnOpen || lc.cur == nil {
+	if lc.own == nil || lc.own.finalizing {
 		return nil, false
 	}
-	return lc.cur.Buf, true
+	return lc.own.Log, true
 }
 
-// openWire opens a turn the ENGINE started. It takes no completion handle — a handle
-// nobody releases retains the record for the life of the process. The source is the
-// caller's: a fold carrying a workflow step's own marker opens the RUN's turn, and
-// everything else opens this chat's.
-func (r *turnRegistry) openWire(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, model string, credits CreditBaseline) *Turn {
+// promptTurn is the chat's prompt-class turn awaiting or holding its bracket, the
+// one a turn_bind joins; false when none is open.
+func (r *turnRegistry) promptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	lc := r.lifecycleFor(chatID)
-	if !lc.awaitNotFinalizing(ctx) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.pending != nil && !lc.pending.finalizing {
+		return lc.pending.Log, true
+	}
+	if lc.own != nil && lc.own.Source.Acknowledgeable() && !lc.own.finalizing {
+		return lc.own.Log, true
+	}
+	return nil, false
+}
+
+// revisableLocked reports the provisionally bound prompt turn a frame carrying
+// agentInitiated re-targets, nil when the chat holds none. Caller holds mu.
+func (lc *chatLifecycle) revisableLocked() *Turn {
+	pre := lc.own
+	if pre == nil || !pre.acked || !pre.Source.Acknowledgeable() || pre.finalizing {
 		return nil
 	}
-	defer lc.mu.Unlock()
-	if lc.state == turnOpen && lc.cur != nil {
-		return lc.cur
-	}
-	t := lc.openLocked(chatID, source, model, credits)
-	t.acked = true
-	return t
+	return pre
 }
 
-// reclassify undoes a provisional binding on the evidence that the started turn was the
-// AGENT's. The started turn keeps the buffer the frames were folded into; the pre-open
-// drops back to pending with a fresh one, and the agent's turn takes a LATER epoch.
-func (r *turnRegistry) reclassify(ctx context.Context, chatID marotte.ChatID) bool {
-	lc := r.lifecycleFor(chatID)
-	if !lc.awaitNotFinalizing(ctx) {
-		return false
-	}
-	defer lc.mu.Unlock()
-	pre := lc.cur
-	if pre == nil || !pre.acked || !pre.Source.Acknowledgeable() {
-		return false
-	}
-	// The agent's OWN turn, never a step's: a step's marker routes it elsewhere.
-	agentTurn := lc.openLocked(chatID, marotte.TurnSourceWireTurnStart, pre.Model, pre.Credits)
-	agentTurn.acked = true
-	// Opened moves with the buffer: the agent's turn began when those frames did.
-	agentTurn.Buf = pre.Buf
-	agentTurn.Opened = pre.Opened
-	pre.Buf = buffer.New()
+// reviseLocked re-targets routing after the caller appended the agent turn's
+// turn_open and opened it as own: the agent's turn began when the bracket did, and
+// the prompt's turn drops back to pending-only, owed its bracket again. Entries
+// already sealed into the prompt's turn stay where they are. Caller holds mu.
+func (lc *chatLifecycle) reviseLocked(pre, agent *Turn) {
+	agent.acked = true
+	agent.Opened = pre.Opened
 	pre.acked = false
 	lc.pending = pre
 	slog.Info("a frame revised a provisional turn binding to agent-initiated",
-		"chat_id", chatID, "pre_open_epoch", pre.Epoch, "agent_epoch", agentTurn.Epoch)
-	return true
+		"chat_id", pre.Chat, "prompt_turn", pre.ID, "agent_turn", agent.ID)
 }

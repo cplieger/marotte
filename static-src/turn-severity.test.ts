@@ -23,6 +23,7 @@ import type { TurnOutcome } from "./wire/types.gen.js";
 const EVERY_OUTCOME_SORTED = [
   "cancelled",
   "completed",
+  "empty",
   "failed",
   "interrupted",
   "refused",
@@ -31,7 +32,7 @@ const EVERY_OUTCOME_SORTED = [
 ] as const satisfies readonly TurnOutcome[];
 
 describe("TURN_OUTCOME_VALUES", () => {
-  it("holds exactly the seven outcomes the wire can send", () => {
+  it("holds exactly the eight outcomes the wire can send", () => {
     // The case exists for the DERIVATION rather than for the list. It is
     // `Object.keys` over a total record, so `Object.keys` over the WRONG table, or
     // over one that gained a key which is not an outcome, answers a wrong array

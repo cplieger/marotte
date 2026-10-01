@@ -225,6 +225,37 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 	b.mu.Unlock()
 }
 
+// applyIgnoreFiles tells KAS which ignore FILES to enforce on this connection.
+// Sent once per bridge, after initialize and before the first session verb,
+// because the value is CONNECTION-scope in KAS rather than per session.
+//
+// The list is RESOLVED HERE rather than captured by the caller: the bridge is
+// registered before Start runs, so a settings write landing in between reaches
+// this bridge through the fan-out and a captured list would overwrite it with the
+// pre-write value for the connection's whole life.
+//
+// NIL or EMPTY sends NOTHING. `{files: []}` CLEARS the list, so a caller that
+// could not read the settings document leaves KAS enforcing whatever it was last
+// told instead of disabling enforcement it cannot re-derive.
+//
+// Best-effort, at Warn: the notification takes effect with no session restart, so
+// a failure costs the list on this connection and nothing else. KAS itself answers
+// a malformed payload with a warn and a no-op.
+func (b *Bridge) applyIgnoreFiles(ctx context.Context, resolve func(context.Context) []string) {
+	if resolve == nil {
+		return
+	}
+	names := resolve(ctx)
+	if len(names) == 0 {
+		return
+	}
+	if err := b.Notify(ctx, marotte.MethodPolicyIgnoreFilesChanged, map[string]any{
+		marotte.ParamIgnoreFiles: names,
+	}); err != nil {
+		slog.Warn("apply agent ignore files", "files", names, "error", err)
+	}
+}
+
 // applyInitialMode switches a freshly-created session to wantMode when it differs
 // from the session's default. Best-effort: a failed switch logs and leaves the
 // default rather than failing session creation. No-op when wantMode is empty.

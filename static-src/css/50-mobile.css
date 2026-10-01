@@ -234,7 +234,9 @@
     gap: 0;
   }
 
-  /* Settings page: reduce padding */
+  /* The remaining `.page-content` surfaces — History, the run and subagent pages
+     and the file browser's list wrap. The tabbed pages carry `.page-shell`, which
+     states its own phone inset in its own slice (11-page-lists.css). */
   .page-content {
     padding: var(--sp-3);
   }

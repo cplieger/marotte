@@ -45,7 +45,7 @@ describe("buildUserInputCard", () => {
       }),
       () => undefined,
     );
-    expect(card.querySelector(".user-input-body")?.textContent).toContain("Which approach?");
+    expect(card.querySelector(".dock-ask-body")?.textContent).toContain("Which approach?");
     const cards = card.querySelectorAll(".user-input-option");
     expect(cards.length).toBe(2);
     expect(cards[0]?.textContent).toContain("Quick pass");
@@ -81,9 +81,9 @@ describe("buildUserInputCard", () => {
     if (boxes[1] !== undefined) {
       boxes[1].checked = false; // drop "Docs"
     }
-    const confirm = [
-      ...card.querySelectorAll<HTMLButtonElement>(".user-input-actions button"),
-    ].find((b) => b.textContent === "Confirm");
+    const confirm = [...card.querySelectorAll<HTMLButtonElement>(".dock-ask-actions button")].find(
+      (b) => b.textContent === "Confirm",
+    );
     confirm?.click();
     expect(onSubmit).toHaveBeenCalledWith("answered", "Thorough [Tests, Bench]");
   });
@@ -94,7 +94,7 @@ describe("buildUserInputCard", () => {
       () => undefined,
     );
     (card.querySelector(".user-input-option") as HTMLButtonElement).click();
-    const back = [...card.querySelectorAll<HTMLButtonElement>(".user-input-actions button")].find(
+    const back = [...card.querySelectorAll<HTMLButtonElement>(".dock-ask-actions button")].find(
       (b) => b.textContent === "Back",
     );
     back?.click();
@@ -105,7 +105,7 @@ describe("buildUserInputCard", () => {
     const onSubmit = vi.fn();
     const card = mount(payload({ options: [] }), onSubmit);
     expect(card.querySelectorAll(".user-input-option").length).toBe(0);
-    const input = card.querySelector(".user-input-text") as HTMLTextAreaElement;
+    const input = card.querySelector(".dock-ask-text") as HTMLTextAreaElement;
     input.value = "  do both  ";
     const send = [...card.querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent === "Send",
@@ -117,8 +117,8 @@ describe("buildUserInputCard", () => {
   it("a typed answer is available alongside options and empty text never submits", () => {
     const onSubmit = vi.fn();
     const card = mount(payload({ options: [{ title: "Fast" }] }), onSubmit);
-    const input = card.querySelector(".user-input-text") as HTMLTextAreaElement;
-    const send = [...card.querySelectorAll<HTMLButtonElement>(".user-input-freeform button")].find(
+    const input = card.querySelector(".dock-ask-text") as HTMLTextAreaElement;
+    const send = [...card.querySelectorAll<HTMLButtonElement>("button")].find(
       (b) => b.textContent === "Send",
     );
     send?.click();
@@ -131,7 +131,7 @@ describe("buildUserInputCard", () => {
   it("Skip dismisses", () => {
     const onSubmit = vi.fn();
     const card = mount(payload({ options: [{ title: "A" }] }), onSubmit);
-    const skip = [...card.querySelectorAll<HTMLButtonElement>(".user-input-actions button")].find(
+    const skip = [...card.querySelectorAll<HTMLButtonElement>(".dock-ask-actions button")].find(
       (b) => b.textContent === "Skip",
     );
     skip?.click();

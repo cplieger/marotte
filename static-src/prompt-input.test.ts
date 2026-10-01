@@ -31,17 +31,37 @@ function makeSession(prompts: string[]): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: prompts.length,
-    messages: prompts.map((content, i) => ({
-      id: `m${String(i)}`,
-      role: "user",
-      content,
-      ts: i,
-    })),
+    // One turn per prompt, oldest first, each carrying the reader's own text on its
+    // `turn_open`. `userPrompts` walks `turn_order` backwards, so this is what puts
+    // "newest" at the top of the history.
+    turns: new Map(
+      prompts.map((text, i) => [
+        `t${String(i)}`,
+        {
+          entries: [
+            {
+              id: `t${String(i)}-open`,
+              turn: `t${String(i)}`,
+              lane: "",
+              kind: "turn_open" as const,
+              payload: {
+                source: "prompt" as const,
+                n: i + 1,
+                prompt: { id: `p${String(i)}`, text },
+              },
+              seq: 0,
+              ts: i,
+            },
+          ],
+          openEntries: new Map(),
+        },
+      ]),
+    ),
+    turn_order: prompts.map((_text, i) => `t${String(i)}`),
+    turn_count: prompts.length,
     has_more: false,
     thinking: false,
     working_label: "Thinking",

@@ -19,8 +19,8 @@ import (
 // legitimately run for hours. Those two facts compose into a failure that is
 // worse than an error: an unanswered A→C request means the session/prompt Call
 // never returns, bridgePrompting is never released, and every later prompt on
-// that chat 409s into a client queue whose only drain is a turn_ended that will
-// never fire. The chat is dead with a spinner and no diagnosis.
+// that chat 409s with no turn to steer into, because the turn_closed that would
+// release the slot never fires. The chat is dead with a spinner and no diagnosis.
 //
 // The utility bridge and the run bridge both already had this fallback, each
 // with the rationale in a comment. The chat dispatcher was the one of the three

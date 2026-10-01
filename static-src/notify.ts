@@ -49,12 +49,14 @@ export const KEYED_PUSH_KINDS: Readonly<
   run_outcome: "notify_run_outcome",
 };
 
-/** The default for each keyed kind, matching `settings.Default*` on the server.
+/** The default for each keyed kind. `pr_status` is OFF while its two siblings are
+ *  ON: a pull request's CI verdict is already on the forge and in the PRs tab,
+ *  where the other two report work this server did while nobody was looking.
  *
- *  `pr_status` is OFF while its two siblings are ON: a pull request's CI verdict is
- *  already on the forge and in the PRs tab, where the other two report work this
- *  server did while nobody was looking. Exported because `settings-notifications.ts`
- *  reads it to decide which kinds the master switch turns on. */
+ *  A MIRROR the payload cannot replace: `EffectiveSettings` carries each kind's
+ *  value in FORCE, so a kind the reader switched off is byte-identical there to
+ *  one whose default is off, and "which kinds does the master turn on" is not
+ *  derivable from it. `push-kinds.test.ts` holds the two languages in step. */
 export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS, boolean>> = {
   agent_finished: true,
   pr_status: false,

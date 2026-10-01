@@ -18,8 +18,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 func TestNew_PersistsAndReloadsKeys(t *testing.T) {

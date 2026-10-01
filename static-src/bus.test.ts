@@ -57,11 +57,11 @@ describe("dispatch (SSE routing)", () => {
       name: "unsubscribed handler does not fire",
       setup: () => {
         const handler = vi.fn();
-        const unsub = onSSE("turn_ended", handler);
+        const unsub = onSSE("turn_closed", handler);
         unsub();
         return { handler, unsub };
       },
-      event: { type: "turn_ended", chat_id: "c2", payload: { chat_id: "c2" } },
+      event: { type: "turn_closed", chat_id: "c2", payload: { chat_id: "c2" } },
       expectedCalls: [],
     },
   ];
@@ -328,12 +328,12 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 describe("decodeEnvelope", () => {
   it("decodes the type, the chat id and a subject stamp", () => {
     const evt = decodeEnvelope({
-      type: "message_appended",
+      type: "entry_appended",
       chat_id: "c1",
-      payload: { id: "m1" },
+      payload: { entry: { id: "e1" } },
       subject: { kind: "chat", ref: "c1", version: "3" },
     });
-    expect(evt.type).toBe("message_appended");
+    expect(evt.type).toBe("entry_appended");
     expect(evt.chat_id).toBe("c1");
     expect(evt.subject).toEqual({ kind: "chat", ref: "c1", version: "3" });
   });

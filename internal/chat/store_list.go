@@ -7,10 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -22,8 +21,8 @@ func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
 	return r
 }
 
-// List returns every chat's header (no messages) sorted by UpdatedAt desc.
-// Unreadable files are logged and skipped: one bad file must not hide the rest.
+// List returns every chat's header sorted by UpdatedAt desc. Unreadable headers
+// are logged and skipped: one bad file must not hide the rest.
 // Never nil, so JSON encoders emit `[]` rather than the `null` the wire decoder
 // rejects.
 func (s *Store) List(ctx context.Context) []marotte.ChatHeader {
@@ -91,27 +90,14 @@ func (s *Store) listOnce(ctx context.Context) ([]marotte.ChatHeader, bool) {
 		// Nothing is known about what chats exist, so never report complete.
 		return []marotte.ChatHeader{}, false
 	}
-	var valid []chatEntry
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, chatFileSuffix) {
-			continue
-		}
-		id := strings.TrimSuffix(name, chatFileSuffix)
-		if !chatIDPattern(marotte.ChatID(id)) {
-			slog.Debug("chat list: skipped non-chat file",
-				"name", name, "reason", "invalid chat id pattern")
-			continue
-		}
-		valid = append(valid, chatEntry{id: id, path: filepath.Join(s.dir, name)})
-	}
+	valid := chatDirs(entries, s.dir)
 	if len(valid) == 0 {
 		return []marotte.ChatHeader{}, true
 	}
 
 	// No per-chat lock: reads are read-only and writes land by temp+rename, so a
 	// reader always sees a complete file.
-	headers, complete := readHeadersParallel(ctx, valid, s.fileCap)
+	headers, complete := readHeadersParallel(ctx, valid)
 	slices.SortFunc(headers, func(a, b marotte.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
@@ -127,4 +113,28 @@ func (s *Store) listOnce(ctx context.Context) ([]marotte.ChatHeader, bool) {
 		"returned", len(headers),
 		"complete", complete)
 	return headers, complete
+}
+
+// chatDirs filters a listing of the store's directory down to the chat directories:
+// a directory named by a valid chat id that holds a header. A directory with no
+// header is a chat mid-creation or mid-delete and is not listed.
+func chatDirs(entries []os.DirEntry, dir string) []chatEntry {
+	var valid []chatEntry
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() {
+			continue
+		}
+		if !chatIDPattern(marotte.ChatID(name)) {
+			slog.Debug("chat list: skipped non-chat entry",
+				"name", name, "reason", "invalid chat id pattern")
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(filepath.Join(path, headerFileName)); err != nil {
+			continue
+		}
+		valid = append(valid, chatEntry{id: name, path: path})
+	}
+	return valid
 }

@@ -1,9 +1,9 @@
-// Where a marker sits on the rail, and which turns get one. Position is a continuous
-// function of the turn's own NUMBER and of how many turns the session has, rather than
-// a slot in a fixed-capacity list, so a marker does not move when a page loads.
+// Where a marker sits on the rail, and which turns get one. Position is a function of
+// the marker's SLOT in the shown set: `k` markers sit at one pitch, so a dropped
+// turn leaves no gap behind it. The set itself is a function of rank alone.
 //
-// TWO REGIMES, and `railSpan` is the crossover: a session that fits at the relaxed
-// pitch is spread from the top at it, and one that does not takes the whole track.
+// TWO REGIMES, and `railSpan` is the crossover: a set that fits at the relaxed pitch
+// is spread from the top at it, and one that does not takes the whole track.
 
 import type { TurnSummary } from "./rail-merge.js";
 import { severityOf } from "./turn-severity.js";
@@ -51,57 +51,50 @@ function floorPx(track: HTMLElement): number | null {
 /** THE PITCH A YOUNG RAIL SPACES ITS MARKERS AT: one marker box of clear, against
  *  `MARKER_CLEAR_PX`'s 4px floor a full track compresses to.
  *
- *  A session shorter than the track is spread from the TOP at this pitch rather than
+ *  A set shorter than the track is spread from the TOP at this pitch rather than
  *  across the whole track, which is what puts turn 2 one gap under turn 1 instead of
  *  at the foot of the column beside the resume control. The gaps then tighten as
- *  turns accumulate and reach the floor as the track fills, so the compression is
- *  continuous and the downsample below takes over from it rather than from a jump.
- *
- *  That is the whole justification now. It used to carry a second one — two boxes is
- *  the smallest pitch leaving a dashed pause BAND a whole box tall — and both that band
- *  and the pause reporting behind it are deleted (2026-09), so the pitch answers to the
- *  spread alone and nothing on the axis measures against it. */
+ *  markers accumulate and reach the floor as the track fills, so the compression is
+ *  continuous and the downsample takes over from it rather than from a jump. */
 export function relaxedPitch(markerPx: number): number {
   return markerPx * 2;
 }
 
-/** How much of the track's travel the whole marker set occupies, 0..1: the relaxed
- *  pitch while every turn fits at it, all of it once they do not.
+/** How much of the track's travel the shown set occupies, 0..1: the relaxed pitch
+ *  while every marker fits at it, all of it once they do not.
  *
- *  This is the one value that makes a marker's position a function of the SESSION's
- *  size as well as of the turn's own number, so every `railAt` one render publishes
- *  has to carry the same one. `1` for a track with no travel, because a fraction of
- *  nothing is unused rather than wrong. */
-export function railSpan(total: number, trackPx: number, markerPx: number): number {
+ *  `slots` is the SHOWN set's size, not the session's, and every `railAt` one render
+ *  publishes has to carry the same span. `1` for a track with no travel, because a
+ *  fraction of nothing is unused rather than wrong. */
+export function railSpan(slots: number, trackPx: number, markerPx: number): number {
   const travel = Math.max(0, trackPx - markerPx);
   if (travel === 0) {
     return 1;
   }
-  return Math.min(1, (Math.max(0, total - 1) * relaxedPitch(markerPx)) / travel);
+  return Math.min(1, (Math.max(0, slots - 1) * relaxedPitch(markerPx)) / travel);
 }
 
-/** A turn's position on the axis: 0 at the first turn, `span` at the Nth, as a
+/** A marker's position on the axis: 0 for the first slot, `span` for the last, as a
  *  fraction of the track's travel. Published as `--rail-at`, so the arithmetic below
  *  and the rendered `top` cannot disagree.
  *
  *  `span` is REQUIRED rather than defaulted to 1, because 1 is the stretched layout
- *  this argument exists to stop: a caller that forgot it would put the last turn at
+ *  this argument exists to stop: a caller that forgot it would put the last marker at
  *  the foot of the track and nothing would say so. */
-export function railAt(n: number, total: number, span: number): number {
-  return ((n - 1) / Math.max(1, total - 1)) * span;
+export function railAt(slot: number, slots: number, span: number): number {
+  return (slot / Math.max(1, slots - 1)) * span;
 }
 
 /** A marker's own top. The travel span is the track minus one marker box, so both
- *  ends sit fully inside it. It resolves the session's own span, so the separation
- *  pass below reasons about the positions the render produces. */
-export function markerPosition(
-  n: number,
-  total: number,
+ *  ends sit fully inside it. */
+export function slotPosition(
+  slot: number,
+  slots: number,
   trackPx: number,
   markerPx: number,
 ): number {
   const travel = Math.max(0, trackPx - markerPx);
-  return railAt(n, total, railSpan(total, trackPx, markerPx)) * travel;
+  return railAt(slot, slots, railSpan(slots, trackPx, markerPx)) * travel;
 }
 
 /** How many markers a track of this height holds at the tier's separation. */
@@ -114,9 +107,12 @@ export function maxMarkers(trackPx: number, pitchPx: number): number {
  *  see. `hits` is the search-hit rank passed IN, read once per render, so a
  *  module-level read of the search state cannot put presence back on their keystrokes.
  *
- *  Ranks, worst dropped first: a uniform stride, a live search hit, a turn that did
- *  not end clean, then the FIRST and LAST turn, never dropped. One separation pass
- *  drops the lower-ranked of a pair closer than `pitchPx`, rank 1 exempt. */
+ *  The FIRST and LAST turn are always kept; the remaining slots up to the track's
+ *  capacity go, in order, to the turns that did not end clean, then to the live
+ *  search hits, then to a uniform spread of the rest. Because the caller lays the
+ *  result out by slot, `k <= maxMarkers` is what keeps every pair `pitchPx` apart;
+ *  the one exception is a track with room for a single marker, which still shows both
+ *  ends. */
 export function selectMarkers(
   turns: readonly TurnSummary[],
   trackPx: number,
@@ -127,67 +123,28 @@ export function selectMarkers(
   if (last < 0) {
     return [];
   }
-  const total = turns[last]?.n ?? 1;
-  // N is the LAST turn's own `n`, which `mergeTurnSets` makes the session count, and
-  // the marker box is the pitch minus the clear `railMetrics` added to it.
-  const markerPx = pitchPx - MARKER_CLEAR_PX;
   const cap = maxMarkers(trackPx, pitchPx);
-
-  const rank = new Map<number, number>();
-  const claim = (i: number, r: number): void => {
-    const held = rank.get(i);
-    if (held === undefined || r < held) {
-      rank.set(i, r);
-    }
-  };
-  claim(0, 1);
-  claim(last, 1);
-  for (let i = 0; i <= last; i++) {
-    const t = turns[i];
-    if (t === undefined) {
-      continue;
-    }
-    if (severityOf(t.outcome) !== "clean") {
-      claim(i, 2);
-    } else if (hits.has(t.n)) {
-      claim(i, 3);
-    }
-  }
-  for (const i of stride(turns.length, rank, cap)) {
-    claim(i, 4);
-  }
-
-  const picked = [...rank.keys()].sort((a, b) => a - b);
-  const kept: number[] = [];
-  for (const i of picked) {
-    const r = rank.get(i) ?? 4;
-    const pos = markerPosition(turns[i]?.n ?? 1, total, trackPx, markerPx);
-    while (kept.length > 0) {
-      const prevIndex = kept[kept.length - 1] ?? 0;
-      const prevRank = rank.get(prevIndex) ?? 4;
-      const prevPos = markerPosition(turns[prevIndex]?.n ?? 1, total, trackPx, markerPx);
-      if (pos - prevPos >= pitchPx || prevRank === 1) {
-        break;
+  const picked = new Set<number>([0, last]);
+  const tiers: ((t: TurnSummary) => boolean)[] = [
+    (t) => severityOf(t.outcome) !== "clean",
+    (t) => hits.has(t.n),
+    () => true,
+  ];
+  for (const wanted of tiers) {
+    const candidates: number[] = [];
+    for (let i = 0; i <= last; i++) {
+      const t = turns[i];
+      if (t !== undefined && !picked.has(i) && wanted(t)) {
+        candidates.push(i);
       }
-      if (r < prevRank) {
-        kept.pop();
-        continue;
-      }
-      break;
     }
-    const prevIndex = kept[kept.length - 1];
-    if (prevIndex === undefined) {
-      kept.push(i);
-      continue;
-    }
-    const prevPos = markerPosition(turns[prevIndex]?.n ?? 1, total, trackPx, markerPx);
-    if (pos - prevPos >= pitchPx || r === 1) {
-      kept.push(i);
+    for (const i of spread(candidates, cap - picked.size)) {
+      picked.add(i);
     }
   }
 
   const out: TurnSummary[] = [];
-  for (const i of kept) {
+  for (const i of [...picked].sort((a, b) => a - b)) {
     const t = turns[i];
     if (t !== undefined) {
       out.push(t);
@@ -196,29 +153,22 @@ export function selectMarkers(
   return out;
 }
 
-/** A uniform stride over the turns no higher rank claimed, filling what is left of
- *  the track's slots. */
-function stride(count: number, rank: ReadonlyMap<number, number>, cap: number): number[] {
-  const rest: number[] = [];
-  for (let i = 0; i < count; i++) {
-    if (!rank.has(i)) {
-      rest.push(i);
-    }
-  }
-  const slots = cap - rank.size;
-  if (slots <= 0 || rest.length === 0) {
+/** A uniform spread of `candidates` over `slots` places: all of them when they fit,
+ *  the middle one for a single place, `Math.round`-spaced picks otherwise. */
+function spread(candidates: readonly number[], slots: number): number[] {
+  if (slots <= 0 || candidates.length === 0) {
     return [];
   }
-  if (slots >= rest.length) {
-    return rest;
+  if (slots >= candidates.length) {
+    return [...candidates];
   }
   if (slots === 1) {
-    return [rest[Math.floor((rest.length - 1) / 2)] ?? 0];
+    return [candidates[Math.floor((candidates.length - 1) / 2)] ?? 0];
   }
   const out = new Set<number>();
   for (let k = 0; k < slots; k++) {
-    const at = Math.round((k * (rest.length - 1)) / (slots - 1));
-    const i = rest[at];
+    const at = Math.round((k * (candidates.length - 1)) / (slots - 1));
+    const i = candidates[at];
     if (i !== undefined) {
       out.add(i);
     }

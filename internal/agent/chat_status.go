@@ -10,7 +10,7 @@ package agent
 // Deliberately ephemeral and tiny: one entry per chat, MERGED on each event
 // (MergeStamped owns why), dropped when the turn ends. Never persisted, matching the
 // live event's contract — cleared client-side on the next prompt and on
-// transport:gap, so a bare replay cannot resurrect a stale "in_progress".
+// BUS_RECONCILE, so a bare replay cannot resurrect a stale "in_progress".
 
 import (
 	"cmp"
@@ -18,8 +18,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 type chatStatusCache struct {
@@ -88,7 +88,7 @@ func statusStamp(version string) *marotte.SubjectStamp {
 // waitingRowsLocked is the retained waiting_on_user set minus the chats in busy, in
 // chat order: a chat whose turn is running must still suppress a stale
 // waiting_on_user, and a PRIME's chat is covered the same way. Callers hold c.mu.
-func (c *chatStatusCache) waitingRowsLocked(busy map[marotte.ChatID]openTurnFacts) []marotte.StatusRow {
+func (c *chatStatusCache) waitingRowsLocked(busy map[marotte.ChatID]*Turn) []marotte.StatusRow {
 	rows := make([]marotte.StatusRow, 0, len(c.byChat))
 	for id, p := range c.byChat {
 		if _, isBusy := busy[id]; isBusy || p.Status != marotte.ChatStatusWaitingOnUser {
@@ -108,7 +108,7 @@ func (c *chatStatusCache) waitingRowsLocked(busy map[marotte.ChatID]openTurnFact
 // unchanged across a connection loss. Both reads are under c.mu here, so the order
 // is belt and braces for this store; it is normative for the pending snapshot,
 // whose three stores cannot share a section.
-func (c *chatStatusCache) SnapshotStamped(busy map[marotte.ChatID]openTurnFacts) (marotte.StatusSnapshotPayload, *marotte.SubjectStamp) {
+func (c *chatStatusCache) SnapshotStamped(busy map[marotte.ChatID]*Turn) (marotte.StatusSnapshotPayload, *marotte.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	version, _ := c.registry().Current(subject.KindStatus, "")

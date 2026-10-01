@@ -14,9 +14,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // flakyTabs embeds the real store rather than reimplementing one, so every case
@@ -826,6 +826,111 @@ func TestSetPinned_IdempotentInBothDirections(t *testing.T) {
 	open, _ := st.List()
 	if i := indexOfTab(open, a.Subject.ID); i < 0 || !open[i].Pinned {
 		t.Errorf("the tab is not pinned in the store: %+v", open)
+	}
+}
+
+// A reparent is the one mutation that reassigns Parent, and it lives here for the
+// same reason a pin does: the emit must be serialized behind the commit. The
+// frame carries Order beside Changed because the row moved; a repeat carries
+// nothing, because nothing committed.
+func TestReparent_EmitsOneFrameWithOrderAndIsSilentOnARepeat(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, st, bus := newTabbedMembership(t, store)
+	a := createChat(t, mem, "op-a")
+	b := createChat(t, mem, "op-b")
+	spec, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindSpec, Ref: ".kiro/specs/x"}, "op-spec")
+	if err != nil {
+		t.Fatalf("Setup: OpenTab(spec) = %v", err)
+	}
+	framesBefore := len(bus.frames(t))
+
+	moved, version, err := mem.Reparent(t.Context(), spec.Subject.ID, a.Subject.ID, "op-move")
+	if err != nil {
+		t.Fatalf("Reparent = %v", err)
+	}
+	if moved.ID != spec.Subject.ID || moved.Parent != a.Subject.ID {
+		t.Errorf("Reparent returned %+v, want %q under %q", moved, spec.Subject.ID, a.Subject.ID)
+	}
+	frames := bus.frames(t)
+	if got := len(frames) - framesBefore; got != 1 {
+		t.Fatalf("a reparent emitted %d frames, want exactly 1", got)
+	}
+	frame := frames[len(frames)-1]
+	if frame.Changed == nil || frame.Changed.ID != spec.Subject.ID || frame.Changed.Parent != a.Subject.ID {
+		t.Errorf("frame.Changed = %+v, want the spec tab under %q", frame.Changed, a.Subject.ID)
+	}
+	wantOrder := []string{a.Subject.ID, spec.Subject.ID, b.Subject.ID}
+	if !slices.Equal(frame.Order, wantOrder) {
+		t.Errorf("frame.Order = %v, want %v: the row moved behind its new parent", frame.Order, wantOrder)
+	}
+	if frame.Version != version || frame.OpID != "op-move" {
+		t.Errorf("frame = (v%d, op %q), want (v%d, op %q)", frame.Version, frame.OpID, version, "op-move")
+	}
+
+	again, repeatVersion, err := mem.Reparent(t.Context(), spec.Subject.ID, a.Subject.ID, "op-move-again")
+	if err != nil {
+		t.Fatalf("repeat Reparent = %v", err)
+	}
+	if repeatVersion != version || again.Parent != a.Subject.ID {
+		t.Errorf("repeat Reparent = (v%d, parent %q), want (v%d, %q) unchanged", repeatVersion, again.Parent, version, a.Subject.ID)
+	}
+	if got := len(bus.frames(t)) - framesBefore; got != 1 {
+		t.Errorf("a repeat reparent emitted %d more frames, want 0", got-1)
+	}
+	open, _ := st.List()
+	if got := subjectIDs(open); !slices.Equal(got, wantOrder) {
+		t.Errorf("store order = %v, want %v", got, wantOrder)
+	}
+}
+
+// The three refusals a reparent can answer, each with its own status: 404 for a
+// tab that is not open (a statement about a tab, like a pin), 409 for a parent
+// that is not an open chat tab, 409 for a parent inside the tab's own subtree.
+// None of them commits or emits.
+func TestReparent_RefusesAnAbsentTabANonChatParentAndACycle(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	mem, _, bus := newTabbedMembership(t, store)
+	a := createChat(t, mem, "op-a")
+	editor, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/workspace/a.go"}, "op-editor")
+	if err != nil {
+		t.Fatalf("Setup: OpenTab(editor) = %v", err)
+	}
+	tangent, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
+		OpID:       "op-tangent",
+		ParentChat: marotte.ChatID(a.Chat.ID),
+		Init:       func(c *marotte.Chat) { c.Name = marotte.DefaultChatName },
+	})
+	if err != nil {
+		t.Fatalf("Setup: CreateChatAndOpen(tangent) = %v", err)
+	}
+	_, before := mem.tabs.List()
+	framesBefore := len(bus.frames(t))
+
+	cases := []struct {
+		desc       string
+		id, parent string
+		want       int
+	}{
+		{desc: "an absent tab", id: "ghost", parent: a.Subject.ID, want: http.StatusNotFound},
+		{desc: "a parent that is not open", id: editor.Subject.ID, parent: "ghost", want: http.StatusConflict},
+		{desc: "a parent that is an editor", id: a.Subject.ID, parent: editor.Subject.ID, want: http.StatusConflict},
+		{desc: "a chat under its own tangent", id: a.Subject.ID, parent: tangent.Subject.ID, want: http.StatusConflict},
+		{desc: "a chat under itself", id: a.Subject.ID, parent: a.Subject.ID, want: http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			_, _, err := mem.Reparent(t.Context(), tc.id, tc.parent, "op-"+tc.desc)
+
+			if statusOf(err) != tc.want {
+				t.Errorf("Reparent(%q, %q) status = %d, want %d (%s)", tc.id, tc.parent, statusOf(err), tc.want, errText(err))
+			}
+		})
+	}
+	if _, after := mem.tabs.List(); after != before {
+		t.Errorf("version went %d -> %d across refusals, want it unchanged", before, after)
+	}
+	if got := len(bus.frames(t)) - framesBefore; got != 0 {
+		t.Errorf("refused reparents emitted %d frames, want 0", got)
 	}
 }
 

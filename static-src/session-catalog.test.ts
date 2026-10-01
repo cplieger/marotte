@@ -70,7 +70,6 @@ function usage(contextSize: number): Session["usage"] {
     context_pct: 0,
     context_size: contextSize,
     credits: 0,
-    turn_count: 0,
     last_turn_ms: 0,
     has_real_data: false,
   };

@@ -10,7 +10,9 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const chatFileSuffix = ".json"
+// headerFileName is the record inside a chat's directory; a directory without one
+// is not a chat.
+const headerFileName = "chat.json"
 
 // RetentionHeader is the projection of a chat a retention decision reads. Nothing
 // else: a chat's messages, blocks, tool calls and diffs decide nothing here and

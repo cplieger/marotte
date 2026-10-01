@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // chatHoldsLiveRun reports whether any of `leases` belongs to a run launched by

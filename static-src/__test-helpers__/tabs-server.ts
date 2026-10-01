@@ -385,6 +385,50 @@ function handle(type: string, payload: Record<string, unknown>): SendResultLike 
       stamp(payload);
       return { ok: true, status: 200, body: { version: state.version } };
     }
+    case "reparent_tab": {
+      const id = payload["id"] as string;
+      const parent = payload["parent"] as string;
+      const at = state.subjects.findIndex((s) => s.id === id);
+      if (at < 0) {
+        // Same reading as a pin: a reparent is a statement ABOUT a tab, so an id
+        // that is not open is a mistake rather than a race.
+        return { ok: false, status: 404, error: "no such tab" };
+      }
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by the index check
+      const before = state.subjects[at]!;
+      if (before.parent === parent) {
+        // Commits nothing, so it emits NOTHING — which is why the response
+        // carries the subject: there is no frame for the caller to adopt from.
+        return { ok: true, status: 200, body: { subject: before, version: state.version } };
+      }
+      const host = state.subjects.find((s) => s.id === parent);
+      if (host === undefined || host.kind !== "chat") {
+        // The parent must be an OPEN chat tab, which is the coordinator's rule.
+        return { ok: false, status: 409, error: "the parent must be an open chat tab" };
+      }
+      if (descendants(id).includes(parent)) {
+        // The cycle refusal: a tab may not hang under itself or its own subtree.
+        return { ok: false, status: 409, error: "that would make a cycle" };
+      }
+      const after: TabSubject = { ...before, parent };
+      // The row MOVES, so it is removed and re-inserted at the child-insert
+      // position rather than edited in place — the store's own rule, and the
+      // reason the frame carries an `order` beside the changed subject.
+      state.subjects.splice(at, 1);
+      let to = state.subjects.findIndex((s) => s.id === parent) + 1;
+      while (to < state.subjects.length && state.subjects[to]?.parent === parent) {
+        to++;
+      }
+      state.subjects.splice(to, 0, after);
+      state.version++;
+      state.pending.push({
+        changed: after,
+        order: state.subjects.map((s) => s.id),
+        version: state.version,
+      });
+      stamp(payload);
+      return { ok: true, status: 200, body: { subject: after, version: state.version } };
+    }
     case "reorder_tabs": {
       const order = payload["order"] as string[];
       const held = state.subjects.map((s) => s.id);

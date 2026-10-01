@@ -40,12 +40,13 @@ import {
   tabStatusFor,
   setSessions,
   setThinking,
-  setTurnDone,
-  clearTurnDone,
-  applyLatch,
+  setAgentStatus,
+  openTurn,
+  appendEntry,
+  upsertHeader,
   outcomeLatch,
-  relatchTurnVerdict,
   runStatusFor,
+  defaultUsage,
   get,
 } from "./store.js";
 import type {
@@ -55,7 +56,7 @@ import type {
   Session,
   TabKind,
 } from "./types.js";
-import type { TurnOutcome } from "./wire/types.gen.js";
+import type { Entry, EntryToolCall, TurnOutcome } from "./wire/types.gen.js";
 import type { TabDotStatus } from "./tab-view.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
 
@@ -66,9 +67,10 @@ function session(over: Partial<Session> = {}): Session {
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    usage: { context_pct: 0, context_size: 0, credits: 0, turns: 0, last_turn_ms: 0 },
-    messages: [],
-    message_count: 0,
+    usage: defaultUsage(),
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -76,70 +78,214 @@ function session(over: Partial<Session> = {}): Session {
   } as Session;
 }
 
+/** A chat whose newest turn FINISHED, which is the state a launching chat comes back to
+ *  the moment its run was created: no resident turn without a `turn_close`, and a header
+ *  outcome that grades `done`. The verdict has ONE source, so this is spelled as the
+ *  header field rather than as a latch a caller sets. */
+function settledChat(id: string, outcome: TurnOutcome = "completed"): Session {
+  return session({ id, last_turn_outcome: outcome, turn_open: false });
+}
+
+/** A server header for `id` carrying `outcome` as the newest FINISHED turn's verdict. The
+ *  closer stamps that field in the same header rewrite that appends the `turn_close`, so a
+ *  case that closes a turn states both halves. */
+function headerWithOutcome(id: string, outcome?: TurnOutcome): ChatHeader {
+  return {
+    id,
+    name: id,
+    usage: defaultUsage(),
+    turn_count: 1,
+    created_at: 0,
+    updated_at: 0,
+    ...(outcome !== undefined && { last_turn_outcome: outcome }),
+  };
+}
+
+/** The `turn_open` that opens `turnID` at session-absolute ordinal `n`. `wire_turn_start`
+ *  is the agent-initiated source, which is the shape every case here needs: none of them
+ *  addresses a prompt by its id. */
+function turnOpenEntry(turnID: string, n = 1): Entry {
+  return {
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "wire_turn_start", n },
+  };
+}
+
+/** A sealed entry of any kind at `seq`, in lane `lane` (`""`, the transcript's own, unless
+ *  named). */
+function sealed(
+  turnID: string,
+  seq: number,
+  kind: Entry["kind"],
+  payload: unknown,
+  lane?: string,
+): Entry {
+  return {
+    id: `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind,
+    seq,
+    ts: seq + 1,
+    ...(lane !== undefined && { lane }),
+    payload,
+  };
+}
+
+/** Open a turn on `chatID` through the real store operation. */
+function openTurnIn(chatID: string, turnID: string, n = 1): void {
+  openTurn(chatID, turnOpenEntry(turnID, n));
+}
+
+/** Close `turnID` with `outcome`, at the seq the caller says the body reached. */
+function closeTurnIn(chatID: string, turnID: string, seq: number, outcome: TurnOutcome): void {
+  appendEntry(chatID, sealed(turnID, seq, "turn_close", { outcome }));
+}
+
+/** A delegate's invocation `tool_call`, which is the one entry a subagent surface reads for
+ *  that delegate's state. It sits in the ISSUER's lane (`""`), which is why no lane is
+ *  named here. */
+function invocationCall(over: Partial<EntryToolCall> = {}): EntryToolCall {
+  const base: EntryToolCall = {
+    id: "tc1",
+    title: "Sub-agent: introspect",
+    status: "in_progress",
+    kind: "other",
+    ts: 1,
+    agent_subtask_id: "task-1",
+  };
+  return Object.assign(base, over);
+}
+
 // ---------------------------------------------------------------------------
 // 1. Signal -> state.
 // ---------------------------------------------------------------------------
 
-describe("tabStatusFor maps each signal to its dot state", () => {
-  it("idles a chat with no signal at all", () => {
-    // The FLOOR for a real chat, not an absence: a chat tab always shows a dot,
-    // which keeps the strip's leading column aligned and makes "nothing is
-    // happening here" readable rather than inferred.
-    expect(tabStatusFor(session())).toBe("idle");
+// LIVENESS IS THE LOG, which is what this section is for: the four independent
+// latches are gone (`thinking`, `turn_done`, `turn_failed`, an `agent_status` of
+// `completed`), so `working` is DERIVED from a resident turn carrying no
+// `turn_close` and `done` reads the header's own statement about the newest turn
+// that finished. `store.test.ts` owns the unit MAPPING of that rule; what only
+// this file can drive is the rule against the real store operations, which is
+// where the reported defect lived — a delegate spends minutes in tool calls
+// emitting no text, so nothing latched, and any completed-shaped signal landing in
+// that window painted the tab green while the turn was mid-flight.
+describe("the dot derives working from an OPEN TURN rather than from a latch", () => {
+  beforeEach(() => {
+    setSessions([session({ id: "c1" })]);
   });
 
   it("returns nothing at all for a chat it has never heard of", () => {
     expect(tabStatusFor(undefined)).toBe("");
   });
 
-  it("works while a turn is in flight", () => {
-    expect(tabStatusFor(session({ thinking: true }))).toBe("working");
+  it("reads WORKING for a turn holding only delegate-lane entries", () => {
+    // ADDENDUM 6's green bar, first case, and the reported bug. The delegate's
+    // entries are entries of the PARENT's own turn in the delegate's lane, so the
+    // parent's turn carries no `turn_close` and the dot cannot read anything else
+    // for the duration — whatever the delegate is or is not emitting at the top
+    // level.
+    openTurnIn("c1", "t1");
+    appendEntry("c1", sealed("t1", 1, "text", { text: "reading" }, "delegate-uuid"));
+    appendEntry("c1", sealed("t1", 2, "tool_call", invocationCall(), "delegate-uuid"));
+    expect(tabStatusFor(get("c1"))).toBe("working");
   });
 
-  it("waits when the agent declared waiting_on_user", () => {
-    expect(tabStatusFor(session({ agent_status: "waiting_on_user" }))).toBe("waiting");
+  it("keeps WORKING when a waiting_on_user status arrives DURING that turn", () => {
+    // Green bar, second case, and the reason `waiting` moved BEHIND `working`: a
+    // status declared mid-turn by a sub-execution is the same false verdict in
+    // yellow. The status is not discarded — it paints the moment the turn ends.
+    openTurnIn("c1", "t1");
+    setAgentStatus("c1", "waiting_on_user");
+    expect(tabStatusFor(get("c1"))).toBe("working");
   });
 
-  it("finishes when the agent declared completed", () => {
-    expect(tabStatusFor(session({ agent_status: "completed" }))).toBe("done");
+  it("flips to DONE only on the turn_closed that leaves no open turn", () => {
+    // Green bar, third case. The close is what makes the verdict readable, and the
+    // verdict's one source is the header — so the close plus the header the closer
+    // stamped is the whole of it.
+    openTurnIn("c1", "t1");
+    expect(tabStatusFor(get("c1"))).toBe("working");
+    closeTurnIn("c1", "t1", 1, "completed");
+    upsertHeader(headerWithOutcome("c1", "completed"));
+    expect(tabStatusFor(get("c1"))).toBe("done");
   });
 
-  it("fails when the failure latch is set", () => {
-    expect(tabStatusFor(session({ turn_failed: true }))).toBe("failed");
+  it("does NOT flip on a turn_closed for a DIFFERENT turn of the same chat", () => {
+    // Green bar, fourth case: the two-open-turns state of design 4.1, a prompt in
+    // `pending` beside an agent-initiated turn. Every `turn_closed` settles exactly
+    // the turn it names, so the chat stays live while the OTHER turn has no close —
+    // and the header's outcome, already written by the first closer, may not be read
+    // as this chat's state while that is true.
+    openTurnIn("c1", "t1", 1);
+    openTurnIn("c1", "t2", 2);
+    closeTurnIn("c1", "t1", 1, "completed");
+    upsertHeader(headerWithOutcome("c1", "completed"));
+    expect(tabStatusFor(get("c1"))).toBe("working");
+
+    closeTurnIn("c1", "t2", 1, "completed");
+    expect(tabStatusFor(get("c1"))).toBe("done");
   });
 
-  it("needs a decision when the chat's dock holds an unanswered ask", () => {
-    expect(tabStatusFor(session(), true)).toBe("input");
+  it("never lets `thinking` outrank the log, in either direction", () => {
+    // `thinking` survives only as a render-time convenience and is NOT an input
+    // here. Both directions are asserted, because the defect is symmetric: a stale
+    // latch must not claim a chat is busy, and a missing one must not claim it is
+    // finished.
+    openTurnIn("c1", "t1");
+    setThinking("c1", false);
+    expect(tabStatusFor(get("c1"))).toBe("working");
+
+    setSessions([settledChat("c2")]);
+    setThinking("c2", true);
+    expect(tabStatusFor(get("c2"))).toBe("done");
   });
 
-  it("puts a pending ask AHEAD of the in-flight turn that raised it", () => {
-    // The precedence that matters. These two genuinely coexist: KAS raises the
-    // ask mid-turn and `thinking` stays true until the turn ends, so reporting
-    // `working` here would hide every approval the app is blocked on.
-    expect(tabStatusFor(session({ thinking: true }), true)).toBe("input");
+  it("puts a pending ask AHEAD of the open turn that raised it", () => {
+    // The one state that outranks liveness, and the two genuinely coexist: KAS
+    // raises the ask mid-turn, so reporting `working` here would hide every
+    // approval the app is blocked on.
+    openTurnIn("c1", "t1");
+    expect(tabStatusFor(get("c1"), true)).toBe("input");
   });
 
   it("puts a pending ask ahead of every settled verdict too", () => {
-    // An ask outlives the turn that raised it, so a turn_ended or an error
-    // landing first must not bury it.
-    expect(tabStatusFor(session({ turn_failed: true }), true)).toBe("input");
-    expect(tabStatusFor(session({ agent_status: "completed" }), true)).toBe("input");
+    // An ask outlives the turn that raised it, so a close landing first must not
+    // bury it.
+    expect(tabStatusFor(settledChat("c1", "failed"), true)).toBe("input");
+    expect(tabStatusFor(settledChat("c1", "completed"), true)).toBe("input");
   });
 
-  it("reports a failure rather than an in-flight turn if both are somehow set", () => {
-    // Unreachable today — the error handler clears thinking and a new turn clears
-    // the latch — so this pins the ORDER, which is the thing a future writer of
-    // either field could invalidate without noticing.
-    expect(tabStatusFor(session({ thinking: true, turn_failed: true }))).toBe("failed");
+  it("gates FAILED on liveness, so a running turn is never painted red", () => {
+    // `failed` and `done` read the SAME field, and it is rewritten only at a
+    // `turn_close` — so it still describes the previous turn for the whole of the
+    // next one, and an ungated `failed` paints a chat red for the duration of a turn
+    // that is running fine.
+    upsertHeader(headerWithOutcome("c1", "failed"));
+    openTurnIn("c1", "t1");
+    expect(tabStatusFor(get("c1"))).toBe("working");
+  });
+
+  it("keeps a chat that has NOT initiated on the idle floor", () => {
+    // The hollow ring means the chat has not initiated, so it is reachable only for
+    // a chat with no turn and a record with no outcome. Every other row shows a
+    // state.
+    expect(tabStatusFor(settledChat("c1", "completed"))).not.toBe("idle");
+    expect(tabStatusFor(session({ id: "c9", turn_open: false }))).toBe("idle");
   });
 
   it("ignores the agent statuses that are not their own dot state", () => {
-    // `in_progress` and `idle` arrive on the same channel as waiting/completed.
-    // in_progress duplicates `thinking`, which is the authoritative busy signal
-    // (the server synthesizes it on connect); a chat is not made busy by the
-    // agent SAYING so while the turn machinery reports otherwise.
-    expect(tabStatusFor(session({ agent_status: "in_progress" }))).toBe("idle");
-    expect(tabStatusFor(session({ agent_status: "idle" }))).toBe("idle");
+    // `in_progress` and `idle` arrive on the same channel as `waiting_on_user`. A
+    // chat is not made busy by the agent SAYING so while the log reports otherwise,
+    // and `completed` is no longer an input at all — the verdict has one source.
+    setSessions([session({ id: "c1", turn_open: false })]);
+    for (const status of ["in_progress", "idle", "completed"]) {
+      setAgentStatus("c1", status);
+      expect(tabStatusFor(get("c1")), status).toBe("idle");
+    }
   });
 });
 
@@ -341,6 +487,10 @@ async function resetProjection(): Promise<void> {
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
+    // `TabOpeners` is total over `TabKind`, which is a REGISTERED WIRE ENUM, so a
+    // kind another session adds server-side reaches this fixture through the
+    // codegen. Inert: no case here opens one.
+    spec: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();
@@ -424,7 +574,7 @@ describe("the tab's accessible name announces its state", () => {
     // grounds that the latch was set for every `error` frame naming the chat,
     // `switch_failed` and `bridge_start_failed` among them. That breadth is gone:
     // the error handler stopped touching turn state when `endsTurn` was removed
-    // (handlers/turn.ts), so `setTurnFailed` has one live producer, `turn_ended`
+    // (handlers/turn.ts), so `setTurnFailed` has one live producer, `turn_closed`
     // with outcome `failed` or `refused`, and its two other callers re-derive the
     // same turn verdict. The phrase is the only channel a screen-reader user has
     // here, so it must claim neither more NOR less than that.
@@ -496,6 +646,8 @@ describe("the announced phrase names the subject of the tab it is on", () => {
     chat: "c1",
     editor: "/a.ts",
     run: "wf-1",
+    // A spec's ref is its DIRECTORY, so the row's name is that path's last segment.
+    spec: ".kiro/specs/parser",
     settings: "",
     git: "",
     files: "",
@@ -601,7 +753,7 @@ describe("the announced phrase names the subject of the tab it is on", () => {
     const { id, row } = await openKind("chat");
 
     // The regression guard for the kind that was already right: `tabStatusFor`'s
-    // subject genuinely is a turn (its latch has one live producer, `turn_ended`
+    // subject genuinely is a turn (its latch has one live producer, `turn_closed`
     // with a broken outcome), so kind-awareness must not move this wording.
     setTabStatus(id, "failed");
     expect(phraseOn(row)).toBe("turn failed");
@@ -901,15 +1053,16 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
     // still means exactly one thing, now across two marks.
     // Read through `allRules` rather than a prelude regex, so each rule is named by
     // its WHOLE selector list: the mark's two wants-you rules are shared with the
-    // composer band's glyph now, and a rule that gains a consumer has to show it
-    // here rather than hiding behind whichever member happens to be written last.
+    // composer band's glyph and a History run row's lead, and a rule that gains a
+    // consumer has to show it here rather than hiding behind whichever member
+    // happens to be written last.
     const ringed = allRules(tabs)
       .filter((r) => /box-shadow: 0 0 0 2px/.test(r.body))
       .map((r) => r.selector.replace(/\s+/gu, " "))
       .sort();
     expect(ringed).toEqual([
-      '.tab-run-dot[data-status="input"], .run-bar-glyph[data-status="input"]',
-      '.tab-run-dot[data-status="waiting"], .run-bar-glyph[data-status="waiting"]',
+      '.tab-run-dot[data-status="input"], .run-bar-glyph[data-status="input"], .entry-mark[data-status="input"]',
+      '.tab-run-dot[data-status="waiting"], .run-bar-glyph[data-status="waiting"], .entry-mark[data-status="waiting"]',
       '.tab-status-dot[data-status="input"]',
       '.tab-status-dot[data-status="waiting"]',
     ]);
@@ -1783,80 +1936,18 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. The finished-turn latch.
+// 6. The finished-turn latch is DELETED, subject and all.
 //
-// `agent_status === "completed"` is the higher-fidelity signal for "this turn is
-// over" and it is NOT a guaranteed one: it only arrives when the model calls
-// `update_session_information`. So a turn that ended without one fell to `idle`,
-// and "this chat finished" — the headline promise of the whole strip — held only
-// for the turns where the agent happened to say so. `turn_ended` always arrives,
-// so a client-side latch is what makes the promise total.
+// It existed because `agent_status === "completed"` is not a guaranteed signal, so
+// a turn that ended without one fell to `idle` and "this chat finished" held only
+// for the turns where the agent happened to say so. Under the entry log the
+// verdict has ONE source — `last_turn_outcome`, written by the closer in the same
+// header rewrite that appends the `turn_close` — so there is no client memory to
+// latch, to clear, or to keep from being cleared by seeing it. `setTurnDone`,
+// `clearTurnDone`, `applyLatch`, `relatchTurnVerdict` and the `turn_done` /
+// `turn_failed` fields are gone with the four-latch precedence, and the section
+// above pins what replaced them.
 // ---------------------------------------------------------------------------
-
-describe("the finished-turn latch reports done without the agent's tool call", () => {
-  beforeEach(() => {
-    setSessions([]);
-  });
-
-  it("derives done from the latch alone", () => {
-    expect(tabStatusFor(session({ turn_done: true }))).toBe("done");
-  });
-
-  it("agrees with the agent when the agent does declare completed", () => {
-    // Both producers, one state. There is nothing to reconcile: `completed` is
-    // preferred in the rule's order, and it maps to the same dot either way.
-    expect(tabStatusFor(session({ agent_status: "completed", turn_done: true }))).toBe("done");
-  });
-
-  it("does not let the latch outrank a chat that wants something", () => {
-    // A finished turn that left a question behind is a chat that wants you, not a
-    // chat that is done. Both of these can now genuinely coexist with the latch,
-    // which is why the order is asserted rather than assumed.
-    expect(tabStatusFor(session({ agent_status: "waiting_on_user", turn_done: true }))).toBe(
-      "waiting",
-    );
-    expect(tabStatusFor(session({ turn_done: true }), true)).toBe("input");
-    expect(tabStatusFor(session({ turn_done: true, turn_failed: true }))).toBe("failed");
-    expect(tabStatusFor(session({ turn_done: true, thinking: true }))).toBe("working");
-  });
-
-  it("is cleared by the next turn, in the same place every other verdict is", () => {
-    setSessions([session({ id: "c1", turn_done: true })]);
-    setThinking("c1", true);
-    expect(get("c1")?.turn_done).toBeUndefined();
-    // Not a one-off: the same write clears the failure latch and the agent's
-    // declared status, because all three are latched-until-the-next-turn.
-    setSessions([
-      session({ id: "c2", turn_failed: true, agent_status: "completed", turn_done: true }),
-    ]);
-    setThinking("c2", true);
-    expect(tabStatusFor(get("c2"))).toBe("working");
-  });
-
-  it("is NOT cleared by seeing it, so the dot can turn green while you watch", () => {
-    // The one caller of clearTurnDone is the transport-gap reconciler. Opening the
-    // chat used to clear it, back when the mark meant "finished while you were
-    // away" — and the cost of that pair of rules (skip the latch for a watched
-    // chat, clear it on activation) was the dot falling back to hollow `idle` at
-    // the exact moment a turn completed in front of the reader. web-terminal-kiro
-    // latches its own `done` in the engine, focus-blind and cleared only by the
-    // next turn's progress state, and this is now the same rule.
-    expect(chatSrc).not.toContain("clearTurnDone");
-    // The function still exists and still works; nothing but a dropped stream is
-    // entitled to call it.
-    setSessions([session({ id: "c1", turn_done: true })]);
-    clearTurnDone("c1");
-    expect(tabStatusFor(get("c1"))).toBe("idle");
-  });
-
-  it("does not churn the session signal on a replayed turn_ended", () => {
-    setSessions([session({ id: "c1" })]);
-    setTurnDone("c1");
-    const first = get("c1");
-    setTurnDone("c1");
-    expect(get("c1")).toBe(first);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // 5b. EVERY outcome the wire can send reaches the dot, and none reaches it as
@@ -1913,27 +2004,21 @@ describe("every turn outcome reaches the tab dot", () => {
 
   for (const [outcome, want] of cases) {
     it(`shows ${want} for a turn that ended ${outcome}`, () => {
-      setSessions([session({ id: "c1" })]);
-      // Through `relatchTurnVerdict`, which is the door a reload and a transport gap
-      // both come through: the latches are client memory, so the persisted outcome is
-      // all there is to re-derive them from.
-      setSessions([
-        session({
-          id: "c1",
-          messages: [{ id: "m1", role: "assistant", ts: 1, turn_outcome: outcome } as never],
-        }),
-      ]);
-      relatchTurnVerdict("c1");
+      // Through the HEADER, which is the one door left: the verdict is the server's
+      // statement about the newest finished turn, so a chat whose window was never
+      // fetched is the ordinary case rather than a fallback and every row of this
+      // table is that case. There is nothing client-side to re-derive.
+      upsertHeader(headerWithOutcome("c1", outcome));
       expect(tabStatusFor(get("c1"))).toBe(want);
     });
   }
 
   it("grades every outcome the same way the dot above painted it", () => {
-    // The table drove `relatchTurnVerdict`; this pins the shared table underneath
-    // it, so a change to `outcomeLatch` that the reload path happens to survive
-    // still fails here. That the LIVE turn_ended handler agrees with both is a
-    // separate assertion, in handlers/turn.test.ts — it needs that module's own
-    // mock set, and it is the pairing that used to disagree.
+    // The table drove the header; this pins the shared grader underneath it, so a
+    // change to `outcomeLatch` that the header path happens to survive still fails
+    // here. `store.test.ts` owns the grader's own table including the two values
+    // this one has no dot row for (`running`, and an absent outcome); what is
+    // asserted here is that the two agree.
     for (const [outcome, want] of cases) {
       expect(outcomeLatch(outcome), `outcomeLatch(${outcome})`).toBe(
         want === "failed" ? "failed" : want === "done" ? "done" : "",
@@ -1961,40 +2046,15 @@ describe("every turn outcome reaches the tab dot", () => {
     expect(outcomeLatch("unknown")).toBe("done");
   });
 
-  it("paints the header's own verdict for a chat whose window was never fetched", () => {
-    // The relatch's FALLBACK, at the dot. No resident message carries an outcome,
-    // which is the ordinary state of a chat nobody has opened — and exactly the
-    // population the connect retraction reaches. Without the fallback that chat
-    // re-derives nothing and paints the hollow ring that means it has never
-    // initiated.
-    setSessions([session({ id: "c1", last_turn_outcome: "failed" })]);
-    relatchTurnVerdict("c1");
+  it("reads an ABSENT outcome on a later header as a CLEAR, back to the floor", () => {
+    // The header is the AUTHORITY in both directions, so the field going away is a
+    // real statement and not "no news" — which is what makes the hollow ring
+    // reachable again for a record whose outcome the server no longer reports. The
+    // old client-memory rule was the opposite: the latch was sticky, so nothing a
+    // later read carried could return the row to the floor.
+    upsertHeader(headerWithOutcome("c1", "failed"));
     expect(tabStatusFor(get("c1"))).toBe("failed");
-  });
-
-  it("refuses to paint a failure over a turn that is still streaming", () => {
-    // The relatch's REFUSAL, and `failed` is the outcome that makes it visible:
-    // `tabStatusFor` ranks `turn_failed` ABOVE `thinking`, so a relatch that ran
-    // here would paint the red diamond over a reply arriving on screen. Every
-    // caller clears `thinking` first, so the refusal costs those doors nothing.
-    setSessions([
-      session({
-        id: "c1",
-        messages: [{ id: "m1", role: "assistant", ts: 1, turn_outcome: "failed" } as never],
-      }),
-    ]);
-    setThinking("c1", true);
-    relatchTurnVerdict("c1");
-    expect(tabStatusFor(get("c1"))).toBe("working");
-  });
-
-  it("latches nothing for the answer that decides nothing", () => {
-    // `applyLatch`'s third case, which a persisted `running` outcome and an absent
-    // one both reach. Writing either latch here would report a turn still in
-    // flight as settled; the two arms that DO write are driven through this same
-    // function by the table above.
-    setSessions([session({ id: "c1" })]);
-    applyLatch("c1", "");
+    upsertHeader(headerWithOutcome("c1"));
     expect(tabStatusFor(get("c1"))).toBe("idle");
   });
 
@@ -2017,75 +2077,35 @@ describe("every turn outcome reaches the tab dot", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. The two client-only latches survive a list refetch.
+// 7. A LIST REFETCH IS THE VERDICT'S OWN DOOR, and the client keeps nothing of
+// its own to be erased.
 //
-// `loadList` rebuilds each Session from a chat HEADER, and the server sends none
-// of the client-only projections — so every field it does not explicitly carry
-// over is silently reset. It runs on EVERY `connected`, reconnects included, so
-// this was not an edge case: an ordinary network recovery repainted a failed tab
-// as idle and dropped the agent's declared status with it.
+// This section used to defend two client-only latches across `loadList`, because
+// the server sent none of the client's projections and every field the rebuild did
+// not carry over was silently reset. Under the entry log the verdict rides the
+// HEADER, so the rebuild taking it is the mechanism rather than the hazard, and
+// there is no carry-over rule, no rule-1 arbitration between a local latch and a
+// header read, and no convergence order between the seed and the connect replay to
+// reconcile. Every case below goes through the REAL store and the REAL loadList
+// with no pre-existing session, which is what a full page reload, a brand-new
+// browser session and a reconnect after hours all look like from here.
+//
+// `store-load.test.ts` owns the rebuild's own rule (the header replaces the
+// outcome, and an absent one is a CLEAR); what this file adds is that the value
+// reaches the DOT, which is the surface the bug was reported at: "if a turn is done
+// after i close the window and come back, it will be an empty circle".
 // ---------------------------------------------------------------------------
 
-describe("a reconnect does not erase what only the client knows", () => {
-  const header = (id: string): ChatHeader =>
-    ({
-      id,
-      name: id,
-      message_count: 0,
-      usage: { context_pct: 0, context_size: 0, credits: 0, turns: 0, last_turn_ms: 0 },
-    }) as unknown as ChatHeader;
+describe("a list refetch paints the verdict the header carries", () => {
+  const header = (id: string): ChatHeader => headerWithOutcome(id);
 
   beforeEach(() => {
     setSessions([]);
     mockApiGetTyped.mockReset();
   });
 
-  it("keeps a failure latched across the refetch a reconnect triggers", async () => {
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", turn_failed: true })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [header("c1")] });
-
-    expect(await loadList()).toBe(true);
-    expect(tabStatusFor(get("c1"))).toBe("failed");
-  });
-
-  it("keeps the finished latch and the agent's declared status too", async () => {
-    const { loadList } = await import("./store-load.js");
-    setSessions([
-      session({ id: "c1", turn_done: true }),
-      session({ id: "c2", agent_status: "waiting_on_user" }),
-    ]);
-    mockApiGetTyped.mockResolvedValue({ chats: [header("c1"), header("c2")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c1"))).toBe("done");
-    expect(tabStatusFor(get("c2"))).toBe("waiting");
-  });
-
-  it("carries nothing over for a chat it has not seen before", async () => {
-    // The preservation is per-id off the EXISTING row, so a chat arriving for the
-    // first time gets the floor rather than a neighbour's verdict — and with the
-    // header silent on the outcome, the floor is still the right answer.
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", turn_failed: true })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [header("c1"), header("c2")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c2"))).toBe("idle");
-  });
-
-  // -------------------------------------------------------------------------
-  // The other half, and the one the user reported: what the client does NOT
-  // know, the server does. `last_turn_outcome` rides the header, so a chat this
-  // client has never seen live gets a real verdict instead of the hollow ring.
-  //
-  // Every case below goes through the REAL store and the REAL loadList with no
-  // pre-existing session, which is what a full page reload, a brand-new browser
-  // session and a reconnect after hours all look like from here.
-  // -------------------------------------------------------------------------
-
-  const outcomeHeader = (id: string, outcome: string): ChatHeader =>
-    ({ ...header(id), last_turn_outcome: outcome }) as unknown as ChatHeader;
+  const outcomeHeader = (id: string, outcome: TurnOutcome): ChatHeader =>
+    headerWithOutcome(id, outcome);
 
   it("paints DONE for a finished turn on a chat it has never seen live", async () => {
     // The reported bug, asserted at the surface the user sees: "if a turn is done
@@ -2127,130 +2147,28 @@ describe("a reconnect does not erase what only the client knows", () => {
     expect(tabStatusFor(get("c-legacy"))).toBe("idle");
   });
 
-  it("keeps a local failure when the header reports the turn before it completed", async () => {
-    // The carry-over still outranks the seed: a latch set by a live `turn_ended`
-    // on this page is newer than anything a header read can carry.
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", turn_failed: true })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "completed")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c1"))).toBe("failed");
-  });
-
-  it("takes another device's finished turn over the verdict this page holds", async () => {
-    // RULE 1 at the dot, and the case it exists for: the row stores the outcome the
-    // page last saw, so a header reporting a DIFFERENT one is news from another
-    // device and outranks the local latch. Ahead of the carry, or a chat that
-    // already holds a latch would never see a moved header at all.
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", turn_done: true, last_turn_outcome: "completed" })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "failed")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c1"))).toBe("failed");
-  });
-
-  it("keeps the verdict when the header's outcome moves to a LIVE turn", async () => {
-    // Rule 1 may not CLEAR. A `running`-severity outcome latches nothing, and that
-    // means "a turn is in flight" rather than "the last one un-finished" — so the
-    // empty answer falls through to the carry and the dot keeps saying the previous
-    // turn finished, instead of falling to the ring that means this chat has never
-    // initiated.
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", turn_done: true, last_turn_outcome: "completed" })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "running")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c1"))).toBe("done");
-  });
-
-  it("keeps the verdict when the header stops reporting an outcome at all", async () => {
-    // The same term over the other empty answer, and the shape a real header
-    // produces: `last_turn_outcome` is omitempty on the wire, so a stored outcome
-    // going away is a MOVEMENT — and it still may not blank the dot.
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", turn_done: true, last_turn_outcome: "completed" })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [header("c1")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c1"))).toBe("done");
-  });
-
-  it("keeps a mid-turn reload working even when the header's outcome MOVED", async () => {
-    // The `thinking` term of rule 1, which the case below cannot reach: that one
-    // stores no outcome, so the baseline term blocks the seed before `thinking` is
-    // consulted. Here the header really has moved, and taking it would paint the
-    // failure diamond over a streaming reply — `turn_failed` outranks `thinking`.
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", thinking: true, last_turn_outcome: "completed" })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "failed")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c1"))).toBe("working");
-    expect(get("c1")?.turn_failed, "no verdict was seeded at all").toBeUndefined();
-  });
-
-  it("keeps a mid-turn reload WORKING rather than seeding the previous turn's verdict", async () => {
-    // A live turn invalidates every prior verdict: the header's outcome describes
-    // the turn BEFORE this one, so reporting it would call a working chat
-    // finished — the inverse of the reported bug.
-    //
-    // TWO independent mechanisms defend this, which is why the case survives a
-    // red check on either one alone: `latchFieldsFor` refuses to seed while
-    // `thinking` is set (pinned on its own in store.test.ts), and `tabStatusFor`
-    // ranks `working` above `done` regardless. What this case pins is the
-    // end-to-end guarantee the reader actually gets.
-    const { loadList } = await import("./store-load.js");
-    setSessions([session({ id: "c1", thinking: true })]);
-    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "completed")] });
-
-    await loadList();
-    expect(tabStatusFor(get("c1"))).toBe("working");
-  });
-
-  // A mid-turn reconnect races two independent doors: `loadList`'s header fetch
-  // (which seeds from the header) and the connect handshake's `busy_chats`
-  // (which sets `thinking`). Nothing orders them, so BOTH orders
-  // have to converge on `working` — otherwise a chat whose turn is still running
-  // paints a settled dot until the turn ends.
-  //
-  // They converge for two independent reasons, and each of these cases isolates
-  // one: the seed refuses to run while `thinking` is set, and `setThinking(id,
-  // true)` clears both latches, so a seed that already landed is dropped.
-
-  it("converges on working when the replay sets thinking BEFORE the header seed", async () => {
+  it("keeps a mid-turn reload WORKING, because the WINDOW travels and the verdict does not", async () => {
+    // The inverse of the reported bug, and the one thing the header cannot settle: a
+    // live turn invalidates every prior verdict, because the header's outcome
+    // describes the turn BEFORE this one. What defends it is that the rebuild carries
+    // the resident window over — a turn with no `turn_close` is still there after the
+    // refetch — and the dot derives liveness from that window, so `working` outranks
+    // the `completed` the same header carries.
     const { loadList } = await import("./store-load.js");
     setSessions([session({ id: "c1" })]);
-    setThinking("c1", true); // the handshake's busy_chats, first
-    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "completed")] });
+    openTurnIn("c1", "t1");
+    mockApiGetTyped.mockResolvedValue({ chats: [headerWithOutcome("c1", "completed")] });
 
     await loadList();
+    expect(get("c1")?.turns.size, "the window was dropped by the rebuild").toBe(1);
     expect(tabStatusFor(get("c1"))).toBe("working");
-    // The seed did not land at all, so nothing is left to leak when the turn ends.
-    expect(get("c1")?.turn_done).toBeUndefined();
   });
 
-  it("converges on working when the header seed lands BEFORE the replay", async () => {
-    const { loadList } = await import("./store-load.js");
-    setSessions([]);
-    mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "completed")] });
-
-    await loadList();
-    // The seed legitimately landed: nothing had said this chat was busy yet.
-    expect(get("c1")?.turn_done).toBe(true);
-
-    setThinking("c1", true); // the handshake's busy_chats, second
-    expect(tabStatusFor(get("c1"))).toBe("working");
-    // And the stale verdict is GONE rather than merely outranked, so the dot
-    // cannot snap back to `done` when this turn ends on some other outcome.
-    expect(get("c1")?.turn_done).toBeUndefined();
-  });
-
-  it("lets a waiting_on_user chat keep saying so over a seeded done", async () => {
-    // `waiting` outranks `done` in tabStatusFor, and the connect replay re-emits
-    // the retained waiting status — so the seed must not be able to bury the one
-    // state whose whole meaning is that a person still owes an answer.
+  it("lets a waiting_on_user chat keep saying so over a header's done", async () => {
+    // `waiting` outranks `done` in tabStatusFor, and the status is one of the few
+    // client-held projections the rebuild still carries over — so a header's own
+    // verdict must not bury the one state whose whole meaning is that a person still
+    // owes an answer.
     const { loadList } = await import("./store-load.js");
     setSessions([session({ id: "c1", agent_status: "waiting_on_user" })]);
     mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "completed")] });
@@ -2291,7 +2209,7 @@ describe("an abandoned ask does not keep a chat in input", () => {
     pushDecision(ask("c1", 1, ""));
     expect(tabStatusFor(get("c1"), hasPendingDecision("c1"))).toBe("input");
 
-    // What handlers/turn.ts now runs on turn_ended. Every ask BLOCKS its turn, so
+    // What handlers/turn.ts now runs on turn_closed. Every ask BLOCKS its turn, so
     // a turn that has ended is not waiting on one: it was answered (already
     // spliced) or abandoned when the turn was cancelled, and cmdCancel clears the
     // server's own pending set — the card left here could never be answered.
@@ -2410,7 +2328,7 @@ describe("a run's wait ending releases the launching chat's dot", () => {
    *  card still on screen for the length of its phase. */
   function answerInRunHost(hostEl: HTMLElement, text: string): void {
     const card = hostEl.querySelector<HTMLElement>(":scope > .dock-card");
-    const box = card?.querySelector<HTMLTextAreaElement>(".run-input-text") ?? null;
+    const box = card?.querySelector<HTMLTextAreaElement>(".dock-ask-text") ?? null;
     if (box !== null) {
       box.value = text;
     }
@@ -2423,10 +2341,10 @@ describe("a run's wait ending releases the launching chat's dot", () => {
     const dock = await import("./decision-dock.js");
     dock._resetForTest();
     document.body.replaceChildren();
-    setSessions([session({ id: PARENT })]);
-    // The launching turn ended when the run was created, so this is the state the
-    // parent has to come back to.
-    setTurnDone(PARENT);
+    // The launching turn ended when the run was created — `run_workflow` returns as
+    // soon as the run exists — so this is the state the parent has to come back to,
+    // and it is the header's own verdict rather than anything this client latched.
+    setSessions([settledChat(PARENT)]);
   });
 
   it("clears the parent when the sub-tab answers the step's question", async () => {
@@ -2616,10 +2534,9 @@ describe("the dock's own signal repaints the launching chat's row", () => {
     await resetProjection();
     const dock = await import("./decision-dock.js");
     dock._resetForTest();
-    setSessions([session({ id: PARENT })]);
     // The launching turn ended when the run was created, so this is the state the
     // row starts in and the one it has to come back to.
-    setTurnDone(PARENT);
+    setSessions([settledChat(PARENT)]);
 
     const tabID = await openSubject("chat", PARENT);
     const dispose = await installRowEffect(PARENT, tabID);
@@ -2764,7 +2681,7 @@ describe("a row built later paints the state its chat is in", () => {
 // ---------------------------------------------------------------------------
 // 11. The dot is live state, so it must never be persisted.
 //
-// TabSpec feeds the persistence subscriber, and a dot restored from a previous
+// TabViewSpec feeds the persistence subscriber, and a dot restored from a previous
 // process would be a claim about a turn that ended before the page loaded.
 // ---------------------------------------------------------------------------
 
@@ -3023,33 +2940,17 @@ describe("the real subscriber fills the reserved slot", () => {
     }
   });
 
-  /** A chat whose resident window holds one delegate's invocation, at `status`. */
-  async function chatWithDelegate(status: string): Promise<void> {
+  /** A chat whose resident window holds one delegate's invocation, at `status`.
+   *
+   *  The invocation is a `tool_call` ENTRY in the ISSUER's lane, which is what the
+   *  subagent surfaces address a delegate by: `payload.agent_subtask_id` names the
+   *  delegate, and the entry's own lane is `""` because the call was issued at the top
+   *  level. */
+  async function chatWithDelegate(status: EntryToolCall["status"]): Promise<void> {
     const { setSessions } = await import("./store.js");
-    setSessions([
-      {
-        ...session({ id: "c1" }),
-        messages: [
-          {
-            id: "m1",
-            role: "assistant",
-            ts: 1,
-            content: "",
-            blocks: [{ type: "tool_use", tool_call_id: "tc1", agent_subtask_id: "task-1" }],
-            tool_calls: [
-              {
-                id: "tc1",
-                title: "Sub-agent: introspect",
-                kind: "other",
-                status,
-                agent_subtask_id: "task-1",
-                ts: 1,
-              },
-            ],
-          },
-        ],
-      } as unknown as Session,
-    ]);
+    setSessions([session({ id: "c1" })]);
+    openTurnIn("c1", "t1");
+    appendEntry("c1", sealed("t1", 1, "tool_call", invocationCall({ status })));
   }
 
   async function subagentRow(): Promise<HTMLElement> {
@@ -3119,7 +3020,6 @@ describe("the real subscriber fills the reserved slot", () => {
     // The reservation earning its keep against the real writer rather than a hand
     // write: the effect paints on a later tick than the row is built, so this is
     // the ordering every real subagent tab has.
-    const { upsertToolCall } = await import("./store.js");
     await chatWithDelegate("in_progress");
     const row = await subagentRow();
     const name = row.querySelector<HTMLElement>(".tab-name");
@@ -3131,21 +3031,18 @@ describe("the real subscriber fills the reserved slot", () => {
     const working = offsetOf();
     expect(dotOf(row).getAttribute("data-status")).toBe("working");
 
-    // The real ingest path for a `tool_call_update`, which is what turns a running
-    // delegate into a failed one — and the diamond into the disc's own footprint.
-    upsertToolCall(
-      "c1",
-      "m1",
-      {
-        id: "tc1",
-        title: "Sub-agent: introspect",
-        kind: "other",
-        status: "failed",
-        agent_subtask_id: "task-1",
-        ts: 1,
-      },
-      0,
-    );
+    // The real ingest path for a settled tool call, which is what turns a running
+    // delegate into a failed one — and the diamond into the disc's own footprint. A
+    // `tool_result` is an ordinary appended entry that FOLDS into its `tool_call` by
+    // id (`<tool_call entry id>:result`), so the call's own entry is never rewritten.
+    appendEntry("c1", {
+      id: "t1-e1:result",
+      turn: "t1",
+      kind: "tool_result",
+      seq: 2,
+      ts: 3,
+      payload: { status: "failed" },
+    });
     await new Promise((r) => setTimeout(r, 0));
 
     expect(dotOf(row).getAttribute("data-status")).toBe("failed");

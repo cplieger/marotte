@@ -45,7 +45,7 @@ export const UPLOADS_DIR = "/uploads";
  *  Go const stays the single definition.
  *
  *  It is NOT what the pre-flight enforces — see MAX_UPLOAD_TOTAL_BYTES. */
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 
 /** Bytes held back from MAX_UPLOAD_BYTES so the pre-flight's verdict survives
  *  the request that carries it.
@@ -58,8 +58,9 @@ export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
  *
  *  1 MiB is far more than framing costs (roughly a kilobyte per part at the
  *  longest legal filename, times a 25-file cap). It is sized for the HINT
- *  rather than for the overhead: it leaves a round 49 MB that
- *  uploadLimitHint can state exactly, and an under-promise is the right
+ *  rather than for the overhead: subtracting a whole MiB from a cap that is
+ *  itself a whole number of MiB leaves the hint a round whole number to state
+ *  exactly (255 MB at the current cap), and an under-promise is the right
  *  direction for a limit a user reads before choosing a file. */
 const MULTIPART_RESERVE_BYTES = 1024 * 1024;
 
@@ -67,10 +68,11 @@ const MULTIPART_RESERVE_BYTES = 1024 * 1024;
  *  server's whole-request ceiling minus the framing reserve.
  *
  *  This is the number the pre-flight enforces, and it is a TOTAL, not a
- *  per-file allowance. Checking only per-file was the defect: two 30 MiB files
- *  each passed a 50 MiB per-file test and then failed together against the one
- *  limit the server actually applies, which is exactly the 413 the pre-flight
- *  exists to predict. A single file is capped at the same number, because one
+ *  per-file allowance. Checking only per-file was the defect: two files at
+ *  three fifths of the cap each passed a per-file test against
+ *  MAX_UPLOAD_BYTES and then failed together against the one limit the server
+ *  actually applies, which is exactly the 413 the pre-flight exists to
+ *  predict. A single file is capped at the same number, because one
  *  file is a batch of one and nothing larger can fit in the request either. */
 export const MAX_UPLOAD_TOTAL_BYTES = MAX_UPLOAD_BYTES - MULTIPART_RESERVE_BYTES;
 
@@ -101,8 +103,9 @@ function limitLabel(bytes: number): string {
 /** The composer's one-line statement of the upload limit.
  *
  *  It names the TOTAL, because that is the limit that decides whether a drop
- *  succeeds. "Up to 50 MB per file" was true of no request the server accepts:
- *  a file at 50 MB always 413s, and two files well under it could too. */
+ *  succeeds. A hint naming MAX_UPLOAD_BYTES per FILE was true of no request
+ *  the server accepts: a file at that raw ceiling always 413s, and two files
+ *  well under it could too. */
 export function uploadLimitHint(): string {
   return `Up to ${limitLabel(MAX_UPLOAD_TOTAL_BYTES)} per upload, all files together`;
 }

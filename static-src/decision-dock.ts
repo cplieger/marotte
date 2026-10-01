@@ -33,8 +33,10 @@
 import { el, signal, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { activeSession } from "./store.js";
+import { BUS_USER_INPUT_ANSWERED, emitBus } from "./bus.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { forceReflow } from "./dom.js";
+import { RUN_INPUT_FALLBACK } from "./dock-ask.js";
 import { buildPermissionCard } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
@@ -191,6 +193,12 @@ interface DockHost {
   /** Bumped by `endPhase`. A timer callback whose generation has moved on
    *  returns without touching the DOM. */
   gen: number;
+  /** This host's render subscription, so a host whose element is going away can
+   *  be released. The two docks in `static/index.html` never are; a per-page
+   *  host is (`spec-view.ts` builds one per open spec and drops it with the
+   *  page), and without the disposer that page's effect would keep rendering
+   *  into a detached element for the tab's remaining lifetime. */
+  stop: () => void;
 }
 
 const hosts: DockHost[] = [];
@@ -213,11 +221,40 @@ export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): 
   });
 }
 
+/** Wire a dock that shows ONE NAMED chat's queue, the chat named by a GETTER.
+ *
+ *  `mountDecisionDock` is the composer's variant and reads whichever chat is
+ *  ACTIVE; a page that is not the composer has no active chat to read (with a
+ *  spec tab on screen there is no active chat tab at all) and knows its own
+ *  chat instead. A getter rather than a value for `mountRunDecisionDock`'s
+ *  reason: a re-parent changes the id during the host's life, so an id captured
+ *  at mount would name the previous parent. Idempotent per host element. */
+export function mountChatDecisionDock(hostEl: HTMLElement, chatID: () => string): void {
+  addHost(hostEl, (d) => {
+    const id = chatID();
+    return id !== "" && d.chatID === id;
+  });
+}
+
 /** Re-render every dock. The run view calls this when the run on screen
  *  changes: the host's match closure reads new state the reactive graph cannot
  *  see, so the repaint needs an explicit nudge. */
 export function rerenderDocks(): void {
   bump();
+}
+
+/** Release a host whose element is going away: stop its render subscription,
+ *  end any phase it is in, and forget it. Unknown elements are ignored, so a
+ *  page may call it unconditionally on teardown. */
+export function unmountDecisionDock(hostEl: HTMLElement): void {
+  const i = hosts.findIndex((h) => h.el === hostEl);
+  const h = hosts[i];
+  if (h === undefined) {
+    return;
+  }
+  endPhase(h);
+  h.stop();
+  hosts.splice(i, 1);
 }
 
 function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
@@ -231,11 +268,12 @@ function addHost(hostEl: HTMLElement, match: (d: Decision) => boolean): void {
     outgoing: null,
     timer: null,
     gen: 0,
+    stop: () => undefined,
   };
   hosts.push(h);
   // Two triggers: the active chat changed (a different queue is on screen), or
   // this module's queue changed (a decision arrived or was answered).
-  effect(() => {
+  h.stop = effect(() => {
     touch(activeSession, queueVersion);
     renderHost(h);
   });
@@ -472,10 +510,6 @@ function askLabel(d: Decision): string {
       return d.payload.question === "" ? RUN_INPUT_FALLBACK : d.payload.question;
   }
 }
-
-/** What a run ask reads as when its question text did not survive. Shared with the
- *  card so the dock's line and the card's heading cannot disagree. */
-export const RUN_INPUT_FALLBACK = "A step is waiting for your answer";
 
 /** Retire a decision ANOTHER surface answered (`decision_settled`), and say who
  *  answered it.
@@ -1001,6 +1035,12 @@ function buildCard(d: Decision): HTMLElement {
       return buildUserInputCard(d.payload, (action, answer) => {
         settle(d, () => {
           d.submit(action, answer);
+          // AFTER the answer goes out, and inside settle's callback: a surface
+          // that carries an answer out must not act on an ask another surface
+          // already answered, and must not act before the agent has it.
+          if (action === "answered" && answer !== undefined) {
+            emitBus(BUS_USER_INPUT_ANSWERED, { chatID: d.chatID, answer });
+          }
         });
       });
     case "run_input":
@@ -1033,9 +1073,17 @@ function buildCard(d: Decision): HTMLElement {
 export function _resetForTest(): void {
   for (const h of hosts) {
     endPhase(h);
+    h.stop();
   }
   queues.clear();
   heldAnswers.clear();
   hosts.length = 0;
   queueVersion.value = 0;
+}
+
+/** @internal How many hosts are mounted. The one observable of a RELEASE: a
+ *  host left behind renders into a detached element for the tab's lifetime, and
+ *  every other symptom of that is invisible from outside this module. */
+export function _hostCount(): number {
+  return hosts.length;
 }

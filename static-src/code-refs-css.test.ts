@@ -22,13 +22,12 @@
 // declaration rather than the floor having quietly started to apply here.
 //
 // Built by the real `syncCodeReferences`, in the chain `messages.ts` mounts it in
-// (`.turn > .turn-body > .msg-wrap > .msg-row`), so the structure cannot drift from
+// (`.turn > .turn-body > .msg-row`), so the structure cannot drift from
 // production behind the test.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { syncCodeReferences } from "./code-refs.js";
-import type { Message } from "./types.js";
 
 const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
 
@@ -78,29 +77,19 @@ function attributionLink(): HTMLAnchorElement {
   turn.className = "turn";
   const body = document.createElement("div");
   body.className = "turn-body";
-  const wrap = document.createElement("div");
-  wrap.className = "msg-wrap";
   const row = document.createElement("div");
   row.className = "msg-row";
-  wrap.append(row);
-  body.append(wrap);
+  body.append(row);
   turn.append(body);
   host.append(turn);
 
-  const m: Message = {
-    id: "m1",
-    role: "assistant",
-    ts: 0,
-    content: "code",
-    code_references: [
-      {
-        license_name: "MIT",
-        repository: "github.com/foo/bar",
-        url: "https://github.com/foo/bar",
-      },
-    ],
-  };
-  syncCodeReferences(row, m);
+  syncCodeReferences(row, [
+    {
+      license_name: "MIT",
+      repository: "github.com/foo/bar",
+      url: "https://github.com/foo/bar",
+    },
+  ]);
   const link = row.querySelector<HTMLAnchorElement>(".code-refs-link");
   expect(link, "the footnote built its link").not.toBeNull();
   return link as HTMLAnchorElement;

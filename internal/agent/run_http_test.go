@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/workflow"
 )
 
@@ -886,7 +886,7 @@ func TestSetStepStatus(t *testing.T) {
 		h, cs, br := newTestHub()
 		// An AGENT-launched run has no bridge of its own — KAS parents it on the calling
 		// chat's session — so resolving that chat's bridge avoids a needless re-host.
-		cs.Chats["c1"] = &marotte.Chat{ID: "c1", ACPSessionID: "sess_parent"}
+		cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_parent") })
 		h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowList: json.RawMessage(

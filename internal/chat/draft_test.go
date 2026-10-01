@@ -17,7 +17,10 @@ import (
 // else (a truncated write, an operator editing /config by hand).
 func writeRawChat(t *testing.T, dir string, chatID marotte.ChatID, body string) {
 	t.Helper()
-	path := filepath.Join(dir, string(chatID)+chatFileSuffix)
+	path := filepath.Join(dir, string(chatID), headerFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("plant %s: %v", path, err)
+	}
 	if err := os.WriteFile(path, []byte(body), fileMode); err != nil {
 		t.Fatalf("plant %s: %v", path, err)
 	}
@@ -29,7 +32,7 @@ func writeRawChat(t *testing.T, dir string, chatID marotte.ChatID, body string) 
 // happened to round-trip.
 func readRawChat(t *testing.T, dir string, chatID marotte.ChatID) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dir, string(chatID)+chatFileSuffix))
+	b, err := os.ReadFile(filepath.Join(dir, string(chatID), headerFileName))
 	if err != nil {
 		t.Fatalf("read %s: %v", chatID, err)
 	}
@@ -91,8 +94,8 @@ func TestSetDraft(t *testing.T) {
 			t.Fatal("chat vanished")
 		}
 		c.UpdatedAt = aged
-		if err := s.writeChat("c1", c); err != nil {
-			t.Fatalf("writeChat: %v", err)
+		if err := s.writeHeader(t.Context(), "c1", c); err != nil {
+			t.Fatalf("writeHeader: %v", err)
 		}
 
 		if _, err := s.SetDraft(t.Context(), "c1", "typed and walked away"); err != nil {
@@ -123,8 +126,8 @@ func TestSetDraft(t *testing.T) {
 		c, _ := s.Get(t.Context(), "c1")
 		aged := time.Now().Add(-72 * time.Hour).UnixMilli()
 		c.UpdatedAt = aged
-		if err := s.writeChat("c1", c); err != nil {
-			t.Fatalf("writeChat: %v", err)
+		if err := s.writeHeader(t.Context(), "c1", c); err != nil {
+			t.Fatalf("writeHeader: %v", err)
 		}
 		if _, err := s.Mutate(t.Context(), "c1", func(ch *marotte.Chat, _ bool) bool {
 			ch.Name = "renamed"
@@ -276,7 +279,7 @@ func TestSetDraft(t *testing.T) {
 
 	// The guard belongs to the WRITE PRIMITIVE, not to its callers: that is what
 	// stops the next no-stamp writer from reintroducing the bypass by forgetting
-	// a check. Asserted directly on writeChat so it survives any future caller.
+	// a check. Asserted directly on writeHeader so it survives any future caller.
 	t.Run("write_primitive_refuses_a_mismatched_object", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
@@ -287,13 +290,13 @@ func TestSetDraft(t *testing.T) {
 		newChat(t, s, "c2")
 		c2Before := readRawChat(t, dir, "c2")
 
-		if err := s.writeChat("c1", &marotte.Chat{ID: "c2", Name: "impostor"}); err == nil {
-			t.Error("writeChat accepted an object whose id is not its destination")
+		if err := s.writeHeader(t.Context(), "c1", &marotte.Chat{ID: "c2", Name: "impostor"}); err == nil {
+			t.Error("writeHeader accepted an object whose id is not its destination")
 		}
 		if got := readRawChat(t, dir, "c2"); got != c2Before {
-			t.Errorf("c2.json changed under a writeChat for c1\nbefore: %s\nafter:  %s", c2Before, got)
+			t.Errorf("c2 header changed under a writeHeader for c1\nbefore: %s\nafter:  %s", c2Before, got)
 		}
-		if _, err := os.Stat(filepath.Join(dir, "c1"+chatFileSuffix)); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(filepath.Join(dir, "c1", headerFileName)); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("stat c1.json = %v, want it never created", err)
 		}
 	})

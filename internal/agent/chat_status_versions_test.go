@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 func statusVersion(t *testing.T, v *subject.Versions) string {
@@ -101,7 +101,7 @@ func TestStatusSnapshotStamped_CarriesTheWaitingSetMinusBusyChats(t *testing.T) 
 	c.Merge("w2", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "two"})
 	c.Merge("busy", marotte.ChatStatusPayload{Status: "in_progress"})
 	c.Merge("w3", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
-	open := map[marotte.ChatID]openTurnFacts{"w3": {}}
+	open := map[marotte.ChatID]*Turn{"w3": {ID: "t-w3"}}
 
 	payload, stamp := c.SnapshotStamped(open)
 	if len(payload.Rows) != 2 || payload.Rows[0].ChatID != "w1" || payload.Rows[1].ChatID != "w2" {

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // recordingBridge records the one call made through it and replies with a scripted
@@ -75,8 +75,6 @@ func (b *recordingBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { re
 func (b *recordingBridge) EndPromptCall()                                   {}
 func (b *recordingBridge) PromptGeneration() uint64                         { return 0 }
 func (b *recordingBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
-func (b *recordingBridge) IsPrimed() bool                                   { return true }
-func (b *recordingBridge) SetPrimed()                                       {}
 
 // bridgeDeps adds a bridge to storeDeps so the outgoing call can be observed.
 type bridgeDeps struct {
@@ -86,25 +84,15 @@ type bridgeDeps struct {
 	// opened is separate from bridge because the state rewind exists to serve is
 	// exactly nil live plus a non-nil resume: a reopened chat nobody has prompted.
 	opened Bridge
-	// order is shared with recordingBridge.order, so host steps and wire calls
-	// interleave in one slice.
-	order *[]string
-	// awaitErr is what AwaitReplayAdopted reports; nil is the adopted case, so the
-	// barrier is transparent unless a test asks for the refusal.
-	awaitErr error
 }
 
 func (d *bridgeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 
+// BridgeLive follows the live bridge: a spawning or absent one parks a steer.
+func (d *bridgeDeps) BridgeLive(marotte.ChatID) bool { return d.bridge != nil }
+
 func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return d.opened, nil
-}
-
-func (d *bridgeDeps) AwaitReplayAdopted(context.Context, marotte.ChatID) error {
-	if d.order != nil {
-		*d.order = append(*d.order, "await")
-	}
-	return d.awaitErr
 }
 
 // newBridgeHost lets one bridge answer both lookups: a chat with a live bridge is what
@@ -117,18 +105,26 @@ func newBridgeHost(store ChatStore, bridge Bridge) hostDouble {
 	}
 }
 
-// newBridgelessHost is the state every reopened chat is in: no live bridge, but a session
-// a resume can still reach.
-func newBridgelessHost(store ChatStore, resumed Bridge) hostDouble {
+// idleHost is newBridgeHost over a registry holding NO turn: the state a rewind is
+// admitted in, and the one a steer is refused in. opened may differ from bridge for
+// the bridgeless-but-resumable shape.
+func idleHost(store ChatStore, bridge, opened Bridge) *bridgeDeps {
 	return &bridgeDeps{
-		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
-		opened:    resumed,
+		storeDeps: &storeDeps{benchDeps: &benchDeps{}, store: store},
+		bridge:    bridge,
+		opened:    opened,
 	}
 }
 
 func rewindReq(t *testing.T, chatID marotte.ChatID, messageID string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(marotte.RewindChatCommand{MessageID: messageID})
+	return rewindReqConfirmed(t, chatID, messageID, false)
+}
+
+// rewindReqConfirmed is rewindReq with the reader's answer to the runs-in-cut question.
+func rewindReqConfirmed(t *testing.T, chatID marotte.ChatID, messageID string, confirmed bool) *marotte.ClientCommand {
+	t.Helper()
+	payload, err := json.Marshal(marotte.RewindChatCommand{MessageID: messageID, Confirmed: confirmed})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -139,63 +135,216 @@ func rewindReq(t *testing.T, chatID marotte.ChatID, messageID string) *marotte.C
 	}
 }
 
-// seedChat writes u1, a1, u2, a2. The session id matters as much as the messages: rewind
-// captures it before it resumes and refuses on a mismatch, so it has to match
-// recordingBridge{sessionID: "sess-1"} or every rewind test refuses.
-func seedChat(t *testing.T, store ChatStore, id marotte.ChatID) {
-	t.Helper()
-	_, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
-		c.RecordSession("sess-1")
-		c.Messages = []marotte.Message{
-			{ID: "u1", Role: marotte.RoleUser, Content: "first", Ts: 100},
-			{ID: "a1", Role: marotte.RoleAssistant, Content: "reply one", Ts: 200},
-			{ID: "u2", Role: marotte.RoleUser, Content: "second", Ts: 300},
-			{ID: "a2", Role: marotte.RoleAssistant, Content: "reply two", Ts: 400},
+// rewindStore is the in-memory store with a scripted log: RewindTarget answers from
+// targets (a prompt id the log holds, and the turn it opened), Revert records the
+// turns it was asked to revert to and answers the record plus the carrier it minted.
+// The real store's resolution over turn_open and turn_bind entries is internal/chat's
+// to pin; what this file pins is what the command does with the answer.
+type rewindStore struct {
+	*testsupport.InMemoryChatStore
+	targets  map[string]marotte.RewindTarget
+	reverted []string
+	// carrier, when set, is the turn_open the store reports as freshly minted, which
+	// the command must announce ahead of the record.
+	carrier   *marotte.Entry
+	revertErr error
+	// order, when set, interleaves the store's record with the bridge's call.
+	order *[]string
+}
+
+func (s *rewindStore) RewindTarget(_ context.Context, _ marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error) {
+	target, ok := s.targets[promptID]
+	return target, ok, nil
+}
+
+func (s *rewindStore) Revert(_ context.Context, _ marotte.ChatID, turn, _ string) (*marotte.Entry, *marotte.Entry, error) {
+	if s.order != nil {
+		*s.order = append(*s.order, "revert")
+	}
+	if s.revertErr != nil {
+		return nil, nil, s.revertErr
+	}
+	s.reverted = append(s.reverted, turn)
+	return &marotte.Entry{ID: turn + ":revert", Turn: "carrier", Kind: marotte.EntryKindTurnRevert}, s.carrier, nil
+}
+
+// rewindRuns is the run registry as a rewind sees it: live holds the runs still
+// leased, by id, with the label the reader knows them by; CancelRun records the
+// cancel, releases the lease and joins the shared order so a test can place the
+// cancel against the wire call and the truncate.
+type rewindRuns struct {
+	live      map[string]string
+	order     *[]string
+	cancelErr error
+	cancelled []string
+}
+
+func (r *rewindRuns) LiveRuns(ids []string) []LiveRunRef {
+	var out []LiveRunRef
+	for _, id := range ids {
+		if label, ok := r.live[id]; ok {
+			out = append(out, LiveRunRef{ID: id, Label: label})
 		}
+	}
+	return out
+}
+
+func (r *rewindRuns) CancelRun(_ context.Context, id string) error {
+	if r.order != nil {
+		*r.order = append(*r.order, "cancel:"+id)
+	}
+	r.cancelled = append(r.cancelled, id)
+	if r.cancelErr != nil {
+		return r.cancelErr
+	}
+	delete(r.live, id)
+	return nil
+}
+
+// runsOf reads the live runs a refusal carries.
+func runsOf(err error) []LiveRunRef {
+	if se, ok := errors.AsType[*statusError](err); ok {
+		return se.runs
+	}
+	return nil
+}
+
+// A cut holding a live run's launch un-says the instruction that started it, so the
+// reader decides: unconfirmed, the command names the run and reverts nothing.
+func TestCmdRewindChat_A409NamesTheLiveRunsTheCutLaunchedAndRecordsNothing(t *testing.T) {
+	store := seedRewindChat(t, false)
+	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1"}}
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := idleHost(store, b, b)
+	runs := &rewindRuns{live: map[string]string{"wf-1": "app-review"}}
+
+	_, err := CmdRewindChat(t.Context(), host, host, host, runs, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 naming the run (body %s)", statusOf(err), errText(err))
+	}
+	if got := reasonOf(err); got != reasonRunsInCut {
+		t.Errorf("reason = %q, want %q", got, reasonRunsInCut)
+	}
+	if want := []LiveRunRef{{ID: "wf-1", Label: "app-review"}}; !slices.Equal(runsOf(err), want) {
+		t.Errorf("runs named = %+v, want %+v", runsOf(err), want)
+	}
+	if len(runs.cancelled) != 0 || b.callCount != 0 || len(store.reverted) != 0 {
+		t.Errorf("unconfirmed rewind cancelled %v, called KAS %d times and truncated %v; want nothing touched",
+			runs.cancelled, b.callCount, store.reverted)
+	}
+}
+
+// Confirmed, the run is cancelled and stopped BEFORE the revert, so nothing a step
+// does can land in the range being cut, and the log is cut exactly once.
+func TestCmdRewindChat_ConfirmedStopsTheRunsBeforeTheRevertAndCutsOnce(t *testing.T) {
+	var order []string
+	store := seedRewindChat(t, false)
+	store.order = &order
+	store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: []string{"wf-1", "wf-2"}}
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1", order: &order}
+	host := idleHost(store, b, b)
+	runs := &rewindRuns{live: map[string]string{"wf-1": "app-review", "wf-2": "docs-review"}, order: &order}
+
+	_, err := CmdRewindChat(t.Context(), host, host, host, runs, host, rewindReqConfirmed(t, "c1", "u2", true))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if want := []string{"cancel:wf-1", "cancel:wf-2", "call", "revert"}; !slices.Equal(order, want) {
+		t.Errorf("order = %v, want %v: every cancel before the revert, the revert before the cut", order, want)
+	}
+	if want := []string{"t2"}; !slices.Equal(store.reverted, want) {
+		t.Errorf("recorded a revert at %v, want %v exactly once", store.reverted, want)
+	}
+}
+
+// A run launched before the cut keeps running and is not the reader's to weigh; so
+// does a run the cut launched whose lease has already gone.
+func TestCmdRewindChat_ARunOutsideTheCutIsNeitherCancelledNorNamed(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		launched []string
+	}{
+		{"launched before the cut", nil},
+		{"launched in the cut but already over", []string{"wf-9"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := seedRewindChat(t, false)
+			store.targets["u2"] = marotte.RewindTarget{Turn: "t2", LaunchedRuns: tc.launched}
+			b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+			host := idleHost(store, b, b)
+			runs := &rewindRuns{live: map[string]string{"wf-0": "app-review"}}
+
+			_, err := CmdRewindChat(t.Context(), host, host, host, runs, host, rewindReq(t, "c1", "u2"))
+
+			if statusOf(err) != http.StatusOK {
+				t.Fatalf("status = %d, want 200 with no confirmation asked (body %s)", statusOf(err), errText(err))
+			}
+			if len(runs.cancelled) != 0 {
+				t.Errorf("cancelled %v, want none", runs.cancelled)
+			}
+			if _, live := runs.live["wf-0"]; !live {
+				t.Errorf("the run launched before the cut lost its lease")
+			}
+		})
+	}
+}
+
+// seedRewindChat seeds a chat on sess-1 whose log holds two prompt turns: u1 opened
+// t1 and u2 opened t2, the second bound to KAS's kas-2 when bound is set. The session
+// id matters as much as the turns: rewind captures it before it resumes and refuses
+// on a mismatch, so it has to match recordingBridge{sessionID: "sess-1"} or every
+// rewind test refuses.
+func seedRewindChat(t *testing.T, bound bool) *rewindStore {
+	t.Helper()
+	store := &rewindStore{
+		InMemoryChatStore: testsupport.NewInMemoryChatStore(),
+		targets: map[string]marotte.RewindTarget{
+			"u1": {Turn: "t1"},
+			"u2": {Turn: "t2"},
+		},
+	}
+	if bound {
+		store.targets["u2"] = marotte.RewindTarget{Turn: "t2", KASMessageID: "kas-2"}
+	}
+	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.RecordSession("sess-1")
+		c.TurnCount = 2
 		return true
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	return store
 }
 
 func okResult() map[string]any {
 	return map[string]any{"success": true, "affectedFiles": []string{"a.go"}, "totalFiles": 2}
 }
 
-// The target goes WITH its successors: KAS slices from the target inclusive, so a record
-// that kept u2 would disagree with the session about what the transcript is.
-func TestCmdRewindChat_DropsTheTargetAndEverythingAfter(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+// The cut is AT the target's turn: KAS slices from the addressed prompt inclusive, so
+// the record that kept t2 would disagree with the session about what the transcript is.
+func TestCmdRewindChat_RecordsTheRevertAtTheTargetsTurn(t *testing.T) {
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	c, ok := store.Get(t.Context(), "c1")
-	if !ok {
-		t.Fatal("chat vanished")
-	}
-	got := make([]string, 0, len(c.Messages))
-	for i := range c.Messages {
-		got = append(got, c.Messages[i].ID)
-	}
-	if len(got) != 2 || got[0] != "u1" || got[1] != "a1" {
-		t.Errorf("messages = %v, want [u1 a1]", got)
+	if len(store.reverted) != 1 || store.reverted[0] != "t2" {
+		t.Errorf("recorded a revert at %v, want [t2]", store.reverted)
 	}
 }
 
 func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, _ = CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u1"))
+	_, _ = CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u1"))
 
 	if b.gotMethod != marotte.MethodCheckpointRevertMultiple {
 		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodCheckpointRevertMultiple)
@@ -209,65 +358,75 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 	}
 }
 
-// marotte checks the target's role first rather than spending a round trip to be told,
-// and it cannot address an assistant turn at all: only user ids are shared with KAS.
-func TestCmdRewindChat_RefusesANonUserTarget(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
-	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+// marotte resolves the target first rather than spending a round trip to be told:
+// only a prompt's id opens a turn, so an id no turn_open carries is refused before
+// the bridge is reached and nothing is cut.
+func TestCmdRewindChat_RefusesATargetNoPromptCarries(t *testing.T) {
+	for _, id := range []string{"a1", "nope"} {
+		t.Run(id, func(t *testing.T) {
+			store := seedRewindChat(t, false)
+			b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+			host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "a1"))
+			_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", id))
 
-	if statusOf(err) != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", statusOf(err))
-	}
-	if b.callCount != 0 {
-		t.Errorf("called the bridge %d times, want 0", b.callCount)
-	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 4 {
-		t.Errorf("transcript changed on a refused rewind: %d messages", len(c.Messages))
-	}
-}
-
-func TestCmdRewindChat_RefusesAnUnknownTarget(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
-	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
-
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "nope"))
-
-	if statusOf(err) != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", statusOf(err))
-	}
-	if b.callCount != 0 {
-		t.Errorf("called the bridge %d times, want 0", b.callCount)
+			if statusOf(err) != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", statusOf(err))
+			}
+			if b.callCount != 0 {
+				t.Errorf("called the bridge %d times, want 0", b.callCount)
+			}
+			if len(store.reverted) != 0 {
+				t.Errorf("recorded a revert at %v on a refused rewind, want nothing cut", store.reverted)
+			}
+		})
 	}
 }
 
 func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
-	host := newBridgeHost(store, &recordingBridge{result: okResult()})
+	store := seedRewindChat(t, false)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", ""))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", ""))
 
 	if statusOf(err) != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", statusOf(err))
 	}
+	if b.callCount != 0 {
+		t.Errorf("called the bridge %d times, want 0", b.callCount)
+	}
 }
 
-// A chat with no live bridge is the NORMAL state — marotte spawns one on the first
-// prompt, not the first view — so a rewind resumes the session instead of refusing.
-func TestCmdRewindChat_ResumesABridgelessChatAndReverts(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+// A rewind is refused while the registry holds a turn or a reservation for the chat:
+// KAS's own mid-turn rule, applied before the round trip, and before anything is cut.
+func TestCmdRewindChat_RefusedWhileTheRegistryHoldsATurn(t *testing.T) {
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgelessHost(store, b)
+	host := idleHost(store, b, b)
+	held := newBridgeHost(store, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, held, host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Errorf("status = %d, want 409", statusOf(err))
+	}
+	if b.callCount != 0 {
+		t.Errorf("called the bridge %d times, want 0", b.callCount)
+	}
+	if len(store.reverted) != 0 {
+		t.Errorf("recorded a revert at %v under an open turn, want nothing cut", store.reverted)
+	}
+}
+
+// A reopened chat has a session and no bridge: the rewind resumes it and reverts on
+// the resumed bridge rather than refusing.
+func TestCmdRewindChat_ResumesABridgelessChatAndReverts(t *testing.T) {
+	store := seedRewindChat(t, false)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := idleHost(store, nil, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -275,33 +434,27 @@ func TestCmdRewindChat_ResumesABridgelessChatAndReverts(t *testing.T) {
 	if b.gotMethod != marotte.MethodCheckpointRevertMultiple {
 		t.Errorf("method = %q, want the revert verb on the resumed bridge", b.gotMethod)
 	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 2 {
-		t.Errorf("messages = %d, want 2 (u1, a1)", len(c.Messages))
+	if len(store.reverted) != 1 || store.reverted[0] != "t2" {
+		t.Errorf("recorded a revert at %v, want [t2]", store.reverted)
 	}
 }
 
-// The record must not be cut on the strength of a bridge that does not exist.
 func TestCmdRewindChat_AFailedResumeIsA502(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
-	host := newBridgelessHost(store, nil)
+	store := seedRewindChat(t, false)
+	host := idleHost(store, nil, nil)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
 	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 4 {
-		t.Errorf("transcript truncated with no bridge to revert on: %d messages", len(c.Messages))
+	if len(store.reverted) != 0 {
+		t.Errorf("recorded a revert at %v with no bridge to revert on, want nothing cut", store.reverted)
 	}
 }
 
-// No KAS session means no checkpoint to roll back to, so refuse before opening anything.
 func TestCmdRewindChat_RefusesAChatWithNoSession(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
 	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("")
 		return true
@@ -309,9 +462,9 @@ func TestCmdRewindChat_RefusesAChatWithNoSession(t *testing.T) {
 		t.Fatalf("clear session: %v", err)
 	}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgelessHost(store, b)
+	host := idleHost(store, nil, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
@@ -319,21 +472,20 @@ func TestCmdRewindChat_RefusesAChatWithNoSession(t *testing.T) {
 	if b.callCount != 0 {
 		t.Errorf("called the bridge %d times, want 0", b.callCount)
 	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 4 {
-		t.Errorf("transcript changed on a refused rewind: %d messages", len(c.Messages))
+	if len(store.reverted) != 0 {
+		t.Errorf("recorded a revert at %v on a refused rewind, want nothing cut", store.reverted)
 	}
 }
 
-// A failed session/load falls through to session/new, so the bridge comes back on a FRESH
-// session whose log never held the target: reverting there rolls back the wrong thing.
+// The session id is captured BEFORE the resume: a failed session/load falls through
+// to session/new, which holds none of this transcript, so a resumed bridge on another
+// session is refused rather than reverted.
 func TestCmdRewindChat_RefusesWhenTheOriginalSessionWasNotResumed(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{result: okResult(), sessionID: "sess-fresh"}
-	host := newBridgelessHost(store, b)
+	host := idleHost(store, nil, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
@@ -341,89 +493,33 @@ func TestCmdRewindChat_RefusesWhenTheOriginalSessionWasNotResumed(t *testing.T) 
 	if b.callCount != 0 {
 		t.Errorf("called the bridge %d times, want 0", b.callCount)
 	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 4 {
-		t.Errorf("transcript truncated against an unrelated session: %d messages", len(c.Messages))
+	if len(store.reverted) != 0 {
+		t.Errorf("recorded a revert at %v against an unrelated session, want nothing cut", store.reverted)
 	}
 }
 
-// recordingStore notes each Mutate in the shared order slice, so a test can place the
-// record rewrite against the steps that must precede it.
-type recordingStore struct {
-	ChatStore
-	order *[]string
-}
-
-func (s *recordingStore) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
-	*s.order = append(*s.order, "mutate")
-	return s.ChatStore.Mutate(ctx, id, fn)
-}
-
-// The replay-adoption wait must come BEFORE the revert and the truncation: a resume's
-// staged projection is swapped in on another goroutine, and the merge preserves a record
-// row newer than the replay's newest while re-adding a projected row that pairs with
-// nothing, so a swap landing after the cut hands every reverted turn back.
-func TestCmdRewindChat_WaitsForTheReplayBeforeItReverts(t *testing.T) {
+// The revert lands BEFORE the cut: a refused revert then records nothing, and no replay
+// barrier sits between the two, since the appended record is itself what refuses a swap
+// built from the pre-revert replay.
+func TestCmdRewindChat_RevertsBeforeItRecords(t *testing.T) {
 	order := []string{}
-	base := testsupport.NewInMemoryChatStore()
-	seedChat(t, base, "c1")
-	store := &recordingStore{ChatStore: base, order: &order}
+	store := seedRewindChat(t, false)
+	store.order = &order
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1", order: &order}
-	host := &bridgeDeps{
-		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
-		opened:    b,
-		order:     &order,
-	}
+	host := idleHost(store, nil, b)
 
-	if _, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2")); err != nil {
+	if _, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2")); err != nil {
 		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
 	}
-
-	// seedChat's own Mutate goes through the base store, so this order is the handler's.
-	want := []string{"await", "call", "mutate"}
-	if len(order) != len(want) {
-		t.Fatalf("order = %v, want %v", order, want)
-	}
-	for i := range want {
-		if order[i] != want[i] {
-			t.Fatalf("order = %v, want %v (the replay wait must precede the revert)", order, want)
-		}
+	if len(order) != 2 || order[0] != "call" || order[1] != "revert" {
+		t.Fatalf("order = %v, want [call truncate]: the revert must land before the record is cut", order)
 	}
 }
 
-// A wait that does NOT complete must refuse the whole rewind. The settle is triggered by
-// the bridge's frame loop rather than by anything this handler can reach, so "waited and
-// it never settled" is reachable with the swap still to come — cutting the record there
-// is the exact data loss the barrier exists to prevent, and the revert is not attempted.
-func TestCmdRewindChat_ARefusedReplayWaitTruncatesNothing(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
-	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := &bridgeDeps{
-		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
-		opened:    b,
-		awaitErr:  errors.New("replay not adopted"),
-	}
-
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
-
-	if statusOf(err) != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503 (a pending replay is worth retrying)", statusOf(err))
-	}
-	if b.gotMethod != "" {
-		t.Errorf("revert was attempted as %q; a rewind that cannot be made durable must not touch KAS either", b.gotMethod)
-	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 4 {
-		t.Errorf("messages = %d, want 4: the record was cut into a pending swap", len(c.Messages))
-	}
-}
-
-// KAS's in-band refusal must leave the record ALONE: a truncated transcript against an
-// un-reverted session is the one outcome worse than a failed rewind.
+// KAS refused in band (success:false), so the answer is 409 carrying KAS's own
+// reason, and the record is untouched: a cut here would drop turns the session kept.
 func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{
 		result: map[string]any{
 			"success": false,
@@ -431,204 +527,79 @@ func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
 		},
 		sessionID: "sess-1",
 	}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
 	}
-	// KAS's reason reaches the client: more specific than anything marotte could infer.
 	if body := errText(err); !strings.Contains(body, "still running") {
 		t.Errorf("response %s does not carry KAS's reason", body)
 	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 4 {
-		t.Errorf("transcript truncated after a refused revert: %d messages", len(c.Messages))
+	if len(store.reverted) != 0 {
+		t.Errorf("recorded a revert at %v after a refused revert, want nothing cut", store.reverted)
 	}
 }
 
 func TestCmdRewindChat_TransportFailureLeavesTheRecordIntact(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
 	}
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 4 {
-		t.Errorf("transcript truncated after a failed call: %d messages", len(c.Messages))
+	if len(store.reverted) != 0 {
+		t.Errorf("recorded a revert at %v after a failed call, want nothing cut", store.reverted)
 	}
 }
 
-// Emptying the transcript is legal and the chat SURVIVES: same chat, back at the start.
-func TestCmdRewindChat_ToTheFirstMessageEmptiesTheTranscript(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+// A truncate the store refuses after KAS already reverted is a 500: the session and
+// the record now disagree, which the next session/load's merge is what heals, and
+// the response must not claim a rewind the record does not hold.
+func TestCmdRewindChat_ARecordFailureIsA500(t *testing.T) {
+	store := seedRewindChat(t, false)
+	store.revertErr = errors.New("entry log refused the cut")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u1"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
-	if statusOf(err) != http.StatusOK {
-		t.Fatalf("status = %d, want 200", statusOf(err))
-	}
-	c, ok := store.Get(t.Context(), "c1")
-	if !ok {
-		t.Fatal("chat was deleted; a rewind is not a delete")
-	}
-	if len(c.Messages) != 0 {
-		t.Errorf("messages = %d, want 0", len(c.Messages))
+	if statusOf(err) != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 (body %s)", statusOf(err), errText(err))
 	}
 }
 
-// seedLiveLayout reproduces the STRUCTURE of a real 12-message chat (roles, event kinds,
-// outcomes, and which rows carry no Content) with synthetic words. What makes it worth
-// pinning: four rows carry no Content and five carry a turn outcome, so a projection or
-// boundary rule treating either as a turn terminator moves the rewind target.
-func seedLiveLayout(t *testing.T, store ChatStore, id marotte.ChatID) {
-	t.Helper()
-	interrupted := func(msgID string, ts int64) marotte.Message {
-		return marotte.Message{
-			ID: msgID, Role: marotte.RoleAssistant, Ts: ts,
-			TurnOutcome:       marotte.TurnOutcomeInterrupted,
-			TurnStopReasonRaw: marotte.StopReasonInterrupted,
-		}
-	}
-	failedMarker := func(msgID string, ts int64) marotte.Message {
-		return marotte.Message{
-			ID: msgID, Role: marotte.RoleEvent, Ts: ts,
-			EventKind:         marotte.EventTurnOutcome,
-			TurnOutcome:       marotte.TurnOutcomeFailed,
-			TurnStopReasonRaw: marotte.StopReasonError,
-		}
-	}
-	_, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
-		c.RecordSession("sess-1")
-		c.Messages = []marotte.Message{
-			{ID: "m-u1", Role: marotte.RoleUser, Content: "first", Ts: 100},
-			interrupted("a1", 200),
-			{ID: "e1", Role: marotte.RoleEvent, EventKind: marotte.EventInterrupted, Content: "Interrupted", Ts: 201},
-			{ID: "m-u2", Role: marotte.RoleUser, Content: "resume", Ts: 300},
-			interrupted("a2", 400),
-			{ID: "e2", Role: marotte.RoleEvent, EventKind: marotte.EventInterrupted, Content: "Interrupted", Ts: 401},
-			{ID: "m-u3", Role: marotte.RoleUser, Content: "resume", Ts: 500},
-			{
-				ID: "a3", Role: marotte.RoleAssistant, Content: "the reply", Ts: 600,
-				TurnOutcome:       marotte.TurnOutcomeCompleted,
-				TurnStopReasonRaw: marotte.StopReasonEndTurn,
-			},
-			{ID: "m-u4", Role: marotte.RoleUser, Content: "carry on", Ts: 700},
-			failedMarker("e3", 701),
-			{ID: "m-u5", Role: marotte.RoleUser, Content: "carry on", Ts: 800},
-			failedMarker("e4", 801),
-		}
-		return true
-	})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-}
-
-// Checked by ID SEQUENCE rather than length: a merge that put back eight of the wrong
-// messages would satisfy a count.
-func TestCmdRewindChat_KeepsTurnsOneToThreeOnTheLiveLayout(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedLiveLayout(t, store, "c1")
-
-	// The client sends the NEXT turn's trigger, because KAS drops the addressed message
-	// inclusive; turn 4's user message is index 8.
-	c, _ := store.Get(t.Context(), "c1")
-	if got := userMessageIndex(c.Messages, "m-u4"); got != 8 {
-		t.Fatalf("userMessageIndex(m-u4) = %d, want 8", got)
-	}
-
-	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgelessHost(store, b)
-
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "m-u4"))
-
-	if statusOf(err) != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
-	}
-	c, _ = store.Get(t.Context(), "c1")
-	got := make([]string, 0, len(c.Messages))
-	for i := range c.Messages {
-		got = append(got, c.Messages[i].ID)
-	}
-	want := []string{"m-u1", "a1", "e1", "m-u2", "a2", "e2", "m-u3", "a3"}
-	if !slices.Equal(got, want) {
-		t.Errorf("messages = %v, want %v", got, want)
-	}
-}
-
-func TestUserMessageIndex(t *testing.T) {
-	msgs := []marotte.Message{
-		{ID: "u1", Role: marotte.RoleUser},
-		{ID: "a1", Role: marotte.RoleAssistant},
-		{ID: "e1", Role: marotte.RoleEvent},
-		{ID: "u2", Role: marotte.RoleUser},
-	}
-	cases := map[string]int{"u1": 0, "u2": 3, "a1": -1, "e1": -1, "missing": -1, "": -1}
-	for id, want := range cases {
-		if got := userMessageIndex(msgs, id); got != want {
-			t.Errorf("userMessageIndex(%q) = %d, want %d", id, got, want)
-		}
-	}
-}
-
-// How much history a rewind discarded is the one number a reader cannot recover from
-// anywhere else: the record has already been cut by the time anyone looks.
-func TestCmdRewindChat_LogsHowManyMessagesItDropped(t *testing.T) {
+// The log line names the turn the revert was recorded at and whether the log had to
+// mint a carrier for the record, which is the one thing about the append a reader of
+// the log line cannot derive from the turn.
+func TestCmdRewindChat_LogsTheTurnAndWhetherACarrierWasMinted(t *testing.T) {
 	logs := captureLogs(t)
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
+	store.carrier = &marotte.Entry{ID: "t-carrier", Turn: "t-carrier", Kind: marotte.EntryKindTurnOpen}
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	if _, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2")); err != nil {
+	if _, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2")); err != nil {
 		t.Fatalf("CmdRewindChat = %v, want it to succeed", err)
 	}
-
-	if !strings.Contains(logs.String(), "dropped_messages=2") {
-		t.Errorf("log does not report dropped_messages=2: %s", logs.String())
+	if got := logs.String(); !strings.Contains(got, "turn=t2") || !strings.Contains(got, "carrier_minted=true") {
+		t.Errorf("log does not report turn=t2 carrier_minted=true: %s", got)
 	}
 }
 
-// seedKASChat writes u1, a1, u2, a2 where each user row also carries the agent-side id
-// KAS's own log holds it under. That second id is the one revertMultiple accepts, and
-// seedChat above is the same layout WITHOUT it — the legacy population.
-func seedKASChat(t *testing.T, store ChatStore, id marotte.ChatID) {
-	t.Helper()
-	_, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
-		c.RecordSession("sess-1")
-		c.Messages = []marotte.Message{
-			{ID: "u1", Role: marotte.RoleUser, Content: "first", KASMessageID: "kas-1", Ts: 100},
-			{ID: "a1", Role: marotte.RoleAssistant, Content: "reply one", Ts: 200},
-			{ID: "u2", Role: marotte.RoleUser, Content: "second", KASMessageID: "kas-2", Ts: 300},
-			{ID: "a2", Role: marotte.RoleAssistant, Content: "reply two", Ts: 400},
-		}
-		return true
-	})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-}
-
-// The user's own report, in one assertion: the client addresses a turn by the id it
-// minted, and the wire must carry the id KAS's session log holds that turn under. The two
-// spaces are disjoint, so sending marotte's own is what KAS answers `not found` to.
+// marotte's own m- id names nothing in KAS's log; the id KAS holds the prompt under
+// arrived on user_message_id_assigned and rides the turn_bind, so that is what the
+// revert is addressed with.
 func TestCmdRewindChat_AddressesKASByItsOwnRecordID(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedKASChat(t, store, "c1")
+	store := seedRewindChat(t, true)
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -638,15 +609,14 @@ func TestCmdRewindChat_AddressesKASByItsOwnRecordID(t *testing.T) {
 	}
 }
 
-// A row an older build's replay projected has KAS's record id as its OWN id and no
-// separate field, so the fallback is what keeps that population working.
+// A turn whose bind never arrived is addressed by the prompt's own id, which KAS may
+// or may not know.
 func TestCmdRewindChat_FallsBackToTheRowsOwnIDWhenNoKASIDIsHeld(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -656,19 +626,17 @@ func TestCmdRewindChat_FallsBackToTheRowsOwnIDWhenNoKASIDIsHeld(t *testing.T) {
 	}
 }
 
-// KAS cannot explain a turn marotte holds no agent-side id for — its reason names an id
-// the reader never saw and offers nothing to do about it. marotte adds the one thing it
-// knows, and KEEPS KAS's reason, because the refusal may be a specific one worth reading.
+// A refusal on a turn marotte could only address by its own id says so beside KAS's
+// reason: the reader can then tell an unaddressable turn from a mid-turn refusal.
 func TestCmdRewindChat_ExplainsARefusalOnATurnItCannotAddress(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedChat(t, store, "c1")
+	store := seedRewindChat(t, false)
 	b := &recordingBridge{
 		result:    map[string]any{"success": false, "error": `Message "u2" not found`},
 		sessionID: "sess-1",
 	}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", statusOf(err))
@@ -682,11 +650,8 @@ func TestCmdRewindChat_ExplainsARefusalOnATurnItCannotAddress(t *testing.T) {
 	}
 }
 
-// The same refusal on a turn marotte CAN address means something else entirely (mid-turn,
-// a concurrent revert), so the id explanation must not be attached to it.
 func TestCmdRewindChat_DoesNotBlameIDCaptureWhenTheKASIDWasSent(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedKASChat(t, store, "c1")
+	store := seedRewindChat(t, true)
 	b := &recordingBridge{
 		result: map[string]any{
 			"success": false,
@@ -694,50 +659,14 @@ func TestCmdRewindChat_DoesNotBlameIDCaptureWhenTheKASIDWasSent(t *testing.T) {
 		},
 		sessionID: "sess-1",
 	}
-	host := newBridgeHost(store, b)
+	host := idleHost(store, b, b)
 
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+	_, err := CmdRewindChat(t.Context(), host, host, host, host, host, rewindReq(t, "c1", "u2"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", statusOf(err))
 	}
 	if body := errText(err); strings.Contains(body, "no id for this turn in the agent's current session") {
 		t.Errorf("response %s blames id capture for a mid-turn refusal", body)
-	}
-}
-
-// A stamp minted under a session the chat has since retired names a record the current
-// session's log does not hold, so KAS answers `not found` — the original report's toast. The
-// clear is what turns that row into one marotte can explain: it sends the row's own id and
-// appends the sentence instead of forwarding a bare refusal.
-func TestCmdRewindChat_ARetiredSessionsStampIsGoneSoTheRefusalIsExplained(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedKASChat(t, store, "c1")
-	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.RecordSession("sess-2")
-		return true
-	}); err != nil {
-		t.Fatalf("retire the session: %v", err)
-	}
-	b := &recordingBridge{
-		result:    map[string]any{"success": false, "error": `Message "u2" not found`},
-		sessionID: "sess-2",
-	}
-	host := newBridgeHost(store, b)
-
-	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
-
-	if statusOf(err) != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
-	}
-	if got := b.gotParams["messageId"]; got != "u2" {
-		t.Errorf("messageId = %v, want u2: kas-2 names a record only the retired session held", got)
-	}
-	body := errText(err)
-	if !strings.Contains(body, "not found") {
-		t.Errorf("response %s dropped KAS's own reason", body)
-	}
-	if !strings.Contains(body, "no id for this turn in the agent's current session") {
-		t.Errorf("response %s does not say why this turn is unaddressable", body)
 	}
 }

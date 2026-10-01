@@ -16,12 +16,14 @@ import { logout } from "./actions/settings.js";
 import { GLOBAL_BANNER, showBanner } from "./banner-stack.js";
 import { $ } from "./dom.js";
 import { bootMode, clearReloadGuard, noteBootAlive, reloadCount } from "./reload-guard.js";
-import { loadList } from "./store-load.js";
+import { abortReadsForRevert, loadList, requestTurnRange } from "./store-load.js";
 import {
   getActive,
   getActiveId,
   getSessions,
   registerEvictionExemption,
+  registerTurnRepair,
+  registerRevertReadAbort,
   startEvictionSweep,
 } from "./store.js";
 import {
@@ -66,9 +68,9 @@ import { initStatusVersions, setStatus } from "./status.js";
 import type { ConnectionStatus } from "./types.js";
 import { loadVersions } from "./versions.js";
 import { refreshRetention } from "./retention.js";
-import { hasExecutingRunForChat, registerRunStateDemand } from "./run-store.js";
+import { registerRunStateDemand, registerRunTurnRepair } from "./run-store.js";
+import { requestRunTurnRange } from "./run-turn-range.js";
 import { chatTabFoldsRun } from "./chat-run-dots.js";
-import { runTabProjectsChat } from "./run-view.js";
 import { subagentTabProjectsChat } from "./subagent-view.js";
 import { markBootDone } from "./view-swap.js";
 import { applyShareTarget } from "./share-target.js";
@@ -375,8 +377,21 @@ export function initPostAuth(): void {
   }
   // Registered here because store.ts is a leaf and may not import run-store.ts or
   // tabs.ts. Registrations rather than reads, so a reduced boot keeps them.
-  registerEvictionExemption(hasExecutingRunForChat);
-  registerEvictionExemption(runTabProjectsChat);
+  //
+  // The range read of the entry log is the same shape one direction further out: the store
+  // DETECTS a `seq` hole and never fetches, `store-load.ts` owns every read, so the repair
+  // is injected rather than imported — which is also what keeps the loader's one-way edge
+  // onto the store.
+  registerTurnRepair(requestTurnRange);
+  // The revert's own half of that inversion: the handler drops turns, and the reads
+  // already out for one of them are this module's to cancel.
+  registerRevertReadAbort(abortReadsForRevert);
+  // The run log's twin: `run-store.ts` detects the `seq` hole and `run-turn-range.ts`
+  // owns the read, so the repair is injected here rather than imported.
+  registerRunTurnRepair(requestRunTurnRange);
+  // Both run-shaped exemptions are gone: a step's entries are the RUN's, so no
+  // surface pins a chat's window on a run's account. The delegate page's stays,
+  // because a delegate's entries really are in the chat's log.
   registerEvictionExemption(subagentTabProjectsChat);
   // The same shape over the RUN store's cache: who still needs a run's state cell,
   // so `forgetRun` needs no enumeration of its readers at the call site. The run TAB

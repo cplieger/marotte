@@ -1,5 +1,11 @@
-// Unit tests for store.ts — property-based idempotency invariants.
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// Unit tests for store.ts, the ENTRY-LOG store: the five operations over `session.turns`,
+// the header re-sync, the dock projection, the dot vocabulary and the per-chat repaint
+// causes.
+//
+// Position is `seq` and counts are counts: a value that does not fit is a HOLE and the
+// repair is one range read, so several cases below assert that a repair was ASKED FOR
+// rather than that the store patched anything.
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fc from "fast-check";
 import {
   parseContextSize,
@@ -8,54 +14,86 @@ import {
   get,
   setActive,
   getActive,
-  appendMessage,
-  upsertMessage,
+  getActiveId,
+  watchActiveId,
+  activeSession,
   upsertHeader,
   removeChat,
+  reinsertSession,
+  indexOfSession,
   setThinking,
   setWorkingLabel,
+  setName,
+  setModel,
+  setCurrentMode,
+  setSupervisedMode,
+  setEffort,
+  setAgentStatus,
+  setTurnOpen,
+  turnLive,
+  isThinking,
+  isEmptyChat,
+  derivedHasMore,
+  chatHoldingTurn,
+  hasMessage,
+  transcriptStale,
+  outcomeLatch,
+  tabStatusFor,
+  subagentStatusFor,
+  runStatusFor,
+  defaultUsage,
+  evictChatMessages,
+  registerEvictionExemption,
+  startEvictionSweep,
+  stopEvictionSweep,
+  EVICT_IDLE_MS,
+  EVICT_SWEEP_MS,
+  markWindowStale,
+  registerTurnRepair,
+  openTurn,
+  appendEntry,
+  openEntry,
+  applyDelta,
+  sealEntry,
+  bumpMessages,
+  messagesVersionOf,
+  renderCauseOf,
   steerIDFor,
+  steerCount,
   recordSteerSent,
   forgetSteer,
   recordSteerQueued,
-  promoteSteer,
   dropSteers,
   dropConfirmedSteers,
   restoreSteers,
-  pendingSteerCarry,
   forgetSteers,
-  steerCount,
-  steerMarks,
-  setName,
-  activeSession,
-  getActiveId,
-  setModel,
-  transcriptStale,
-  setTurnOpen,
-  turnLive,
-  noteAdoptedSnapshot,
-  snapshotBlockBase,
-  isTruncatedSnapshot,
-  clearAdoptedSnapshot,
-  clearAdoptedSnapshots,
+  markSteersCompacted,
+  pendingSteerCarry,
+  setCodeReferences,
+  codeReferencesFor,
+  setLiveRefusal,
+  liveRefusalFor,
+  clearLiveTurnFacts,
+  applyToolProgress,
+  foldToolCallDelta,
+  settledToolCall,
+  republishWindowToolCalls,
 } from "./store.js";
 import {
-  _resetForTest as resetFreshness,
-  observeStamp,
-  forgetSubject,
-} from "./subject-versions.js";
-import type { Block, ChatHeader, Message, Session } from "./types.js";
-import type { TurnOutcome } from "./wire/types.gen.js";
+  ensureToolCallSig,
+  peekToolCallSig,
+  toolCallSigs,
+  toolCallSigKey,
+  entryTextSig,
+  laneSig,
+  clearAllEntrySigs,
+} from "./store-signals.js";
+import { _resetForTest as resetFreshness, observeStamp } from "./subject-versions.js";
+import type { ChatHeader, Session, ToolCall, ToolProgressPayload } from "./types.js";
+import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/reactive";
 
-// Arbitrary generators for domain types.
-const arbMessage = () =>
-  fc.record({
-    id: fc.uuid(),
-    role: fc.constantFrom("user", "assistant") as fc.Arbitrary<"user" | "assistant">,
-    ts: fc.nat({ max: 2_000_000_000_000 }),
-    content: fc.string({ maxLength: 200 }),
-  });
+// --- Fixtures -------------------------------------------------------------------------
 
 function makeSession(chatID: string): Session {
   return {
@@ -65,16 +103,10 @@ function makeSession(chatID: string): Session {
     acp_session_id: "",
     current_mode_id: "",
     supervised_mode: false,
-    usage: {
-      context_pct: 0,
-      context_size: 0,
-      credits: 0,
-      turn_count: 0,
-      last_turn_ms: 0,
-      has_real_data: false,
-    },
-    message_count: 0,
-    messages: [],
+    usage: defaultUsage(),
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -86,3704 +118,724 @@ function resetStore(chatID: string): void {
   setActive(chatID);
 }
 
-/** A minimal server header for `chatID`. `model` is deliberately absent, which
- *  is the shape the wire produces for a chat whose model the server has not been
- *  told yet (`Model` is `omitempty`). */
+/** A minimal server header for `chatID`. `model` is deliberately absent, which is the shape
+ *  the wire produces for a chat whose model the server has not been told yet (`Model` is
+ *  `omitempty`). */
 function headerFor(chatID: string): ChatHeader {
   return {
     id: chatID,
     name: chatID,
-    usage: {
-      context_pct: 0,
-      context_size: 0,
-      credits: 0,
-      turn_count: 0,
-      last_turn_ms: 0,
-      has_real_data: false,
-    },
-    message_count: 0,
+    usage: defaultUsage(),
+    turn_count: 0,
     created_at: 0,
     updated_at: 0,
   };
 }
 
-describe("Store idempotency (property-based)", () => {
-  it("appendMessage is idempotent: duplicate ID is ignored", () => {
-    fc.assert(
-      fc.property(arbMessage(), (msg) => {
-        resetStore("chat-1");
-        appendMessage("chat-1", msg);
-        appendMessage("chat-1", msg);
-        const session = get("chat-1")!;
-        const matches = session.messages.filter((m) => m.id === msg.id);
-        expect(matches).toHaveLength(1);
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("appendMessage: different IDs all land", () => {
-    fc.assert(
-      fc.property(fc.array(arbMessage(), { minLength: 1, maxLength: 20 }), (msgs) => {
-        resetStore("chat-1");
-        const unique = msgs.map((m, i) => ({ ...m, id: `msg-${String(i)}` }));
-        for (const m of unique) {
-          appendMessage("chat-1", m);
-        }
-        const session = get("chat-1")!;
-        expect(session.messages).toHaveLength(unique.length);
-      }),
-      { numRuns: 100 },
-    );
-  });
-
-  it("upsertMessage is idempotent: same message applied twice yields same state", () => {
-    fc.assert(
-      fc.property(arbMessage(), (msg) => {
-        resetStore("chat-1");
-        upsertMessage("chat-1", msg);
-        const after1 = JSON.stringify(get("chat-1")!.messages);
-        upsertMessage("chat-1", msg);
-        const after2 = JSON.stringify(get("chat-1")!.messages);
-        expect(after1).toBe(after2);
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("upsertMessage: non-empty content wins on merge, upsert not duplicate", () => {
-    fc.assert(
-      fc.property(arbMessage(), fc.string({ minLength: 1, maxLength: 100 }), (msg, newContent) => {
-        resetStore("chat-1");
-        upsertMessage("chat-1", msg);
-        upsertMessage("chat-1", { ...msg, content: newContent });
-        const session = get("chat-1")!;
-        const found = session.messages.find((m) => m.id === msg.id);
-        // ingestMessage merges: a non-empty incoming content replaces the
-        // existing, and the message is upserted (never duplicated) by id.
-        expect(found?.content).toBe(newContent);
-        expect(session.messages.filter((m) => m.id === msg.id)).toHaveLength(1);
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("upsertMessage: an empty incoming content does not clobber existing content", () => {
-    fc.assert(
-      fc.property(arbMessage(), (msg) => {
-        resetStore("chat-1");
-        // Seed with real content, then re-upsert the same id with empty content
-        // (the message_created-after-stream case): the merge must keep it.
-        upsertMessage("chat-1", { ...msg, content: "seeded-content" });
-        upsertMessage("chat-1", { ...msg, content: "" });
-        const found = get("chat-1")!.messages.find((m) => m.id === msg.id);
-        expect(found?.content).toBe("seeded-content");
-      }),
-      { numRuns: 100 },
-    );
-  });
-
-  it("appendMessage on unknown chat is a no-op", () => {
-    fc.assert(
-      fc.property(arbMessage(), (msg) => {
-        resetStore("chat-1");
-        appendMessage("nonexistent", msg);
-        expect(get("chat-1")!.messages).toHaveLength(0);
-      }),
-      { numRuns: 50 },
-    );
-  });
-});
-
-describe("setActive updates the active session", () => {
-  // Regression: messages.ts paint() effect tracks activeSession. setActive
-  // must re-derive activeSession on chat switch so the renderer re-runs and
-  // #messages doesn't keep the previous chat's children (stale messages
-  // bleeding through under the new chat's model picker).
-  it("activeSession follows the active id", () => {
-    setSessions([makeSession("a"), makeSession("b")]);
-    setActive("a");
-    expect(getActiveId()).toBe("a");
-    expect(activeSession.peek()?.id).toBe("a");
-    setActive("b");
-    expect(getActiveId()).toBe("b");
-    expect(activeSession.peek()?.id).toBe("b");
-  });
-
-  it("is a no-op / undefined when no active id", () => {
-    setSessions([]);
-    setActive("");
-    expect(getActiveId()).toBe("");
-    expect(activeSession.peek()).toBeUndefined();
-    setActive("");
-    expect(getActiveId()).toBe("");
-  });
-
-  // The empty string is the store's sentinel for "nothing is active":
-  // `getActiveId` returns it before the first `setActive`, and `setActive("")`
-  // is how a selection is cleared. `setSessions` is fed straight from the
-  // server's chat list, so a row whose id decoded to "" is a shape it can
-  // receive — and it must not become the active chat by matching the sentinel,
-  // which would show a phantom conversation to a user who has none selected.
-  it("never resolves the no-active sentinel to a row whose id is empty", () => {
-    setSessions([makeSession("real"), makeSession("")]);
-    setActive("real");
-    setActive("");
-
-    expect(getActiveId()).toBe("");
-    expect(getActive()).toBeUndefined();
-    expect(activeSession.peek()).toBeUndefined();
-    // The malformed row is still in the list; it is only barred from being the
-    // active one, since dropping rows is not this function's job.
-    expect(get("")?.id).toBe("");
-  });
-});
-
-describe("activeSession reactivity (two-tier tracking + batch)", () => {
-  it("activeSession re-fires on active-session field change, not on inactive", () => {
-    setSessions([makeSession("a"), makeSession("b")]);
-    setActive("a");
-
-    let count = 0;
-    const dispose = effect(() => {
-      void activeSession.value;
-      count++;
-    });
-    // effect() runs once synchronously on registration.
-    const afterRegister = count;
-
-    // A field change on the ACTIVE session re-derives activeSession.
-    setWorkingLabel("a", "x");
-    expect(count).toBe(afterRegister + 1);
-    expect(activeSession.value?.working_label).toBe("x");
-
-    const afterActiveChange = count;
-
-    // A field change on an INACTIVE session fires only that session's signal,
-    // which activeSession does not track — so the counter must not move.
-    setWorkingLabel("b", "y");
-    expect(count).toBe(afterActiveChange);
-
-    dispose();
-  });
-
-  it("activeSession recovers when active id set before session exists", () => {
-    setSessions([]);
-    setActive("ghost");
-    // No session yet for the active id.
-    expect(activeSession.value).toBeUndefined();
-
-    // The session arrives after the id was made active. Recovery relies on the
-    // computed tracking sessions.ids (the `void sessions.ids.value` line), since
-    // signalFor("ghost") didn't exist to be tracked at first derive.
-    upsertHeader({
-      id: "ghost",
-      name: "ghost",
-      usage: {
-        context_pct: 0,
-        context_size: 0,
-        credits: 0,
-        turn_count: 0,
-        last_turn_ms: 0,
-        has_real_data: false,
-      },
-      created_at: 0,
-      updated_at: 0,
-      message_count: 0,
-    });
-
-    expect(activeSession.value?.id).toBe("ghost");
-  });
-
-  it("a header that omits the model leaves a locally-chosen one alone", () => {
-    // A model picked before the first prompt is client-only — it rides that
-    // prompt — and `Model` is `omitempty` on the wire, so the record that
-    // `set_effort` / `set_mode` auto-creates broadcasts a header carrying no
-    // model at all. Reading that as a clear is what reset the pill to "auto" and
-    // unselected every row in the model list on the first effort click in a
-    // fresh chat, which looked like the effort control changing the model.
-    setSessions([makeSession("hm-keep")]);
-    setActive("hm-keep");
-    setModel("hm-keep", "claude-opus-5");
-
-    upsertHeader({ ...headerFor("hm-keep"), effort: "high" });
-
-    expect(get("hm-keep")?.model).toBe("claude-opus-5");
-    expect(get("hm-keep")?.effort).toBe("high");
-  });
-
-  it("a header that names a model overwrites the local one", () => {
-    // The other direction, so the rule above cannot be read as "the client wins":
-    // once the server knows a model it is authoritative, which is what makes a
-    // switch performed on another device land here.
-    setSessions([makeSession("hm-take")]);
-    setActive("hm-take");
-    setModel("hm-take", "claude-opus-5");
-
-    upsertHeader({ ...headerFor("hm-take"), model: "claude-sonnet-5" });
-
-    expect(get("hm-take")?.model).toBe("claude-sonnet-5");
-  });
-
-  it("removeChat of active does not double-render", () => {
-    setSessions([makeSession("rc-a"), makeSession("rc-b")]);
-    setActive("rc-a");
-
-    let count = 0;
-    const dispose = effect(() => {
-      void activeSession.value;
-      count++;
-    });
-    // Discard the registration run + setup so we count only the removal.
-    count = 0;
-
-    removeChat("rc-a");
-
-    // The batch() in removeChat coalesces sessions.remove (sessions.ids) and the
-    // activeId reassignment into ONE re-derive of activeSession. Without it this
-    // would be 2.
-    expect(count).toBe(1);
-
-    dispose();
-  });
-});
-
-describe("parseContextSize (table-driven)", () => {
-  const cases: { input: string; expected: number | undefined }[] = [
-    { input: "128K context", expected: 128_000 },
-    { input: "200k context", expected: 200_000 },
-    { input: "32K context window", expected: 32_000 },
-    { input: "1M context", expected: 1_000_000 },
-    { input: "2M context", expected: 2_000_000 },
-    { input: "Has 1M token limit", expected: 1_000_000 },
-    { input: "no match here", expected: undefined },
-    { input: "", expected: undefined },
-    { input: "4k context", expected: 4_000 },
-    { input: "100 K context", expected: 100_000 },
-  ];
-
-  for (const { input, expected } of cases) {
-    it(`parseContextSize(${JSON.stringify(input)}) → ${String(expected)}`, () => {
-      expect(parseContextSize(input)).toBe(expected);
-    });
-  }
-});
-
-describe("Store removeChat index consistency (property-based)", () => {
-  const chatPool = ["c-0", "c-1", "c-2", "c-3", "c-4"];
-
-  const arbOp = () =>
-    fc.oneof(
-      fc.record({ type: fc.constant("add" as const), id: fc.constantFrom(...chatPool) }),
-      fc.record({ type: fc.constant("remove" as const), id: fc.constantFrom(...chatPool) }),
-    );
-
-  function makeHeader(id: string) {
-    return {
-      id,
-      name: id,
-      model: "",
-      acp_session_id: "",
-      current_mode_id: "",
-      supervised_mode: false,
-      usage: {
-        context_pct: 0,
-        context_size: 0,
-        credits: 0,
-        turn_count: 0,
-        last_turn_ms: 0,
-        has_real_data: false,
-      },
-      message_count: 0,
-      created_at: 0,
-      updated_at: 0,
-    };
-  }
-
-  it("sessionIndex stays in sync after arbitrary upsertHeader/removeChat sequences", () => {
-    fc.assert(
-      fc.property(fc.array(arbOp(), { minLength: 10, maxLength: 50 }), (ops) => {
-        setSessions([]);
-        setActive("");
-
-        for (const op of ops) {
-          if (op.type === "add") {
-            upsertHeader(makeHeader(op.id));
-          } else {
-            removeChat(op.id);
-          }
-
-          const sessions = getSessions();
-          const indexedCount = sessions.filter((s) => get(s.id) === s).length;
-          expect(indexedCount).toBe(sessions.length);
-
-          for (const s of sessions) {
-            expect(get(s.id)).toBe(s);
-          }
-
-          for (const cid of chatPool) {
-            if (!sessions.some((s) => s.id === cid)) {
-              expect(get(cid)).toBeUndefined();
-            }
-          }
-        }
-      }),
-      { numRuns: 200 },
-    );
-  });
-});
-
-describe("Store setWorkingLabel/setThinking interaction", () => {
-  it("setThinking(false) resets working_label to 'Thinking'", () => {
-    resetStore("chat-1");
-    setThinking("chat-1", true);
-    setWorkingLabel("chat-1", "Editing");
-    expect(get("chat-1")!.working_label).toBe("Editing");
-    setThinking("chat-1", false);
-    expect(get("chat-1")!.working_label).toBe("Thinking");
-  });
-
-  it("setWorkingLabel on a non-thinking session is accepted", () => {
-    resetStore("chat-1");
-    expect(get("chat-1")!.thinking).toBe(false);
-    setWorkingLabel("chat-1", "Custom");
-    expect(get("chat-1")!.working_label).toBe("Custom");
-  });
-});
-
-// --- Mid-turn steers: two fields, two lifetimes ---
-//
-// `session.steers` is what the agent has NOT read (the dock's rows, whose
-// lifetime is the turn) and `session.steer_marks` is what has LEFT it — read, or
-// dropped unread at a boundary — anchored in the turn transcript, whose lifetime
-// is the loaded transcript. An entry moves from the first to the second and never
-// back, so every case below asserts BOTH sides of a move rather than a flag.
-//
-// Every case here is about surviving the wire rather than about data structure
-// mechanics. The client writes intent (`recordSteerSent` on submit, `forgetSteer`
-// on a refusal) and the server writes fact, and the server's frames arrive twice,
-// out of order, or without the frame that should have preceded them. Those are
-// the cases that matter.
-
-/** A chat mid-turn: one user message and one assistant message carrying `blocks`
- *  blocks, which is what an anchor is measured against. `content` stays empty on
- *  purpose — `normalizeMessage` synthesizes a block from a non-empty content, so
- *  a message that is meant to have none has to have neither. */
-function chatWithTurn(chatID: string, blocks: number): void {
-  resetStore(chatID);
-  appendMessage(chatID, { id: "u-1", role: "user", ts: 1, content: "do the thing" });
-  appendMessage(chatID, { id: "a-1", role: "assistant", ts: 2, blocks: turnBlocks(blocks) });
+/** The `turn_open` that opens turn `turnID`, at session-absolute ordinal `n`. A prompt id
+ *  makes it a reader-opened turn, which is what `hasMessage` addresses. */
+function turnOpenEntry(turnID: string, n: number, promptID?: string): Entry {
+  return {
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: {
+      source: promptID === undefined ? "wire_turn_start" : "prompt",
+      n,
+      ...(promptID !== undefined && { prompt: { id: promptID, text: "hi" } }),
+    },
+  };
 }
 
-function turnBlocks(n: number): Block[] {
-  return Array.from({ length: n }, (_, i) => ({
-    type: "text" as const,
-    text: `block ${String(i)}`,
-  }));
+/** A sealed entry of any kind at `seq`. `lane` is `""` unless named, which is the transcript's
+ *  own lane. */
+function sealed(
+  turnID: string,
+  seq: number,
+  kind: Entry["kind"],
+  payload: unknown,
+  opts: { readonly id?: string; readonly lane?: string } = {},
+): Entry {
+  return {
+    id: opts.id ?? `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind,
+    seq,
+    ts: seq + 1,
+    ...(opts.lane !== undefined && { lane: opts.lane }),
+    payload,
+  };
 }
 
-describe("Store steer projection", () => {
-  // --- The client's half: intent, drawn on submit and un-drawn on a refusal ---
-
-  // The row the user is owed for pressing Send, under the id KAS will return
-  // (`internal/marotte/commands.go:329-330`), which is what makes the reconcile a
-  // plain by-id merge rather than a guess.
-  it("records a submitted steer as pending, keyed by the derived id", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-42", "actually use tabs");
-    expect(steerIDFor("m-42")).toBe("steer-m-42");
-    expect(get("chat-1")?.steers).toEqual([
-      { id: "steer-m-42", text: "actually use tabs", origin: "user", pending: true },
-    ]);
-  });
-
-  // submit.ts reuses one message id when it retries a failed attempt, so the
-  // retry has to refresh the row rather than add a second one for one message.
-  it("is idempotent by message id, so a retried submit adds no second row", () => {
-    fc.assert(
-      fc.property(fc.integer({ min: 1, max: 6 }), (repeats) => {
-        resetStore("chat-1");
-        for (let i = 0; i < repeats; i++) {
-          recordSteerSent("chat-1", "m-1", "same message");
-        }
-        expect(steerCount("chat-1")).toBe(1);
-      }),
-    );
-  });
-
-  it("ignores a submit with no message id rather than creating an unaddressable row", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "", "nowhere");
-    expect(get("chat-1")?.steers).toBeUndefined();
-  });
-
-  // The rollback half. A 409 for the message just sent must un-draw its own row
-  // and nothing else — a sibling still waiting is a different message.
-  it("forgets one pending row and leaves a confirmed sibling alone", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "earlier", origin: "user" });
-    recordSteerSent("chat-1", "m-2", "just sent");
-    forgetSteer("chat-1", steerIDFor("m-2"));
-    expect(get("chat-1")?.steers).toEqual([{ id: "steer-1", text: "earlier", origin: "user" }]);
-  });
-
-  it("deletes the field when the forgotten row was the last one", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-1", "one");
-    forgetSteer("chat-1", steerIDFor("m-1"));
-    expect(get("chat-1")?.steers).toBeUndefined();
-  });
-
-  it("is a no-op when the id to forget is not held", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-1", "one");
-    const before = get("chat-1")?.steers;
-    forgetSteer("chat-1", "steer-nope");
-    // Same array identity: a no-op must not churn the session, or the dock would
-    // repaint on every failed dispatch elsewhere.
-    expect(get("chat-1")?.steers).toBe(before);
-  });
-
-  // --- The server's half: confirm, and the reconcile that keeps it one row ---
-
-  it("records a queued steer as waiting, with no pending flag", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "actually use tabs", origin: "user" });
-    expect(steerCount("chat-1")).toBe(1);
-    expect(get("chat-1")?.steers?.[0]).toEqual({
-      id: "steer-1",
-      origin: "user",
-      text: "actually use tabs",
-    });
-  });
-
-  // THE case both halves exist for: the optimistic row and its confirmation are
-  // one row, not two. The id matches because the client derived the one KAS
-  // returns.
-  it("confirms the pending row in place when the ids agree", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-1", "use tabs instead");
-    recordSteerQueued("chat-1", {
-      id: steerIDFor("m-1"),
-      text: "use tabs instead",
-      origin: "user",
-    });
-    expect(get("chat-1")?.steers).toEqual([
-      { id: "steer-m-1", text: "use tabs instead", origin: "user" },
-    ]);
-  });
-
-  // The safety net for a KAS whose id convention has drifted: the oldest pending
-  // row with the same TEXT adopts the server's id, so the reconcile does not
-  // depend on the prefix rule holding.
-  it("adopts a server id onto the pending row when only the text matches", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-1", "use tabs instead");
-    recordSteerQueued("chat-1", {
-      id: "kas-generated-7",
-      text: "use tabs instead",
-      origin: "user",
-    });
-    expect(get("chat-1")?.steers).toEqual([
-      { id: "kas-generated-7", text: "use tabs instead", origin: "user" },
-    ]);
-  });
-
-  // With two in flight, the server's id lands on the OLDEST match, so the second
-  // still has a row of its own waiting for its own frame.
-  it("adopts onto the oldest pending row of equal text, leaving the newer pending", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-1", "same words");
-    recordSteerSent("chat-1", "m-2", "same words");
-    recordSteerQueued("chat-1", { id: "kas-1", text: "same words", origin: "user" });
-    expect(get("chat-1")?.steers).toEqual([
-      { id: "kas-1", text: "same words", origin: "user" },
-      { id: "steer-m-2", text: "same words", origin: "user", pending: true },
-    ]);
-  });
-
-  // An SSE reconnect replays unacknowledged frames, so the same steer_queued can
-  // legitimately arrive twice. Two rows for one message would misreport how much
-  // the agent has been told.
-  it("is idempotent by id across a replayed frame", () => {
-    fc.assert(
-      fc.property(fc.integer({ min: 1, max: 6 }), (repeats) => {
-        resetStore("chat-1");
-        for (let i = 0; i < repeats; i++) {
-          recordSteerQueued("chat-1", { id: "steer-1", text: "same message", origin: "user" });
-        }
-        expect(steerCount("chat-1")).toBe(1);
-      }),
-    );
-  });
-
-  it("ignores a queued frame with an empty id", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "", text: "nowhere", origin: "user" });
-    expect(steerCount("chat-1")).toBe(0);
-  });
-
-  // --- Promotion: out of the dock, into the transcript ---
-
-  it("moves a read steer out of the dock and anchors it in the turn", () => {
-    chatWithTurn("chat-1", 2);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "use tabs instead", "user");
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1")).toEqual([
-      {
-        id: "steer-1",
-        origin: "user",
-        text: "use tabs instead",
-        anchor: { msgID: "a-1", blockIndex: 2 },
-      },
-    ]);
-  });
-
-  // The promotion also has to find an optimistic row whose id KAS never
-  // confirmed: the injected frame can beat the queued one.
-  it("promotes a still-pending row through the text fallback", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerSent("chat-1", "m-1", "use tabs instead");
-    promoteSteer("chat-1", "kas-generated-7", "use tabs instead", "user");
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["kas-generated-7"]);
-  });
-
-  // Two steer_injected frames, one id: KAS's read frame carries the text, the
-  // agent's acknowledgement marker carries what it did. Each field is adopted
-  // only from the frame that has it, or the second would blank the first's text
-  // — and the second must not re-anchor a note already placed, or the reader
-  // would watch it jump down the turn.
-  it("merges a later acknowledgement onto the mark without blanking it", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "use tabs instead", "user");
-    // A second block arrives between the two frames, so a re-anchor would be
-    // visible as the note jumping down the turn.
-    upsertMessage("chat-1", { id: "a-1", role: "assistant", ts: 2, blocks: turnBlocks(2) });
-    promoteSteer("chat-1", "steer-1", "", "user", "switched the file to tabs");
-    expect(steerMarks("chat-1")).toEqual([
-      {
-        id: "steer-1",
-        origin: "user",
-        text: "use tabs instead",
-        ack: "switched the file to tabs",
-        anchor: { msgID: "a-1", blockIndex: 1 },
-      },
-    ]);
-  });
-
-  // A read frame after an ack frame must not erase the ack: SSE reconnect
-  // replays every unanswered frame, so the two can arrive in either order.
-  it("keeps an acknowledgement when a read frame is replayed after it", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "", "user", "did the thing");
-    promoteSteer("chat-1", "steer-1", "one", "user");
-    expect(steerMarks("chat-1")[0]?.ack).toBe("did the thing");
-    expect(steerMarks("chat-1")).toHaveLength(1);
-  });
-
-  // steer_injected can arrive with no steer_queued behind it: another device sent
-  // the steer, or this one connected mid-turn. Dropping it would leave the
-  // transcript showing the agent change course with nothing explaining why.
-  it("marks an injected steer it never saw queued", () => {
-    chatWithTurn("chat-1", 0);
-    promoteSteer("chat-1", "steer-ghost", "from another tab", "user");
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1")).toEqual([
-      {
-        id: "steer-ghost",
-        origin: "user",
-        text: "from another tab",
-        anchor: { msgID: "a-1", blockIndex: 0 },
-      },
-    ]);
-  });
-
-  // An ack frame carries no text, so an id this client never saw has nothing to
-  // label a note with. A note reading only "the agent did X" names no message
-  // and cannot be matched to anything the user wrote.
-  it("ignores an acknowledgement for a steer it never saw", () => {
-    chatWithTurn("chat-1", 1);
-    promoteSteer("chat-1", "steer-unknown", "", "user", "did something");
-    expect(get("chat-1")?.steer_marks).toBeUndefined();
-  });
-
-  it("ignores a promotion with an empty id", () => {
-    chatWithTurn("chat-1", 1);
-    promoteSteer("chat-1", "", "nowhere", "user");
-    expect(get("chat-1")?.steer_marks).toBeUndefined();
-  });
-
-  // A reconnect replays the queued frame for a steer the agent has since read.
-  // Appending it as confirmed would put a delivered message back in the dock.
-  it("does not resurrect a dock row for an already-promoted id", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "one", "user");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1")).toHaveLength(1);
-  });
-
-  // A steer read before the turn produced anything belongs ABOVE the turn's
-  // first block, and until that message exists there is no id to say so with.
-  it("rebinds an anchor-less mark to the first assistant message that arrives", () => {
-    resetStore("chat-1");
-    appendMessage("chat-1", { id: "u-1", role: "user", ts: 1, content: "go" });
-    promoteSteer("chat-1", "steer-1", "read before anything landed", "user");
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
-
-    appendMessage("chat-1", { id: "a-9", role: "assistant", ts: 2, content: "here" });
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-9", blockIndex: 0 });
-  });
-
-  // --- Turn-boundary drops: the same move, labelled undelivered ---
-
-  it("promotes a dropped steer as undelivered, keeping its text", () => {
-    chatWithTurn("chat-1", 3);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "never read", origin: "user" });
-    dropSteers("chat-1", ["steer-1"]);
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1")).toEqual([
-      {
-        id: "steer-1",
-        origin: "user",
-        text: "never read",
-        dropped: true,
-        anchor: { msgID: "a-1", blockIndex: 3 },
-      },
-    ]);
-  });
-
-  // KAS clears its buffer at EVERY boundary, so `steer_cleared` routinely names
-  // ids the model already read. Those keep their existing note; a second one
-  // claiming they were missed would be false.
-  it("leaves an already-promoted id alone rather than marking it undelivered", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "one", "user");
-    dropSteers("chat-1", ["steer-1"]);
-    expect(steerMarks("chat-1")).toEqual([
-      { id: "steer-1", text: "one", origin: "user", anchor: { msgID: "a-1", blockIndex: 1 } },
-    ]);
-  });
-
-  it("drops only the named ids", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-3", text: "three", origin: "user" });
-    dropSteers("chat-1", ["steer-1", "steer-3"]);
-    expect(get("chat-1")?.steers?.map((e) => e.id)).toEqual(["steer-2"]);
-    expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["steer-1", "steer-3"]);
-  });
-
-  // The field is DELETED rather than emptied so a cleared session compares equal
-  // to one that never had steers — the dock dedups by value, and an empty array
-  // would repaint on every turn boundary.
-  it("deletes the field when the last steer goes", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    dropSteers("chat-1", ["steer-1"]);
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1")).toHaveLength(1);
-  });
-
-  it("treats an empty id list as drop-everything, which is what a turn boundary means", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
-    dropSteers("chat-1", []);
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1").map((m) => m.dropped)).toEqual([true, true]);
-  });
-
-  it("is a no-op for ids it does not hold, and for an unknown chat", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    const before = get("chat-1")?.steers;
-    dropSteers("chat-1", ["steer-nope"]);
-    // Same array identity: a no-op must not churn the session, or every
-    // boundary would repaint the row.
-    expect(get("chat-1")?.steers).toBe(before);
-    expect(get("chat-1")?.steer_marks).toBeUndefined();
-    dropSteers("nonexistent");
-    expect(steerCount("nonexistent")).toBe(0);
-  });
-
-  // --- The two paths that leave NO mark ---
-
-  // An explicit discard is not the agent missing something, so the entries go
-  // before the server's frame can promote them. Only the confirmed ones: a
-  // pending steer is not in KAS's buffer yet, so the clear cannot address it and
-  // removing it locally would hide a message still on its way.
-  it("takes the confirmed rows out on an explicit discard and keeps the pending one", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    recordSteerSent("chat-1", "m-2", "still sending");
-    const removed = dropConfirmedSteers("chat-1");
-    expect(removed.map((e) => e.id)).toEqual(["steer-1", "steer-m-2"]);
-    expect(get("chat-1")?.steers).toEqual([
-      { id: "steer-m-2", text: "still sending", origin: "user", pending: true },
-    ]);
-    // No note, which is the point: the user took the message back.
-    expect(get("chat-1")?.steer_marks).toBeUndefined();
-  });
-
-  it("reports nothing removed when every row is still pending", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-1", "still sending");
-    expect(dropConfirmedSteers("chat-1")).toEqual([]);
-    expect(steerCount("chat-1")).toBe(1);
-  });
-
-  // The rollback of a failed discard restores the array as it was, in order,
-  // rather than reconstructing it from the entries taken.
-  it("restores a discard snapshot in its original order", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "two", origin: "user" });
-    const removed = dropConfirmedSteers("chat-1");
-    expect(get("chat-1")?.steers).toBeUndefined();
-    restoreSteers("chat-1", removed);
-    expect(get("chat-1")?.steers?.map((e) => e.id)).toEqual(["steer-1", "steer-2"]);
-  });
-
-  // ---------------------------------------------------------------------------
-  // `pendingSteerCarry` — what the boundary resend carries into the next turn.
-  // ---------------------------------------------------------------------------
-
-  // ARRIVAL ORDER, always: the reader gets their own messages back reading the way
-  // they wrote them, so neither the caller nor the frame decides the order.
-  it("reads the waiting entries in arrival order", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
-    expect(pendingSteerCarry("chat-1").map((e) => e.text)).toEqual(["first", "second"]);
-  });
-
-  it("narrows to a named set, still in arrival order", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-3", text: "third", origin: "user" });
-    // The frame lists them backwards; the answer does not.
-    expect(pendingSteerCarry("chat-1", ["steer-3", "steer-1"]).map((e) => e.text)).toEqual([
-      "first",
-      "third",
-    ]);
-  });
-
-  // THE PENDING EXCLUSION, and it is the same line `dropConfirmedSteers` draws for a
-  // sharper reason: a pending row's POST is still resolving, and submit.ts already
-  // converts a `no_turn` refusal of it into a prompt. Resending it here as well would
-  // send one message twice.
-  it("excludes a row whose own POST is still in flight", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "confirmed", origin: "user" });
-    recordSteerSent("chat-1", "m-2", "still sending");
-    expect(steerCount("chat-1")).toBe(2);
-    expect(pendingSteerCarry("chat-1").map((e) => e.text)).toEqual(["confirmed"]);
-  });
-
-  // THE ORIGIN EXCLUSION, and it is a DUPLICATE-SEND guard like the one above rather
-  // than a tidiness rule: KAS re-wakes an undelivered workflow notification itself, by
-  // starting its own turn with it, so carrying one here delivers it twice. The row is
-  // still in the dock and still earns its `dropped` mark — it is only not RESENT.
-  it("excludes the agent's own notice, which KAS re-wakes itself", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "mine", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "workflow says hi", origin: "agent" });
-    expect(steerCount("chat-1")).toBe(2);
-    expect(pendingSteerCarry("chat-1").map((e) => e.text)).toEqual(["mine"]);
-    // Named explicitly, so the `steer_cleared` door cannot reach it either.
-    expect(pendingSteerCarry("chat-1", ["steer-2"])).toEqual([]);
-  });
-
-  // The entries carry ids because the send-now arrow names its lead row by id; a bare
-  // text list could not express that without matching on the words themselves.
-  it("carries each row's id beside its text", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    expect(pendingSteerCarry("chat-1")).toEqual([{ id: "steer-1", text: "one" }]);
-  });
-
-  // An empty list means "the whole set", matching `dropSteers`, so an absent and an
-  // empty argument cannot mean different things.
-  it("reads the whole set for an empty id list", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    expect(pendingSteerCarry("chat-1", []).map((e) => e.text)).toEqual(["one"]);
-  });
-
-  it("answers empty for a chat with nothing waiting, and for a chat it does not hold", () => {
-    resetStore("chat-1");
-    expect(pendingSteerCarry("chat-1")).toEqual([]);
-    expect(pendingSteerCarry("no-such-chat")).toEqual([]);
-  });
-
-  // A steer the agent READ has left the dock, so it is not eligible by construction
-  // rather than by a filter — which is what makes "only never-read steers are
-  // resent" true without a second rule to keep in step.
-  it("answers nothing for a steer the agent has read", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "read one", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "read one", "user");
-    expect(pendingSteerCarry("chat-1")).toEqual([]);
-    expect(pendingSteerCarry("chat-1", ["steer-1"])).toEqual([]);
-  });
-
-  // A transport gap means the frames that resolved these steers may be among the
-  // ones we lost, so promoting them would assert "the agent never read this" on
-  // no evidence. Marks already established are facts and stay.
-  it("forgets the dock on a gap without marking anything undelivered", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "read one", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "read one", "user");
-    recordSteerQueued("chat-1", { id: "steer-2", text: "unresolved", origin: "user" });
-    forgetSteers("chat-1");
-    expect(get("chat-1")?.steers).toBeUndefined();
-    expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["steer-1"]);
-  });
-});
-
-// The one field on a steer that is not the user's text: whose words it is.
-// Nothing on the wire separates the user's correction from a workflow reporting
-// into the same KAS buffer, so the server resolves it and the client carries it
-// unchanged — the note's TITLE is what it decides.
-describe("Store steer origin", () => {
-  it("carries an agent-origin queued frame through to the mark", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", {
-      id: "notify-wf-9",
-      text: "A workflow you launched completed.",
-      origin: "agent",
-    });
-    expect(get("chat-1")?.steers?.[0]?.origin).toBe("agent");
-
-    promoteSteer("chat-1", "notify-wf-9", "A workflow you launched completed.", "agent");
-    expect(steerMarks("chat-1")[0]?.origin).toBe("agent");
-  });
-
-  // A dropped steer has no injected frame to read an origin off, so the mark
-  // takes the dock entry's — which came from the queued frame the server stamped.
-  it("keeps an agent origin on a steer the boundary dropped unread", () => {
-    chatWithTurn("chat-1", 0);
-    recordSteerQueued("chat-1", { id: "notify-wf-9", text: "step failed", origin: "agent" });
-    dropSteers("chat-1", ["notify-wf-9"]);
-    const mark = steerMarks("chat-1")[0];
-    expect(mark?.dropped).toBe(true);
-    expect(mark?.origin).toBe("agent");
-  });
-
-  // The ack frame must not rewrite it. Both frames carry an origin and the server
-  // resolves both from one ledger, but that ledger is TTL'd: a long gap between
-  // the read and the acknowledgement could have the second frame answer `agent`
-  // for a message the first correctly named as the user's.
-  it("writes the origin once, on the frame that creates the mark", () => {
-    chatWithTurn("chat-1", 1);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "use tabs", "user");
-    promoteSteer("chat-1", "steer-1", "", "agent", "switched to tabs");
-    const mark = steerMarks("chat-1")[0];
-    expect(mark?.ack, "the ack still lands").toBe("switched to tabs");
-    expect(mark?.origin, "and the origin is the first frame's").toBe("user");
-  });
-
-  // The optimistic row's own claim, which the server's frame then confirms under
-  // the same id: this device POSTed it, so `user` is a fact rather than a guess.
-  it("marks a locally submitted steer as the user's", () => {
-    resetStore("chat-1");
-    recordSteerSent("chat-1", "m-42", "actually use tabs");
-    expect(get("chat-1")?.steers?.[0]?.origin).toBe("user");
-  });
-});
-
-// A mark's anchor records where the steer WAS read, which is durable intent worth
-// keeping as written. Where it can be DRAWN is a different question — one about
-// the window that exists NOW — and `steerMarks` is the reader that answers it,
-// because the renderer sees one message at a time and cannot tell an ORPHANED
-// anchor from a foreign one.
-//
-// What orphans an anchor: the in-flight assistant message lives in the server's
-// in-memory buffer until `turn_ended`, so it is absent from
-// `GET /api/chats/{id}` and a refetch drops it (store-load.test.ts pins that);
-// eviction plus a refetch does the same to a whole window. Every rebuild path
-// carries `steer_marks` over, so the mark itself always survives.
-describe("Store steer anchor resolution", () => {
-  it("leaves an anchor that names a resident message untouched", () => {
-    chatWithTurn("chat-1", 2);
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
-    promoteSteer("chat-1", "steer-1", "use tabs", "user");
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
-  });
-
-  it("rewrites an anchor naming an absent message to the newest assistant message", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "the correction", "user");
-    // The window the reader comes back to: the anchored message is gone and a
-    // LATER assistant message is what the page holds, with three blocks of its own.
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [
-          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
-          { id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) },
-        ],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-9", blockIndex: 3 });
-  });
-
-  // `anchorFor` records the empty anchor when the turn has produced nothing, and
-  // `rebindPendingAnchors` only fires for a message ARRIVING. A window refetched
-  // with the reply already in it never sees that arrival.
-  it("resolves the empty anchor produced by a turn that had output nothing", () => {
-    resetStore("chat-1");
-    promoteSteer("chat-1", "steer-1", "read before any output", "user");
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
-
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [{ id: "a-1", role: "assistant", ts: 2, blocks: turnBlocks(1) }],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 1 });
-  });
-
-  // The tail is the newest ASSISTANT message, never the newest message of any
-  // role: only an assistant body renders steer notes, so resolving to a user row
-  // would move the anchor somewhere the renderer will never visit — a silent loss
-  // wearing a resolved anchor. With none resident the mark keeps what it was
-  // written with, and the note renders nowhere; that residual is phase 3's
-  // (persisting the steer into the turn), not something this reader can fake.
-  it("keeps the recorded anchor when no assistant message is resident", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "the correction", "user");
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [{ id: "u-1", role: "user", ts: 1, content: "do the thing" }],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
-  });
-
-  // Nothing to resolve against, and nothing to render into either.
-  it("leaves the anchor alone when the window is empty", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "the correction", "user");
-    setSessions([{ ...makeSession("chat-1"), steer_marks: [...steerMarks("chat-1")] }]);
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
-  });
-
-  // The other half of the rule `rebindPendingAnchors` already applies to an
-  // ARRIVING message ("a plan row does not capture a pending steer anchor"
-  // below): a plan row is RoleAssistant and is not the reply the steer was read
-  // into, so resolving to it would put the note against the plan card. One
-  // predicate, two readers — a gate written twice can disagree, and the
-  // disagreement reads as the anchor moving between rows on its own.
-  it("does not resolve to a plan row, which is RoleAssistant and not a reply", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "the correction", "user");
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [
-          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
-          {
-            id: "m-plan",
-            role: "assistant",
-            ts: 2,
-            content: "",
-            plan: [{ content: "step one", priority: "high", status: "pending" }],
-          },
-        ],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
-  });
-
-  // A trailing user row belongs to a LATER turn that has produced nothing yet — a
-  // prompt persists its row before it asks for the chat's admission slot — so the
-  // tail steps over it rather than reading it as the newest thing in the window.
-  it("resolves past a trailing user row to the assistant message before it", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "the correction", "user");
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [
-          { id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) },
-          { id: "u-2", role: "user", ts: 4, content: "next prompt" },
-        ],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-9", blockIndex: 3 });
-  });
-
-  // The resolution is a READ, so the stored intent is unchanged: a window that
-  // regains the message it lost draws the note where the steer was actually read.
-  it("does not write the resolved anchor back onto the session", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "the correction", "user");
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [{ id: "a-9", role: "assistant", ts: 3, blocks: turnBlocks(3) }],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1")[0]?.anchor.msgID, "the read resolves").toBe("a-9");
-    expect(get("chat-1")?.steer_marks?.[0]?.anchor.msgID, "the record does not move").toBe("a-1");
-  });
-
-  it("answers with no marks for a chat it does not hold", () => {
-    resetStore("chat-1");
-    expect(steerMarks("nonexistent")).toEqual([]);
-  });
-
-  // The DOUBLE RENDER: once the replay projection persists a steer as a user row
-  // carrying `user_kind: "steer"`, the transcript draws that row through the same
-  // primitive the mark draws through, so a window holding both draws the note
-  // twice. Both ids are KAS's own `steer-` id, so the suppression is an equality
-  // test between two values marotte received — never a prefix parse — and the
-  // DURABLE row wins, because it survives a reload and the mark does not.
-  it("omits a mark whose own id names a resident message", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "use tabs", "user");
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [
-          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
-          { id: "steer-1", role: "user", ts: 2, content: "use tabs", user_kind: "steer" },
-          { id: "a-1", role: "assistant", ts: 3, blocks: turnBlocks(2) },
-        ],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1")).toEqual([]);
-    // A READ, like the anchor resolution beside it: the record does not move, so a
-    // window that loses the durable row again draws the mark.
-    expect(get("chat-1")?.steer_marks).toHaveLength(1);
-  });
-
-  // The other direction, so the case above cannot pass by the filter dropping
-  // everything. Unconditional and BEFORE the early returns: this mark's anchor
-  // needs no move, which is the shape a filter written after them would skip.
-  it("returns a mark whose id is not resident, anchor-resolved as before", () => {
-    chatWithTurn("chat-1", 2);
-    promoteSteer("chat-1", "steer-1", "use tabs", "user");
-    setSessions([
-      {
-        ...makeSession("chat-1"),
-        messages: [
-          { id: "u-1", role: "user", ts: 1, content: "do the thing" },
-          { id: "steer-other", role: "user", ts: 2, content: "someone else", user_kind: "steer" },
-          { id: "a-1", role: "assistant", ts: 3, blocks: turnBlocks(2) },
-        ],
-        steer_marks: [...steerMarks("chat-1")],
-      },
-    ]);
-    expect(steerMarks("chat-1").map((m) => m.id)).toEqual(["steer-1"]);
-    expect(steerMarks("chat-1")[0]?.anchor).toEqual({ msgID: "a-1", blockIndex: 2 });
-  });
-});
-
-describe("Store setName", () => {
-  it("updates session name", () => {
-    resetStore("chat-1");
-    expect(get("chat-1")!.name).toBe("test");
-    setName("chat-1", "Renamed");
-    expect(get("chat-1")!.name).toBe("Renamed");
-  });
-
-  it("no-ops on unknown chat", () => {
-    resetStore("chat-1");
-    setName("nonexistent", "X");
-    expect(get("chat-1")!.name).toBe("test");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Per-message + per-tool signal architecture
-// ---------------------------------------------------------------------------
-
-import { appendChunk, republishWindowToolCalls, upsertToolCall } from "./store.js";
-import { ensureToolCallSig, clearToolCallSig, peekToolCallSig } from "./store-signals.js";
-import type { ToolCall } from "./types.js";
-
-describe("streaming accumulation", () => {
-  it("appendChunk keeps content and reasoning in separate fields", () => {
-    resetStore("chat-1");
-    appendChunk("chat-1", "m1", "hello", false, 0, "");
-    const session = get("chat-1")!;
-    expect(session.messages[0]?.content).toBe("hello");
-    expect(session.messages[0]?.reasoning ?? "").toBe("");
-
-    appendChunk("chat-1", "m1", " world", false, 0, "");
-    expect(session.messages[0]?.content).toBe("hello world");
-    expect(session.messages[0]?.reasoning ?? "").toBe("");
-
-    appendChunk("chat-1", "m1", "let me think", true, 1, "");
-    expect(session.messages[0]?.reasoning).toBe("let me think");
-    expect(session.messages[0]?.content).toBe("hello world");
-  });
-
-  // The three per-message-signal cases were here. That registry is gone: the per-BLOCK
-  // signals (`blockTextSigs` / `blockThinkingSigs`) superseded it, nothing ever created a
-  // message-level one, and the store's read of it could not execute.
-});
-
-describe("per-tool signal", () => {
-  const baseTC = (id: string, status: ToolCall["status"]): ToolCall => ({
-    id,
-    title: "readFile",
-    kind: "read",
-    status,
-    ts: 0,
-  });
-
-  it("upsertToolCall: first add bumps global, subsequent updates fan via signal", () => {
-    resetStore("chat-1");
-    appendMessage("chat-1", { id: "m1", role: "assistant", ts: 0, content: "" });
-
-    // First tool — this creates the tool array. No signal yet, so it
-    // bumps global to trigger reconcile mount.
-    upsertToolCall("chat-1", "m1", baseTC("t1", "pending"), 0);
-
-    // Now mount-time signal subscription happens.
-    const sig = ensureToolCallSig("chat-1", "t1", baseTC("t1", "pending"));
-    const firedCount = 0;
-    const lastValue: ToolCall | null = null;
-    // Manually subscribe via reading sig.value in an effect-like wrapper.
-    // (Tests don't import `effect`; we use peek/value to simulate the flow.)
-    const observed: ToolCall[] = [];
-    // Update via upsertToolCall — should fire the signal directly,
-    // not via global reconcile.
-    upsertToolCall("chat-1", "m1", baseTC("t1", "completed"), 0);
-    expect(sig.value.status).toBe("completed");
-
-    // Idle reads to satisfy the linter.
-    void firedCount;
-    void lastValue;
-    void observed;
-
-    clearToolCallSig("chat-1", "t1");
-  });
-
-  it("ensureToolCallSig is idempotent on the chat and id together", () => {
-    const a = ensureToolCallSig("chat-1", "t-id", baseTC("t-id", "pending"));
-    const b = ensureToolCallSig("chat-1", "t-id", baseTC("t-id", "completed"));
-    // Same signal — initial value preserved (b's `initial` is ignored).
-    expect(a).toBe(b);
-    expect(a.value.status).toBe("pending");
-    clearToolCallSig("chat-1", "t-id");
-  });
-
-  // THE KEYING: a tool call id is backend-authored and the wire guarantees no
-  // uniqueness for it, while `upsertToolCall` runs for whatever chat a frame
-  // arrived on. Keyed on the id alone, a collision wrote a background chat's card
-  // state into the visible chat's card.
-  it("keeps two chats' signals for one tool call id apart", () => {
-    const a = ensureToolCallSig("chat-A", "dup", baseTC("dup", "pending"));
-    const b = ensureToolCallSig("chat-B", "dup", baseTC("dup", "pending"));
-    expect(a).not.toBe(b);
-  });
-
-  it("does not move a signal ensured under chat A when chat B is written", () => {
-    resetStore("chat-A");
-    resetStore("chat-B");
-    upsertToolCall("chat-A", "m1", baseTC("dup", "pending"), 0);
-    upsertToolCall("chat-B", "m1", baseTC("dup", "pending"), 0);
-    const a = ensureToolCallSig("chat-A", "dup", baseTC("dup", "pending"));
-
-    upsertToolCall("chat-B", "m1", baseTC("dup", "completed"), 0);
-
-    expect(a.value.status).toBe("pending");
-    clearToolCallSig("chat-A", "dup");
-  });
-});
-
-// A FETCHED WINDOW REACHES A MOUNTED CARD, which until this existed nothing did: a card's
-// DOM has one refresh channel, the per-call signal, and the SSE path was its only writer.
-// So a window replacement left every mounted card showing whatever it was built from —
-// which is what made the boot snapshot's deliberately-truncated output permanent, the
-// record being a paint-time hint the server's answer is meant to supersede.
-describe("republishWindowToolCalls", () => {
-  const call = (id: string, output: string): ToolCall => ({
+function textEntry(turnID: string, seq: number, text: string, lane?: string): Entry {
+  return sealed(turnID, seq, "text", { text }, lane === undefined ? {} : { lane });
+}
+
+// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a
+// `Partial` widens every required field to include `undefined`, which the target type refuses.
+function toolCall(id: string, over: Partial<EntryToolCall> = {}): EntryToolCall {
+  const base: EntryToolCall = {
     id,
     title: "Run Command",
+    status: "in_progress",
     kind: "execute",
-    status: "completed",
-    ts: 0,
-    output,
-  });
-
-  // UNCONDITIONAL, so a failing assertion above cannot leak the signal into a later case:
-  // the map is module state and `resetStore` does not reach it.
-  afterEach(() => {
-    clearToolCallSig("chat-1", "t1");
-  });
-
-  it("replaces a mounted card's value with the fetched call", () => {
-    resetStore("chat-1");
-    // The mount, with the copy a snapshot paint hands a card: the output cut to what a
-    // first frame does not show.
-    const sig = ensureToolCallSig("chat-1", "t1", call("t1", "clipped"));
-
-    republishWindowToolCalls("chat-1", [
-      {
-        id: "m1",
-        role: "assistant",
-        ts: 0,
-        content: "",
-        tool_calls: [call("t1", "the whole answer")],
-      },
-    ]);
-
-    expect(sig.value.output).toBe("the whole answer");
-  });
-
-  it("publishes nothing at a card already showing the fetched call", () => {
-    resetStore("chat-1");
-    const mounted = call("t1", "the whole answer");
-    const sig = ensureToolCallSig("chat-1", "t1", mounted);
-
-    // A freshly decoded copy: equal in every field `applyToolCallUpdate` reads, and never
-    // the object the card mounted with — which is the only comparison the card's own effect
-    // makes (`messages-tools.ts` guards on `next === lastApplied`). So publishing it
-    // repaints every mounted card on every load, and `applyOutputUpdate` re-creates
-    // `.tool-output-reveal`, taking a reader's expansion of a long output with it.
-    republishWindowToolCalls("chat-1", [
-      {
-        id: "m1",
-        role: "assistant",
-        ts: 0,
-        content: "",
-        tool_calls: [call("t1", "the whole answer")],
-      },
-    ]);
-
-    // IDENTITY: the signal still holds the object the card was mounted with, so its effect
-    // never ran.
-    expect(sig.peek()).toBe(mounted);
-  });
-
-  it("republishes a call whose style spans the record dropped", () => {
-    resetStore("chat-1");
-    // The record deletes `output_spans` outright and truncates nothing under 256 bytes, so
-    // a SHORT styled output mounts with every scalar the card reads already equal. Compared
-    // on those alone the publish would be skipped and the card would keep unstyled text for
-    // the life of the document — which is why the spans are in the comparison.
-    const sig = ensureToolCallSig("chat-1", "t1", call("t1", "ok"));
-
-    republishWindowToolCalls("chat-1", [
-      {
-        id: "m1",
-        role: "assistant",
-        ts: 0,
-        content: "",
-        tool_calls: [
-          { ...call("t1", "ok"), output_spans: [{ start: 0, end: 2, fg: 2, bg: -1, attrs: 0 }] },
-        ],
-      },
-    ]);
-
-    expect(sig.peek().output_spans).toHaveLength(1);
-  });
-
-  it("mints no signal for a call nothing has mounted", () => {
-    resetStore("chat-1");
-
-    republishWindowToolCalls("chat-1", [
-      { id: "m1", role: "assistant", ts: 0, content: "", tool_calls: [call("t-unmounted", "out")] },
-    ]);
-
-    // `get`-not-`ensure` is what keeps a window of hundreds of calls from leaving a
-    // signal behind for every card nobody is looking at.
-    expect(peekToolCallSig("chat-1", "t-unmounted")).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The chunk watermark: what this client has already folded into the chat's in-flight
-// assistant message. TWO writers — a server-sent whole copy of the turn (the transcript
-// GET's `live_turn`), and `appendChunk` as live chunks land — and the second is what lets
-// a copy fetched LATER be told from a stale one.
-// ---------------------------------------------------------------------------
-
-import { setChunkWatermark, clearChunkWatermark, chunkWatermark } from "./store.js";
-
-describe("appendChunk chunk-watermark gating", () => {
-  it("drops chunks at or below the watermark, applies those above", () => {
-    resetStore("chat-ws");
-    // A server copy said: message m-snap already contains deltas 1..3.
-    setChunkWatermark("chat-ws", "m-snap", 3);
-
-    appendChunk("chat-ws", "m-snap", "dup-1 ", false, 0, "", 2); // folded in → drop
-    appendChunk("chat-ws", "m-snap", "dup-2 ", false, 0, "", 3); // boundary → drop
-    appendChunk("chat-ws", "m-snap", "fresh", false, 0, "", 4); // new → apply
-
-    const msg = get("chat-ws")!.messages.find((m) => m.id === "m-snap");
-    expect(msg?.content).toBe("fresh");
-    clearChunkWatermark("chat-ws");
-  });
-
-  it("seq 0 (pre-seq server or unrelated turn) always applies", () => {
-    resetStore("chat-ws0");
-    setChunkWatermark("chat-ws0", "m-snap", 5);
-    appendChunk("chat-ws0", "m-snap", "legacy", false, 0, "", 0);
-    const msg = get("chat-ws0")!.messages.find((m) => m.id === "m-snap");
-    expect(msg?.content).toBe("legacy");
-    clearChunkWatermark("chat-ws0");
-  });
-
-  it("a different message id ignores the watermark (fresh turn)", () => {
-    resetStore("chat-wsx");
-    setChunkWatermark("chat-wsx", "m-old", 99);
-    appendChunk("chat-wsx", "m-new", "next turn", false, 0, "", 1);
-    const msg = get("chat-wsx")!.messages.find((m) => m.id === "m-new");
-    expect(msg?.content).toBe("next turn");
-    clearChunkWatermark("chat-wsx");
-  });
-
-  it("clearChunkWatermark lifts the gate", () => {
-    resetStore("chat-wsc");
-    setChunkWatermark("chat-wsc", "m-snap", 10);
-    clearChunkWatermark("chat-wsc");
-    appendChunk("chat-wsc", "m-snap", "after clear", false, 0, "", 1);
-    const msg = get("chat-wsc")!.messages.find((m) => m.id === "m-snap");
-    expect(msg?.content).toBe("after clear");
-  });
-
-  // The SECOND writer. Without it the mark only ever describes the last whole copy the
-  // server sent, so a chunk re-delivered above that seq — a reconnect replaying from the
-  // ring, a frame the transport delivered twice — is appended a second time.
-  it("raises the mark as live chunks land, so a re-delivered chunk is dropped", () => {
-    resetStore("chat-wsr");
-    appendChunk("chat-wsr", "m-live", "once ", false, 0, "", 5);
-    appendChunk("chat-wsr", "m-live", "once ", false, 0, "", 5); // re-delivered → drop
-
-    const msg = get("chat-wsr")!.messages.find((m) => m.id === "m-live");
-    expect(msg?.content).toBe("once ");
-    clearChunkWatermark("chat-wsr");
-  });
-
-  it("reports the mark the live stream reached", () => {
-    // `store-load.ts` reads this to refuse a fetched in-flight turn that is OLDER than
-    // what the live stream has already delivered, so the number has to be readable.
-    resetStore("chat-wsq");
-    expect(chunkWatermark("chat-wsq", "m-live")).toBeUndefined();
-
-    appendChunk("chat-wsq", "m-live", "a", false, 0, "", 4);
-
-    expect(chunkWatermark("chat-wsq", "m-live")).toBe(4);
-    // Keyed on the MESSAGE as well as the chat: a mark for the previous turn says nothing
-    // about this one, and reading it as one would refuse the new turn's whole copy.
-    expect(chunkWatermark("chat-wsq", "m-other")).toBeUndefined();
-    clearChunkWatermark("chat-wsq");
-  });
-
-  it("a seq-0 chunk applies without lowering the mark", () => {
-    // Seq 0 means "an older server, or a frame with no sequence", so it is applied — but
-    // recording it as the mark would let every chunk the server already folded in arrive
-    // again, which is the gate above defeated by its own writer.
-    resetStore("chat-wsz");
-    setChunkWatermark("chat-wsz", "m-snap", 5);
-
-    appendChunk("chat-wsz", "m-snap", "legacy", false, 0, "", 0);
-
-    expect(chunkWatermark("chat-wsz", "m-snap")).toBe(5);
-    clearChunkWatermark("chat-wsz");
-  });
-
-  it("a new message id replaces the mark rather than keeping the old turn's", () => {
-    // A different id is a fresh turn, whose own seq starts from 1 again — maxing against
-    // the previous turn's mark would drop the whole of the new one.
-    resetStore("chat-wsn");
-    setChunkWatermark("chat-wsn", "m-old", 99);
-
-    appendChunk("chat-wsn", "m-new", "next turn", false, 0, "", 1);
-
-    expect(chunkWatermark("chat-wsn", "m-new")).toBe(1);
-    expect(chunkWatermark("chat-wsn", "m-old")).toBeUndefined();
-    clearChunkWatermark("chat-wsn");
-  });
-});
-
-// mergeMessage is a field-by-field ALLOWLIST: an unlisted field is silently
-// dropped on the second ingest of the same id, and a user message with
-// attachments is ingested at least twice — once from the prompt's own
-// message_appended and again on any chat refetch or reconnect replay. So the
-// clause is what makes the turn header's pills survive a reload, not decoration.
-describe("Store message attachments (merge allowlist)", () => {
-  const atts = [
-    { path: "out/shot.png", name: "shot.png" },
-    { path: "docs/spec.pdf", name: "spec.pdf" },
-  ];
-
-  it("keeps the attachments on first ingest", () => {
-    resetStore("chat-att1");
-    appendMessage("chat-att1", {
-      id: "m-1",
-      role: "user",
-      ts: 1,
-      content: "look at these",
-      attachments: atts,
-    });
-    expect(get("chat-att1")?.messages[0]?.attachments).toEqual(atts);
-  });
-
-  it("survives a re-ingest of the same id that omits them", () => {
-    resetStore("chat-att2");
-    appendMessage("chat-att2", {
-      id: "m-1",
-      role: "user",
-      ts: 1,
-      content: "look at these",
-      attachments: atts,
-    });
-    // A refetch or replay of the same row without the field must not erase it —
-    // the exact shape the allowlist exists to get right.
-    upsertMessage("chat-att2", { id: "m-1", role: "user", ts: 1, content: "look at these" });
-    expect(get("chat-att2")?.messages[0]?.attachments).toEqual(atts);
-  });
-
-  it("adopts a non-empty incoming list over an existing one", () => {
-    resetStore("chat-att3");
-    appendMessage("chat-att3", { id: "m-1", role: "user", ts: 1, content: "x", attachments: [] });
-    upsertMessage("chat-att3", {
-      id: "m-1",
-      role: "user",
-      ts: 1,
-      content: "x",
-      attachments: atts,
-    });
-    expect(get("chat-att3")?.messages[0]?.attachments).toEqual(atts);
-  });
-
-  it("leaves a message with none alone", () => {
-    resetStore("chat-att4");
-    appendMessage("chat-att4", { id: "m-1", role: "user", ts: 1, content: "just a question" });
-    expect(get("chat-att4")?.messages[0]?.attachments).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The render signal: one bump per list change, coalesced, PER CHAT.
-//
-// Each chat's `messagesVersionOf` signal is the renderer's only coarse "the
-// list changed" input, and the streaming paths deliberately do NOT bump it per
-// delta — the per-block and per-message signals carry those. Worth pinning:
-// a list change bumps exactly once; several changes in one tick still bump
-// exactly once; a BACKGROUND chat's changes bump its own signal and never the
-// active chat's; and a chat removed before its deferred flush does not get its
-// version signal re-minted by the flush.
-// ---------------------------------------------------------------------------
-
-import {
-  messagesVersionOf,
-  bumpMessages,
-  renderCauseOf,
-  watchActiveId,
-  isThinking,
-  defaultUsage,
-  setTurnFailed,
-  clearTurnFailed,
-  clearTurnDone,
-  relatchTurnVerdict,
-  outcomeLatch,
-  applyLatch,
-  latchFieldsFor,
-  tabStatusFor,
-  setAgentStatus,
-  setCurrentMode,
-  setSupervisedMode,
-  setEffort,
-  normalizeMessage,
-  setTurnSummary,
-  reinsertSession,
-  setCodeReferences,
-  rebuildMsgIndex,
-  subagentStatusFor,
-  type TabDotState,
-} from "./store.js";
-import type { ToolStatus } from "./types.js";
-import { ensureBlockTextSig, ensureBlockThinkingSig, clearAllBlockSigs } from "./store-signals.js";
-
-/** Let the queueMicrotask coalescer run. A macrotask, so every pending
- *  microtask has drained by the time it resolves. */
-function tick(): Promise<void> {
-  return new Promise((r) => setTimeout(r, 0));
+    ts: 1,
+  };
+  return Object.assign(base, over);
 }
 
-describe("per-chat messages version", () => {
-  it("counts up by one per explicit bump, on the named chat only", () => {
-    const mine = messagesVersionOf("mv-a").peek();
-    const other = messagesVersionOf("mv-b").peek();
-    bumpMessages("mv-a");
-    expect(messagesVersionOf("mv-a").peek()).toBe(mine + 1);
-    expect(messagesVersionOf("mv-b").peek()).toBe(other);
-  });
+function toolResult(over: Partial<EntryToolResult> = {}): EntryToolResult {
+  const base: EntryToolResult = { status: "completed" };
+  return Object.assign(base, over);
+}
 
-  it("coalesces two new messages arriving in one tick into one render", async () => {
-    resetStore("mv-1");
-    const before = messagesVersionOf("mv-1").peek();
-    appendChunk("mv-1", "m-a", "a", false, 0, "");
-    appendChunk("mv-1", "m-b", "b", false, 0, "");
-    // Deferred: the coalescer owns the microtask, so nothing has repainted yet.
-    expect(messagesVersionOf("mv-1").peek()).toBe(before);
-    await tick();
-    expect(messagesVersionOf("mv-1").peek()).toBe(before + 1);
-  });
+/** Open a turn and return its id, so a case reads as one line of arrange. */
+function openTurnIn(chatID: string, turnID: string, n = 1, promptID?: string): string {
+  openTurn(chatID, turnOpenEntry(turnID, n, promptID));
+  return turnID;
+}
 
-  it("schedules again once the deferred render has run", async () => {
-    resetStore("mv-2");
-    appendChunk("mv-2", "m-a", "a", false, 0, "");
-    await tick();
-    const between = messagesVersionOf("mv-2").peek();
-    appendChunk("mv-2", "m-b", "b", false, 0, "");
-    await tick();
-    // The guard has to reset, or the second turn of any chat never repaints.
-    expect(messagesVersionOf("mv-2").peek()).toBe(between + 1);
-  });
+/** The repair calls `store.ts` asked for, in order. Installed per test so a case can assert
+ *  that a hole was DETECTED without the loader being present. */
+let repairs: { chatID: string; turnID: string; afterSeq?: number }[] = [];
 
-  it("a background chat's stream bumps its own version, never the active chat's", async () => {
-    setSessions([makeSession("mv-fg"), makeSession("mv-bg")]);
-    setActive("mv-fg");
-    const fg = messagesVersionOf("mv-fg").peek();
-    const bg = messagesVersionOf("mv-bg").peek();
-    appendChunk("mv-bg", "m-a", "a", false, 0, "");
-    await tick();
-    expect(messagesVersionOf("mv-bg").peek()).toBe(bg + 1);
-    expect(messagesVersionOf("mv-fg").peek()).toBe(fg);
+beforeEach(() => {
+  repairs = [];
+  registerTurnRepair((chatID, turnID, afterSeq) => {
+    repairs.push(afterSeq === undefined ? { chatID, turnID } : { chatID, turnID, afterSeq });
   });
+  resetFreshness();
+  clearAllEntrySigs();
+  toolCallSigs.clearAll();
+});
 
-  it("a chat removed before its deferred flush is skipped, not re-minted", async () => {
-    resetStore("mv-gone");
-    appendChunk("mv-gone", "m-a", "a", false, 0, "");
-    removeChat("mv-gone");
-    const fresh = messagesVersionOf("mv-gone").peek(); // a NEW signal, minted by this read
-    await tick();
-    // The parked flush must not have bumped the re-minted signal.
-    expect(messagesVersionOf("mv-gone").peek()).toBe(fresh);
-  });
-
-  it("transcript facts bump the chat's version (coalesced)", async () => {
-    resetStore("mv-fact");
-    const before = messagesVersionOf("mv-fact").peek();
-    setThinking("mv-fact", true);
-    await tick();
-    expect(messagesVersionOf("mv-fact").peek()).toBe(before + 1);
-    const mid = messagesVersionOf("mv-fact").peek();
-    setTurnFailed("mv-fact");
-    setWorkingLabel("mv-fact", "Reading files");
-    await tick();
-    // Two facts in one tick coalesce into one repaint.
-    expect(messagesVersionOf("mv-fact").peek()).toBe(mid + 1);
-  });
-
-  it("a replayed fact frame that changes nothing bumps nothing", async () => {
-    resetStore("mv-noop");
-    setTurnFailed("mv-noop");
-    await tick();
-    const before = messagesVersionOf("mv-noop").peek();
-    setTurnFailed("mv-noop"); // replay: latch already set
-    await tick();
-    expect(messagesVersionOf("mv-noop").peek()).toBe(before);
-  });
-
-  it("watchActiveId reads the active id", () => {
-    setSessions([makeSession("mv-w")]);
-    setActive("mv-w");
-    expect(watchActiveId()).toBe("mv-w");
+afterEach(() => {
+  registerTurnRepair(() => {
+    // No repair recorded outside a case that installed its own collector.
   });
 });
 
-// ---------------------------------------------------------------------------
-// parseContextSize: the whitespace the model catalog's prose actually carries.
-//
-// The table above covers the shapes we have seen; these cover the tolerance the
-// `\s*` in both patterns exists for. The input is upstream prose from the model
-// catalog, so "128K context", "128K  context" and "128Kcontext" are all the same
-// claim, and a multi-digit M size must not be read one digit at a time.
-// ---------------------------------------------------------------------------
+// --- parseContextSize ----------------------------------------------------------------
 
-describe("parseContextSize tolerates the spacing upstream prose varies on", () => {
-  const cases: { input: string; expected: number | undefined }[] = [
-    { input: "128K  context", expected: 128_000 },
-    { input: "128Kcontext", expected: 128_000 },
-    { input: "2M  context", expected: 2_000_000 },
-    { input: "10M context", expected: 10_000_000 },
-    { input: "100 M context", expected: 100_000_000 },
+describe("parseContextSize reads a window size out of a model's own description", () => {
+  const cases: [string, number | undefined][] = [
+    ["200K context", 200_000],
+    ["200k context", 200_000],
+    ["1M context", 1_000_000],
+    ["2M context", 2_000_000],
+    ["Claude with 200K context window", 200_000],
+    ["no numbers here", undefined],
+    ["", undefined],
+    ["200Kcontext", 200_000],
+    ["200 K context", 200_000],
+    ["200  K  context", 200_000],
+    ["200K  Context", 200_000],
   ];
-
-  for (const { input, expected } of cases) {
-    it(`parseContextSize(${JSON.stringify(input)}) → ${String(expected)}`, () => {
+  for (const [input, expected] of cases) {
+    it(`reads ${JSON.stringify(input)} as ${String(expected)}`, () => {
       expect(parseContextSize(input)).toBe(expected);
     });
   }
 });
 
-// ---------------------------------------------------------------------------
-// The latches, and the no-churn discipline they share.
-//
-// Every mutator here is driven by an SSE frame that an interrupted stream can
-// replay, so "already in that state" has to be a no-op rather than a rewrite:
-// a rewrite fires the chat's per-entity signal, and every subscriber of that
-// chat repaints for a frame that said nothing new. Object identity is the only
-// way to assert that from outside, which is why these read `toBe`.
-// ---------------------------------------------------------------------------
+// --- The active session ----------------------------------------------------------------
 
-describe("Store defaults for a chat it has never heard of", () => {
-  it("reports no turn in flight", () => {
+describe("the active session", () => {
+  it("follows the active id", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+    expect(getActive()?.id).toBe("a");
+    setActive("b");
+    expect(getActive()?.id).toBe("b");
+  });
+
+  it("answers undefined when nothing is active", () => {
+    setSessions([makeSession("a")]);
+    setActive("");
+    expect(getActive()).toBeUndefined();
+    expect(activeSession.value).toBeUndefined();
+  });
+
+  it("never resolves the no-active sentinel to a row whose id is empty", () => {
+    const ghost = makeSession("");
+    setSessions([ghost, makeSession("a")]);
+    setActive("");
+    expect(activeSession.value).toBeUndefined();
+  });
+
+  it("re-fires on the ACTIVE session's field change and not on another's", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+    let runs = 0;
+    const stop = effect(() => {
+      void activeSession.value?.name;
+      runs += 1;
+    });
+    const base = runs;
+    setName("b", "other");
+    expect(runs).toBe(base);
+    setName("a", "mine");
+    expect(runs).toBe(base + 1);
+    stop();
+  });
+
+  it("recovers when the active id is set before the session exists", () => {
     setSessions([]);
-    expect(isThinking("nobody")).toBe(false);
+    setActive("later");
+    expect(activeSession.value).toBeUndefined();
+    upsertHeader(headerFor("later"));
+    expect(activeSession.value?.id).toBe("later");
   });
 
-  it("seeds usage as not-yet-measured", () => {
-    // The flag is what stops the context ring presenting a fresh chat's zeroes as
-    // a measurement; flipping it would make "0 credits used" look observed.
-    expect(defaultUsage().has_real_data).toBe(false);
-  });
-});
-
-describe("Store failure latch", () => {
-  it("latches a failed turn", () => {
-    resetStore("tf-1");
-    setTurnFailed("tf-1");
-    expect(get("tf-1")?.turn_failed).toBe(true);
-    expect(tabStatusFor(get("tf-1"))).toBe("failed");
-  });
-
-  it("does not churn the session on a replayed error frame", () => {
-    resetStore("tf-2");
-    setTurnFailed("tf-2");
-    const latched = get("tf-2");
-    setTurnFailed("tf-2");
-    expect(get("tf-2")).toBe(latched);
-  });
-
-  it("clears on request without a turn starting", () => {
-    resetStore("tf-3");
-    setTurnFailed("tf-3");
-    clearTurnFailed("tf-3");
-    expect(get("tf-3")?.turn_failed).toBeUndefined();
-    expect(tabStatusFor(get("tf-3"))).toBe("idle");
-  });
-
-  it("does not churn the session clearing a latch that was never set", () => {
-    resetStore("tf-4");
-    const before = get("tf-4");
-    clearTurnFailed("tf-4");
-    expect(get("tf-4")).toBe(before);
+  it("reads the active id, tracked and untracked", () => {
+    resetStore("a");
+    expect(getActiveId()).toBe("a");
+    expect(watchActiveId()).toBe("a");
   });
 });
 
-// ---------------------------------------------------------------------------
-// turnLive: the projection's liveness input, and the ONE reader of `turn_open`.
-//
-// `thinking` alone cannot answer it. It is this client's memory of a stream it has
-// watched, and it starts false — so between `GET /api/chats/{id}` painting and the
-// held `connected` frame releasing, a turn whose reply is still in the server's
-// buffer read "not running", and the projection derived `unknown` ("nothing closed
-// this turn") for a turn the server knew was running.
-// ---------------------------------------------------------------------------
+// --- The session collection ------------------------------------------------------------
 
-describe("Store turnLive", () => {
-  it("is true when EITHER input says a turn is running", () => {
-    resetStore("tl-1");
-    setThinking("tl-1", true);
-    const streaming = get("tl-1");
-    expect(streaming !== undefined && turnLive(streaming)).toBe(true);
-
-    // The reload shape: no frame has arrived, so `thinking` is false and only the
-    // server's statement is available.
-    resetStore("tl-2");
-    setTurnOpen("tl-2", true);
-    const reloaded = get("tl-2");
-    expect(reloaded?.thinking).toBe(false);
-    expect(reloaded !== undefined && turnLive(reloaded)).toBe(true);
-  });
-
-  it("is false only when BOTH inputs say nothing is running", () => {
-    resetStore("tl-3");
-    const idle = get("tl-3");
-    expect(idle !== undefined && turnLive(idle)).toBe(false);
-
-    setTurnOpen("tl-3", false);
-    const stated = get("tl-3");
-    expect(stated !== undefined && turnLive(stated)).toBe(false);
-  });
-
-  it("is true for a provisional row, which states neither input", () => {
-    // The reload shape, built the way `boot-snapshot.ts` toProvisionalSession builds
-    // one: `thinking: false` hard-coded, no `turn_open`, `provisional: true`. Both
-    // inputs default to the terminal direction, so `false` here is a guess, and the
-    // guess derives `unknown` for the newest turn — which paints "The turn ended for
-    // a reason marotte could not read." over a turn the server is still streaming.
-    //
-    // `resetStore`'s own row is NOT provisional, which is what keeps the case above
-    // green and pins this term on the mark rather than on `turn_open === undefined`.
-    setSessions([{ ...makeSession("tl-6"), provisional: true }]);
-    const hinted = get("tl-6");
-    expect(hinted?.thinking).toBe(false);
-    expect(hinted?.turn_open).toBeUndefined();
-    expect(hinted !== undefined && turnLive(hinted)).toBe(true);
-  });
-
-  it("drops the server's statement when a NEW turn starts", () => {
-    // It described the PREVIOUS turn, so it joins the two outcome latches in
-    // `setThinking(id, true)`'s invalidation block. Left standing, a stale `false`
-    // would put `turnLive` back on `thinking` alone.
-    resetStore("tl-4");
-    setTurnOpen("tl-4", false);
-    setThinking("tl-4", true);
-    expect(get("tl-4")?.turn_open).toBeUndefined();
-  });
-
-  it("does not churn the session on a repeated statement", () => {
-    resetStore("tl-5");
-    setTurnOpen("tl-5", true);
-    const stated = get("tl-5");
-    setTurnOpen("tl-5", true);
-    expect(get("tl-5")).toBe(stated);
+describe("the session collection stays consistent under arbitrary add and remove", () => {
+  it("keeps every id's index in sync with the list", () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            op: fc.constantFrom("add", "remove") as fc.Arbitrary<"add" | "remove">,
+            id: fc.constantFrom("a", "b", "c", "d"),
+          }),
+          { maxLength: 24 },
+        ),
+        (ops) => {
+          setSessions([]);
+          for (const { op, id } of ops) {
+            if (op === "add") {
+              upsertHeader(headerFor(id));
+            } else {
+              removeChat(id);
+            }
+          }
+          const ids = getSessions().map((s) => s.id);
+          for (const [i, id] of ids.entries()) {
+            expect(indexOfSession(id)).toBe(i);
+          }
+          expect(new Set(ids).size).toBe(ids.length);
+        },
+      ),
+    );
   });
 });
 
-describe("Store finished latch", () => {
-  it("does not churn the session clearing a latch that was never set", () => {
-    resetStore("td-1");
-    const before = get("td-1");
-    clearTurnDone("td-1");
-    expect(get("td-1")).toBe(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// relatchTurnVerdict: the outcome latches, re-derived from the persisted
-// record. The latches are client memory and every reload or transport gap
-// drops them, while the newest message's turn_outcome is durable — so the
-// latch is re-set from it exactly as the live turn_ended handler would have
-// set it. The refusals are half the contract: a live turn invalidates every
-// prior verdict, and a latch already set is newer than anything the page
-// carries.
-// ---------------------------------------------------------------------------
-
-describe("Store relatchTurnVerdict", () => {
-  /** An assistant row as the persisted page carries it; `outcome` absent means
-   *  a message the finalize path never stamped. */
-  function row(id: string, outcome?: Message["turn_outcome"]): Message {
-    return {
-      id,
-      role: "assistant",
-      ts: 1,
-      content: "done.",
-      ...(outcome === undefined ? {} : { turn_outcome: outcome }),
-    };
-  }
-
-  function seed(chatID: string, messages: Message[]): void {
-    setSessions([{ ...makeSession(chatID), messages }]);
-    setActive(chatID);
-  }
-
-  it("re-latches done from the newest persisted outcome, skipping unstamped rows", () => {
-    seed("rl-1", [row("m1", "completed"), { id: "m2", role: "user", ts: 2, content: "thanks" }]);
-    relatchTurnVerdict("rl-1");
-    expect(get("rl-1")?.turn_done).toBe(true);
-    expect(tabStatusFor(get("rl-1"))).toBe("done");
-  });
-
-  it("the newest outcome wins: a failed turn after a completed one relatches failed", () => {
-    seed("rl-2", [row("m1", "completed"), row("m2", "failed")]);
-    relatchTurnVerdict("rl-2");
-    expect(get("rl-2")?.turn_failed).toBe(true);
-    expect(get("rl-2")?.turn_done).toBeUndefined();
-  });
-
-  it("a refusal relatches the failure latch, like the live handler", () => {
-    seed("rl-3", [row("m1", "refused")]);
-    relatchTurnVerdict("rl-3");
-    expect(get("rl-3")?.turn_failed).toBe(true);
-  });
-
-  it("takes the NEWEST outcome even when an older row would grade differently", () => {
-    // The newest outcome is the chat's verdict: the scan STOPS there rather than
-    // digging below it. Both rows here happen to latch `done` now, so the thing
-    // this pins is that the walk stops — `turn_failed` staying unset is what
-    // proves it read m2 and not something else.
-    seed("rl-4", [row("m1", "failed"), row("m2", "cancelled")]);
-    relatchTurnVerdict("rl-4");
-    expect(get("rl-4")?.turn_failed).toBeUndefined();
-    expect(get("rl-4")?.turn_done).toBe(true);
-    expect(tabStatusFor(get("rl-4"))).toBe("done");
-  });
-
-  it("refuses while a turn is live: thinking invalidates every prior verdict", () => {
-    seed("rl-5", [row("m1", "completed")]);
-    setThinking("rl-5", true);
-    relatchTurnVerdict("rl-5");
-    expect(get("rl-5")?.turn_done).toBeUndefined();
-  });
-
-  it("refuses to overwrite a latch already set", () => {
-    seed("rl-6", [row("m1", "completed")]);
-    setTurnFailed("rl-6");
-    relatchTurnVerdict("rl-6");
-    expect(get("rl-6")?.turn_failed).toBe(true);
-    expect(get("rl-6")?.turn_done).toBeUndefined();
-  });
-
-  it("does not churn the session when no message carries an outcome", () => {
-    seed("rl-7", [row("m1"), row("m2")]);
-    const before = get("rl-7");
-    relatchTurnVerdict("rl-7");
-    expect(get("rl-7")).toBe(before);
-  });
-
-  it("falls back to the header's own outcome when no resident message carries one", () => {
-    // The ordinary state of a chat whose window was never fetched, which is
-    // exactly the population the connect retraction reaches: no resident outcome
-    // to read, and `last_turn_outcome` is the durable statement standing in for
-    // it. Without the fallback that chat re-latches nothing and paints the hollow
-    // ring that means it has never initiated.
-    setSessions([{ ...makeSession("rl-8"), last_turn_outcome: "failed" } as Session]);
-    relatchTurnVerdict("rl-8");
-    expect(get("rl-8")?.turn_failed).toBe(true);
-  });
-
-  it("prefers a resident outcome over the header's, which is older", () => {
-    // The other half: the fallback is a fallback. A resident message states how
-    // the newest turn ended, and the header can only report what the server knew
-    // when it was built.
-    setSessions([
-      {
-        ...makeSession("rl-9"),
-        messages: [row("m1", "completed")],
-        last_turn_outcome: "failed",
-      } as Session,
-    ]);
-    relatchTurnVerdict("rl-9");
-    expect(get("rl-9")?.turn_done).toBe(true);
-    expect(get("rl-9")?.turn_failed).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// applyLatch: the ONE writer of the pair.
-//
-// It exists so a fourth producer of the verdict cannot spell the mapping a
-// fourth way — `handlers/turn.ts` is the other one — which makes the empty
-// answer's arm as load-bearing as the two that write: a `running` outcome and
-// an absent one both reach it, and either latching something would report a
-// turn in flight as settled.
-// ---------------------------------------------------------------------------
-
-describe("Store applyLatch", () => {
-  beforeEach(() => {
-    setSessions([makeSession("al-1")]);
-  });
-
-  it("writes the finished latch for done", () => {
-    applyLatch("al-1", "done");
-    expect(get("al-1")?.turn_done).toBe(true);
-    expect(get("al-1")?.turn_failed).toBeUndefined();
-  });
-
-  it("writes the failure latch for failed", () => {
-    applyLatch("al-1", "failed");
-    expect(get("al-1")?.turn_failed).toBe(true);
-    expect(get("al-1")?.turn_done).toBeUndefined();
-  });
-
-  it("writes nothing at all for the empty answer", () => {
-    const before = get("al-1");
-    applyLatch("al-1", "");
-    expect(get("al-1")?.turn_done).toBeUndefined();
-    expect(get("al-1")?.turn_failed).toBeUndefined();
-    // Not even a session churn: the row is the same object, so no subscriber
-    // re-derives for a call that decided nothing.
-    expect(get("al-1")).toBe(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// setAgentStatus: the agent's own words about what it is doing.
-//
-// An empty string is a CLEAR rather than a value — the field is deleted so a
-// cleared session compares equal to one that never had a status, which is what
-// keeps the tab strip from repainting on every turn boundary.
-// ---------------------------------------------------------------------------
-
-describe("Store agent status", () => {
-  it("records the status", () => {
-    resetStore("as-1");
-    setAgentStatus("as-1", "waiting_on_user");
-    expect(get("as-1")?.agent_status).toBe("waiting_on_user");
-  });
-
-  it("does not churn the session on a repeated frame", () => {
-    resetStore("as-2");
-    setAgentStatus("as-2", "in_progress");
-    const settled = get("as-2");
-    setAgentStatus("as-2", "in_progress");
-    expect(get("as-2")).toBe(settled);
-  });
-
-  it("takes a new status", () => {
-    resetStore("as-4");
-    setAgentStatus("as-4", "in_progress");
-    setAgentStatus("as-4", "completed");
-    expect(get("as-4")?.agent_status).toBe("completed");
-  });
-
-  it("reads an empty status as a clear, and deletes the field", () => {
-    resetStore("as-5");
-    setAgentStatus("as-5", "completed");
-    setAgentStatus("as-5", "");
-    expect(get("as-5")?.agent_status).toBeUndefined();
-  });
-
-  it("does not churn a chat that never had one when an empty status arrives", () => {
-    // The `?? ""` on the read is what makes this a no-op: an absent field and a
-    // cleared one are the same state, so the clearing frame says nothing new.
-    resetStore("as-7");
-    const before = get("as-7");
-    setAgentStatus("as-7", "");
-    expect(get("as-7")).toBe(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// upsertHeader: a SERVER-authoritative re-sync that must not lose what only the
-// client knows. `chat_updated` arrives on every write to any field of the chat,
-// so this runs constantly and each `??` in it is a decision about who wins.
-// ---------------------------------------------------------------------------
-
-describe("Store upsertHeader re-sync", () => {
-  it("never lowers a message count the client has already seen", () => {
-    // The header's count is the server's; `messages` is the paginated window. A
-    // header built before the last turn was flushed would otherwise walk the
-    // count backwards and make a chat with history look empty.
-    setSessions([{ ...makeSession("uh-1"), message_count: 5 }]);
-    upsertHeader({ ...headerFor("uh-1"), message_count: 2 });
-    expect(get("uh-1")?.message_count).toBe(5);
-  });
-
-  it("does not read an empty model string as a clear either", () => {
-    // Same rule as an absent model, one step further along: "" is what a header
-    // built from a record the server has no model for looks like once the field
-    // is present at all.
-    setSessions([makeSession("uh-2")]);
-    setModel("uh-2", "claude-opus-5");
-    upsertHeader({ ...headerFor("uh-2"), model: "" });
-    expect(get("uh-2")?.model).toBe("claude-opus-5");
-  });
-
-  it("leaves supervised mode off when the header does not mention it", () => {
-    setSessions([makeSession("uh-3")]);
-    upsertHeader(headerFor("uh-3"));
-    expect(get("uh-3")?.supervised_mode).toBe(false);
-  });
-
-  it("adopts a compaction watermark", () => {
-    setSessions([makeSession("uh-4")]);
-    upsertHeader({ ...headerFor("uh-4"), compaction_watermark: "msg-42" });
-    expect(get("uh-4")?.compaction_watermark).toBe("msg-42");
-  });
-
-  it("drops the watermark when the header stops carrying one", () => {
-    setSessions([makeSession("uh-5")]);
-    upsertHeader({ ...headerFor("uh-5"), compaction_watermark: "msg-42" });
-    upsertHeader(headerFor("uh-5"));
-    expect(get("uh-5")?.compaction_watermark).toBeUndefined();
-  });
-
-  it("seeds a brand-new chat as idle and unsupervised", () => {
-    setSessions([]);
-    upsertHeader(headerFor("uh-6"));
-    expect(get("uh-6")?.thinking).toBe(false);
-    expect(get("uh-6")?.supervised_mode).toBe(false);
-  });
-
-  it("seeds a brand-new chat with history as having more to fetch", () => {
-    setSessions([]);
-    upsertHeader({ ...headerFor("uh-7"), message_count: 3 });
-    expect(get("uh-7")?.has_more).toBe(true);
-  });
-
-  it("seeds a brand-new empty chat as having nothing to fetch", () => {
-    setSessions([]);
-    upsertHeader(headerFor("uh-8"));
-    expect(get("uh-8")?.has_more).toBe(false);
-  });
-
-  it("carries a watermark onto a brand-new chat", () => {
-    setSessions([]);
-    upsertHeader({ ...headerFor("uh-9"), compaction_watermark: "msg-7" });
-    expect(get("uh-9")?.compaction_watermark).toBe("msg-7");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// removeChat and reinsertSession: the optimistic-delete pair.
-//
-// `chat.delete` removes the row before the server answers and puts it back if
-// the command fails, so which chat becomes active and where the row lands are
-// both user-visible.
-// ---------------------------------------------------------------------------
-
-describe("Store removeChat", () => {
+describe("removeChat", () => {
   it("activates the next remaining chat when the active one goes", () => {
-    setSessions([makeSession("rm-a"), makeSession("rm-b")]);
-    setActive("rm-a");
-    removeChat("rm-a");
-    expect(getActiveId()).toBe("rm-b");
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+    removeChat("a");
+    expect(getActiveId()).toBe("b");
   });
 
   it("leaves the active chat alone when a different one goes", () => {
-    setSessions([makeSession("rm-a"), makeSession("rm-b"), makeSession("rm-c")]);
-    setActive("rm-c");
-    removeChat("rm-a");
-    expect(getActiveId()).toBe("rm-c");
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+    removeChat("b");
+    expect(getActiveId()).toBe("a");
   });
 
   it("does not switch chats for an id that has no row", () => {
-    // An id can be active before its session arrives (the ghost case above), and
-    // removing something that was never there must not move the user.
-    setSessions([makeSession("rm-a"), makeSession("rm-b")]);
-    setActive("rm-ghost");
-    removeChat("rm-ghost");
-    expect(getActiveId()).toBe("rm-ghost");
+    resetStore("a");
+    removeChat("nope");
+    expect(getActiveId()).toBe("a");
   });
 
-  it("drops the removed chat's message index with it", () => {
-    setSessions([makeSession("rm-i")]);
-    appendMessage("rm-i", { id: "m-1", role: "user", ts: 1, content: "one" });
-    appendMessage("rm-i", { id: "m-2", role: "user", ts: 2, content: "two" });
-    removeChat("rm-i");
-    upsertHeader(headerFor("rm-i"));
-    // A surviving index would report m-2 as already resident at slot 1 of an
-    // empty list, and the message would be silently dropped.
-    appendMessage("rm-i", { id: "m-2", role: "user", ts: 2, content: "two" });
-    expect(get("rm-i")?.messages).toHaveLength(1);
-    expect(get("rm-i")?.messages[0]?.id).toBe("m-2");
+  it("drops the removed chat's per-entry signals with it", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1")));
+    ensureToolCallSig("a", "c1", toolCall("c1"));
+    expect(peekToolCallSig("a", "c1")).toBeDefined();
+    removeChat("a");
+    expect(peekToolCallSig("a", "c1")).toBeUndefined();
+  });
+
+  it("re-derives the active session ONCE when the active chat goes", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+    let runs = 0;
+    const stop = effect(() => {
+      void activeSession.value?.id;
+      runs += 1;
+    });
+    const base = runs;
+    removeChat("a");
+    expect(runs).toBe(base + 1);
+    stop();
   });
 });
 
-describe("Store reinsertSession", () => {
+describe("reinsertSession", () => {
   it("restores a removed chat at the index it held", () => {
-    setSessions([makeSession("ri-a"), makeSession("ri-b"), makeSession("ri-c")]);
-    const gone = get("ri-b")!;
-    removeChat("ri-b");
-    reinsertSession(gone, 1);
-    expect(getSessions().map((s) => s.id)).toEqual(["ri-a", "ri-b", "ri-c"]);
+    setSessions([makeSession("a"), makeSession("b"), makeSession("c")]);
+    const b = get("b");
+    removeChat("b");
+    reinsertSession(b as Session, 1);
+    expect(getSessions().map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
 
   it("puts it at the head when no index is named", () => {
-    setSessions([makeSession("ri-a"), makeSession("ri-b")]);
-    reinsertSession(makeSession("ri-z"));
-    expect(getSessions().map((s) => s.id)).toEqual(["ri-z", "ri-a", "ri-b"]);
+    setSessions([makeSession("a")]);
+    reinsertSession(makeSession("z"));
+    expect(getSessions().map((s) => s.id)).toEqual(["z", "a"]);
   });
 
   it("clamps an index past the end to the end", () => {
-    setSessions([makeSession("ri-a"), makeSession("ri-b")]);
-    reinsertSession(makeSession("ri-z"), 99);
-    expect(getSessions().map((s) => s.id)).toEqual(["ri-a", "ri-b", "ri-z"]);
+    setSessions([makeSession("a")]);
+    reinsertSession(makeSession("z"), 99);
+    expect(getSessions().map((s) => s.id)).toEqual(["a", "z"]);
   });
 
   it("clamps a negative index to the head", () => {
-    setSessions([makeSession("ri-a")]);
-    reinsertSession(makeSession("ri-z"), -5);
-    expect(getSessions().map((s) => s.id)).toEqual(["ri-z", "ri-a"]);
+    setSessions([makeSession("a")]);
+    reinsertSession(makeSession("z"), -5);
+    expect(getSessions().map((s) => s.id)).toEqual(["z", "a"]);
   });
 
   it("is idempotent: a chat already present is left where it is", () => {
-    setSessions([makeSession("ri-a"), makeSession("ri-b")]);
-    reinsertSession(makeSession("ri-b"), 0);
-    expect(getSessions().map((s) => s.id)).toEqual(["ri-a", "ri-b"]);
+    setSessions([makeSession("a"), makeSession("b")]);
+    reinsertSession(makeSession("b"), 0);
+    expect(getSessions().map((s) => s.id)).toEqual(["a", "b"]);
   });
 });
 
-// ---------------------------------------------------------------------------
-// normalizeMessage: give the renderer ONE path.
-//
-// v3 messages already carry `blocks`; a legacy replay carries content /
-// reasoning / tool_calls and nothing else. The synthesis order is the
-// chronological order the renderer walks — thinking, then text, then one
-// tool_use per call — and anything that already has blocks, or has nothing to
-// synthesize from, must pass through untouched rather than gain an empty array.
-// ---------------------------------------------------------------------------
+// --- The five entry operations ---------------------------------------------------------
 
-describe("Store normalizeMessage", () => {
-  it("leaves a user message alone", () => {
-    const m = { id: "n-1", role: "user" as const, ts: 1, content: "hello" };
-    expect(normalizeMessage(m).blocks).toBeUndefined();
+describe("openTurn", () => {
+  it("creates the turn with its turn_open as entries[0] and appends the turn order", () => {
+    resetStore("a");
+    openTurn("a", turnOpenEntry("t1", 1));
+    const state = get("a")?.turns.get("t1");
+    expect(state?.entries.map((e) => e.kind)).toEqual(["turn_open"]);
+    expect(state?.entries[0]?.seq).toBe(0);
+    expect(get("a")?.turn_order).toEqual(["t1"]);
   });
 
-  it("leaves an assistant message that already carries blocks alone", () => {
-    const blocks = [{ type: "text" as const, text: "already" }];
-    const m = { id: "n-2", role: "assistant" as const, ts: 1, content: "ignored", blocks };
-    expect(normalizeMessage(m).blocks).toBe(blocks);
+  it("is idempotent by turn id, so a replayed frame changes nothing", () => {
+    resetStore("a");
+    openTurn("a", turnOpenEntry("t1", 1));
+    appendEntry("a", textEntry("t1", 1, "hello"));
+    openTurn("a", turnOpenEntry("t1", 1));
+    expect(get("a")?.turns.get("t1")?.entries).toHaveLength(2);
+    expect(get("a")?.turn_order).toEqual(["t1"]);
   });
 
-  it("synthesizes into an assistant message whose blocks array is empty", () => {
-    // What appendChunk mints, and what a v3 message with no content looks like.
-    const m = { id: "n-3", role: "assistant" as const, ts: 1, content: "hi", blocks: [] };
-    expect(normalizeMessage(m).blocks).toEqual([{ type: "text", text: "hi" }]);
+  it("adopts turn_open.n as the session's turn count, never lowering it", () => {
+    resetStore("a");
+    openTurn("a", turnOpenEntry("t9", 9));
+    expect(get("a")?.turn_count).toBe(9);
+    openTurn("a", turnOpenEntry("t3", 3));
+    expect(get("a")?.turn_count).toBe(9);
   });
 
-  it("leaves a plan-only assistant message alone", () => {
-    const m = {
-      id: "n-4",
-      role: "assistant" as const,
-      ts: 1,
-      content: "",
-      plan: [{ content: "step one", priority: "high", status: "pending" as const }],
-    };
-    expect(normalizeMessage(m).blocks).toBeUndefined();
+  it("derives has_more from the count against what is resident", () => {
+    resetStore("a");
+    openTurn("a", turnOpenEntry("t5", 5));
+    expect(get("a")?.has_more).toBe(true);
+    openTurn("a", turnOpenEntry("t6", 1));
+    openTurn("a", turnOpenEntry("t7", 1));
+    openTurn("a", turnOpenEntry("t8", 1));
+    openTurn("a", turnOpenEntry("t9", 1));
+    expect(get("a")?.has_more).toBe(false);
   });
 
-  it("synthesizes a thinking block from reasoning alone", () => {
-    const m = { id: "n-5", role: "assistant" as const, ts: 1, reasoning: "let me think" };
-    expect(normalizeMessage(m).blocks).toEqual([{ type: "thinking", thinking: "let me think" }]);
+  it("is a no-op for a chat the store does not hold", () => {
+    setSessions([]);
+    openTurn("ghost", turnOpenEntry("t1", 1));
+    expect(get("ghost")).toBeUndefined();
   });
 
-  it("orders thinking ahead of text", () => {
-    const m = { id: "n-6", role: "assistant" as const, ts: 1, content: "answer", reasoning: "why" };
-    expect(normalizeMessage(m).blocks).toEqual([
-      { type: "thinking", thinking: "why" },
-      { type: "text", text: "answer" },
-    ]);
-  });
-
-  it("synthesizes one tool_use per call, carrying each call's subtask", () => {
-    const m = {
-      id: "n-7",
-      role: "assistant" as const,
-      ts: 1,
-      content: "",
-      tool_calls: [
-        {
-          id: "t-1",
-          origin: "user",
-          title: "readFile",
-          kind: "read" as const,
-          status: "completed" as const,
-          ts: 0,
-        },
-        {
-          id: "t-2",
-          origin: "user",
-          title: "bash",
-          kind: "execute" as const,
-          status: "completed" as const,
-          ts: 0,
-          agent_subtask_id: "sub-1",
-        },
-      ],
-    };
-    expect(normalizeMessage(m).blocks).toEqual([
-      { type: "tool_use", tool_call_id: "t-1" },
-      { type: "tool_use", tool_call_id: "t-2", agent_subtask_id: "sub-1" },
-    ]);
+  it("bumps the chat's version synchronously, because a new card must be in the frame", () => {
+    resetStore("a");
+    const before = messagesVersionOf("a").peek();
+    openTurn("a", turnOpenEntry("t1", 1));
+    expect(messagesVersionOf("a").peek()).toBe(before + 1);
+    expect(renderCauseOf("a").cause).toBe("shape");
   });
 });
 
-// ---------------------------------------------------------------------------
-// mergeMessage's allowlist, field by field.
-//
-// The rule is one sentence — adopt the incoming's non-empty fields, never
-// clobber a non-empty field with an empty one — and it is a per-field clause
-// rather than a loop, so every field is its own chance to get it wrong. A
-// message is ingested at least twice (its own message_appended, then any
-// refetch or reconnect replay), so a clause that clobbers loses real data on
-// the second pass.
-// ---------------------------------------------------------------------------
-
-describe("Store mergeMessage allowlist", () => {
-  const seededBlocks = () => [{ type: "text" as const, text: "seeded" }];
-
-  function seed(chat: string, over: Record<string, unknown> = {}): void {
-    setSessions([makeSession(chat)]);
-    setActive(chat);
-    appendMessage(chat, {
-      id: "mm-1",
-      role: "assistant",
-      ts: 5,
-      content: "seeded",
-      blocks: seededBlocks(),
-      ...over,
-    });
-  }
-
-  function reingest(chat: string, over: Record<string, unknown> = {}): void {
-    upsertMessage(chat, {
-      id: "mm-1",
-      role: "assistant",
-      ts: 5,
-      content: "seeded",
-      blocks: seededBlocks(),
-      ...over,
-    });
-  }
-
-  function merged(chat: string) {
-    return get(chat)?.messages[0];
-  }
-
-  it("adopts a non-empty incoming reasoning", () => {
-    seed("mg-1", { reasoning: "first pass" });
-    reingest("mg-1", { reasoning: "the sanitized version" });
-    expect(merged("mg-1")?.reasoning).toBe("the sanitized version");
-  });
-
-  it("adopts a non-empty incoming blocks array", () => {
-    seed("mg-2");
-    reingest("mg-2", { blocks: [{ type: "text", text: "final" }] });
-    expect(merged("mg-2")?.blocks).toEqual([{ type: "text", text: "final" }]);
-  });
-
-  it("does not let an empty blocks array wipe the streamed ones", () => {
-    // The message_created shape: an empty assistant bubble arriving after the
-    // stream that filled it. Nothing on it is non-empty, so normalizeMessage
-    // passes it through with its empty array and the merge has to refuse it.
-    seed("mg-3");
-    reingest("mg-3", { content: "", blocks: [] });
-    expect(merged("mg-3")?.blocks).toEqual([{ type: "text", text: "seeded" }]);
-  });
-
-  it("adopts a non-empty incoming tool_calls list", () => {
-    seed("mg-4");
-    reingest("mg-4", {
-      tool_calls: [{ id: "t-1", title: "readFile", kind: "read", status: "completed", ts: 0 }],
-    });
-    expect(merged("mg-4")?.tool_calls).toHaveLength(1);
-  });
-
-  it("does not let an empty tool_calls list wipe the streamed ones", () => {
-    seed("mg-5", {
-      tool_calls: [{ id: "t-1", title: "readFile", kind: "read", status: "pending", ts: 0 }],
-    });
-    reingest("mg-5", { tool_calls: [] });
-    expect(merged("mg-5")?.tool_calls).toHaveLength(1);
-  });
-
-  it("adopts a non-empty incoming plan", () => {
-    seed("mg-6");
-    reingest("mg-6", { plan: [{ content: "step one", priority: "high", status: "pending" }] });
-    expect(merged("mg-6")?.plan).toHaveLength(1);
-  });
-
-  it("does not let an empty plan wipe the one already rendered", () => {
-    seed("mg-7", { plan: [{ content: "step one", priority: "high", status: "pending" }] });
-    reingest("mg-7", { plan: [] });
-    expect(merged("mg-7")?.plan).toHaveLength(1);
-  });
-
-  it("adopts a non-empty incoming code_references list", () => {
-    seed("mg-8");
-    reingest("mg-8", { code_references: [{ license_name: "MIT" }] });
-    expect(merged("mg-8")?.code_references).toEqual([{ license_name: "MIT" }]);
-  });
-
-  it("does not let an empty code_references list wipe the footnote", () => {
-    seed("mg-9", { code_references: [{ license_name: "MIT" }] });
-    reingest("mg-9", { code_references: [] });
-    expect(merged("mg-9")?.code_references).toEqual([{ license_name: "MIT" }]);
-  });
-
-  it("does not let an empty attachments list wipe the turn header's pills", () => {
-    seed("mg-10", { attachments: [{ path: "out/shot.png", name: "shot.png" }] });
-    reingest("mg-10", { attachments: [] });
-    expect(merged("mg-10")?.attachments).toEqual([{ path: "out/shot.png", name: "shot.png" }]);
-  });
-
-  it("adopts a refusal that only the later frame carries", () => {
-    seed("mg-11");
-    reingest("mg-11", { refusal: { category: "policy" } });
-    expect(merged("mg-11")?.refusal).toEqual({ category: "policy" });
-  });
-
-  it("adopts an event_kind that only the later frame carries", () => {
-    seed("mg-12");
-    reingest("mg-12", { event_kind: "compacted" });
-    expect(merged("mg-12")?.event_kind).toBe("compacted");
-  });
-
-  it("adopts a later timestamp", () => {
-    seed("mg-13");
-    reingest("mg-13", { ts: 9 });
-    expect(merged("mg-13")?.ts).toBe(9);
-  });
-
-  it("does not let a zero timestamp overwrite a real one", () => {
-    // A frame that never had a ts decodes as 0, and a message stamped 1970 sorts
-    // to the top of the transcript.
-    seed("mg-14");
-    reingest("mg-14", { ts: 0 });
-    expect(merged("mg-14")?.ts).toBe(5);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// ingestMessage's bookkeeping.
-// ---------------------------------------------------------------------------
-
-describe("Store ingestMessage bookkeeping", () => {
-  it("never lowers the server's count when a message lands", () => {
-    setSessions([{ ...makeSession("ig-1"), message_count: 7 }]);
-    appendMessage("ig-1", { id: "m-1", role: "user", ts: 1, content: "one" });
-    expect(get("ig-1")?.message_count).toBe(7);
-  });
-
-  it("repaints when a message lands", () => {
-    resetStore("ig-2");
-    const before = messagesVersionOf("ig-2").peek();
-    appendMessage("ig-2", { id: "m-1", role: "user", ts: 1, content: "one" });
-    expect(messagesVersionOf("ig-2").peek()).toBe(before + 1);
-  });
-
-  it("repaints when an existing message is merged over", () => {
-    resetStore("ig-3");
-    appendMessage("ig-3", { id: "m-1", role: "user", ts: 1, content: "one" });
-    const before = messagesVersionOf("ig-3").peek();
-    upsertMessage("ig-3", { id: "m-1", role: "user", ts: 1, content: "one (sanitized)" });
-    expect(messagesVersionOf("ig-3").peek()).toBe(before + 1);
-  });
-
-  it("indexes messages that arrived with the session, so a replay merges", () => {
-    // The page-load shape: the fetched window is already on the record when the
-    // first ingest happens, so the index has to be built FROM it rather than
-    // accumulated by the ingests. Without that, every message in the window is
-    // appended a second time by the next refetch or reconnect replay.
-    setSessions([
-      {
-        ...makeSession("mi-1"),
-        message_count: 2,
-        messages: [
-          { id: "m-1", role: "user", ts: 1, content: "one" },
-          {
-            id: "m-2",
-            role: "assistant",
-            ts: 2,
-            content: "two",
-            blocks: [{ type: "text", text: "two" }],
-          },
-        ],
-      },
-    ]);
-    upsertMessage("mi-1", {
-      id: "m-2",
-      role: "assistant",
-      ts: 2,
-      content: "two (sanitized)",
-      blocks: [{ type: "text", text: "two (sanitized)" }],
-    });
-    expect(get("mi-1")?.messages).toHaveLength(2);
-    expect(get("mi-1")?.messages[1]?.content).toBe("two (sanitized)");
-  });
-
-  it("re-derives the index after a page of history is prepended", () => {
-    // The load-more path in store-load.ts: it prepends the older page onto
-    // `session.messages` (store-load.ts:181) and then calls rebuildMsgIndex,
-    // which is the only way the index can learn that every resident message
-    // shifted. Without the rebuild the next message_updated for a resident id
-    // merges into whatever now sits at its stale slot — silently rewriting a
-    // different turn.
-    setSessions([makeSession("rb-1")]);
-    appendMessage("rb-1", {
-      id: "m-new",
-      role: "assistant",
-      ts: 9,
-      content: "newest",
-      blocks: [{ type: "text", text: "newest" }],
-    });
-    const session = get("rb-1");
-    if (session === undefined) {
-      throw new Error("session went missing");
-    }
-    session.messages = [
-      { id: "m-old-1", role: "user", ts: 1, content: "oldest" },
-      {
-        id: "m-old-2",
-        role: "assistant",
-        ts: 2,
-        content: "older",
-        blocks: [{ type: "text", text: "older" }],
-      },
-      ...session.messages,
-    ];
-    rebuildMsgIndex("rb-1", session.messages);
-
-    upsertMessage("rb-1", {
-      id: "m-new",
-      role: "assistant",
-      ts: 9,
-      content: "newest (sanitized)",
-      blocks: [{ type: "text", text: "newest (sanitized)" }],
-    });
-
-    expect(get("rb-1")?.messages).toHaveLength(3);
-    expect(get("rb-1")?.messages[2]?.content).toBe("newest (sanitized)");
-    expect(get("rb-1")?.messages[0]?.content).toBe("oldest");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// setTurnSummary: the turn footer's ledger.
-//
-// It stamps the chat's LAST ASSISTANT message, which is not the last message —
-// the next user turn can already be on the record when a background turn's
-// summary arrives. Every field is guarded on being present AND meaningful,
-// because a zero credit count or an empty changed-files map would render a
-// footer claiming a measurement nobody made.
-// ---------------------------------------------------------------------------
-
-describe("Store setTurnSummary", () => {
-  function chatWithTurn(chat: string): void {
-    setSessions([makeSession(chat)]);
-    // Activated because four of these cases assert a repaint, and a repaint is
-    // gated on the chat being the one on screen ("repaints are gated on the
-    // active chat" below). The stamping itself is unconditional either way, which
-    // is what the non-repaint cases here check.
-    setActive(chat);
-    appendMessage(chat, {
-      id: "t-a",
-      role: "assistant",
-      ts: 1,
-      content: "first",
-      blocks: [{ type: "text", text: "first" }],
-    });
-    appendMessage(chat, {
-      id: "t-b",
-      role: "assistant",
-      ts: 2,
-      content: "second",
-      blocks: [{ type: "text", text: "second" }],
-    });
-    appendMessage(chat, { id: "t-c", role: "user", ts: 3, content: "next question" });
-  }
-
-  it("walks back past a trailing user message to the assistant's", () => {
-    chatWithTurn("ts-1");
-    setTurnSummary("ts-1", { credits: 4 });
-    expect(get("ts-1")?.messages[1]?.turn_credits).toBe(4);
-    expect(get("ts-1")?.messages[2]?.turn_credits).toBeUndefined();
-  });
-
-  it("stamps the credits and repaints", () => {
-    chatWithTurn("ts-2");
-    const before = messagesVersionOf("ts-2").peek();
-    setTurnSummary("ts-2", { credits: 12 });
-    expect(get("ts-2")?.messages[1]?.turn_credits).toBe(12);
-    expect(messagesVersionOf("ts-2").peek()).toBe(before + 1);
-  });
-
-  it("ignores a zero credit count rather than stamping one", () => {
-    chatWithTurn("ts-3");
-    const before = messagesVersionOf("ts-3").peek();
-    setTurnSummary("ts-3", { credits: 0 });
-    expect(get("ts-3")?.messages[1]?.turn_credits).toBeUndefined();
-    expect(messagesVersionOf("ts-3").peek()).toBe(before);
-  });
-
-  it("stamps the elapsed time and repaints", () => {
-    chatWithTurn("ts-4");
-    const before = messagesVersionOf("ts-4").peek();
-    setTurnSummary("ts-4", { elapsedMs: 250 });
-    expect(get("ts-4")?.messages[1]?.turn_elapsed_ms).toBe(250);
-    expect(messagesVersionOf("ts-4").peek()).toBe(before + 1);
-  });
-
-  it("ignores a zero elapsed time", () => {
-    chatWithTurn("ts-5");
-    const before = messagesVersionOf("ts-5").peek();
-    setTurnSummary("ts-5", { elapsedMs: 0 });
-    expect(get("ts-5")?.messages[1]?.turn_elapsed_ms).toBeUndefined();
-    expect(messagesVersionOf("ts-5").peek()).toBe(before);
-  });
-
-  it("stamps the changed files and repaints", () => {
-    chatWithTurn("ts-6");
-    const before = messagesVersionOf("ts-6").peek();
-    setTurnSummary("ts-6", {
-      changedFiles: { "src/parser.ts": { lines_added: 3, lines_removed: 1 } },
-    });
-    expect(get("ts-6")?.messages[1]?.changed_files).toEqual({
-      "src/parser.ts": { lines_added: 3, lines_removed: 1 },
-    });
-    expect(messagesVersionOf("ts-6").peek()).toBe(before + 1);
-  });
-
-  it("ignores an empty changed-files map", () => {
-    chatWithTurn("ts-7");
-    const before = messagesVersionOf("ts-7").peek();
-    setTurnSummary("ts-7", { changedFiles: {} });
-    expect(get("ts-7")?.messages[1]?.changed_files).toBeUndefined();
-    expect(messagesVersionOf("ts-7").peek()).toBe(before);
-  });
-
-  it("stamps the model and repaints", () => {
-    chatWithTurn("ts-8");
-    const before = messagesVersionOf("ts-8").peek();
-    setTurnSummary("ts-8", { model: "claude-opus-5" });
-    expect(get("ts-8")?.messages[1]?.turn_model).toBe("claude-opus-5");
-    expect(messagesVersionOf("ts-8").peek()).toBe(before + 1);
-  });
-
-  it("does not repaint for a summary carrying nothing", () => {
-    chatWithTurn("ts-9");
-    const before = messagesVersionOf("ts-9").peek();
-    setTurnSummary("ts-9", {});
-    expect(messagesVersionOf("ts-9").peek()).toBe(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The per-chat switches. Each is a set-once control whose SSE echo arrives
-// after the optimistic local write, so "already that value" is the common case
-// and has to be a no-op.
-// ---------------------------------------------------------------------------
-
-describe("Store per-chat switches", () => {
-  it("setCurrentMode applies a new mode", () => {
-    resetStore("sw-1");
-    setCurrentMode("sw-1", "plan");
-    expect(get("sw-1")?.current_mode_id).toBe("plan");
-  });
-
-  it("setCurrentMode does not churn on the mode it already has", () => {
-    resetStore("sw-2");
-    setCurrentMode("sw-2", "plan");
-    const settled = get("sw-2");
-    setCurrentMode("sw-2", "plan");
-    expect(get("sw-2")).toBe(settled);
-  });
-
-  it("setSupervisedMode applies a new value", () => {
-    resetStore("sw-3");
-    setSupervisedMode("sw-3", true);
-    expect(get("sw-3")?.supervised_mode).toBe(true);
-  });
-
-  it("setSupervisedMode does not churn on the value it already has", () => {
-    resetStore("sw-4");
-    const settled = get("sw-4");
-    setSupervisedMode("sw-4", false);
-    expect(get("sw-4")).toBe(settled);
-  });
-
-  it("setEffort applies a level", () => {
-    resetStore("sw-5");
-    setEffort("sw-5", "high");
-    expect(get("sw-5")?.effort).toBe("high");
-  });
-
-  it("setEffort does not churn on the level it already has", () => {
-    resetStore("sw-6");
-    setEffort("sw-6", "high");
-    const settled = get("sw-6");
-    setEffort("sw-6", "high");
-    expect(get("sw-6")).toBe(settled);
-  });
-
-  it("setEffort reads an absent level as empty, so clearing an unset one is a no-op", () => {
-    resetStore("sw-7");
-    const before = get("sw-7");
-    setEffort("sw-7", "");
-    expect(get("sw-7")).toBe(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// appendChunk: the delta lands in three places at once — the message's flat
-// content/reasoning string, the chronological block at the server's block
-// index, and whichever signal is mounted over that block. The block array is
-// what the renderer walks, so a delta that reaches the string and not the block
-// is invisible.
-// ---------------------------------------------------------------------------
-
-describe("Store appendChunk blocks", () => {
-  it("puts the first text delta in the block the server named", () => {
-    resetStore("ac-1");
-    appendChunk("ac-1", "m-1", "hello", false, 0, "");
-    expect(get("ac-1")?.messages[0]?.blocks).toEqual([{ type: "text", text: "hello" }]);
-  });
-
-  it("appends a second text delta to the same block", () => {
-    resetStore("ac-2");
-    appendChunk("ac-2", "m-1", "hel", false, 0, "");
-    appendChunk("ac-2", "m-1", "lo", false, 0, "");
-    expect(get("ac-2")?.messages[0]?.blocks?.[0]?.text).toBe("hello");
-  });
-
-  it("accumulates thinking on a reasoning block rather than replacing it", () => {
-    resetStore("ac-3");
-    appendChunk("ac-3", "m-1", "let ", true, 0, "");
-    appendChunk("ac-3", "m-1", "me think", true, 0, "");
-    expect(get("ac-3")?.messages[0]?.blocks?.[0]?.thinking).toBe("let me think");
-  });
-
-  it("keeps text and thinking on separate blocks", () => {
-    resetStore("ac-4");
-    appendChunk("ac-4", "m-1", "why", true, 0, "");
-    appendChunk("ac-4", "m-1", "because", false, 1, "");
-    expect(get("ac-4")?.messages[0]?.blocks).toEqual([
-      { type: "thinking", thinking: "why" },
-      { type: "text", text: "because" },
-    ]);
-  });
-
-  it("pads the gap when the server's block index runs ahead", () => {
-    resetStore("ac-5");
-    appendChunk("ac-5", "m-1", "third", false, 2, "");
-    const blocks = get("ac-5")?.messages[0]?.blocks;
-    expect(blocks).toHaveLength(3);
-    expect(blocks?.[2]?.text).toBe("third");
-  });
-
-  it("stamps a delegated block with its subtask id", () => {
-    resetStore("ac-6");
-    appendChunk("ac-6", "m-1", "delegated", false, 0, "sub-7");
-    expect(get("ac-6")?.messages[0]?.blocks?.[0]?.agent_subtask_id).toBe("sub-7");
-  });
-
-  it("accepts a block index that goes BACKWARDS mid-turn", () => {
-    // The interleaved case, and the index is deliberately non-monotonic: the
-    // server extends the newest block of the DELTA'S OWN subtask, so the parent's
-    // second delta addresses block 0 with a delegate's block 1 already open
-    // (internal/buffer's lastBlockOfSubtask). Nothing here may pad a gap or open a
-    // third block — the two halves of the parent's sentence belong in one bubble.
-    resetStore("ac-10");
-    appendChunk("ac-10", "m-1", "The", false, 0, "");
-    appendChunk("ac-10", "m-1", "I", false, 1, "wf:wf_1:wf_1/plan");
-    appendChunk("ac-10", "m-1", " workflow is running.", false, 0, "");
-    const msg = get("ac-10")?.messages[0];
-    expect(msg?.blocks).toEqual([
-      { type: "text", text: "The workflow is running." },
-      { type: "text", text: "I", agent_subtask_id: "wf:wf_1:wf_1/plan" },
-    ]);
-    // The flat string is the wire's arrival order, not the blocks' — it feeds
-    // search and the persisted Content, which are chronological by delta.
-    expect(msg?.content).toBe("TheI workflow is running.");
-  });
-
-  it("keeps the server's message count when a streamed message appears", () => {
-    setSessions([{ ...makeSession("ac-7"), message_count: 9 }]);
-    appendChunk("ac-7", "m-1", "x", false, 0, "");
-    expect(get("ac-7")?.message_count).toBe(9);
-  });
-
-  it("appends a new streaming message rather than writing over a resident one", () => {
-    setSessions([makeSession("ac-8")]);
-    appendMessage("ac-8", { id: "m-old-0", role: "user", ts: 1, content: "q" });
-    appendMessage("ac-8", {
-      id: "m-old-1",
-      role: "assistant",
-      ts: 2,
-      content: "a",
-      blocks: [{ type: "text", text: "a" }],
-    });
-    appendChunk("ac-8", "m-new", "streaming", false, 0, "");
-    expect(get("ac-8")?.messages).toHaveLength(3);
-    expect(get("ac-8")?.messages[1]?.content).toBe("a");
-    expect(get("ac-8")?.messages[2]?.content).toBe("streaming");
-  });
-
-  it("streams into the resident message its index names", () => {
-    setSessions([makeSession("ac-9")]);
-    appendMessage("ac-9", { id: "m-0", role: "user", ts: 1, content: "q" });
-    appendMessage("ac-9", {
-      id: "m-1",
-      role: "assistant",
-      ts: 2,
-      content: "par",
-      blocks: [{ type: "text", text: "par" }],
-    });
-    appendChunk("ac-9", "m-1", "tial", false, 0, "");
-    expect(get("ac-9")?.messages).toHaveLength(2);
-    expect(get("ac-9")?.messages[1]?.content).toBe("partial");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// appendChunk's repaint discipline. A mounted per-BLOCK signal carries the TEXT, so the
-// version bump it schedules declares cause `chunk` — the renderer's tail-bookkeeping-only
-// branch; with nothing mounted the list is the only channel, so the bump declares `shape`
-// (the full pass is what puts the text on screen). Getting this backwards is either a
-// dropped delta or a transcript that re-projects per character.
-// ---------------------------------------------------------------------------
-
-describe("Store appendChunk repaint discipline", () => {
-  // The message-level-signal case was here; that channel no longer exists. The per-block
-  // equivalent is covered by the mounted-block cases in this same describe.
-
-  it("repaints the list when nothing is mounted to carry the text", async () => {
-    resetStore("ar-2");
-    appendChunk("ar-2", "m-1", "hello", false, 0, "");
-    await tick();
-    const before = messagesVersionOf("ar-2").peek();
-    appendChunk("ar-2", "m-1", " world", false, 0, "");
-    await tick();
-    expect(messagesVersionOf("ar-2").peek()).toBe(before + 1);
-    expect(renderCauseOf("ar-2").cause).toBe("shape");
-  });
-
-  it("routes the text delta to the per-block signal, bumping as a chunk", async () => {
-    resetStore("ar-3");
-    appendChunk("ar-3", "m-1", "hello", false, 0, "");
-    await tick();
-    const blockSig = ensureBlockTextSig("m-1", 0, "hello");
-    const before = messagesVersionOf("ar-3").peek();
-    appendChunk("ar-3", "m-1", " world", false, 0, "");
-    await tick();
-    expect(blockSig.value).toEqual({ full: "hello world", delta: " world" });
-    expect(messagesVersionOf("ar-3").peek()).toBe(before + 1);
-    expect(renderCauseOf("ar-3")).toEqual({ cause: "chunk" });
-    clearAllBlockSigs();
-  });
-
-  it("routes a delta to the signal of the earlier block it names", async () => {
-    // A backwards block index (an interleaved delegate opened a block behind
-    // which the parent's stream continues) has to reach the signal mounted over
-    // THAT block, or the parent's prose stops growing on screen while it keeps
-    // accumulating in the store.
-    resetStore("ar-7");
-    appendChunk("ar-7", "m-1", "The", false, 0, "");
-    appendChunk("ar-7", "m-1", "I", false, 1, "sub-7");
-    await tick();
-    const parentSig = ensureBlockTextSig("m-1", 0, "The");
-    const before = messagesVersionOf("ar-7").peek();
-    appendChunk("ar-7", "m-1", " workflow is running.", false, 0, "");
-    await tick();
-    expect(parentSig.value).toEqual({
-      full: "The workflow is running.",
-      delta: " workflow is running.",
-    });
-    expect(messagesVersionOf("ar-7").peek()).toBe(before + 1);
-    expect(renderCauseOf("ar-7")).toEqual({ cause: "chunk" });
-    clearAllBlockSigs();
-  });
-
-  it("routes a reasoning delta to its own per-block signal", async () => {
-    resetStore("ar-4");
-    appendChunk("ar-4", "m-1", "why", true, 0, "");
-    await tick();
-    const blockSig = ensureBlockThinkingSig("m-1", 0, "why");
-    const before = messagesVersionOf("ar-4").peek();
-    appendChunk("ar-4", "m-1", " not", true, 0, "");
-    await tick();
-    expect(blockSig.value).toEqual({ full: "why not", delta: " not" });
-    expect(messagesVersionOf("ar-4").peek()).toBe(before + 1);
-    expect(renderCauseOf("ar-4")).toEqual({ cause: "chunk" });
-    clearAllBlockSigs();
-  });
-
-  it("repaints for a reasoning delta with nothing mounted", async () => {
-    resetStore("ar-5");
-    appendChunk("ar-5", "m-1", "why", true, 0, "");
-    await tick();
-    const before = messagesVersionOf("ar-5").peek();
-    appendChunk("ar-5", "m-1", " not", true, 0, "");
-    await tick();
-    expect(messagesVersionOf("ar-5").peek()).toBe(before + 1);
-  });
-
-  it("repaints when a refusal is stamped, so the callout can mount", async () => {
-    resetStore("ar-6");
-    appendChunk("ar-6", "m-1", "I can't", false, 0, "");
-    await tick();
-    const before = messagesVersionOf("ar-6").peek();
-    appendChunk("ar-6", "m-1", " help with that", false, 0, "", 0, { category: "policy" });
-    await tick();
-    expect(get("ar-6")?.messages[0]?.refusal).toEqual({ category: "policy" });
-    expect(get("ar-6")?.messages[0]?.content).toBe("I can't help with that");
-    // A block signal carries text only, so a message-level callout needs the keyed
-    // reconcile as well.
-    expect(messagesVersionOf("ar-6").peek()).toBe(before + 1);
-  });
-
-  it("stamps a refusal once, so a later frame cannot restate it", async () => {
-    resetStore("ar-7");
-    appendChunk("ar-7", "m-1", "a", false, 0, "", 0, { category: "policy" });
-    await tick();
-    appendChunk("ar-7", "m-1", "b", false, 0, "", 0, { category: "something else" });
-    await tick();
-    expect(get("ar-7")?.messages[0]?.refusal).toEqual({ category: "policy" });
-  });
-
-  it("lets a load bump win a window a shape cause is still parked in", async () => {
-    // The mid-turn refetch, and the one interleave the cause ranks decide: a chunk
-    // for a message the store has never seen parks `shape` on the microtask, and a
-    // fetched window can land before that flush. `shape`'s WORK is contained in
-    // `load`'s, while `load`'s statement — these rows are a replay — is not
-    // recoverable from the array, so losing it makes the paint read a refetched
-    // window as an appended tail and animate every row of a reopened conversation.
-    resetStore("ar-8");
-    appendChunk("ar-8", "m-1", "hello", false, 0, "");
-    bumpMessages("ar-8", "load");
-    expect(renderCauseOf("ar-8").cause).toBe("load");
-    await tick();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// upsertToolCall: the same three-way write as a chunk, plus the tool call's own
-// identity. A tool call is updated many times (pending → in_progress →
-// completed), so finding the existing entry is the hot path and appending a
-// duplicate would render the same card twice.
-// ---------------------------------------------------------------------------
-
-describe("Store upsertToolCall", () => {
-  const call = (id: string, status = "pending") => ({
-    id,
-    title: "readFile",
-    kind: "read" as const,
-    status: status as ToolCall["status"],
-    ts: 0,
-  });
-
-  it("mints the assistant message when the tool call arrives first", () => {
-    resetStore("tc-1");
-    upsertToolCall("tc-1", "m-1", call("t-1"), 0);
-    const msg = get("tc-1")?.messages[0];
-    expect(msg?.tool_calls).toEqual([call("t-1")]);
-    expect(msg?.blocks).toEqual([{ type: "tool_use", tool_call_id: "t-1" }]);
-  });
-
-  it("repaints when it mints one", () => {
-    resetStore("tc-2");
-    const before = messagesVersionOf("tc-2").peek();
-    upsertToolCall("tc-2", "m-1", call("t-1"), 0);
-    expect(messagesVersionOf("tc-2").peek()).toBe(before + 1);
-  });
-
-  it("keeps the server's message count when it mints one", () => {
-    setSessions([{ ...makeSession("tc-3"), message_count: 6 }]);
-    upsertToolCall("tc-3", "m-1", call("t-1"), 0);
-    expect(get("tc-3")?.message_count).toBe(6);
-  });
-
-  it("indexes the message it minted, so the next call finds it", () => {
-    resetStore("tc-4");
-    upsertToolCall("tc-4", "m-1", call("t-1"), 0);
-    upsertToolCall("tc-4", "m-1", call("t-2"), 1);
-    expect(get("tc-4")?.messages).toHaveLength(1);
-    expect(get("tc-4")?.messages[0]?.tool_calls).toHaveLength(2);
-  });
-
-  it("updates a call in place rather than appending a duplicate", () => {
-    resetStore("tc-5");
-    upsertToolCall("tc-5", "m-1", call("t-1"), 0);
-    upsertToolCall("tc-5", "m-1", call("t-1", "completed"), 0);
-    expect(get("tc-5")?.messages[0]?.tool_calls).toEqual([call("t-1", "completed")]);
-  });
-
-  it("updates the named call and leaves its siblings alone", () => {
-    resetStore("tc-6");
-    upsertToolCall("tc-6", "m-1", call("t-1"), 0);
-    upsertToolCall("tc-6", "m-1", call("t-2"), 1);
-    upsertToolCall("tc-6", "m-1", call("t-2", "completed"), 1);
-    const calls = get("tc-6")?.messages[0]?.tool_calls;
-    expect(calls?.[0]?.status).toBe("pending");
-    expect(calls?.[1]?.status).toBe("completed");
-  });
-
-  it("pins a new call to the block index the server reported", () => {
-    resetStore("tc-7");
-    appendChunk("tc-7", "m-1", "let me look", false, 0, "");
-    upsertToolCall("tc-7", "m-1", call("t-1"), 2);
-    const blocks = get("tc-7")?.messages[0]?.blocks;
-    expect(blocks).toHaveLength(3);
-    expect(blocks?.[2]).toEqual({ type: "tool_use", tool_call_id: "t-1" });
-  });
-
-  it("leaves a block already standing at that index alone", () => {
-    resetStore("tc-8");
-    appendChunk("tc-8", "m-1", "one", false, 0, "");
-    appendChunk("tc-8", "m-1", "two", false, 1, "");
-    upsertToolCall("tc-8", "m-1", call("t-1"), 1);
-    const blocks = get("tc-8")?.messages[0]?.blocks;
-    expect(blocks).toHaveLength(2);
-    expect(blocks?.[1]).toEqual({ type: "text", text: "two" });
-  });
-
-  it("repaints when a call joins a message already on screen", async () => {
-    resetStore("tc-9");
-    appendMessage("tc-9", { id: "m-1", role: "assistant", ts: 1, content: "", blocks: [] });
-    await tick();
-    const before = messagesVersionOf("tc-9").peek();
-    upsertToolCall("tc-9", "m-1", call("t-1"), 0);
-    await tick();
-    expect(messagesVersionOf("tc-9").peek()).toBe(before + 1);
-  });
-
-  it("fans a later update through the tool's own signal, bumping as a tool cause", async () => {
-    resetStore("tc-10");
-    upsertToolCall("tc-10", "m-1", call("t-1"), 0);
-    await tick();
-    const sig = ensureToolCallSig("tc-10", "t-1", call("t-1"));
-    const before = messagesVersionOf("tc-10").peek();
-    upsertToolCall("tc-10", "m-1", call("t-1", "completed"), 0);
-    await tick();
-    expect(sig.value.status).toBe("completed");
-    // The card's own effect paints the update; the bump carries the keyed-
-    // update address so the renderer refreshes ONE message, never the list.
-    expect(messagesVersionOf("tc-10").peek()).toBe(before + 1);
-    expect(renderCauseOf("tc-10")).toEqual({ cause: "tool", msgID: "m-1" });
-    clearToolCallSig("tc-10", "t-1");
-  });
-
-  it("repaints a later update when no tool signal is mounted", async () => {
-    resetStore("tc-11");
-    upsertToolCall("tc-11", "m-1", call("t-1"), 0);
-    await tick();
-    const before = messagesVersionOf("tc-11").peek();
-    upsertToolCall("tc-11", "m-1", call("t-1", "completed"), 0);
-    await tick();
-    expect(messagesVersionOf("tc-11").peek()).toBe(before + 1);
-  });
-
-  it("mints a new message rather than embedding into a resident one", () => {
-    setSessions([makeSession("tc-12")]);
-    appendMessage("tc-12", { id: "m-0", role: "user", ts: 1, content: "q" });
-    appendMessage("tc-12", {
-      id: "m-1",
-      role: "assistant",
-      ts: 2,
-      content: "a",
-      blocks: [{ type: "text", text: "a" }],
-    });
-    upsertToolCall("tc-12", "m-new", call("t-1"), 0);
-    expect(get("tc-12")?.messages).toHaveLength(3);
-    expect(get("tc-12")?.messages[1]?.tool_calls).toBeUndefined();
-  });
-
-  it("embeds into the resident message its index names", () => {
-    setSessions([makeSession("tc-13")]);
-    appendMessage("tc-13", { id: "m-0", role: "user", ts: 1, content: "q" });
-    appendMessage("tc-13", {
-      id: "m-1",
-      role: "assistant",
-      ts: 2,
-      content: "a",
-      blocks: [{ type: "text", text: "a" }],
-    });
-    upsertToolCall("tc-13", "m-1", call("t-1"), 1);
-    expect(get("tc-13")?.messages).toHaveLength(2);
-    expect(get("tc-13")?.messages[1]?.tool_calls).toEqual([call("t-1")]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// setCodeReferences: licensed-code attributions arriving mid-turn. The refs
-// persist server-side and render on reload, so a message that has not landed
-// yet is a no-op — but attaching them to whichever message happens to sit at a
-// fallback index would put another turn's attribution under this one.
-// ---------------------------------------------------------------------------
-
-describe("Store setCodeReferences", () => {
-  function chatWithTwo(chat: string): void {
-    setSessions([makeSession(chat)]);
-    // See `chatWithTurn` above: the repaint is gated on the chat being active.
-    setActive(chat);
-    appendMessage(chat, { id: "m-1", role: "user", ts: 1, content: "any licensed code?" });
-    appendMessage(chat, {
-      id: "m-2",
-      role: "assistant",
-      ts: 2,
-      content: "here it is",
-      blocks: [{ type: "text", text: "here it is" }],
-    });
-  }
-
-  it("attaches the attributions to the message the id names, and repaints", () => {
-    chatWithTwo("cr-1");
-    const before = messagesVersionOf("cr-1").peek();
-    setCodeReferences("cr-1", "m-2", [{ license_name: "MIT" }]);
-    expect(get("cr-1")?.messages[1]?.code_references).toEqual([{ license_name: "MIT" }]);
-    expect(messagesVersionOf("cr-1").peek()).toBe(before + 1);
-  });
-
-  it("is a no-op for a message that has not arrived yet", () => {
-    chatWithTwo("cr-2");
-    setCodeReferences("cr-2", "m-not-here", [{ license_name: "MIT" }]);
-    expect(get("cr-2")?.messages[0]?.code_references).toBeUndefined();
-    expect(get("cr-2")?.messages[1]?.code_references).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Steers: the two frames that carry an acknowledgement, and the entry a
-// replayed frame must not touch.
-// ---------------------------------------------------------------------------
-
-describe("Store steer projection, frame by frame", () => {
-  it("refreshes only the replayed steer, leaving its siblings alone", () => {
-    resetStore("st-1");
-    recordSteerQueued("st-1", { id: "s-1", text: "one", origin: "user" });
-    recordSteerQueued("st-1", { id: "s-2", text: "two", origin: "user" });
-    promoteSteer("st-1", "s-1", "one", "user");
-    recordSteerQueued("st-1", { id: "s-2", text: "two, corrected", origin: "user" });
-    // The promoted one is out of the dock; the replay corrected its sibling in
-    // place rather than appending a third row.
-    expect(get("st-1")?.steers).toEqual([{ id: "s-2", text: "two, corrected", origin: "user" }]);
-    expect(steerMarks("st-1").map((m) => m.id)).toEqual(["s-1"]);
-  });
-
-  it("records an acknowledgement that rides the steer's first frame", () => {
-    resetStore("st-2");
-    promoteSteer("st-2", "s-ghost", "from another tab", "user", "switched the file to tabs");
-    expect(steerMarks("st-2")).toEqual([
-      {
-        id: "s-ghost",
-        origin: "user",
-        text: "from another tab",
-        ack: "switched the file to tabs",
-        anchor: { msgID: "", blockIndex: 0 },
-      },
-    ]);
-  });
-
-  it("adds no verdict when a first frame's acknowledgement is empty", () => {
-    // An empty ack is the absence of one. A note carrying `ack: ""` renders a
-    // verdict line with nothing in it.
-    resetStore("st-3");
-    promoteSteer("st-3", "s-ghost", "from another tab", "user", "");
-    expect(steerMarks("st-3")).toEqual([
-      {
-        id: "s-ghost",
-        text: "from another tab",
-        origin: "user",
-        anchor: { msgID: "", blockIndex: 0 },
-      },
-    ]);
-  });
-
-  it("adds no verdict when a read frame's acknowledgement is empty", () => {
-    resetStore("st-4");
-    recordSteerQueued("st-4", { id: "s-1", text: "use tabs", origin: "user" });
-    promoteSteer("st-4", "s-1", "use tabs", "user", "");
-    expect(steerMarks("st-4")).toEqual([
-      { id: "s-1", text: "use tabs", origin: "user", anchor: { msgID: "", blockIndex: 0 } },
-    ]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A message the store has not seen before has to reach the LIST, whatever is already
-// mounted: nothing has mounted the row, so the only channel that can put it on screen is
-// the keyed reconcile behind the chat's version signal. This is the one case where the
-// "a mounted signal carries the delta, so stay off the list" discipline above does NOT
-// apply, and it is why `isNew` takes `shape` before any cause is derived.
-// ---------------------------------------------------------------------------
-
-describe("Store appendChunk on a first sighting", () => {
-  it("repaints the list on a first content delta", async () => {
-    resetStore("fs-1");
-    const before = messagesVersionOf("fs-1").peek();
-
-    appendChunk("fs-1", "m-unseen", "hello", false, 0, "");
-    await tick();
-
-    expect(get("fs-1")?.messages[0]?.content).toBe("hello");
-    expect(messagesVersionOf("fs-1").peek()).toBe(before + 1);
-    expect(renderCauseOf("fs-1")).toEqual({ cause: "shape" });
-  });
-
-  it("repaints the list on a first reasoning delta", async () => {
-    resetStore("fs-2");
-    const before = messagesVersionOf("fs-2").peek();
-
-    appendChunk("fs-2", "m-unseen-r", "why", true, 0, "");
-    await tick();
-
-    expect(get("fs-2")?.messages[0]?.reasoning).toBe("why");
-    expect(messagesVersionOf("fs-2").peek()).toBe(before + 1);
-    expect(renderCauseOf("fs-2")).toEqual({ cause: "shape" });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The coalescer's schedule set, read at the module's first list change.
-//
-// `scheduleMessages` guards itself with a module-scope Set so several changes
-// in one tick cost one repaint. That initial state is computed once when the
-// module is evaluated, which a static import freezes at collection time — so
-// this test loads its own copy of the store, the way `platform.pwa.test.ts` does
-// for the constants it stubs a platform for. Without a fresh module the very
-// first repaint of the page is not observable at all.
-// ---------------------------------------------------------------------------
-
-describe("the deferred-repaint guard", () => {
-  it("is clear on a freshly loaded module, so the first list change repaints", async () => {
-    vi.resetModules();
-    const store = await import("./store.js");
-    store.setSessions([makeSession("boot-1")]);
-    store.setActive("boot-1");
-    const before = store.messagesVersionOf("boot-1").peek();
-
-    store.appendChunk("boot-1", "m-1", "a", false, 0, "");
-    // Deferred by one microtask, so nothing has repainted yet.
-    expect(store.messagesVersionOf("boot-1").peek()).toBe(before);
-
-    await tick();
-    expect(store.messagesVersionOf("boot-1").peek()).toBe(before + 1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Each chat repaints ITSELF; the chat on screen is untouched by the rest.
-//
-// Versions are per chat: a background chat's stream bumps its OWN signal, which
-// nothing on screen subscribes to — the transcript effect and the task-list
-// pill track the ACTIVE chat's signal only. That is what closes the multi-tab
-// freeze (N streaming chats used to repaint the visible transcript N times per
-// frame) without the old active-chat gate's blind spot, where a background
-// consumer (the subagent page) had no repaint channel at all.
-//
-// The tests are in pairs on purpose: the foreground signal stays put, AND the
-// background data lands with its own bump. A gate that dropped the delta would
-// be a data-loss bug wearing a performance improvement's clothes.
-// ---------------------------------------------------------------------------
-
-describe("per-chat repaint isolation", () => {
-  /** Two chats in the store, the first active. */
-  function twoChats(): void {
-    setSessions([makeSession("fg"), makeSession("bg")]);
-    setActive("fg");
-  }
-
-  it("a background text delta bumps its own chat, not the active one", async () => {
-    twoChats();
-    const fg = messagesVersionOf("fg").peek();
-    const bg = messagesVersionOf("bg").peek();
-
-    appendChunk("bg", "m-bg", "hello", false, 0, "");
-    await tick();
-
-    expect(messagesVersionOf("fg").peek()).toBe(fg);
-    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
-    // The mutation lands too. Asserted through the blocks array rather than
-    // `content`, because the blocks are what the renderer reads.
-    expect(get("bg")?.messages[0]?.blocks?.[0]?.text).toBe("hello");
-    expect(get("bg")?.messages[0]?.content).toBe("hello");
-  });
-
-  it("a background reasoning delta does the same", async () => {
-    twoChats();
-    const fg = messagesVersionOf("fg").peek();
-    const bg = messagesVersionOf("bg").peek();
-
-    appendChunk("bg", "m-bg-r", "weighing", true, 0, "");
-    await tick();
-
-    expect(messagesVersionOf("fg").peek()).toBe(fg);
-    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
-    expect(get("bg")?.messages[0]?.blocks?.[0]?.thinking).toBe("weighing");
-  });
-
-  it("a background tool call does the same", async () => {
-    twoChats();
-    const fg = messagesVersionOf("fg").peek();
-    const bg = messagesVersionOf("bg").peek();
-
-    // A NEW tool call on a message the store has not seen: the path that creates
-    // the assistant message, which is the most structural change there is.
-    upsertToolCall(
-      "bg",
-      "m-bg-t",
-      { id: "tc-1", title: "ls", kind: "execute", status: "pending", ts: 0 },
-      0,
+describe("appendEntry", () => {
+  it("appends an entry whose seq is exactly the next one", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", textEntry(turn, 1, "one"));
+    appendEntry("a", textEntry(turn, 2, "two"));
+    expect(
+      get("a")
+        ?.turns.get(turn)
+        ?.entries.map((e) => e.seq),
+    ).toEqual([0, 1, 2]);
+    expect(repairs).toEqual([]);
+  });
+
+  it("reads an entry naming a turn it does not hold as a hole, and asks for the WHOLE turn", () => {
+    resetStore("a");
+    appendEntry("a", textEntry("unseen", 3, "x"));
+    expect(repairs).toEqual([{ chatID: "a", turnID: "unseen" }]);
+    expect(get("a")?.residency).toBeUndefined();
+  });
+
+  it("reads a seq that is not next as a hole, and asks for the range above what it holds", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", textEntry(turn, 1, "one"));
+    appendEntry("a", textEntry(turn, 4, "four"));
+    expect(repairs).toEqual([{ chatID: "a", turnID: turn, afterSeq: 1 }]);
+    expect(get("a")?.turns.get(turn)?.entries).toHaveLength(2);
+  });
+
+  it("drops a REDELIVERY rather than asking for a range read", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    const e = textEntry(turn, 1, "one");
+    appendEntry("a", e);
+    appendEntry("a", e);
+    expect(get("a")?.turns.get(turn)?.entries).toHaveLength(2);
+    expect(repairs).toEqual([]);
+  });
+
+  it("marks the window stale on a hole, so the next activation refetches", () => {
+    resetStore("a");
+    const s = get("a") as Session;
+    s.residency = "loaded";
+    appendEntry("a", textEntry("unseen", 1, "x"));
+    expect(get("a")?.residency).toBe("partial");
+  });
+
+  it("caches where the turn_close landed, which is what liveness reads", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    expect(get("a")?.turns.get(turn)?.closeAt).toBeUndefined();
+    appendEntry("a", sealed(turn, 1, "turn_close", { outcome: "completed" }));
+    expect(get("a")?.turns.get(turn)?.closeAt).toBe(1);
+  });
+
+  it("takes a dock row out on that steer's own entry, whatever its state", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    recordSteerSent("a", "m1", "wait");
+    const steerID = steerIDFor("m1");
+    expect(steerCount("a")).toBe(1);
+    appendEntry(
+      "a",
+      sealed(turn, 1, "steer", { text: "wait", origin: "user", state: "dropped" }, { id: steerID }),
     );
-    await tick();
-
-    expect(messagesVersionOf("fg").peek()).toBe(fg);
-    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
-    expect(get("bg")?.messages[0]?.tool_calls?.[0]?.id).toBe("tc-1");
+    expect(steerCount("a")).toBe(0);
   });
 
-  it("a background message arriving bumps its own chat synchronously", () => {
-    twoChats();
-    const fg = messagesVersionOf("fg").peek();
-    const bg = messagesVersionOf("bg").peek();
-
-    // `ingestMessage`, reached through both of its doors. The bump here is
-    // SYNCHRONOUS: the renderer's keyed reconcile must see an arrival before
-    // the frame it was announced in.
-    upsertMessage("bg", { id: "m-bg", role: "assistant", ts: 1, content: "hi" });
-    appendMessage("bg", { id: "m-bg", role: "assistant", ts: 1, content: "hi there" });
-
-    expect(messagesVersionOf("fg").peek()).toBe(fg);
-    expect(messagesVersionOf("bg").peek()).toBe(bg + 2);
-    expect(get("bg")?.messages[0]?.content).toBe("hi there");
+  it("publishes a tool_result's settled value at the card its call mounted", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1"), { id: "c1" }));
+    ensureToolCallSig("a", "c1", toolCall("c1"));
+    appendEntry(
+      "a",
+      sealed(turn, 2, "tool_result", toolResult({ output: "done" }), { id: "c1:result" }),
+    );
+    expect(peekToolCallSig("a", "c1")?.status).toBe("completed");
+    expect(peekToolCallSig("a", "c1")?.output).toBe("done");
   });
 
-  it("a background turn summary bumps its own chat", () => {
-    twoChats();
-    appendMessage("bg", { id: "m-bg", role: "assistant", ts: 1, content: "done" });
-    const fg = messagesVersionOf("fg").peek();
-    const bg = messagesVersionOf("bg").peek();
-
-    setTurnSummary("bg", { credits: 4, elapsedMs: 90 });
-
-    expect(messagesVersionOf("fg").peek()).toBe(fg);
-    expect(messagesVersionOf("bg").peek()).toBe(bg + 1);
-    expect(get("bg")?.messages[0]?.turn_credits).toBe(4);
-    expect(get("bg")?.messages[0]?.turn_elapsed_ms).toBe(90);
+  it("bumps the lane signal for the entry's own lane", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    const before = laneSig(turn, "sub-1").peek();
+    appendEntry("a", textEntry(turn, 1, "delegate says", "sub-1"));
+    expect(laneSig(turn, "sub-1").peek()).toBe(before + 1);
   });
 
-  it("setActive bumps no version — the switch travels on the active id", async () => {
-    twoChats();
-    appendChunk("bg", "m-bg", "hello", false, 0, "");
-    await tick();
-    const fg = messagesVersionOf("fg").peek();
-    const bg = messagesVersionOf("bg").peek();
-
-    setActive("bg");
-    await tick();
-
-    // `setActive` writes `activeId`, which the transcript effect tracks via
-    // `watchActiveId` — so the switch repaints by re-running the effect against
-    // the new chat's signal, not by bumping anything.
-    expect(messagesVersionOf("fg").peek()).toBe(fg);
-    expect(messagesVersionOf("bg").peek()).toBe(bg);
-    expect(activeSession.value?.id).toBe("bg");
-    expect(activeSession.value?.messages[0]?.content).toBe("hello");
-  });
-
-  it("a chat streams normally with no chat active at all", async () => {
-    setSessions([makeSession("orphan")]);
-    setActive("");
-    const before = messagesVersionOf("orphan").peek();
-
-    appendChunk("orphan", "m-1", "hello", false, 0, "");
-    await tick();
-
-    // Reachable on the boot path before a tab is activated. The chat's own
-    // version moves; there is simply no subscriber for it yet.
-    expect(messagesVersionOf("orphan").peek()).toBe(before + 1);
-    expect(get("orphan")?.messages[0]?.content).toBe("hello");
+  it("earns a shape pass for a lane-less entry and a chunk pass for a laned one", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", textEntry(turn, 1, "top"));
+    expect(renderCauseOf("a").cause).toBe("shape");
+    appendEntry("a", textEntry(turn, 2, "delegate", "sub-1"));
+    // A laned entry coalesces, so its cause is parked on the microtask rather than flushed.
+    expect(renderCauseOf("a").cause).toBe("shape");
   });
 });
 
-// ---------------------------------------------------------------------------
-// The in-flight turn marker: which message id the chat file cannot carry yet.
-//
-// `loadMessages` replaces the array with the server's page, so it needs to know
-// which local message the page is entitled to omit. Position cannot answer it:
-// the agent persists messages DURING a turn (a plan update, a compaction or
-// safety event, the cancel badge), each landing after the streaming reply
-// locally while sitting inside the page — so a rule of "keep everything after
-// the newest id the page carries" dropped the reply and the reader saw their own
-// prompt above an empty turn body until a reload.
-// ---------------------------------------------------------------------------
-
-import { noteLiveTurnMessage, clearLiveTurnMessage, liveTurnMessage } from "./store.js";
-
-describe("the in-flight turn marker", () => {
-  it("is unset for a chat with no turn running", () => {
-    resetStore("chat-live0");
-    expect(liveTurnMessage("chat-live0")).toBeUndefined();
+describe("the coalescing trio", () => {
+  it("stores one open entry per lane with the count it arrived with", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    const open = get("a")?.turns.get(turn)?.openEntries.get("");
+    expect(open?.text).toBe("He");
+    expect(open?.n).toBe(1);
   });
 
-  it("is set by a chunk that arrives before its own message_created", () => {
-    resetStore("chat-live1");
-    appendChunk("chat-live1", "m-early", "hello", false, 0, "");
-    expect(liveTurnMessage("chat-live1")).toBe("m-early");
+  it("mints the streaming signal an unmounted surface follows", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    expect(entryTextSig(turn, "e1")?.peek().full).toBe("He");
   });
 
-  it("is cleared by the persist echo of the same id, which is what message_appended is", () => {
-    resetStore("chat-live2");
-    noteLiveTurnMessage("chat-live2", "m-turn");
-    appendMessage("chat-live2", { id: "m-turn", role: "assistant", ts: 2, content: "done" });
-    expect(liveTurnMessage("chat-live2")).toBeUndefined();
+  it("extends the open entry when n is exactly the next one", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    applyDelta("a", turn, "e1", "", 2, "llo");
+    expect(get("a")?.turns.get(turn)?.openEntries.get("")?.text).toBe("Hello");
+    expect(entryTextSig(turn, "e1")?.peek()).toEqual({ full: "Hello", delta: "llo" });
+    expect(repairs).toEqual([]);
   });
 
-  it("survives a persisted message with a DIFFERENT id — the plan update that caused the bug", () => {
-    resetStore("chat-live3");
-    appendChunk("chat-live3", "m-turn", "streaming", false, 0, "");
-    appendMessage("chat-live3", { id: "m-plan", role: "assistant", ts: 3, content: "" });
-    expect(liveTurnMessage("chat-live3")).toBe("m-turn");
+  it("reads a delta whose n is not the next one as a hole", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    applyDelta("a", turn, "e1", "", 4, "llo");
+    expect(get("a")?.turns.get(turn)?.openEntries.get("")?.text).toBe("He");
+    expect(repairs).toEqual([{ chatID: "a", turnID: turn, afterSeq: 0 }]);
   });
 
-  it("only tracks the chat it was recorded against", () => {
-    resetStore("chat-live4");
-    noteLiveTurnMessage("chat-live4", "m-a");
-    noteLiveTurnMessage("chat-live5", "m-b");
-    clearLiveTurnMessage("chat-live5");
-    expect(liveTurnMessage("chat-live4")).toBe("m-a");
-    expect(liveTurnMessage("chat-live5")).toBeUndefined();
+  it("reads a delta naming an entry the lane is not coalescing as the same hole", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    applyDelta("a", turn, "other", "", 2, "llo");
+    expect(repairs).toEqual([{ chatID: "a", turnID: turn, afterSeq: 0 }]);
   });
 
-  it("goes with the chat", () => {
-    resetStore("chat-live6");
-    noteLiveTurnMessage("chat-live6", "m-turn");
-    removeChat("chat-live6");
-    expect(liveTurnMessage("chat-live6")).toBeUndefined();
+  it("reads a frame naming a turn it does not hold as the whole-turn hole", () => {
+    resetStore("a");
+    openEntry("a", { turn: "unseen", id: "e1", kind: "text", text: "x", n: 1 });
+    applyDelta("a", "unseen", "e1", "", 2, "y");
+    sealEntry("a", "unseen", "e1", "", 1, 5, 2);
+    expect(repairs).toEqual([
+      { chatID: "a", turnID: "unseen" },
+      { chatID: "a", turnID: "unseen" },
+      { chatID: "a", turnID: "unseen" },
+    ]);
+  });
+
+  it("seals the open entry into the log, so the seq check applies to the seal too", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    applyDelta("a", turn, "e1", "", 2, "llo");
+    sealEntry("a", turn, "e1", "", 1, 42, 2);
+    const state = get("a")?.turns.get(turn);
+    expect(state?.openEntries.size).toBe(0);
+    expect(state?.entries[1]).toMatchObject({
+      id: "e1",
+      turn,
+      kind: "text",
+      seq: 1,
+      ts: 42,
+      payload: { text: "Hello" },
+    });
+    expect(entryTextSig(turn, "e1")).toBeUndefined();
+  });
+
+  it("reads a seal whose n disagrees with the held count as a hole, keeping the open entry", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    sealEntry("a", turn, "e1", "", 1, 5, 7);
+    expect(get("a")?.turns.get(turn)?.openEntries.get("")?.text).toBe("He");
+    expect(get("a")?.turns.get(turn)?.entries).toHaveLength(1);
+    expect(repairs).toEqual([{ chatID: "a", turnID: turn, afterSeq: 0 }]);
+  });
+
+  it("reads a seal whose seq is not next as the append's own hole", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "He", n: 1 });
+    sealEntry("a", turn, "e1", "", 5, 5, 1);
+    expect(get("a")?.turns.get(turn)?.entries).toHaveLength(1);
+    expect(repairs).toEqual([{ chatID: "a", turnID: turn, afterSeq: 0 }]);
+  });
+
+  it("keeps two lanes' open entries apart", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "top", kind: "text", text: "A", n: 1 });
+    openEntry("a", { turn, id: "sub", lane: "sub-1", kind: "text", text: "B", n: 1 });
+    applyDelta("a", turn, "sub", "sub-1", 2, "C");
+    const state = get("a")?.turns.get(turn);
+    expect(state?.openEntries.get("")?.text).toBe("A");
+    expect(state?.openEntries.get("sub-1")?.text).toBe("BC");
+  });
+
+  it("replaces a lane's open entry when a second one opens in it", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", kind: "text", text: "A", n: 1 });
+    openEntry("a", { turn, id: "e2", kind: "thinking", text: "B", n: 1 });
+    const state = get("a")?.turns.get(turn);
+    expect(state?.openEntries.size).toBe(1);
+    expect(state?.openEntries.get("")?.id).toBe("e2");
+  });
+
+  it("carries the kind through the seal, which is what tells text from thinking", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "r1", kind: "thinking", text: "hmm", n: 1 });
+    sealEntry("a", turn, "r1", "", 1, 5, 1);
+    expect(get("a")?.turns.get(turn)?.entries[1]?.kind).toBe("thinking");
   });
 });
 
-describe("transcriptStale (the activation refetch gate)", () => {
-  beforeEach(() => {
-    resetFreshness();
+describe("markWindowStale", () => {
+  it("flips a loaded window partial, and leaves any other residency alone", () => {
+    resetStore("a");
+    const s = get("a") as Session;
+    s.residency = "loaded";
+    markWindowStale("a");
+    expect(get("a")?.residency).toBe("partial");
+    s.residency = "evicted";
+    markWindowStale("a");
+    expect(get("a")?.residency).toBe("evicted");
   });
 
-  function loadedNow(chatID: string): Session {
-    const s: Session = { ...makeSession(chatID), residency: "loaded" };
-    observeStamp({ kind: "chat", ref: chatID, version: "1" });
-    return s;
-  }
-
-  it("a loaded window whose version is held is fresh", () => {
-    expect(transcriptStale(loadedNow("c-fresh"))).toBe(false);
-  });
-
-  it("a never-loaded chat is stale by construction", () => {
-    // No residency and no stamp: the boot-listed shape. Both halves absent must
-    // read stale, or the first activation would skip the fetch it exists to do.
-    expect(transcriptStale(makeSession("c-cold"))).toBe(true);
-  });
-
-  it("an evicted window is stale whatever its stamp says", () => {
-    const s: Session = { ...makeSession("c-evicted"), residency: "evicted" };
-    observeStamp({ kind: "chat", ref: "c-evicted", version: "1" });
-    expect(transcriptStale(s)).toBe(true);
-  });
-
-  it("a partial window is stale whatever its stamp says", () => {
-    // Background ingest into an evicted chat: some rows resident, the window
-    // around them not — only a newest-page load may claim otherwise.
-    const s: Session = { ...makeSession("c-partial"), residency: "partial" };
-    observeStamp({ kind: "chat", ref: "c-partial", version: "1" });
-    expect(transcriptStale(s)).toBe(true);
-  });
-
-  it("a load_failed window is stale whatever its stamp says", () => {
-    const s: Session = { ...makeSession("c-failed"), residency: "load_failed" };
-    observeStamp({ kind: "chat", ref: "c-failed", version: "1" });
-    expect(transcriptStale(s)).toBe(true);
-  });
-
-  it("forgetting the held version flips a fresh window stale", () => {
-    // What a digest `removed` answer and a whole reconcile's bind both do to the map.
-    const s = loadedNow("c-forgotten");
-    expect(transcriptStale(s)).toBe(false);
-    forgetSubject("chat", "c-forgotten");
-    expect(transcriptStale(s)).toBe(true);
-  });
-
-  it("a loaded window with no held version is stale", () => {
-    // A row claiming loaded that no loader ever stamped must refetch, not trust the
-    // hole: only a load that ANSWERED observes a version.
-    const s: Session = { ...makeSession("c-unstamped"), residency: "loaded" };
-    expect(transcriptStale(s)).toBe(true);
+  it("is a no-op for a chat the store does not hold", () => {
+    setSessions([]);
+    expect(() => {
+      markWindowStale("ghost");
+    }).not.toThrow();
   });
 });
 
-// ---------------------------------------------------------------------------
-// Where a server-persisted row lands relative to the unflushed reply.
-//
-// The server writes the chat file BEFORE it broadcasts, and the in-flight turn's
-// message is not in that file until turn_ended — so every row persisted mid-turn
-// sits ABOVE the reply on disk. Appending it put it BELOW the reply live, so the
-// same conversation read one way on screen and the other way after a reload.
-// ---------------------------------------------------------------------------
+// --- hasMessage -----------------------------------------------------------------------
 
-describe("a server-persisted row lands before the unflushed reply", () => {
-  /** A chat with one user prompt and a streaming reply, which is what makes the
-   *  in-flight marker meaningful. */
-  function streamingChat(chatID: string): void {
-    resetStore(chatID);
-    appendMessage(chatID, { id: "u-1", role: "user", ts: 1, content: "go" });
-    appendChunk(chatID, "m-turn", "streaming", false, 0, "");
-  }
-
-  function ids(chatID: string): string[] {
-    return (get(chatID)?.messages ?? []).map((m) => m.id);
-  }
-
-  it("puts the turn's plan row above the reply", () => {
-    streamingChat("chat-ord1");
-    appendMessage("chat-ord1", {
-      id: "m-plan",
-      role: "assistant",
-      ts: 2,
-      content: "",
-      plan: [{ content: "step one", priority: "high", status: "pending" }],
-    });
-    expect(ids("chat-ord1")).toEqual(["u-1", "m-plan", "m-turn"]);
+describe("hasMessage answers off turn_open.prompt.id, the one place a prompt id is addressed", () => {
+  it("finds a prompt this client sent", () => {
+    resetStore("a");
+    openTurnIn("a", "t1", 1, "m-abc");
+    expect(hasMessage("a", "m-abc")).toBe(true);
   });
 
-  it.each(["compaction_failed", "infra_safety_blocked", "model_switched", "compacted"] as const)(
-    "puts a %s event above the reply",
-    (kind) => {
-      const chatID = `chat-ord-${kind}`;
-      streamingChat(chatID);
-      appendMessage(chatID, { id: "e-1", role: "event", ts: 2, content: "", event_kind: kind });
-      expect(ids(chatID)).toEqual(["u-1", "e-1", "m-turn"]);
-    },
-  );
-
-  // The message index is by POSITION, so an insert moves every id at or past the
-  // splice point. Without the rebuild the next frame for the reply merges into
-  // whatever now occupies its old slot.
-  it("re-derives the index, so the reply's own next frame still finds it", () => {
-    streamingChat("chat-ord2");
-    appendMessage("chat-ord2", { id: "m-plan", role: "assistant", ts: 2, content: "" });
-    upsertMessage("chat-ord2", {
-      id: "m-turn",
-      role: "assistant",
-      ts: 3,
-      content: "streaming (sanitized)",
-    });
-    expect(ids("chat-ord2")).toEqual(["u-1", "m-plan", "m-turn"]);
-    expect(get("chat-ord2")?.messages[2]?.content).toBe("streaming (sanitized)");
+  it("answers false for a prompt id no resident turn opened", () => {
+    resetStore("a");
+    openTurnIn("a", "t1", 1, "m-abc");
+    expect(hasMessage("a", "m-other")).toBe(false);
   });
 
-  // The one exemption, and it is the ordinary case rather than an edge: a prompt
-  // is admitted while an engine-opened turn streams (such a turn holds no
-  // admission reservation), and projectTurns opens a new turn on a user message.
-  it("keeps a user prompt at the END, because it OPENS a turn", () => {
-    streamingChat("chat-ord3");
-    appendMessage("chat-ord3", { id: "u-2", role: "user", ts: 2, content: "and this" });
-    expect(ids("chat-ord3")).toEqual(["u-1", "m-turn", "u-2"]);
+  it("answers false for an agent-initiated turn, which carries no prompt", () => {
+    resetStore("a");
+    openTurnIn("a", "t1", 1);
+    expect(hasMessage("a", "m-abc")).toBe(false);
   });
 
-  // An UNPERSISTED frame keeps appending: message_created and a reconnect's
-  // `live_turn` describe the live turn itself, which is not in the file at all.
-  it("still appends an unpersisted frame", () => {
-    streamingChat("chat-ord4");
-    upsertMessage("chat-ord4", { id: "m-later", role: "assistant", ts: 2, content: "second" });
-    expect(ids("chat-ord4")).toEqual(["u-1", "m-turn", "m-later"]);
-  });
-
-  it("appends when no turn is in flight, which is every settled transcript", () => {
-    resetStore("chat-ord5");
-    appendMessage("chat-ord5", { id: "u-1", role: "user", ts: 1, content: "go" });
-    appendMessage("chat-ord5", { id: "a-1", role: "assistant", ts: 2, content: "done" });
-    appendMessage("chat-ord5", {
-      id: "e-1",
-      role: "event",
-      ts: 3,
-      content: "",
-      event_kind: "compacted",
-    });
-    expect(ids("chat-ord5")).toEqual(["u-1", "a-1", "e-1"]);
+  it("answers false for a chat it does not hold", () => {
+    setSessions([]);
+    expect(hasMessage("ghost", "m-abc")).toBe(false);
   });
 });
 
-describe("a plan row does not capture a pending steer anchor", () => {
-  // A plan row is RoleAssistant, so before the shape gate it took every
-  // anchor-less mark and the reply's own message_created found none left — the
-  // note then rendered against the plan card instead of the point in the reply
-  // where the agent read it.
-  it("leaves the anchor for the reply that follows it", () => {
-    resetStore("chat-anchor1");
-    appendMessage("chat-anchor1", { id: "u-1", role: "user", ts: 1, content: "go" });
-    promoteSteer("chat-anchor1", "steer-1", "read before anything landed", "user");
-    expect(steerMarks("chat-anchor1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
+// --- Liveness -------------------------------------------------------------------------
 
-    appendMessage("chat-anchor1", {
-      id: "m-plan",
-      role: "assistant",
-      ts: 2,
-      content: "",
-      plan: [{ content: "step one", priority: "high", status: "pending" }],
-    });
-    expect(steerMarks("chat-anchor1")[0]?.anchor).toEqual({ msgID: "", blockIndex: 0 });
+describe("turnLive: liveness is the log", () => {
+  it("is true while a resident turn carries no turn_close", () => {
+    resetStore("a");
+    openTurnIn("a", "t1");
+    expect(turnLive(get("a") as Session)).toBe(true);
+  });
 
-    noteLiveTurnMessage("chat-anchor1", "m-turn");
-    upsertMessage("chat-anchor1", { id: "m-turn", role: "assistant", ts: 3, content: "" });
-    expect(steerMarks("chat-anchor1")[0]?.anchor).toEqual({ msgID: "m-turn", blockIndex: 0 });
+  it("is false once every resident turn is closed and the server says nothing", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "turn_close", { outcome: "completed" }));
+    expect(turnLive(get("a") as Session)).toBe(false);
+  });
+
+  it("is true on the server's own statement for a window that is not resident", () => {
+    resetStore("a");
+    setTurnOpen("a", true);
+    expect(turnLive(get("a") as Session)).toBe(true);
+  });
+
+  it("is true for a provisional row, which states neither input", () => {
+    resetStore("a");
+    const s = get("a") as Session;
+    s.provisional = true;
+    expect(turnLive(s)).toBe(true);
+  });
+
+  it("does NOT read thinking, so a latch can never outrank an open turn", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "turn_close", { outcome: "completed" }));
+    setThinking("a", true);
+    expect(turnLive(get("a") as Session)).toBe(false);
+  });
+
+  it("drops the server's statement when a NEW turn starts", () => {
+    resetStore("a");
+    setTurnOpen("a", false);
+    expect(get("a")?.turn_open).toBe(false);
+    setThinking("a", true);
+    expect(get("a")?.turn_open).toBeUndefined();
+  });
+
+  it("does not churn the session on a repeated statement", () => {
+    resetStore("a");
+    setTurnOpen("a", true);
+    const before = get("a");
+    setTurnOpen("a", true);
+    expect(get("a")).toBe(before);
   });
 });
 
-describe("setTurnSummary stamps exactly one carrier per turn", () => {
-  it("skips the segment when a persisted row in the turn already carries the outcome", () => {
-    // The sealed-then-empty turn: the seal persisted segment 1, the turn produced
-    // nothing after it, so the server's marker is the turn's carrier. turnLedger
-    // SUMS across the turn's body, so stamping the segment too reported the
-    // credits and the elapsed time twice live and once after a reload.
-    resetStore("chat-sum1");
-    appendMessage("chat-sum1", { id: "u-1", role: "user", ts: 1, content: "go" });
-    appendMessage("chat-sum1", { id: "seg-1", role: "assistant", ts: 2, content: "before" });
-    appendMessage("chat-sum1", {
-      id: "e-1",
-      role: "event",
-      ts: 3,
-      content: "",
-      event_kind: "turn_outcome",
-      turn_outcome: "completed",
-      turn_credits: 0.5,
-      turn_elapsed_ms: 1200,
-    });
-
-    setTurnSummary("chat-sum1", { credits: 0.5, elapsedMs: 1200, model: "m-x" });
-
-    const seg = get("chat-sum1")?.messages[1];
-    expect(seg?.turn_credits).toBeUndefined();
-    expect(seg?.turn_elapsed_ms).toBeUndefined();
-    expect(seg?.turn_model).toBeUndefined();
+describe("chatHoldingTurn", () => {
+  it("names the chat whose window holds the turn", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    openTurnIn("b", "t9");
+    expect(chatHoldingTurn("t9")).toBe("b");
   });
 
-  it("stamps the reply when the turn has no persisted carrier", () => {
-    resetStore("chat-sum2");
-    appendMessage("chat-sum2", { id: "u-1", role: "user", ts: 1, content: "go" });
-    appendMessage("chat-sum2", { id: "a-1", role: "assistant", ts: 2, content: "done" });
-
-    setTurnSummary("chat-sum2", { credits: 0.5, elapsedMs: 1200, model: "m-x" });
-
-    const reply = get("chat-sum2")?.messages[1];
-    expect(reply?.turn_credits).toBe(0.5);
-    expect(reply?.turn_elapsed_ms).toBe(1200);
-    expect(reply?.turn_model).toBe("m-x");
-  });
-
-  it("finds the carrier even behind a trailing user row", () => {
-    // The next prompt can already be on the record when a background turn's
-    // summary lands, so the walk steps over trailing user rows — and the veto has
-    // to survive that step, or the case it exists for is exactly the one it misses.
-    resetStore("chat-sum3");
-    appendMessage("chat-sum3", { id: "u-1", role: "user", ts: 1, content: "go" });
-    appendMessage("chat-sum3", { id: "seg-1", role: "assistant", ts: 2, content: "before" });
-    appendMessage("chat-sum3", {
-      id: "e-1",
-      role: "event",
-      ts: 3,
-      content: "",
-      event_kind: "turn_outcome",
-      turn_outcome: "completed",
-      turn_credits: 0.5,
-    });
-    appendMessage("chat-sum3", { id: "u-2", role: "user", ts: 4, content: "next" });
-
-    setTurnSummary("chat-sum3", { credits: 0.5, elapsedMs: 1200 });
-
-    expect(get("chat-sum3")?.messages[1]?.turn_credits).toBeUndefined();
-  });
-
-  it("stamps a new headerless turn whose predecessor sealed with a carrier", () => {
-    // Two turns with no user row between them, which is what an engine-opened
-    // turn produces: persistOutcomeMarker seals the first with a carrier, and the
-    // second's reply is a NEW turn by projectTurns' own rule (an outcome-bearing
-    // row closes a turn). The veto is for a carrier in the turn being summarised,
-    // so it must not reach across that boundary — ungated it did, and the live
-    // footer showed no credits and no elapsed time until a reload.
-    resetStore("chat-sum4");
-    appendMessage("chat-sum4", { id: "u-1", role: "user", ts: 1, content: "go" });
-    appendMessage("chat-sum4", { id: "a-1", role: "assistant", ts: 2, content: "first turn" });
-    appendMessage("chat-sum4", {
-      id: "e-1",
-      role: "event",
-      ts: 3,
-      content: "",
-      event_kind: "turn_outcome",
-      turn_outcome: "completed",
-      turn_credits: 0.5,
-    });
-    appendMessage("chat-sum4", { id: "a-2", role: "assistant", ts: 4, content: "second turn" });
-
-    setTurnSummary("chat-sum4", { credits: 0.25, elapsedMs: 900, model: "m-y" });
-
-    const fresh = get("chat-sum4")?.messages[3];
-    expect(fresh?.turn_credits).toBe(0.25);
-    expect(fresh?.turn_elapsed_ms).toBe(900);
-    expect(fresh?.turn_model).toBe("m-y");
-    // The sealed turn's own segment keeps its carrier's numbers and gains none.
-    expect(get("chat-sum4")?.messages[1]?.turn_credits).toBeUndefined();
+  it("answers empty for a turn no resident window holds", () => {
+    resetStore("a");
+    expect(chatHoldingTurn("t9")).toBe("");
   });
 });
 
-// ---------------------------------------------------------------------------
-// outcomeLatch + latchFieldsFor: the header-derived dot state.
-//
-// The two outcome latches are client memory, so a fresh page load, a brand-new
-// browser session and a transport gap all arrived with nothing to derive them
-// from — and every door that rebuilds a Session from a header alone produced a
-// session with neither latch, which `tabStatusFor` reports as `idle`. `idle`
-// paints a hollow ring where `done` paints a solid fill, which is the "empty
-// circle" a finished turn came back as after a reconnect.
-//
-// `outcomeLatch` is the ONE table both derivation paths read, so the table is
-// pinned over the whole enum rather than over the members that happen to matter:
-// a member added later is judged here instead of silently latching nothing.
-// ---------------------------------------------------------------------------
+describe("window edges", () => {
+  it("derivedHasMore compares the record's count against what is resident", () => {
+    expect(derivedHasMore(0, 0)).toBe(false);
+    expect(derivedHasMore(3, 3)).toBe(false);
+    expect(derivedHasMore(4, 3)).toBe(true);
+  });
 
-describe("outcomeLatch maps every turn outcome to the latch it sets", () => {
-  /** The latch each wire outcome sets, keyed over the GENERATED union — which is
-   *  what makes this table complete in BOTH directions, at compile time. An
-   *  eighth member added to `TurnOutcome` leaves a required key missing and
-   *  `npm run typecheck:tests` rejects the literal; a key that is not a member is
-   *  rejected the same way.
-   *
-   *  A `Record` rather than a list of pairs FOR that reason, and it replaced an
-   *  `expect(cases).toHaveLength(8)` that claimed the same guarantee and could
-   *  not deliver it: it read the length of the table declared three lines above
-   *  itself, so a member added to the wire and forgotten here left it green, and
-   *  `TURN_OUTCOMES` (the runtime enum the decoder validates against) is
-   *  module-private to decoders.gen.ts, so nothing tied the rows to the wire at
-   *  all. Same shape `CUE_ICON` and `DOT_SUBJECT` use, for the same reason. */
-  const LATCH_BY_OUTCOME: Readonly<Record<TurnOutcome, "done" | "failed" | "">> = {
-    // The two that latch what they say.
-    completed: "done",
-    failed: "failed",
-    // A refusal is a failure for the dot: nothing malfunctioned, but the turn
-    // produced no answer, and the remedy is the user's.
-    refused: "failed",
-    // `interrupted` is BROKEN, and this row is deliberately NOT "latches
-    // nothing". `turn-severity.ts` is the authority: five surfaces already
-    // graded an interrupted turn as a fault (the transcript's red divider, the
-    // collapsed turn face, the footer glyph, and fold-state's never-auto-fold
-    // promise) and this latch was the ONE that mapped it to nothing — which is
-    // why its dot fell through to `idle` and painted the same hollow ring this
-    // change exists to remove. A fault nobody chose stopped the turn, so the
-    // chat does have something to report.
-    interrupted: "failed",
-    // The two STOPPED outcomes latch DONE, and neither row is "latches nothing".
-    // The hollow ring means the chat has NOT INITIATED (user ruling, 2026-09-04),
-    // so a turn that ended may never fall to it — and both of these ended. They
-    // are not `failed` either: a cancel is the user's own doing, and `unknown` is
-    // an unmeasured stop reason, so grading it broken would report a working turn
-    // as a failure. `done` is the transport's "a turn finished here", which is
-    // exactly what both are. `runStatusFor` already answered a run's cancel the
-    // same way, so the two dot derivations agree.
-    cancelled: "done",
-    unknown: "done",
-    // `running` is the ONE outcome that latches nothing: the turn has not ended,
-    // and `thinking` already paints it `working`, so the chat is never left
-    // hollow by this row either. Unreachable from a persisted record.
-    running: "",
-  };
+  it("isEmptyChat needs BOTH halves: nothing on the record and nothing resident", () => {
+    resetStore("a");
+    expect(isEmptyChat(get("a"))).toBe(true);
+    openTurnIn("a", "t1", 1);
+    expect(isEmptyChat(get("a"))).toBe(false);
+  });
 
-  const cases: readonly (readonly [TurnOutcome | undefined, "done" | "failed" | ""])[] = [
-    // `Object.entries` widens the key back to `string`, so the cast restores what
-    // the declaration above already checked. Derived rather than restated, so the
-    // rows and the exhaustive table cannot drift apart.
-    ...(Object.entries(LATCH_BY_OUTCOME) as (readonly [TurnOutcome, "done" | "failed" | ""])[]),
-    // ABSENT is the one case the ruling exempts, and it is answered before
-    // `severityOf` is consulted: there is genuinely no state to pull from a
-    // record written before the field existed, so the hollow ring is honest
-    // rather than a guess. Reading it through severity's unknown-value arm
-    // latched `done` on every legacy chat. It cannot be a row in the Record —
-    // `undefined` is not a member of the wire enum — which is why it is the one
-    // case spelled out here.
+  it("isEmptyChat reads an absent chat as empty, so callers need no null check", () => {
+    expect(isEmptyChat(undefined)).toBe(true);
+  });
+});
+
+// --- The dot vocabulary ---------------------------------------------------------------
+
+describe("outcomeLatch grades a persisted outcome for the dot", () => {
+  const cases: [TurnOutcome | undefined, "done" | "failed" | ""][] = [
+    ["completed", "done"],
+    ["empty", "done"],
+    ["cancelled", "done"],
+    ["interrupted", "failed"],
+    ["unknown", "done"],
+    ["failed", "failed"],
+    ["refused", "failed"],
+    ["running", ""],
     [undefined, ""],
   ];
-
   for (const [outcome, want] of cases) {
     it(`maps ${outcome ?? "an absent outcome"} to ${want === "" ? "nothing" : want}`, () => {
       expect(outcomeLatch(outcome)).toBe(want);
@@ -3791,414 +843,902 @@ describe("outcomeLatch maps every turn outcome to the latch it sets", () => {
   }
 });
 
-describe("latchFieldsFor seeds a rebuilt session from the header", () => {
-  const withOutcome = (chatID: string, outcome: string | undefined): ChatHeader => {
-    const h = headerFor(chatID);
-    return outcome === undefined ? h : ({ ...h, last_turn_outcome: outcome } as ChatHeader);
-  };
-
-  it("seeds done from a completed turn for a chat it has never seen live", () => {
-    // The case the whole change exists for: no existing session at all, which is
-    // what a fresh page load and a brand-new browser session both look like.
-    expect(latchFieldsFor(undefined, withOutcome("c1", "completed"))).toEqual({ turn_done: true });
-  });
-
-  it("seeds failed from a failed turn and from a refused one", () => {
-    expect(latchFieldsFor(undefined, withOutcome("c1", "failed"))).toEqual({ turn_failed: true });
-    expect(latchFieldsFor(undefined, withOutcome("c1", "refused"))).toEqual({ turn_failed: true });
-  });
-
-  it("seeds done for a STOPPED turn, so a cancel is not reported as no chat at all", () => {
-    // The hollow ring means the chat has not initiated (user ruling, 2026-09-04),
-    // and a cancelled or unreadable turn is still a turn that ran.
-    expect(latchFieldsFor(undefined, withOutcome("c1", "cancelled"))).toEqual({ turn_done: true });
-    expect(latchFieldsFor(undefined, withOutcome("c1", "unknown"))).toEqual({ turn_done: true });
-  });
-
-  it("seeds neither for an ABSENT outcome, which is the one case the ruling exempts", () => {
-    // A record written before the field existed: there is genuinely no state to
-    // pull, so the hollow ring is the honest answer rather than a guess. This is
-    // also what keeps `omitempty` on the wire meaningful.
-    expect(latchFieldsFor(undefined, withOutcome("c1", undefined))).toEqual({});
-  });
-
-  it("carries an existing latch over even when the header disagrees", () => {
-    // RULE 2. A latch set by a live `turn_ended` on this page is newer than a
-    // header that has NOT MOVED, so the local verdict wins. The header here
-    // reports the same outcome the row already stores, which is what keeps rule 1
-    // out of it.
-    const existing = {
-      ...makeSession("c1"),
-      turn_failed: true,
-      last_turn_outcome: "completed",
-    } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({ turn_failed: true });
-  });
-
-  it("takes a MOVED header's verdict over the latch this page holds", () => {
-    // RULE 1, and the case it exists for: another device ran a turn, so the
-    // header's outcome is newer than anything this page remembers. Ahead of the
-    // carry, because rule 2 returns for a chat that already holds a latch and a
-    // moved header could never be seen behind it.
-    const existing = {
-      ...makeSession("c1"),
-      turn_done: true,
-      last_turn_outcome: "completed",
-    } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", "failed"))).toEqual({ turn_failed: true });
-  });
-
-  it("may not CLEAR a latch: a header moving to running keeps the stored verdict", () => {
-    // The VERDICT term of rule 1. `latchFromOutcome` answers {} for a
-    // `running`-severity outcome, and that means "a turn is in flight" rather
-    // than "the last one un-finished" — so an empty answer falls through to the
-    // carry instead of replacing the latch with nothing.
-    const existing = {
-      ...makeSession("c1"),
-      turn_done: true,
-      last_turn_outcome: "completed",
-    } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", "running"))).toEqual({ turn_done: true });
-  });
-
-  it("may not CLEAR a latch: a header moving to an ABSENT outcome keeps it too", () => {
-    // The same term over the other empty answer, and the shape a real header
-    // produces: `last_turn_outcome` is omitempty on the wire, and `upsertHeader`
-    // treats an absent one as a CLEAR — so a stored outcome going away is a
-    // movement, and it still may not blank the latch.
-    const existing = {
-      ...makeSession("c1"),
-      turn_done: true,
-      last_turn_outcome: "completed",
-    } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", undefined))).toEqual({ turn_done: true });
-  });
-
-  it("reads an ABSENT stored outcome as no movement rather than as a change", () => {
-    // The BASELINE term of rule 1. With nothing stored, `incoming !==
-    // existing.last_turn_outcome` is true for EVERY header, so a first read could
-    // replace a latch a `turn_ended` on this page just took. The intended case
-    // always has a stored baseline to have moved from, so the term costs nothing.
-    const existing = { ...makeSession("c1"), turn_failed: true } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({ turn_failed: true });
-  });
-
-  it("does not take a moved header while a turn is in flight", () => {
-    // The `thinking` term of rule 1, which the in-flight case below cannot reach:
-    // that one has no stored outcome, so the baseline term already blocks it.
-    // Seeding here would paint a `failed` latch over a streaming reply, because
-    // `tabStatusFor` ranks `turn_failed` ABOVE `thinking`.
-    const existing = {
-      ...makeSession("c1"),
-      thinking: true,
-      last_turn_outcome: "completed",
-    } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", "failed"))).toEqual({});
-  });
-
-  it("carries BOTH latches when both are somehow set, so it can never clear one", () => {
-    // This is what lets `upsertHeader` apply the result over an existing session
-    // without a guard: the helper only ever preserves or adds.
-    const existing = { ...makeSession("c1"), turn_done: true, turn_failed: true } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", "cancelled"))).toEqual({
-      turn_done: true,
-      turn_failed: true,
-    });
-  });
-
-  it("seeds nothing while a turn is in flight", () => {
-    // RULE 3. The header's outcome describes the turn BEFORE the one now
-    // running, so seeding it would paint a settled dot over a working chat on a
-    // mid-turn reload.
-    const existing = { ...makeSession("c1"), thinking: true } as Session;
-    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({});
-  });
-
-  it("seeds an existing session that carries no latch and no live turn", () => {
-    // The gap-reconcile shape: `transport:gap` clears both latches explicitly
-    // and then reloads the list, so the row exists with nothing latched and the
-    // header is entitled to re-seed it.
-    const existing = makeSession("c1");
-    expect(latchFieldsFor(existing, withOutcome("c1", "completed"))).toEqual({ turn_done: true });
-  });
-
-  it("never returns an explicit undefined, which would delete a latch on spread", () => {
-    // exactOptionalPropertyTypes makes an explicit `undefined` a different thing
-    // from an absent key, and `upsertHeader` spreads this over a live session.
-    for (const outcome of [undefined, "completed", "cancelled", "failed"]) {
-      const fields = latchFieldsFor(undefined, withOutcome("c1", outcome));
-      for (const [key, value] of Object.entries(fields)) {
-        expect(value, `${key} must be true or absent, never undefined`).toBe(true);
-      }
+describe("tabStatusFor", () => {
+  function idleChat(outcome?: TurnOutcome): Session {
+    const s = makeSession("a");
+    if (outcome !== undefined) {
+      s.last_turn_outcome = outcome;
     }
+    s.turn_open = false;
+    return s;
+  }
+
+  it("answers nothing at all for a chat it does not hold", () => {
+    expect(tabStatusFor(undefined)).toBe("");
+  });
+
+  it("puts a question ahead of everything", () => {
+    expect(tabStatusFor(idleChat("failed"), true)).toBe("input");
+  });
+
+  it("reads a failed newest turn as failed while nothing is live", () => {
+    expect(tabStatusFor(idleChat("failed"))).toBe("failed");
+  });
+
+  it("gates failed on liveness, so a running turn is never painted red", () => {
+    resetStore("a");
+    const s = get("a") as Session;
+    s.last_turn_outcome = "failed";
+    openTurnIn("a", "t1");
+    expect(tabStatusFor(get("a"))).toBe("working");
+  });
+
+  it("reads a declared waiting_on_user as waiting once the turn has ended", () => {
+    const s = idleChat("completed");
+    s.agent_status = "waiting_on_user";
+    expect(tabStatusFor(s)).toBe("waiting");
+  });
+
+  it("reads a completed newest turn as done", () => {
+    expect(tabStatusFor(idleChat("completed"))).toBe("done");
+  });
+
+  it("keeps a chat that has never initiated on the idle floor", () => {
+    expect(tabStatusFor(idleChat())).toBe("idle");
   });
 });
 
-describe("upsertHeader applies the header's outcome to the dot", () => {
-  it("seeds a chat arriving for the first time on a chat_created frame", () => {
-    setSessions([]);
-    upsertHeader({ ...headerFor("uh-new"), last_turn_outcome: "completed" } as ChatHeader);
-    expect(tabStatusFor(get("uh-new"))).toBe("done");
+describe("runStatusFor", () => {
+  it("answers nothing for a run it has not fetched", () => {
+    expect(runStatusFor(undefined)).toBe("");
   });
 
-  it("seeds an existing row that has no latch of its own", () => {
-    setSessions([makeSession("uh-seed")]);
-    expect(tabStatusFor(get("uh-seed"))).toBe("idle");
-
-    upsertHeader({ ...headerFor("uh-seed"), last_turn_outcome: "failed" } as ChatHeader);
-    expect(tabStatusFor(get("uh-seed"))).toBe("failed");
+  it("puts an unanswered ask ahead of every status", () => {
+    expect(runStatusFor("completed", true)).toBe("input");
   });
 
-  it("does not overwrite a local latch with the header's older verdict", () => {
-    setSessions([{ ...makeSession("uh-keep"), turn_failed: true } as Session]);
-    upsertHeader({ ...headerFor("uh-keep"), last_turn_outcome: "completed" } as ChatHeader);
-    expect(tabStatusFor(get("uh-keep"))).toBe("failed");
+  it("reads a park on a person as input and any other park as waiting", () => {
+    expect(runStatusFor("paused", false, "need_input")).toBe("input");
+    expect(runStatusFor("paused")).toBe("waiting");
   });
 
-  it("leaves a working chat working", () => {
-    setSessions([makeSession("uh-live")]);
-    setThinking("uh-live", true);
-    upsertHeader({ ...headerFor("uh-live"), last_turn_outcome: "completed" } as ChatHeader);
-    expect(tabStatusFor(get("uh-live"))).toBe("working");
+  it("reads a cancelled run as done, because the reader asked for the stop", () => {
+    expect(runStatusFor("cancelled")).toBe("done");
+    expect(runStatusFor("completed")).toBe("done");
   });
 
-  it("leaves a chat with no reported outcome on the idle floor", () => {
-    setSessions([]);
-    upsertHeader(headerFor("uh-quiet"));
-    expect(tabStatusFor(get("uh-quiet"))).toBe("idle");
+  it("reads failed and aborted as failed", () => {
+    expect(runStatusFor("failed")).toBe("failed");
+    expect(runStatusFor("aborted")).toBe("failed");
   });
 
-  // -------------------------------------------------------------------------
-  // The PRE-UPDATE contract, which is what makes rule 1 reachable at all.
-  //
-  // `latchFieldsFor` compares the incoming outcome against the PREVIOUSLY stored
-  // one, and `upsertHeader` hands it `s` (the stored row) rather than `next` — so
-  // writing the new outcome onto `s` instead of onto `next` would make every
-  // header read as "not moved" and the moved-header rule would be dead code with
-  // its unit tests still green.
-  // -------------------------------------------------------------------------
-
-  it("writes the moved outcome onto the row AND still latches from the movement", () => {
-    setSessions([
-      {
-        ...makeSession("uh-moved"),
-        turn_done: true,
-        last_turn_outcome: "completed",
-      } as Session,
-    ]);
-
-    upsertHeader({ ...headerFor("uh-moved"), last_turn_outcome: "failed" } as ChatHeader);
-
-    // Both halves of one call, because either alone passes for the wrong reason:
-    // the stored field proves the row took the server's news, and the latch proves
-    // the comparison ran against what was there BEFORE it did.
-    expect(get("uh-moved")?.last_turn_outcome, "the row took the new outcome").toBe("failed");
-    expect(get("uh-moved")?.turn_failed, "the movement was latched").toBe(true);
-  });
-
-  it("REPLACES the outcome and the timestamp rather than preserving them", () => {
-    // A header read is the AUTHORITY for both fields, which is the OPPOSITE of
-    // `model` and `effort_levels` in the same literal — those fall back to `s`
-    // because absent means no news there. Here an absent value is a CLEAR, and a
-    // conditional spread would carry the stale outcome forward, which is what
-    // would stop rule 1 ever observing an outcome that went away.
-    setSessions([
-      {
-        ...makeSession("uh-clear"),
-        last_turn_outcome: "completed",
-        updated_at: 111,
-      } as Session,
-    ]);
-
-    upsertHeader({ ...headerFor("uh-clear"), updated_at: 0 } as ChatHeader);
-
-    expect(get("uh-clear")?.last_turn_outcome, "outcome").toBeUndefined();
-    expect(get("uh-clear")?.updated_at, "timestamp").toBe(0);
+  it("folds an unrecognised status toward saying nothing rather than idle", () => {
+    expect(runStatusFor("unknown")).toBe("");
   });
 });
 
-// ---------------------------------------------------------------------------
-// subagentStatusFor: the third producer of the tab-dot vocabulary.
-//
-// A delegate had no activity signal on the strip at all while a chat and a run
-// both did, and the fact that answers for it is its INVOCATION TOOL CALL's
-// status. Two things make this table worth pinning rather than reading off the
-// four-line switch. `failed` is not a theoretical arm — measured over the
-// addressable subagent invocations on this container's chat volume, 5.3% of them
-// are failures, and that is the one state a reader must never see reported as
-// the settled green disc. And nothing may map to `idle`: the hollow ring means a
-// chat has not initiated (the ruling at `outcomeLatch`), so a delegate someone
-// opened a tab for may not paint it whatever became of the delegate.
-// ---------------------------------------------------------------------------
-
-describe("subagentStatusFor maps a delegate's tool status to its dot state", () => {
-  /** The dot state each `ToolStatus` produces, keyed over the GENERATED union so
-   *  the table is complete in BOTH directions at compile time — the same shape
-   *  `LATCH_BY_OUTCOME` uses, for the same reason. A fifth member added to
-   *  `ToolStatus` upstream leaves a required key missing and
-   *  `npm run typecheck:tests` rejects the literal, which is what stops a new
-   *  wire value reaching the strip as whatever the switch happens to fall to.
-   *
-   *  Every value here is one the strip ALREADY paints: this producer reaches four
-   *  of the seven states, so it needed no CSS rule, no `NEUTRAL_PHRASE` entry and
-   *  no new ink. A fifth value would be a state with no rule behind it, which paints
-   *  an invisible dot rather than failing — so a new entry is a CSS question. */
-  const DOT_BY_TOOL_STATUS: Readonly<Record<ToolStatus, TabDotState>> = {
-    // `isToolActive`'s pair, and it is one arm rather than two on purpose: the
-    // transcript's own delegate card spins for both, so a dot that separated
-    // them would disagree with the card beside it about what in-flight means.
-    pending: "working",
-    in_progress: "working",
-    // The settled disc. `done` is the transport's "it finished" and never a
-    // claim that the delegate succeeded — the same reading a chat's and a run's
-    // `done` carries.
-    completed: "done",
-    // The red diamond. Distinct from `completed` because the wire distinguishes
-    // them, and this is the arm a reader has to be able to see.
-    failed: "failed",
-    // The reader's own cancel. It FOLDS onto `done` rather than earning a fifth
-    // value, which is the CSS question this table's header asks answered: the
-    // strip already paints `done`, so no rule, phrase or ink is added — and it is
-    // the same fold `runStatusFor` makes for a cancelled run two arms above it.
-    // The distinction is not lost, it is carried by the delegate's own card,
-    // which paints the yellow stopped mark.
-    aborted: "done",
-  };
-
-  for (const [status, want] of Object.entries(DOT_BY_TOOL_STATUS) as (readonly [
-    ToolStatus,
-    TabDotState,
-  ])[]) {
+describe("subagentStatusFor maps a delegate's invocation status to its dot", () => {
+  const cases: [ToolCall["status"], string][] = [
+    ["pending", "working"],
+    ["in_progress", "working"],
+    ["completed", "done"],
+    ["aborted", "done"],
+    ["failed", "failed"],
+  ];
+  for (const [status, want] of cases) {
     it(`maps ${status} to ${want}`, () => {
       expect(subagentStatusFor(status)).toBe(want);
     });
   }
 
   it("answers nothing at all when this client holds no invocation", () => {
-    // ABSENCE, which is a statement about the RESIDENT WINDOW rather than about
-    // the delegate: the invocation is persisted with its subtask id, so a chat
-    // whose messages have not been fetched simply has nothing to read. Not
-    // knowing is different from knowing nothing is happening, which is the same
-    // call `runStatusFor` makes for a run it has not fetched.
     expect(subagentStatusFor(undefined)).toBe("");
   });
 });
 
-// ---------------------------------------------------------------------------
-// The adopted-snapshot record.
-//
-// The transcript GET's live_turn can carry only the TAIL of a big in-flight
-// turn — re-indexed from zero. So the record
-// holds TWO facts about that one transfer: whether anything was withheld (which
-// is what lets the renderer say so, and the CONSUMER the wire's required
-// `truncated` field exists for), and WHERE the delivered array sits in the turn's
-// own, which is what a later absolute block_index is measured against.
-// ---------------------------------------------------------------------------
-describe("adopted snapshot records", () => {
-  it("records and reads one message id", () => {
-    clearAdoptedSnapshots("chat-1");
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 0, truncated: true });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+// --- The header re-sync ---------------------------------------------------------------
+
+describe("upsertHeader re-syncs an existing row", () => {
+  it("never lowers the turn count the client has already seen", () => {
+    resetStore("a");
+    const s = get("a") as Session;
+    s.turn_count = 7;
+    upsertHeader({ ...headerFor("a"), turn_count: 3 });
+    expect(get("a")?.turn_count).toBe(7);
   });
 
-  // The base's own reader, and the answer §6 states for a message nothing was
-  // adopted for: 0, because such a client holds the array from index 0 and the
-  // subtraction has to be a no-op there rather than an arithmetic hazard.
-  it("answers base 0 for a message with no record, and the recorded base for one with", () => {
-    clearAdoptedSnapshots("chat-1");
-    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: true });
-    expect(snapshotBlockBase("chat-1", "m1")).toBe(117);
-    // And per message, like the marker beside it: a second id in the same chat
-    // has its own window.
-    expect(snapshotBlockBase("chat-1", "m2")).toBe(0);
+  it("leaves a locally-chosen model alone when the header omits it", () => {
+    resetStore("a");
+    setModel("a", "opus");
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.model).toBe("opus");
   });
 
-  // The two facts are INDEPENDENT: the GET's caps are wide enough that an
-  // ordinary turn is not cut, so a base of 0 with `truncated: false` is the
-  // ordinary answer and a cut without a base is unrepresentable rather than
-  // impossible. Reading one off the other is what a single flag would force.
-  it("keeps the base and the marker independent", () => {
-    clearAdoptedSnapshots("chat-1");
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: false });
-    expect(snapshotBlockBase("chat-1", "m1")).toBe(117);
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+  it("does not read an empty model string as a clear either", () => {
+    resetStore("a");
+    setModel("a", "opus");
+    upsertHeader({ ...headerFor("a"), model: "" });
+    expect(get("a")?.model).toBe("opus");
   });
 
-  // PER-CHAT, so a capped snapshot in a background chat cannot put a
-  // withheld-output note on the reply the reader is looking at. Two chats can be
-  // mid-turn at once and the connect replay caps each independently.
-  it("is per chat", () => {
-    clearAdoptedSnapshots("chat-1");
-    clearAdoptedSnapshots("chat-2");
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 0, truncated: true });
-    expect(isTruncatedSnapshot("chat-2", "m1")).toBe(false);
-    noteAdoptedSnapshot("chat-2", "m2", { blockBase: 0, truncated: true });
-    expect(isTruncatedSnapshot("chat-1", "m2")).toBe(false);
-    expect(isTruncatedSnapshot("chat-2", "m2")).toBe(true);
+  it("overwrites the local model when the header names one", () => {
+    resetStore("a");
+    setModel("a", "opus");
+    upsertHeader({ ...headerFor("a"), model: "sonnet" });
+    expect(get("a")?.model).toBe("sonnet");
   });
 
-  // A MAP rather than a flag: a reconnect names whichever message is in flight
-  // then, so two ids can carry a record across the life of one chat view.
-  it("holds several ids for one chat, and clears them one at a time", () => {
-    clearAdoptedSnapshots("chat-1");
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 5, truncated: true });
-    noteAdoptedSnapshot("chat-1", "m2", { blockBase: 9, truncated: true });
-    clearAdoptedSnapshot("chat-1", "m1");
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
-    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
-    expect(isTruncatedSnapshot("chat-1", "m2")).toBe(true);
-    expect(snapshotBlockBase("chat-1", "m2")).toBe(9);
+  it("reads an ABSENT last_turn_outcome as a CLEAR, unlike model", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), last_turn_outcome: "failed" });
+    expect(get("a")?.last_turn_outcome).toBe("failed");
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.last_turn_outcome).toBeUndefined();
   });
 
-  // What `clearTurnState` calls on both its doors (turn_ended and
-  // transport:gap). The turn is over, so either the whole message arrived or the
-  // replay ring no longer covers what was missed — the note has nothing left to
-  // be true about, and left standing it claims output is still coming.
-  it("clearAdoptedSnapshots empties the whole chat's records", () => {
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: true });
-    noteAdoptedSnapshot("chat-1", "m2", { blockBase: 3, truncated: true });
-    clearAdoptedSnapshots("chat-1");
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
-    expect(isTruncatedSnapshot("chat-1", "m2")).toBe(false);
-    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
+  it("takes pending_model in both directions, which is what clears the badge everywhere", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), pending_model: "opus" });
+    expect(get("a")?.pending_model).toBe("opus");
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.pending_model).toBe("");
   });
 
-  // The HEAL, driven through the real ingest path: message_appended is the
-  // persist echo, so it carries the whole message and the tail the cap left is
-  // replaced. A `message_updated` for the same id is NOT a heal and must leave
-  // the marker standing — `adoptLiveTurn` upserts right after setting it, so a
-  // clear on the shared merge path would erase it in the same tick.
-  it("message_appended clears the record; upsertMessage does not", () => {
-    setSessions([makeSession("chat-1")]);
-    clearAdoptedSnapshots("chat-1");
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 0, truncated: true });
-
-    upsertMessage("chat-1", { id: "m1", role: "assistant", ts: 1, content: "tail only" });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
-
-    appendMessage("chat-1", { id: "m1", role: "assistant", ts: 2, content: "the whole reply" });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+  it("keeps the tier list when the header has no session catalog to report", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), effort_levels: [{ id: "max", name: "Max" }] });
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.effort_levels).toHaveLength(1);
   });
 
-  it("removeChat drops the chat's records", () => {
-    setSessions([makeSession("chat-1")]);
-    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: true });
-    removeChat("chat-1");
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
-    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
+  it("adopts a compaction watermark and drops it when the header stops carrying one", () => {
+    resetStore("a");
+    upsertHeader({ ...headerFor("a"), compaction_watermark: "w1" });
+    expect(get("a")?.compaction_watermark).toBe("w1");
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.compaction_watermark).toBeUndefined();
   });
 
-  // Nothing to key a record on. Guarded so a malformed frame cannot seed one
-  // under the empty chat id, where nothing would ever clear it — and so
-  // `snapshotBlockBase` is never answerable for a chat that does not exist.
-  it("ignores an empty chat id or message id", () => {
-    noteAdoptedSnapshot("", "m1", { blockBase: 117, truncated: true });
-    noteAdoptedSnapshot("chat-1", "", { blockBase: 117, truncated: true });
-    expect(isTruncatedSnapshot("", "m1")).toBe(false);
-    expect(isTruncatedSnapshot("chat-1", "")).toBe(false);
-    expect(snapshotBlockBase("", "m1")).toBe(0);
-    expect(snapshotBlockBase("chat-1", "")).toBe(0);
+  it("leaves supervised mode off when the header does not mention it", () => {
+    resetStore("a");
+    upsertHeader(headerFor("a"));
+    expect(get("a")?.supervised_mode).toBe(false);
+  });
+});
+
+describe("upsertHeader seeds a brand-new row", () => {
+  it("seeds it idle, unsupervised and with an empty window", () => {
+    setSessions([]);
+    upsertHeader(headerFor("a"));
+    const s = get("a") as Session;
+    expect(s.thinking).toBe(false);
+    expect(s.supervised_mode).toBe(false);
+    expect(s.turns.size).toBe(0);
+    expect(s.turn_order).toEqual([]);
+  });
+
+  it("derives has_more from the record's count, because a header carries no window", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("a"), turn_count: 4 });
+    expect(get("a")?.has_more).toBe(true);
+    upsertHeader(headerFor("b"));
+    expect(get("b")?.has_more).toBe(false);
+  });
+
+  it("carries the header's own outcome onto the new row", () => {
+    setSessions([]);
+    upsertHeader({ ...headerFor("a"), last_turn_outcome: "failed" });
+    expect(get("a")?.last_turn_outcome).toBe("failed");
+  });
+});
+
+// --- Per-chat switches ----------------------------------------------------------------
+
+describe("the per-chat switches", () => {
+  it("setCurrentMode applies a new mode and does not churn on the one it has", () => {
+    resetStore("a");
+    setCurrentMode("a", "spec");
+    expect(get("a")?.current_mode_id).toBe("spec");
+    const before = get("a");
+    setCurrentMode("a", "spec");
+    expect(get("a")).toBe(before);
+  });
+
+  it("setSupervisedMode applies a new value and does not churn on the one it has", () => {
+    resetStore("a");
+    setSupervisedMode("a", true);
+    expect(get("a")?.supervised_mode).toBe(true);
+    const before = get("a");
+    setSupervisedMode("a", true);
+    expect(get("a")).toBe(before);
+  });
+
+  it("setEffort applies a level and reads an absent one as empty", () => {
+    resetStore("a");
+    setEffort("a", "max");
+    expect(get("a")?.effort).toBe("max");
+    const before = get("a");
+    setEffort("a", "max");
+    expect(get("a")).toBe(before);
+    setSessions([makeSession("b")]);
+    const fresh = get("b");
+    setEffort("b", "");
+    expect(get("b")).toBe(fresh);
+  });
+
+  it("setName updates the name and no-ops on an unknown chat", () => {
+    resetStore("a");
+    setName("a", "renamed");
+    expect(get("a")?.name).toBe("renamed");
+    expect(() => {
+      setName("ghost", "x");
+    }).not.toThrow();
+  });
+
+  it("setModel refreshes the derived context size in the same update", () => {
+    resetStore("a");
+    setModel("a", "unknown-model");
+    expect(get("a")?.usage.context_size).toBe(0);
+  });
+});
+
+describe("setThinking and setWorkingLabel", () => {
+  it("resets the working label when a turn ends", () => {
+    resetStore("a");
+    setThinking("a", true);
+    setWorkingLabel("a", "Reading files");
+    setThinking("a", false);
+    expect(get("a")?.working_label).toBe("Thinking");
+  });
+
+  it("keeps the label across a start, so the resume control has a fallback", () => {
+    resetStore("a");
+    setWorkingLabel("a", "Reading files");
+    setThinking("a", true);
+    expect(get("a")?.working_label).toBe("Reading files");
+  });
+
+  it("clears the agent's declared status when a new turn starts", () => {
+    resetStore("a");
+    setAgentStatus("a", "waiting_on_user");
+    setThinking("a", true);
+    expect(get("a")?.agent_status).toBeUndefined();
+  });
+
+  it("isThinking reads false for a chat it has never heard of", () => {
+    setSessions([]);
+    expect(isThinking("ghost")).toBe(false);
+  });
+});
+
+describe("setAgentStatus", () => {
+  it("records the status and takes a new one", () => {
+    resetStore("a");
+    setAgentStatus("a", "in_progress");
+    expect(get("a")?.agent_status).toBe("in_progress");
+    setAgentStatus("a", "waiting_on_user");
+    expect(get("a")?.agent_status).toBe("waiting_on_user");
+  });
+
+  it("does not churn the session on a repeated frame", () => {
+    resetStore("a");
+    setAgentStatus("a", "in_progress");
+    const before = get("a");
+    setAgentStatus("a", "in_progress");
+    expect(get("a")).toBe(before);
+  });
+
+  it("reads an empty status as a clear, and deletes the field", () => {
+    resetStore("a");
+    setAgentStatus("a", "in_progress");
+    setAgentStatus("a", "");
+    expect(get("a")?.agent_status).toBeUndefined();
+  });
+
+  it("does not churn a chat that never had one when an empty status arrives", () => {
+    resetStore("a");
+    const before = get("a");
+    setAgentStatus("a", "");
+    expect(get("a")).toBe(before);
+  });
+});
+
+// --- The dock -------------------------------------------------------------------------
+
+describe("the steer dock holds what the agent has NOT read", () => {
+  beforeEach(() => {
+    resetStore("a");
+  });
+
+  it("derives the id KAS will return, which is what lets a plain id match reconcile", () => {
+    expect(steerIDFor("m1")).toBe("steer-m1");
+  });
+
+  it("records a submitted steer as pending, keyed by the derived id", () => {
+    recordSteerSent("a", "m1", "wait");
+    expect(get("a")?.steers).toEqual([
+      { id: "steer-m1", text: "wait", origin: "user", pending: true },
+    ]);
+  });
+
+  it("is idempotent by message id, so a retried submit adds no second row", () => {
+    recordSteerSent("a", "m1", "wait");
+    recordSteerSent("a", "m1", "wait harder");
+    expect(get("a")?.steers).toHaveLength(1);
+    expect(get("a")?.steers?.[0]?.text).toBe("wait harder");
+  });
+
+  it("ignores a submit with no message id rather than creating an unaddressable row", () => {
+    recordSteerSent("a", "", "wait");
+    expect(steerCount("a")).toBe(0);
+  });
+
+  it("forgets one pending row and leaves a sibling alone", () => {
+    recordSteerSent("a", "m1", "one");
+    recordSteerSent("a", "m2", "two");
+    forgetSteer("a", "steer-m1");
+    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["steer-m2"]);
+  });
+
+  it("deletes the field when the forgotten row was the last one", () => {
+    recordSteerSent("a", "m1", "one");
+    forgetSteer("a", "steer-m1");
+    expect(get("a")?.steers).toBeUndefined();
+  });
+
+  it("is a no-op when the id to forget is not held", () => {
+    recordSteerSent("a", "m1", "one");
+    const before = get("a");
+    forgetSteer("a", "steer-other");
+    expect(get("a")).toBe(before);
+  });
+
+  it("records a queued steer as waiting, with no pending flag", () => {
+    recordSteerQueued("a", { id: "steer-x", text: "hi", origin: "user" });
+    expect(get("a")?.steers).toEqual([{ id: "steer-x", text: "hi", origin: "user" }]);
+  });
+
+  it("confirms the pending row in place when the ids agree", () => {
+    recordSteerSent("a", "m1", "wait");
+    recordSteerQueued("a", { id: "steer-m1", text: "wait", origin: "user" });
+    expect(get("a")?.steers).toEqual([{ id: "steer-m1", text: "wait", origin: "user" }]);
+  });
+
+  it("adopts a server id onto the pending row when only the text matches", () => {
+    recordSteerSent("a", "m1", "wait");
+    recordSteerQueued("a", { id: "kas-99", text: "wait", origin: "user" });
+    expect(get("a")?.steers).toEqual([{ id: "kas-99", text: "wait", origin: "user" }]);
+  });
+
+  it("adopts onto the OLDEST pending row of equal text, leaving the newer pending", () => {
+    recordSteerSent("a", "m1", "wait");
+    recordSteerSent("a", "m2", "wait");
+    recordSteerQueued("a", { id: "kas-99", text: "wait", origin: "user" });
+    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["kas-99", "steer-m2"]);
+    expect(get("a")?.steers?.[1]?.pending).toBe(true);
+  });
+
+  it("is idempotent by id across a replayed frame", () => {
+    recordSteerQueued("a", { id: "steer-x", text: "hi", origin: "user" });
+    recordSteerQueued("a", { id: "steer-x", text: "hi", origin: "user" });
+    expect(get("a")?.steers).toHaveLength(1);
+  });
+
+  it("ignores a queued frame with an empty id", () => {
+    recordSteerQueued("a", { id: "", text: "hi", origin: "user" });
+    expect(steerCount("a")).toBe(0);
+  });
+
+  it("takes the frame's origin over this device's claim", () => {
+    recordSteerSent("a", "m1", "wait");
+    recordSteerQueued("a", { id: "steer-m1", text: "wait", origin: "agent" });
+    expect(get("a")?.steers?.[0]?.origin).toBe("agent");
+  });
+
+  it("does NOT put a steer back in the dock when the log already holds its entry", () => {
+    const turn = openTurnIn("a", "t1");
+    appendEntry(
+      "a",
+      sealed(turn, 1, "steer", { text: "hi", origin: "user", state: "read" }, { id: "steer-x" }),
+    );
+    recordSteerQueued("a", { id: "steer-x", text: "hi", origin: "user" });
+    expect(steerCount("a")).toBe(0);
+  });
+
+  it("drops only the named ids", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    dropSteers("a", ["s1"]);
+    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["s2"]);
+  });
+
+  it("treats an empty id list as drop-everything, which is what a boundary means", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    dropSteers("a");
+    expect(get("a")?.steers).toBeUndefined();
+  });
+
+  it("is a no-op for ids it does not hold, and for a chat it does not hold", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    const before = get("a");
+    dropSteers("a", ["nope"]);
+    expect(get("a")).toBe(before);
+    expect(() => {
+      dropSteers("ghost");
+    }).not.toThrow();
+  });
+
+  it("takes the confirmed rows out on an explicit discard and keeps the pending one", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerSent("a", "m2", "two");
+    const snapshot = dropConfirmedSteers("a");
+    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["steer-m2"]);
+    expect(snapshot.map((e) => e.id)).toEqual(["s1", "steer-m2"]);
+  });
+
+  it("reports nothing removed when every row is still pending", () => {
+    recordSteerSent("a", "m1", "one");
+    expect(dropConfirmedSteers("a")).toEqual([]);
+    expect(steerCount("a")).toBe(1);
+  });
+
+  it("restores a discard snapshot in its original order", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    const snapshot = dropConfirmedSteers("a");
+    restoreSteers("a", snapshot);
+    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["s1", "s2"]);
+  });
+
+  it("forgets the dock on a gap without asserting anything about what was read", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    forgetSteers("a");
+    expect(get("a")?.steers).toBeUndefined();
+  });
+
+  it("marks every row then in the dock as sent across a compaction", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    markSteersCompacted("a");
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    expect(get("a")?.steers?.map((e) => e.compacted)).toEqual([true, undefined]);
+  });
+
+  it("is idempotent: a second compaction over the same rows changes nothing", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    markSteersCompacted("a");
+    const before = get("a");
+    markSteersCompacted("a");
+    expect(get("a")).toBe(before);
+  });
+});
+
+describe("pendingSteerCarry: what a boundary must re-send", () => {
+  beforeEach(() => {
+    resetStore("a");
+  });
+
+  it("reads the waiting entries in arrival order, id beside text", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    expect(pendingSteerCarry("a")).toEqual([
+      { id: "s1", text: "one" },
+      { id: "s2", text: "two" },
+    ]);
+  });
+
+  it("narrows to a named set, still in arrival order", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    expect(pendingSteerCarry("a", ["s2", "s1"]).map((e) => e.id)).toEqual(["s1", "s2"]);
+  });
+
+  it("excludes a row whose own POST is still in flight", () => {
+    recordSteerSent("a", "m1", "one");
+    expect(pendingSteerCarry("a")).toEqual([]);
+  });
+
+  it("excludes the agent's own notice, which KAS re-wakes itself", () => {
+    recordSteerQueued("a", { id: "notify-1", text: "done", origin: "agent" });
+    expect(pendingSteerCarry("a")).toEqual([]);
+  });
+
+  it("reads the whole set for an empty id list", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    expect(pendingSteerCarry("a", [])).toHaveLength(1);
+  });
+
+  it("answers empty for a chat with nothing waiting, and one it does not hold", () => {
+    expect(pendingSteerCarry("a")).toEqual([]);
+    expect(pendingSteerCarry("ghost")).toEqual([]);
+  });
+});
+
+// --- The per-chat repaint causes ------------------------------------------------------
+
+describe("the per-chat transcript version", () => {
+  it("counts up by one per explicit bump, on the named chat only", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    const a = messagesVersionOf("a").peek();
+    const b = messagesVersionOf("b").peek();
+    bumpMessages("a", "shape");
+    expect(messagesVersionOf("a").peek()).toBe(a + 1);
+    expect(messagesVersionOf("b").peek()).toBe(b);
+  });
+
+  it("coalesces a tick's worth of laned growth into one repaint", async () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", lane: "sub-1", kind: "text", text: "A", n: 1 });
+    const before = messagesVersionOf("a").peek();
+    applyDelta("a", turn, "e1", "sub-1", 2, "B");
+    applyDelta("a", turn, "e1", "sub-1", 3, "C");
+    await Promise.resolve();
+    expect(messagesVersionOf("a").peek()).toBe(before + 1);
+  });
+
+  it("schedules again once the deferred repaint has run", async () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", lane: "sub-1", kind: "text", text: "A", n: 1 });
+    const before = messagesVersionOf("a").peek();
+    applyDelta("a", turn, "e1", "sub-1", 2, "B");
+    await Promise.resolve();
+    applyDelta("a", turn, "e1", "sub-1", 3, "C");
+    await Promise.resolve();
+    expect(messagesVersionOf("a").peek()).toBe(before + 2);
+  });
+
+  it("a background chat's stream bumps its own version, never the active chat's", async () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+    const turn = openTurnIn("b", "t1");
+    const a = messagesVersionOf("a").peek();
+    openEntry("b", { turn, id: "e1", kind: "text", text: "A", n: 1 });
+    await Promise.resolve();
+    expect(messagesVersionOf("a").peek()).toBe(a);
+  });
+
+  it("a chat removed before its deferred flush is skipped, not re-minted", async () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    setActive("a");
+    const turn = openTurnIn("b", "t1");
+    openEntry("b", { turn, id: "e1", lane: "sub-1", kind: "text", text: "A", n: 1 });
+    removeChat("b");
+    await Promise.resolve();
+    expect(messagesVersionOf("b").peek()).toBe(0);
+  });
+
+  it("lets a load bump win a window a shape cause is still parked in", async () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    openEntry("a", { turn, id: "e1", lane: "sub-1", kind: "text", text: "A", n: 1 });
+    bumpMessages("a", "load");
+    expect(renderCauseOf("a").cause).toBe("load");
+    await Promise.resolve();
+  });
+
+  it("reads a chat it has flushed nothing for as needing the full pass", () => {
+    setSessions([makeSession("fresh")]);
+    expect(renderCauseOf("fresh")).toEqual({ cause: "shape" });
+  });
+});
+
+// --- transcriptStale ------------------------------------------------------------------
+
+describe("transcriptStale: the activation refetch gate", () => {
+  function loadedChat(): Session {
+    resetStore("a");
+    const s = get("a") as Session;
+    s.residency = "loaded";
+    observeStamp({ kind: "chat", ref: "a", version: "1" });
+    return s;
+  }
+
+  it("a loaded window whose version is held is fresh", () => {
+    expect(transcriptStale(loadedChat())).toBe(false);
+  });
+
+  it("a never-loaded chat is stale by construction", () => {
+    resetStore("a");
+    expect(transcriptStale(get("a") as Session)).toBe(true);
+  });
+
+  it("an evicted window is stale whatever its stamp says", () => {
+    const s = loadedChat();
+    s.residency = "evicted";
+    expect(transcriptStale(s)).toBe(true);
+  });
+
+  it("a partial window is stale whatever its stamp says", () => {
+    const s = loadedChat();
+    s.residency = "partial";
+    expect(transcriptStale(s)).toBe(true);
+  });
+
+  it("a load_failed window is stale whatever its stamp says", () => {
+    const s = loadedChat();
+    s.residency = "load_failed";
+    expect(transcriptStale(s)).toBe(true);
+  });
+
+  it("forgetting the held version flips a fresh window stale", () => {
+    const s = loadedChat();
+    resetFreshness();
+    expect(transcriptStale(s)).toBe(true);
+  });
+});
+
+// --- Eviction -------------------------------------------------------------------------
+
+describe("evictChatMessages", () => {
+  it("drops the window and keeps the session row, so header data survives", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t3", 3);
+    appendEntry("a", textEntry(turn, 1, "x"));
+    evictChatMessages("a");
+    const s = get("a") as Session;
+    expect(s.turns.size).toBe(0);
+    expect(s.turn_order).toEqual([]);
+    expect(s.turn_count).toBe(3);
+    expect(s.residency).toBe("evicted");
+    expect(s.has_more).toBe(true);
+  });
+
+  it("takes the window's per-entry signals with it", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1"), { id: "c1" }));
+    ensureToolCallSig("a", "c1", toolCall("c1"));
+    evictChatMessages("a");
+    expect(peekToolCallSig("a", "c1")).toBeUndefined();
+  });
+
+  it("is a no-op for a chat it does not hold", () => {
+    setSessions([]);
+    expect(() => {
+      evictChatMessages("ghost");
+    }).not.toThrow();
+  });
+});
+
+describe("registerEvictionExemption", () => {
+  // The sweep is the exemption's only reader, so the timer is what makes either half
+  // observable: the predicate and its unregister move nothing else in the store.
+  it("keeps an exempt chat resident, and its unregister hands the window back", () => {
+    vi.useFakeTimers();
+    try {
+      setSessions([makeSession("a"), makeSession("b")]);
+      setActive("a");
+      openTurnIn("b", "t1");
+      const stop = registerEvictionExemption((chatID) => chatID === "b");
+      startEvictionSweep();
+      vi.advanceTimersByTime(EVICT_IDLE_MS + EVICT_SWEEP_MS);
+      expect(get("b")?.turn_order).toEqual(["t1"]);
+      stop();
+      vi.advanceTimersByTime(EVICT_SWEEP_MS);
+      expect(get("b")?.turn_order).toEqual([]);
+      expect(get("b")?.residency).toBe("evicted");
+    } finally {
+      stopEvictionSweep();
+      vi.useRealTimers();
+    }
+  });
+});
+
+// --- Live turn facts ------------------------------------------------------------------
+
+describe("the live turn facts", () => {
+  it("keys code references by TURN, and only for a turn the window holds", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    setCodeReferences("a", turn, [{ license_name: "MIT", repository: "r", url: "u" }]);
+    expect(codeReferencesFor("a", turn)).toHaveLength(1);
+    setCodeReferences("a", "unseen", [{ license_name: "MIT", repository: "r", url: "u" }]);
+    expect(codeReferencesFor("a", "unseen")).toBeUndefined();
+  });
+
+  it("replaces rather than appends, because the server sends the full deduped list", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    setCodeReferences("a", turn, [{ license_name: "MIT", repository: "r", url: "u" }]);
+    setCodeReferences("a", turn, []);
+    expect(codeReferencesFor("a", turn)).toEqual([]);
+  });
+
+  it("stamps a refusal ONCE per turn, so a second frame cannot restate it", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    setLiveRefusal("a", turn, { category: "policy" });
+    setLiveRefusal("a", turn, { category: "other" });
+    expect(liveRefusalFor("a", turn)?.category).toBe("policy");
+  });
+
+  it("ignores a refusal for a turn the window does not hold", () => {
+    resetStore("a");
+    setLiveRefusal("a", "unseen", { category: "policy" });
+    expect(liveRefusalFor("a", "unseen")).toBeUndefined();
+  });
+
+  it("clears both, because the turn's own close carries them durably", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    setCodeReferences("a", turn, [{ license_name: "MIT", repository: "r", url: "u" }]);
+    setLiveRefusal("a", turn, { category: "policy" });
+    clearLiveTurnFacts("a");
+    expect(codeReferencesFor("a", turn)).toBeUndefined();
+    expect(liveRefusalFor("a", turn)).toBeUndefined();
+  });
+});
+
+// --- Tool calls -----------------------------------------------------------------------
+
+describe("settledToolCall joins a call with its result", () => {
+  it("returns the call as created when no result has landed", () => {
+    const call = toolCall("c1");
+    expect(settledToolCall(call, undefined)).toBe(call);
+  });
+
+  it("lets the result's status win, because the call's is a starting state", () => {
+    const merged = settledToolCall(toolCall("c1", { status: "in_progress" }), toolResult());
+    expect(merged.status).toBe("completed");
+  });
+
+  it("takes each field the result carries and leaves the rest of the call alone", () => {
+    const merged = settledToolCall(
+      toolCall("c1", { title: "Run Command" }),
+      toolResult({ output: "hi", duration_ms: 12 }),
+    );
+    expect(merged.title).toBe("Run Command");
+    expect(merged.output).toBe("hi");
+    expect(merged.duration_ms).toBe(12);
+  });
+
+  it("latches declined one way, so a later verdict-free result cannot clear it", () => {
+    const merged = settledToolCall(toolCall("c1", { declined: true }), toolResult());
+    expect(merged.declined).toBe(true);
+  });
+});
+
+describe("foldToolCallDelta", () => {
+  function delta(over: Partial<ToolProgressPayload> = {}): ToolProgressPayload {
+    return { turn: "t1", tool_call_id: "c1", ...over };
+  }
+
+  it("accumulates output by default", () => {
+    const next = foldToolCallDelta(toolCall("c1", { output: "ab" }), delta({ output_delta: "cd" }));
+    expect(next.output).toBe("abcd");
+  });
+
+  it("reads output_replace as authoritative on its own, even with no delta at all", () => {
+    const next = foldToolCallDelta(
+      toolCall("c1", { output: "ab" }),
+      delta({ output_replace: true }),
+    );
+    expect(next.output).toBe("");
+  });
+
+  it("leaves the output alone when the frame carries none", () => {
+    const next = foldToolCallDelta(toolCall("c1", { output: "ab" }), delta({ title: "x" }));
+    expect(next.output).toBe("ab");
+  });
+
+  it("appends diffs rather than replacing them", () => {
+    const next = foldToolCallDelta(
+      toolCall("c1", { diffs: [{ path: "a", old_text: "", new_text: "1" }] }),
+      delta({ diffs_appended: [{ path: "b", old_text: "", new_text: "2" }] }),
+    );
+    expect(next.diffs?.map((d) => d.path)).toEqual(["a", "b"]);
+  });
+
+  it("latches declined one way", () => {
+    const next = foldToolCallDelta(toolCall("c1", { declined: true }), delta({ status: "failed" }));
+    expect(next.declined).toBe(true);
+  });
+
+  it("returns a fresh object, because the card's signal dedups by identity", () => {
+    const prev = toolCall("c1");
+    expect(foldToolCallDelta(prev, delta({ title: "x" }))).not.toBe(prev);
+  });
+});
+
+describe("applyToolProgress", () => {
+  it("folds onto the signal a card subscribes to, seeded from the call's own payload", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1"), { id: "c1" }));
+    ensureToolCallSig("a", "c1", toolCall("c1"));
+    const next = applyToolProgress("a", turn, {
+      turn,
+      tool_call_id: "c1",
+      output_delta: "hello",
+    });
+    expect(next?.output).toBe("hello");
+    expect(peekToolCallSig("a", "c1")?.output).toBe("hello");
+  });
+
+  it("reads the call off the entry when no signal has been minted yet", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1"), { id: "c1" }));
+    expect(applyToolProgress("a", turn, { turn, tool_call_id: "c1", title: "x" })?.title).toBe("x");
+  });
+
+  it("answers undefined for a call this window does not hold, which is the handler's own gap signal", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    expect(applyToolProgress("a", turn, { turn, tool_call_id: "nope" })).toBeUndefined();
+    expect(
+      applyToolProgress("a", "unseen", { turn: "unseen", tool_call_id: "c1" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("republishWindowToolCalls", () => {
+  it("replaces a mounted card's value with the fetched call", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry(
+      "a",
+      sealed(turn, 1, "tool_call", toolCall("c1", { output: "full" }), { id: "c1" }),
+    );
+    ensureToolCallSig("a", "c1", toolCall("c1", { output: "trunc" }));
+    republishWindowToolCalls("a", [turn]);
+    expect(peekToolCallSig("a", "c1")?.output).toBe("full");
+  });
+
+  it("publishes a call's SETTLED value, which is its tool_result", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1"), { id: "c1" }));
+    appendEntry(
+      "a",
+      sealed(turn, 2, "tool_result", toolResult({ output: "done" }), { id: "c1:result" }),
+    );
+    ensureToolCallSig("a", "c1", toolCall("c1"));
+    republishWindowToolCalls("a", [turn]);
+    expect(peekToolCallSig("a", "c1")?.status).toBe("completed");
+  });
+
+  it("publishes nothing at a card already showing what the fetch carries", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry(
+      "a",
+      sealed(turn, 1, "tool_call", toolCall("c1", { output: "same" }), { id: "c1" }),
+    );
+    ensureToolCallSig("a", "c1", toolCall("c1", { output: "same" }));
+    const shown = peekToolCallSig("a", "c1");
+    republishWindowToolCalls("a", [turn]);
+    expect(peekToolCallSig("a", "c1")).toBe(shown);
+  });
+
+  it("mints no signal for a call nothing has mounted", () => {
+    resetStore("a");
+    const turn = openTurnIn("a", "t1");
+    appendEntry("a", sealed(turn, 1, "tool_call", toolCall("c1"), { id: "c1" }));
+    republishWindowToolCalls("a", [turn]);
+    expect(toolCallSigs.get(toolCallSigKey("a", "c1"))).toBeUndefined();
+  });
+
+  it("skips a turn the window does not hold", () => {
+    resetStore("a");
+    expect(() => {
+      republishWindowToolCalls("a", ["unseen"]);
+    }).not.toThrow();
+  });
+});
+
+// --- Defaults -------------------------------------------------------------------------
+
+describe("defaultUsage", () => {
+  it("seeds usage as not-yet-measured, so a ring does not claim a reading", () => {
+    expect(defaultUsage()).toEqual({
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    });
   });
 });

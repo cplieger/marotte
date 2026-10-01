@@ -102,6 +102,10 @@ func TestPlainPathRoutesRefuseTheWrongMethod(t *testing.T) {
 			serve: func(_ *Server, w http.ResponseWriter, r *http.Request) { handleToolStatus(w, r) },
 		},
 		{
+			name: "tool_reconcile", method: http.MethodDelete, path: "/api/tools/reconcile", wantAllow: "POST",
+			serve: func(s *Server, w http.ResponseWriter, r *http.Request) { s.handleToolReconcile(w, r) },
+		},
+		{
 			name: "kiro_rescan", method: http.MethodGet, path: kiroRescanPath, wantAllow: "POST",
 			serve: func(s *Server, w http.ResponseWriter, r *http.Request) {
 				loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)).ServeHTTP(w, r)
@@ -110,6 +114,10 @@ func TestPlainPathRoutesRefuseTheWrongMethod(t *testing.T) {
 		{
 			name: "pprof_index", method: http.MethodPost, path: pprofPath + "goroutine", wantAllow: "GET",
 			serve: func(_ *Server, w http.ResponseWriter, r *http.Request) { pprofHandler().ServeHTTP(w, r) },
+		},
+		{
+			name: "spec", method: http.MethodPost, path: "/api/specs/x", wantAllow: "GET",
+			serve: func(s *Server, w http.ResponseWriter, r *http.Request) { s.handleSpec(w, r) },
 		},
 	}
 

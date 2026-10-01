@@ -33,7 +33,7 @@ beforeAll(() => {
   // The transcript's own block container, at a transcript width: a card takes
   // both from it, and the tail's line height is inherited.
   stage = document.createElement("div");
-  stage.className = "msg-wrap";
+  stage.className = "turn-body";
   stage.style.inlineSize = "760px";
   document.body.appendChild(stage);
 });

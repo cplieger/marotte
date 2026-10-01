@@ -20,7 +20,7 @@ import (
 // chatStoreUnion is the union of what the real consumers declare, spelled out
 // here rather than named, so a consumer that grows a method fails to compile
 // against these fakes instead of silently outgrowing them. It is
-// ChatStoreContract's 8 plus the two composer writers, which internal/command
+// ChatStoreContract's 5 plus the two composer writers, which internal/command
 // needs and the contract suite does not exercise.
 //
 // RegisterRoutes is NOT here, and each fake dropped its no-op: only
@@ -179,55 +179,6 @@ func (s *RecordingChatStore) Delete(_ context.Context, id marotte.ChatID) error 
 	if s.Bus != nil {
 		s.Bus.Broadcast(context.Background(), marotte.ServerEvent{Type: marotte.EventChatDeleted, ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
-	return nil
-}
-
-// AppendMessage appends a message to the stored chat and broadcasts message_appended.
-func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	var appended bool
-	version, err := s.Mutate(context.Background(), chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		c.Messages = append(c.Messages, *msg)
-		appended = true
-		return true
-	})
-	if err != nil || !appended || s.Bus == nil {
-		return err
-	}
-	s.Bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
-	return nil
-}
-
-// UpsertTurnPlan overwrites this turn's plan row, or appends msg when the turn
-// carries none. Mirrors (*chat.Store).UpsertTurnPlan, including the turn
-// boundary being the first user message walking back from the tail — see the
-// contract suite for why the fake implements the rule rather than appending.
-func (s *RecordingChatStore) UpsertTurnPlan(_ context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	return upsertTurnPlan(s.Mutate, s.Bus, chatID, msg)
-}
-
-// UpdateMessage applies mutate to the message identified by msgID within the stored chat.
-func (s *RecordingChatStore) UpdateMessage(_ context.Context, chatID marotte.ChatID, msgID string, mutate func(*marotte.Message)) error {
-	var updated *marotte.Message
-	version, err := s.Mutate(context.Background(), chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		for i := range c.Messages {
-			if c.Messages[i].ID == msgID {
-				mutate(&c.Messages[i])
-				updated = &c.Messages[i]
-				return true
-			}
-		}
-		return false
-	})
-	if err != nil || updated == nil || s.Bus == nil {
-		return err
-	}
-	s.Bus.Broadcast(context.Background(), stamped(marotte.ServerEvent{Type: marotte.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
 	return nil
 }
 

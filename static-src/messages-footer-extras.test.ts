@@ -4,7 +4,8 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import type { Message, Session } from "./types.js";
+import type { TurnState } from "./types.js";
+import type { Entry } from "./wire/types.gen.js";
 
 // The page's own nesting, from messages-turn-number.test.ts's harness minus pagination.
 const outer = document.createElement("div");
@@ -56,25 +57,21 @@ afterAll(() => {
   bundle.remove();
 });
 
-/** A turn's trigger. One `ts` for every turn here: these two cases are about which
- *  CONTROL an extra mounts, so the summary fields are deliberately empty and the fact
- *  slot paints nothing. */
-function user(id: string): Message {
-  return { id, role: "user", ts: 1000, content: `prompt ${id}` } as Message;
-}
-
-/** A settled reply carrying `text`. `turn_outcome` is what settles the turn AND what
- *  keeps a text-free reply out of `carriesNothing`, so the empty form still opens a
- *  turn and still grades `completed` rather than `unknown`. */
-function reply(id: string, text: string): Message {
-  return {
-    id,
-    role: "assistant",
-    ts: 1000,
-    content: text,
-    blocks: text === "" ? [] : [{ type: "text", text }],
-    turn_outcome: "completed",
-  } as unknown as Message;
+/** A reader-opened turn at session ordinal `n`, settled, whose reply is `text`. One `ts`
+ *  for every entry here: these two cases are about which CONTROL an extra mounts, so the
+ *  `turn_close` carries the outcome and nothing else and the fact slot paints nothing.
+ *  An EMPTY `text` is a turn that produced no prose, which is what leaves `settledProse`
+ *  false while the turn is still drawn by its own `turn_open.source`. */
+function promptTurn(n: number, text: string): Entry[] {
+  const id = `t${String(n)}`;
+  const at = (seq: number, kind: Entry["kind"], payload: unknown): Entry =>
+    ({ id: `${id}-e${String(seq)}`, turn: id, kind, seq, ts: 1000, payload }) as Entry;
+  const body: Entry[] = text === "" ? [] : [at(1, "text", { text })];
+  return [
+    at(0, "turn_open", { prompt: { id: `${id}-p`, text: `prompt ${id}` }, source: "prompt", n }),
+    ...body,
+    at(body.length + 1, "turn_close", { outcome: "completed" }),
+  ];
 }
 
 let seq = 0;
@@ -98,9 +95,19 @@ function cards(): HTMLElement[] {
   return root === null ? [] : [...root.querySelectorAll<HTMLElement>(":scope > .turn")];
 }
 
-async function paint(msgs: Message[]): Promise<HTMLElement[]> {
+async function paint(turnEntries: readonly (readonly Entry[])[]): Promise<HTMLElement[]> {
   const id = nextChat();
-  const expected = msgs.filter((m) => m.role === "user").length;
+  const expected = turnEntries.length;
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const entries of turnEntries) {
+    const first = entries[0];
+    if (first === undefined) {
+      continue;
+    }
+    turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+    order.push(first.turn);
+  }
   // A held `chat` version is what marks the window fresh, or the activation refetches
   // and the mocked loader answers nothing.
   observeStamp({ kind: "chat", ref: id, version: "1" });
@@ -108,13 +115,24 @@ async function paint(msgs: Message[]): Promise<HTMLElement[]> {
     {
       id,
       name: id,
-      messages: msgs,
-      message_count: msgs.length,
+      model: "",
+      acp_session_id: "",
+      current_mode_id: "",
+      turns,
+      turn_order: order,
+      turn_count: order.length,
       has_more: false,
       residency: "loaded",
       thinking: false,
       working_label: "",
-    } as unknown as Session,
+      usage: {
+        context_pct: 0,
+        context_size: 0,
+        credits: 0,
+        last_turn_ms: 0,
+        has_real_data: false,
+      },
+    },
   ]);
   store.setActive(id);
   await until(() => cards().length === expected, `${String(expected)} cards for ${id}`);
@@ -153,7 +171,7 @@ function controlShows(el: HTMLElement | null): boolean {
 /** The two channels the footer MODULE owns, so a case can state that the extra it is
  *  about earned the footer through its control and not through a fact. */
 function footerPaintsText(footer: HTMLElement): boolean {
-  const fact = footer.querySelector<HTMLElement>(":scope > .turn-fact");
+  const fact = footer.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact");
   const word = footer.querySelector<HTMLElement>(
     ":scope > .turn-ledger-summary > .turn-ledger-text",
   );
@@ -168,12 +186,7 @@ function footerPaintsText(footer: HTMLElement): boolean {
 describe("a footer earned by an extra mounts that extra's control", () => {
   it("mounts a visible Rewind for a turn earned by `rewindable` alone", async () => {
     // Turn 1 did nothing, so its only reason is that turn 2 gives it a trigger.
-    const [first, second] = await paint([
-      user("u1"),
-      reply("a1", ""),
-      user("u2"),
-      reply("a2", "reply"),
-    ]);
+    const [first, second] = await paint([promptTurn(1, ""), promptTurn(2, "reply")]);
     expect(first).toBeDefined();
     expect(second).toBeDefined();
     const footer = footerOf(first as HTMLElement);
@@ -187,7 +200,7 @@ describe("a footer earned by an extra mounts that extra's control", () => {
 
   it("mounts visible turn actions for a turn earned by `settledProse` alone", async () => {
     // Turn 2 is LAST, so no rewind target, and its prose carries no ledger behind it.
-    const [, second] = await paint([user("u1"), reply("a1", ""), user("u2"), reply("a2", "reply")]);
+    const [, second] = await paint([promptTurn(1, ""), promptTurn(2, "reply")]);
     expect(second).toBeDefined();
     const footer = footerOf(second as HTMLElement);
     expect(footer, "the turn earned a footer").not.toBeNull();

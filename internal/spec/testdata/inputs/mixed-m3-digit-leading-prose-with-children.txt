@@ -1,0 +1,6 @@
+
+- [ ] 12 label pairs exceed the budget, trim them
+  - [ ] child A
+  - [ ] child B
+- [ ] another top level
+  - [ ] child C

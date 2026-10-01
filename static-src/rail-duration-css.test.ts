@@ -188,6 +188,7 @@ const RULED = new Map<string, string>([
   ["ev-tl-dur", "out of scope — the exec view"],
   // Row 8's ruling applied elsewhere: an absolute timestamp is not a duration.
   ["sched-time", "wall clock, not a duration"],
+  ["entry-time", "wall clock, not a duration — and painted at rest on every device"],
 ]);
 
 describe("the closed list stays closed", () => {

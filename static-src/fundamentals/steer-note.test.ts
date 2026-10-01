@@ -20,6 +20,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { buildSteerNote, type SteerNoteData } from "./steer-note.js";
+import type { SteerReason } from "../types.js";
 import { mountAppCSS } from "../__test-helpers__/css-rules.js";
 
 function note(over: Partial<SteerNoteData> = {}): HTMLElement {
@@ -30,10 +31,9 @@ function textOf(root: HTMLElement, sel: string): string | null {
   return root.querySelector(sel)?.textContent ?? null;
 }
 
-/** Any control at all. The note carries none in either state now: the boundary
- *  resend sends an undelivered message for the reader, so the button that used to
- *  ask them to do it by hand is gone (steer-note.ts's header records the reasoning),
- *  and the CLAMP's opener is the one button the note may hold. */
+/** Any control at all. The note carries none in either state now: `runArmedResend`
+ *  re-sends an undelivered message for the reader, so no button asks them to do it by
+ *  hand, and the CLAMP's opener is the one button the note may hold. */
 function controls(root: HTMLElement): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter(
     (b) => !b.classList.contains("steer-note-more"),
@@ -53,23 +53,27 @@ describe("the read state", () => {
     expect(n.getAttribute("aria-label")).toBe("Mid-turn message: actually target main");
   });
 
-  // What the agent said it did, on the row where the course actually changed.
-  it("renders the agent's account of what it did when one arrived", () => {
-    const n = note({ ack: "rebased onto main instead" });
+  // THAT the agent acknowledged it, which is the whole of what the note records
+  // now: the acknowledgement is its own `steer_ack` entry, so its words are not
+  // this note's to carry and there is no account line to draw.
+  it("records that the agent acknowledged it, and draws no account line", () => {
+    const n = note({ acknowledged: true });
 
-    expect(textOf(n, ".steer-note-ack")).toBe("rebased onto main instead");
+    expect(n.dataset["acknowledged"]).toBe("true");
+    expect(n.querySelector(".steer-note-ack")).toBeNull();
     // The steer's own text stays the message: the note has to remain
     // identifiable as the thing that was sent.
     expect(textOf(n, ".steer-note-text")).toBe("actually target main");
     expect(n.getAttribute("aria-label")).toBe(
-      "Mid-turn message: actually target main. The agent did: rebased onto main instead",
+      "Mid-turn message \u00b7 acknowledged: actually target main",
     );
   });
 
-  // An agent that never emitted the acknowledgement marker has said nothing, and
-  // an empty line would read as a verdict with nothing in it.
-  it("renders no account line when the agent said nothing about it", () => {
+  // A steer with no `steer_ack` behind it: the note says nothing about an
+  // acknowledgement rather than claiming one with an empty clause.
+  it("claims no acknowledgement when none was recorded", () => {
     const n = note({ text: "one" });
+    expect(n.dataset["acknowledged"]).toBeUndefined();
     expect(n.querySelector(".steer-note-ack")).toBeNull();
     expect(n.getAttribute("aria-label")).toBe("Mid-turn message: one");
   });
@@ -80,16 +84,17 @@ describe("the read state", () => {
 });
 
 describe("the dropped state", () => {
-  // THE LABEL SAYS WHAT HAPPENED NEXT. "Not delivered" alone left the reader looking
-  // at their own words twice — once as this mark, once as the turn the resend opened
-  // under it — with nothing joining them. Both halves are stated: not read, and sent.
-  it("says it was not read and was sent as a new turn, and keeps the text", () => {
+  // THE LABEL STATES WHAT IS KNOWN AND NOTHING MORE. It used to assert the resend
+  // ("Not read — sent as a new turn"), which is a claim about a turn this note
+  // cannot see: the resend is a RECORDED fact, so the resent note says it and no
+  // label may assert one. What this state knows is that the agent never read it.
+  it("says it was not read, and keeps the text", () => {
     const n = note({ text: "never read this", dropped: true });
 
     expect(n.dataset["state"]).toBe("dropped");
-    expect(textOf(n, ".steer-note-label")).toBe("Not read — sent as a new turn");
+    expect(textOf(n, ".steer-note-label")).toBe("Not read");
     expect(textOf(n, ".steer-note-text")).toBe("never read this");
-    expect(n.getAttribute("aria-label")).toBe("Not read — sent as a new turn: never read this");
+    expect(n.getAttribute("aria-label")).toBe("Not read: never read this");
   });
 
   // THE MARK IS A RECORD, NOT AN OFFER. It used to carry "Put it back in the
@@ -102,12 +107,37 @@ describe("the dropped state", () => {
     expect(n.textContent).not.toContain("message box");
   });
 
-  // An agent that never read the message cannot have said what it did about it,
-  // so an ack on this state is dropped rather than rendered as a claim.
-  it("renders no account line, because there is nothing it could be", () => {
-    const n = note({ text: "never read this", ack: "should not appear", dropped: true });
+  // The dropped label states what is known and nothing more: no account line, and
+  // no clause about an acknowledgement a dropped steer cannot have.
+  it("says only that it was not read", () => {
+    const n = note({ text: "never read this", dropped: true });
     expect(n.querySelector(".steer-note-ack")).toBeNull();
-    expect(n.getAttribute("aria-label")).toBe("Not read — sent as a new turn: never read this");
+    expect(n.dataset["acknowledged"]).toBeUndefined();
+    expect(n.getAttribute("aria-label")).toBe("Not read: never read this");
+  });
+});
+
+// WHY it was never read is the reason field, and `boundary` is the value marotte's
+// own translator writes: KAS clears its buffer at every turn boundary, so a steer the
+// model never reached was dropped BY that boundary. Without a clause the label says
+// only that the words were not read, with nothing about what ended the turn first.
+describe("the reason clause", () => {
+  it("words the boundary drop, so the label says what ended the turn", () => {
+    const n = note({ text: "use tabs", dropped: true, reason: "boundary" });
+
+    expect(textOf(n, ".steer-note-label")).toBe("Not read \u00b7 the turn ended first");
+    expect(n.getAttribute("aria-label")).toBe("Not read \u00b7 the turn ended first: use tabs");
+  });
+
+  // THE TABLE IS TOTAL OVER THE ENUM, which is what stops a reason reaching a reader
+  // as a bare label: a fourth member added to SteerReason server-side fails the
+  // client's own type check until somebody words it. Asserted as a TYPE rather than
+  // by exporting REASONS, because the table is not public surface.
+  it("cannot hold a reason it has no wording for", () => {
+    // @ts-expect-error - a table missing `boundary` is not total over SteerReason.
+    const partial: Record<SteerReason, string> = { restart: "the session restarted" };
+
+    expect(Object.keys(partial)).toHaveLength(1);
   });
 });
 
@@ -160,14 +190,10 @@ describe("the message keeps its shape", () => {
   // It used to collapse whitespace, which destroyed the shape of anything typed
   // as more than one line. With the text fully openable there is nothing to buy.
   it("keeps the newlines the reader typed", () => {
-    const n = note({ text: "first line\n\nsecond line", ack: "did\n  the thing" });
+    const n = note({ text: "first line\n\nsecond line" });
     expect(textOf(n, ".steer-note-text")).toBe("first line\n\nsecond line");
-    // The single-string surfaces still collapse: an accessible name is announced
-    // as one string and the ack is a one-line verdict.
-    expect(textOf(n, ".steer-note-ack")).toBe("did the thing");
-    expect(n.getAttribute("aria-label")).toBe(
-      "Mid-turn message: first line second line. The agent did: did the thing",
-    );
+    // The accessible name still collapses, because it is announced as one string.
+    expect(n.getAttribute("aria-label")).toBe("Mid-turn message: first line second line");
   });
 });
 

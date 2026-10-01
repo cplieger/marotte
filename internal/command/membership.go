@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // The coordinator's own refusals.
@@ -32,8 +32,12 @@ var (
 	// errOpenChatUnknown is the 404 for an open_tab, or a fresh create, naming a chat
 	// that is gone — the delete-ordering gate's refusal.
 	errOpenChatUnknown = errors.New("that chat no longer exists")
-	// errTabUnknown is the 404 for a pin naming an id the set does not hold.
+	// errTabUnknown is the 404 for a pin or a reparent naming an id the set does
+	// not hold.
 	errTabUnknown = errors.New("that tab is not open")
+	// errParentNotChat is the 409 for a reparent whose parent is not an open chat
+	// tab: only a chat can hold sub-tabs.
+	errParentNotChat = errors.New("the parent must be an open chat tab")
 )
 
 // TabSet is the open-tab set as this package uses it, declared at the consumer
@@ -46,6 +50,7 @@ type TabSet interface {
 	Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error)
 	Reorder(ctx context.Context, ids []string) (uint64, error)
 	SetPinned(ctx context.Context, id string, pinned bool) (uint64, error)
+	Reparent(ctx context.Context, id, parent string) (uint64, error)
 	List() ([]marotte.TabSubject, uint64)
 	Subtree(id string) []marotte.TabSubject
 }
@@ -532,6 +537,43 @@ func (m *Membership) SetPinned(ctx context.Context, id string, pinned bool, opID
 		}
 	}
 	return version, nil
+}
+
+// Reparent hangs one open tab under an open chat tab and returns the subject
+// as it now reads. Idempotent when the parent is unchanged: nothing commits,
+// nothing is emitted.
+//
+// errTabUnknown (404) for an id that is not open, like a pin; 409 when parent
+// is not an open TabKindChat tab or sits inside the tab's own subtree. The
+// frame carries Order beside Changed because the row moved.
+func (m *Membership) Reparent(ctx context.Context, id, parent, opID string) (marotte.TabSubject, uint64, error) {
+	if m.tabs == nil {
+		return marotte.TabSubject{}, 0, StatusError(http.StatusServiceUnavailable, ErrTabsUnavailable)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	open, before := m.tabs.List()
+	if indexOfTab(open, id) < 0 {
+		return marotte.TabSubject{}, 0, StatusError(http.StatusNotFound, errTabUnknown)
+	}
+	if p := indexOfTab(open, parent); p < 0 || open[p].Kind != marotte.TabKindChat {
+		return marotte.TabSubject{}, 0, StatusError(http.StatusConflict, errParentNotChat)
+	}
+	version, err := m.tabs.Reparent(ctx, id, parent)
+	if err != nil {
+		if errors.Is(err, tabs.ErrCycle) {
+			return marotte.TabSubject{}, 0, StatusError(http.StatusConflict, err)
+		}
+		return marotte.TabSubject{}, 0, StatusError(http.StatusInternalServerError, err)
+	}
+	changed, ok := m.subject(id)
+	if !ok {
+		return marotte.TabSubject{}, 0, StatusError(http.StatusInternalServerError, errTabUnknown)
+	}
+	if version != before {
+		m.emit(ctx, &marotte.TabsChangedPayload{Changed: &changed, Order: m.order(), Version: version, OpID: opID})
+	}
+	return changed, version, nil
 }
 
 // DeleteChatAndCloseTabs is the delete path: tear the chat's work down, remove the

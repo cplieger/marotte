@@ -8,14 +8,16 @@ import (
 	"net"
 	"net/http"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/specapproval"
+	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/toolbelt/v3/httpapi"
-	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -41,6 +43,7 @@ type Server struct {
 	accountUsage  AccountUsageProvider
 	policy        policyProvider
 	policyReload  policyReloader
+	mcpRender     mcpRenderer
 	agent         chatEngine
 	steering      SteeringGenerator
 	mcpRegistry   routeHandler
@@ -48,9 +51,12 @@ type Server struct {
 	// kiroDocs memoizes the .kiro inventory; a pointer so the zero Server needs no init.
 	kiroDocs *docsCache
 	// tabs is the open-tab set; nil (no config dir) answers an empty collection at version 0.
-	tabs      tabReader
-	cliRunner CLIRunner
-	tools     *toolbelt.Engine
+	tabs tabReader
+	// specApprovals is the spec-phase approval record; nil (no config dir) means
+	// the spec GET carries no approvals.
+	specApprovals specApprovalReader
+	cliRunner     CLIRunner
+	tools         *toolbelt.Engine
 	// kiroReady is the install manager's readiness verdict, re-read per /api/health.
 	kiroReady func() (bool, pinstall.Reason)
 	// kiroRescan re-derives the active version from disk; nil leaves the repair route unmounted.
@@ -137,6 +143,15 @@ func WithPolicyReload(p policyReloader) Option {
 	return func(s *Server) { s.policyReload = p }
 }
 
+// WithMCPRenderer wires the KAS-config re-render a security-profile change needs,
+// so the rung's auto-approve posture reaches the file KAS is already watching.
+// Optional: unwired, a saved profile still applies at the next render — the next
+// MCP config mutation, or the boot reconcile after a restart — and until then the
+// previous rung's posture stands on every live chat.
+func WithMCPRenderer(r mcpRenderer) Option {
+	return func(s *Server) { s.mcpRender = r }
+}
+
 // WithStaticFS sets the embedded filesystem serving the compiled web UI.
 func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
@@ -186,6 +201,19 @@ func WithTabs(st *tabs.Store) Option {
 			return
 		}
 		s.tabs = st
+	}
+}
+
+// WithSpecApprovals wires the spec-phase approval record the spec GET reads. A
+// nil store stays a nil INTERFACE rather than an interface holding a nil pointer,
+// or the handler's unwired branch would never be taken and it would nil-deref
+// instead of serving a spec with no approvals.
+func WithSpecApprovals(st *specapproval.Store) Option {
+	return func(s *Server) {
+		if st == nil {
+			return
+		}
+		s.specApprovals = st
 	}
 }
 
@@ -239,6 +267,7 @@ func New(opts ...Option) *Server {
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
+	registerAPIFallback(mux)
 	s.agent.RegisterRoutes(mux)
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
@@ -256,14 +285,16 @@ func (s *Server) ListenAndServe() error {
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	// The toolbelt httpapi projection, at the exact prefix and the subtree.
-	// /api/tools/status stays app-owned, and its exact pattern winning over the subtree
-	// for EVERY method is what keeps it out of toolbelt's {name} handlers as name="status".
+	// /api/tools/status and /api/tools/reconcile stay app-owned, and each exact pattern
+	// winning over the subtree for EVERY method is what keeps it out of toolbelt's
+	// {name} handlers as name="status" / name="reconcile".
 	if s.tools != nil {
 		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
 		mux.Handle("/api/tools", toolsAPI)
 		mux.Handle("/api/tools/", toolsAPI)
 	}
 	mux.HandleFunc("/api/tools/status", handleToolStatus)
+	mux.HandleFunc("/api/tools/reconcile", s.handleToolReconcile)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)
@@ -273,6 +304,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/tabs", s.handleTabs)
 	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
+	mux.HandleFunc("/api/specs/{dir}", s.handleSpec)
 	s.mcpConfig.RegisterRoutes(mux)
 	s.mcpStatus.RegisterRoutes(mux)
 	s.mcpRegistry.RegisterRoutes(mux)
@@ -351,6 +383,25 @@ func (s *Server) ListenAndServe() error {
 	}))
 	s.ready.Store(false) // no-op on the signal path; covers a serve failure
 	return runErr
+}
+
+// msgUnknownAPIEndpoint is what an /api/ path no route claims answers with.
+const msgUnknownAPIEndpoint = "unknown endpoint"
+
+// registerAPIFallback puts a 404 under the whole /api/ subtree, so an unmatched API
+// path is no longer absorbed by the "/" mount and answered 200 with index.html —
+// which the machine senders requestpath.go names read as success.
+//
+// BOTH spellings, because with only the subtree pattern ServeMux answers GET /api
+// with a 301, the other silent success for those senders. Every real route sits at
+// least two segments deep, so each matches a strict subset of /api/ and wins under
+// ServeMux's precedence rule.
+func registerAPIFallback(mux *http.ServeMux) {
+	fallback := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		httpreply.NotFound(w, msgUnknownAPIEndpoint)
+	})
+	mux.Handle(strings.TrimSuffix(apiPathPrefix, "/"), fallback)
+	mux.Handle(apiPathPrefix, fallback)
 }
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST

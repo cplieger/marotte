@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // kasSupportedDocumentMIMEs mirrors KAS's SUPPORTED_DOCUMENT_MIME_TYPES
@@ -512,18 +514,40 @@ func TestBuildPromptBlocks_HistoryImageBudgetDegradesToPathReference(t *testing.
 	}
 }
 
-func TestHistoryInlineImageCount_StopsAtTheCompactionWatermark(t *testing.T) {
-	chat := &marotte.Chat{
-		CompactionWatermark: "compact-1",
-		Messages: []marotte.Message{
-			{ID: "m-old", Role: marotte.RoleUser, Attachments: []marotte.Attachment{{Path: "old.png"}}},
-			{ID: "compact-1", Role: marotte.RoleEvent},
-			{ID: "m-current", Role: marotte.RoleUser, Attachments: []marotte.Attachment{{Path: "current.png"}}},
-		},
-	}
+// attachmentPathsStore answers PromptAttachmentPaths from a fixed list, or with
+// an error: the store owns the watermark cut, this counts what it answers.
+type attachmentPathsStore struct {
+	*testsupport.InMemoryChatStore
+	paths []string
+	err   error
+}
 
-	if got := historyInlineImageCount(chat, "m-current"); got != 0 {
-		t.Errorf("historyInlineImageCount after compaction = %d, want 0", got)
+func (s *attachmentPathsStore) PromptAttachmentPaths(context.Context, marotte.ChatID, string) ([]string, error) {
+	return s.paths, s.err
+}
+
+func TestHistoryInlineImages_CountsTheImagesTheStoreAnswers(t *testing.T) {
+	store := &attachmentPathsStore{
+		InMemoryChatStore: testsupport.NewInMemoryChatStore(),
+		paths:             []string{"old.png", "notes.pdf", "shot.webp", "diagram.svg"},
+	}
+	seedEmptyChat(t, store, "c1")
+
+	if got := historyInlineImages(t.Context(), store, "c1"); got != 2 {
+		t.Errorf("historyInlineImages = %d, want 2: two of the four prompt attachments are images", got)
+	}
+}
+
+// A history that cannot be read answers the cap, so a doubt costs a path
+// reference rather than a refused prompt; so does a chat with no record.
+func TestHistoryInlineImages_ADoubtAnswersTheCap(t *testing.T) {
+	failing := &attachmentPathsStore{InMemoryChatStore: testsupport.NewInMemoryChatStore(), err: errors.New("log unreadable")}
+	seedEmptyChat(t, failing, "c1")
+	if got := historyInlineImages(t.Context(), failing, "c1"); got != MaxHistoryInlineImages {
+		t.Errorf("historyInlineImages on an unreadable log = %d, want the cap %d", got, MaxHistoryInlineImages)
+	}
+	if got := historyInlineImages(t.Context(), testsupport.NewInMemoryChatStore(), "absent"); got != MaxHistoryInlineImages {
+		t.Errorf("historyInlineImages on a missing chat = %d, want the cap %d", got, MaxHistoryInlineImages)
 	}
 }
 

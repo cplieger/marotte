@@ -11,6 +11,7 @@
     "actions/*.ts",
     "lib/**/*.ts",
     "audit/*.ts",
+    "scripts/*.ts",
     "**/__test-helpers__/**/*.ts",
     "**/*.test.ts"
   ],

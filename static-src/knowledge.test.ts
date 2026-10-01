@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // Tests for knowledge.ts: list render (contexts + live indexing progress),
 // merge-by-name dedup, empty/error states, the inline add form, destructive
-// remove, the enable hint, and the SSE-driven refetch. api-client, the
-// knowledge actions, confirm, toast, and bus are mocked so we control the
-// fetched payload + dispatch results and assert the rendered DOM.
+// remove, background re-index, the enable hint, and the SSE-driven refetch.
+// api-client, the knowledge actions, confirm, toast, and bus are mocked so we
+// control the fetched payload + dispatch results and assert the rendered DOM.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -13,6 +13,7 @@ vi.mock("./confirm.js", () => ({ confirm: vi.fn() }));
 vi.mock("./icons.js", () => ({
   ICON_PLUS_UI: "<svg data-plus></svg>",
   ICON_TRASH_UI: "<svg data-trash></svg>",
+  ICON_REFRESH: "<svg data-refresh></svg>",
 }));
 vi.mock("./bus.js", () => ({ onSSE: vi.fn(() => () => undefined) }));
 vi.mock("./actions/index.js", () => ({
@@ -22,6 +23,7 @@ vi.mock("./actions/index.js", () => ({
 vi.mock("./actions/knowledge.js", () => ({
   addKnowledge: { dispatch: vi.fn() },
   removeKnowledge: { dispatch: vi.fn() },
+  reindexKnowledge: { dispatch: vi.fn() },
 }));
 vi.mock("./api-client.js", () => ({
   apiGetTyped: vi.fn(),
@@ -44,7 +46,7 @@ import { apiGetTyped } from "./api-client.js";
 import { onSSE } from "./bus.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { showToast } from "./toast.js";
-import { addKnowledge, removeKnowledge } from "./actions/knowledge.js";
+import { addKnowledge, reindexKnowledge, removeKnowledge } from "./actions/knowledge.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 
@@ -52,6 +54,7 @@ const mockGet = vi.mocked(apiGetTyped);
 const mockConfirm = vi.mocked(confirmDialog);
 const mockAdd = vi.mocked(addKnowledge.dispatch);
 const mockRemove = vi.mocked(removeKnowledge.dispatch);
+const mockReindex = vi.mocked(reindexKnowledge.dispatch);
 
 /** Flush the fetch().then(render) + refreshHint microtask chains without
  *  advancing the 1500ms poll timer (fake timers keep it pending; afterEach
@@ -233,15 +236,38 @@ describe("loadKnowledge render", () => {
 });
 
 describe("add flow", () => {
-  it("dispatches knowledge.add with the entered path and refetches", async () => {
-    initKnowledge();
-    mockAdd.mockResolvedValue({ message: "Indexing 'docs' in background" });
-    mockGet.mockResolvedValue({ contexts: [] });
+  /** What the dispatch answers. Only `.outcome` is read, because `error: false`
+   *  keeps the failure off the toast stack and the typed outcome is the only
+   *  thing carrying the server's message. */
+  function addAnswers(outcome: { status: string; value?: unknown; error?: { message: string } }) {
+    mockAdd.mockReturnValue(
+      Object.assign(
+        Promise.resolve(outcome.status === "success" ? (outcome.value ?? null) : null),
+        {
+          abort: () => undefined,
+          outcome: Promise.resolve(outcome),
+        },
+      ) as never,
+    );
+  }
 
-    (document.getElementById("knowledge-add-path") as HTMLInputElement).value = "docs";
+  function submit(path: string): void {
+    (document.getElementById("knowledge-add-path") as HTMLInputElement).value = path;
     (document.getElementById("knowledge-add-form") as HTMLFormElement).dispatchEvent(
       new Event("submit", { cancelable: true }),
     );
+  }
+
+  function errorText(): string {
+    return document.getElementById("knowledge-add-error")?.textContent ?? "";
+  }
+
+  it("dispatches knowledge.add with the entered path and refetches", async () => {
+    initKnowledge();
+    addAnswers({ status: "success", value: { message: "Indexing 'docs' in background" } });
+    mockGet.mockResolvedValue({ contexts: [] });
+
+    submit("docs");
     await flush();
 
     expect(mockAdd).toHaveBeenCalledWith({ path: "docs", name: "" });
@@ -249,17 +275,36 @@ describe("add flow", () => {
     expect((document.getElementById("knowledge-add-form") as HTMLFormElement).hidden).toBe(true);
   });
 
-  it("keeps the form open and shows no success toast when add fails", async () => {
+  // The action carries `error: false`, so nothing else in the app reports this:
+  // before the field existed, a bad path or a 502 cleared the spinner and said
+  // nothing at all.
+  it("writes the server's own message beside the field when the add fails", async () => {
     initKnowledge();
-    mockAdd.mockResolvedValue(null); // action reported failure (default error toast already fired)
+    addAnswers({ status: "error", error: { message: "path does not exist: bad/path" } });
     (document.getElementById("knowledge-add-form") as HTMLFormElement).hidden = false;
-    (document.getElementById("knowledge-add-path") as HTMLInputElement).value = "bad/path";
-    (document.getElementById("knowledge-add-form") as HTMLFormElement).dispatchEvent(
-      new Event("submit", { cancelable: true }),
-    );
+
+    submit("bad/path");
     await flush();
+
+    expect(errorText()).toBe("path does not exist: bad/path");
     expect(vi.mocked(showToast)).not.toHaveBeenCalled();
     expect((document.getElementById("knowledge-add-form") as HTMLFormElement).hidden).toBe(false);
+  });
+
+  it("clears a previous failure when the next attempt succeeds", async () => {
+    initKnowledge();
+    addAnswers({ status: "error", error: { message: "path does not exist: bad/path" } });
+    (document.getElementById("knowledge-add-form") as HTMLFormElement).hidden = false;
+    submit("bad/path");
+    await flush();
+    expect(errorText()).not.toBe("");
+
+    addAnswers({ status: "success", value: {} });
+    mockGet.mockResolvedValue({ contexts: [] });
+    submit("docs");
+    await flush();
+
+    expect(errorText()).toBe("");
   });
 });
 
@@ -285,6 +330,61 @@ describe("remove flow", () => {
     (list().querySelector(".knowledge-remove") as HTMLButtonElement).click();
     await flush();
     expect(mockRemove).not.toHaveBeenCalled();
+  });
+});
+
+describe("reindex flow", () => {
+  async function renderSettledRow(): Promise<void> {
+    mockGet.mockResolvedValue({
+      contexts: [{ name: "docs", id: "a", item_count: 3, path: "internal/api" }],
+    });
+    loadKnowledge();
+    await flush();
+  }
+
+  const control = (): HTMLButtonElement =>
+    list().querySelector(".knowledge-reindex") as HTMLButtonElement;
+
+  it("dispatches knowledge.reindex for the row's own name, and confirms nothing", async () => {
+    await renderSettledRow();
+    control().click();
+    await flush();
+    // Not destructive: the base survives and only its index is rebuilt, so there
+    // is nothing to undo and nothing to ask about.
+    expect(mockConfirm).not.toHaveBeenCalled();
+    expect(mockReindex).toHaveBeenCalledWith({ name: "docs" }, expect.any(Object));
+  });
+
+  // The row's own signature does not move when a re-index starts, so the refetch
+  // is the only thing that turns this row into an indexing one and restarts the
+  // progress poll.
+  it("says so and refetches on success", async () => {
+    await renderSettledRow();
+    const before = mockGet.mock.calls.length;
+    control().click();
+    await flush();
+
+    const opts = mockReindex.mock.calls[0]?.[1] as { onSuccess: () => void } | undefined;
+    opts?.onSuccess();
+    await flush();
+
+    expect(vi.mocked(showToast)).toHaveBeenCalledWith(
+      expect.stringContaining('Re-indexing "docs"'),
+      "success",
+    );
+    expect(mockGet.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  // A base already indexing is the progress readout, and the server refuses a
+  // name no SETTLED base holds — so the control is withheld rather than offered
+  // and then refused.
+  it("offers no control while the base is still indexing", async () => {
+    mockGet.mockResolvedValue({
+      contexts: [{ name: "docs", id: "a", item_count: 0, items_display: "12%", indexing: true }],
+    });
+    loadKnowledge();
+    await flush();
+    expect(list().querySelector(".knowledge-reindex")).toBeNull();
   });
 });
 
@@ -343,6 +443,73 @@ describe("indexing poll", () => {
       // Bounded well below the tick count, so a wedged index does not poll on
       // forever.
       expect(mockGet.mock.calls.length).toBeLessThan(60);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The row's last paint reads `Indexing… 42%` and nothing is going to move it,
+  // so leaving it there claims the client is still watching an index it has given
+  // up on. Re-activating the tab re-fires the load, which is the recovery the copy
+  // has to name because it is the only one there is.
+  it("says so on the row when it abandons a stalled index", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGet.mockImplementation(() => Promise.resolve(indexing(42)));
+      loadKnowledge();
+      await flush();
+      for (let i = 0; i < 40; i++) {
+        await vi.advanceTimersByTimeAsync(1500);
+        await flush();
+      }
+
+      const text = list().querySelector(".knowledge-progress-text")?.textContent ?? "";
+      expect(text).toContain("stalled");
+      expect(text).toContain("reopen this tab");
+      // And no bar: a value nothing will advance is worse than no bar at all.
+      expect(list().querySelector(".knowledge-bar")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The STALL signature, which is a different one from the row's above and was
+  // the last template-literal join in this file. A base NAME is free text from the
+  // add form, so two genuinely different progress states can produce one
+  // "${name}:${count}:${display}" joined by "|" — and then the counter advances
+  // while indexing is moving and abandons a healthy index inside 45 seconds.
+  it("keeps polling across two states the old '|'-joined progress signature collapsed", async () => {
+    /** The progress expression as it was before the keyenc adoption. */
+    function oldProgressSig(ctxs: readonly { name: string; item_count: number }[]): string {
+      return ctxs
+        .map((c) => `${c.name}:${String(c.item_count)}:`)
+        .sort((a, b) => a.localeCompare(b))
+        .join("|");
+    }
+    const two = [
+      { name: "docs", id: "1", item_count: 1, indexing: true },
+      { name: "refs", id: "2", item_count: 2, indexing: true },
+    ];
+    const one = [{ name: "docs:1:|refs", id: "3", item_count: 2, indexing: true }];
+    // Precondition: the pre-adoption expression really did collapse these.
+    expect(oldProgressSig(two)).toBe(oldProgressSig(one));
+
+    vi.useFakeTimers();
+    try {
+      let tick = 0;
+      mockGet.mockImplementation(() => {
+        tick += 1;
+        return Promise.resolve({ contexts: tick % 2 === 0 ? [...one] : [...two] });
+      });
+      loadKnowledge();
+      await flush();
+      for (let i = 0; i < 100; i++) {
+        await vi.advanceTimersByTimeAsync(1500);
+        await flush();
+      }
+      // Under the old join every tick read as a stall, so the poll gave up inside
+      // MAX_STALLED_POLLS ticks.
+      expect(mockGet.mock.calls.length).toBeGreaterThan(60);
     } finally {
       vi.useRealTimers();
     }
@@ -410,11 +577,13 @@ describe("loadKnowledge row signature", () => {
 
   it("emits verbatim components for ordinary input", async () => {
     // No reserved character in any field, so each component is emitted as-is
-    // and the signature is just the four fields separated by ":".
-    expect(await sigFor("42%", "internal/api")).toBe("0:3:42%:internal/api");
+    // and the signature is just the five fields separated by ":". The last is
+    // the stall flag, which is what makes the abandoned-poll repaint reach a row
+    // whose other four fields have stopped moving.
+    expect(await sigFor("42%", "internal/api")).toBe("0:3:42%:internal/api:0");
   });
 
   it("escapes a reserved character instead of emitting a bare separator", async () => {
-    expect(await sigFor("a:b", "")).toBe("0:3:a\\:b:");
+    expect(await sigFor("a:b", "")).toBe("0:3:a\\:b::0");
   });
 });

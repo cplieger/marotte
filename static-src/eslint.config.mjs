@@ -168,6 +168,7 @@ export default [
       "**/*.gen.ts",
       "**/wire/*.ts",
       "vitest.config.ts",
+      "scripts/*.ts",
       "*.config.ts",
       "*.config.mjs",
       "*.config.js",
@@ -177,5 +178,12 @@ export default [
       "fc-strict-setup.ts",
     ],
     ...tseslint.configs.disableTypeChecked,
+  },
+
+  // 6. Build scripts: a CLI reports its measurement on stdout. Typed by
+  // `npm run typecheck:tests` (tsconfig.test.json), not here.
+  {
+    files: ["scripts/*.ts"],
+    rules: { "no-console": "off" },
   },
 ];

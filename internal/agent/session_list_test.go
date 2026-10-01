@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -39,7 +38,7 @@ func rowCreated(id, title, updated, created string) kasSessionRow {
 // CONVERSATIONS, so a fixture of bare session ids would assert nothing.
 func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 	t.Helper()
-	store := testsupport.NewInMemoryChatStore()
+	store := newTestChatStore()
 	for chatID, sessions := range owners {
 		if _, err := store.Mutate(t.Context(), marotte.ChatID(chatID), func(c *marotte.Chat, _ bool) bool {
 			c.Name = chatID
@@ -115,7 +114,7 @@ func TestToResumable_NewestFirst(t *testing.T) {
 // retired sessions back as separate resumable conversations. However many a chat
 // has held, it is one conversation and earns one row.
 func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
+	store := newTestChatStore()
 	ctx := t.Context()
 	if _, err := store.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Owned"
@@ -302,7 +301,7 @@ func TestParseKASTime(t *testing.T) {
 // recorded `parentSessionId` retired, so matching on ACPSessionID alone reads the
 // run as parentless and no tab can say which conversation started it.
 func TestWorkflowRunAttribution(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
+	store := newTestChatStore()
 	ctx := t.Context()
 	if _, err := store.Mutate(ctx, "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Launcher"

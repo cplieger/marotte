@@ -18,30 +18,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/sse"
-	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/sse"
 )
 
 // --- Runtime construction helpers ---
 
 // newTestHub roots the Runtime's lifetime at context.Background(), so a test that wants
 // it torn down calls Shutdown.
-func newTestHub() (*Runtime, *fakeChatStore, *fakeBridge) {
+func newTestHub() (*Runtime, *testChatStore, *fakeBridge) {
 	return newTestHubIn("/tmp/work")
 }
 
 // newTestHubUnready is newTestHub with MCP readiness WITHHELD, so a prompt parks in
 // WaitForReady's 30s wait. That is the widest part of the window between BeginPromptCall
 // and StartTurn, which is the one a cancel has to be driven into.
-func newTestHubUnready() (*Runtime, *fakeChatStore, *fakeBridge) {
+func newTestHubUnready() (*Runtime, *testChatStore, *fakeBridge) {
 	return buildTestHub("/tmp/work", false)
 }
 
 // newTestHubIn builds a runtime rooted at workDir. Use it rather than reassigning
 // h.lifecycle.workDir afterwards: the workspace paths are read once at wiring time, so a
 // post-construction mutation configures something the wiring has already read.
-func newTestHubIn(workDir string) (*Runtime, *fakeChatStore, *fakeBridge) {
+func newTestHubIn(workDir string) (*Runtime, *testChatStore, *fakeBridge) {
 	return buildTestHub(workDir, true)
 }
 
@@ -51,11 +51,14 @@ func newTestHubIn(workDir string) (*Runtime, *fakeChatStore, *fakeBridge) {
 // signalled once the registry exists. Two copies meant a step added to one silently
 // skipped the other, and the readiness-withholding copy was the one no reader thinks to
 // check. Readiness is the only axis they differed on, so it is the only parameter.
-func buildTestHub(workDir string, mcpReady bool) (*Runtime, *fakeChatStore, *fakeBridge) {
-	cs := newFakeChatStore()
+func buildTestHub(workDir string, mcpReady bool) (*Runtime, *testChatStore, *fakeBridge) {
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), workDir, func() ACPBridge { return br }, cs)
-	cs.Bus = h
+	// Park the cancel-retry ladder past any test run: its re-attempts ride untracked
+	// timers that outlive the test. A test that needs it to fire lowers it itself.
+	h.runs.cancelRetryBase = time.Hour
+	cs.wire(h)
 	if mcpReady {
 		// Signal MCP readiness immediately so tests don't wait 30 seconds.
 		h.mcpRegistry.SignalReady()
@@ -191,27 +194,6 @@ func newSessionChunkMsg(sessionID, text string) *marotte.RPCResponse {
 	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// newStepChunkMsg is the shape a chat-parented run's step frames arrive in on the
-// LAUNCHING chat's connection: the subtask id is empty exactly as KAS sends it, so
-// `_meta.kiro.workflow` is the whole attribution.
-func newStepChunkMsg(text, workflowID, nodePath string) *marotte.RPCResponse {
-	update, _ := json.Marshal(map[string]any{
-		"sessionUpdate": "agent_message_chunk",
-		"content":       map[string]any{"type": "text", "text": text},
-		"_meta": map[string]any{
-			"kiro": map[string]any{
-				"workflow": map[string]any{
-					"workflowId": workflowID,
-					"nodePath":   []string{nodePath},
-					"type":       "step",
-				},
-			},
-		},
-	})
-	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
-	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
-}
-
 func newToolCallMsg(t *testing.T, id, title, status string) *marotte.RPCResponse {
 	t.Helper()
 	raw := mustJSON(t, map[string]any{
@@ -282,36 +264,54 @@ func quietLogs(b *testing.B) {
 	swapDefaultLogger(b, slog.DiscardHandler)
 }
 
-// --- Turn buffer helpers ---
+// --- Turn helpers ---
 
-// stageTurnBuffer opens a wireTurnStart turn when none is open, the test-side equivalent
-// of the first frame of a turn marotte did not prompt. There is no buffer store: a
-// buffer belongs to the turn record that installed it.
-func (rt *Runtime) stageTurnBuffer(tb testing.TB, chatID marotte.ChatID) *buffer.Buffer {
+// stageWireTurn opens a wireTurnStart turn when none is open, the test-side
+// equivalent of the first frame of a turn marotte did not prompt, and answers the
+// accumulator the frames fold into.
+func (rt *Runtime) stageWireTurn(tb testing.TB, chatID marotte.ChatID) *turnlog.Turn {
 	tb.Helper()
-	return rt.coord.TurnFoldTarget(tb.Context(), chatID, marotte.TurnSourceWireTurnStart)
+	return rt.coord.TurnFoldTarget(tb.Context(), chatID)
 }
 
-// stagePromptTurn hands back the epoch as well as the buffer, and the epoch is the point:
-// an epoch-scoped closer handed zero closes nothing (zero is what StartTurn answers when
-// it refuses), so a test passing zero exercises the fallthrough rather than its closer.
-func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (marotte.TurnEpoch, *buffer.Buffer) {
+// stagePromptTurn opens a prompt turn (the record's turn_open, then StartTurn) and
+// hands back its id beside its accumulator. The id is the point: an id-scoped
+// closer handed another turn's id closes nothing, so a test passing the wrong one
+// exercises the fallthrough rather than its closer.
+func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (string, *turnlog.Turn) {
 	tb.Helper()
-	epoch := rt.coord.StartTurn(tb.Context(), chatID, marotte.TurnSourcePrompt)
-	if epoch == 0 {
-		tb.Fatalf("StartTurn(%q) refused, so there is no turn to stage", chatID)
+	id, err := rt.coord.OpenTurn(tb.Context(), chatID, marotte.TurnSourcePrompt,
+		&marotte.EntryPrompt{ID: "m-" + string(chatID), Text: "prompt"},
+		func(c *marotte.Chat) { c.Name = "test chat" })
+	if err != nil {
+		tb.Fatalf("OpenTurn(%q) failed: %v", chatID, err)
 	}
-	return epoch, rt.coord.TurnFoldTarget(tb.Context(), chatID, marotte.TurnSourceWireTurnStart)
+	if !rt.coord.StartTurn(tb.Context(), chatID, id) {
+		tb.Fatalf("StartTurn(%q, %q) refused, so there is no turn to stage", chatID, id)
+	}
+	log, ok := rt.coord.OwnTurn(chatID)
+	if !ok {
+		tb.Fatalf("OwnTurn(%q) holds nothing after StartTurn", chatID)
+	}
+	return id, log
 }
 
-// liveTurnBuffer is what the NEXT turn would read, which is what a released-buffer
-// assertion is about. Nil when no turn is open.
-func (rt *Runtime) liveTurnBuffer(chatID marotte.ChatID) *buffer.Buffer {
-	facts, open := rt.coord.turns.openTurns()[chatID]
-	if !open {
+// liveTurn is the accumulator the NEXT frame would fold into: the chat's own open
+// turn, nil when none is open.
+// endTurn settles the chat's turn through the prompt-response closer with a
+// clean end_turn, the shape every test that only needs a closed turn wants.
+func endTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, turnID string) {
+	t.Helper()
+	h.SettleTurnOnResponse(t.Context(), chatID, turnID, 0,
+		&marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
+}
+
+func (rt *Runtime) liveTurn(chatID marotte.ChatID) *turnlog.Turn {
+	log, ok := rt.coord.OwnTurn(chatID)
+	if !ok {
 		return nil
 	}
-	return facts.Buf
+	return log
 }
 
 // --- session_info_update builders ---
@@ -384,13 +384,13 @@ func newAgentInitiatedChunkMsg(text string) *marotte.RPCResponse {
 // waitForParkedSettle proves the settle is PARKED before the folder is let move. It
 // polls the registry's own state rather than sleeping: the discriminator is that no
 // frame has been consumed yet, and a sleep would only make that likely.
-func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID, epoch marotte.TurnEpoch, want uint64) {
+func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID, turnID string, want uint64) {
 	tb.Helper()
 	lc := reg.lifecycleFor(chatID)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		lc.mu.Lock()
-		t := lc.turnLocked(epoch)
+		t := lc.turnLocked(turnID)
 		parked := t != nil && t.NeedSeq == want
 		lc.mu.Unlock()
 		if parked {
@@ -398,7 +398,7 @@ func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID
 		}
 		runtime.Gosched()
 	}
-	tb.Fatalf("the settle for epoch %d never recorded NeedSeq %d, so it is not parked", epoch, want)
+	tb.Fatalf("the settle for turn %q never recorded NeedSeq %d, so it is not parked", turnID, want)
 }
 
 // payloadsOfType is generic over the payload so a caller reads the FIELD it cares about
@@ -421,14 +421,32 @@ func payloadsOfType[T any](tb testing.TB, events []sse.ReplayEvent, want marotte
 	return out
 }
 
-func hasAssistantContent(c *marotte.Chat, want string) bool {
-	if c == nil {
-		return false
+// hasText reports whether the chat's log holds a sealed text entry containing
+// want, the entry-model reading of "the assistant said this".
+func (s *testChatStore) hasText(tb testing.TB, chatID marotte.ChatID, want string) bool {
+	tb.Helper()
+	entries, err := s.All(tb.Context(), chatID)
+	if err != nil {
+		tb.Fatalf("All(%q): %v", chatID, err)
 	}
-	for i := range c.Messages {
-		if c.Messages[i].Role == marotte.RoleAssistant && strings.Contains(c.Messages[i].Content, want) {
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindText {
+			continue
+		}
+		var text marotte.EntryText
+		if json.Unmarshal(entries[i].Payload, &text) == nil && strings.Contains(text.Text, want) {
 			return true
 		}
 	}
 	return false
+}
+
+// sayText gives a staged turn one sealed word, so its end_turn grades completed
+// rather than empty: the closer narrows a silent end_turn to `empty`, which earns
+// no push.
+func sayText(tb testing.TB, log *turnlog.Turn) {
+	tb.Helper()
+	if _, err := log.TextDelta(tb.Context(), "", "say-1", "hello"); err != nil {
+		tb.Fatalf("TextDelta: %v", err)
+	}
 }

@@ -42,8 +42,7 @@ export interface ChatOutstanding {
   readonly turn: boolean;
   /** How many live workflow runs this chat launched — parked ones INCLUDED, because
    *  a run stopped on a person is precisely the case a badge must not call finished
-   *  (`run-store.ts` records why `hasLiveRunForChat` is the settle question and
-   *  `hasExecutingRunForChat` is the store-eviction one). */
+   *  (`run-store.ts` records why `hasLiveRunForChat` includes a parked run). */
   readonly runs: number;
   /** An unanswered decision sits in this chat's dock queue. */
   readonly asks: boolean;

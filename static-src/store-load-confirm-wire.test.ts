@@ -93,13 +93,13 @@ function answerWith(status: number, body: string | null, contentType = "applicat
  *  `map[string]any{"chat": c.Header(), "messages": …, "has_more": …}`.
  *
  *  The chat object carries every field `marotte.ChatHeader` marshals WITHOUT
- *  `omitempty` — `name`, `id`, `usage`, `created_at`, `updated_at`,
- *  `message_count`, and `usage`'s own six — because the generated `decodeChatHeader`
- *  requires exactly those and this file is the only place that runs it. That
- *  requirement is not incidental: the FIRST version of this fixture was the
- *  `{id, name, message_count, usage: {}}` object the mocked suite hands in, and the
- *  real decoder REJECTED it. A shape a mock passes straight through is not evidence
- *  the wire shape is right, which is the whole reason this file exists.
+ *  `omitempty` — `name`, `id`, `usage`, `created_at`, `updated_at`, `turn_count`
+ *  and `usage`'s own six — because the generated `decodeChatHeader`
+ *  requires exactly those and this file is the only place that runs it. That requirement is not
+ *  incidental: the FIRST version of this fixture was the `{id, name, usage: {}}`
+ *  object the mocked suite hands in, and the real decoder REJECTED it. A shape a mock
+ *  passes straight through is not evidence the wire shape is right, which is the whole
+ *  reason this file exists.
  *
  *  The sibling keys are present on purpose — the confirm decoder is deliberately
  *  narrower than `decodeChatGetResponseLocal` and must ignore them rather than
@@ -112,12 +112,11 @@ function serverBody(id: string): string {
       name: "Made elsewhere",
       created_at: 1_730_000_000,
       updated_at: 1_730_000_500,
-      message_count: 3,
+      turn_count: 2,
       usage: {
         context_pct: 12,
         context_size: 200_000,
         credits: 0.5,
-        turn_count: 2,
         last_turn_ms: 4200,
         has_real_data: true,
       },
@@ -150,7 +149,7 @@ describe("confirmChatExists over the real transport", () => {
     expect(mockUpsertHeader.mock.calls[0]?.[0]).toMatchObject({
       id: "c-elsewhere",
       name: "Made elsewhere",
-      message_count: 3,
+      turn_count: 2,
     });
     expect(asked).toEqual(["/api/chats/c-elsewhere?limit=1"]);
   });
@@ -163,7 +162,7 @@ describe("confirmChatExists over the real transport", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     answerWith(
       200,
-      JSON.stringify({ session: { id: "c-elsewhere", name: "x", message_count: 0, usage: {} } }),
+      JSON.stringify({ session: { id: "c-elsewhere", name: "x", turn_count: 0, usage: {} } }),
     );
 
     expect(await confirmChatExists("c-elsewhere")).toBe("unresolved");

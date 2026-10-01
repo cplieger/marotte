@@ -57,14 +57,14 @@ func (f *fakeMCPConfig) copyOf(src map[string]struct{}) map[string]struct{} {
 }
 
 func newHubWithMCPConfig(cfg mcpNameSets) *Runtime {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	factory := func() ACPBridge { return newFakeBridge() }
 	var opts []Option
 	if cfg != nil {
 		opts = append(opts, WithMCPConfig(cfg))
 	}
 	h := New(context.Background(), "/tmp/work", factory, cs, opts...)
-	cs.Bus = h
+	cs.wire(h)
 	return h
 }
 

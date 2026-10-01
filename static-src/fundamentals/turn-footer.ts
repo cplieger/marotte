@@ -25,7 +25,7 @@ import { COMMAND_KINDS, type TurnOutcome } from "../turns.js";
  *
  *  Two outcomes carry no word because they carry no glyph either: `completed`, where
  *  the absence of a mark IS the clean case, and `running`, which 29-turns.css hides on
- *  the same rule. The other five say their name in the ROW rather than in a hover,
+ *  the same rule. The other six say their name in the ROW rather than in a hover,
  *  which does not exist on a touch device. Short by design — the row is dense and the
  *  turn's own `.turn-notice` carries the sentence. */
 const OUTCOME_LEAD: Record<TurnOutcome, string> = {
@@ -36,6 +36,7 @@ const OUTCOME_LEAD: Record<TurnOutcome, string> = {
   failed: "Failed",
   refused: "Refused",
   unknown: "Outcome unknown",
+  empty: "Empty",
 };
 
 /** The per-turn summary inputs, sourced from turn metadata on the message. */
@@ -101,28 +102,21 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
     className: "turn-ledger-summary",
     type: "button",
   }) as HTMLButtonElement;
-  // An `i` rather than a chevron, LEADING. The button spans the band on the BLOCK
-  // axis only — measured on a clean turn it is 28px wide of a 798px band, 3.5% — so
-  // `data-tooltip-anchor` moves the tip's POSITION to the ink. Why: `marotte-ui.md`
-  // "A THIRD case: a door onto INFORMATION" and "A TOOLTIP POINTS AT INK".
+  // An `i` rather than a chevron, LEADING, and the PURPOSE span leads the CONTENT so the
+  // name opens with it. No `aria-label`: one would win over that content and hide the
+  // outcome word and the fact. Why the `i`, and why the tip anchors to it rather than to a
+  // wider button's middle: `marotte-ui.md` "A THIRD case" and "A TOOLTIP POINTS AT INK".
+  summary.appendChild(el("span", { className: "sr-only" }, "Turn details"));
   summary.appendChild(
     el("span", { className: "turn-ledger-info", "data-tooltip-anchor": "" }, iconEl(ICON_INFO)),
   );
   summary.appendChild(el("span", { className: "turn-ledger-glyph" }));
   summary.appendChild(el("span", { className: "turn-ledger-text" }));
-  // The name comes from the button's CONTENT, so there is deliberately no
-  // `aria-label`: one would WIN over the element's own text and hide the outcome word.
-  // Without this span a clean turn's button has no accessible name at all.
-  summary.appendChild(el("span", { className: "sr-only" }, "Turn details"));
+  summary.appendChild(el("span", { className: "turn-fact" }));
   summary.addEventListener("click", () => {
     setInfoOpen(footer, !infoOpen(footer));
   });
   footer.appendChild(summary);
-
-  // A SIBLING of the button, not a child: the button's name is computed from its
-  // content, so a fact inside it would be read out as part of the trigger's name and
-  // would change whenever the turn's numbers do.
-  footer.appendChild(el("span", { className: "turn-fact" }));
 
   footer.appendChild(el("div", { className: "turn-info-panel" }));
 
@@ -149,7 +143,7 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
     text.textContent = summaryLine(d);
   }
 
-  const slot = footer.querySelector<HTMLElement>(":scope > .turn-fact");
+  const slot = footer.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact");
   if (slot !== null) {
     const facts = turnFacts(d);
     slot.hidden = facts.length === 0;

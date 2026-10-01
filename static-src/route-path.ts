@@ -1,30 +1,12 @@
 // ---------------------------------------------------------------------------
-// Client-side URL router: maps browser URL to the active view/tab.
-//
-// URL scheme:
-//   /                             default chat (last active, or empty state)
-//   /chat/{id}                    specific conversation
-//   /chat/{id}/subagent/{taskId}  one subagent execution of that conversation
-//   /git                          git panel (Changes tab — canonical)
-//   /git/{tab}                    git panel sub-tab (prs | sources; changes omits the segment),
-//                                 with optional #pr=<identity> for the PR to focus
-//   /files[/{path}]               file browser at path (omit for workspace root)
-//   /file/{path}                  file editor for a specific file, with optional #L<line>
-//   /docs                         Kiro configuration browser (Steering tab — canonical)
-//   /docs/{tab}                   browser sub-tab (skills | agents | specs | hooks | workflows)
-//   /history                      previous chats + workflow runs (full-page view)
-//   /run/{workflowId}             one workflow run (a review, or a launcher-owned live tab),
-//                                 with optional #node=<path> for the step to focus
-//   /settings                     Settings (General tab)
-//   /settings/tools               Settings → Tools
-//   /settings/permissions         Settings → Permissions
-//   /settings/instructions        Settings → Custom Instructions
-//
-// Shell, popups, modals, and the model-switch affordance are transient UI;
-// they don't get URLs.
-//
-// Canonical forms: `/settings` is preferred over `/settings/general` (both
-// parse to the same route; pushRoute writes the shorter form back).
+// The URL vocabulary, DOM-free so the service worker shares it: `Route`,
+// `parseRoute` and its inverse `buildPath`. The route table is marotte.md "URL
+// scheme"; the shape here is flat paths with one level of nesting for the
+// sub-tabbed pages (`/git/{tab}`, `/docs/{tab}`, `/history/runs`,
+// `/settings/{tab}`), a fragment where a position contains `/` or `#` (`#L<line>`,
+// `#pr=<identity>`, `#node=<path>`), and a CANONICAL default per sub-tabbed page
+// whose URL omits the segment (`/settings`, never `/settings/general`).
+// Shell, popups and modals are transient UI and get no URL.
 // ---------------------------------------------------------------------------
 
 // --- Route types ---
@@ -42,15 +24,13 @@ export type GitTab = "changes" | "prs" | "sources";
 
 // The configuration browser's six sub-tabs. "steering" is the canonical default
 // and its URL omits the segment (/docs, not /docs/steering), mirroring
-// SettingsTab's "general" and GitTab's "changes".
-//
-// "workflows" is RPC-sourced rather than a .kiro file scan (a recipe is compiled
-// into KAS or lives under its sessions tree), which is why it arrived later than
-// the rest — but it is a sub-tab like any other and MUST stay in parseDocsTab
-// below. It was added here and to formatRoute without the parser, so the app
-// wrote /docs/workflows and then read it back as /docs: a reload, a back button
-// or a shared link silently landed on Steering.
+// SettingsTab's "general" and GitTab's "changes". Every member MUST be in
+// parseDocsTab below, or the app writes /docs/<tab> and reads it back as /docs.
 export type DocsTab = "steering" | "skills" | "agents" | "specs" | "hooks" | "workflows";
+
+// History's two panes. "chats" is the canonical default and its URL omits the
+// segment (/history, not /history/chats), mirroring GitTab's "changes".
+export type HistoryTab = "chats" | "runs";
 
 interface RouteChat {
   kind: "chat";
@@ -78,6 +58,9 @@ interface RouteFile {
 }
 interface RouteHistory {
   kind: "history";
+  /** Absent means the canonical Chats pane, so every caller that spells the bare
+   *  `{kind: "history"}` still names a real location. */
+  tab?: HistoryTab;
 }
 /** The Kiro configuration browser. */
 interface RouteDocs {
@@ -111,6 +94,16 @@ interface RouteSubagent {
   /** The delegate's `agent_subtask_id`. */
   id: string;
 }
+/** One Kiro spec's documents, on the spec sub-tab.
+ *
+ *  `dir` is the workspace-relative spec directory (`.kiro/specs/<name>` or
+ *  `<repo>/.kiro/specs/<name>`), carried as ONE percent-encoded segment because
+ *  `parseRoute` splits on `/` before it decodes, so the encoding is what keeps a
+ *  directory one route value. */
+interface RouteSpec {
+  readonly kind: "spec";
+  readonly dir: string;
+}
 interface RouteSettings {
   kind: "settings";
   tab: SettingsTab;
@@ -125,6 +118,7 @@ export type Route =
   | RouteDocs
   | RouteRun
   | RouteSubagent
+  | RouteSpec
   | RouteSettings;
 
 // --- Parse current URL into a Route ---
@@ -157,8 +151,12 @@ export function parseRoute(pathname: string, hash: string): Route {
       return pr === undefined ? { kind: "git", tab } : { kind: "git", tab, pr };
     }
 
-    case "history":
-      return { kind: "history" };
+    case "history": {
+      // Built conditionally, like the `git` arm's `pr`: the canonical pane omits
+      // the field, so `/history` parses to the same object every caller writes.
+      const tab = parseHistoryTab(segments[1]);
+      return tab === "chats" ? { kind: "history" } : { kind: "history", tab };
+    }
 
     case "docs":
       return { kind: "docs", tab: parseDocsTab(segments[1]) };
@@ -171,6 +169,18 @@ export function parseRoute(pathname: string, hash: string): Route {
         // optional property.
         const node = parseHashNode(hash);
         return node !== undefined ? { kind: "run", id, node } : { kind: "run", id };
+      }
+      break;
+    }
+
+    case "spec": {
+      // Exactly one further segment: the directory is one encoded value, so a
+      // second segment means the caller wrote the directory unencoded.
+      if (segments.length === 2) {
+        const dir = safeDecode(segments[1] ?? "");
+        if (dir !== "") {
+          return { kind: "spec", dir };
+        }
       }
       break;
     }
@@ -270,6 +280,12 @@ function parseGitTab(seg: string | undefined): GitTab {
   }
 }
 
+// parseHistoryTab normalises an unknown / missing segment to "chats" (the
+// canonical default), mirroring parseGitTab.
+function parseHistoryTab(seg: string | undefined): HistoryTab {
+  return seg === "runs" ? "runs" : "chats";
+}
+
 function parseHashLine(hash: string): number | undefined {
   const m = /^#L(\d+)/.exec(hash);
   if (m === null) {
@@ -325,7 +341,8 @@ export function buildPath(route: Route): string {
       // Changes is the canonical default; omit the tab segment.
       return route.tab === "changes" ? "/git" : `/git/${route.tab}`;
     case "history":
-      return "/history";
+      // Chats is the canonical default; omit the tab segment.
+      return route.tab === "runs" ? "/history/runs" : "/history";
     case "docs":
       // Steering is the canonical default; omit the tab segment.
       return route.tab === "steering" ? "/docs" : `/docs/${route.tab}`;
@@ -337,6 +354,8 @@ export function buildPath(route: Route): string {
         : `/run/${encodeURIComponent(route.id)}`;
     case "subagent":
       return `/chat/${encodeURIComponent(route.chat)}/subagent/${encodeURIComponent(route.id)}`;
+    case "spec":
+      return `/spec/${encodeURIComponent(route.dir)}`;
     case "files":
       // The canonical form drops the leading slash, so `/workspace/_ui-qa` serialises to
       // `/files/workspace/_ui-qa` and the root listing has no segment of its own. The

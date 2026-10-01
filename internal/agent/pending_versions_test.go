@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // pendingVersion reads the shared `pending` counter.

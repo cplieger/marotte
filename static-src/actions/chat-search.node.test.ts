@@ -44,10 +44,13 @@ describe("the cross-chat search reply shared with the Go implementation", () => 
   it("carries a best hit only where the transcript holds a line to show", () => {
     const r = decodeSearchAllResult(fx.result);
     const [withLine, titleOnly] = r.matches;
-    // The first occurrence in the chat, segment-relative, past no multibyte word.
+    // The first occurrence in the chat, segment-relative, past no multibyte word. The hit
+    // names its TURN and its ENTRY, and the two are equal here because the match is that
+    // turn's prompt, which rides the `turn_open` entry.
     expect(withLine?.best).toMatchObject({
-      message_id: "m1",
-      segment_kind: "content",
+      turn_id: "chat-001-t1",
+      entry_id: "chat-001-t1",
+      segment_kind: "prompt",
       offset: 22,
       segment_len: 33,
     });
@@ -60,17 +63,25 @@ describe("the cross-chat search reply shared with the Go implementation", () => 
 
   it("refuses a title-only match spelled as a zero hit", () => {
     const r = fx.result as { matches: Record<string, unknown>[] };
+    // Every other field is present and well-typed, so the refusal is attributable to the
+    // empty `segment_kind` alone — which is what the assertion on the message pins.
     const zeroHit = {
-      message_id: "",
-      turn_message_id: "",
+      turn_id: "chat-003-t1",
+      entry_id: "chat-003-t1",
       excerpt: "",
-      role: "",
       segment_kind: "",
       turn: 0,
       offset: 0,
       segment_len: 0,
     };
     const forged = { ...r, matches: [{ ...r.matches[1], best: zeroHit }] };
-    expect(() => decodeSearchAllResult(forged)).toThrow();
+    expect(() => decodeSearchAllResult(forged)).toThrow(/segment_kind/);
+    // The control: the same hit with a real segment kind decodes, so the refusal above
+    // cannot be a missing or mistyped field wearing the enum's name.
+    const named = {
+      ...r,
+      matches: [{ ...r.matches[1], best: { ...zeroHit, segment_kind: "prompt" } }],
+    };
+    expect(() => decodeSearchAllResult(named)).not.toThrow();
   });
 });

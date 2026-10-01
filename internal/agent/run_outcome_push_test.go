@@ -48,10 +48,10 @@ func (p *runOutcomePush) Send(
 // newRunPushHub is newTestHub with a push recorder that keeps the kind.
 func newRunPushHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	t.Helper()
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	fp := newRunOutcomePush()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, fp

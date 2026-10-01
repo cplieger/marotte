@@ -17,7 +17,7 @@ import {
   RETRY_STANDARD,
   IDEMPOTENCY_HEADER,
 } from "./index.js";
-import type { ActionContext } from "./index.js";
+import type { ActionContext, NotificationSpec } from "./index.js";
 import type {
   CatalogInfo,
   Inventory,
@@ -211,7 +211,53 @@ export const ensureTool = defineAction<{ name: string }, JobResponse>({
   error: false,
 });
 
-export const searchTools = apiAction<{ q: string }, SearchResponse>({
+/** Whether the engine read the host's package index for this reply: not usable
+ *  here, still loading, or read. Three-valued because "no Debian hit" and "the
+ *  index could not be consulted" are opposite answers that `apt_available`
+ *  merges. */
+type AptState = "unavailable" | "indexing" | "available";
+
+function isAptState(v: unknown): v is AptState {
+  return v === "unavailable" || v === "indexing" || v === "available";
+}
+
+/** The search reply, plus the two fields an engine states only from the release
+ *  that added them. Absent means UNSTATED — never a zero and never a negative —
+ *  because the engine this build pins emits neither. */
+export interface ToolSearchResponse extends SearchResponse {
+  apt_state?: AptState;
+  /** How many rows the query matched over the blocks the reply holds, so it is
+   *  a denominator for `results.length` whenever it is stated. */
+  matched?: number;
+}
+
+/** Both additive fields are read off the raw body and VALIDATED rather than
+ *  taken from the generated wire type, which types `apt_state` as a bare
+ *  `string` — the renderer switches exhaustively over the three members, so a
+ *  fourth value an engine invents has to read as unstated rather than reaching
+ *  a switch with no arm for it. `apt_state` is therefore dropped from the
+ *  spread's TYPE as well as its value: it is the one field whose wire type is
+ *  wider than this one's. */
+function decodeSearch(data: unknown): ToolSearchResponse {
+  const o = data as Record<string, unknown>;
+  const out: ToolSearchResponse = { ...(data as Omit<SearchResponse, "apt_state">) };
+  // Dropped before either is put back, or a value this decoder REFUSED would
+  // survive the spread and the type would claim an apt state the renderer's
+  // exhaustive switch has no arm for.
+  delete out.apt_state;
+  delete out.matched;
+  const state = o["apt_state"];
+  if (isAptState(state)) {
+    out.apt_state = state;
+  }
+  const matched = o["matched"];
+  if (typeof matched === "number" && Number.isInteger(matched) && matched >= 0) {
+    out.matched = matched;
+  }
+  return out;
+}
+
+export const searchTools = apiAction<{ q: string }, ToolSearchResponse>({
   name: "tools.search",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -220,6 +266,7 @@ export const searchTools = apiAction<{ q: string }, SearchResponse>({
     method: "GET",
     path: `/api/tools/search?q=${encodeURIComponent(q)}`,
   }),
+  decode: decodeSearch,
   error: false,
 });
 
@@ -252,6 +299,26 @@ export const refreshCatalog = apiAction<void, JobResponse>({
   scope: "tools",
   request: () => ({ method: "POST", path: "/api/tools/catalog/refresh" }),
   error: "Couldn't refresh the tool catalog",
+});
+
+/** Converge the volume on the manifest as it stands on disk — the verb behind
+ *  Settings → Tools' Apply, for a tools.json somebody edited by hand.
+ *
+ *  202 like every other tools mutation, and a null job is the engine's "nothing
+ *  to converge" rather than a failure. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
+export const applyManifest = apiAction<void, JobResponse>({
+  name: "tools.apply_manifest",
+  scope: "tools",
+  request: () => ({ method: "POST", path: "/api/tools/reconcile" }),
+  // A null job produces no SSE frame, no output line and no pill busy state, so
+  // the toast is the only channel left. The framework suppresses a resolver
+  // answering null; its type does not spell that arm, hence the assertion.
+  success: ((_a, r) =>
+    r.job == null
+      ? "Nothing to converge: the manifest and the volume already agree."
+      : null) as NotificationSpec<void, JobResponse>,
+  error: "Couldn't apply the manifest",
 });
 
 export const cancelToolJob = apiAction<{ id: string }>({

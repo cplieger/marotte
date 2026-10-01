@@ -7,7 +7,7 @@
 // `reason: "starting"` is a real failure it renders through the error face.
 
 import type { TabKind } from "./types.js";
-import { reportFailure } from "./failure-notice.js";
+import { BUS_COMMAND_FAILED, emitBus } from "./bus.js";
 import {
   registerCleanup,
   hasErrorString,
@@ -47,6 +47,9 @@ export type TypedCommand =
         attachments?: readonly unknown[];
         message_id?: string;
         model?: string;
+        // The steer entries whose text this prompt re-sends; lands on
+        // `turn_open.prompt.resends` (PromptCommand.Resends).
+        resends?: readonly string[];
       };
     }
   | { type: "cancel"; chat_id: string }
@@ -77,7 +80,14 @@ export type TypedCommand =
   // A message delivered INTO the running turn (`_session/steer`). Typed here
   // for the steer action's custom runner — the wire shape every other sender
   // (the framework's loose TransportCommand) already produces.
-  | { type: "steer"; chat_id: string; payload: { text: string; message_id: string } }
+  | {
+      type: "steer";
+      chat_id: string;
+      // `resends` names the steer entries this one re-sends (SteerCommand.Resends),
+      // so a resend a busy chat converted into a steer records the same provenance
+      // the prompt would have.
+      payload: { text: string; message_id: string; resends?: readonly string[] };
+    }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
   | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } }
@@ -97,7 +107,12 @@ export type TypedCommand =
     }
   | { type: "close_tab"; payload: { id: string; op_id: string } }
   | { type: "reorder_tabs"; payload: { order: string[]; op_id: string } }
-  | { type: "pin_tab"; payload: { id: string; pinned: boolean; op_id: string } };
+  | { type: "pin_tab"; payload: { id: string; pinned: boolean; op_id: string } }
+  | { type: "reparent_tab"; payload: { id: string; parent: string; op_id: string } }
+  // A human sign-off on one phase of one spec, with no `chat_id` for the tab
+  // mutations' reason: a spec is workspace-global. `hash` is the compare-and-swap
+  // precondition rather than a value the server trusts.
+  | { type: "approve_spec_phase"; payload: { dir: string; phase: string; hash: string } };
 
 const TRANSPORT_ERROR_CODES = {
   TIMEOUT: "timeout",
@@ -145,8 +160,9 @@ function idempotencyKeyOf(cmd: TypedCommand | Command): string | undefined {
 }
 
 /** The chat a command is addressed to, or "" when it addresses none. "" is what
- *  the envelope carries for the creating commands, and what `reportFailure`
- *  treats as workspace-wide — correct, since a failed create belongs to no chat. */
+ *  the envelope carries for the creating commands, and what the failure notice on
+ *  the other end of `BUS_COMMAND_FAILED` treats as workspace-wide — correct, since
+ *  a failed create belongs to no chat. */
 function chatIDOf(cmd: TypedCommand | Command): string {
   return "chat_id" in cmd ? (cmd.chat_id ?? "") : "";
 }
@@ -262,7 +278,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
     // the send-error face rather than a toast.
     const reportSendState = opts?.reportSendState ?? true;
     if (r.status !== 409 && reportSendState) {
-      reportFailure(chatIDOf(cmd), errMsg);
+      emitBus(BUS_COMMAND_FAILED, { chatID: chatIDOf(cmd), message: errMsg });
     }
     return {
       ok: false,
@@ -286,7 +302,7 @@ export async function send(cmd: TypedCommand | Command, opts?: SendOptions): Pro
     }
     const reportSendState = opts?.reportSendState ?? true;
     if (reportSendState) {
-      reportFailure(chatIDOf(cmd), msg);
+      emitBus(BUS_COMMAND_FAILED, { chatID: chatIDOf(cmd), message: msg });
     }
     return { ok: false, status: 0, error: msg, code };
   } finally {

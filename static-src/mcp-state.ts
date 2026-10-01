@@ -170,13 +170,28 @@ const decodeServer: Decoder<Server> = (v) => {
   if (Array.isArray(o["disabled_tools"])) {
     out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
   }
+  if (Array.isArray(o["auto_approve"])) {
+    out.auto_approve = (o["auto_approve"] as unknown[]).map((x) => String(x));
+  }
   return out;
 };
 
-const decodeMCPServersResponseLocal: Decoder<{ servers: Server[] }> = (v) => {
+const decodeMCPServersResponseLocal: Decoder<{
+  servers: Server[];
+  honoursAutoApprove: boolean;
+}> = (v) => {
   const o = asObject(v, "$.mcp_servers");
   return {
     servers: decodeArray(o["servers"], decodeServer, "$.mcp_servers.servers"),
+    // REQUIRED, and the throw it costs is deliberate: the server sends the field
+    // unconditionally, and supplying a default here would be the absent-means-a-value
+    // that requiredness exists to forbid. The throw's blast radius is the whole
+    // response (apiGetTyped collapses it to null, so the list blanks too), which is
+    // only acceptable because the absent case is unreachable in this deployment —
+    // index.html and /api/mcp are served by ONE binary, so a bundle newer than the
+    // server cannot be loaded, and a tab held open across a deploy runs the OLD
+    // bundle, which does not read this field at all.
+    honoursAutoApprove: reqBool(o, "honours_auto_approve", "$.mcp_servers"),
   };
 };
 
@@ -210,6 +225,10 @@ export interface Server {
   url?: string;
   headers?: KeyPair[];
   disabled_tools?: string[];
+  /** Tool names this server may run with NO permission request. Rendered into
+   *  KAS's own config as `autoApprove`, so a listed tool is a standing
+   *  prompt bypass rather than a per-call approval. */
+  auto_approve?: string[];
   /** Pre-registered OAuth 2.0 client ID for HTTP servers without
    *  Dynamic Client Registration support (Slack, GitHub, Figma).
    *  Forwarded to kiro-cli as `oauth.clientId` on session/new
@@ -407,6 +426,24 @@ export function configuredServers(): Server[] {
   return servers.items();
 }
 
+const autoApproveHonouredState: Signal<boolean> = signal<boolean>(true);
+
+/** Whether the security profile in force lets a server's `auto_approve` list
+ *  reach the agent, as `GET /api/mcp` last answered.
+ *
+ *  A statement about what the SERVER rendered, never derived here from a rung
+ *  name: `internal/policyfile` owns the ladder, `internal/mcp` answers with the
+ *  resolved decision, and that decision is the same value that decided what went
+ *  into KAS's own config file — so the chips and the file cannot disagree.
+ *
+ *  It starts TRUE, which is the honest pre-fetch reading rather than a fallback:
+ *  the panel renders the chips as SUSPENDED when this is false, so starting false
+ *  would paint a suspension notice for the window before the first fetch lands,
+ *  on every profile including the ones that honour the list. Nothing is protected
+ *  by guessing here — the grant is withheld server-side either way, and this value
+ *  only decides what the panel SAYS about it. */
+export const autoApproveHonoured: ReadonlySignal<boolean> = autoApproveHonouredState;
+
 /** Element-wise equality for two sorted name lists. */
 function sameNames(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((n, i) => n === b[i]);
@@ -470,6 +507,13 @@ class MCPStateController {
       return;
     }
     servers.setAll(d?.servers ?? []);
+    // Assigned only on a real answer. A failed or refused fetch says nothing
+    // about the posture, so the last known one stands rather than being reset to
+    // the optimistic start value — which on a `guarded` instance would drop the
+    // suspension notice for as long as the endpoint stayed unreachable.
+    if (d !== null) {
+      autoApproveHonouredState.value = d.honoursAutoApprove;
+    }
   }
 
   refetchStatus(): void {
