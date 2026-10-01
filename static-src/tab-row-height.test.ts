@@ -7,7 +7,7 @@
 // took every row to 62px against `#new-chat`'s 44px — reported as the chat tabs
 // appearing larger than the New chat button. The × now grows its TARGET through an
 // absolutely positioned `::after` instead, which is the app's documented escape for
-// a control that must stay visually small (`vibekit-ui.md` "Hit targets").
+// a control that must stay visually small (`marotte-ui.md` "Hit targets").
 //
 // So there are two claims and they pull against each other, which is why both are
 // here: the ROW must not grow, and the × must still be reachable with a finger. A
@@ -70,7 +70,7 @@ function mountSidebar(): { btn: HTMLElement; tab: HTMLElement; close: HTMLElemen
   runDot.setAttribute("aria-hidden", "true");
   const name = doc.createElement("span");
   name.className = "tab-name";
-  name.textContent = "Rebuild vibekit timeline rail";
+  name.textContent = "Rebuild marotte timeline rail";
   const sr = doc.createElement("span");
   sr.className = "tab-status-sr sr-only";
   const runSr = doc.createElement("span");

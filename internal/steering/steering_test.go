@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ func TestWriteMCP_EmptyServersEmitsNothing(t *testing.T) {
 func TestWriteMCP_SortsServersAlphabetically(t *testing.T) {
 	var b strings.Builder
 	writeMCP(&b, MCPSnapshot{
-		Servers: []vibekit.MCPSnapshotServer{
+		Servers: []marotte.MCPSnapshotServer{
 			{Name: "zed"},
 			{Name: "alpha"},
 			{Name: "linear"},
@@ -169,7 +169,7 @@ func TestWriteMCP_SortsServersAlphabetically(t *testing.T) {
 }
 
 func TestWriteMCP_InputSnapshotNotMutated(t *testing.T) {
-	servers := []vibekit.MCPSnapshotServer{{Name: "zed"}, {Name: "alpha"}}
+	servers := []marotte.MCPSnapshotServer{{Name: "zed"}, {Name: "alpha"}}
 	snap := MCPSnapshot{Servers: servers}
 
 	var b strings.Builder
@@ -254,7 +254,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 
 	g := New(workDir, configDir)
 	g.SetMCPSnapshot(func() MCPSnapshot {
-		return MCPSnapshot{Servers: []vibekit.MCPSnapshotServer{{Name: "github"}}}
+		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
 
 	g.Generate(t.Context())
@@ -467,7 +467,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 
 	g := New(workDir, configDir)
 	g.SetMCPSnapshot(func() MCPSnapshot {
-		return MCPSnapshot{Servers: []vibekit.MCPSnapshotServer{{Name: "github"}}}
+		return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 	})
 
 	const n = 16
@@ -478,7 +478,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 		wg.Go(func() { g.Generate(t.Context()) })
 		wg.Go(func() {
 			g.SetMCPSnapshot(func() MCPSnapshot {
-				return MCPSnapshot{Servers: []vibekit.MCPSnapshotServer{{Name: "github"}}}
+				return MCPSnapshot{Servers: []marotte.MCPSnapshotServer{{Name: "github"}}}
 			})
 		})
 	}

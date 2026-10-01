@@ -212,7 +212,7 @@ var errImportDuplicate = errors.New("names the same server twice")
 
 // There is no ACP wire builder here any more, and no ACPServers.
 //
-// vibekit sent its server set INLINE on session/new and session/load. It
+// marotte sent its server set INLINE on session/new and session/load. It
 // now renders KAS's own config file instead (kasfile.go) and sends
 // nothing — KAS merges `client > file-based`, so an inline entry would
 // win over the file and make every file edit look like a no-op.
@@ -229,12 +229,12 @@ func (s *Store) EnabledNames(_ context.Context) map[string]struct{} {
 // ConfiguredNames returns every server name this store holds regardless of
 // its enabled flag. The runtime subtracts EnabledNames
 // from it to identify the one case that still drops a status frame: a server
-// vibekit configured and the user switched off.
+// marotte configured and the user switched off.
 func (s *Store) ConfiguredNames(_ context.Context) map[string]struct{} {
 	return s.namesWhere(func(*Server) bool { return true })
 }
 
-// AllNames returns every name reachable through the config file vibekit renders, which is its own servers plus the `powers.mcpServers` block
+// AllNames returns every name reachable through the config file marotte renders, which is its own servers plus the `powers.mcpServers` block
 // KAS reads out of the same file. A name in here that ConfiguredNames does not
 // hold came from an installed Power.
 //

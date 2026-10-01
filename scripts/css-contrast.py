@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure WCAG contrast between vibekit's design tokens, per theme.
+"""Measure WCAG contrast between marotte's design tokens, per theme.
 
 Resolves the token graph in static-src/css/01-tokens.css for both themes
 (`:root` = dark, `:root[data-theme="light"]` = light), including `var()`
@@ -1058,7 +1058,7 @@ RUN_REDUCED_MOTION_SUBSTITUTION = {"motion": "still", "band": "3"}
 # and a reader cannot, and it is the shape that shipped once.
 BAND_RATIO_FLOOR = 2.0
 
-# The sibling app's own declaration for each state, and the vibekit token that
+# The sibling app's own declaration for each state, and the marotte token that
 # answers to it. web-terminal-kiro themes @cplieger/web-terminal-ui's --status-*
 # family in its static-src/app.ts, so THESE are the reference — not the library
 # defaults, which it overrides on every member and which an earlier pass aligned to
@@ -1321,7 +1321,7 @@ def show_dot_hues(themes: list[Theme]) -> None:
     print()
     print(
         f"  {'state':<8} {'source token':<18} {'source value':<22} {'hue':<8} "
-        f"{'vibekit token':<20} dark                 light"
+        f"{'marotte token':<20} dark                 light"
     )
     for state, token, src_token, src_expr in DOT_SOURCE_HUES:
         src = themes[0].resolve(src_expr)

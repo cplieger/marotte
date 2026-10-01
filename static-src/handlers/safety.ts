@@ -6,7 +6,7 @@
 // (Terraform / CloudFormation / CDK / Docker / k8s / …) against remotely
 // "formalized" safety properties and streams its state as safety_status /
 // safety_properties SSE. But KAS only installs the gate — and so only emits
-// these — when vibekit's infrastructureSafety capability AND an AWS governance
+// these — when marotte's infrastructureSafety capability AND an AWS governance
 // flag (infraSafetyMonitor|infraSafetyEnforce) are both on; that flag is off by
 // default on individual/Builder-ID accounts, so on a normal account this handler
 // never fires. It exists so the state surfaces IF an enterprise account has the
@@ -14,7 +14,7 @@
 //
 // Surface: one transient toast per non-idle status. `idle` is the all-clear, so it
 // raises nothing — there is no notice to retire, because a toast expires on its
-// own. This is Kiro's infra guardrail, called out as distinct from vibekit's own
+// own. This is Kiro's infra guardrail, called out as distinct from marotte's own
 // Supervised write-gate. There is no authoring UI: safety properties are
 // formalized out-of-band (a remote endpoint), never created by the client.
 // ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ function levelFor(status: string): ToastLevel {
 }
 
 /** Human-readable toast text for a gate status, prefixed so it reads as
- *  Kiro's Infrastructure Safety (distinct from vibekit's Supervised gate). */
+ *  Kiro's Infrastructure Safety (distinct from marotte's Supervised gate). */
 function headlineFor(p: SafetyStatusPayload): string {
   switch (p.status) {
     case "blocked":

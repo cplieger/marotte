@@ -9,15 +9,15 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/rpcerr"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // resolveSwitchModel returns the effective model after applying the
 // optional payload override.
-func resolveSwitchModel(chat *vibekit.Chat, p vibekit.SwitchModelCommand) (model string, isSwitch bool) {
+func resolveSwitchModel(chat *marotte.Chat, p marotte.SwitchModelCommand) (model string, isSwitch bool) {
 	model = chat.Model
 	if p.Model == "" || p.Model == modelAuto || p.Model == model {
 		return model, false
@@ -32,11 +32,11 @@ var responseOK2 = map[string]bool{"ok": true}
 // is well-formed, so the refusal is about entitlement, not the request.
 var errModelNotServed = errors.New("that model is not available on this account")
 
-func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientCommand) (any, error) {
+func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrMissingChatID)
 	}
-	var p vibekit.SwitchModelCommand
+	var p marotte.SwitchModelCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 			return nil, command.StatusError(http.StatusBadRequest, command.ErrInvalidPayload)
@@ -76,8 +76,8 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientComman
 // persistModelPick records a pre-session model choice: no event row, no usage
 // reset, no bridge. Clears Effort, since a tier picked under the previous model
 // does not carry onto this one.
-func (rt *Runtime) persistModelPick(ctx context.Context, chatID vibekit.ChatID, model string) {
-	if _, err := rt.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+func (rt *Runtime) persistModelPick(ctx context.Context, chatID marotte.ChatID, model string) {
+	if _, err := rt.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -92,15 +92,15 @@ func (rt *Runtime) persistModelPick(ctx context.Context, chatID vibekit.ChatID, 
 // switchByRestart is the fallback when the in-session swap did not take: tear
 // the bridge down and let OpenBridge try session/load, then session/new.
 func (rt *Runtime) switchByRestart(
-	ctx context.Context, cmd *vibekit.ClientCommand,
-	chat *vibekit.Chat, model string, isSwitch bool,
+	ctx context.Context, cmd *marotte.ClientCommand,
+	chat *marotte.Chat, model string, isSwitch bool,
 ) (any, error) {
 	rt.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
 	rt.coord.CloseBridge(cmd.ChatID)
 
 	sb, err := rt.coord.OpenBridge(ctx, cmd.ChatID, model)
 	if err != nil {
-		rt.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
+		rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, cmd.ChatID, marotte.ErrorPayload{Code: marotte.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
 		return nil, command.StatusError(http.StatusInternalServerError, err)
 	}
 	if isSwitch {
@@ -136,15 +136,15 @@ func (rt *Runtime) switchByRestart(
 // the bridge's session-result snapshot can only get older; the set is UNFILTERED,
 // and an empty one means entitlement is unknowable, which ModelServed allows.
 func (rt *Runtime) refuseUnservedModel(
-	ctx context.Context, chatID vibekit.ChatID, chat *vibekit.Chat, model string,
+	ctx context.Context, chatID marotte.ChatID, chat *marotte.Chat, model string,
 ) error {
-	if vibekit.ModelServed(model, chat.ServedModelIDs) {
+	if marotte.ModelServed(model, chat.ServedModelIDs) {
 		return nil
 	}
 	slog.Warn("refusing a model switch this account does not serve",
 		"chat_id", chatID, "model", model)
-	rt.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-		Code:    vibekit.ErrCodeModelNotServed,
+	rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+		Code:    marotte.ErrCodeModelNotServed,
 		Message: "\"" + model + "\" is not available on this account. Pick another model.",
 	}))
 	return command.StatusError(http.StatusConflict, errModelNotServed)

@@ -11,8 +11,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // FrameOwner is who a frame on a chat's connection belongs to.
@@ -49,7 +49,7 @@ type FrameAttribution struct {
 // a `session/update`, so a step cannot classify differently depending on which handler reads it.
 // `workflowMarked` is the frame's own answer when it has one, which is how a CONTENT frame
 // classifies correctly even with the step registry cold after a restart.
-func (t *Translator) Attribute(chatID vibekit.ChatID, sessionID string, workflowMarked bool) FrameAttribution {
+func (t *Translator) Attribute(chatID marotte.ChatID, sessionID string, workflowMarked bool) FrameAttribution {
 	switch t.ClassifyFrame(chatID, sessionID, workflowMarked) {
 	case OwnerSubagent:
 		return FrameAttribution{SubSessionID: sessionID}
@@ -65,11 +65,11 @@ func (t *Translator) Attribute(chatID vibekit.ChatID, sessionID string, workflow
 // fold onto the launching chat, so a turn opened for one is the RUN's rather than the chat's —
 // a distinction the client needs, because the attribution gate drops a step's own turn_end, so
 // what closes such a turn is the run's terminal transition on the run surface.
-func foldSource(step bool) vibekit.TurnOpenSource {
+func foldSource(step bool) marotte.TurnOpenSource {
 	if step {
-		return vibekit.TurnSourceWorkflowStep
+		return marotte.TurnSourceWorkflowStep
 	}
-	return vibekit.TurnSourceWireTurnStart
+	return marotte.TurnSourceWireTurnStart
 }
 
 // stepRegistry maps a step's ACP session id to the run and node it belongs to, and counts each
@@ -98,7 +98,7 @@ type stepRegistry struct {
 // carried, so the address must come from what the create recorded.
 type runToolEntry struct {
 	nodePath string
-	call     vibekit.ToolCall
+	call     marotte.ToolCall
 }
 
 // stepTurnKey is the enforcement identity of a step instance: which run, and which step within
@@ -128,7 +128,7 @@ func newStepRegistry() *stepRegistry {
 }
 
 // recordRunTool stores a run step's tool call, replacing any earlier state for the same id.
-func (s *stepRegistry) recordRunTool(workflowID, nodePath string, call *vibekit.ToolCall) {
+func (s *stepRegistry) recordRunTool(workflowID, nodePath string, call *marotte.ToolCall) {
 	if workflowID == "" || call.ID == "" {
 		return
 	}
@@ -145,12 +145,12 @@ func (s *stepRegistry) recordRunTool(workflowID, nodePath string, call *vibekit.
 // runTool returns a COPY of a run step's accumulated tool call and the step row it belongs to.
 // A copy because the caller folds an update into it and writes it back, so handing out the
 // stored value would mutate the map from outside its own lock.
-func (s *stepRegistry) runTool(workflowID, toolCallID string) (vibekit.ToolCall, string, bool) {
+func (s *stepRegistry) runTool(workflowID, toolCallID string) (marotte.ToolCall, string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	entry, ok := s.runTools[workflowID][toolCallID]
 	if !ok {
-		return vibekit.ToolCall{}, "", false
+		return marotte.ToolCall{}, "", false
 	}
 	return entry.call, entry.nodePath, true
 }
@@ -267,7 +267,7 @@ func (t *Translator) RecordRunSteps(raw json.RawMessage) {
 // ClassifyFrame decides who a frame belongs to, from the chat it arrived on and the session id it
 // carries; the single classifier both derivation sites use. `workflowMarked` is the frame's own
 // answer when it has one, which classifies a `session/update` correctly even with a cold registry.
-func (t *Translator) ClassifyFrame(chatID vibekit.ChatID, sessionID string, workflowMarked bool) FrameOwner {
+func (t *Translator) ClassifyFrame(chatID marotte.ChatID, sessionID string, workflowMarked bool) FrameOwner {
 	parent := t.sessions.ParentACPSession(chatID)
 	if sessionID == "" || parent == "" || sessionID == parent {
 		return OwnerChat
@@ -287,7 +287,7 @@ func (t *Translator) ClassifyFrame(chatID vibekit.ChatID, sessionID string, work
 // fans one account-global payload out to every live session), while elicitation, permission and
 // user_input emit either way and only need to know whether to LABEL the ask as a subagent's —
 // where a step must answer no, or its ask names a subagent that does not exist.
-func (t *Translator) foreignSession(chatID vibekit.ChatID, sessionID string) bool {
+func (t *Translator) foreignSession(chatID marotte.ChatID, sessionID string) bool {
 	return t.ClassifyFrame(chatID, sessionID, false) != OwnerChat
 }
 

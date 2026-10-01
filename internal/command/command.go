@@ -16,10 +16,10 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/rpcerr"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -32,7 +32,7 @@ const maxCommandBody = webhttp.MaxJSONBody
 // outcome rather than writing to an http.ResponseWriter: the dispatcher
 // marshals the body. A nil error means 200 with that body; an error carrying
 // a status (see StatusError) sets it, and a bare error is a 500.
-type Handler func(ctx context.Context, cmd *vibekit.ClientCommand) (any, error)
+type Handler func(ctx context.Context, cmd *marotte.ClientCommand) (any, error)
 
 // statusError carries the HTTP status a handler chose for a failure, plus an
 // optional machine-readable reason the error envelope emits as its additive
@@ -77,7 +77,7 @@ func statusOf(err error) int {
 // Dispatcher holds the command dispatch table and serves the
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
-	handlers map[vibekit.CommandType]Handler
+	handlers map[marotte.CommandType]Handler
 	// status ends a chat's retained waiting_on_user claim after a command that IS the
 	// user answering. Assigned once at registration, before the dispatcher serves, so
 	// it is read without mu; commandDischarges is the classification.
@@ -88,11 +88,11 @@ type Dispatcher struct {
 // New constructs a Dispatcher. A handler's own collaborators arrive at
 // registration (see RegisterDefaults).
 func New() *Dispatcher {
-	return &Dispatcher{handlers: make(map[vibekit.CommandType]Handler)}
+	return &Dispatcher{handlers: make(map[marotte.CommandType]Handler)}
 }
 
 // Register adds a handler for the given command type.
-func (d *Dispatcher) Register(t vibekit.CommandType, h Handler) {
+func (d *Dispatcher) Register(t marotte.CommandType, h Handler) {
 	d.mu.Lock()
 	d.handlers[t] = h
 	d.mu.Unlock()
@@ -119,7 +119,7 @@ func writeErr(w http.ResponseWriter, err error) {
 }
 
 // requireChatID returns the 400 for a command that needs a chat and named none.
-func requireChatID(cmd *vibekit.ClientCommand) error {
+func requireChatID(cmd *marotte.ClientCommand) error {
 	if cmd.ChatID == "" {
 		return StatusError(http.StatusBadRequest, ErrMissingChatID)
 	}
@@ -133,7 +133,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhttp.LimitBody(w, r, maxCommandBody)
-	var cmd vibekit.ClientCommand
+	var cmd marotte.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("command body too large",

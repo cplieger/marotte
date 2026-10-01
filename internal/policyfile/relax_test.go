@@ -8,7 +8,7 @@ import (
 // TestRelaxCapabilities_ExactSet pins the relaxation's membership. Two entries,
 // each load-bearing for a different reason: `all` is the alias that keeps the
 // rule short and lets a capability a later KAS version adds to BUILTIN be covered
-// without a vibekit release, and `sandbox_network` is the one vocabulary member
+// without a marotte release, and `sandbox_network` is the one vocabulary member
 // that alias genuinely does not reach. A set of just ["all"] means the switch is
 // claiming to allow everything while one capability still asks.
 //
@@ -24,7 +24,7 @@ func TestRelaxCapabilities_ExactSet(t *testing.T) {
 }
 
 // TestRelaxCapabilities_CoversTheWholeVocabulary is the property the switch's
-// LABEL promises: every capability vibekit knows about is either named in the set
+// LABEL promises: every capability marotte knows about is either named in the set
 // or a member of the `all` alias it names. Written as a coverage check rather than
 // a set comparison so a capability added to the vocabulary fails HERE — the
 // switch would otherwise keep its name while quietly leaving the newcomer asking.

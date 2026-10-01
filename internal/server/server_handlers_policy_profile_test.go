@@ -13,18 +13,18 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/policyfile"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeEngine is the SSE fan-out as this handler uses it: it records what was
 // broadcast so a test can assert the client was told, which is the difference
 // between a profile that changed and one that changed invisibly.
-type fakeEngine struct{ events []vibekit.ServerEvent }
+type fakeEngine struct{ events []marotte.ServerEvent }
 
 func (f *fakeEngine) RegisterRoutes(*http.ServeMux) {}
-func (f *fakeEngine) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (f *fakeEngine) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	f.events = append(f.events, evt)
 }
 func (f *fakeEngine) Shutdown(context.Context) error { return nil }
@@ -40,8 +40,8 @@ func (f *fakeReload) RestartUtilitySession() { f.restarts++ }
 //
 // t.Setenv rather than an injected home because policyfile.PathFor reads
 // os.UserHomeDir, which is the same resolution KAS performs — faking it would test
-// a path vibekit does not use. No t.Parallel in this file as a result.
-func profileFixture(t *testing.T, live []vibekit.PolicyRule) (*Server, *fakeEngine, *fakeReload, string, string) {
+// a path marotte does not use. No t.Parallel in this file as a result.
+func profileFixture(t *testing.T, live []marotte.PolicyRule) (*Server, *fakeEngine, *fakeReload, string, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -77,8 +77,8 @@ func postProfile(t *testing.T, s *Server, body profileBody) *httptest.ResponseRe
 
 // seedRule is a bare session-scope rule as KAS reports one it resolved from a
 // preset. The source prefix is what materialisation keys on.
-func seedRule(capability, preset string) vibekit.PolicyRule {
-	return vibekit.PolicyRule{
+func seedRule(capability, preset string) marotte.PolicyRule {
+	return marotte.PolicyRule{
 		Capability: capability, Effect: "allow",
 		Scope: "session", Source: "preset:" + preset,
 	}
@@ -154,7 +154,7 @@ func TestPolicyProfile_NamedSelectionRemovesProfileOwnedRules(t *testing.T) {
 	}
 	var sawPermissions bool
 	for _, e := range eng.events {
-		if e.Type == vibekit.EventPermissionsChanged {
+		if e.Type == marotte.EventPermissionsChanged {
 			sawPermissions = true
 		}
 	}
@@ -168,7 +168,7 @@ func TestPolicyProfile_NamedSelectionRemovesProfileOwnedRules(t *testing.T) {
 // is about to delete, and it must take them from the live view because no RPC
 // enumerates a preset.
 func TestPolicyProfile_SeedMaterialisesTheProfileInForce(t *testing.T) {
-	live := []vibekit.PolicyRule{
+	live := []marotte.PolicyRule{
 		seedRule("fs_read", "read-workspace"),
 		seedRule("shell", "dev-shell"),
 		// Neither of these is the profile's: one is a consent granted for this
@@ -224,7 +224,7 @@ func bareAllows(caps []string) []policyfile.Rule {
 // The fixture reports ONLY `all` live, which is the real distribution: that is what
 // the preset resolves to, and sandbox_network exists nowhere but the user file.
 func TestPolicyProfile_SeedKeepsTheOutgoingRungsFileRules(t *testing.T) {
-	s, _, _, userPath, _ := profileFixture(t, []vibekit.PolicyRule{seedRule("all", "allow-all")})
+	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("all", "allow-all")})
 	if err := s.persistProfile(t.Context(), policyfile.ProfileUnrestricted); err != nil {
 		t.Fatalf("Setup: put the loosest rung in force: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestPolicyProfile_SeedKeepsTheOutgoingRungsFileRules(t *testing.T) {
 // that: the Customize case (_SeedMaterialisesTheProfileInForce) copies the live
 // preset rules in and this one does not.
 func TestPolicyProfile_CustomWithoutSeedKeepsHandAuthoredRules(t *testing.T) {
-	s, _, _, userPath, _ := profileFixture(t, []vibekit.PolicyRule{seedRule("fs_read", "read-workspace")})
+	s, _, _, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 	if err := policyfile.Save(t.Context(), userPath, &policyfile.File{Rules: []policyfile.Rule{
 		{Capability: "shell", Effect: "allow"},
 	}}); err != nil {
@@ -475,7 +475,7 @@ func TestPolicyProfile_WorkspaceWriteFailureRestoresTheUserFile(t *testing.T) {
 	}
 	var sawPermissions bool
 	for _, e := range eng.events {
-		if e.Type == vibekit.EventPermissionsChanged {
+		if e.Type == marotte.EventPermissionsChanged {
 			sawPermissions = true
 		}
 	}
@@ -489,7 +489,7 @@ func TestPolicyProfile_WorkspaceWriteFailureRestoresTheUserFile(t *testing.T) {
 // status is the whole content of this fix: a user file at the rule cap is a
 // condition the user created in their own file and can fix from the table, and the
 // sibling rule endpoint has always answered 400 for it. Answered as a 500 it read
-// as vibekit being broken, for every profile selection, until they found the log.
+// as marotte being broken, for every profile selection, until they found the log.
 //
 // It also pins that this refusal writes NOTHING, which needs two observables
 // because the restore it must not run would have produced byte-identical rules. The
@@ -549,7 +549,7 @@ func TestPolicyProfile_AFullUserFileIsTheCallersProblem(t *testing.T) {
 }
 
 // TestPolicyProfile_RefusesAnUnparseableUserFile: the overwrite this replaced never
-// read these files, so a hand-edit vibekit could not parse was destroyed silently.
+// read these files, so a hand-edit marotte could not parse was destroyed silently.
 // A selection now refuses with the same 409 policyRuleAdd answers, and the bytes
 // stay on disk for the user to fix.
 func TestPolicyProfile_RefusesAnUnparseableUserFile(t *testing.T) {
@@ -589,11 +589,11 @@ func TestPolicyProfile_RefusesAnUnparseableUserFile(t *testing.T) {
 func TestPolicyProfile_SeedFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		live []vibekit.PolicyRule
+		live []marotte.PolicyRule
 	}{
 		// Nothing preset-sourced is indistinguishable from a session that has not
 		// started yet, and the two want opposite outcomes.
-		{"no preset rules in force", []vibekit.PolicyRule{
+		{"no preset rules in force", []marotte.PolicyRule{
 			{Capability: "fs_write", Effect: "ask", Scope: "kiro", Source: "kiro-scope"},
 		}},
 		{"no live policy at all", nil},
@@ -637,7 +637,7 @@ func TestPolicyProfile_Refusals(t *testing.T) {
 		{"seed on a named profile", profileBody{Profile: policyfile.ProfileTrusted, Seed: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, _, reload, userPath, _ := profileFixture(t, []vibekit.PolicyRule{seedRule("fs_read", "read-workspace")})
+			s, _, reload, userPath, _ := profileFixture(t, []marotte.PolicyRule{seedRule("fs_read", "read-workspace")})
 			if rec := postProfile(t, s, tc.body); rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rec.Code)
 			}
@@ -683,7 +683,7 @@ func TestPolicyView_CarriesTheLadderAndTheActiveProfile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
 
-	var view vibekit.PolicyView
+	var view marotte.PolicyView
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

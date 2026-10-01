@@ -8,7 +8,7 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // errStoredNull marks a key whose stored value is the JSON literal null. It is
@@ -43,8 +43,8 @@ const (
 // per consumer. internal/composition's chatRetention is the case that proves they
 // must not be merged — it uses FieldStrict, so an UNREADABLE file yields 0 (purge
 // nothing this pass) where an ABSENT key yields DefaultChatRetentionDays.
-func EffectiveDefaults() vibekit.EffectiveSettings {
-	return vibekit.EffectiveSettings{
+func EffectiveDefaults() marotte.EffectiveSettings {
+	return marotte.EffectiveSettings{
 		AgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
 		ChatRetentionDays: DefaultChatRetentionDays,
 		KnowledgeEnabled:  DefaultKnowledgeEnabled,
@@ -97,7 +97,7 @@ func RetentionEnabled(ctx context.Context, configDir string) bool {
 // "purple"` is a well-typed string and passes, and the client's asThemeChoice
 // rejects it. The wire owns the type, the reader with the vocabulary owns the
 // value. A nil or empty stored map yields the defaults unchanged.
-func EffectiveFrom(stored map[string]json.RawMessage) (effective vibekit.EffectiveSettings, rejected []string) {
+func EffectiveFrom(stored map[string]json.RawMessage) (effective marotte.EffectiveSettings, rejected []string) {
 	out := EffectiveDefaults()
 	for key, set := range effectiveSetters(&out) {
 		raw, ok := stored[key]
@@ -115,10 +115,10 @@ func EffectiveFrom(stored map[string]json.RawMessage) (effective vibekit.Effecti
 //
 // Exists for two mechanical properties: each key is in KnownKeys, so a response
 // round-tripped as a PATCH raises no unknown-key warning; and each FIELD of
-// vibekit.EffectiveSettings has one, so adding a field without a setter fails
+// marotte.EffectiveSettings has one, so adding a field without a setter fails
 // rather than silently becoming unsettable.
 func effectiveKeys() []string {
-	var out vibekit.EffectiveSettings
+	var out marotte.EffectiveSettings
 	return slices.Sorted(maps.Keys(effectiveSetters(&out)))
 }
 
@@ -128,7 +128,7 @@ func effectiveKeys() []string {
 // that does not fit leaves the destination untouched and there is nothing to undo.
 // Built per call over the caller's own struct rather than declared once, because
 // each closure has to bind that struct's field address.
-func effectiveSetters(out *vibekit.EffectiveSettings) map[string]func(json.RawMessage) error {
+func effectiveSetters(out *marotte.EffectiveSettings) map[string]func(json.RawMessage) error {
 	return map[string]func(json.RawMessage) error{
 		KeyAgentIgnoreFiles:     func(r json.RawMessage) error { return decodeInto(&out.AgentIgnoreFiles, r) },
 		KeyChatRetentionDays:    func(r json.RawMessage) error { return decodeInto(&out.ChatRetentionDays, r) },

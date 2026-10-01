@@ -1,15 +1,15 @@
 // Forge login flows.
 //
 // Two paths:
-//   - GitHub: OAuth device flow (vibekit handles the entire flow, then
+//   - GitHub: OAuth device flow (marotte handles the entire flow, then
 //     hands the resulting token to `gh auth login --with-token`).
 //   - GitLab/Gitea/Codeberg: PAT paste (UI prompts the user for a
-//     personal access token, vibekit pipes it to the CLI's own login
+//     personal access token, marotte pipes it to the CLI's own login
 //     subcommand).
 //
 // In both paths the result is the same: the CLI is fully authenticated
 // AND git operations are configured via the CLI's credential helper.
-// The CLIs discover and store the account identity themselves; vibekit
+// The CLIs discover and store the account identity themselves; marotte
 // never supplies or persists a username.
 
 package forges

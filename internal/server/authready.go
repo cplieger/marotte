@@ -2,7 +2,7 @@ package server
 
 // The readiness reason for a dead sign-in.
 //
-// kiro-cli owns the login store and the rotating refresh chain; vibekit only
+// kiro-cli owns the login store and the rotating refresh chain; marotte only
 // asks it for a KAS access token when a session opens (_kiro/auth/getAccessToken,
 // internal/agent/bridge_v3_auth.go). When that vend fails, KAS runs
 // UNAUTHENTICATED rather than refusing: sessions still open, and then every

@@ -103,7 +103,7 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
   }) as HTMLButtonElement;
   // An `i` rather than a chevron, LEADING. The button spans the band on the BLOCK
   // axis only — measured on a clean turn it is 28px wide of a 798px band, 3.5% — so
-  // `data-tooltip-anchor` moves the tip's POSITION to the ink. Why: `vibekit-ui.md`
+  // `data-tooltip-anchor` moves the tip's POSITION to the ink. Why: `marotte-ui.md`
   // "A THIRD case: a door onto INFORMATION" and "A TOOLTIP POINTS AT INK".
   summary.appendChild(
     el("span", { className: "turn-ledger-info", "data-tooltip-anchor": "" }, iconEl(ICON_INFO)),
@@ -181,7 +181,7 @@ function summaryLine(d: TurnSummaryData): string {
  *  renders it from. A zero or absent value contributes nothing, and the
  *  ROW PAINTS `[0]` — the panel one click away is the full statement. Do NOT rotate the
  *  slot through this list: a dwell replaces a gesture-gated value with a TIME-gated one,
- *  and it fails WCAG 2.2.2 with no pause control anywhere in the app (`vibekit-ui.md`
+ *  and it fails WCAG 2.2.2 with no pause control anywhere in the app (`marotte-ui.md`
  *  "A ROTATING READOUT IS NOT A BEAT"). */
 export function turnFacts(d: TurnSummaryData): readonly string[] {
   const facts: string[] = [];

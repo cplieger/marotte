@@ -1,4 +1,4 @@
-// Package wirespec is the single source of truth for vibekit's wire contract: the
+// Package wirespec is the single source of truth for marotte's wire contract: the
 // registered wire types, the enums, the TS-name and path-name overrides, and the
 // SSE event→decoder table cmd/wire-codegen feeds into wiregen to emit
 // static-src/wire/{types,decoders,registry}.gen.ts.
@@ -7,7 +7,7 @@
 // cmd/wire-codegen and by tests, never by the server runtime, or go/packages and
 // golang.org/x/tools would enter the server binary.
 //
-// There is deliberately NO endpoint table: vibekit generates neither a typed client
+// There is deliberately NO endpoint table: marotte generates neither a typed client
 // nor Go path constants, so one here would be an unverified copy of the routing.
 package wirespec
 
@@ -15,157 +15,157 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/cplieger/vibekit/internal/auth"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/filebrowse"
-	"github.com/cplieger/vibekit/internal/forges"
-	"github.com/cplieger/vibekit/internal/mcp"
-	"github.com/cplieger/vibekit/internal/server"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/auth"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/forges"
+	"github.com/cplieger/marotte/internal/mcp"
+	"github.com/cplieger/marotte/internal/server"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/wiregen/v3"
 )
 
 // wireTypes is every Go type the generator emits a TypeScript declaration for.
 // ORDER IS SIGNIFICANT: a type must be declared before any type referencing it.
 var wireTypes = []wiregen.WireType{
-	wiregen.TypeRef[vibekit.ToolLocation](),
-	wiregen.TypeRef[vibekit.ToolDiff](),
-	wiregen.TypeRef[vibekit.ToolCheckpoint](),
+	wiregen.TypeRef[marotte.ToolLocation](),
+	wiregen.TypeRef[marotte.ToolDiff](),
+	wiregen.TypeRef[marotte.ToolCheckpoint](),
 	// Before ToolCall, which references both.
-	wiregen.TypeRef[vibekit.ToolDisclosed](),
-	wiregen.TypeRef[vibekit.ToolDenialRule](),
-	wiregen.TypeRef[vibekit.ToolDenial](),
-	wiregen.TypeRef[vibekit.TextSpan](),
-	wiregen.TypeRef[vibekit.ToolTruncation](),
-	wiregen.TypeRef[vibekit.ToolCall](),
+	wiregen.TypeRef[marotte.ToolDisclosed](),
+	wiregen.TypeRef[marotte.ToolDenialRule](),
+	wiregen.TypeRef[marotte.ToolDenial](),
+	wiregen.TypeRef[marotte.TextSpan](),
+	wiregen.TypeRef[marotte.ToolTruncation](),
+	wiregen.TypeRef[marotte.ToolCall](),
 	// A REST response, after ToolDiff and TextSpan, which it references. No
 	// `Payload` suffix, so the SSE-binding test exempts it by construction.
-	wiregen.TypeRef[vibekit.ToolCallBulk](),
-	wiregen.TypeRef[vibekit.PlanEntry](),
-	wiregen.TypeRef[vibekit.Block](),
-	wiregen.TypeRef[vibekit.CodeReference](),
-	wiregen.TypeRef[vibekit.RefusalInfo](),
+	wiregen.TypeRef[marotte.ToolCallBulk](),
+	wiregen.TypeRef[marotte.PlanEntry](),
+	wiregen.TypeRef[marotte.Block](),
+	wiregen.TypeRef[marotte.CodeReference](),
+	wiregen.TypeRef[marotte.RefusalInfo](),
 	// Before Message, which references it.
-	wiregen.TypeRef[vibekit.Attachment](),
-	wiregen.TypeRef[vibekit.Message](),
+	wiregen.TypeRef[marotte.Attachment](),
+	wiregen.TypeRef[marotte.Message](),
 	// After Message, which it carries. Registered so the single-chat GET's `live_turn`
 	// reads a GENERATED decoder rather than a hand-mirrored one — the required block_base
 	// cannot then be optional on one side only. No `Payload` suffix, so the SSE-binding
 	// test exempts it by construction, like ToolCallBulk.
-	wiregen.TypeRef[vibekit.LiveTurn](),
-	wiregen.TypeRef[vibekit.MeteringItem](),
-	wiregen.TypeRef[vibekit.Usage](),
-	wiregen.TypeRef[vibekit.SessionMode](),
-	wiregen.TypeRef[vibekit.SessionModel](),
-	wiregen.TypeRef[vibekit.SessionEffortLevel](),
+	wiregen.TypeRef[marotte.LiveTurn](),
+	wiregen.TypeRef[marotte.MeteringItem](),
+	wiregen.TypeRef[marotte.Usage](),
+	wiregen.TypeRef[marotte.SessionMode](),
+	wiregen.TypeRef[marotte.SessionModel](),
+	wiregen.TypeRef[marotte.SessionEffortLevel](),
 	// Registered so the pre-session catalog fetch reads a GENERATED decoder rather
 	// than an unchecked cast: `modes` was read as `d.modes.length` with nothing
 	// behind the claim, so `modes: null` was a TypeError inside the boot path.
-	wiregen.TypeRef[vibekit.ConfigTemplateResponse](),
-	wiregen.TypeRef[vibekit.ChatHeader](),
-	wiregen.TypeRef[vibekit.PermissionOption](),
-	wiregen.TypeRef[vibekit.ApprovalFile](),
-	wiregen.TypeRef[vibekit.FileChange](),
-	wiregen.TypeRef[vibekit.ConnectedPayload](),
-	wiregen.TypeRef[vibekit.SubjectStamp](),
-	wiregen.TypeRef[vibekit.PendingSnapshotPayload](),
-	wiregen.TypeRef[vibekit.StatusRow](),
-	wiregen.TypeRef[vibekit.StatusSnapshotPayload](),
-	wiregen.TypeRef[vibekit.MessageChunkPayload](),
-	wiregen.TypeRef[vibekit.TurnEndedPayload](),
-	wiregen.TypeRef[vibekit.SteerQueuedPayload](),
-	wiregen.TypeRef[vibekit.SteerInjectedPayload](),
-	wiregen.TypeRef[vibekit.SteerClearedPayload](),
-	wiregen.TypeRef[vibekit.AgentNoticePayload](),
+	wiregen.TypeRef[marotte.ConfigTemplateResponse](),
+	wiregen.TypeRef[marotte.ChatHeader](),
+	wiregen.TypeRef[marotte.PermissionOption](),
+	wiregen.TypeRef[marotte.ApprovalFile](),
+	wiregen.TypeRef[marotte.FileChange](),
+	wiregen.TypeRef[marotte.ConnectedPayload](),
+	wiregen.TypeRef[marotte.SubjectStamp](),
+	wiregen.TypeRef[marotte.PendingSnapshotPayload](),
+	wiregen.TypeRef[marotte.StatusRow](),
+	wiregen.TypeRef[marotte.StatusSnapshotPayload](),
+	wiregen.TypeRef[marotte.MessageChunkPayload](),
+	wiregen.TypeRef[marotte.TurnEndedPayload](),
+	wiregen.TypeRef[marotte.SteerQueuedPayload](),
+	wiregen.TypeRef[marotte.SteerInjectedPayload](),
+	wiregen.TypeRef[marotte.SteerClearedPayload](),
+	wiregen.TypeRef[marotte.AgentNoticePayload](),
 	// Before the two types that reference it.
-	wiregen.TypeRef[vibekit.TabSubject](),
-	wiregen.TypeRef[vibekit.TabsChangedPayload](),
-	wiregen.TypeRef[vibekit.TabList](),
-	wiregen.TypeRef[vibekit.MCPToolIdentity](),
-	wiregen.TypeRef[vibekit.PermissionNeededPayload](),
-	wiregen.TypeRef[vibekit.ErrorPayload](),
-	wiregen.TypeRef[vibekit.MCPConnectedPayload](),
-	wiregen.TypeRef[vibekit.MCPOAuthPayload](),
-	wiregen.TypeRef[vibekit.MCPFailedPayload](),
-	wiregen.TypeRef[vibekit.MCPDisconnectedPayload](),
-	wiregen.TypeRef[vibekit.ChatDeletedPayload](),
-	wiregen.TypeRef[vibekit.DraftChangedPayload](),
-	wiregen.TypeRef[vibekit.ToolCallPayload](),
-	wiregen.TypeRef[vibekit.ToolCallUpdatePayload](),
-	wiregen.TypeRef[vibekit.ElicitationPropertySchema](),
-	wiregen.TypeRef[vibekit.ElicitationRequestSchema](),
-	wiregen.TypeRef[vibekit.ElicitationNeededPayload](),
-	wiregen.TypeRef[vibekit.UserInputSubOption](),
-	wiregen.TypeRef[vibekit.UserInputOption](),
-	wiregen.TypeRef[vibekit.UserInputNeededPayload](),
-	wiregen.TypeRef[vibekit.DecisionSettledPayload](),
-	wiregen.TypeRef[vibekit.OpenExternalURLPayload](),
-	wiregen.TypeRef[vibekit.CodeReferencesPayload](),
-	wiregen.TypeRef[vibekit.AccountUsageBreakdown](),
-	wiregen.TypeRef[vibekit.AccountUsage](),
-	wiregen.TypeRef[vibekit.PolicyRuleCore](),
-	wiregen.TypeRef[vibekit.PolicyRule](),
-	wiregen.TypeRef[vibekit.SecurityProfile](),
-	wiregen.TypeRef[vibekit.PolicyView](),
-	wiregen.TypeRef[vibekit.PolicyExplainResult](),
-	wiregen.TypeRef[vibekit.PolicyErrorItem](),
-	wiregen.TypeRef[vibekit.PermissionsChangedPayload](),
-	wiregen.TypeRef[vibekit.PolicyErrorPayload](),
-	wiregen.TypeRef[vibekit.SafetyProperty](),
-	wiregen.TypeRef[vibekit.SafetyStatusPayload](),
-	wiregen.TypeRef[vibekit.SafetyPropertiesPayload](),
-	wiregen.TypeRef[vibekit.GovernanceFeatures](),
-	wiregen.TypeRef[vibekit.GovernanceStatePayload](),
-	wiregen.TypeRef[vibekit.ToolJob](),
-	wiregen.TypeRef[vibekit.ToolInfo](),
-	wiregen.TypeRef[vibekit.SystemTool](),
-	wiregen.TypeRef[vibekit.AptPackage](),
-	wiregen.TypeRef[vibekit.ToolsList](),
-	wiregen.TypeRef[vibekit.ToolCatalogHit](),
-	wiregen.TypeRef[vibekit.ToolsSearchResponse](),
-	wiregen.TypeRef[vibekit.ToolJobAccepted](),
-	wiregen.TypeRef[vibekit.ToolRemoveResponse](),
-	wiregen.TypeRef[vibekit.ToolsJobsResponse](),
-	wiregen.TypeRef[vibekit.ToolCatalogInfo](),
-	wiregen.TypeRef[vibekit.Recipe](),
-	wiregen.TypeRef[vibekit.RecipesResponse](),
+	wiregen.TypeRef[marotte.TabSubject](),
+	wiregen.TypeRef[marotte.TabsChangedPayload](),
+	wiregen.TypeRef[marotte.TabList](),
+	wiregen.TypeRef[marotte.MCPToolIdentity](),
+	wiregen.TypeRef[marotte.PermissionNeededPayload](),
+	wiregen.TypeRef[marotte.ErrorPayload](),
+	wiregen.TypeRef[marotte.MCPConnectedPayload](),
+	wiregen.TypeRef[marotte.MCPOAuthPayload](),
+	wiregen.TypeRef[marotte.MCPFailedPayload](),
+	wiregen.TypeRef[marotte.MCPDisconnectedPayload](),
+	wiregen.TypeRef[marotte.ChatDeletedPayload](),
+	wiregen.TypeRef[marotte.DraftChangedPayload](),
+	wiregen.TypeRef[marotte.ToolCallPayload](),
+	wiregen.TypeRef[marotte.ToolCallUpdatePayload](),
+	wiregen.TypeRef[marotte.ElicitationPropertySchema](),
+	wiregen.TypeRef[marotte.ElicitationRequestSchema](),
+	wiregen.TypeRef[marotte.ElicitationNeededPayload](),
+	wiregen.TypeRef[marotte.UserInputSubOption](),
+	wiregen.TypeRef[marotte.UserInputOption](),
+	wiregen.TypeRef[marotte.UserInputNeededPayload](),
+	wiregen.TypeRef[marotte.DecisionSettledPayload](),
+	wiregen.TypeRef[marotte.OpenExternalURLPayload](),
+	wiregen.TypeRef[marotte.CodeReferencesPayload](),
+	wiregen.TypeRef[marotte.AccountUsageBreakdown](),
+	wiregen.TypeRef[marotte.AccountUsage](),
+	wiregen.TypeRef[marotte.PolicyRuleCore](),
+	wiregen.TypeRef[marotte.PolicyRule](),
+	wiregen.TypeRef[marotte.SecurityProfile](),
+	wiregen.TypeRef[marotte.PolicyView](),
+	wiregen.TypeRef[marotte.PolicyExplainResult](),
+	wiregen.TypeRef[marotte.PolicyErrorItem](),
+	wiregen.TypeRef[marotte.PermissionsChangedPayload](),
+	wiregen.TypeRef[marotte.PolicyErrorPayload](),
+	wiregen.TypeRef[marotte.SafetyProperty](),
+	wiregen.TypeRef[marotte.SafetyStatusPayload](),
+	wiregen.TypeRef[marotte.SafetyPropertiesPayload](),
+	wiregen.TypeRef[marotte.GovernanceFeatures](),
+	wiregen.TypeRef[marotte.GovernanceStatePayload](),
+	wiregen.TypeRef[marotte.ToolJob](),
+	wiregen.TypeRef[marotte.ToolInfo](),
+	wiregen.TypeRef[marotte.SystemTool](),
+	wiregen.TypeRef[marotte.AptPackage](),
+	wiregen.TypeRef[marotte.ToolsList](),
+	wiregen.TypeRef[marotte.ToolCatalogHit](),
+	wiregen.TypeRef[marotte.ToolsSearchResponse](),
+	wiregen.TypeRef[marotte.ToolJobAccepted](),
+	wiregen.TypeRef[marotte.ToolRemoveResponse](),
+	wiregen.TypeRef[marotte.ToolsJobsResponse](),
+	wiregen.TypeRef[marotte.ToolCatalogInfo](),
+	wiregen.TypeRef[marotte.Recipe](),
+	wiregen.TypeRef[marotte.RecipesResponse](),
 	// GET /api/sessions. Registered so the History picker reads the per-list
 	// verdicts through a decoder: they had no client reader at all, so "nothing to
 	// resume" and "the read failed" rendered identically.
-	wiregen.TypeRef[vibekit.ResumableSession](),
-	wiregen.TypeRef[vibekit.WorkflowRun](),
-	wiregen.TypeRef[vibekit.SessionListResponse](),
+	wiregen.TypeRef[marotte.ResumableSession](),
+	wiregen.TypeRef[marotte.WorkflowRun](),
+	wiregen.TypeRef[marotte.SessionListResponse](),
 	// Before LiveRunsResponse, which references it.
-	wiregen.TypeRef[vibekit.LiveRun](),
-	wiregen.TypeRef[vibekit.LiveRunsResponse](),
+	wiregen.TypeRef[marotte.LiveRun](),
+	wiregen.TypeRef[marotte.LiveRunsResponse](),
 	// REST replies; no `Payload` suffix, so the SSE-binding test exempts them.
-	wiregen.TypeRef[vibekit.RunControlsResponse](),
-	wiregen.TypeRef[vibekit.RunRetriedResponse](),
-	wiregen.TypeRef[vibekit.RunLaunchRequest](),
-	wiregen.TypeRef[vibekit.RunLaunchedResponse](),
+	wiregen.TypeRef[marotte.RunControlsResponse](),
+	wiregen.TypeRef[marotte.RunRetriedResponse](),
+	wiregen.TypeRef[marotte.RunLaunchRequest](),
+	wiregen.TypeRef[marotte.RunLaunchedResponse](),
 	// A request shape the client composes: generated rather than hand-mirrored, so
 	// a field rename cannot land on one side only.
-	wiregen.TypeRef[vibekit.RunAnswerRequest](),
-	wiregen.TypeRef[vibekit.RunStartedPayload](),
-	wiregen.TypeRef[vibekit.RunProgressPayload](),
-	wiregen.TypeRef[vibekit.RunFinishedPayload](),
-	wiregen.TypeRef[vibekit.RunStepPayload](),
-	wiregen.TypeRef[vibekit.RunInputNeededPayload](),
-	wiregen.TypeRef[vibekit.RunInputSettledPayload](),
+	wiregen.TypeRef[marotte.RunAnswerRequest](),
+	wiregen.TypeRef[marotte.RunStartedPayload](),
+	wiregen.TypeRef[marotte.RunProgressPayload](),
+	wiregen.TypeRef[marotte.RunFinishedPayload](),
+	wiregen.TypeRef[marotte.RunStepPayload](),
+	wiregen.TypeRef[marotte.RunInputNeededPayload](),
+	wiregen.TypeRef[marotte.RunInputSettledPayload](),
 	// GET /api/runs/{id}'s `open_asks`. No `Payload` suffix, so the SSE-binding test
 	// exempts it: it is a read reply rather than an event payload.
-	wiregen.TypeRef[vibekit.RunOpenAsk](),
+	wiregen.TypeRef[marotte.RunOpenAsk](),
 	// GET /api/runs/{id}/steps/{path...}. No field carries omitempty, so `state` is
 	// a REQUIRED TypeScript field and a reader cannot invent "assume ready".
-	wiregen.TypeRef[vibekit.RunStepTranscript](),
-	wiregen.TypeRef[vibekit.ToolJobChangedPayload](),
-	wiregen.TypeRef[vibekit.ToolJobOutputPayload](),
-	wiregen.TypeRef[vibekit.TerminalCreatedPayload](),
-	wiregen.TypeRef[vibekit.TerminalOutputPayload](),
-	wiregen.TypeRef[vibekit.TerminalExitedPayload](),
+	wiregen.TypeRef[marotte.RunStepTranscript](),
+	wiregen.TypeRef[marotte.ToolJobChangedPayload](),
+	wiregen.TypeRef[marotte.ToolJobOutputPayload](),
+	wiregen.TypeRef[marotte.TerminalCreatedPayload](),
+	wiregen.TypeRef[marotte.TerminalOutputPayload](),
+	wiregen.TypeRef[marotte.TerminalExitedPayload](),
 	// GET /api/settings. Every field is required on both sides (no omitempty),
 	// which is what lets the client hold no defaults of its own.
-	wiregen.TypeRef[vibekit.EffectiveSettings](),
+	wiregen.TypeRef[marotte.EffectiveSettings](),
 	wiregen.TypeRef[forges.ConfiguredForge](),
 	wiregen.TypeRef[forges.Repo](),
 	wiregen.TypeRef[forges.PR](),
@@ -243,7 +243,7 @@ var wireEnums = map[string]wiregen.EnumDef{
 	"CatalogReason": {},
 	// Registered for CatalogState's reason: the History picker branches on it.
 	"ReadState": {},
-	// The client's branch over it must be TOTAL: "vibekit could not ask" has to
+	// The client's branch over it must be TOTAL: "marotte could not ask" has to
 	// render a retry rather than a sign-in prompt.
 	"WhoamiState": {},
 	"Transport":   {},
@@ -273,7 +273,7 @@ var pathNameOverrides = map[string]string{
 	"OpenExternalURLPayload": "open_external_url_payload",
 }
 
-// typeMessage is named because 3 SSE events decode to vibekit.Message.
+// typeMessage is named because 3 SSE events decode to marotte.Message.
 const typeMessage = "Message"
 
 // sseEvents binds each SSE event type to the registered struct its payload decodes

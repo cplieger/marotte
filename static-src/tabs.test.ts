@@ -1255,7 +1255,7 @@ describe("the tooltip a row carries", () => {
   // folder, and both truncate through the same rule.
   it("carries a NON-chat row's title too", async () => {
     expect.assertions(2);
-    await openEditorView("/workspace/vibekit/static-src/messages-blocks.ts");
+    await openEditorView("/workspace/marotte/static-src/messages-blocks.ts");
     await paint();
     const label = rows()[0]?.querySelector(".tab-name")?.textContent ?? "";
     expect(label).not.toBe("");

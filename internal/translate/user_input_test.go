@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // pendingCaptureDeps augments baseDeps with a PendingPermsAdd capture so
@@ -15,17 +15,17 @@ type pendingCaptureDeps struct {
 	pendingAdds []int64
 }
 
-func (d *pendingCaptureDeps) PendingPermsAdd(id int64, _ vibekit.ServerEvent) {
+func (d *pendingCaptureDeps) PendingPermsAdd(id int64, _ marotte.ServerEvent) {
 	d.pendingAdds = append(d.pendingAdds, id)
 }
 
-func userInputMsg(t *testing.T, id *int64, params map[string]any) *vibekit.RPCResponse {
+func userInputMsg(t *testing.T, id *int64, params map[string]any) *marotte.RPCResponse {
 	t.Helper()
 	raw, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
-	return &vibekit.RPCResponse{ID: id, Params: raw, Method: vibekit.MethodKiroUserInput}
+	return &marotte.RPCResponse{ID: id, Params: raw, Method: marotte.MethodKiroUserInput}
 }
 
 func TestHandleUserInput(t *testing.T) {
@@ -49,10 +49,10 @@ func TestHandleUserInput(t *testing.T) {
 			},
 		}))
 
-		var got *vibekit.UserInputNeededPayload
+		var got *marotte.UserInputNeededPayload
 		for _, e := range *events {
-			if e.Type == vibekit.EventUserInputNeeded {
-				p := e.Payload.(vibekit.UserInputNeededPayload)
+			if e.Type == marotte.EventUserInputNeeded {
+				p := e.Payload.(marotte.UserInputNeededPayload)
 				got = &p
 			}
 		}
@@ -86,8 +86,8 @@ func TestHandleUserInput(t *testing.T) {
 			"question":  "Describe the goal",
 		}))
 		for _, e := range *events {
-			if e.Type == vibekit.EventUserInputNeeded {
-				if p := e.Payload.(vibekit.UserInputNeededPayload); len(p.Options) != 0 {
+			if e.Type == marotte.EventUserInputNeeded {
+				if p := e.Payload.(marotte.UserInputNeededPayload); len(p.Options) != 0 {
 					t.Errorf("expected free-form (no options), got %+v", p.Options)
 				}
 				return

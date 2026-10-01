@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A wire turn_start binds to the pending pre-open rather than closing it and
@@ -19,10 +19,10 @@ import (
 func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	h.translateACPEvent(chatID, newTurnStartMsg())
@@ -44,7 +44,7 @@ func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	startedTurnOn(t, h, cs, chatID, "the first turn's reply")
 	first, _ := h.coord.turns.openEpoch(chatID)
 	// Acknowledge it, so the next bracket has nothing pending to bind.
@@ -52,8 +52,8 @@ func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(vibekit.StopReasonUnknown)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one %q", got, vibekit.StopReasonUnknown)
+	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonUnknown)}) {
+		t.Errorf("turn_ended stops = %v, want exactly one %q", got, marotte.StopReasonUnknown)
 	}
 	second, open := h.coord.turns.openEpoch(chatID)
 	if !open {
@@ -78,10 +78,10 @@ func TestWireTurnStart_ClosesATurnWhoseEndNeverArrived(t *testing.T) {
 func TestReviseTurnBinding_HandsTheBufferToTheAgentsTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	preOpen := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
@@ -112,7 +112,7 @@ func TestReviseTurnBinding_HandsTheBufferToTheAgentsTurn(t *testing.T) {
 // the lifecycle holds it rather than by consuming it: bindPending RETIRES what it
 // binds, so a test that called it to ask the question would answer it and change
 // it in one step.
-func pendingEpoch(h *Runtime, chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+func pendingEpoch(h *Runtime, chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
 	lc := h.coord.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -133,11 +133,11 @@ func pendingEpoch(h *Runtime, chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
 func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	failed := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
-	h.AbandonInFlightTurn(ctx, chatID, failed, vibekit.StopReasonInterrupted, "the pipe died")
+	failed := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
+	h.AbandonInFlightTurn(ctx, chatID, failed, marotte.StopReasonInterrupted, "the pipe died")
 	h.ReleaseTurn(chatID, failed)
 
 	if _, ok := pendingEpoch(h, chatID); ok {
@@ -146,7 +146,7 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	}
 
 	// The next prompt gets its own bracket and the wire's own outcome.
-	next := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	next := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, next)
 	h.translateACPEvent(chatID, newTurnStartMsg())
 	h.translateACPEvent(chatID, newChunkMsg("the second answer"))
@@ -171,8 +171,8 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
 
@@ -197,7 +197,7 @@ func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 // does.
 func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	startedTurnOn(t, h, cs, chatID, "a live reply")
 	epoch, _ := h.coord.turns.openEpoch(chatID)
 
@@ -215,13 +215,13 @@ func TestWireTurnEnd_ReplayedBracketClosesNoLiveTurn(t *testing.T) {
 // A fold with no open turn OPENS one, rather than lazily creating a bare buffer.
 //
 // The buffer used to be created on the first frame and keyed by chat, so a turn
-// vibekit did not prompt had content and no record: nothing to end it, nothing to
+// marotte did not prompt had content and no record: nothing to end it, nothing to
 // account for it, and its buffer left behind for the next turn's frames to extend.
 func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newChunkMsg("nobody prompted this"))
 
@@ -233,7 +233,7 @@ func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	lc.mu.Lock()
 	source := lc.cur.Source
 	lc.mu.Unlock()
-	if source != vibekit.TurnSourceWireTurnStart {
+	if source != marotte.TurnSourceWireTurnStart {
 		t.Errorf("turn %d source = %v, want wireTurnStart", epoch, source)
 	}
 	if buf := h.liveTurnBuffer(chatID); buf == nil || buf.Content.String() != "nobody prompted this" {
@@ -244,24 +244,24 @@ func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 // A local shell turn REFUSES while another turn is open: a shell turn cannot begin
 // during an agent turn.
 //
-// The prompt-slot guard catches the turns vibekit itself prompted; this catches the
+// The prompt-slot guard catches the turns marotte itself prompted; this catches the
 // ones it did not, which is the class with no slot to hold. Running anyway would
 // fold the command's output into the agent's live turn.
 func TestStartTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// A turn the ENGINE started, so no prompt slot is held.
 	h.translateACPEvent(chatID, newTurnStartMsg())
 
-	if epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourceLocalShell); epoch != 0 {
+	if epoch := h.StartTurn(ctx, chatID, marotte.TurnSourceLocalShell); epoch != 0 {
 		t.Errorf("StartTurn(localShell) = %d, want 0 (refused) while an agent turn is open", epoch)
 	}
 	// And it is allowed once that turn ends.
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
-	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourceLocalShell)
+	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourceLocalShell)
 	if epoch == 0 {
 		t.Error("StartTurn(localShell) still refuses on an idle chat")
 	}
@@ -281,10 +281,10 @@ func TestStartTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	preOpen := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
 
 	// The agent's own turn arrives first, mis-binds, is revised by its content, and
@@ -337,15 +337,15 @@ func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 func TestStartTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// A turn the ENGINE started, streaming: no prompt slot, nothing pending.
 	h.translateACPEvent(chatID, newTurnStartMsg())
 	h.translateACPEvent(chatID, newChunkMsg("the auto-wake got this far"))
 	agentTurn, _ := h.coord.turns.openEpoch(chatID)
 
-	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	c, _ := cs.Get(ctx, chatID)
@@ -353,9 +353,9 @@ func TestStartTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T
 		t.Errorf("the displaced turn's streamed content was not persisted, so it vanishes on "+
 			"the next reload; messages = %+v", c.Messages)
 	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(vibekit.StopReasonUnknown)}) {
+	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonUnknown)}) {
 		t.Errorf("turn_ended stops = %v, want exactly one %q: the displaced turn's end was "+
-			"never announced", got, vibekit.StopReasonUnknown)
+			"never announced", got, marotte.StopReasonUnknown)
 	}
 	if open, _ := h.coord.turns.openEpoch(chatID); open != epoch {
 		t.Errorf("open epoch = %d, want the prompt's %d (the agent's was %d)", open, epoch, agentTurn)
@@ -377,8 +377,8 @@ func TestStartTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T
 func TestFold_AStepsFrameOpensTheRunsTurnRatherThanTheChats(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newStepChunkMsg("the step wrote this", "wf-1", "root/step"))
 
@@ -390,7 +390,7 @@ func TestFold_AStepsFrameOpensTheRunsTurnRatherThanTheChats(t *testing.T) {
 	lc.mu.Lock()
 	source := lc.cur.Source
 	lc.mu.Unlock()
-	if source != vibekit.TurnSourceWorkflowStep {
+	if source != marotte.TurnSourceWorkflowStep {
 		t.Errorf("turn %d source = %v, want workflowStep: the chat would read as working "+
 			"for the whole run", epoch, source)
 	}
@@ -406,10 +406,10 @@ func TestFold_AStepsFrameOpensTheRunsTurnRatherThanTheChats(t *testing.T) {
 func TestFold_AStepsFrameDoesNotReclassifyTheChatsOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	h.translateACPEvent(chatID, newStepChunkMsg("a step of a run this turn launched", "wf-1", "root/step"))
@@ -418,7 +418,7 @@ func TestFold_AStepsFrameDoesNotReclassifyTheChatsOpenTurn(t *testing.T) {
 	lc.mu.Lock()
 	source := lc.cur.Source
 	lc.mu.Unlock()
-	if source != vibekit.TurnSourcePrompt {
+	if source != marotte.TurnSourcePrompt {
 		t.Errorf("open turn source = %v, want prompt: the chat's own live turn was reclassified", source)
 	}
 }
@@ -432,13 +432,13 @@ func TestFold_AStepsFrameDoesNotReclassifyTheChatsOpenTurn(t *testing.T) {
 func TestStartTurn_PromptDisplacesAStepDrivenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newStepChunkMsg("the step got this far", "wf-1", "root/step"))
 	stepTurn, _ := h.coord.turns.openEpoch(chatID)
 
-	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	c, _ := cs.Get(ctx, chatID)
@@ -446,8 +446,8 @@ func TestStartTurn_PromptDisplacesAStepDrivenTurn(t *testing.T) {
 		t.Errorf("the displaced step turn's content was not persisted, so it vanishes on the "+
 			"next reload; messages = %+v", c.Messages)
 	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(vibekit.StopReasonUnknown)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one %q", got, vibekit.StopReasonUnknown)
+	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonUnknown)}) {
+		t.Errorf("turn_ended stops = %v, want exactly one %q", got, marotte.StopReasonUnknown)
 	}
 	if open, _ := h.coord.turns.openEpoch(chatID); open != epoch {
 		t.Errorf("open epoch = %d, want the prompt's %d (the step's was %d)", open, epoch, stepTurn)

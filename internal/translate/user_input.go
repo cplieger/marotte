@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // HandleUserInput processes a _kiro/userInput request from KAS (2.14+):
@@ -22,7 +22,7 @@ import (
 // like a permission prompt. The question also arrives as a pending
 // tool_call (kind "other", _meta.kiro.toolId "user_input") that KAS
 // completes itself once answered — no tool bookkeeping here.
-func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandleUserInput(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
 		// The request must be answerable; without an id we cannot route
 		// a response, so drop rather than show a dialog whose answer
@@ -39,8 +39,8 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID,
 	reqID := *msg.ID
 	p, err := decodeParams[userInputParams](msg)
 	if err != nil {
-		t.refuseAsk(ctx, chatID, vibekit.MethodKiroUserInput, reqID,
-			vibekit.UserInputResult{Action: vibekit.UserInputActionDismissed}, err)
+		t.refuseAsk(ctx, chatID, marotte.MethodKiroUserInput, reqID,
+			marotte.UserInputResult{Action: marotte.UserInputActionDismissed}, err)
 		return
 	}
 
@@ -49,7 +49,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID,
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 
 	step := t.steps.refFor(p.SessionID)
-	evt := vibekit.NewEvent(vibekit.EventUserInputNeeded, chatID, vibekit.UserInputNeededPayload{
+	evt := marotte.NewEvent(marotte.EventUserInputNeeded, chatID, marotte.UserInputNeededPayload{
 		RequestID: reqID,
 		// The question is the other half of the decision surface the options
 		// are: it is what the human is answering, the agent composes it, and
@@ -63,8 +63,8 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID,
 	})
 	t.bus.Broadcast(ctx, evt)
 	t.pendingPerms.PendingPermsAdd(reqID, evt)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
-	t.push.NotifyPush(ctx, "The agent has a question", vibekit.PushKindPermission, chatID)
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelInput}))
+	t.push.NotifyPush(ctx, "The agent has a question", marotte.PushKindPermission, chatID)
 }
 
 // wireUserInputOption / wireUserInputSubOption are KAS's `_kiro/userInput` option
@@ -111,8 +111,8 @@ const (
 //
 // The title IS the answer sent back to the agent, so the text the human
 // read and the text the agent receives have to be the same string.
-func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOption {
-	options := make([]vibekit.UserInputOption, 0, min(len(in), maxUserInputOptions))
+func sanitizeUserInputOptions(in []wireUserInputOption) []marotte.UserInputOption {
+	options := make([]marotte.UserInputOption, 0, min(len(in), maxUserInputOptions))
 	seen := make(map[string]struct{}, len(in))
 	for i := range in {
 		o := &in[i]
@@ -124,7 +124,7 @@ func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOptio
 			continue
 		}
 		seen[title] = struct{}{}
-		options = append(options, vibekit.UserInputOption{
+		options = append(options, marotte.UserInputOption{
 			Title:           title,
 			Description:     displayText(o.Description),
 			SubOptionsLabel: displayText(o.SubOptionsLabel),
@@ -140,8 +140,8 @@ func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOptio
 
 // sanitizeUserInputSubOptions applies the same rules one level down. Split
 // out to keep the parent inside the complexity budget.
-func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []vibekit.UserInputSubOption {
-	subs := make([]vibekit.UserInputSubOption, 0, min(len(in), maxUserInputSubOptions))
+func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []marotte.UserInputSubOption {
+	subs := make([]marotte.UserInputSubOption, 0, min(len(in), maxUserInputSubOptions))
 	seen := make(map[string]struct{}, len(in))
 	for _, sub := range in {
 		title := strings.TrimSpace(displayText(sub.Title))
@@ -152,7 +152,7 @@ func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []vibekit.UserInpu
 			continue
 		}
 		seen[title] = struct{}{}
-		subs = append(subs, vibekit.UserInputSubOption{Title: title, Description: displayText(sub.Description)})
+		subs = append(subs, marotte.UserInputSubOption{Title: title, Description: displayText(sub.Description)})
 		if len(subs) == maxUserInputSubOptions {
 			break
 		}

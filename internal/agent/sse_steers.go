@@ -3,7 +3,7 @@ package agent
 import (
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // replayPendingSteers emits one steer_queued per steer still in KAS's steering
@@ -13,7 +13,7 @@ import (
 // It cannot recover a steer the turn ENDED on: KAS clears its buffer at every
 // boundary, so nothing is left to replay. dropSteers makes that loss visible
 // instead, as a `dropped: true` transcript mark.
-func (rt *Runtime) replayPendingSteers(writeFn func(vibekit.ServerEvent) error) error {
+func (rt *Runtime) replayPendingSteers(writeFn func(marotte.ServerEvent) error) error {
 	events := rt.bus.steers.List("")
 	for _, evt := range events {
 		if err := writeFn(evt); err != nil {

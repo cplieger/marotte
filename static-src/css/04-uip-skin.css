@@ -1,17 +1,17 @@
 /* ==========================================================================
-   @cplieger/ui-primitives — vibekit SKIN.
+   @cplieger/ui-primitives — marotte SKIN.
    ==========================================================================
 
    The headless base stylesheet (css/ui-primitives.css, vendored from
    @cplieger/ui-primitives and concatenated into the bundle immediately BEFORE
    this file — see css/MANIFEST) ships STRUCTURE + MOTION only, keyed off
    --uip-* custom properties. This file supplies the SKIN: it (1) maps every
-   --uip-* motion/duration/easing + z-index onto vibekit's existing
+   --uip-* motion/duration/easing + z-index onto marotte's existing
    --dur-* / --ease-* vocabulary and z-index ladder so the animation system stays
    IDENTICAL, and (2) styles the .uip-* classes with the exact colors, borders,
    radii, and shadows the hand-rolled toast/tooltip/confirm/context-menu used.
 
-   Both the base and this skin are UNLAYERED (outside vibekit's @layer cascade),
+   Both the base and this skin are UNLAYERED (outside marotte's @layer cascade),
    so this file's .uip-* rules sit above the base by source order — which is why
    the toast bottom-right override, the tooltip enter fade, etc. win. Reduced
    motion is handled globally by 40-a11y.css (`* { transition-duration: 0.01ms
@@ -19,7 +19,7 @@
    the library's own reduced-motion block does. */
 
 :root {
-  /* --- z-index ladder: preserve vibekit's exact ORDER (modal < popover <
+  /* --- z-index ladder: preserve marotte's exact ORDER (modal < popover <
      toast < tooltip). The values are raised above the shell panel's fullscreen
      9999: a popover anchored to a control on the page was rendering UNDER an
      open panel, which is the one thing a popover must never do. Native <dialog>
@@ -47,8 +47,8 @@
   --uip-tooltip-fade-duration: 80ms;
   --uip-tooltip-fade-easing: var(--ease-exit);
 
-  /* --- dialog / confirm: vibekit's confirm closed instantly; the library's
-     lifecycle fades out on `is-leaving`, mapped here to vibekit's standard exit
+  /* --- dialog / confirm: marotte's confirm closed instantly; the library's
+     lifecycle fades out on `is-leaving`, mapped here to marotte's standard exit
      motion so the vocabulary stays consistent. Backdrop dim matches the old
      .vk-confirm-dialog::backdrop. */
   --uip-dialog-leave-duration: var(--dur-exit);
@@ -56,17 +56,17 @@
   --uip-backdrop: oklch(0% 0 none / 50%);
 
   /* --- popover (context menu): the old .tab-context-menu appeared instantly;
-     the library's optional enter fade is mapped to vibekit's micro motion. */
+     the library's optional enter fade is mapped to marotte's micro motion. */
   --uip-popover-enter-duration: var(--dur-micro);
   --uip-popover-enter-easing: var(--ease-enter);
 
   /* --- modal motion + dim: the createModal native <dialog> replaces the
      hand-rolled .modal-overlay/.modal-card system. The ::backdrop reproduces the
-     old overlay dim (75% black); the leave fade maps to vibekit's exit motion
+     old overlay dim (75% black); the leave fade maps to marotte's exit motion
      (the enter is a CSS keyframe on .uip-modal[open], see the Modal section
      below, since createModal's JS open is instant). The disclosure vars drive
      the createDisclosure height tween (adopted for the git repo sections in
-     22-git-multirepo.css), mapped to vibekit's standard panel motion. */
+     22-git-multirepo.css), mapped to marotte's standard panel motion. */
   --uip-modal-backdrop: oklch(0% 0 none / 75%);
   --uip-modal-leave-duration: var(--dur-exit);
   --uip-modal-leave-easing: var(--ease-exit);
@@ -128,7 +128,7 @@
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
 
-  /* NO SHADOW (user ruling, 2026-09-14, from a phone report). vibekit-ui.md's
+  /* NO SHADOW (user ruling, 2026-09-14, from a phone report). marotte-ui.md's
      shadow population is "overlays", which this is — and the ruling narrows that
      to the surfaces a reader meets as a LIFTED card. A toast shares one band with
      `.banner`, which paints its edge with a 1px border and no shadow, so the two
@@ -187,7 +187,7 @@
    is where a toast's level vocabulary and a banner's stop agreeing: a banner's
    lowest level is a CONDITION worth acting on and takes the accent wash, while
    most of this app's `toast.info` calls are statements of fact, and accent ink is
-   this app's text-control idiom (vibekit-ui.md "Color system"). */
+   this app's text-control idiom (marotte-ui.md "Color system"). */
 
 /* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
 .uip-toast--error {
@@ -262,7 +262,7 @@
 
 /* ==========================================================================
    Tooltip — ports the old .vk-tooltip look. The base owns positioning (fixed,
-   flip/clamp) + the leave fade; the enter fade reuses vibekit's vk-fade-in.
+   flip/clamp) + the leave fade; the enter fade reuses marotte's vk-fade-in.
    ========================================================================== */
 
 .uip-tooltip {
@@ -300,7 +300,7 @@
 /* ==========================================================================
    Ask (boolean confirm shape) — ports the old .vk-confirm-dialog look. The
    base owns the native <dialog> leave fade + backdrop; buttons reproduce
-   .btn-small + .confirm-allow / .confirm-danger. (vibekit has no input-ask
+   .btn-small + .confirm-allow / .confirm-danger. (marotte has no input-ask
    consumer yet; add .uip-ask--input / .uip-ask-form / .uip-ask-input rules
    when one appears.)
    ========================================================================== */

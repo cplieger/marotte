@@ -1,4 +1,4 @@
-// Command bundle builds vibekit's browser client: it bundles the TypeScript
+// Command bundle builds marotte's browser client: it bundles the TypeScript
 // entrypoints with esbuild (a Go library — no Node, no npm) and assembles the CSS
 // bundle from the manifest files. tsc remains the TYPE gate; esbuild does not
 // typecheck. Compression is the server's job; the bundler emits plain artifacts.
@@ -334,7 +334,7 @@ type cssManifest struct {
 }
 
 // buildCSS assembles static/style.css: the @cplieger/web-terminal-ui component bundle
-// FIRST (root-scoped, zero-specificity :where(.wt-root) selectors), then vibekit's own
+// FIRST (root-scoped, zero-specificity :where(.wt-root) selectors), then marotte's own
 // splits — library-before-consumer source order is the override mechanism.
 func buildCSS() error {
 	wtui := filepath.Join(srcDir, "node_modules", "@cplieger", "web-terminal-ui", "css")

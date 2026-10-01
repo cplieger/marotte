@@ -6,17 +6,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// hookCmd builds an *vibekit.ClientCommand carrying the marshaled hook payload p.
-func hookCmd(t *testing.T, p hookCreatePayload) *vibekit.ClientCommand {
+// hookCmd builds an *marotte.ClientCommand carrying the marshaled hook payload p.
+func hookCmd(t *testing.T, p hookCreatePayload) *marotte.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(p)
 	if err != nil {
 		t.Fatalf("marshal hook payload: %v", err)
 	}
-	return &vibekit.ClientCommand{Payload: json.RawMessage(raw)}
+	return &marotte.ClientCommand{Payload: json.RawMessage(raw)}
 }
 
 // TestValidateHookPayload exercises the decode/name/event gate, the
@@ -103,9 +103,9 @@ func TestValidateHookPayload(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *vibekit.ClientCommand
+			var cmd *marotte.ClientCommand
 			if tc.raw != nil {
-				cmd = &vibekit.ClientCommand{Payload: json.RawMessage(tc.raw)}
+				cmd = &marotte.ClientCommand{Payload: json.RawMessage(tc.raw)}
 			} else {
 				cmd = hookCmd(t, tc.p)
 			}
@@ -137,7 +137,7 @@ func FuzzValidateHookPayload(f *testing.F) {
 	f.Add([]byte(`{"name":"../evil","event_type":"x","action_type":"askAgent","prompt":"p"}`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		cmd := &vibekit.ClientCommand{Payload: json.RawMessage(data)}
+		cmd := &marotte.ClientCommand{Payload: json.RawMessage(data)}
 		_, _, code, err := validateHookPayload(cmd)
 
 		if err == nil && code != 0 {

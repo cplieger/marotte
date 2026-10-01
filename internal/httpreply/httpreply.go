@@ -1,20 +1,20 @@
-// Package httpreply writes what vibekit answers an HTTP request with: the
+// Package httpreply writes what marotte answers an HTTP request with: the
 // named status responses, the error envelope they carry, and the request
 // guards whose failure IS one of those responses.
 //
 // Every symbol here either writes a reply or refuses a request by writing one,
 // which is what the name claims and the whole of what the package does.
 //
-// It exists because this is BEHAVIOUR, and it used to sit in internal/vibekit
+// It exists because this is BEHAVIOUR, and it used to sit in internal/marotte
 // beside the wire and domain TYPES. That put the 405 helper every handler
 // imports inside the one package the code generator walks for the
 // cross-language type contract, so neither half could be read or changed
 // without the other in view.
 //
 // The mechanism is the fleet's: webhttp owns the headers, the status and the
-// encode, and handlers call it directly for a plain body. What is vibekit's,
+// encode, and handlers call it directly for a plain body. What is marotte's,
 // and the only reason this package exists at all, is the error TAXONOMY: every
-// helper here writes the bare {"error": "msg"} envelope vibekit's clients
+// helper here writes the bare {"error": "msg"} envelope marotte's clients
 // decode, leaving webhttp.ErrorResponse's Code and RequestID fields empty. A
 // handler that hand-rolls that envelope instead is the drift these helpers
 // exist to stop, and webhttp's own contract puts the named helpers here — it
@@ -26,7 +26,7 @@
 // disjoint concerns and taught a fleet reader that the name carries no
 // information. Fleet alignment aligns concepts, not spellings: the shared
 // concept is "the app's own HTTP boundary vocabulary", and the direction is
-// what the name has to say out loud. NOT apireply either: internal/vibekit is the
+// what the name has to say out loud. NOT apireply either: internal/marotte is the
 // package being renamed away from api because api names nothing, so borrowing
 // the word for its neighbour would repeat the mistake and leave a reader
 // guessing whether the prefix means the package, the URL space, or the idea.
@@ -74,7 +74,7 @@ const msgInternalError = "internal error"
 
 // --- JSON response writers ---
 //
-// The mechanism (headers, status, encode) is webhttp's; vibekit's error
+// The mechanism (headers, status, encode) is webhttp's; marotte's error
 // taxonomy (the bare {"error":…} named helpers below) is layered on top.
 
 // WriteRawJSON writes pre-marshalled JSON bytes with the standard
@@ -94,9 +94,9 @@ func WriteRawJSON(w http.ResponseWriter, data []byte) {
 // Use these in handlers instead of hand-crafting JSON strings with
 // http.Error. Consistent shape across every package: {"error": "msg"}
 // with the correct status code + Content-Type. Each helper layers
-// vibekit's bare error taxonomy on webhttp.ErrorResponse; the Code and
+// marotte's bare error taxonomy on webhttp.ErrorResponse; the Code and
 // RequestID envelope fields are left empty (omitempty), so the wire
-// shape stays the bare {"error": "msg"} vibekit clients expect.
+// shape stays the bare {"error": "msg"} marotte clients expect.
 
 // BadRequest writes a 400 with {"error": msg}.
 func BadRequest(w http.ResponseWriter, msg string) {
@@ -127,7 +127,7 @@ const headerAllow = "Allow"
 // case-sensitive (RFC 9110 §9.1), so they are emitted verbatim rather than
 // normalised; empty arguments are dropped because §5.6.1.1 forbids empty
 // list elements. The separator is ", " — the same rendering net/http's own
-// ServeMux uses for the method-pattern routes, so every Allow vibekit emits
+// ServeMux uses for the method-pattern routes, so every Allow marotte emits
 // looks alike. Must be called before the status is committed.
 func setAllow(w http.ResponseWriter, method string, more ...string) {
 	methods := make([]string, 0, 1+len(more))
@@ -155,7 +155,7 @@ func setAllow(w http.ResponseWriter, method string, more ...string) {
 // At least one method is mandatory at the call site by construction: a
 // resource that permits nothing is a 404, not a 405.
 //
-// HEAD is deliberately NOT implied by GET. vibekit's JSON handlers compare
+// HEAD is deliberately NOT implied by GET. marotte's JSON handlers compare
 // r.Method for equality and its API routes are registered as plain paths,
 // so net/http's ServeMux does no method matching and a HEAD request reaches
 // the handler and lands here — listing HEAD would advertise a method that
@@ -205,7 +205,7 @@ func RequireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 
 // DecodeBody caps + decodes exactly one JSON value into v via
 // webhttp.DecodeJSONInto (rejecting trailing data), returning true on success.
-// On any decode failure it writes vibekit's bare {"error":errMsg} 400 and
+// On any decode failure it writes marotte's bare {"error":errMsg} 400 and
 // returns false.
 func DecodeBody(w http.ResponseWriter, r *http.Request, v any, errMsg string) bool {
 	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {

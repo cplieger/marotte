@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // --- Shared harness ---
@@ -34,7 +34,7 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	factory := func() ACPBridge { return br }
 	h := New(t.Context(), workDir, factory, cs)
 	cs.Bus = h
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -110,9 +110,9 @@ func TestTranslateACPEvent_FSReadRespondsAfterEventCtxCancel_C1(t *testing.T) {
 	br := newCtxAwareBridge()
 	h := hubWithBridge(t, work, br)
 	id := int64(1)
-	msg := &vibekit.RPCResponse{
+	msg := &marotte.RPCResponse{
 		ID:     &id,
-		Method: vibekit.MethodFSRead,
+		Method: marotte.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "c1.txt"}),
 	}
 
@@ -142,9 +142,9 @@ func TestTranslateACPEvent_FSWriteRespondsAfterEventCtxCancel_C1(t *testing.T) {
 	br := newCtxAwareBridge()
 	h := hubWithBridge(t, work, br)
 	id := int64(2)
-	msg := &vibekit.RPCResponse{
+	msg := &marotte.RPCResponse{
 		ID:     &id,
-		Method: vibekit.MethodFSWrite,
+		Method: marotte.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "c1-out.txt", "content": "C1-written"}),
 	}
 
@@ -208,7 +208,7 @@ func (b *recordingTermBridge) lastResponse() (recordedResp, bool) {
 	return b.resps[len(b.resps)-1], true
 }
 
-func termCreateMsg(t *testing.T, id int64, command string, args []string, env []map[string]string) *vibekit.RPCResponse {
+func termCreateMsg(t *testing.T, id int64, command string, args []string, env []map[string]string) *marotte.RPCResponse {
 	t.Helper()
 	params := map[string]any{"command": command}
 	if len(args) > 0 {
@@ -217,7 +217,7 @@ func termCreateMsg(t *testing.T, id int64, command string, args []string, env []
 	if env != nil {
 		params["env"] = env
 	}
-	return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
+	return &marotte.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
 }
 
 // singleTerm returns the sole registered agent terminal.
@@ -323,7 +323,7 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
 	id := int64(1)
-	msg := &vibekit.RPCResponse{
+	msg := &marotte.RPCResponse{
 		ID:     &id,
 		Method: methodTermOutput,
 		Params: mustJSON(t, map[string]any{"terminalId": "does-not-exist"}),
@@ -342,9 +342,9 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 	}
 	// The code travels with it. KAS branches on the code, and the JSON-RPC
 	// error range is negative, so a positive one is not an error it recognises.
-	rpcErr, isRPC := errors.AsType[*vibekit.RPCError](last.err)
+	rpcErr, isRPC := errors.AsType[*marotte.RPCError](last.err)
 	if !isRPC {
-		t.Errorf("H2: response error = %T, want *vibekit.RPCError", last.err)
+		t.Errorf("H2: response error = %T, want *marotte.RPCError", last.err)
 	} else if rpcErr.Code != -1 {
 		t.Errorf("H2: response error code = %d, want -1", rpcErr.Code)
 	}
@@ -356,9 +356,9 @@ func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
-	const sentinel = "vibekit-env-sentinel-42"
-	env := []map[string]string{{"name": "VIBEKIT_TEST_ENV", "value": sentinel}}
-	msg := termCreateMsg(t, 1, "sh", []string{"-c", `printf '%s' "$VIBEKIT_TEST_ENV" > envout.txt`}, env)
+	const sentinel = "marotte-env-sentinel-42"
+	env := []map[string]string{{"name": "MAROTTE_TEST_ENV", "value": sentinel}}
+	msg := termCreateMsg(t, 1, "sh", []string{"-c", `printf '%s' "$MAROTTE_TEST_ENV" > envout.txt`}, env)
 
 	h.translateACPEvent("c1", msg)
 	term := singleTerm(t, h)
@@ -438,17 +438,17 @@ func TestTermEnv(t *testing.T) {
 	if termEnv([]termEnvVar{}) != nil {
 		t.Error("termEnv(empty) = non-nil, want nil")
 	}
-	got := termEnv([]termEnvVar{{Name: "VIBEKIT_A", Value: "1"}})
+	got := termEnv([]termEnvVar{{Name: "MAROTTE_A", Value: "1"}})
 	if len(got) <= len(os.Environ()) {
 		t.Errorf("termEnv should layer on os.Environ (len=%d, environ=%d)", len(got), len(os.Environ()))
 	}
 	found := false
 	for _, e := range got {
-		if e == "VIBEKIT_A=1" {
+		if e == "MAROTTE_A=1" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("termEnv missing VIBEKIT_A=1")
+		t.Error("termEnv missing MAROTTE_A=1")
 	}
 }

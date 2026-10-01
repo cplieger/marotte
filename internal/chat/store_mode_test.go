@@ -97,7 +97,7 @@ func TestNewStore_VerifiesTheModeItCreated(t *testing.T) {
 //
 // The store still OPENS, deliberately: aborting boot over persistent-volume state
 // the container neither created nor owns leaves the operator no way in to repair
-// it (vibekit invariant 6). The exposure is reported, not enforced.
+// it (marotte invariant 6). The exposure is reported, not enforced.
 func TestNewStore_EnforcesTheModeOnAHandleNotAPathname(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "elsewhere")
 	if err := os.Mkdir(target, 0o777); err != nil {

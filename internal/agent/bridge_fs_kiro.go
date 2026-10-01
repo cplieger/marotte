@@ -7,7 +7,7 @@
 // what lets the agent-ignore list reach a LISTING, closing the discovery
 // vector an unfiltered listing would otherwise open.
 //
-// vibekit is the confined EXECUTOR; KAS is the REVIEWER: resolve, filter,
+// marotte is the confined EXECUTOR; KAS is the REVIEWER: resolve, filter,
 // execute, no staging or attribution. KAS checkpoints before it unlinks and
 // restores a rejected delete via an ordinary `fs/write_text_file`; a second
 // gate here would intercept that restore.
@@ -27,7 +27,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // File-type strings KAS's own NodeFileSystem returns, and therefore the only
@@ -83,8 +83,8 @@ type kiroReadDirBody struct {
 // per-event ctx is cancelled by translateACPEvent's defer the moment it returns,
 // and Bridge.Respond drops a write on a cancelled ctx, which would hang the
 // agent's Call forever (KAS's `extMethod` has NO timeout: no deadline, no abort).
-func (in *inbound) handleKiroFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
-	var handler func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)
+func (in *inbound) handleKiroFSRequest(_ context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
+	var handler func(context.Context, marotte.ChatID, *marotte.RPCResponse)
 	switch msg.Method {
 	case methodKiroFSStat:
 		handler = in.respondKiroFSStat
@@ -119,7 +119,7 @@ func (in *inbound) handleKiroFSRequest(_ context.Context, chatID vibekit.ChatID,
 // resolver's containment verdict and the operation had no handle in common, so a
 // directory renamed into a symlink after the verdict redirected the operation,
 // delete included. See lifetime.confineInWorkDir.
-func (in *inbound) kiroFSPath(msg *vibekit.RPCResponse) (root *os.Root, rel string, err error) {
+func (in *inbound) kiroFSPath(msg *marotte.RPCResponse) (root *os.Root, rel string, err error) {
 	var p kiroFSParams
 	if pErr := parseRequest(msg, &p); pErr != nil {
 		return nil, "", fmt.Errorf("decode %s params: %w", msg.Method, pErr)
@@ -136,7 +136,7 @@ func (in *inbound) kiroFSPath(msg *vibekit.RPCResponse) (root *os.Root, rel stri
 // agent's next move on a false "absent" is to CREATE it, clobbering the very
 // file the user asked to keep out of the way. An honest stat is the safer answer;
 // the listing is where the discovery vector actually is.
-func (in *inbound) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
@@ -167,7 +167,7 @@ func (in *inbound) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID,
 // A missing directory answers with an empty list rather than an error, matching
 // KAS's NodeFileSystem (it swallows ENOENT and returns []). Diverging would make
 // a probe for an optional directory look like a failure.
-func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)
@@ -213,7 +213,7 @@ func readDirInRoot(root *os.Root, rel string) ([]os.DirEntry, error) {
 // discovery vector this filter exists to close behind an error nobody could
 // trigger deliberately but nobody had ruled out either. Joining onto the
 // already-relative dirRel cannot fail, so the case is gone rather than handled.
-func (in *inbound) filterDirEntries(ctx context.Context, _ vibekit.ChatID, dirRel string, dirEntries []os.DirEntry) []kiroDirEntry {
+func (in *inbound) filterDirEntries(ctx context.Context, _ marotte.ChatID, dirRel string, dirEntries []os.DirEntry) []kiroDirEntry {
 	out := make([]kiroDirEntry, 0, len(dirEntries))
 	for _, e := range dirEntries {
 		entryType := fsTypeFile
@@ -244,7 +244,7 @@ func (in *inbound) filterDirEntries(ctx context.Context, _ vibekit.ChatID, dirRe
 // NOT ignore-filtered (a delete is write-class, and writes follow git
 // semantics), and NOT gated (KAS checkpoints before the unlink and reviews
 // after it — see the file header).
-func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
 		in.respondFSError(ctx, chatID, msg, err)

@@ -24,16 +24,16 @@ func TestDecodeJSON_ReportsWhetherTheHandlerMayProceed(t *testing.T) {
 	}
 
 	t.Run("a well-formed body decodes and leaves the response untouched", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/test", strings.NewReader(`{"name":"vibekit"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/test", strings.NewReader(`{"name":"marotte"}`))
 		req.Header.Set("Content-Type", MIMETypeJSON)
 		rec := httptest.NewRecorder()
 
 		var got payload
 		if !DecodeJSON(rec, req, &got) {
-			t.Fatalf("DecodeJSON(valid body) = false, want true (body %q)", `{"name":"vibekit"}`)
+			t.Fatalf("DecodeJSON(valid body) = false, want true (body %q)", `{"name":"marotte"}`)
 		}
-		if got.Name != "vibekit" {
-			t.Errorf("decoded name = %q, want %q", got.Name, "vibekit")
+		if got.Name != "marotte" {
+			t.Errorf("decoded name = %q, want %q", got.Name, "marotte")
 		}
 		if rec.Body.Len() != 0 {
 			t.Errorf("DecodeJSON wrote %q on the success path, want nothing", rec.Body.String())
@@ -58,7 +58,7 @@ func TestDecodeJSON_ReportsWhetherTheHandlerMayProceed(t *testing.T) {
 	})
 
 	t.Run("a non-JSON content type is refused before the body is read", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/test", strings.NewReader(`{"name":"vibekit"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/test", strings.NewReader(`{"name":"marotte"}`))
 		req.Header.Set("Content-Type", "text/plain")
 		rec := httptest.NewRecorder()
 

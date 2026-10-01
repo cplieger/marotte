@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -26,7 +26,7 @@ func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
 // Unreadable files are logged and skipped: one bad file must not hide the rest.
 // Never nil, so JSON encoders emit `[]` rather than the `null` the wire decoder
 // rejects.
-func (s *Store) List(ctx context.Context) []vibekit.ChatHeader {
+func (s *Store) List(ctx context.Context) []marotte.ChatHeader {
 	headers, _ := s.listWithCompleteness(ctx)
 	return headers
 }
@@ -36,7 +36,7 @@ func (s *Store) List(ctx context.Context) []vibekit.ChatHeader {
 // puts its header in the list and its bump outside the stamp, and the client then
 // holds a list at least as new as its version, which the next digest reads as one
 // spurious changed and never as a false unchanged.
-func (s *Store) ListStamped(ctx context.Context) ([]vibekit.ChatHeader, *vibekit.SubjectStamp) {
+func (s *Store) ListStamped(ctx context.Context) ([]marotte.ChatHeader, *marotte.SubjectStamp) {
 	version, _ := s.versions.Current(subject.KindChats, "")
 	headers, _ := s.listWithCompleteness(ctx)
 	return headers, s.restStamp(subject.KindChats, "", version)
@@ -44,7 +44,7 @@ func (s *Store) ListStamped(ctx context.Context) ([]vibekit.ChatHeader, *vibekit
 
 // listResult carries a scan and its completeness through one singleflight slot.
 type listResult struct {
-	headers  []vibekit.ChatHeader
+	headers  []marotte.ChatHeader
 	complete bool
 }
 
@@ -72,24 +72,24 @@ func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struc
 // coalescing makes one caller's lifetime everybody's: the request that opens the
 // slot is routinely aborted by a second one already waiting on its answer, and
 // both then received a truncated header list.
-func (s *Store) listWithCompleteness(ctx context.Context) ([]vibekit.ChatHeader, bool) {
+func (s *Store) listWithCompleteness(ctx context.Context) ([]marotte.ChatHeader, bool) {
 	scanCtx := context.WithoutCancel(ctx)
 	r := sfDo(&s.listSF, "list", func() listResult {
 		headers, complete := s.listOnce(scanCtx)
 		return listResult{headers: headers, complete: complete}
 	})
 	if r.headers == nil {
-		return []vibekit.ChatHeader{}, r.complete
+		return []marotte.ChatHeader{}, r.complete
 	}
 	return r.headers, r.complete
 }
 
-func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
+func (s *Store) listOnce(ctx context.Context) ([]marotte.ChatHeader, bool) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		slog.Error("chat list", "dir", s.dir, "error", err)
 		// Nothing is known about what chats exist, so never report complete.
-		return []vibekit.ChatHeader{}, false
+		return []marotte.ChatHeader{}, false
 	}
 	var valid []chatEntry
 	for _, e := range entries {
@@ -98,7 +98,7 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 			continue
 		}
 		id := strings.TrimSuffix(name, chatFileSuffix)
-		if !chatIDPattern(vibekit.ChatID(id)) {
+		if !chatIDPattern(marotte.ChatID(id)) {
 			slog.Debug("chat list: skipped non-chat file",
 				"name", name, "reason", "invalid chat id pattern")
 			continue
@@ -106,13 +106,13 @@ func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 		valid = append(valid, chatEntry{id: id, path: filepath.Join(s.dir, name)})
 	}
 	if len(valid) == 0 {
-		return []vibekit.ChatHeader{}, true
+		return []marotte.ChatHeader{}, true
 	}
 
 	// No per-chat lock: reads are read-only and writes land by temp+rename, so a
 	// reader always sees a complete file.
 	headers, complete := readHeadersParallel(ctx, valid, s.fileCap)
-	slices.SortFunc(headers, func(a, b vibekit.ChatHeader) int {
+	slices.SortFunc(headers, func(a, b marotte.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	if !complete {

@@ -23,7 +23,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/marotte/internal/buffer"
 )
 
 // steerAckPrefix is the shortest span that commits a `[` to being a marker.
@@ -39,7 +39,7 @@ const maxSteerCarry = 8 << 10
 
 // steerAckRe matches a COMPLETE marker. Deliberately the same shape as KAS's
 // STEERING_RESPONSE_PATTERN — `(?s)` for its `s` flag and a lazy body that ends
-// at the first `]` — because what vibekit hides must be exactly what KAS treats
+// at the first `]` — because what marotte hides must be exactly what KAS treats
 // as an acknowledgement. A looser pattern here would eat real text; a stricter
 // one would leave machinery on screen.
 //

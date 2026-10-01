@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/textsearch"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/textsearch"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Transcript search: the in-chat scan.
@@ -110,7 +110,7 @@ type Hit struct {
 	Excerpt       string `json:"excerpt"`
 	// Role of the matched message, so a result list can say where a hit came
 	// from without a second lookup.
-	Role vibekit.Role `json:"role"`
+	Role marotte.Role `json:"role"`
 	// SegmentKind names the span the hit landed in: content | reasoning |
 	// tool_title | tool_disclosed | tool_diff | tool_denial | tool_input |
 	// tool_output | plan | attachment | turn_failure, or message for a
@@ -218,7 +218,7 @@ func (sc *hitScan) add(mk func() Hit) {
 // rail draws. caseSensitive governs the FREE TEXT only; both halves of the
 // in-chat search have to agree on it, so the flag travels on the request rather
 // than being a server default either side could get wrong.
-func Search(msgs []vibekit.Message, raw string, caseSensitive bool) SearchResult {
+func Search(msgs []marotte.Message, raw string, caseSensitive bool) SearchResult {
 	res, _ := searchChat(msgs, raw, caseSensitive)
 	return res
 }
@@ -228,7 +228,7 @@ func Search(msgs []vibekit.Message, raw string, caseSensitive bool) SearchResult
 // taking both from one walk is what keeps the numerator and the denominator
 // over the same spans: a message a filter excludes is in neither, a reasoning
 // or tool span the scan searches is in both.
-func searchChat(msgs []vibekit.Message, raw string, caseSensitive bool) (res SearchResult, chars int) {
+func searchChat(msgs []marotte.Message, raw string, caseSensitive bool) (res SearchResult, chars int) {
 	q := parseSearchQuery(raw, caseSensitive)
 	if q.text == "" && q.file == "" && q.tool == "" && q.role == "" && q.turn < 0 {
 		return SearchResult{Matches: []Hit{}}, 0
@@ -252,7 +252,7 @@ func searchChat(msgs []vibekit.Message, raw string, caseSensitive bool) (res Sea
 
 // turnIndexByMessage maps every message id to its turn's absolute ordinal, via
 // the shared projection so numbering cannot disagree with the rail's.
-func turnIndexByMessage(msgs []vibekit.Message) (turns map[string]int, openers map[string]string) {
+func turnIndexByMessage(msgs []marotte.Message) (turns map[string]int, openers map[string]string) {
 	turns = make(map[string]int, len(msgs))
 	openers = make(map[string]string, len(msgs))
 	summaries := projectTurnSummaries(msgs, false)
@@ -274,7 +274,7 @@ func turnIndexByMessage(msgs []vibekit.Message) (turns map[string]int, openers m
 }
 
 // messageMatchesFilters applies the scoped filters, all of which must hold.
-func messageMatchesFilters(m *vibekit.Message, q *searchQuery, turn int) bool {
+func messageMatchesFilters(m *marotte.Message, q *searchQuery, turn int) bool {
 	if q.turn >= 0 && turn != q.turn {
 		return false
 	}
@@ -293,7 +293,7 @@ func messageMatchesFilters(m *vibekit.Message, q *searchQuery, turn int) bool {
 // messageTouchesFile matches a substring against changed-file paths AND
 // tool locations — a turn that only READ a file never appears in
 // changed_files.
-func messageTouchesFile(m *vibekit.Message, want string) bool {
+func messageTouchesFile(m *marotte.Message, want string) bool {
 	for path := range m.ChangedFiles {
 		if strings.Contains(strings.ToLower(path), want) {
 			return true
@@ -309,7 +309,7 @@ func messageTouchesFile(m *vibekit.Message, want string) bool {
 	return false
 }
 
-func messageUsesTool(m *vibekit.Message, want string) bool {
+func messageUsesTool(m *marotte.Message, want string) bool {
 	for i := range m.ToolCalls {
 		tc := &m.ToolCalls[i]
 		if strings.Contains(strings.ToLower(tc.Title), want) ||
@@ -326,7 +326,7 @@ func messageUsesTool(m *vibekit.Message, want string) bool {
 //
 // A filter-only query still yields one hit per matching message, so a
 // scoped search without free text lists turns rather than finding nothing.
-func appendMessageHits(sc *hitScan, m *vibekit.Message, q *searchQuery, turn int, opener string) {
+func appendMessageHits(sc *hitScan, m *marotte.Message, q *searchQuery, turn int, opener string) {
 	if q.text == "" {
 		sc.add(func() Hit {
 			return Hit{
@@ -347,7 +347,7 @@ func appendMessageHits(sc *hitScan, m *vibekit.Message, q *searchQuery, turn int
 }
 
 // appendSegmentHits counts every occurrence of the query text inside one segment.
-func appendSegmentHits(sc *hitScan, m *vibekit.Message, q *searchQuery, turn int, opener string, seg *segment) {
+func appendSegmentHits(sc *hitScan, m *marotte.Message, q *searchQuery, turn int, opener string, seg *segment) {
 	var runes []rune
 	for hit := range q.needle.Occurrences(seg.text) {
 		if runes == nil {
@@ -388,7 +388,7 @@ type segment struct {
 // before blocks existed fall back to one content segment over the legacy
 // concatenation plus each tool call's own spans (toolSegments). Both shapes end
 // with the same message-level tail (messageTailSegments).
-func messageSegments(m *vibekit.Message) []segment {
+func messageSegments(m *marotte.Message) []segment {
 	if len(m.Blocks) == 0 {
 		return legacySegments(m)
 	}
@@ -396,11 +396,11 @@ func messageSegments(m *vibekit.Message) []segment {
 	for i := range m.Blocks {
 		b := &m.Blocks[i]
 		switch b.Type {
-		case vibekit.BlockText:
+		case marotte.BlockText:
 			segs = append(segs, segment{kind: SegmentContent, text: b.Text, subtaskID: b.AgentSubtaskID, blockIndex: new(i)})
-		case vibekit.BlockThinking:
+		case marotte.BlockThinking:
 			segs = append(segs, segment{kind: SegmentReasoning, text: b.Thinking, subtaskID: b.AgentSubtaskID, blockIndex: new(i)})
-		case vibekit.BlockToolUse:
+		case marotte.BlockToolUse:
 			tc := toolCallByID(m, b.ToolCallID)
 			if tc == nil {
 				continue
@@ -415,7 +415,7 @@ func messageSegments(m *vibekit.Message) []segment {
 // prose and thinking trace as ONE content segment over their concatenation,
 // plus each tool call's own spans (toolSegments) and the shared message-level
 // tail, none of it block-addressed.
-func legacySegments(m *vibekit.Message) []segment {
+func legacySegments(m *marotte.Message) []segment {
 	text := m.Content
 	if m.Reasoning != "" {
 		text += "\n" + m.Reasoning
@@ -451,7 +451,7 @@ func legacySegments(m *vibekit.Message) []segment {
 // over it — so of the 240 corpus messages carrying a reason, ~17 are silenced
 // outright and ~27 more sit on turns where an event can win. Both land on the
 // honest notice: the hit selects the TURN CARD and says "not in rendered text".
-func messageTailSegments(m *vibekit.Message) []segment {
+func messageTailSegments(m *marotte.Message) []segment {
 	segs := make([]segment, 0, len(m.Attachments)+len(m.Plan)+1)
 	for i := range m.Attachments {
 		segs = append(segs, segment{kind: SegmentAttachment, text: m.Attachments[i].Name})
@@ -496,7 +496,7 @@ func messageTailSegments(m *vibekit.Message) []segment {
 // Path is deliberately not searched: it is already reachable through the `file:`
 // filter (messageTouchesFile) and through the title, and searching it would give
 // every diff a hit for a query naming its directory.
-func toolSegments(tc *vibekit.ToolCall, subtaskID string, blockIndex *int) []segment {
+func toolSegments(tc *marotte.ToolCall, subtaskID string, blockIndex *int) []segment {
 	segs := []segment{{kind: SegmentToolTitle, text: tc.Title, subtaskID: subtaskID, blockIndex: blockIndex}}
 	if tc.Disclosed != nil && tc.Disclosed.DisplayName != "" {
 		segs = append(segs, segment{kind: SegmentToolDisclosed, text: tc.Disclosed.DisplayName, subtaskID: subtaskID, blockIndex: blockIndex})
@@ -656,7 +656,7 @@ func inputLeafInDiff(leaf, diffText string) bool {
 }
 
 // toolCallByID resolves a tool_use block's reference into Message.ToolCalls.
-func toolCallByID(m *vibekit.Message, id string) *vibekit.ToolCall {
+func toolCallByID(m *marotte.Message, id string) *marotte.ToolCall {
 	for i := range m.ToolCalls {
 		if m.ToolCalls[i].ID == id {
 			return &m.ToolCalls[i]
@@ -670,7 +670,7 @@ func toolCallByID(m *vibekit.Message, id string) *vibekit.ToolCall {
 // messageSegments, which covers spans this omits — and survives only as the
 // excerpt source for a filter-only hit, where the excerpt has to open with
 // something a reader recognises rather than be exhaustive.
-func searchableText(m *vibekit.Message) string {
+func searchableText(m *marotte.Message) string {
 	var b strings.Builder
 	b.Grow(len(m.Content) + len(m.Reasoning) + 64)
 	b.WriteString(m.Content)

@@ -6,8 +6,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // pendingPermsTracker tracks unresolved permission_needed events, keyed by CHAT
@@ -16,7 +16,7 @@ import (
 // open until answered or cancelled, so an expiry would invent a deadline nothing
 // upstream has. Growth is bounded by the Take and Clear paths instead.
 type pendingPermsTracker struct {
-	perms map[permKey]vibekit.ServerEvent
+	perms map[permKey]marotte.ServerEvent
 	// versions holds the shared `pending` counter every mutation bumps under mu;
 	// see mintPending.
 	versions *subject.Versions
@@ -29,17 +29,17 @@ type pendingPermsTracker struct {
 // request 7 is ordinary. No generation is needed: every path that replaces a
 // bridge first drops that chat's entries.
 type permKey struct {
-	chat vibekit.ChatID
+	chat marotte.ChatID
 	id   int64
 }
 
 func newPendingPermsTracker() *pendingPermsTracker {
-	return &pendingPermsTracker{perms: make(map[permKey]vibekit.ServerEvent)}
+	return &pendingPermsTracker{perms: make(map[permKey]marotte.ServerEvent)}
 }
 
 // Add records a permission_needed event under its own chat's id, taken off the
 // event because that is what the answer and ClearForChat will both carry.
-func (t *pendingPermsTracker) Add(id int64, evt vibekit.ServerEvent) {
+func (t *pendingPermsTracker) Add(id int64, evt marotte.ServerEvent) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.perms[permKey{chat: evt.ChatID, id: id}] = evt
@@ -52,13 +52,13 @@ func (t *pendingPermsTracker) Add(id int64, evt vibekit.ServerEvent) {
 // whose window let two surfaces each answer — two tabs, or a human racing the
 // unattended floor. Presence is the only test (see the type comment for the
 // missing age check); the returned event names WHICH kind of decision settled.
-func (t *pendingPermsTracker) TakeIfPresent(chatID vibekit.ChatID, id int64) (vibekit.ServerEvent, bool) {
+func (t *pendingPermsTracker) TakeIfPresent(chatID marotte.ChatID, id int64) (marotte.ServerEvent, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	k := permKey{chat: chatID, id: id}
 	evt, ok := t.perms[k]
 	if !ok {
-		return vibekit.ServerEvent{}, false
+		return marotte.ServerEvent{}, false
 	}
 	delete(t.perms, k)
 	mintPending(&t.versions)
@@ -67,16 +67,16 @@ func (t *pendingPermsTracker) TakeIfPresent(chatID vibekit.ChatID, id int64) (vi
 
 // TakePermissionOption validates one advertised option and claims the request
 // in the same critical section. An off-list answer leaves the request pending.
-func (t *pendingPermsTracker) TakePermissionOption(chatID vibekit.ChatID, id int64, optionID string) (evt vibekit.ServerEvent, pending, offered bool) {
+func (t *pendingPermsTracker) TakePermissionOption(chatID marotte.ChatID, id int64, optionID string) (evt marotte.ServerEvent, pending, offered bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	k := permKey{chat: chatID, id: id}
 	evt, pending = t.perms[k]
 	if !pending {
-		return vibekit.ServerEvent{}, false, false
+		return marotte.ServerEvent{}, false, false
 	}
-	payload, ok := evt.Payload.(vibekit.PermissionNeededPayload)
-	if !ok || !slices.ContainsFunc(payload.Options, func(option vibekit.PermissionOption) bool {
+	payload, ok := evt.Payload.(marotte.PermissionNeededPayload)
+	if !ok || !slices.ContainsFunc(payload.Options, func(option marotte.PermissionOption) bool {
 		return option.OptionID == optionID
 	}) {
 		return evt, true, false
@@ -87,7 +87,7 @@ func (t *pendingPermsTracker) TakePermissionOption(chatID vibekit.ChatID, id int
 }
 
 // ClearForChat drops every unresolved permission_needed entry owned by chatID.
-func (t *pendingPermsTracker) ClearForChat(chatID vibekit.ChatID) {
+func (t *pendingPermsTracker) ClearForChat(chatID marotte.ChatID) {
 	if chatID == "" {
 		return
 	}
@@ -119,7 +119,7 @@ func (t *pendingPermsTracker) ClearForRun(workflowID string) {
 	defer t.mu.Unlock()
 	removed := false
 	for k, evt := range t.perms {
-		if vibekit.DecisionRunID(evt.Payload) == workflowID {
+		if marotte.DecisionRunID(evt.Payload) == workflowID {
 			delete(t.perms, k)
 			removed = true
 		}
@@ -135,7 +135,7 @@ func (t *pendingPermsTracker) ClearForRun(workflowID string) {
 // CONTRACT, ascending by request id — the order the agent asked, so two tabs
 // reconnecting stack the same queue. The chat is the TIE-BREAK and not a grouping,
 // because ids are per bridge and two chats can hold the same one.
-func (t *pendingPermsTracker) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
+func (t *pendingPermsTracker) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
 	t.mu.Lock()
 	keys := make([]permKey, 0, len(t.perms))
 	for k := range t.perms {
@@ -147,7 +147,7 @@ func (t *pendingPermsTracker) List(chatFilter vibekit.ChatID) []vibekit.ServerEv
 	slices.SortFunc(keys, func(a, b permKey) int {
 		return cmp.Or(cmp.Compare(a.id, b.id), cmp.Compare(a.chat, b.chat))
 	})
-	result := make([]vibekit.ServerEvent, 0, len(keys))
+	result := make([]marotte.ServerEvent, 0, len(keys))
 	for _, k := range keys {
 		result = append(result, t.perms[k])
 	}
@@ -156,7 +156,7 @@ func (t *pendingPermsTracker) List(chatFilter vibekit.ChatID) []vibekit.ServerEv
 }
 
 // ClearPendingPermsForChat drops every unresolved decision owned by chatID.
-func (b *bus) ClearPendingPermsForChat(chatID vibekit.ChatID) {
+func (b *bus) ClearPendingPermsForChat(chatID marotte.ChatID) {
 	b.pendingPerms.ClearForChat(chatID)
 }
 
@@ -172,7 +172,7 @@ func (b *bus) ClearPendingPermsForRun(workflowID string) {
 // shows. It takes the CHAT as well as the id, because an id is unique only within
 // one bridge (see permKey). Order is the contract: TAKE first, then answer
 // kiro-cli — a caller that loses the race must not send its answer at all.
-func (b *bus) TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool {
+func (b *bus) TakePendingPerm(chatID marotte.ChatID, requestID int64, settledBy marotte.SettledBy) bool {
 	evt, ok := b.pendingPerms.TakeIfPresent(chatID, requestID)
 	if !ok {
 		return false
@@ -182,7 +182,7 @@ func (b *bus) TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy 
 }
 
 // TakePendingPermissionOption validates and claims a permission response.
-func (b *bus) TakePendingPermissionOption(chatID vibekit.ChatID, requestID int64, optionID string, settledBy vibekit.SettledBy) (pending, offered bool) {
+func (b *bus) TakePendingPermissionOption(chatID marotte.ChatID, requestID int64, optionID string, settledBy marotte.SettledBy) (pending, offered bool) {
 	evt, pending, offered := b.pendingPerms.TakePermissionOption(chatID, requestID, optionID)
 	if offered {
 		b.announceDecisionSettled(evt, requestID, settledBy)
@@ -191,8 +191,8 @@ func (b *bus) TakePendingPermissionOption(chatID vibekit.ChatID, requestID int64
 }
 
 // announceDecisionSettled retires a claimed decision on every other surface.
-func (b *bus) announceDecisionSettled(evt vibekit.ServerEvent, requestID int64, settledBy vibekit.SettledBy) {
-	kind, known := vibekit.DecisionKindForEvent(evt.Type)
+func (b *bus) announceDecisionSettled(evt marotte.ServerEvent, requestID int64, settledBy marotte.SettledBy) {
+	kind, known := marotte.DecisionKindForEvent(evt.Type)
 	if !known {
 		// Only the three *_needed events are tracked, so this is tracker misuse, not
 		// the wire. The claim stands; only an unactionable announcement is skipped.
@@ -200,10 +200,10 @@ func (b *bus) announceDecisionSettled(evt vibekit.ServerEvent, requestID int64, 
 			"type", evt.Type, "request_id", requestID)
 		return
 	}
-	b.emit(vibekit.NewEvent(vibekit.EventDecisionSettled, evt.ChatID, vibekit.DecisionSettledPayload{
+	b.emit(marotte.NewEvent(marotte.EventDecisionSettled, evt.ChatID, marotte.DecisionSettledPayload{
 		RequestID: requestID,
 		Kind:      kind,
 		SettledBy: settledBy,
 	}))
-	b.retractPush(vibekit.ChatSubject(evt.ChatID))
+	b.retractPush(marotte.ChatSubject(evt.ChatID))
 }

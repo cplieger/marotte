@@ -25,7 +25,7 @@ type sensitivePath struct {
 
 // Specific paths or path prefixes blocked from the file-editor surface:
 // system-level agent config, auto-generated docs, internal state files,
-// and the credential stores backing vibekit's own auth, git, and MCP
+// and the credential stores backing marotte's own auth, git, and MCP
 // integrations.
 //
 // /config/kiro/ is the LEGACY KIRO_HOME (pre-relocation; the v3 engine
@@ -39,13 +39,13 @@ var sensitivePrefixes = []sensitivePath{
 	// git SSH keys, forge PAT, ~/.gitconfig, kiro-cli's ~/.kiro state, and
 	// its ~/.local install tree. The whole tree is blocked.
 	{Path: "/config/home/", IsDir: true},
-	// Internal vibekit runtime state.
+	// Internal marotte runtime state.
 	{Path: "/config/chats/", IsDir: true},
 	{Path: "/config/push-subs.json", IsDir: false},
 	{Path: "/config/vapid-keys.json", IsDir: false},
 	// MCP server config — env / header / OAuth secrets stored cleartext.
 	{Path: "/config/mcp.json", IsDir: false},
-	// The OAuth credentials KAS asks vibekit to hold for it (opaque blobs,
+	// The OAuth credentials KAS asks marotte to hold for it (opaque blobs,
 	// refresh tokens, PKCE verifiers whose 0600 is the whole protection).
 	{Path: "/config/mcp-secrets.json", IsDir: false},
 }

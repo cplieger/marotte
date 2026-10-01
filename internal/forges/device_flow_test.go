@@ -199,7 +199,7 @@ type deviceCodeReply struct {
 }
 
 // scopeRecorder records the scope parameter of every device-code
-// request and answers from a queue, so a test can assert what vibekit
+// request and answers from a queue, so a test can assert what marotte
 // ASKED GitHub for rather than what it did with the answer.
 type scopeRecorder struct {
 	replies []deviceCodeReply

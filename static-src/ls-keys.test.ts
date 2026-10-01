@@ -55,12 +55,12 @@ describe("clearDeviceKeys", () => {
   it("leaves a key it does not own alone", () => {
     // The theme-init snippet inlined in index.html reads LS_UI_STATE_KEY and
     // nothing else, but this origin is shared with whatever else is stored here.
-    localStorage.setItem("vibekit.something-else", "keep me");
+    localStorage.setItem("marotte.something-else", "keep me");
     localStorage.setItem(LS_UI_STATE_KEY, "{}");
 
     clearDeviceKeys();
 
-    expect(localStorage.getItem("vibekit.something-else")).toBe("keep me");
+    expect(localStorage.getItem("marotte.something-else")).toBe("keep me");
   });
 
   it("does not throw where storage is denied", () => {

@@ -1,4 +1,4 @@
-// vibekit never parses or writes another program's config file; the one
+// marotte never parses or writes another program's config file; the one
 // exception is glab's read-only discovery parser (see glab_config.go).
 
 package forges

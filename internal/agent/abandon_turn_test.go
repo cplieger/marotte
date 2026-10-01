@@ -5,15 +5,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // dividerIn returns the last interrupted-event message in a chat, or nil.
 // A helper that cannot fail, so it takes no *testing.T and marks no t.Helper().
-func dividerIn(chat *vibekit.Chat) *vibekit.Message {
-	var last *vibekit.Message
+func dividerIn(chat *marotte.Chat) *marotte.Message {
+	var last *marotte.Message
 	for i := range chat.Messages {
-		if m := &chat.Messages[i]; m.Role == vibekit.RoleEvent && m.EventKind == vibekit.EventInterrupted {
+		if m := &chat.Messages[i]; m.Role == marotte.RoleEvent && m.EventKind == marotte.EventInterrupted {
 			last = m
 		}
 	}
@@ -44,7 +44,7 @@ func TestAbandonInFlightTurn_ReleasesTheBuffer(t *testing.T) {
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, "the pipe died")
 
 	if h.liveTurnBuffer("c1") != nil {
 		t.Error("the assistant buffer survived AbandonInFlightTurn; the next turn " +
@@ -74,7 +74,7 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	buf.Content.WriteString(partial)
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, "the pipe died")
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -83,7 +83,7 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 
 	var sawPartial bool
 	for i := range chat.Messages {
-		if m := &chat.Messages[i]; m.Role == vibekit.RoleAssistant && m.Content == partial {
+		if m := &chat.Messages[i]; m.Role == marotte.RoleAssistant && m.Content == partial {
 			sawPartial = true
 		}
 	}
@@ -126,8 +126,8 @@ func TestAbandonInFlightTurn_MarksATurnThatNeverStarted(t *testing.T) {
 	// longer opens one itself — every fold opens one and every prompt pre-opens its
 	// own, so a terminal step never finds an idle chat with content to account for.
 	const reason = "Too many requests, please wait before trying again."
-	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
-	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, reason)
+	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, reason)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -144,7 +144,7 @@ func TestAbandonInFlightTurn_MarksATurnThatNeverStarted(t *testing.T) {
 	// No assistant message: there was nothing to persist, and an empty one would
 	// render as a blank reply bubble under the request.
 	for i := range chat.Messages {
-		if m := &chat.Messages[i]; m.Role == vibekit.RoleAssistant {
+		if m := &chat.Messages[i]; m.Role == marotte.RoleAssistant {
 			t.Errorf("an unstarted turn persisted an assistant message %q; the divider is "+
 				"the whole record", m.Content)
 		}
@@ -169,7 +169,7 @@ func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
 	buf.MessageID = newMessageID()
 	buf.Content.WriteString("half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, reason)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, reason)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -227,7 +227,7 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 		t.Error("InterruptTurn left the prompt context live")
 	}
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, callers)
+	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, callers)
 
 	chat, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {
@@ -261,19 +261,19 @@ func TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	ctx := t.Context()
 
-	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
 	before := h.bus.fanout.Position().Head
-	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, "Too many requests, please wait before trying again.")
+	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, "Too many requests, please wait before trying again.")
 
-	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, before), vibekit.EventTurnEnded)
+	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded)
 	if len(ends) != 1 {
 		t.Fatalf("turn_ended count = %d, want exactly 1: a turn that produced nothing "+
 			"still ended, and the client clears its own state on nothing else", len(ends))
 	}
-	if ends[0].Outcome != vibekit.TurnOutcomeInterrupted {
-		t.Errorf("outcome = %q, want %q", ends[0].Outcome, vibekit.TurnOutcomeInterrupted)
+	if ends[0].Outcome != marotte.TurnOutcomeInterrupted {
+		t.Errorf("outcome = %q, want %q", ends[0].Outcome, marotte.TurnOutcomeInterrupted)
 	}
-	if ends[0].StopReason != vibekit.StopReasonInterrupted {
-		t.Errorf("stop reason = %q, want %q", ends[0].StopReason, vibekit.StopReasonInterrupted)
+	if ends[0].StopReason != marotte.StopReasonInterrupted {
+		t.Errorf("stop reason = %q, want %q", ends[0].StopReason, marotte.StopReasonInterrupted)
 	}
 }

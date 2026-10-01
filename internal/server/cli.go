@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/procout"
 )
 
 const (
@@ -135,7 +135,7 @@ type settingMeta struct {
 // kiro-cli setting at all — measured on the stock 2.19.2 bundle, whose only
 // `chat.*` occurrences are `@see kiro-cli:` cross-references in the settings schema
 // rather than reads. So a write here reaches the TUI, the index builder and
-// vibekit's own suppression logic, and can never reach a running vibekit chat.
+// marotte's own suppression logic, and can never reach a running marotte chat.
 // Anything that must change a chat goes through `internal/kascap`'s table instead.
 var allowedKiroSettings = map[string]settingMeta{
 	"chat.enableKnowledge":   {Kind: settingBool},
@@ -143,7 +143,7 @@ var allowedKiroSettings = map[string]settingMeta{
 	"chat.enablePromptHints": {Kind: settingBool},
 	"hooks.showStatus":       {Kind: settingBool},
 	"telemetry.enabled":      {Kind: settingBool},
-	// cleanup.periodDays is deliberately NOT here: vibekit pins it to 0/never at
+	// cleanup.periodDays is deliberately NOT here: marotte pins it to 0/never at
 	// boot and owns chat retention itself, so exposing it would let the UI
 	// re-enable kiro-cli's competing purge.
 	"chat.disableInheritingDefaultResources": {Kind: settingBool},

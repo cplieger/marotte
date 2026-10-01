@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // turnCloser names the local step ending a turn rather than a stop reason: each resolves
@@ -26,7 +26,7 @@ const (
 	closerPromptFailure
 	// closerModelSwitch is a bridge restart DISCARDING the turn as moot.
 	closerModelSwitch
-	// closerLocalShell is a `!cmd` turn vibekit ran itself.
+	// closerLocalShell is a `!cmd` turn marotte ran itself.
 	closerLocalShell
 	// closerBridgeDeath is the bridge's frame stream ending with a turn still open.
 	closerBridgeDeath
@@ -40,7 +40,7 @@ const (
 )
 
 // deathInterruptCause is the divider's label when the bridge's frame stream ended
-// mid-turn. PUBLIC PROSE, and it claims only what vibekit observed: nothing on this
+// mid-turn. PUBLIC PROSE, and it claims only what marotte observed: nothing on this
 // path reads the process's exit status, so a closed pipe must not be reported as an
 // exit.
 const deathInterruptCause = "The connection to the agent closed before the turn finished."
@@ -63,10 +63,10 @@ const maxReasonBytes = 2048
 // nothing for a turn that ended cleanly. Sanitized and capped here rather than at
 // each call site, because every source but the local constants above is untrusted
 // upstream text.
-func reasonFor(o vibekit.TurnOutcome, supplied string) string {
+func reasonFor(o marotte.TurnOutcome, supplied string) string {
 	reason := supplied
 	if reason == "" {
-		reason = vibekit.DefaultFailureReason(o)
+		reason = marotte.DefaultFailureReason(o)
 	}
 	if reason == "" {
 		return ""
@@ -78,16 +78,16 @@ func reasonFor(o vibekit.TurnOutcome, supplied string) string {
 // turnClose is what a closer knows about the stop it is reporting.
 type turnClose struct {
 	// Resp is the session/prompt response, on closerPromptResponse only.
-	Resp *vibekit.RPCResponse
+	Resp *marotte.RPCResponse
 	// Reason is the user-facing account of the stop. Empty leaves the outcome's
 	// default sentence to speak, rather than inventing wording.
 	Reason string
 	// Stop is the stop the close concludes: the wire's own on closerWireEnd, the command
 	// layer's decision on closerPromptFailure, where the only legal values are
 	// `interrupted` and `cancelled` — a user cancel KAS never acked is not a fault.
-	Stop vibekit.StopReason
+	Stop marotte.StopReason
 	// Epoch names the ONE turn an epoch-scoped closer may end. Zero only with AnyOpen.
-	Epoch vibekit.TurnEpoch
+	Epoch marotte.TurnEpoch
 	// Seq is the read loop position the response arrived at, on closerPromptResponse
 	// only: the settle waits for the folder to reach it. Zero skips the wait.
 	Seq uint64
@@ -112,8 +112,8 @@ type turnStats struct {
 // finalizing, and every caller's zero-epoch branch broadcasts the terminal frame the turn
 // owes. WAITS out a finalize in progress, and a prompt-shaped source finding a turn the
 // ENGINE started CLOSES it first. A DEAD ctx starts NOTHING, and that check leads here
-// rather than sitting in `turns.open` — `vibekit.md` "A turn opened on a dead ctx" says why.
-func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+// rather than sitting in `turns.open` — `marotte.md` "A turn opened on a dead ctx" says why.
+func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) marotte.TurnEpoch {
 	if ctx.Err() != nil {
 		return 0
 	}
@@ -141,7 +141,7 @@ func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID vibekit.ChatI
 // it displaced. closerWireDisplaced rather than the model-switch closer, which DISCARDS
 // the partial: that is right for the user's own turn and wrong for someone else's,
 // whose content is already on every client's screen.
-func (bc *BridgeCoordinator) displaceEngineTurn(ctx context.Context, chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+func (bc *BridgeCoordinator) displaceEngineTurn(ctx context.Context, chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
 	displaced, ok := bc.turns.displaceableEngineTurn(chatID)
 	if !ok {
 		return 0, false
@@ -154,26 +154,26 @@ func (bc *BridgeCoordinator) displaceEngineTurn(ctx context.Context, chatID vibe
 // did, so a caller reads the turn's account rather than state the finalize has
 // consumed. It runs on the CALLER's goroutine: deciding inside the finalizer
 // deadlocks against the close it awaits.
-func (bc *BridgeCoordinator) AwaitTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) (vibekit.TurnResult, error) {
+func (bc *BridgeCoordinator) AwaitTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) (marotte.TurnResult, error) {
 	return bc.turns.await(ctx, chatID, epoch)
 }
 
 // ReleaseTurn gives up the completion handle StartTurn issued. The finalized
 // record is dropped when its last handle goes, which is what bounds retention.
-func (bc *BridgeCoordinator) ReleaseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+func (bc *BridgeCoordinator) ReleaseTurn(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
 	bc.turns.release(chatID, epoch)
 }
 
 // turnOpenFacts reads the two facts a turn records at open. The model comes from the
 // chat record rather than the bridge: a resumed session's own accessors answer the zero
 // value for whatever session/load omitted, which routinely includes the model.
-func (bc *BridgeCoordinator) turnOpenFacts(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) (string, CreditBaseline) {
+func (bc *BridgeCoordinator) turnOpenFacts(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) (string, CreditBaseline) {
 	ch, ok := bc.chatStore.Get(ctx, chatID)
 	if !ok {
 		return "", 0
 	}
 	credits := CreditBaseline(ch.Usage.Credits)
-	if source == vibekit.TurnSourceLocalShell {
+	if source == marotte.TurnSourceLocalShell {
 		return "", credits
 	}
 	return ch.Model, credits
@@ -182,7 +182,7 @@ func (bc *BridgeCoordinator) turnOpenFacts(ctx context.Context, chatID vibekit.C
 // finalizeTurn claims chatID's turn and runs one closer's effects. Claim first,
 // effects second, publish third, with the mutex held for none of the effects — so
 // finalizing an epoch twice broadcasts once: the second caller loses the claim.
-func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.ChatID, tc turnClose) {
+func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID marotte.ChatID, tc turnClose) {
 	// The wait comes BEFORE the claim: claiming first puts the chat in turnFinalizing,
 	// where a fold waits, so the settle would block on a folder it had blocked itself.
 	// False means the position is unreachable, so the bridge-death closer owns the turn.
@@ -197,7 +197,7 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.Ch
 	// its only timed escape. Below here the effects are durability, and both doors into
 	// this function are handed a shutdown-cancelled context by construction.
 	ctx = durable.Context(ctx)
-	var result vibekit.TurnResult
+	var result marotte.TurnResult
 	switch tc.Closer {
 	case closerPromptResponse:
 		result = bc.closeOnPromptResponse(ctx, t, tc.Resp)
@@ -206,14 +206,14 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.Ch
 	case closerPromptFailure:
 		result = bc.closeAsInterrupted(ctx, t, tc.Stop, tc.Reason)
 	case closerBridgeDeath:
-		result = bc.closeAsInterrupted(ctx, t, vibekit.StopReasonInterrupted, deathInterruptCause)
+		result = bc.closeAsInterrupted(ctx, t, marotte.StopReasonInterrupted, deathInterruptCause)
 	case closerWireDisplaced:
-		result = bc.closeWithOutcome(ctx, t, vibekit.StopReasonUnknown, closerWireDisplaced, displacedTurnCause)
+		result = bc.closeWithOutcome(ctx, t, marotte.StopReasonUnknown, closerWireDisplaced, displacedTurnCause)
 	case closerRunComplete:
-		// `unknown` is what vibekit knows: the RUN ended and the step's own turn end
+		// `unknown` is what marotte knows: the RUN ended and the step's own turn end
 		// never arrived. Deriving one from the run's status is wrong — a run can complete
 		// while a step failed, and one turn can hold several steps' content.
-		result = bc.closeWithOutcome(ctx, t, vibekit.StopReasonUnknown, closerRunComplete, stepRunEndedCause)
+		result = bc.closeWithOutcome(ctx, t, marotte.StopReasonUnknown, closerRunComplete, stepRunEndedCause)
 	case closerModelSwitch:
 		result = bc.closeAsDiscarded(ctx, t)
 	case closerLocalShell:
@@ -230,7 +230,7 @@ func (bc *BridgeCoordinator) finalizeTurn(ctx context.Context, chatID vibekit.Ch
 // turn, AnyOpen whatever is open. Neither OPENS a turn to close it, or a bracket for
 // an already-closed turn makes a phantom. A ZERO epoch closes nothing, so a prompt
 // failure cannot claim a turn StartTurn never opened.
-func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID vibekit.ChatID, tc turnClose) (*Turn, bool) {
+func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID marotte.ChatID, tc turnClose) (*Turn, bool) {
 	if tc.AnyOpen {
 		// NO AMEND ON THIS BRANCH: claimOpen cannot tell a loss from an absence (both
 		// answer (nil, false), and a bridge death on an idle chat is the common case),
@@ -262,7 +262,7 @@ func (bc *BridgeCoordinator) claimForCloser(ctx context.Context, chatID vibekit.
 // fires only when the loser supplied one and the winner's was DEFAULTED from the
 // outcome. Only the reason moves; outcome, stop reason, truncation and stats stay the
 // winner's.
-func (bc *BridgeCoordinator) amendLostReason(ctx context.Context, chatID vibekit.ChatID, tc turnClose) {
+func (bc *BridgeCoordinator) amendLostReason(ctx context.Context, chatID marotte.ChatID, tc turnClose) {
 	carrier, found := bc.turns.carrierOf(chatID, tc.Epoch)
 	// One decline message per cause, so each cause's frequency stays separately
 	// measurable; each arm carries only the attrs it actually read.
@@ -279,9 +279,9 @@ func (bc *BridgeCoordinator) amendLostReason(ctx context.Context, chatID vibekit
 			"winner_reason_supplied", carrier.ReasonSupplied)
 		return
 	}
-	var outcome vibekit.TurnOutcome
+	var outcome marotte.TurnOutcome
 	var ran, wrote bool
-	err := bc.chatStore.UpdateMessage(durable.Context(ctx), chatID, carrier.MessageID, func(m *vibekit.Message) {
+	err := bc.chatStore.UpdateMessage(durable.Context(ctx), chatID, carrier.MessageID, func(m *marotte.Message) {
 		// The closure reports that it RAN, which is what separates the two declines
 		// below: UpdateMessage returns nil both when the row is absent (what a rewind
 		// truncation leaves behind) and when the gate declines.
@@ -303,8 +303,8 @@ func (bc *BridgeCoordinator) amendLostReason(ctx context.Context, chatID vibekit
 		if m.TurnOutcome == "" {
 			return
 		}
-		switch vibekit.SeverityOf(m.TurnOutcome) {
-		case vibekit.TurnSeverityClean, vibekit.TurnSeverityRunning:
+		switch marotte.SeverityOf(m.TurnOutcome) {
+		case marotte.TurnSeverityClean, marotte.TurnSeverityRunning:
 			return
 		}
 		wrote = true
@@ -359,9 +359,9 @@ func settleBuffer(buf *buffer.Buffer) buffer.TurnContent {
 // persistTurnReply commits a finalized turn's assistant message where every client
 // already places it, keyed on the turn's SOURCE: an ENGINE-opened turn's content
 // interleaves with the reader's own prompts, so its reply goes AHEAD of the trailing
-// user rows already on disk, while a turn vibekit opened must not, because its own
+// user rows already on disk, while a turn marotte opened must not, because its own
 // trigger row IS that tail. Both routes broadcast message_appended, so only FILE order moves.
-func (bc *BridgeCoordinator) persistTurnReply(ctx context.Context, t *Turn, msg *vibekit.Message) {
+func (bc *BridgeCoordinator) persistTurnReply(ctx context.Context, t *Turn, msg *marotte.Message) {
 	if t.Source.EngineOpened() {
 		bc.persistDisplacedTurn(ctx, t.Chat, msg)
 		return
@@ -371,7 +371,7 @@ func (bc *BridgeCoordinator) persistTurnReply(ctx context.Context, t *Turn, msg 
 
 // closeOnPromptResponse finalizes a turn on the response that settled it: the LOCAL
 // fallback, so its outcome is never richer than end_turn or cancelled.
-func (bc *BridgeCoordinator) closeOnPromptResponse(ctx context.Context, t *Turn, resp *vibekit.RPCResponse) vibekit.TurnResult {
+func (bc *BridgeCoordinator) closeOnPromptResponse(ctx context.Context, t *Turn, resp *marotte.RPCResponse) marotte.TurnResult {
 	// No reason of its own: the response carries a stop reason and no prose.
 	return bc.closeWithOutcome(ctx, t, extractStopReason(resp), closerPromptResponse, "")
 }
@@ -379,7 +379,7 @@ func (bc *BridgeCoordinator) closeOnPromptResponse(ctx context.Context, t *Turn,
 // closeOnWireEnd finalizes a turn the ENGINE closed: same effects as the local
 // fallback, but the outcome came off the wire, so WireEnded is set. `details` is the
 // wire's own stopDetails, empty on every build that sends none.
-func (bc *BridgeCoordinator) closeOnWireEnd(ctx context.Context, t *Turn, stop vibekit.StopReason, details string) vibekit.TurnResult {
+func (bc *BridgeCoordinator) closeOnWireEnd(ctx context.Context, t *Turn, stop marotte.StopReason, details string) marotte.TurnResult {
 	return bc.closeWithOutcome(ctx, t, stop, closerWireEnd, details)
 }
 
@@ -389,10 +389,10 @@ func (bc *BridgeCoordinator) closeOnWireEnd(ctx context.Context, t *Turn, stop v
 func (bc *BridgeCoordinator) closeWithOutcome(
 	ctx context.Context,
 	t *Turn,
-	stopReason vibekit.StopReason,
+	stopReason marotte.StopReason,
 	closer turnCloser,
 	reason string,
-) vibekit.TurnResult {
+) marotte.TurnResult {
 	// NOT widened for closerRunComplete: that closer keys on a RUN-level frame rather
 	// than the turn's own bracket, and WireEnded's only reader is the empty-turn
 	// recovery's arming gate, which is about a prompt this closer never touches.
@@ -401,7 +401,7 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 	// a parameter here would recreate the bare flag this function's doc comment
 	// records as having been replaced by taking the closer.
 	superseded := closer == closerWireDisplaced
-	workflowStep := t.Source == vibekit.TurnSourceWorkflowStep
+	workflowStep := t.Source == marotte.TurnSourceWorkflowStep
 	chatID := t.Chat
 	c := bc.concludeStop(chatID, stopReason, reason)
 	statusDesc := bc.turns.statusDescription(t)
@@ -423,7 +423,7 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 	// carrier, and the end is still this chat's — see announcesEmptyEnd.
 	if persisted || announcesEmptyEnd(t) {
 		if _, stillExists := bc.chatStore.Get(ctx, chatID); stillExists {
-			bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID, vibekit.TurnEndedPayload{
+			bc.broadcast(ctx, marotte.NewEvent(marotte.EventTurnEnded, chatID, marotte.TurnEndedPayload{
 				Outcome:      c.Outcome,
 				StopReason:   stopReason,
 				Truncated:    c.Truncated,
@@ -438,26 +438,26 @@ func (bc *BridgeCoordinator) closeWithOutcome(
 		}
 	}
 	bc.pushTurnOutcome(ctx, chatID, c, statusDesc)
-	return vibekit.TurnResult{Stop: stopReason, EmittedNothing: snap.EmittedNothing, WireEnded: wireEnded}
+	return marotte.TurnResult{Stop: stopReason, EmittedNothing: snap.EmittedNothing, WireEnded: wireEnded}
 }
 
 // concludeStop grades the stop and settles what the close SAYS: the reason travels ON
 // the conclusion, so every carrier stamps it from one field. An unmapped stop logs ONCE
 // per distinct value, so an unseen wire is discoverable without a line per turn.
 func (bc *BridgeCoordinator) concludeStop(
-	chatID vibekit.ChatID,
-	stop vibekit.StopReason,
+	chatID marotte.ChatID,
+	stop marotte.StopReason,
 	reason string,
-) vibekit.TurnConclusion {
-	c := vibekit.ConcludeStopReason(stop)
+) marotte.TurnConclusion {
+	c := marotte.ConcludeStopReason(stop)
 	if !c.Known {
 		if _, seen := bc.unknownStops.LoadOrStore(stop, struct{}{}); !seen {
-			slog.Warn("a turn ended on a stop reason vibekit does not map",
+			slog.Warn("a turn ended on a stop reason marotte does not map",
 				"chat_id", chatID, "stop_reason", stop)
 		}
 	}
 	c.Reason = reasonFor(c.Outcome, reason)
-	if c.Reason == "" && vibekit.SeverityOf(c.Outcome) == vibekit.TurnSeverityBroken {
+	if c.Reason == "" && marotte.SeverityOf(c.Outcome) == marotte.TurnSeverityBroken {
 		// Unreachable while DefaultFailureReason covers every broken outcome; logged
 		// rather than asserted because being wrong shows a red turn card with no body.
 		slog.Warn("a broken turn closed with no reason to show",
@@ -484,9 +484,9 @@ func (bc *BridgeCoordinator) settleTurnContent(ctx context.Context, t *Turn) buf
 // snapshot that the turn_ended payload reports.
 type persistedTurn struct {
 	// ChangedFiles is the TURN's map, cumulative across segments, nil when it touched nothing.
-	ChangedFiles map[string]*vibekit.FileChange
+	ChangedFiles map[string]*marotte.FileChange
 	// Refusal is the model's own refusal metadata, which only a carried turn has.
-	Refusal *vibekit.RefusalInfo
+	Refusal *marotte.RefusalInfo
 	// MessageID names the assistant row this persisted, empty when it persisted none.
 	MessageID string
 	// Model is the model that ANSWERED, falling back to the record's value at open.
@@ -507,7 +507,7 @@ func (bc *BridgeCoordinator) persistTurnContent(
 	ctx context.Context,
 	t *Turn,
 	snap *buffer.TurnContent,
-	c vibekit.TurnConclusion,
+	c marotte.TurnConclusion,
 	stats turnStats,
 ) persistedTurn {
 	p := persistedTurn{Model: t.Model}
@@ -538,14 +538,14 @@ func (bc *BridgeCoordinator) recordTurnCarrier(
 	t *Turn,
 	p persistedTurn,
 	facts *turnOutcomeFacts,
-	stopReason vibekit.StopReason,
+	stopReason marotte.StopReason,
 	reasonSupplied bool,
 ) bool {
 	carrier := turnCarrier{MessageID: p.MessageID, ReasonSupplied: reasonSupplied}
 	persisted := p.Carried
 	switch {
 	case stopReason == stopReasonCancelled:
-		cancelID := bc.appendEventMessage(ctx, t.Chat, vibekit.EventCancelled, "", carrierFor(facts, p.Carried))
+		cancelID := bc.appendEventMessage(ctx, t.Chat, marotte.EventCancelled, "", carrierFor(facts, p.Carried))
 		persisted = true
 		if !p.Carried {
 			carrier.MessageID = cancelID
@@ -567,8 +567,8 @@ func (bc *BridgeCoordinator) recordTurnCarrier(
 // fans out on its own goroutine, and runPromptTurn defers a cancel of the caller's.
 func (bc *BridgeCoordinator) pushTurnOutcome(
 	ctx context.Context,
-	chatID vibekit.ChatID,
-	c vibekit.TurnConclusion,
+	chatID marotte.ChatID,
+	c marotte.TurnConclusion,
 	statusDesc string,
 ) {
 	// The chat's TURN ended; its WORK has not, if a run this chat launched is still on
@@ -591,12 +591,12 @@ func (bc *BridgeCoordinator) pushTurnOutcome(
 			"chat_id", chatID, "outcome", c.Outcome)
 		return
 	}
-	switch vibekit.SeverityOf(c.Outcome) {
-	case vibekit.TurnSeverityClean:
-		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), vibekit.PushKindAgentFinished, chatID)
-	case vibekit.TurnSeverityBroken:
-		bc.NotifyPush(ctx, vibekit.DefaultFailureReason(c.Outcome), vibekit.PushKindAgentFinished, chatID)
-	case vibekit.TurnSeverityStopped, vibekit.TurnSeverityRunning:
+	switch marotte.SeverityOf(c.Outcome) {
+	case marotte.TurnSeverityClean:
+		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), marotte.PushKindAgentFinished, chatID)
+	case marotte.TurnSeverityBroken:
+		bc.NotifyPush(ctx, marotte.DefaultFailureReason(c.Outcome), marotte.PushKindAgentFinished, chatID)
+	case marotte.TurnSeverityStopped, marotte.TurnSeverityRunning:
 		// A cancel is what the reader asked for and an unreadable end reports nothing,
 		// so neither earns an off-screen notification. `running` cannot reach a close.
 	}
@@ -609,11 +609,11 @@ func (bc *BridgeCoordinator) pushTurnOutcome(
 // projections.
 type turnOutcomeFacts struct {
 	// ChangedFiles is the turn's cumulative map, nil when an assistant message carries it.
-	ChangedFiles map[string]*vibekit.FileChange
+	ChangedFiles map[string]*marotte.FileChange
 	// Model is which model answered. A footer fact like the two below, because the
 	// client's turn ledger reads it off every row in the turn's body.
 	Model      string
-	Conclusion vibekit.TurnConclusion
+	Conclusion marotte.TurnConclusion
 	// Stats are the turn's credits and duration, left zero by a caller whose footer is
 	// deliberately empty — an interrupted turn has no spend to attribute.
 	Stats turnStats
@@ -636,7 +636,7 @@ func persistsEmptyCarrier(t *Turn, segmented bool) bool {
 // client instead: `connected.busy_chats` sets thinking at connect and GET /api/chats/{id}
 // reports turn_open, and only a settled turn_ended or a transport gap retracts either.
 func announcesEmptyEnd(t *Turn) bool {
-	return t.Source != vibekit.TurnSourceWorkflowStep
+	return t.Source != marotte.TurnSourceWorkflowStep
 }
 
 // persistOutcomeMarker records how a turn that emitted NOTHING ended: with no assistant
@@ -646,7 +646,7 @@ func announcesEmptyEnd(t *Turn) bool {
 // deriveTurnOutcome answer `unknown` instead of reading a turn a restart killed as
 // `completed`. Cost: one invisible EventTurnOutcome row per clean empty prompted turn.
 func (bc *BridgeCoordinator) persistOutcomeMarker(ctx context.Context, t *Turn, f *turnOutcomeFacts) string {
-	return bc.appendEventMessage(ctx, t.Chat, vibekit.EventTurnOutcome, "", f)
+	return bc.appendEventMessage(ctx, t.Chat, marotte.EventTurnOutcome, "", f)
 }
 
 // carrierFor answers which marker carries the turn's outcome: none when an
@@ -671,22 +671,22 @@ func carrierFor(f *turnOutcomeFacts, alreadyCarried bool) *turnOutcomeFacts {
 // cannot disagree. deriveTurnOutcome returns on the first stamped carrier, so this close's
 // own carrier is what grades the turn; the marker decides only for a legacy or un-stamped
 // one, where `interrupted` outranks `cancelled`.
-func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, stop vibekit.StopReason, reason string) vibekit.TurnResult {
+func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, stop marotte.StopReason, reason string) marotte.TurnResult {
 	chatID := t.Chat
 	cause := bc.turns.interruptCause(t)
 	if cause != "" {
 		reason = string(cause)
 	} else {
-		cause = vibekit.InterruptCause(reason)
+		cause = marotte.InterruptCause(reason)
 	}
-	c := vibekit.ConcludeStopReason(stop)
-	markerKind := vibekit.StopMarkerKind(c.Outcome)
+	c := marotte.ConcludeStopReason(stop)
+	markerKind := marotte.StopMarkerKind(c.Outcome)
 	// The same prose the divider carries, ALSO stamped on the carrier: a divider is
 	// skipped whenever the turn already carried its outcome, and only the client's
 	// collapsed face reads it, so a reason living only there is unreachable from an
 	// OPEN turn's body.
 	c.Reason = reasonFor(c.Outcome, reason)
-	result := vibekit.TurnResult{
+	result := marotte.TurnResult{
 		Stop:           stop,
 		Interrupt:      cause,
 		EmittedNothing: true,
@@ -746,15 +746,15 @@ func (bc *BridgeCoordinator) closeAsInterrupted(ctx context.Context, t *Turn, st
 // turn must not arrive as this chat's own turn ending.
 func (bc *BridgeCoordinator) announceConclusion(
 	ctx context.Context,
-	chatID vibekit.ChatID,
-	c vibekit.TurnConclusion,
-	source vibekit.TurnOpenSource,
+	chatID marotte.ChatID,
+	c marotte.TurnConclusion,
+	source marotte.TurnOpenSource,
 ) {
-	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID,
-		vibekit.TurnEndedPayload{
+	bc.broadcast(ctx, marotte.NewEvent(marotte.EventTurnEnded, chatID,
+		marotte.TurnEndedPayload{
 			Outcome:      c.Outcome,
 			StopReason:   c.RawStop,
-			WorkflowStep: source == vibekit.TurnSourceWorkflowStep,
+			WorkflowStep: source == marotte.TurnSourceWorkflowStep,
 		}))
 }
 
@@ -765,13 +765,13 @@ func (bc *BridgeCoordinator) announceConclusion(
 // `interrupted` grades BROKEN, which marks a switch the reader asked for as a fault. A
 // marker IS persisted so a reload reads the same verdict; EventCancelled renders as a
 // skip, so it adds no visible row.
-func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibekit.TurnResult {
-	c := vibekit.ConcludeStopReason(vibekit.StopReasonCancelled)
+func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) marotte.TurnResult {
+	c := marotte.ConcludeStopReason(marotte.StopReasonCancelled)
 	c.Reason = reasonFor(c.Outcome, "")
 	// TurnResult.Stop stays `interrupted`: its one reader is recoverEmptyTurn's
 	// `== StopReasonEndTurn` gate, false either way, so moving it would change a
 	// field no consumer reads.
-	result := vibekit.TurnResult{Stop: vibekit.StopReasonInterrupted, EmittedNothing: true}
+	result := marotte.TurnResult{Stop: marotte.StopReasonInterrupted, EmittedNothing: true}
 	// Nothing is persisted here, so only the BROADCAST matters: the discarded message stays
 	// in every client's store, so its cards need the terminal frame. Before settleBuffer,
 	// which clears the tool calls that broadcast reads.
@@ -787,7 +787,7 @@ func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibe
 		// idle and the restart is invisible.
 		return result
 	}
-	markerID := bc.appendEventMessage(ctx, t.Chat, vibekit.EventCancelled, "", &turnOutcomeFacts{
+	markerID := bc.appendEventMessage(ctx, t.Chat, marotte.EventCancelled, "", &turnOutcomeFacts{
 		ChangedFiles: snap.ChangedFiles,
 		Conclusion:   c,
 		Model:        cmp.Or(snap.Model, t.Model),
@@ -803,30 +803,30 @@ func (bc *BridgeCoordinator) closeAsDiscarded(ctx context.Context, t *Turn) vibe
 
 // closeOnLocalShell finalizes a `!cmd` turn. The output is already persisted by
 // the interception itself, so the end is all that is left to announce — and it
-// settles nothing, because vibekit runs the command before anything reaches the
+// settles nothing, because marotte runs the command before anything reaches the
 // agent, so the buffer holds no tool calls to abort.
-func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) vibekit.TurnResult {
-	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, t.Chat,
-		vibekit.TurnEndedPayload{
-			Outcome:      vibekit.TurnOutcomeCompleted,
-			StopReason:   vibekit.StopReasonEndTurn,
-			WorkflowStep: t.Source == vibekit.TurnSourceWorkflowStep,
+func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) marotte.TurnResult {
+	bc.broadcast(ctx, marotte.NewEvent(marotte.EventTurnEnded, t.Chat,
+		marotte.TurnEndedPayload{
+			Outcome:      marotte.TurnOutcomeCompleted,
+			StopReason:   marotte.StopReasonEndTurn,
+			WorkflowStep: t.Source == marotte.TurnSourceWorkflowStep,
 		}))
-	return vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn}
+	return marotte.TurnResult{Stop: marotte.StopReasonEndTurn}
 }
 
 // abortInFlightTools settles the buffer's running tool calls as aborted and tells every
 // client, so a reload does not render permanent spinners for work that stopped. The
 // message id comes back WITH the changed calls rather than being read off the
 // buffer: this runs on the settling goroutine, not the dispatch loop.
-func (bc *BridgeCoordinator) abortInFlightTools(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
+func (bc *BridgeCoordinator) abortInFlightTools(ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer) {
 	messageID, changed, version := buf.MarkInFlightToolsAborted()
 	for i := range changed {
 		// The status is the only thing that moved, so the frame carries the id and
 		// the status and nothing else — the buffer already holds the rest, and a
 		// reconnecting client refetches it through GET /api/chats/{id}.
-		frame := vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
-			vibekit.ToolCallUpdatePayload{
+		frame := marotte.NewEvent(marotte.EventToolCallUpdate, chatID,
+			marotte.ToolCallUpdatePayload{
 				MessageID:  messageID,
 				ToolCallID: changed[i].ID,
 				Status:     changed[i].Status,
@@ -834,7 +834,7 @@ func (bc *BridgeCoordinator) abortInFlightTools(ctx context.Context, chatID vibe
 		// One write, several frames: only the LAST carries the stamp, so a client
 		// that loses the stream mid-burst still reads changed on its next digest.
 		if i == len(changed)-1 {
-			frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+			frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
 		}
 		bc.broadcast(ctx, frame)
 	}
@@ -850,14 +850,14 @@ func (bc *BridgeCoordinator) abortInFlightTools(ctx context.Context, chatID vibe
 // the turn for both projections, so a second one opens a spurious segment.
 func (bc *BridgeCoordinator) appendEventMessage(
 	ctx context.Context,
-	chatID vibekit.ChatID,
-	kind vibekit.EventKind,
+	chatID marotte.ChatID,
+	kind marotte.EventKind,
 	content string,
 	carries *turnOutcomeFacts,
 ) string {
-	evt := vibekit.Message{
+	evt := marotte.Message{
 		ID:        newMessageID(),
-		Role:      vibekit.RoleEvent,
+		Role:      marotte.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: kind,
 		Content:   content,

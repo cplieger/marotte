@@ -15,7 +15,7 @@
 // unchecked. A misplacement has to fail loudly, and one explicit test is what
 // makes it do so.
 //
-// Four things here are vibekit's own rather than the reference's, and each is
+// Four things here are marotte's own rather than the reference's, and each is
 // pinned because a port gets them wrong silently:
 //
 //  1. THE SEVERITY ORDER puts `input` above `failed`, inverting
@@ -320,7 +320,7 @@ describe("the premise: attention.ts reads nothing from outside itself at load", 
 
 describe("the cue set", () => {
   it("holds exactly the four states that want the reader", () => {
-    // vibekit's dot vocabulary is idle | working | waiting | input | failed |
+    // marotte's dot vocabulary is idle | working | waiting | input | failed |
     // done | dirty. Only four of those are things to tell someone about: the
     // other three are ongoing, absent, or an editor's business.
     expect([...CUE_SEVERITY]).toEqual(["input", "failed", "waiting", "done"]);
@@ -698,7 +698,7 @@ describe("createAttention drives each sink only on a real change", () => {
 });
 
 describe("iconVariantHref follows the asset generator's naming", () => {
-  it("rewrites vibekit's one icon link", () => {
+  it("rewrites marotte's one icon link", () => {
     expect(iconVariantHref("/favicon.svg", "input")).toBe("/favicon-input.svg");
     expect(iconVariantHref("/favicon.svg", "alert")).toBe("/favicon-alert.svg");
   });
@@ -724,11 +724,11 @@ describe("iconVariantHref follows the asset generator's naming", () => {
 
 describe("the acknowledgement store's key", () => {
   it("lives beside the UI state rather than inside it", () => {
-    // Its own key on purpose: `vibekit.ui-state` is the window's ARRANGEMENT,
+    // Its own key on purpose: `marotte.ui-state` is the window's ARRANGEMENT,
     // written on structural change, and this is written whenever a cue is
     // observed. Different cadence, different subject.
-    expect(CUE_SEEN_KEY).toBe("vibekit.cue-seen");
-    expect(CUE_SEEN_KEY).not.toBe("vibekit.ui-state");
+    expect(CUE_SEEN_KEY).toBe("marotte.cue-seen");
+    expect(CUE_SEEN_KEY).not.toBe("marotte.ui-state");
   });
 });
 

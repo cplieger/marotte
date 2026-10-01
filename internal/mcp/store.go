@@ -9,7 +9,7 @@
 //
 // # Scope
 //
-// One scope only: user-global. Vibekit runs one container per user; per-
+// One scope only: user-global. Marotte runs one container per user; per-
 // chat or per-workspace MCP sets would add schema churn with no clear
 // benefit. This matches how kiro-cli's mcpServers parameter is scoped
 // to a session (not a chat), and we intentionally use the same set for
@@ -37,11 +37,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/filemode"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/filemode"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// Transport names the MCP transports vibekit accepts in mcp.json.
+// Transport names the MCP transports marotte accepts in mcp.json.
 // "stdio" is universal; "http" is the Streamable HTTP transport
 // (2025-03-26 MCP spec); "sse" is the legacy HTTP+SSE remote transport.
 //
@@ -87,8 +87,8 @@ func (t Transport) Valid() bool {
 	}
 }
 
-// SecretMask references the shared vibekit.SecretMask constant.
-const SecretMask = vibekit.SecretMask
+// SecretMask references the shared marotte.SecretMask constant.
+const SecretMask = marotte.SecretMask
 
 // Server is one user-configured MCP server. ID is a short stable
 // identifier used in URLs and events (generated at create time);
@@ -138,7 +138,7 @@ type Store struct {
 // cares. The ctx is stored for use in fire-and-forget persist paths so
 // writes are cancellable on shutdown.
 //
-// Two files, one source of truth. `<configDir>/mcp.json` is vibekit's
+// Two files, one source of truth. `<configDir>/mcp.json` is marotte's
 // own record; KAS's `~/.kiro/settings/mcp.json` is RENDERED from it and
 // is what the agent actually reads (see kasfile.go).
 func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {

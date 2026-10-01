@@ -14,9 +14,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // flakyTabs embeds the real store rather than reimplementing one, so every case
@@ -36,7 +36,7 @@ type flakyTabs struct {
 
 var errCloseFailed = errors.New("simulated tabs.json write failure")
 
-func (f *flakyTabs) Close(ctx context.Context, id string) ([]vibekit.TabSubject, uint64, error) {
+func (f *flakyTabs) Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error) {
 	f.mu.Lock()
 	hook, fail := f.beforeClose, f.failCloses > 0
 	if fail {
@@ -71,19 +71,19 @@ type recordingTeardown struct {
 	// sees it. That is the only way to assert the teardown ran BEFORE the tab close
 	// rather than after it, which is what proves it runs outside the operation lock.
 	onByChain      func()
-	deletedByChain map[vibekit.ChatID][]string
-	deleted        []vibekit.ChatID
-	closed         []vibekit.ChatID
+	deletedByChain map[marotte.ChatID][]string
+	deleted        []marotte.ChatID
+	closed         []marotte.ChatID
 	mu             sync.Mutex
 }
 
-func (r *recordingTeardown) DeleteChatState(_ context.Context, id vibekit.ChatID) {
+func (r *recordingTeardown) DeleteChatState(_ context.Context, id marotte.ChatID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.deleted = append(r.deleted, id)
 }
 
-func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id vibekit.ChatID, chain []string) {
+func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id marotte.ChatID, chain []string) {
 	// Outside r.mu: the hook reads the REAL tab store, which is a different lock, and
 	// holding this one across it would make the ordering test's own fixture the thing
 	// under suspicion when it deadlocks.
@@ -93,12 +93,12 @@ func (r *recordingTeardown) DeleteChatStateByChain(_ context.Context, id vibekit
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.deletedByChain == nil {
-		r.deletedByChain = make(map[vibekit.ChatID][]string)
+		r.deletedByChain = make(map[marotte.ChatID][]string)
 	}
 	r.deletedByChain[id] = slices.Clone(chain)
 }
 
-func (r *recordingTeardown) CloseChatState(_ context.Context, id vibekit.ChatID) {
+func (r *recordingTeardown) CloseChatState(_ context.Context, id marotte.ChatID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = append(r.closed, id)
@@ -108,7 +108,7 @@ func createChat(t *testing.T, mem *Membership, opID string) ChatOpened {
 	t.Helper()
 	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
 		OpID: opID,
-		Init: func(c *vibekit.Chat) { c.Name = vibekit.DefaultChatName },
+		Init: func(c *marotte.Chat) { c.Name = marotte.DefaultChatName },
 	})
 	if err != nil {
 		t.Fatalf("CreateChatAndOpen(op %q) = %v, want it to succeed", opID, err)
@@ -116,11 +116,11 @@ func createChat(t *testing.T, mem *Membership, opID string) ChatOpened {
 	return opened
 }
 
-func tabIDsFor(st *tabs.Store, chatID vibekit.ChatID) []string {
+func tabIDsFor(st *tabs.Store, chatID marotte.ChatID) []string {
 	open, _ := st.List()
 	var out []string
 	for _, tab := range open {
-		if tab.Kind == vibekit.TabKindChat && tab.Ref == string(chatID) {
+		if tab.Kind == marotte.TabKindChat && tab.Ref == string(chatID) {
 			out = append(out, tab.ID)
 		}
 	}
@@ -134,10 +134,10 @@ func TestCreateChatAndOpen_WritesTheChatThenItsTab(t *testing.T) {
 
 	opened := createChat(t, mem, "op-1")
 
-	if _, ok := store.Get(t.Context(), vibekit.ChatID(opened.Chat.ID)); !ok {
+	if _, ok := store.Get(t.Context(), marotte.ChatID(opened.Chat.ID)); !ok {
 		t.Fatalf("the created chat %q is not in the chat store", opened.Chat.ID)
 	}
-	if got := tabIDsFor(st, vibekit.ChatID(opened.Chat.ID)); len(got) != 1 || got[0] != opened.Subject.ID {
+	if got := tabIDsFor(st, marotte.ChatID(opened.Chat.ID)); len(got) != 1 || got[0] != opened.Subject.ID {
 		t.Errorf("tabs for the new chat = %v, want exactly the returned subject %q", got, opened.Subject.ID)
 	}
 	if opened.Version != 1 {
@@ -169,7 +169,7 @@ func TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite(t *testing.T) {
 
 	// First attempt: the chat lands, the tab does not.
 	_, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
-		OpID: "op-retry", Init: func(c *vibekit.Chat) { c.Name = "Half made" },
+		OpID: "op-retry", Init: func(c *marotte.Chat) { c.Name = "Half made" },
 	})
 	if err == nil {
 		t.Fatal("the first attempt reported success, so the fixture did not inject a failure")
@@ -184,13 +184,13 @@ func TestCreateChatAndOpen_ReplayFinishesAMissingTabWrite(t *testing.T) {
 
 	// The retry carries the same op id.
 	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
-		OpID: "op-retry", Init: func(c *vibekit.Chat) { c.Name = "Half made" },
+		OpID: "op-retry", Init: func(c *marotte.Chat) { c.Name = "Half made" },
 	})
 	if err != nil {
 		t.Fatalf("the retry = %v, want it to succeed", err)
 	}
 
-	if vibekit.ChatID(opened.Chat.ID) != ids[0] {
+	if marotte.ChatID(opened.Chat.ID) != ids[0] {
 		t.Errorf("the retry answered with chat %q, want the first attempt's %q", opened.Chat.ID, ids[0])
 	}
 	if !opened.Replay {
@@ -221,7 +221,7 @@ func TestCreateChatAndOpen_RefusesWhenTheRequiredChatIsGone(t *testing.T) {
 	_, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
 		ChatID:      "c-tangent",
 		RequireChat: "c-required",
-		Init:        func(c *vibekit.Chat) { c.Name = "Must not exist" },
+		Init:        func(c *marotte.Chat) { c.Name = "Must not exist" },
 	})
 
 	if statusOf(err) != http.StatusNotFound {
@@ -251,7 +251,7 @@ func TestCreateChatAndOpen_AtTheLimitLeavesTheChatStoreUnchanged(t *testing.T) {
 	framesBefore := len(bus.frames(t))
 
 	_, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
-		OpID: "op-full", Init: func(c *vibekit.Chat) { c.Name = "Never made" },
+		OpID: "op-full", Init: func(c *marotte.Chat) { c.Name = "Never made" },
 	})
 
 	if statusOf(err) != http.StatusConflict {
@@ -282,7 +282,7 @@ func TestOpenTab_AtTheLimitIsRefusedAndTheChatStoreIsUntouched(t *testing.T) {
 	fillTabs(t, mem, tabs.MaxOpenTabs)
 	before := storedChatIDs(t, store)
 
-	_, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-waiting"}, "op-open")
+	_, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-waiting"}, "op-open")
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 at the limit (%s)", statusOf(err), errText(err))
@@ -293,7 +293,7 @@ func TestOpenTab_AtTheLimitIsRefusedAndTheChatStoreIsUntouched(t *testing.T) {
 	if open, _ := st.List(); len(open) != tabs.MaxOpenTabs {
 		t.Errorf("the set holds %d tabs, want %d: nothing was opened", len(open), tabs.MaxOpenTabs)
 	}
-	if got := tabIDsFor(st, vibekit.ChatID(opened.Chat.ID)); len(got) != 1 {
+	if got := tabIDsFor(st, marotte.ChatID(opened.Chat.ID)); len(got) != 1 {
 		t.Errorf("the seeded chat's tab = %v, want it untouched", got)
 	}
 }
@@ -305,11 +305,11 @@ func TestOpenTab_IsIdempotentAndSaysSo(t *testing.T) {
 	mem, _, bus := newTabbedMembership(t, store)
 	seedRecord(t, store, "c-open")
 
-	first, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-open"}, "op-a")
+	first, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-open"}, "op-a")
 	if err != nil {
 		t.Fatalf("first open = %v", err)
 	}
-	second, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-open"}, "op-b")
+	second, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-open"}, "op-b")
 	if err != nil {
 		t.Fatalf("second open = %v", err)
 	}
@@ -337,7 +337,7 @@ func TestOpenTab_ForAChatThatIsGoneIsRefused(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _ := newTabbedMembership(t, store)
 
-	_, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-never"}, "op-a")
+	_, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-never"}, "op-a")
 
 	if statusOf(err) != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (%s)", statusOf(err), errText(err))
@@ -428,10 +428,10 @@ func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open tab store: %v", err)
 	}
-	var tornDown []vibekit.ChatID
+	var tornDown []marotte.ChatID
 	mem := NewMembership(&MembershipDeps{
 		Chats: store, Tabs: st, Bus: &tabBus{},
-		CloseChat: func(_ context.Context, id vibekit.ChatID) { tornDown = append(tornDown, id) },
+		CloseChat: func(_ context.Context, id marotte.ChatID) { tornDown = append(tornDown, id) },
 	})
 	opened := createChat(t, mem, "op-a")
 
@@ -439,10 +439,10 @@ func TestCloseTab_AChatTabRunsTheTeardownAndKeepsTheRecord(t *testing.T) {
 		t.Fatalf("CloseTab = %v", err)
 	}
 
-	if !slices.Equal(tornDown, []vibekit.ChatID{vibekit.ChatID(opened.Chat.ID)}) {
+	if !slices.Equal(tornDown, []marotte.ChatID{marotte.ChatID(opened.Chat.ID)}) {
 		t.Errorf("teardown ran for %v, want exactly the closed chat %q", tornDown, opened.Chat.ID)
 	}
-	if _, ok := store.Get(t.Context(), vibekit.ChatID(opened.Chat.ID)); !ok {
+	if _, ok := store.Get(t.Context(), marotte.ChatID(opened.Chat.ID)); !ok {
 		t.Error("closing the tab deleted the chat record; only delete_chat may do that")
 	}
 }
@@ -498,7 +498,7 @@ func TestDeleteChatAndCloseTabs_TheRecordLeads(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, _ := newFlakyMembership(t, store)
 	opened := createChat(t, mem, "op-a")
-	chatID := vibekit.ChatID(opened.Chat.ID)
+	chatID := marotte.ChatID(opened.Chat.ID)
 
 	var recordPresentAtClose bool
 	var openErr error
@@ -507,7 +507,7 @@ func TestDeleteChatAndCloseTabs_TheRecordLeads(t *testing.T) {
 		_, recordPresentAtClose = store.Get(context.Background(), chatID)
 		openDone.Go(func() {
 			_, openErr = mem.OpenTab(context.Background(),
-				vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: string(chatID)}, "op-racer")
+				marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(chatID)}, "op-racer")
 		})
 	})
 
@@ -534,7 +534,7 @@ func TestDeleteChatAndCloseTabs_RetriesAFailedCloseWithoutARestart(t *testing.T)
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, bus := newFlakyMembership(t, store)
 	opened := createChat(t, mem, "op-a")
-	chatID := vibekit.ChatID(opened.Chat.ID)
+	chatID := marotte.ChatID(opened.Chat.ID)
 	flaky.failCloseOnce()
 
 	if err := mem.DeleteChatAndCloseTabs(t.Context(), chatID, "op-del"); err != nil {
@@ -556,7 +556,7 @@ func TestDeleteChatAndCloseTabs_AnnouncesTheRemovalEvenWhenTheCloseKeepsFailing(
 	store := testsupport.NewInMemoryChatStore()
 	mem, flaky, bus := newFlakyMembership(t, store)
 	opened := createChat(t, mem, "op-a")
-	chatID := vibekit.ChatID(opened.Chat.ID)
+	chatID := marotte.ChatID(opened.Chat.ID)
 	_, versionBefore := flaky.List()
 	flaky.openFails(0)
 	flaky.setFailCloses(10)
@@ -585,7 +585,7 @@ func TestRetentionClose_ClosesWhatThePredicateRaced(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, bus, _ := newTornDownMembership(t, store)
 	opened := createChat(t, mem, "op-a")
-	chatID := vibekit.ChatID(opened.Chat.ID)
+	chatID := marotte.ChatID(opened.Chat.ID)
 	// The reaper removed the file directly, so the record is already gone when the
 	// hook fires.
 	if err := store.Delete(t.Context(), chatID); err != nil {
@@ -613,7 +613,7 @@ func TestRetentionClose_RunsTheDeleteGradeTeardown(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, _, _, td := newTornDownMembership(t, store)
 	opened := createChat(t, mem, "op-a")
-	chatID := vibekit.ChatID(opened.Chat.ID)
+	chatID := marotte.ChatID(opened.Chat.ID)
 	if err := store.Delete(t.Context(), chatID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestRetentionClose_TearsDownBeforeClosingTabs(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	mem, st, _, td := newTornDownMembership(t, store)
 	opened := createChat(t, mem, "op-a")
-	chatID := vibekit.ChatID(opened.Chat.ID)
+	chatID := marotte.ChatID(opened.Chat.ID)
 	if err := store.Delete(t.Context(), chatID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -679,11 +679,11 @@ func TestHasOpenTab_IsRetentionsSecondPredicate(t *testing.T) {
 
 	cases := []struct {
 		desc string
-		chat vibekit.ChatID
+		chat marotte.ChatID
 		want bool
 	}{
-		{desc: "a chat with a tab on the strip is in use", chat: vibekit.ChatID(opened.Chat.ID), want: true},
-		{desc: "a chat whose tab was closed is not", chat: vibekit.ChatID(closedChat.Chat.ID), want: false},
+		{desc: "a chat with a tab on the strip is in use", chat: marotte.ChatID(opened.Chat.ID), want: true},
+		{desc: "a chat whose tab was closed is not", chat: marotte.ChatID(closedChat.Chat.ID), want: false},
 		{desc: "a chat that was never open is not", chat: "c-stranger", want: false},
 	}
 	for _, tc := range cases {
@@ -854,7 +854,7 @@ func (f *flakyTabs) setBeforeClose(fn func()) {
 }
 
 // Open fails the first failOpens calls.
-func (f *flakyTabs) Open(ctx context.Context, spec vibekit.OpenTab) (vibekit.TabSubject, bool, uint64, error) {
+func (f *flakyTabs) Open(ctx context.Context, spec marotte.OpenTab) (marotte.TabSubject, bool, uint64, error) {
 	f.mu.Lock()
 	fail := f.failOpens > 0
 	if fail {
@@ -862,7 +862,7 @@ func (f *flakyTabs) Open(ctx context.Context, spec vibekit.OpenTab) (vibekit.Tab
 	}
 	f.mu.Unlock()
 	if fail {
-		return vibekit.TabSubject{}, false, 0, errCloseFailed
+		return marotte.TabSubject{}, false, 0, errCloseFailed
 	}
 	return f.Store.Open(ctx, spec)
 }
@@ -870,9 +870,9 @@ func (f *flakyTabs) Open(ctx context.Context, spec vibekit.OpenTab) (vibekit.Tab
 // seedRecord puts a chat in the store without a tab, which is what every chat the
 // user has closed looks like. Distinct from rewind_test.go's seedChat, which seeds a
 // transcript a rewind can revert to.
-func seedRecord(t *testing.T, store *testsupport.InMemoryChatStore, id vibekit.ChatID) {
+func seedRecord(t *testing.T, store *testsupport.InMemoryChatStore, id marotte.ChatID) {
 	t.Helper()
-	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = string(id)
 		return true
 	}); err != nil {
@@ -880,11 +880,11 @@ func seedRecord(t *testing.T, store *testsupport.InMemoryChatStore, id vibekit.C
 	}
 }
 
-func openChild(t *testing.T, mem *Membership, store *testsupport.InMemoryChatStore, id vibekit.ChatID, parentTab string) TabOpened {
+func openChild(t *testing.T, mem *Membership, store *testsupport.InMemoryChatStore, id marotte.ChatID, parentTab string) TabOpened {
 	t.Helper()
 	seedRecord(t, store, id)
 	opened, err := mem.OpenTab(t.Context(),
-		vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: string(id), Parent: parentTab}, "op-child")
+		marotte.OpenTab{Kind: marotte.TabKindChat, Ref: string(id), Parent: parentTab}, "op-child")
 	if err != nil {
 		t.Fatalf("open child %q: %v", id, err)
 	}
@@ -898,18 +898,18 @@ func fillTabs(t *testing.T, mem *Membership, n int) {
 	open, _ := mem.tabs.List()
 	for i := len(open); i < n; i++ {
 		if _, err := mem.OpenTab(t.Context(),
-			vibekit.OpenTab{Kind: vibekit.TabKindEditor, Ref: fmt.Sprintf("/workspace/f%d.go", i)}, ""); err != nil {
+			marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: fmt.Sprintf("/workspace/f%d.go", i)}, ""); err != nil {
 			t.Fatalf("fill tab %d: %v", i, err)
 		}
 	}
 }
 
 // storedChatIDs is every chat the store holds.
-func storedChatIDs(t *testing.T, store *testsupport.InMemoryChatStore) []vibekit.ChatID {
+func storedChatIDs(t *testing.T, store *testsupport.InMemoryChatStore) []marotte.ChatID {
 	t.Helper()
-	var out []vibekit.ChatID
+	var out []marotte.ChatID
 	for _, h := range store.List(t.Context()) {
-		out = append(out, vibekit.ChatID(h.ID))
+		out = append(out, marotte.ChatID(h.ID))
 	}
 	slices.Sort(out)
 	return out

@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // stepReplays holds the step replays in flight, keyed by ACP session id. Its zero
@@ -58,7 +58,7 @@ func (sr *stepReplays) open(sessionID string, proj *translate.Projection) bool {
 // ingest folds one frame into the open replay for sessionID, reporting whether a
 // replay consumed it. False is ordinary — no reader — so the forward goroutine
 // consults this before warning about a foreign frame.
-func (sr *stepReplays) ingest(sessionID string, kind vibekit.ACPUpdateKind, raw json.RawMessage) bool {
+func (sr *stepReplays) ingest(sessionID string, kind marotte.ACPUpdateKind, raw json.RawMessage) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	rep := sr.replays[sessionID]
@@ -129,7 +129,7 @@ func (sr *stepReplays) settleLocked(sessionID string, rep *stepReplay, gen uint6
 // take removes the replay for sessionID and returns what it projected. Runs
 // whether the barrier closed or the budget expired, so an abandoned replay leaks
 // neither an entry nor a waiter.
-func (sr *stepReplays) take(sessionID string) []vibekit.Message {
+func (sr *stepReplays) take(sessionID string) []marotte.Message {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	rep := sr.replays[sessionID]

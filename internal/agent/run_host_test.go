@@ -1,7 +1,7 @@
 package agent
 
 // Tests for the run host: the synthetic-id plumbing, the dispatch split, and the
-// teardown rules. What is pinned is vibekit's sequencing, not KAS's behaviour.
+// teardown rules. What is pinned is marotte's sequencing, not KAS's behaviour.
 
 import (
 	"encoding/json"
@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // bufferedEvent is one decoded SSE envelope. Payload stays RAW: the two cases that
@@ -45,12 +45,12 @@ func marshalPayload(t *testing.T, raw json.RawMessage) map[string]string {
 	return out
 }
 
-func runNotif(method string, params map[string]any) *vibekit.RPCResponse {
+func runNotif(method string, params map[string]any) *marotte.RPCResponse {
 	raw, err := json.Marshal(params)
 	if err != nil {
 		panic(err)
 	}
-	return &vibekit.RPCResponse{Method: method, Params: raw}
+	return &marotte.RPCResponse{Method: method, Params: raw}
 }
 
 // TestRunChatID_Namespace pins the synthetic id shape and that a real chat id
@@ -62,7 +62,7 @@ func TestRunChatID_Namespace(t *testing.T) {
 	if !isRunChat("run:wf_1") {
 		t.Error("run:wf_1 not recognised as a run chat")
 	}
-	for _, id := range []vibekit.ChatID{"c-abc123", "", "wf_1", "running-jokes"} {
+	for _, id := range []marotte.ChatID{"c-abc123", "", "wf_1", "running-jokes"} {
 		if isRunChat(id) {
 			t.Errorf("%q misread as a run chat", id)
 		}
@@ -82,7 +82,7 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(events), events)
 	}
-	if events[0].Type != string(vibekit.EventRunStarted) {
+	if events[0].Type != string(marotte.EventRunStarted) {
 		t.Errorf("type = %q, want run_started", events[0].Type)
 	}
 	if events[0].ChatID != "" {
@@ -99,7 +99,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	logs := captureLogs(t)
 	h, _, _ := newTestHub()
 
-	h.dispatch(t.Context(), "run:wf_1", runNotif(vibekit.MethodSessionUpdate, map[string]any{
+	h.dispatch(t.Context(), "run:wf_1", runNotif(marotte.MethodSessionUpdate, map[string]any{
 		"sessionId": "sess_step",
 		"update": map[string]any{
 			"sessionUpdate": "agent_message_chunk",
@@ -117,7 +117,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("a step chunk produced %d events, want 1: %+v", len(events), events)
 	}
-	if events[0].Type != string(vibekit.EventRunStep) {
+	if events[0].Type != string(marotte.EventRunStep) {
 		t.Errorf("type = %q, want run_step", events[0].Type)
 	}
 	// Workspace-global, like the lifecycle frames beside it: a parentless run is
@@ -143,7 +143,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 		t.Error("a step chunk opened an assistant buffer for the synthetic chat id")
 	}
 	// Still silent on the unhandled-notification line: that line is how a frame
-	// vibekit genuinely does not recognise gets noticed, and a step's content
+	// marotte genuinely does not recognise gets noticed, and a step's content
 	// arriving on it would drown that out on every run.
 	const unhandled = "run bridge: unhandled notification"
 	if out := logs.String(); strings.Contains(out, `"msg":"`+unhandled+`"`) {
@@ -157,7 +157,7 @@ func TestRunDispatch_StepContentIsProjected(t *testing.T) {
 func TestRunDispatch_UnmarkedStepContentIsDropped(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	h.dispatch(t.Context(), "run:wf_1", runNotif(vibekit.MethodSessionUpdate, map[string]any{
+	h.dispatch(t.Context(), "run:wf_1", runNotif(marotte.MethodSessionUpdate, map[string]any{
 		"sessionId": "sess_step",
 		"update": map[string]any{
 			"sessionUpdate": "agent_message_chunk",
@@ -177,7 +177,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 	h, _, _ := newTestHub()
 
 	id := int64(7)
-	msg := runNotif(vibekit.MethodRequestPermission, map[string]any{
+	msg := runNotif(marotte.MethodRequestPermission, map[string]any{
 		"sessionId": "sess_step",
 		"toolCall":  map[string]any{"toolCallId": "tc1", "title": "write file", "kind": "edit"},
 		"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
@@ -187,7 +187,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 
 	found := false
 	for _, e := range bufferedEvents(h) {
-		if e.Type == string(vibekit.EventPermissionNeeded) {
+		if e.Type == string(marotte.EventPermissionNeeded) {
 			found = true
 			if e.ChatID != "run:wf_1" {
 				t.Errorf("permission chat_id = %q, want run:wf_1", e.ChatID)
@@ -319,10 +319,10 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 // epochStub is a controllable turn-epoch reader. A chat absent from the map, or
 // holding zero, is idle.
 type epochStub struct {
-	cur map[vibekit.ChatID]vibekit.TurnEpoch
+	cur map[marotte.ChatID]marotte.TurnEpoch
 }
 
-func (e *epochStub) read(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
+func (e *epochStub) read(chatID marotte.ChatID) (marotte.TurnEpoch, bool) {
 	epoch := e.cur[chatID]
 	return epoch, epoch != 0
 }
@@ -332,9 +332,9 @@ func (e *epochStub) read(chatID vibekit.ChatID) (vibekit.TurnEpoch, bool) {
 // turn started alone. The boundary is a turn CLOSING and another OPENING, which the
 // epoch expresses and the prompt-advanced ordinal it replaced could not.
 func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
-	ep := &epochStub{cur: map[vibekit.ChatID]vibekit.TurnEpoch{"c1": 7, "c2": 3}}
+	ep := &epochStub{cur: map[marotte.ChatID]marotte.TurnEpoch{"c1": 7, "c2": 3}}
 	at := newAgentTerminals(nil, nil, nil, ep.read)
-	add := func(id string, chat vibekit.ChatID) {
+	add := func(id string, chat marotte.ChatID) {
 		epoch := at.turnEpochOf(chat)
 		at.mu.Lock()
 		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
@@ -658,11 +658,11 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 		name   string
 		method string
 		params map[string]any
-		want   vibekit.EventType
+		want   marotte.EventType
 	}{
 		{
 			name:   "a step asking the user to fill in a form",
-			method: vibekit.MethodElicitationCreate,
+			method: marotte.MethodElicitationCreate,
 			params: map[string]any{
 				"sessionId":  "sess_step",
 				"toolCallId": "tc1",
@@ -671,11 +671,11 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 					"mode":    "form",
 				},
 			},
-			want: vibekit.EventElicitationNeeded,
+			want: marotte.EventElicitationNeeded,
 		},
 		{
 			name:   "a step asking the user a question",
-			method: vibekit.MethodKiroUserInput,
+			method: marotte.MethodKiroUserInput,
 			params: map[string]any{
 				"sessionId":  "sess_step",
 				"toolCallId": "tc1",
@@ -684,7 +684,7 @@ func TestRunDispatch_TheOtherAskKindsReachTheRunTab(t *testing.T) {
 					{"optionId": "yes", "name": "Yes"},
 				},
 			},
-			want: vibekit.EventUserInputNeeded,
+			want: marotte.EventUserInputNeeded,
 		},
 	}
 	for _, c := range cases {
@@ -756,7 +756,7 @@ func TestLaunchRun_ReportsTheReplysOwnError(t *testing.T) {
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish","builtIn":true}]}`),
 		methodKiroWorkflowList:        json.RawMessage(`{"runs":[]}`),
 	}
-	br.callRPCErrs = map[string]*vibekit.RPCError{
+	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowNew: {Code: -32602, Message: "inputs.branch: Required"},
 	}
 
@@ -820,10 +820,10 @@ func TestCancelForSessions_CancelsARunWhoseRecordIsGone(t *testing.T) {
 // and the line is the only record that it happened. A guard flipped here says that
 // on every ordinary close instead, which buries it.
 func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	seed := func(t *testing.T, cs *fakeChatStore) {
 		t.Helper()
-		if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true
@@ -872,7 +872,7 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 func TestDecodePauseFrame_KeepsWhatDecodedWhenTheDetailDrifts(t *testing.T) {
 	frame := func(t *testing.T, params string) pauseFrame {
 		t.Helper()
-		return decodePauseFrame(&vibekit.RPCResponse{Params: json.RawMessage(params)})
+		return decodePauseFrame(&marotte.RPCResponse{Params: json.RawMessage(params)})
 	}
 
 	// Every shape a `pauseDetail` change can arrive as, against a reason the heal

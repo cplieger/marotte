@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"pgregory.net/rapid"
 )
 
@@ -14,7 +14,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		deps, events := newEventCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
-		chatID := vibekit.ChatID("prop-chat")
+		chatID := marotte.ChatID("prop-chat")
 
 		type action int
 		const (
@@ -72,7 +72,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 		// Invariant: message_created emitted at most once per chunk sequence.
 		createdCount := 0
 		for _, evt := range *events {
-			if evt.Type == vibekit.EventMessageCreated {
+			if evt.Type == marotte.EventMessageCreated {
 				createdCount++
 			}
 		}

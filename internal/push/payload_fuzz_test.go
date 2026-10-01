@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // FuzzPayloadTruncation exercises the push payload truncation logic with
@@ -20,7 +20,7 @@ func FuzzPayloadTruncation(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, title, body string) {
 		// Apply the same truncation the Service.Send path uses.
-		gotTitle, gotBody, _ := fitToCap(title, body, vibekit.PushSubject{})
+		gotTitle, gotBody, _ := fitToCap(title, body, marotte.PushSubject{})
 
 		payload, err := json.Marshal(pushPayload{Title: gotTitle, Body: gotBody})
 		if err != nil {

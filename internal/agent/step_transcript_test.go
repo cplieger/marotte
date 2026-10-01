@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // stepInspect is one run's inspect reply, trimmed to what this path decodes: a
@@ -67,16 +67,16 @@ func armStepInspect(br *fakeBridge) {
 // them foreign to the utility session's own connection and therefore the frames
 // this feature exists to route.
 func armStepReplay(br *fakeBridge, sessionID string, texts ...string) {
-	frames := make([]*vibekit.RPCResponse, 0, len(texts))
+	frames := make([]*marotte.RPCResponse, 0, len(texts))
 	for _, tx := range texts {
 		frames = append(frames, newSessionChunkMsg(sessionID, tx))
 	}
 	br.mu.Lock()
 	defer br.mu.Unlock()
 	if br.notifsOnCall == nil {
-		br.notifsOnCall = map[string][]*vibekit.RPCResponse{}
+		br.notifsOnCall = map[string][]*marotte.RPCResponse{}
 	}
-	br.notifsOnCall[vibekit.MethodSessionLoad] = frames
+	br.notifsOnCall[marotte.MethodSessionLoad] = frames
 }
 
 // shortStepBudget drives the budget in milliseconds so an expiry test does not
@@ -98,14 +98,14 @@ func TestStepTranscript_AStepsFramesProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
-	if got.State != vibekit.RunStepTranscriptReady {
+	if got.State != marotte.RunStepTranscriptReady {
 		t.Fatalf("state = %q, want ready", got.State)
 	}
 	if len(got.Messages) != 1 {
 		t.Fatalf("got %d messages, want 1: %+v", len(got.Messages), got.Messages)
 	}
 	m := got.Messages[0]
-	if m.Role != vibekit.RoleAssistant {
+	if m.Role != marotte.RoleAssistant {
 		t.Errorf("role = %q, want assistant", m.Role)
 	}
 	if m.Content != "first half second half" {
@@ -141,7 +141,7 @@ func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
 		if err != nil {
 			t.Fatalf("StepTranscript(%s): %v", tc.path, err)
 		}
-		if got.State != vibekit.RunStepTranscriptReady {
+		if got.State != marotte.RunStepTranscriptReady {
 			t.Fatalf("%s: state = %q, want ready", tc.path, got.State)
 		}
 		if len(got.Messages) != 1 || got.Messages[0].Content != tc.want {
@@ -150,7 +150,7 @@ func TestStepTranscript_ARepeatsIterationsAreDistinct(t *testing.T) {
 		// The session actually loaded is the other half of the claim: a path
 		// resolving to the right CONTENT off the wrong session id would only be
 		// right because the fake answered the same frames either way.
-		if id := br.lastParamsFor(vibekit.MethodSessionLoad)[vibekit.KeySessionID]; id != tc.session {
+		if id := br.lastParamsFor(marotte.MethodSessionLoad)[marotte.KeySessionID]; id != tc.session {
 			t.Errorf("%s loaded session %v, want %s", tc.path, id, tc.session)
 		}
 	}
@@ -168,7 +168,7 @@ func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
-	if got.State != vibekit.RunStepTranscriptGone {
+	if got.State != marotte.RunStepTranscriptGone {
 		t.Errorf("state = %q, want gone", got.State)
 	}
 	if len(got.Messages) != 0 {
@@ -176,7 +176,7 @@ func TestStepTranscript_AStepThatNeverRanIsGone(t *testing.T) {
 	}
 	// And nothing was loaded: a step with no session must not put a session/load
 	// on the wire at all.
-	if br.called(vibekit.MethodSessionLoad) {
+	if br.called(marotte.MethodSessionLoad) {
 		t.Error("a step with no session issued a session/load")
 	}
 }
@@ -214,8 +214,8 @@ func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 	br.mu.Lock()
-	br.callRPCErrs = map[string]*vibekit.RPCError{
-		vibekit.MethodSessionLoad: {Code: -32603, Message: "Internal error"},
+	br.callRPCErrs = map[string]*marotte.RPCError{
+		marotte.MethodSessionLoad: {Code: -32603, Message: "Internal error"},
 	}
 	br.mu.Unlock()
 
@@ -223,7 +223,7 @@ func TestStepTranscript_AFailedLoadIsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a refused load must not be an error the handler 500s on: %v", err)
 	}
-	if got.State != vibekit.RunStepTranscriptUnavailable {
+	if got.State != marotte.RunStepTranscriptUnavailable {
 		t.Errorf("state = %q, want unavailable", got.State)
 	}
 	if len(got.Messages) != 0 {
@@ -248,7 +248,7 @@ func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
 		{
 			desc: "KAS refused the inspect, which arrives as an empty result",
 			arm: func(br *fakeBridge) {
-				br.callRPCErrs = map[string]*vibekit.RPCError{
+				br.callRPCErrs = map[string]*marotte.RPCError{
 					methodKiroWorkflowInspect: {Code: -32603, Message: "Internal error"},
 				}
 			},
@@ -281,7 +281,7 @@ func TestStepTranscript_AnUnreadableRunIsUnavailable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("an unreadable run must not be a client error: %v", err)
 			}
-			if got.State != vibekit.RunStepTranscriptUnavailable {
+			if got.State != marotte.RunStepTranscriptUnavailable {
 				t.Errorf("state = %q, want unavailable", got.State)
 			}
 		})
@@ -307,7 +307,7 @@ func TestStepTranscript_TheBudgetBoundsTheBarrier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
-	if got.State != vibekit.RunStepTranscriptUnavailable {
+	if got.State != marotte.RunStepTranscriptUnavailable {
 		t.Errorf("state = %q, want unavailable", got.State)
 	}
 	// The point is that it ANSWERS. A generous ceiling, because the assertion is
@@ -325,8 +325,8 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
 	br.mu.Lock()
-	br.callRPCErrs = map[string]*vibekit.RPCError{
-		vibekit.MethodSessionLoad: {Code: -32603, Message: "Internal error"},
+	br.callRPCErrs = map[string]*marotte.RPCError{
+		marotte.MethodSessionLoad: {Code: -32603, Message: "Internal error"},
 	}
 	br.mu.Unlock()
 
@@ -344,7 +344,7 @@ func TestStepTranscript_ARefusedLoadLeavesNoReplayOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if got.State != vibekit.RunStepTranscriptReady {
+	if got.State != marotte.RunStepTranscriptReady {
 		t.Fatalf("retry state = %q, want ready — the first read left a replay open", got.State)
 	}
 	if len(got.Messages) != 1 || got.Messages[0].Content != "second time" {
@@ -359,16 +359,16 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 	h, _, br := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	armStepInspect(br)
-	replay := func(update string) *vibekit.RPCResponse {
+	replay := func(update string) *marotte.RPCResponse {
 		params, _ := json.Marshal(map[string]any{
 			"sessionId": "sess_pass0",
 			"update":    json.RawMessage(update),
 		})
-		return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+		return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 	}
 	br.mu.Lock()
-	br.notifsOnCall = map[string][]*vibekit.RPCResponse{
-		vibekit.MethodSessionLoad: {
+	br.notifsOnCall = map[string][]*marotte.RPCResponse{
+		marotte.MethodSessionLoad: {
 			replay(`{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"the step's own instruction"},"_meta":{"kiro":{"messageId":"instruction"}}}`),
 			replay(`{"sessionUpdate":"session_info_update","_meta":{"kiro":{"kind":"turn_start","turnStart":true}}}`),
 			replay(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Which target?"},"_meta":{"kiro":{"messageId":"question"}}}`),
@@ -390,12 +390,12 @@ func TestStepTranscript_IncludesReaderInterventions(t *testing.T) {
 		t.Fatalf("StepTranscript messages = %d, want 3: %+v", len(got.Messages), got.Messages)
 	}
 	want := []struct {
-		role    vibekit.Role
+		role    marotte.Role
 		content string
 	}{
-		{role: vibekit.RoleAssistant, content: "Which target?"},
-		{role: vibekit.RoleUser, content: "main"},
-		{role: vibekit.RoleAssistant, content: "Using main."},
+		{role: marotte.RoleAssistant, content: "Which target?"},
+		{role: marotte.RoleUser, content: "main"},
+		{role: marotte.RoleAssistant, content: "Using main."},
 	}
 	for i := range want {
 		if got.Messages[i].Role != want[i].role || got.Messages[i].Content != want[i].content {
@@ -463,11 +463,11 @@ func TestHandleStepTranscript_HTTP(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var out vibekit.RunStepTranscript
+	var out marotte.RunStepTranscript
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
 	}
-	if out.State != vibekit.RunStepTranscriptReady {
+	if out.State != marotte.RunStepTranscriptReady {
 		t.Errorf("state = %q, want ready", out.State)
 	}
 	if len(out.Messages) != 1 || out.Messages[0].Content != "served" {
@@ -492,11 +492,11 @@ func TestHandleStepTranscript_AGoneVerdictIsA200(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var out vibekit.RunStepTranscript
+	var out marotte.RunStepTranscript
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.State != vibekit.RunStepTranscriptGone {
+	if out.State != marotte.RunStepTranscriptGone {
 		t.Errorf("state = %q, want gone", out.State)
 	}
 }
@@ -584,11 +584,11 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var out vibekit.RunStepTranscript
+	var out marotte.RunStepTranscript
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.State != vibekit.RunStepTranscriptReady {
+	if out.State != marotte.RunStepTranscriptReady {
 		t.Fatalf("state = %q, want ready", out.State)
 	}
 	if len(out.Messages) != 1 || out.Messages[0].Content != "odd id" {
@@ -757,14 +757,14 @@ func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
 func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 	var sr stepReplays
 	raw := json.RawMessage(`{"content":{"type":"text","text":"x"}}`)
-	if sr.ingest("sess_a", vibekit.ACPUpdateAgentChunk, raw) {
+	if sr.ingest("sess_a", marotte.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest claimed a frame with no replay open")
 	}
 	sr.open("sess_a", translate.NewProjection(newMessageID, ""))
-	if !sr.ingest("sess_a", vibekit.ACPUpdateAgentChunk, raw) {
+	if !sr.ingest("sess_a", marotte.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest dropped a frame for an open replay")
 	}
-	if sr.ingest("sess_b", vibekit.ACPUpdateAgentChunk, raw) {
+	if sr.ingest("sess_b", marotte.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest claimed a frame for a session nobody is reading")
 	}
 	msgs := sr.take("sess_a")
@@ -789,7 +789,7 @@ func TestStepTranscript_SettlesOnTheBarrierRatherThanTheBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StepTranscript: %v", err)
 	}
-	if got.State != vibekit.RunStepTranscriptReady {
+	if got.State != marotte.RunStepTranscriptReady {
 		t.Fatalf("state = %q, want ready — the replay did not settle inside a 50ms "+
 			"budget, so the read is waiting out its clock rather than the drain", got.State)
 	}
@@ -812,8 +812,8 @@ func TestUtilityRawCallAt_CarriesTheResponsePosition(t *testing.T) {
 	rs := unwiredStepRuns(t, br)
 
 	raw, at, err := rs.utility().session.rawCallAt(t.Context(), "step transcript load",
-		vibekit.MethodSessionLoad,
-		callerParams(map[string]any{vibekit.KeySessionID: "sess_pass0"}))
+		marotte.MethodSessionLoad,
+		callerParams(map[string]any{marotte.KeySessionID: "sess_pass0"}))
 	if err != nil {
 		t.Fatalf("rawCallAt: %v", err)
 	}
@@ -850,7 +850,7 @@ func unwiredStepRuns(t *testing.T, br *fakeBridge) *Runs {
 	session := &utilitySession{
 		shutdownCtx:   context.Background(),
 		bridgeFactory: func() ACPBridge { return br },
-		models:        func() []vibekit.SessionModel { return nil },
+		models:        func() []marotte.SessionModel { return nil },
 	}
 	ur := &utilityRuntime{session: session, textgen: newUtilityAgent(session)}
 	t.Cleanup(session.Stop)

@@ -14,7 +14,7 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// Tests for httpreply.go: vibekit's bare {"error":…} taxonomy, WriteRawJSON, and
+// Tests for httpreply.go: marotte's bare {"error":…} taxonomy, WriteRawJSON, and
 // the two logged error paths. The mechanism the helpers sit on (headers, status,
 // encode, body cap) is webhttp's and is tested there.
 
@@ -226,8 +226,8 @@ func TestDecodeBodyOptional_ProceedsWhenTheBodyIsAdvisory(t *testing.T) {
 	}{
 		{name: "absent", body: ""},
 		{name: "malformed", body: `{not json`},
-		{name: "valid", body: `{"repo":"vibekit"}`, wantRepo: "vibekit"},
-		{name: "trailingData", body: `{"repo":"vibekit"}{"repo":"other"}`, wantRepo: "vibekit"},
+		{name: "valid", body: `{"repo":"marotte"}`, wantRepo: "marotte"},
+		{name: "trailingData", body: `{"repo":"marotte"}{"repo":"other"}`, wantRepo: "marotte"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

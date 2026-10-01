@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/vibekit/internal/version"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/version"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -23,7 +23,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
-	payload := map[string]string{"vibekit": version.Build}
+	payload := map[string]string{"marotte": version.Build}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Version)
 	defer cancel()
 	if out, err := s.cliRunner.Run(ctx, "--version"); err == nil {

@@ -6,7 +6,7 @@
 // header — the tool group, the delegated-work card, the run card and every
 // native `<summary>` — while two demanded the chevron itself. The tool card's
 // was a 24x24 button at the FAR END of a 775px row, and the turn card's was
-// 16x16, under the 24px desktop floor `vibekit-ui.md` states. 54 tool headers
+// 16x16, under the 24px desktop floor `marotte-ui.md` states. 54 tool headers
 // and 3 turn headers on that one page reported `cursor: auto`. So the same
 // gesture worked on some cards and not on others, which is the whole defect.
 //

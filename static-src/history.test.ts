@@ -438,7 +438,7 @@ describe("history: chats already open in a tab here", () => {
   });
 
   it("never asks the tab store about an unowned session", async () => {
-    // No `chat_id` means no vibekit chat owns it, so there is no tab it could be.
+    // No `chat_id` means no marotte chat owns it, so there is no tab it could be.
     const c = await render({ sessions: [chatRow], runs: [] });
     expect(c.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
     expect(hasTab).not.toHaveBeenCalled();
@@ -552,7 +552,7 @@ describe("history: a run's outcome is a glyph, not a word", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A run one of vibekit's own bounds stopped (D56c). Both bounds terminate through
+// A run one of marotte's own bounds stopped (D56c). Both bounds terminate through
 // the same cancel a person uses, and KAS's status vocabulary has no "cancelled",
 // so an overrun and a click both land on `aborted` — the row cannot tell them
 // apart from the status alone, which is the whole reason `end_reason` exists.
@@ -599,7 +599,7 @@ describe("history: an overrun reads differently from a cancel", () => {
 
   it("says nothing extra for a user cancel, which is the same status", async () => {
     // The distinguisher is the ABSENCE of a reason. If this row grew a sentence,
-    // the field would be describing every abort rather than the two vibekit
+    // the field would be describing every abort rather than the two marotte
     // caused.
     const c = await render({ sessions: [], runs: [runAt("aborted")] });
     const row = c.querySelector('[data-key="r:wf_1"]')!;
@@ -609,7 +609,7 @@ describe("history: an overrun reads differently from a cancel", () => {
 
   it("settles a run the terminal frame has not caught up with yet", async () => {
     // A bound cancels at a node boundary, so KAS can still report `running` for a
-    // run vibekit already stopped. The reason outranks the status, or the row
+    // run marotte already stopped. The reason outranks the status, or the row
     // reads "running" forever.
     const c = await render({
       sessions: [],
@@ -622,7 +622,7 @@ describe("history: an overrun reads differently from a cancel", () => {
   });
 
   it("states the reason on an agent-parented run too", async () => {
-    // This sentence reports what VIBEKIT did to the run, so it was always stated
+    // This sentence reports what MAROTTE did to the run, so it was always stated
     // whatever launched it. The glyph now is too (see "states the verdict on an
     // agent-parented run too"), so the row carries both.
     const c = await render({
@@ -1161,7 +1161,7 @@ describe("history: the per-row delete", () => {
   // A bound already stopped the run, so KAS still reporting `running` is a frame
   // that has not landed rather than live work — the same precedence `runVerdict`
   // gives the end reason. Withholding the button here would strand the row.
-  it("keeps the delete button on a run one of vibekit's bounds already stopped", async () => {
+  it("keeps the delete button on a run one of marotte's bounds already stopped", async () => {
     const c = await render({
       sessions: [],
       runs: [{ ...runAt("running"), end_reason: "overran" }],

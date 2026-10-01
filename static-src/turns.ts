@@ -235,7 +235,7 @@ function closesTurn(outcome: TurnOutcome | undefined): boolean {
 }
 
 /** Whether this is a user PROMPT rather than a steer. The Go twin is
- *  `vibekit.Message.IsPrompt`. */
+ *  `marotte.Message.IsPrompt`. */
 function isPrompt(m: Message): boolean {
   return m.role === "user" && m.user_kind !== "steer";
 }

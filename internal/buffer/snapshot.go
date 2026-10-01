@@ -5,7 +5,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // SnapshotCaps bounds every dimension of a turn snapshot. A ZERO in any field leaves that
@@ -62,7 +62,7 @@ func tailBytes(s string, n int) (string, bool) {
 // The base is what lets a reader address an ABSOLUTE block index against the window: both
 // slices below re-index from zero, so without it a caller holding out[] and a chunk naming
 // block N have no way to meet.
-func capBlocks(blocks []vibekit.Block, textCap, countCap int) ([]vibekit.Block, int, bool) {
+func capBlocks(blocks []marotte.Block, textCap, countCap int) ([]marotte.Block, int, bool) {
 	out := slices.Clone(blocks)
 	base := 0
 	truncated := false
@@ -113,7 +113,7 @@ func capBlocks(blocks []vibekit.Block, textCap, countCap int) ([]vibekit.Block, 
 // over the already-capped outputs — keep while it fits, tail-cap the boundary call to the
 // remainder, DROP anything older. That mirrors capBlocks' BlockTextBytes handling exactly,
 // so there is ONE shape for a text aggregate in this package.
-func capToolCalls(calls []vibekit.ToolCall, countCap, outputCap, totalCap int) ([]vibekit.ToolCall, bool) {
+func capToolCalls(calls []marotte.ToolCall, countCap, outputCap, totalCap int) ([]marotte.ToolCall, bool) {
 	out := slices.Clone(calls)
 	truncated := false
 	if countCap > 0 && len(out) > countCap {
@@ -159,11 +159,11 @@ func capToolCalls(calls []vibekit.ToolCall, countCap, outputCap, totalCap int) (
 //
 // A STRUCT rather than four positional returns, two of which are adjacent same-kind values:
 // a transposed pair compiles and is silent in both directions, and this codebase already
-// refuses that shape twice — SnapshotCaps over six positional ints, and vibekit.LiveTurn
+// refuses that shape twice — SnapshotCaps over six positional ints, and marotte.LiveTurn
 // over the four values this call used to answer with.
 type Snapshot struct {
 	// Message is the turn as accumulated so far, bounded by the caps.
-	Message vibekit.Message
+	Message marotte.Message
 	// ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq): a
 	// client's dedup watermark, so a chunk at or below it is already in here.
 	ChunkSeq int64
@@ -205,9 +205,9 @@ func (buf *Buffer) SnapshotCapped(caps SnapshotCaps) (snap Snapshot, ok bool) {
 		// Field-for-field the shape assembled at turn end, so a mid-turn snapshot renders
 		// byte-equivalently to the turn that follows it. Slices are copied: the caller reads
 		// them off this goroutine while the dispatch loop keeps appending.
-		snap.Message = vibekit.Message{
+		snap.Message = marotte.Message{
 			ID:             buf.MessageID,
-			Role:           vibekit.RoleAssistant,
+			Role:           marotte.RoleAssistant,
 			Ts:             time.Now().UnixMilli(),
 			Content:        content,
 			Reasoning:      reasoning,

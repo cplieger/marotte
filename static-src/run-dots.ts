@@ -24,7 +24,7 @@
 // that latched `thinking` and re-latched it on every reconnect — so the launching
 // chat read `working` for the whole run and this module's premise was false for
 // exactly the runs it excluded. The turn is now marked as the RUN's on both sides
-// (`vibekit.TurnSourceWorkflowStep`, `turn_ended.workflow_step`, and the `wf:` gate
+// (`marotte.TurnSourceWorkflowStep`, `turn_ended.workflow_step`, and the `wf:` gate
 // in `handlers/messages.ts`), which is what leaves the run's liveness to the dot
 // below and nothing else.
 //

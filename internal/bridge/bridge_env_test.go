@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // envNames pulls the NAMEs out of a composed environment so a case can assert on
@@ -116,7 +116,7 @@ func TestScreenBridgeEnv_BareSuffixIsNotACredential(t *testing.T) {
 	}
 }
 
-// The overlay is vibekit's own, built in this process rather than inherited, and
+// The overlay is marotte's own, built in this process rather than inherited, and
 // os/exec keeps the LAST value for a repeated key. Filtering it could silently
 // drop an entry this server deliberately set and leave PATH resolving out of the
 // wrong install, so the screen must not touch it — including when it carries a
@@ -141,10 +141,10 @@ func TestScreenBridgeEnv_OverlayIsExemptAndStaysLast(t *testing.T) {
 }
 
 // The overlay is appended whether or not anything was inherited. A server whose
-// inherited environment is empty still has to receive vibekit's own overlay,
+// inherited environment is empty still has to receive marotte's own overlay,
 // which is what puts the active install's directory at the front of PATH.
 func TestScreenBridgeEnv_OverlayLandsWithNothingInherited(t *testing.T) {
-	overlay := []string{"PATH=/config/tools/kiro-cli-versions/2.18.1", "VIBEKIT_HOME=/config"}
+	overlay := []string{"PATH=/config/tools/kiro-cli-versions/2.18.1", "MAROTTE_HOME=/config"}
 	env, dropped := screenBridgeEnv(nil, overlay, nil)
 	if !slices.Equal(env, overlay) {
 		t.Errorf("screenBridgeEnv(nil, %v, nil) env = %v, want %v", overlay, env, overlay)
@@ -279,7 +279,7 @@ done
 //
 // Not parallel: it sets an environment variable and swaps the slog default.
 func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
-	const probe = "VIBEKIT_SPAWN_PROBE_TOKEN"
+	const probe = "MAROTTE_SPAWN_PROBE_TOKEN"
 	t.Setenv(probe, "shh")
 
 	dir := t.TempDir()
@@ -290,7 +290,7 @@ func TestStart_ScreensCredentialsOutOfTheSpawnAndNamesThem(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background()}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -354,7 +354,7 @@ func TestStart_ChildEnvironmentCarriesTheMemoryLever(t *testing.T) {
 
 			b := New(scriptPath, dir)
 			t.Cleanup(b.Stop)
-			if err := b.Start(context.Background(), &vibekit.StartOpts{
+			if err := b.Start(context.Background(), &marotte.StartOpts{
 				Lifetime: context.Background(),
 				Memory:   on,
 			}); err != nil {
@@ -397,7 +397,7 @@ func TestStart_ChildEnvironmentPinsTheLocale(t *testing.T) {
 
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background()}); err != nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 

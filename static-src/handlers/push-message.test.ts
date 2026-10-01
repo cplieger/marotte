@@ -54,7 +54,7 @@ describe("initPushMessages", () => {
       reason: "arrived",
       chatId: "c1",
       subject: "",
-      title: "Vibekit",
+      title: "Marotte",
       body: "Agent finished",
     });
     expect(toast.info).toHaveBeenCalledWith("Agent finished");
@@ -69,14 +69,14 @@ describe("routePushMessage", () => {
       type: "push",
       reason: "clicked",
       chatId: "",
-      subject: "pr:github:github.com:cplieger/vibekit#42",
-      title: "Vibekit",
-      body: "cplieger/vibekit #42 checks passed",
+      subject: "pr:github:github.com:cplieger/marotte#42",
+      title: "Marotte",
+      body: "cplieger/marotte #42 checks passed",
     });
     expect(opened).toHaveBeenCalledWith({
       kind: "git",
       tab: "prs",
-      pr: "github:github.com:cplieger/vibekit#42",
+      pr: "github:github.com:cplieger/marotte#42",
     });
   });
 
@@ -85,7 +85,7 @@ describe("routePushMessage", () => {
       type: "push",
       reason: "clicked",
       chatId: "c1",
-      title: "Vibekit",
+      title: "Marotte",
       body: "Reviewing the poller",
     });
     expect(opened).toHaveBeenCalledWith({ kind: "chat", id: "c1" });
@@ -96,7 +96,7 @@ describe("routePushMessage", () => {
       type: "push",
       reason: "clicked",
       chatId: "",
-      title: "Vibekit",
+      title: "Marotte",
       body: "something happened",
     });
     expect(opened).toHaveBeenCalledWith({ kind: "chat", id: "" });
@@ -111,7 +111,7 @@ describe("routePushMessage", () => {
       reason: "clicked",
       chatId: "c1",
       subject: "pr:github:github.com:a/b#1",
-      title: "Vibekit",
+      title: "Marotte",
       body: "checks failed",
     });
     expect(opened).toHaveBeenCalledWith({

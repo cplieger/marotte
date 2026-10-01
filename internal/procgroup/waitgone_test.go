@@ -15,7 +15,7 @@ import (
 //
 // The member is a direct child of the test binary, not a descendant forked inside the
 // head: a descendant orphans the moment the head exits, leaving its reaping to the
-// ambient reaper, and vibekit is PID 1 with no reaper.
+// ambient reaper, and marotte is PID 1 with no reaper.
 func startGroupWithMember(t *testing.T) (pgid int, member *exec.Cmd) {
 	t.Helper()
 	head := exec.Command("sh", "-c", "echo $$; exec sleep 60")
@@ -97,7 +97,7 @@ func TestWaitGone_ReturnsWhenTheGroupEmpties(t *testing.T) {
 }
 
 // A ZOMBIE member counts as gone. An exited-but-unreaped process is still signallable, so
-// the null-signal probe answers "present" for as long as nothing reaps it — and vibekit is
+// the null-signal probe answers "present" for as long as nothing reaps it — and marotte is
 // PID 1 with no reaper, so that probe would burn the full budget on every teardown that
 // WORKED.
 func TestWaitGone_AnUnreapedMemberCountsAsGone(t *testing.T) {
@@ -144,7 +144,7 @@ func TestWaitGone_RefusesToWaitOnAGroupItDoesNotOwn(t *testing.T) {
 }
 
 // GroupOf answers the pgid only for a command that leads its own group, which is
-// the guard that keeps a caller from waiting on vibekit's own group.
+// the guard that keeps a caller from waiting on marotte's own group.
 func TestGroupOf(t *testing.T) {
 	own := exec.Command("sleep", "60")
 	own.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

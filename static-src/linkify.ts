@@ -23,7 +23,7 @@ const RELATIVE_PATH = "[\\w.-]+\\/[\\w./-]*\\." + SUFFIX;
 
 /** Roots an absolute path must start under. A shape test alone linkifies every
  *  `/etc/*.conf` and `/var/log/*.log` a shell command prints; these three are
- *  what `/api/file` can open. An extra `VIBEKIT_BROWSE_ROOTS` mount is missed,
+ *  what `/api/file` can open. An extra `MAROTTE_BROWSE_ROOTS` mount is missed,
  *  which is the safe direction — no link offered rather than a dead one. */
 const LINKABLE_ROOTS = ["workspace", "config", "uploads"] as const;
 

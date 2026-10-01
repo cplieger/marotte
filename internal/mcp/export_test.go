@@ -120,7 +120,7 @@ func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 
 // TestConfiguredNames_IncludesDisabled pins the set the runtime's guard subtracts
 // EnabledNames from: without a disabled server here, the guard could not tell
-// "the user switched this off" from "vibekit never configured this", which are
+// "the user switched this off" from "marotte never configured this", which are
 // the two cases needing opposite treatment.
 func TestConfiguredNames_IncludesDisabled(t *testing.T) {
 	s := newTestStore(t)
@@ -137,7 +137,7 @@ func TestConfiguredNames_IncludesDisabled(t *testing.T) {
 }
 
 // TestAllNames_IncludesThePowersBlock is the origin lookup: a Power's server is
-// named only in the `powers.mcpServers` block of the file vibekit renders but
+// named only in the `powers.mcpServers` block of the file marotte renders but
 // never writes, and reading it is what separates OriginPower from
 // OriginUnknown.
 func TestAllNames_IncludesThePowersBlock(t *testing.T) {
@@ -159,10 +159,10 @@ func TestAllNames_IncludesThePowersBlock(t *testing.T) {
 		t.Errorf("the powers block's server is missing from AllNames: %+v", all)
 	}
 	if _, ok := all["mine"]; !ok {
-		t.Errorf("vibekit's own server is missing from AllNames: %+v", all)
+		t.Errorf("marotte's own server is missing from AllNames: %+v", all)
 	}
 	if _, ok := s.ConfiguredNames(ctx)["from-a-power"]; ok {
-		t.Error("a Power's server must NOT appear in ConfiguredNames; the runtime would read it as vibekit's own")
+		t.Error("a Power's server must NOT appear in ConfiguredNames; the runtime would read it as marotte's own")
 	}
 }
 

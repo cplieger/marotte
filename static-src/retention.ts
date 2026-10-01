@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// Chat retention state. Reads the vibekit-owned chat_retention_days setting
+// Chat retention state. Reads the marotte-owned chat_retention_days setting
 // (/api/settings) and exposes it to the tab-close handler (keep vs delete) and
 // the history button (hidden when retention is off).
 //
-// vibekit owns retention end to end — kiro-cli's own cleanup.periodDays is
+// marotte owns retention end to end — kiro-cli's own cleanup.periodDays is
 // pinned to 0/never, so there are not two systems fighting over one value.
 // There is no archive: a closed chat stays exactly where it was, and
 // "archived" is computed from its age against the window. Encoding:

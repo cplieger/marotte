@@ -11,13 +11,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chatSpec is the shorthand every test needs: the smallest legal spec, with the
 // ref carrying the case's own label so a failure message says which tab it was.
-func chatSpec(ref string) vibekit.OpenTab {
-	return vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: ref}
+func chatSpec(ref string) marotte.OpenTab {
+	return marotte.OpenTab{Kind: marotte.TabKindChat, Ref: ref}
 }
 
 // newTestStore opens a store in a fresh directory and returns both, because
@@ -35,7 +35,7 @@ func newTestStore(t *testing.T) (*Store, string) {
 
 // mustOpen opens a tab and fails the test if it could not, so a case that is
 // about something else does not spend three lines establishing its fixture.
-func mustOpen(t *testing.T, s *Store, spec vibekit.OpenTab) vibekit.TabSubject {
+func mustOpen(t *testing.T, s *Store, spec marotte.OpenTab) marotte.TabSubject {
 	t.Helper()
 	sub, created, _, err := s.Open(t.Context(), spec)
 	if err != nil {
@@ -63,7 +63,7 @@ func onDisk(t *testing.T, dir string) file {
 	return doc
 }
 
-func idsOf(tabs []vibekit.TabSubject) []string {
+func idsOf(tabs []marotte.TabSubject) []string {
 	out := make([]string, 0, len(tabs))
 	for _, t := range tabs {
 		out = append(out, t.ID)
@@ -71,7 +71,7 @@ func idsOf(tabs []vibekit.TabSubject) []string {
 	return out
 }
 
-func refsOf(tabs []vibekit.TabSubject) []string {
+func refsOf(tabs []marotte.TabSubject) []string {
 	out := make([]string, 0, len(tabs))
 	for _, t := range tabs {
 		out = append(out, string(t.Kind)+":"+t.Ref)
@@ -115,7 +115,7 @@ func TestNewStore_FirstRunIsEmptyAndSilent(t *testing.T) {
 func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 	first, dir := newTestStore(t)
 	a := mustOpen(t, first, chatSpec("c-a"))
-	b := mustOpen(t, first, vibekit.OpenTab{Kind: vibekit.TabKindEditor, Ref: "/workspace/a.ts"})
+	b := mustOpen(t, first, marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: "/workspace/a.ts"})
 	if _, err := first.SetPinned(t.Context(), b.ID, true); err != nil {
 		t.Fatalf("Setup: SetPinned(%q, true): %v", b.ID, err)
 	}
@@ -145,7 +145,7 @@ func TestStore_RoundTripsAcrossProcesses(t *testing.T) {
 // pass for a store that is broken: the error is REPORTED (the caller's warn), the
 // set is empty, and the store still WORKS afterwards — the arrangement is
 // re-derivable by opening the tabs again, which is the whole reason this is not a
-// boot failure (vibekit invariant 6).
+// boot failure (marotte invariant 6).
 func TestNewStore_WarnsAndStartsEmpty(t *testing.T) {
 	oversized := append([]byte(`{"tabs":[{"id":"a","kind":"chat","ref":"`), []byte(strings.Repeat("x", MaxBytes))...)
 
@@ -205,7 +205,7 @@ func TestNewStore_OversizedIsRefusedBeforeItIsParsed(t *testing.T) {
 // asked for — is out of a write's reach.
 func TestNewStore_TightensAWideMode(t *testing.T) {
 	dir := t.TempDir()
-	writeDoc(t, dir, file{Version: 2, Tabs: []vibekit.TabSubject{{ID: "a", Kind: vibekit.TabKindGit}}})
+	writeDoc(t, dir, file{Version: 2, Tabs: []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindGit}}})
 	path := filepath.Join(dir, FileName)
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatalf("Setup: chmod 0644 %s: %v", path, err)
@@ -234,7 +234,7 @@ func TestNewStore_TightensAWideMode(t *testing.T) {
 func TestNewStore_RefusesASymlinkAtTheName(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "elsewhere.json")
-	planted := file{Version: 7, Tabs: []vibekit.TabSubject{{ID: "planted", Kind: vibekit.TabKindDocs}}}
+	planted := file{Version: 7, Tabs: []marotte.TabSubject{{ID: "planted", Kind: marotte.TabKindDocs}}}
 	data, err := json.Marshal(planted)
 	if err != nil {
 		t.Fatalf("Setup: encode: %v", err)
@@ -266,47 +266,47 @@ func TestNewStore_RefusesASymlinkAtTheName(t *testing.T) {
 func TestSanitize_DropsWhatOpenCouldNotHaveWritten(t *testing.T) {
 	cases := []struct {
 		desc     string
-		in       []vibekit.TabSubject
+		in       []marotte.TabSubject
 		wantRefs []string
 	}{
 		{
 			desc:     "an entry with no id",
-			in:       []vibekit.TabSubject{{ID: "", Kind: vibekit.TabKindChat, Ref: "c-a"}, {ID: "b", Kind: vibekit.TabKindChat, Ref: "c-b"}},
+			in:       []marotte.TabSubject{{ID: "", Kind: marotte.TabKindChat, Ref: "c-a"}, {ID: "b", Kind: marotte.TabKindChat, Ref: "c-b"}},
 			wantRefs: []string{"chat:c-b"},
 		},
 		{
 			desc:     "an id longer than anything this store mints",
-			in:       []vibekit.TabSubject{{ID: strings.Repeat("f", maxIDBytes+1), Kind: vibekit.TabKindChat, Ref: "c-a"}},
+			in:       []marotte.TabSubject{{ID: strings.Repeat("f", maxIDBytes+1), Kind: marotte.TabKindChat, Ref: "c-a"}},
 			wantRefs: nil,
 		},
 		{
 			desc:     "a kind that is not one of the eight, including the deleted plan",
-			in:       []vibekit.TabSubject{{ID: "a", Kind: "plan", Ref: "x"}, {ID: "b", Kind: "", Ref: "y"}, {ID: "c", Kind: vibekit.TabKindDocs}},
+			in:       []marotte.TabSubject{{ID: "a", Kind: "plan", Ref: "x"}, {ID: "b", Kind: "", Ref: "y"}, {ID: "c", Kind: marotte.TabKindDocs}},
 			wantRefs: []string{"docs:"},
 		},
 		{
 			desc:     "a singleton carrying a ref it has no meaning for",
-			in:       []vibekit.TabSubject{{ID: "a", Kind: vibekit.TabKindSettings, Ref: "something"}},
+			in:       []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindSettings, Ref: "something"}},
 			wantRefs: nil,
 		},
 		{
 			desc:     "a kind that needs a ref with none",
-			in:       []vibekit.TabSubject{{ID: "a", Kind: vibekit.TabKindEditor}, {ID: "b", Kind: vibekit.TabKindRun}},
+			in:       []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindEditor}, {ID: "b", Kind: marotte.TabKindRun}},
 			wantRefs: nil,
 		},
 		{
 			desc:     "a ref over the byte bound",
-			in:       []vibekit.TabSubject{{ID: "a", Kind: vibekit.TabKindEditor, Ref: "/" + strings.Repeat("p", MaxRefBytes)}},
+			in:       []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindEditor, Ref: "/" + strings.Repeat("p", MaxRefBytes)}},
 			wantRefs: nil,
 		},
 		{
 			desc:     "the same id twice",
-			in:       []vibekit.TabSubject{{ID: "a", Kind: vibekit.TabKindChat, Ref: "c-a"}, {ID: "a", Kind: vibekit.TabKindChat, Ref: "c-b"}},
+			in:       []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindChat, Ref: "c-a"}, {ID: "a", Kind: marotte.TabKindChat, Ref: "c-b"}},
 			wantRefs: []string{"chat:c-a"},
 		},
 		{
 			desc:     "two ids for one subject, which Open cannot produce",
-			in:       []vibekit.TabSubject{{ID: "a", Kind: vibekit.TabKindChat, Ref: "c-a"}, {ID: "b", Kind: vibekit.TabKindChat, Ref: "c-a"}},
+			in:       []marotte.TabSubject{{ID: "a", Kind: marotte.TabKindChat, Ref: "c-a"}, {ID: "b", Kind: marotte.TabKindChat, Ref: "c-a"}},
 			wantRefs: []string{"chat:c-a"},
 		},
 	}
@@ -330,9 +330,9 @@ func TestSanitize_DropsWhatOpenCouldNotHaveWritten(t *testing.T) {
 // product rule: a file over it loses its tail instead of taking the strip down.
 func TestSanitize_TruncatesAtTheDecodeBound(t *testing.T) {
 	dir := t.TempDir()
-	over := make([]vibekit.TabSubject, 0, MaxTabs+10)
+	over := make([]marotte.TabSubject, 0, MaxTabs+10)
 	for i := range MaxTabs + 10 {
-		over = append(over, vibekit.TabSubject{ID: newID(), Kind: vibekit.TabKindChat, Ref: "c-" + strconv.Itoa(i)})
+		over = append(over, marotte.TabSubject{ID: newID(), Kind: marotte.TabKindChat, Ref: "c-" + strconv.Itoa(i)})
 	}
 	writeDoc(t, dir, file{Version: 1, Tabs: over})
 
@@ -410,11 +410,11 @@ func TestBounds_AreConsistentWithEachOther(t *testing.T) {
 	if MaxOpenTabs > MaxTabs {
 		t.Errorf("MaxOpenTabs (%d) is over MaxTabs (%d): a full strip would reload truncated", MaxOpenTabs, MaxTabs)
 	}
-	tabs := make([]vibekit.TabSubject, 0, MaxTabs)
+	tabs := make([]marotte.TabSubject, 0, MaxTabs)
 	for i := range MaxTabs {
-		tabs = append(tabs, vibekit.TabSubject{
+		tabs = append(tabs, marotte.TabSubject{
 			ID:   newID(),
-			Kind: vibekit.TabKindEditor,
+			Kind: marotte.TabKindEditor,
 			Ref:  fmt.Sprintf("/%0*d", MaxRefBytes-1, i),
 		})
 	}
@@ -433,8 +433,8 @@ func TestBounds_AreConsistentWithEachOther(t *testing.T) {
 // emitted at load and a client's authority after a restart is the list endpoint.
 func TestNewStore_AdoptsTheVersionEvenWhenSanitizeDropped(t *testing.T) {
 	dir := t.TempDir()
-	writeDoc(t, dir, file{Version: 12, Tabs: []vibekit.TabSubject{
-		{ID: "good", Kind: vibekit.TabKindGit},
+	writeDoc(t, dir, file{Version: 12, Tabs: []marotte.TabSubject{
+		{ID: "good", Kind: marotte.TabKindGit},
 		{ID: "bad", Kind: "plan", Ref: "x"},
 	}})
 	s, err := NewStore(dir)
@@ -473,7 +473,7 @@ func TestNewID_IsOpaqueHexAndUnique(t *testing.T) {
 
 func TestErrorsAreComparableWithIs(t *testing.T) {
 	s, _ := newTestStore(t)
-	_, _, _, err := s.Open(t.Context(), vibekit.OpenTab{Kind: "plan", Ref: "x"})
+	_, _, _, err := s.Open(t.Context(), marotte.OpenTab{Kind: "plan", Ref: "x"})
 	if !errors.Is(err, ErrBadKind) {
 		t.Errorf("Open with kind %q = %v, want ErrBadKind", "plan", err)
 	}

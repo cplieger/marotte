@@ -1,4 +1,4 @@
-// Vibekit for Kiro: ACP-based web interface for kiro-cli.
+// Marotte for Kiro: ACP-based web interface for kiro-cli.
 //
 // One kiro-cli subprocess per active chat; multiple browsers on the same
 // chat share the same bridge and context. Server is the source of truth;
@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/vibekit/internal/composition"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/composition"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // There are no compile-time interface assertions here any more, and no `var _ =`

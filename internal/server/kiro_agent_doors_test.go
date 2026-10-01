@@ -5,7 +5,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/marotte/internal/steering"
 )
 
 // agentDoorFixture is the listing shared with internal/steering's

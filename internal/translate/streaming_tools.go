@@ -11,16 +11,16 @@ import (
 	"time"
 
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // HandleToolCall adds a tool call to the current assistant message buffer and
 // broadcasts it, threading AgentSubtaskID so the client can nest a subagent's
 // chunks (which carry the same id) under its card.
-func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
+func (t *Translator) HandleToolCall(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tc ACPToolCallWire
 	if json.Unmarshal(raw, &tc) != nil {
 		return
@@ -58,16 +58,16 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	// reaches after applying it is the state that version names.
 	version := buf.RecordToolStart(tc.ToolCallID)
 	if len(diffs) > 0 {
-		isNew := tc.Kind == vibekit.ToolKindEdit && tc.Status == vibekit.ToolPending
+		isNew := tc.Kind == marotte.ToolKindEdit && tc.Status == marotte.ToolPending
 		version = buf.TrackFileChanges(diffs, isNew)
 		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	frame := vibekit.NewEvent(vibekit.EventToolCall, chatID,
-		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex})
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	frame := marotte.NewEvent(marotte.EventToolCall, chatID,
+		marotte.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex})
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
 	t.bus.Broadcast(ctx, frame)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
-		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelForKind(tc.Kind, tc.Title)}))
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID,
+		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }
 
 // toolCallFromWire builds the domain tool call a `tool_call` frame describes.
@@ -79,8 +79,8 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 // own timestamp or a resumed transcript claims it ran just now.
 func toolCallFromWire(
 	tc *ACPToolCallWire, subtask, subSessionID string, content toolUpdateContent, ts int64,
-) vibekit.ToolCall {
-	return vibekit.ToolCall{
+) marotte.ToolCall {
+	return marotte.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          displayText(tc.Title),
 		Kind:           tc.Kind,
@@ -99,7 +99,7 @@ func toolCallFromWire(
 
 // HandleToolCallUpdate mutates an in-flight tool call's status and appends any new
 // output chunks.
-func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
+func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var tu ACPToolCallUpdateWire
 	if json.Unmarshal(raw, &tu) != nil {
 		return
@@ -127,9 +127,9 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	before := tc
 	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
 	version := buf.SetToolCall(idx, &tc)
-	frame := vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
+	frame := marotte.NewEvent(marotte.EventToolCallUpdate, chatID,
 		toolCallDelta(buf.MessageID, &before, &tc))
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
 	t.bus.Broadcast(ctx, frame)
 }
 
@@ -141,8 +141,8 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 //
 // Every omitted field means "unchanged", so applying this to `before` reconstructs
 // `after` exactly. That is what lets the client keep no accumulation rules.
-func toolCallDelta(messageID string, before, after *vibekit.ToolCall) vibekit.ToolCallUpdatePayload {
-	d := vibekit.ToolCallUpdatePayload{MessageID: messageID, ToolCallID: after.ID}
+func toolCallDelta(messageID string, before, after *marotte.ToolCall) marotte.ToolCallUpdatePayload {
+	d := marotte.ToolCallUpdatePayload{MessageID: messageID, ToolCallID: after.ID}
 	if after.Title != before.Title {
 		d.Title = after.Title
 	}
@@ -163,7 +163,7 @@ func toolCallDelta(messageID string, before, after *vibekit.ToolCall) vibekit.To
 
 // deltaContent carries the three collections. Only Diffs accumulates; the other
 // two are absolute and go entire whenever they change.
-func deltaContent(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.ToolCall) {
+func deltaContent(d *marotte.ToolCallUpdatePayload, before, after *marotte.ToolCall) {
 	if !slices.Equal(after.OutputSpans, before.OutputSpans) {
 		d.OutputSpans = after.OutputSpans
 	}
@@ -180,7 +180,7 @@ func deltaContent(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.ToolC
 // deltaAttachments carries the four late identity ids and the three metadata
 // blocks. Every one is adopted once and never overwritten, so each appears on at
 // most one frame per call — which is what makes a set-if-present fold correct.
-func deltaAttachments(d *vibekit.ToolCallUpdatePayload, before, after *vibekit.ToolCall) {
+func deltaAttachments(d *marotte.ToolCallUpdatePayload, before, after *marotte.ToolCall) {
 	if after.TerminalID != before.TerminalID {
 		d.TerminalID = after.TerminalID
 	}
@@ -227,9 +227,9 @@ func outputDelta(before, after string) (delta string, replace bool) {
 
 // derefCheckpoint returns the checkpoint's value, or the zero value for nil, so
 // a nil-to-set transition compares as a change without a second nil branch.
-func derefCheckpoint(c *vibekit.ToolCheckpoint) vibekit.ToolCheckpoint {
+func derefCheckpoint(c *marotte.ToolCheckpoint) marotte.ToolCheckpoint {
 	if c == nil {
-		return vibekit.ToolCheckpoint{}
+		return marotte.ToolCheckpoint{}
 	}
 	return *c
 }
@@ -241,7 +241,7 @@ func derefCheckpoint(c *vibekit.ToolCheckpoint) vibekit.ToolCheckpoint {
 // A type:"terminal" block's text is deliberately not folded into the output delta:
 // the bytes arrive on the terminal/* surface instead, and the id is what lets the
 // card subscribe to that stream. toolCallID is carried for the two Debug lines,
-// where a content block vibekit does not model disappears.
+// where a content block marotte does not model disappears.
 func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCallContentBlock) toolUpdateContent {
 	return parseToolContent(t.relPath, toolCallID, items)
 }
@@ -264,7 +264,7 @@ func parseToolContent(
 			outputDelta.WriteString(sanitize.Output(item.Content.Text))
 			outputDelta.WriteByte('\n')
 		case item.Type == ContentTypeDiff && item.Path != "":
-			out.diffs = append(out.diffs, vibekit.ToolDiff{
+			out.diffs = append(out.diffs, marotte.ToolDiff{
 				Path: relPath(item.Path), OldText: item.OldText, NewText: item.NewText,
 			})
 		case item.Type == ContentTypeTerminal && item.TerminalID != "":
@@ -305,13 +305,13 @@ func knownToolContentType(t string) bool {
 type toolUpdateContent struct {
 	output     string
 	terminalID string
-	diffs      []vibekit.ToolDiff
+	diffs      []marotte.ToolDiff
 }
 
 // applyToolCallUpdate folds a parsed tool_call_update into the buffered tool call
 // at idx: status, appended output, replaced locations, appended diffs with line
 // tracking, and a first-seen subsession id.
-func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
+func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer, tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
 	// KAS sends title and kind nullish on an update, so apply only when present or
 	// an update that omits them wipes the initial tool_call's values.
 	if tu.Title != "" {
@@ -371,12 +371,12 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.Cha
 // is the FIELD and not a tool name or title (rawOutputUpdate reports present=false
 // for every other tool), absent means taken, it only ever marks a call the status
 // already settled as `completed`, and it never clears the mark. THIS IS THE STATED
-// EXCEPTION to vibekit-acp.md's rule that outcome comes from the tool_call status and
+// EXCEPTION to marotte-acp.md's rule that outcome comes from the tool_call status and
 // never from a payload: the general test is that a field RESTATING the outcome
 // (`success`, which is `legacySuccess ?? isSuccess(actionState)`) is never read, while
 // a domain fact carried on no other channel is a different question.
-func applyUpdateRefusal(tc *vibekit.ToolCall, raw json.RawMessage) {
-	if tc.Status != vibekit.ToolCompleted {
+func applyUpdateRefusal(tc *marotte.ToolCall, raw json.RawMessage) {
+	if tc.Status != marotte.ToolCompleted {
 		return
 	}
 	if updated, present := rawOutputUpdate(raw); present && !updated {
@@ -400,13 +400,13 @@ func toolCallContentOutput(tu *ACPToolCallUpdateWire, content toolUpdateContent)
 // stringifiedRawOutputMessage. A bare rawOutput string is the fallback when KAS
 // suppresses an edit's diff block; object error/message fields otherwise remain
 // failure-only.
-func applyToolCallOutput(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
+func applyToolCallOutput(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent) {
 	tc.Output += toolCallContentOutput(tu, content)
 	if tc.Output != "" {
 		return
 	}
 	text := rawOutputString(tu.RawOutput)
-	if text == "" && tc.Status == vibekit.ToolFailed {
+	if text == "" && tc.Status == marotte.ToolFailed {
 		text = rawOutputFailureText(tu.RawOutput)
 	}
 	if text != "" {
@@ -417,14 +417,14 @@ func applyToolCallOutput(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, conten
 // applyToolCallStatus folds an update's status in, and on a terminal status stamps
 // the duration and takes the terminal's output for keeping.
 func (t *Translator) applyToolCallStatus(
-	ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer,
-	tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire,
+	ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer,
+	tc *marotte.ToolCall, tu *ACPToolCallUpdateWire,
 ) {
 	if tu.Status == "" {
 		return
 	}
 	tc.Status = tu.Status
-	if tu.Status != vibekit.ToolCompleted && tu.Status != vibekit.ToolFailed {
+	if tu.Status != marotte.ToolCompleted && tu.Status != marotte.ToolFailed {
 		return
 	}
 	// KAS can send several terminal status frames for one tool call, and
@@ -435,8 +435,8 @@ func (t *Translator) applyToolCallStatus(
 		tc.DurationMs, _ = buf.ComputeDuration(tu.ToolCallID)
 	}
 	t.adoptTerminalOutput(chatID, tc)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
-		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelThinking}))
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID,
+		marotte.WorkingLabelPayload{Label: marotte.WorkingLabelThinking}))
 }
 
 // applyToolCallDiffs appends an update's diffs to the card and, once the tool has
@@ -446,13 +446,13 @@ func (t *Translator) applyToolCallStatus(
 // every streaming frame, so tracking each arrival would count partial streams and
 // claim a file changed when the write failed. The card keeps every diff regardless.
 func (t *Translator) applyToolCallDiffs(
-	chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, diffs []vibekit.ToolDiff,
+	chatID marotte.ChatID, buf *buffer.Buffer, tc *marotte.ToolCall, diffs []marotte.ToolDiff,
 ) {
 	if len(diffs) == 0 {
 		return
 	}
 	tc.Diffs = append(tc.Diffs, diffs...)
-	if tc.Status != vibekit.ToolCompleted {
+	if tc.Status != marotte.ToolCompleted {
 		return
 	}
 	buf.TrackFileChanges(diffs, false)
@@ -467,7 +467,7 @@ func (t *Translator) applyToolCallDiffs(
 // anything already on the tool call, since an earlier ACP content block is a
 // fragment of what the terminal holds in full. A miss is logged because a card
 // that renders empty looks exactly like a command that printed nothing.
-func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.ToolCall) {
+func (t *Translator) adoptTerminalOutput(chatID marotte.ChatID, tc *marotte.ToolCall) {
 	if tc.TerminalID == "" {
 		return
 	}
@@ -489,7 +489,7 @@ func (t *Translator) adoptTerminalOutput(chatID vibekit.ChatID, tc *vibekit.Tool
 // mergeToolMeta folds a tool_call_update's disclosure and denial metadata into the
 // buffered call. A denial is decided when the call is ATTEMPTED, so it can arrive
 // on the update rather than the create. Never overwrites a value already held.
-func mergeToolMeta(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire) {
+func mergeToolMeta(tc *marotte.ToolCall, tu *ACPToolCallUpdateWire) {
 	if tc.Disclosed == nil {
 		tc.Disclosed = disclosedFrom(tu.Meta.Kiro.DisclosedContext)
 	}
@@ -500,28 +500,28 @@ func mergeToolMeta(tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire) {
 
 // disclosedFrom maps KAS's disclosedContext block onto the domain type. Returns nil
 // for every tool call that is not a disclose_context, which is nearly all of them.
-func disclosedFrom(in *ACPDisclosedContext) *vibekit.ToolDisclosed {
+func disclosedFrom(in *ACPDisclosedContext) *marotte.ToolDisclosed {
 	if in == nil {
 		return nil
 	}
-	return &vibekit.ToolDisclosed{Type: in.Type, DisplayName: in.DisplayName, URI: in.URI}
+	return &marotte.ToolDisclosed{Type: in.Type, DisplayName: in.DisplayName, URI: in.URI}
 }
 
 // denialFrom maps KAS's policyDenial block onto the domain type. The outer `effect`
 // is always the literal "deny" so it is dropped; the matched rule's own effect is
 // kept, because an "ask" rule that nobody answered also arrives here.
-func denialFrom(in *ACPPolicyDenial) *vibekit.ToolDenial {
+func denialFrom(in *ACPPolicyDenial) *marotte.ToolDenial {
 	if in == nil {
 		return nil
 	}
-	out := &vibekit.ToolDenial{
+	out := &marotte.ToolDenial{
 		Capability: in.Capability,
 		Resource:   in.Resource,
 		Scope:      in.Scope,
 		Source:     in.Source,
 	}
 	if in.MatchedRule != nil {
-		out.Rule = &vibekit.ToolDenialRule{
+		out.Rule = &marotte.ToolDenialRule{
 			Capability: in.MatchedRule.Capability,
 			Effect:     in.MatchedRule.Effect,
 			Match:      in.MatchedRule.Match,
@@ -535,12 +535,12 @@ func denialFrom(in *ACPPolicyDenial) *vibekit.ToolDenial {
 // tool call, field by field so a frame omitting a key cannot erase one an earlier
 // frame supplied: the key set genuinely varies between frames for one tool call, so
 // replacing the struct would be lossy the moment a narrower set arrives.
-func mergeCheckpoint(tc *vibekit.ToolCall, in *ACPCheckpointMeta) {
+func mergeCheckpoint(tc *marotte.ToolCall, in *ACPCheckpointMeta) {
 	if in == nil || (in.Original == "" && in.Modified == "" && in.Local == "") {
 		return
 	}
 	if tc.Checkpoint == nil {
-		tc.Checkpoint = &vibekit.ToolCheckpoint{}
+		tc.Checkpoint = &marotte.ToolCheckpoint{}
 	}
 	if in.Original != "" {
 		tc.Checkpoint.Original = in.Original
@@ -610,7 +610,7 @@ func relPathIn(workDir, ref string) string {
 //
 // It owns no crash durability: a turn interrupted mid-flight is rebuilt from KAS's
 // own log by the session/load replay projection.
-func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
+func (t *Translator) ensureTurnStarted(ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer) {
 	if opened, _ := buf.StartTurn(t.newMsgID()); !opened {
 		return
 	}
@@ -622,6 +622,6 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatI
 			buf.SetModel(c.Model)
 		}
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageCreated, chatID,
-		vibekit.Message{ID: buf.MessageID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli()}))
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventMessageCreated, chatID,
+		marotte.Message{ID: buf.MessageID, Role: marotte.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

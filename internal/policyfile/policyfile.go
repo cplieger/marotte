@@ -1,7 +1,7 @@
 // Package policyfile reads and writes kiro-cli's native Cedar permission
 // policy files (permissions.yaml) for the user and workspace scopes.
 //
-// vibekit is the sole programmatic writer of these files on the acp bridge:
+// marotte is the sole programmatic writer of these files on the acp bridge:
 // KAS only READS them there (its acp consent dialog offers allow_once /
 // reject_once, never a persisted "always", so KAS's own addRuleToFile
 // never runs on the acp path). KAS hot-reloads the file on change via a
@@ -50,7 +50,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// filename is the policy file vibekit writes. Always .yaml (first in KAS's
+// filename is the policy file marotte writes. Always .yaml (first in KAS's
 // POLICY_FILENAMES, so it wins over any sibling .json).
 const filename = "permissions.yaml"
 
@@ -86,7 +86,7 @@ type File struct {
 	Rules []Rule `yaml:"rules"`
 }
 
-// Scope names vibekit can write. Kiro/administration are read-only
+// Scope names marotte can write. Kiro/administration are read-only
 // baselines; agent comes from the agent profile; session is runtime.
 const (
 	ScopeUser      = "user"
@@ -108,7 +108,7 @@ const (
 // agent server gains a capability, and it used to drive TWO things: this picker
 // and rule VALIDATION. That second job made the staleness a refusal: a rule
 // naming a capability KAS had gained but this list had not was rejected with a
-// 400, so vibekit would refuse to write the very rule the new capability
+// 400, so marotte would refuse to write the very rule the new capability
 // existed for, and never offer it in the picker either.
 //
 // Validation is gone (see SanitizeRule) and the picker is no longer limited to
@@ -143,7 +143,7 @@ func Capabilities() []string {
 }
 
 // umbrellas are the capability names that stand for a SET rather than for one
-// thing. KAS resolves each against META_CAPABILITIES; vibekit only needs to know
+// thing. KAS resolves each against META_CAPABILITIES; marotte only needs to know
 // which names are aliases, not what two of them expand to.
 var umbrellas = map[string]struct{}{
 	capAll: {}, "builtin": {}, "filesystem": {},
@@ -190,7 +190,7 @@ var allMembers = map[string]struct{}{
 // rung's own description says it never asks. Two rather than the twelve discrete
 // names for the opposite reason: eleven of them would be pure noise in the Active
 // policy list, and keeping the alias is what makes a capability a later KAS
-// version adds to BUILTIN allowed with no vibekit release, which is what someone
+// version adds to BUILTIN allowed with no marotte release, which is what someone
 // who picked this rung meant.
 //
 // It writes one bare rule per member, which is what makes it exactly reversible:
@@ -248,11 +248,11 @@ const maxCapabilityLen = 128
 // unrecognised capability is NOT fatal. validateRule returns
 // `{rule: null, warning: "Skipping rule N in <source>: unknown capability …"}`,
 // so that ONE rule is dropped and the rest of the file still loads — unlike a bad
-// effect, which throws PolicyParseError and fails the whole file (vibekit cannot
+// effect, which throws PolicyParseError and fails the whole file (marotte cannot
 // write that: ValidEffect gates it). Because the entry is `fatal: false`, it does
 // NOT arrive on _kiro/policy/error, which KAS emits only `if (hasFatalErrors)`.
 // It rides _kiro/policy/changed instead, with `status: "success"` and the warning
-// in that notification's `errors` array — which vibekit decodes
+// in that notification's `errors` array — which marotte decodes
 // (translate/policy.go) into the permissions_changed SSE, and the client renders
 // from `payload.errors` in permissions-ui.ts. So the user IS told; the channel is
 // just not the one named "error".
@@ -266,7 +266,7 @@ var (
 	ErrPatternEmpty    = errors.New("match/exclude list has no non-empty pattern")
 )
 
-// ValidScope reports whether scope is writable by vibekit.
+// ValidScope reports whether scope is writable by marotte.
 func ValidScope(scope string) bool {
 	return scope == ScopeUser || scope == ScopeWorkspace
 }
@@ -280,7 +280,7 @@ func ValidEffect(effect string) bool {
 // chars of sha256 over the workspace root. The root is canonicalized here —
 // absolute, lexically cleaned, no "." / ".." segments, no trailing slash —
 // to match the path.resolve output KAS hashes on its side. Canonicalizing at
-// the hash (rather than trusting workDir verbatim) keeps vibekit's
+// the hash (rather than trusting workDir verbatim) keeps marotte's
 // workspace-roots/<hash> directory in lockstep with KAS's for any
 // non-canonical KIRO_WORK_DIR — a trailing slash, a "/a/../b" form, or a
 // relative value. A divergent hash would silently write workspace-scope rules
@@ -353,7 +353,7 @@ func PathFor(scope string, roots Roots) (string, error) {
 // after an arbitrarily large file had been pulled into memory; ReadBoundedFile
 // stats the descriptor first. OpenRegular also refuses a symlink at the final
 // component, which matches Save: atomicfile's write entry points already refuse
-// to write through one, so a policy vibekit would not write is now a policy it
+// to write through one, so a policy marotte would not write is now a policy it
 // will not read either.
 //
 // The path is made absolute first because OpenRegular requires that. os.ReadFile
@@ -509,7 +509,7 @@ func sanitizePatterns(in []string) ([]string, error) {
 func isCtrl(r rune) bool { return unicode.IsControl(r) }
 
 // Signature is the dedup/equality key for a rule: capability + effect +
-// sorted match + sorted exclude. Mirrors KAS ruleSignature so vibekit's
+// sorted match + sorted exclude. Mirrors KAS ruleSignature so marotte's
 // notion of "same rule" matches the engine's.
 func Signature(r *Rule) string {
 	m := slices.Clone(r.Match)

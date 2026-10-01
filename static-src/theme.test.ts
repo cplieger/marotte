@@ -1,6 +1,6 @@
 //
 // Behavior of the theme controller wiring (theme.ts). The controller itself is
-// @cplieger/ui-primitives' createTheme; these tests cover vibekit's contract on
+// @cplieger/ui-primitives' createTheme; these tests cover marotte's contract on
 // top of it: the toggle CYCLES three states (light -> dark -> system), an unset
 // value resolves the OS preference without persisting anything, and the label
 // names what "system" resolved to.

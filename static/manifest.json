@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Vibekit for Kiro",
-  "short_name": "Vibekit",
+  "name": "Marotte for Kiro",
+  "short_name": "Marotte",
   "description": "AI-powered web development environment",
   "start_url": "/",
   "scope": "/",

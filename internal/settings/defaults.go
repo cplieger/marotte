@@ -1,5 +1,5 @@
 // Centralized defaults and the known-keys validation set for
-// vibekit-managed `<configDir>/config.json`. The HTTP GET handler
+// marotte-managed `<configDir>/config.json`. The HTTP GET handler
 // emits Default() when the file is missing; PATCH/PUT
 // handlers call WarnUnknownKeys to surface typos and CLI/UI drift
 // without rejecting forward-compatible keys (per AUTH/SET design
@@ -74,7 +74,7 @@ const (
 	KeyNotifyRunOutcome    = "notify_run_outcome"
 	KeySupervisedDefault   = "supervised_default"
 
-	// KeySecurityProfile is the named security posture every session vibekit
+	// KeySecurityProfile is the named security posture every session marotte
 	// starts opens with: one of policyfile's profile ids, resolved into KAS policy
 	// preset ids and sent as _meta.kiro.policyPreset.
 	//
@@ -82,7 +82,7 @@ const (
 	// simplification. KAS offers no way to change a live session's policy — no
 	// set_config_option id and no client-callable setter — so a per-chat level
 	// could only take effect on the next session start, and the per-chat control
-	// was dropped for that reason (vibekit-acp.md has the enumeration). One
+	// was dropped for that reason (marotte-acp.md has the enumeration). One
 	// instance is also one HOME, one user and one workspace root, so a global
 	// setting and a per-workspace one would address the same population anyway.
 	//
@@ -104,7 +104,7 @@ const (
 
 	// KeyToolSearchEnabled and KeyKnowledgeEnabled are the two settings whose
 	// value has to reach the AGENT rather than only kiro-cli, and they are the
-	// reason a vibekit setting can now drive a kascap gate at all.
+	// reason a marotte setting can now drive a kascap gate at all.
 	//
 	// Both used to be written through /api/kiro-settings as `toolSearch.enabled`
 	// and `chat.enableKnowledge`. Measured on the stock 2.19.2 KAS bundle, that
@@ -143,7 +143,7 @@ const (
 	//
 	// Defaults OFF, and deliberately not in Default(): the zero value is the safe
 	// state here, which is the opposite of KeyKnowledgeEnabled above. This is a
-	// feature nothing in vibekit has ever had, so an absent key means nobody asked
+	// feature nothing in marotte has ever had, so an absent key means nobody asked
 	// for it, and the standing verdict is that curation beats automatic capture —
 	// see the userMemoryOptIn row in internal/kascap/table.go for why the argument
 	// does not expire when upstream fixes a defect.
@@ -182,7 +182,7 @@ const (
 // approval renders identically to one that is working). So a switch that
 // silenced the ask was not a preference — it was a way to stall every later
 // turn of every chat with no signal, discoverable only by noticing that work
-// had stopped. The permission notice is a FLOOR: vibekit.PushKindPermission is
+// had stopped. The permission notice is a FLOOR: marotte.PushKindPermission is
 // registered with no settings key, so no value in config.json can turn it off
 // (pinned by push.TestPermissionKindHasNoSettingsKey).
 //
@@ -195,7 +195,7 @@ const (
 
 // DefaultChatRetentionDays is the seeded default for chat_retention_days.
 //
-// vibekit owns chat retention end to end (kiro-cli's own cleanup.periodDays
+// marotte owns chat retention end to end (kiro-cli's own cleanup.periodDays
 // is pinned to 0/never so the two systems never both purge). The value is a
 // day count with two sentinels:
 //
@@ -230,7 +230,7 @@ const DefaultChatRetentionDays = 7
 // `get("agentIgnoreFiles") ?? []`, so the IDE filters agent reads only through
 // the always-on user-global ~/.kiro/settings/kiroignore + git global excludes,
 // not workspace .gitignore. Turning the workspace filter ON by default is the
-// settled vibekit decision.
+// settled marotte decision.
 //
 // Returns a fresh slice so callers can resolve/append without mutating the
 // shared default. An explicit [] in config.json is honoured as an opt-out
@@ -261,7 +261,7 @@ func DefaultAgentIgnoreFiles() []string {
 // the narrower question of what is true when the document is merely SILENT, and
 // the two are orthogonal.
 
-// KnownKeys is the set of vibekit-managed config.json keys. PATCH
+// KnownKeys is the set of marotte-managed config.json keys. PATCH
 // handlers warn (but do not reject) keys outside this set so a typo
 // or stray field surfaces in operator logs without breaking forward
 // compatibility with newer frontend versions that introduce new keys
@@ -276,7 +276,7 @@ func DefaultAgentIgnoreFiles() []string {
 // setting shaped `{last_model, effort}`, so it was keyed by the LAST model rather
 // than by the chat: two chats could not disagree about effort, and switching
 // models discarded the previous model's choice. It is a field on the chat record
-// now (vibekit.Chat.Effort), written by CmdSetEffort and applied at session/new
+// now (marotte.Chat.Effort), written by CmdSetEffort and applied at session/new
 // through StartOpts.Effort, which is where the other three per-chat composer
 // settings already lived. Nothing reads or writes the old key; a config.json that
 // still carries it warns as an unknown key on the next write and is otherwise

@@ -1,7 +1,7 @@
 package mcp
 
 // Coverage for the pasted-block path: the translation of a publisher README's
-// JSON into vibekit records, the three-way key classification, and the batch
+// JSON into marotte records, the three-way key classification, and the batch
 // create the HTTP route drives.
 
 import (
@@ -211,7 +211,7 @@ func TestImport_UnknownTopLevelKeyIsNamed(t *testing.T) {
 	}
 }
 
-// A publisher block legitimately carries keys vibekit has no field for. Those
+// A publisher block legitimately carries keys marotte has no field for. Those
 // must not read as typos, which is why the classification is three-way rather
 // than DisallowUnknownFields.
 func TestImport_UnmodelledKeysAreAcceptedWithANote(t *testing.T) {
@@ -384,10 +384,10 @@ func TestImport_OAuthObjectReachesTheRecord(t *testing.T) {
 
 // TestImport_ClientMetadataURLInstallsWithANote is the OTHER half of the nested
 // classification pass, and the two are only correct together: a key the schema
-// carries and vibekit cannot honour has to be accepted with a reason, or the pass
+// carries and marotte cannot honour has to be accepted with a reason, or the pass
 // turns a correctly copied block into a 400 blaming a typo.
 //
-// clientMetadataUrl arrived in kiro-cli 2.19.2. vibekit cannot honour it — the
+// clientMetadataUrl arrived in kiro-cli 2.19.2. marotte cannot honour it — the
 // hosted document declares a redirect URI, and KAS owns the loopback listener and
 // never tells the client which port it bound — so the field is dropped. What was
 // wrong before was the REFUSAL: the key reaches the raw-paste box straight out of
@@ -412,7 +412,7 @@ func TestImport_ClientMetadataURLInstallsWithANote(t *testing.T) {
 	}
 
 	// The note names the key AND the reason. A note saying only "ignoring
-	// clientMetadataUrl" would leave the reader to guess whether vibekit will
+	// clientMetadataUrl" would leave the reader to guess whether marotte will
 	// support it later or is refusing it on purpose.
 	joined := strings.Join(got.Notes, "\n")
 	for _, want := range []string{"clientMetadataUrl", "redirect", "oauth"} {
@@ -467,7 +467,7 @@ func TestImport_UnknownOAuthKeyIsNamedNotDropped(t *testing.T) {
 	}
 }
 
-// The agent reads KAS's rendered file, not vibekit's record, so a paste that
+// The agent reads KAS's rendered file, not marotte's record, so a paste that
 // only updated mcp.json would install a server nothing could connect to. The
 // batch goes through the shared persist path, which is what makes hot-reload
 // free here; this pins that it really does.

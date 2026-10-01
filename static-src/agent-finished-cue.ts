@@ -103,7 +103,7 @@ function raiseAgentFinished(chatID: string, body: string): boolean {
 }
 
 /** A turn ended on `chatID` and `body` is what a cue for it would say ("" for a turn
- *  that says nothing at all — a cancel, or an end vibekit could not read).
+ *  that says nothing at all — a cancel, or an end marotte could not read).
  *
  *  Raises immediately when the chat is settled, parks the cue otherwise. The
  *  per-kind switch is checked before parking as well as before raising, so a cue is

@@ -129,7 +129,7 @@
    on. The theme toggle sitting beside it in the same header swaps glyphs and takes
    no fill, so the pair also disagreed about what an ON header toggle looks like.
    `aria-pressed` STAYS: it is the state channel a screen reader reads and the
-   reason that button's accessible name does not flip (vibekit-ui.md "Toggle
+   reason that button's accessible name does not flip (marotte-ui.md "Toggle
    state"). Only the paint goes, from all three rules in this file — leaving it on
    the hover or press rule would make a fill appear under the pointer in one state
    and not the other. Excluded by id rather than by a new class because there is
@@ -138,7 +138,7 @@
 /* The shell panel's header toggles: full screen, and the key-toolbar trigger.
    Both wrote aria-pressed and neither was in this list, so each announced its
    state to a screen reader and showed the user nothing — the defect the
-   toggle-state rule in vibekit-ui.md exists to prevent, one class short of
+   toggle-state rule in marotte-ui.md exists to prevent, one class short of
    being covered by .icon-btn above. */
 .shell-header-btn[aria-pressed="true"],
 .turn-action-btn[aria-pressed="true"],
@@ -258,7 +258,7 @@
    written as the honest `:not(:has(.tab-close:active))` guard ON that rule: four
    pseudo-classes is over the fleet's `selector-max-pseudo-class` of 3 and (0,5,0) is
    over its `selector-max-specificity`, and those numbers are canonical in
-   cplieger/ci rather than vibekit's to raise.
+   cplieger/ci rather than marotte's to raise.
 
    The value is the RAMP'S MIDDLE RUNG, not a claim that the row is hovered — the
    selected fill runs resting, `-hover` at 12% of the ink, `-press` at 22%, and a row

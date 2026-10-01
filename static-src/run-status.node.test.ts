@@ -21,7 +21,7 @@ interface StatusFixture {
 }
 
 const raw = readFileSync(
-  new URL("../internal/vibekit/testdata/run_statuses.json", import.meta.url),
+  new URL("../internal/marotte/testdata/run_statuses.json", import.meta.url),
   "utf8",
 );
 const fixture = JSON.parse(raw) as StatusFixture;
@@ -44,7 +44,7 @@ describe("the run-status contract shared with Go", () => {
   // The one status the shared fixture cannot carry: `cancelled` is a declared EXTRA
   // (KAS never emits it, but the cancel verb writes `targetStatus` verbatim with no
   // enum check), and the Go census asserts that fixture equals KAS's enum exactly.
-  // So it is pinned here and in internal/vibekit's own contract test, which is what
+  // So it is pinned here and in internal/marotte's own contract test, which is what
   // keeps the two languages agreeing that it reads as over.
   it("reads a cancelled run as over, matching the Go predicate", () => {
     const status = classifyRunStatus("cancelled");

@@ -14,8 +14,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // focusUpdate is the _meta.kiro.focus block of a focus_update
@@ -34,7 +34,7 @@ type focusUpdate struct {
 // Two filters at two depths, because they take different inputs: the door rule is
 // about the string alone and runs here, while the derivation filter needs the chat's
 // own messages and so runs inside applyFocusTitle's Mutate.
-func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatID, f *focusUpdate) {
+func (t *Translator) handleFocusUpdate(ctx context.Context, chatID marotte.ChatID, f *focusUpdate) {
 	if title := SanitizeTitle(f.Title); title != "" {
 		t.adoptOrRefuseTitle(ctx, chatID, title)
 	}
@@ -47,7 +47,7 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatI
 	if status == "" && desc == "" {
 		return
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, chatID, vibekit.ChatStatusPayload{
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, chatID, marotte.ChatStatusPayload{
 		Status:      status,
 		Description: desc,
 	}))
@@ -57,7 +57,7 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatI
 // Refusing leaves whatever name the chat has, which is always the better answer: the
 // local first-prompt label is a real name, and the default placeholder at least still
 // accepts the real title when it arrives.
-func (t *Translator) adoptOrRefuseTitle(ctx context.Context, chatID vibekit.ChatID, title string) {
+func (t *Translator) adoptOrRefuseTitle(ctx context.Context, chatID marotte.ChatID, title string) {
 	reason := TitleRefusal(title)
 	switch reason {
 	case "":
@@ -75,9 +75,9 @@ func (t *Translator) adoptOrRefuseTitle(ctx context.Context, chatID vibekit.Chat
 // derivation filter runs inside the Mutate closure because it needs the
 // chat's messages; Mutate broadcasts chat_updated on change, which is what
 // flips the tab label live.
-func (t *Translator) applyFocusTitle(ctx context.Context, chatID vibekit.ChatID, title string) {
+func (t *Translator) applyFocusTitle(ctx context.Context, chatID marotte.ChatID, title string) {
 	renamed := false
-	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
 			return false
 		}
@@ -105,10 +105,10 @@ func (t *Translator) applyFocusTitle(ctx context.Context, chatID vibekit.ChatID,
 // adopted "agent focus titles" were derivations a byte-exact filter passed, both
 // differing only by the prompt's lowercase first letter. A title SV had to truncate
 // never reaches here, since the door refuses every "..."-suffixed title.
-func titleIsPromptDerived(title string, c *vibekit.Chat) bool {
+func titleIsPromptDerived(title string, c *marotte.Chat) bool {
 	for i := range c.Messages {
 		m := &c.Messages[i]
-		if m.Role != vibekit.RoleUser {
+		if m.Role != marotte.RoleUser {
 			continue
 		}
 		if kasDerivedTitle(m.Content) == title {
@@ -142,7 +142,7 @@ const kasMaxFillerStrips = 6
 // It stops short of SV's own 80-rune truncation: the door refuses every truncated
 // title, so no truncated derivation reaches the comparison this feeds. Every other
 // case-mapping or length divergence from SV is a MISS rather than an over-filter — it
-// can only adopt KAS's derivation where vibekit's own label would have gone.
+// can only adopt KAS's derivation where marotte's own label would have gone.
 func kasDerivedTitle(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {

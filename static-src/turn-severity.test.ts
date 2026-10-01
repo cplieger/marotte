@@ -1,7 +1,7 @@
 // The runtime VOCABULARY half of turn-severity.ts.
 //
 // Distinct from `turn-severity.node.test.ts` beside it, which is the cross-language
-// fixture pin and reads `internal/vibekit/testdata/turn_severity.json` off disk. This
+// fixture pin and reads `internal/marotte/testdata/turn_severity.json` off disk. This
 // file owns the exports that have no Go twin, so it needs no file and no fixture.
 import { describe, it, expect } from "vitest";
 

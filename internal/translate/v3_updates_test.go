@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // configModelUpdate mirrors the shape KAS sends: each model choice gets
@@ -195,7 +195,7 @@ func TestChoiceMeta(t *testing.T) {
 
 // infoKindFrame builds a session_info_update whose _meta.kiro carries only a
 // kind — no focus, summarization, promptTurnSummaries or contextUsage block —
-// which is the shape every sub-kind vibekit does not consume arrives in.
+// which is the shape every sub-kind marotte does not consume arrives in.
 func infoKindFrame(t *testing.T, kind string) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{
@@ -300,7 +300,7 @@ func TestHandleSessionInfoUpdate_AStepsTurnBracketIsDropped(t *testing.T) {
 			name: "the chat's own turn_end",
 			kind: "turn_end",
 			attr: FrameAttribution{},
-			want: []turnBracket{{chat: "c1", kind: "end", stop: vibekit.StopReason("end_turn")}},
+			want: []turnBracket{{chat: "c1", kind: "end", stop: marotte.StopReason("end_turn")}},
 		},
 		{
 			name: "the chat's own turn_start",
@@ -342,7 +342,7 @@ func TestMaterialPctDelta(t *testing.T) {
 		"exactly one point up":           {50, 51, true},
 		"exactly one point down":         {51, 50, true},
 		"large jump":                     {10, 90, true},
-		// The tiers are vibekit's OWN client thresholds, not KAS's: 70 and 90
+		// The tiers are marotte's OWN client thresholds, not KAS's: 70 and 90
 		// recolour the context ring, 95 is where the composer stops accepting
 		// input. KAS's 80/95 TUI boundaries are not rendered by this client.
 		"tiny move crossing 70":              {69.9, 70.0, true},
@@ -353,7 +353,7 @@ func TestMaterialPctDelta(t *testing.T) {
 		"tiny move inside the warning band":  {75.0, 75.2, false},
 		"tiny move inside the critical band": {91.0, 91.3, false},
 		"tiny move above the cutoff":         {96.0, 96.3, false},
-		// 80 is KAS's boundary and not one of vibekit's, so a sub-point move
+		// 80 is KAS's boundary and not one of marotte's, so a sub-point move
 		// across it is correctly ignored.
 		"tiny move crossing KAS's 80 is not material": {79.9, 80.0, false},
 		"from zero is material":                       {0, 1, true},
@@ -591,7 +591,7 @@ func TestHandleSessionInfoUpdate_TurnEndCarriesStopDetails(t *testing.T) {
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", raw, FrameAttribution{})
 
 			want := []turnBracket{
-				{chat: "c1", kind: "end", stop: vibekit.StopReasonError, details: tt.want},
+				{chat: "c1", kind: "end", stop: marotte.StopReasonError, details: tt.want},
 			}
 			if !slices.Equal(deps.brackets, want) {
 				t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
@@ -611,7 +611,7 @@ func TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing(t *testing
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", turnBracketInfo(t, "turn_end"), FrameAttribution{})
 
-	want := []turnBracket{{chat: "c1", kind: "end", stop: vibekit.StopReason("end_turn")}}
+	want := []turnBracket{{chat: "c1", kind: "end", stop: marotte.StopReason("end_turn")}}
 	if !slices.Equal(deps.brackets, want) {
 		t.Errorf("brackets = %+v, want %+v", deps.brackets, want)
 	}
@@ -620,7 +620,7 @@ func TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing(t *testing
 func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
-	_, _ = store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.ServedModelIDs = []string{"old-a", "old-b"}
 		return true
 	})

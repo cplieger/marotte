@@ -81,7 +81,7 @@ function renderAccountUsage(u: AccountUsage | null): void {
   // Written HERE rather than in the arms below, because every arm past this point
   // returns and the state is a property of the ACCOUNT rather than of a breakdown
   // line. The branch is TOTAL because the wire field carries no `omitempty`
-  // (internal/vibekit/account.go), so a payload always states the value; blank is
+  // (internal/marotte/account.go), so a payload always states the value; blank is
   // reserved for the null arm above, where an absent snapshot says nothing about
   // the account and "Overages off" would be a claim.
   overageEl.textContent = u.overages_enabled ? "Overages on" : "Overages off";

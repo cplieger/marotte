@@ -7,11 +7,11 @@
 // summarization frames while the reply says "Done — context compacted." That is
 // the worst failure shape available: a lie with no tell.
 //
-// So a command vibekit wants to be DETERMINISTIC must own its handler and call
+// So a command marotte wants to be DETERMINISTIC must own its handler and call
 // its own endpoint. Passing the text through is asking the model to maybe do it.
 //
 // This is deliberately NOT the command palette, which was priced out and
-// declined (see vibekit.md "Slash commands"). A palette advertises ~90 entries of
+// declined (see marotte.md "Slash commands"). A palette advertises ~90 entries of
 // which one category in four silently degrades to prose; a table of three
 // entries advertises nothing and makes exactly those three true.
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ function dropTurn(chatID: string): boolean {
  * Consume a typed command if the table claims it.
  *
  * Everything not in the table falls through unchanged, including slash text KAS
- * itself parses. vibekit does not try to enumerate what KAS handles — that list
+ * itself parses. marotte does not try to enumerate what KAS handles — that list
  * is KAS's and it moves.
  */
 export function handleTypedCommand(chatID: string, text: string): boolean {

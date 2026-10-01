@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // pendingCall registers one pending request id and returns its channel, the way
@@ -58,13 +58,13 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 	b := readLoopBridge(strings.NewReader(
 		huge + "\n" + `{"jsonrpc":"2.0","method":"session/update","params":{}}` + "\n",
 	))
-	b.notifCh = make(chan vibekit.Notification, 4)
+	b.notifCh = make(chan marotte.Notification, 4)
 
 	b.readLoop()
 
 	select {
 	case n := <-b.notifCh:
-		if n.Msg == nil || n.Msg.Method != vibekit.MethodSessionUpdate {
+		if n.Msg == nil || n.Msg.Method != marotte.MethodSessionUpdate {
 			t.Fatalf("notification after the oversize frame = %#v, want session/update", n.Msg)
 		}
 		if n.Seq != 1 {
@@ -76,7 +76,7 @@ func TestReadLoop_ResumesDispatchAfterAnOversizeFrame(t *testing.T) {
 }
 
 // Call translates the sentinel into a NON-retryable transport error carrying
-// vibekit.ErrFrameTooLarge. Retryability is the load-bearing half: retrying would
+// marotte.ErrFrameTooLarge. Retryability is the load-bearing half: retrying would
 // re-run an expensive turn to produce the same oversize payload, and the wording
 // is what promptFailureReason puts in front of the user.
 func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
@@ -85,7 +85,7 @@ func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := b.Call(t.Context(), vibekit.MethodPrompt, nil)
+		_, err := b.Call(t.Context(), marotte.MethodPrompt, nil)
 		done <- err
 	}()
 	waitPending(t, b, 1)
@@ -93,15 +93,15 @@ func TestCall_FrameTooLargeIsNonRetryableAndNamed(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, vibekit.ErrFrameTooLarge) {
-			t.Fatalf("Call error = %v, want vibekit.ErrFrameTooLarge", err)
+		if !errors.Is(err, marotte.ErrFrameTooLarge) {
+			t.Fatalf("Call error = %v, want marotte.ErrFrameTooLarge", err)
 		}
-		if errors.Is(err, vibekit.ErrBridgeExited) {
+		if errors.Is(err, marotte.ErrBridgeExited) {
 			t.Error("a dropped frame must not read as a dead bridge: the process and the session are still alive")
 		}
-		te, ok := errors.AsType[*vibekit.TransportError](err)
+		te, ok := errors.AsType[*marotte.TransportError](err)
 		if !ok {
-			t.Fatalf("Call error %T, want *vibekit.TransportError", err)
+			t.Fatalf("Call error %T, want *marotte.TransportError", err)
 		}
 		if te.Retryable {
 			t.Error("frame-too-large was marked retryable; the same prompt reproduces the same oversize payload")

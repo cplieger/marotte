@@ -7,21 +7,21 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // stagedStepTurn opens a step turn through the real fold target rather than setting
 // the source by hand: openWire is what stamps TurnSourceWorkflowStep, and a test
 // asserting the source it just assigned would pin nothing.
-func stagedStepTurn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
+func stagedStepTurn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID marotte.ChatID, text string) {
 	t.Helper()
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	buf := h.coord.TurnFoldTarget(t.Context(), chatID, vibekit.TurnSourceWorkflowStep)
+	buf := h.coord.TurnFoldTarget(t.Context(), chatID, marotte.TurnSourceWorkflowStep)
 	if text == "" {
 		return
 	}
@@ -32,7 +32,7 @@ func stagedStepTurn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.
 
 // outcomeMarkerCount is a COUNT rather than a last-one lookup: the ruling is that a
 // step turn persists NO marker, so the idempotency case needs the number unchanged.
-func outcomeMarkerCount(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) int {
+func outcomeMarkerCount(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) int {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
@@ -40,7 +40,7 @@ func outcomeMarkerCount(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) 
 	}
 	n := 0
 	for i := range c.Messages {
-		if c.Messages[i].EventKind == vibekit.EventTurnOutcome {
+		if c.Messages[i].EventKind == marotte.EventTurnOutcome {
 			n++
 		}
 	}
@@ -49,12 +49,12 @@ func outcomeMarkerCount(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) 
 
 // appendUserRow persists a prompt sent while the turn was still folding: the trailing
 // row the client renders AFTER the reply it arrived during.
-func appendUserRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
+func appendUserRow(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID, text string) {
 	t.Helper()
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
-		c.Messages = append(c.Messages, vibekit.Message{
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
+		c.Messages = append(c.Messages, marotte.Message{
 			ID:      newMessageID(),
-			Role:    vibekit.RoleUser,
+			Role:    marotte.RoleUser,
 			Content: text,
 		})
 		return true
@@ -65,7 +65,7 @@ func appendUserRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text 
 
 // rowOrder is a READ rather than an assertion helper: three closers share the ordering
 // rule and each case states its own expectation, so only the walk is worth having once.
-func rowOrder(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) (assistantAt, userAt int) {
+func rowOrder(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) (assistantAt, userAt int) {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
@@ -74,11 +74,11 @@ func rowOrder(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) (assistant
 	assistantAt, userAt = -1, -1
 	for i := range c.Messages {
 		switch c.Messages[i].Role {
-		case vibekit.RoleAssistant:
+		case marotte.RoleAssistant:
 			assistantAt = i
-		case vibekit.RoleUser:
+		case marotte.RoleUser:
 			userAt = i
-		case vibekit.RoleEvent:
+		case marotte.RoleEvent:
 		}
 	}
 	return assistantAt, userAt
@@ -101,7 +101,7 @@ func TestCloseStepTurn_PersistsAStepsContent(t *testing.T) {
 	if msgs[0].Content != reply {
 		t.Errorf("persisted content = %q, want %q", msgs[0].Content, reply)
 	}
-	if msgs[0].TurnOutcome != vibekit.TurnOutcomeUnknown {
+	if msgs[0].TurnOutcome != marotte.TurnOutcomeUnknown {
 		t.Errorf("persisted outcome = %q, want unknown — the run ended, how the step's own turn ended never arrived",
 			msgs[0].TurnOutcome)
 	}
@@ -176,11 +176,11 @@ func TestCloseStepTurn_ASplitStepTurnPersistsAMarkerAndAnnounces(t *testing.T) {
 	if marker == nil {
 		t.Fatal("a split step turn persisted no marker, so its sealed row derives `completed` for a verdict nothing recorded")
 	}
-	if marker.TurnOutcome != vibekit.TurnOutcomeUnknown {
+	if marker.TurnOutcome != marotte.TurnOutcomeUnknown {
 		t.Errorf("marker TurnOutcome = %q, want unknown — the run ended and the step's own turn end never arrived",
 			marker.TurnOutcome)
 	}
-	if got := turnEndedStops(t, h); len(got) != 1 || got[0] != string(vibekit.StopReasonUnknown) {
+	if got := turnEndedStops(t, h); len(got) != 1 || got[0] != string(marotte.StopReasonUnknown) {
 		t.Errorf("turn_ended stops = %v, want exactly one unknown: this close persisted a carrier, and "+
 			"the run ending says nothing about how the step's own turn ended", got)
 	}
@@ -233,7 +233,7 @@ func TestCloseOnWireEnd_InsertsAStepsContentAheadOfATrailingUserRow(t *testing.T
 	stagedStepTurn(t, h, cs, "c1", "the step's reply")
 	appendUserRow(t, cs, "c1", "a prompt sent while the run was still going")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 
 	assistantAt, userAt := rowOrder(t, cs, "c1")
 	if assistantAt < 0 || userAt < 0 {
@@ -257,7 +257,7 @@ func TestCloseAsInterrupted_AnEmptyStepTurnPersistsAndAnnouncesNothing(t *testin
 	if got := assistantMessages(t, cs, "c1"); len(got) != 0 {
 		t.Errorf("persisted %d assistant messages for a step turn that emitted nothing, want 0", len(got))
 	}
-	if got := eventMessageOf(t, cs, "c1", vibekit.EventInterrupted); got != nil {
+	if got := eventMessageOf(t, cs, "c1", marotte.EventInterrupted); got != nil {
 		t.Errorf("persisted an interrupted divider (outcome %q); that row is a turn card in a chat "+
 			"the turn is not about", got.TurnOutcome)
 	}
@@ -284,24 +284,24 @@ func TestCloseAsInterrupted_ASplitStepTurnPersistsADividerAndAnnounces(t *testin
 	if buf == nil {
 		t.Fatal("the fixture opened no step turn")
 	}
-	buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
+	buf.TrackFileChanges([]marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
 	if !h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Fatal("the fixture could not seal a segment")
 	}
 
 	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
 
-	divider := eventMessageOf(t, cs, "c1", vibekit.EventInterrupted)
+	divider := eventMessageOf(t, cs, "c1", marotte.EventInterrupted)
 	if divider == nil {
 		t.Fatal("a split step turn persisted no divider, so its sealed row derives `completed` for a turn its bridge killed")
 	}
-	if divider.TurnOutcome != vibekit.TurnOutcomeInterrupted {
+	if divider.TurnOutcome != marotte.TurnOutcomeInterrupted {
 		t.Errorf("divider TurnOutcome = %q, want interrupted", divider.TurnOutcome)
 	}
 	if divider.ChangedFiles["a.go"] == nil {
 		t.Errorf("divider ChangedFiles = %v, want the step's cumulative map", divider.ChangedFiles)
 	}
-	if got := turnEndedStops(t, h); len(got) != 1 || got[0] != string(vibekit.StopReasonInterrupted) {
+	if got := turnEndedStops(t, h); len(got) != 1 || got[0] != string(marotte.StopReasonInterrupted) {
 		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
 	}
 }
@@ -314,11 +314,11 @@ func TestCloseStepTurn_AStepTurnWithContentStillAnnounces(t *testing.T) {
 
 	h.coord.CloseStepTurn(t.Context(), "c1")
 
-	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, 0), vibekit.EventTurnEnded)
+	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, 0), marotte.EventTurnEnded)
 	if len(ends) != 1 {
 		t.Fatalf("broadcast %d turn_ended events, want exactly 1", len(ends))
 	}
-	if ends[0].Outcome != vibekit.TurnOutcomeUnknown {
+	if ends[0].Outcome != marotte.TurnOutcomeUnknown {
 		t.Errorf("turn_ended outcome = %q, want unknown — the run ended, how the step's own turn ended never arrived",
 			ends[0].Outcome)
 	}
@@ -331,20 +331,20 @@ func TestCloseOnWireEnd_AnEmptyStepTurnCancelledStillPersistsAndAnnounces(t *tes
 	h, cs, _ := newTestHub()
 	stagedStepTurn(t, h, cs, "c1", "")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonCancelled, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonCancelled, "")
 
-	cancelled := eventMessageOf(t, cs, "c1", vibekit.EventCancelled)
+	cancelled := eventMessageOf(t, cs, "c1", marotte.EventCancelled)
 	if cancelled == nil {
 		t.Fatal("a cancelled step turn persisted no EventCancelled row, so a reload derives nothing")
 	}
-	if cancelled.TurnOutcome != vibekit.TurnOutcomeCancelled {
+	if cancelled.TurnOutcome != marotte.TurnOutcomeCancelled {
 		t.Errorf("the cancel row carries outcome %q, want cancelled", cancelled.TurnOutcome)
 	}
-	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, 0), vibekit.EventTurnEnded)
+	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, 0), marotte.EventTurnEnded)
 	if len(ends) != 1 {
 		t.Fatalf("broadcast %d turn_ended events, want exactly 1: this close persisted a carrier", len(ends))
 	}
-	if ends[0].StopReason != vibekit.StopReasonCancelled {
+	if ends[0].StopReason != marotte.StopReasonCancelled {
 		t.Errorf("turn_ended stop reason = %q, want cancelled", ends[0].StopReason)
 	}
 }
@@ -359,7 +359,7 @@ func TestCloseStepTurn_AbortsAnUnsettledToolCall(t *testing.T) {
 	if buf == nil {
 		t.Fatal("the fixture opened no step turn")
 	}
-	buf.AppendToolCall(&vibekit.ToolCall{ID: "tc-1", Title: "Run command", Status: vibekit.ToolInProgress})
+	buf.AppendToolCall(&marotte.ToolCall{ID: "tc-1", Title: "Run command", Status: marotte.ToolInProgress})
 
 	h.coord.CloseStepTurn(t.Context(), "c1")
 
@@ -372,7 +372,7 @@ func TestCloseStepTurn_AbortsAnUnsettledToolCall(t *testing.T) {
 	if len(msgs[0].ToolCalls) != 1 {
 		t.Fatalf("the persisted message carries %d tool calls, want 1", len(msgs[0].ToolCalls))
 	}
-	if got := msgs[0].ToolCalls[0].Status; got != vibekit.ToolAborted {
+	if got := msgs[0].ToolCalls[0].Status; got != marotte.ToolAborted {
 		t.Errorf("persisted tool status = %q, want aborted — nothing is left to settle it", got)
 	}
 }

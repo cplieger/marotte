@@ -1,4 +1,4 @@
-module github.com/cplieger/vibekit
+module github.com/cplieger/marotte
 
 go 1.27.1
 

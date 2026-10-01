@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // handleFSRequest dispatches fs/* incoming requests. Returns true if msg
@@ -26,12 +26,12 @@ import (
 // warn + JSON-RPC error rather than a process-killing crash. Panics were
 // reachable via integer overflow on attacker-influenced line/limit params;
 // the bug is fixed in sliceByLines but this wrapper forecloses the class.
-func (in *inbound) handleFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
-	var handler func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)
+func (in *inbound) handleFSRequest(_ context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) bool {
+	var handler func(context.Context, marotte.ChatID, *marotte.RPCResponse)
 	switch msg.Method {
-	case vibekit.MethodFSRead:
+	case marotte.MethodFSRead:
 		handler = in.respondFSRead
-	case vibekit.MethodFSWrite:
+	case marotte.MethodFSWrite:
 		handler = in.respondFSWrite
 	default:
 		return false
@@ -63,7 +63,7 @@ func (in *inbound) handleFSRequest(_ context.Context, chatID vibekit.ChatID, msg
 //
 // Response: { content: "..." }. Per ACP, line/limit are 1-indexed +
 // inclusive; we slice the read content to that window.
-func (in *inbound) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		Line  *int   `json:"line,omitempty"`
 		Limit *int   `json:"limit,omitempty"`

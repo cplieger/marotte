@@ -4,8 +4,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/textsearch"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/textsearch"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The cross-chat candidate index: one Bloom filter per chat over the rune
@@ -44,7 +44,7 @@ type chatFilter struct {
 // buildChatFilter indexes one decoded chat: its title and every span the scan
 // reads, folded as the scan folds them. A trigram never straddles two spans,
 // because a hit never does.
-func buildChatFilter(c *vibekit.Chat) *chatFilter {
+func buildChatFilter(c *marotte.Chat) *chatFilter {
 	f := new(chatFilter)
 	f.addText(c.Name)
 	for i := range c.Messages {
@@ -138,27 +138,27 @@ func queryTrigrams(text string) []uint64 {
 
 // searchIndex holds the filters by chat id. The zero value is ready to use.
 type searchIndex struct {
-	filters map[vibekit.ChatID]*chatFilter
+	filters map[marotte.ChatID]*chatFilter
 	mu      sync.Mutex
 }
 
-func (x *searchIndex) lookup(id vibekit.ChatID) (*chatFilter, bool) {
+func (x *searchIndex) lookup(id marotte.ChatID) (*chatFilter, bool) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	f, ok := x.filters[id]
 	return f, ok
 }
 
-func (x *searchIndex) put(id vibekit.ChatID, f *chatFilter) {
+func (x *searchIndex) put(id marotte.ChatID, f *chatFilter) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	if x.filters == nil {
-		x.filters = make(map[vibekit.ChatID]*chatFilter)
+		x.filters = make(map[marotte.ChatID]*chatFilter)
 	}
 	x.filters[id] = f
 }
 
-func (x *searchIndex) drop(id vibekit.ChatID) {
+func (x *searchIndex) drop(id marotte.ChatID) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	delete(x.filters, id)

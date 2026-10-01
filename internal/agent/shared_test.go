@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // --- Runtime construction helpers ---
@@ -80,7 +80,7 @@ func (rt *Runtime) handleCommand(w http.ResponseWriter, r *http.Request) {
 	rt.dispatcher.ServeHTTP(w, r)
 }
 
-func postCmd(t *testing.T, h *Runtime, cmd vibekit.ClientCommand) *httptest.ResponseRecorder {
+func postCmd(t *testing.T, h *Runtime, cmd marotte.ClientCommand) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(cmd)
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(body)))
@@ -108,7 +108,7 @@ func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	t.Helper()
 	out := make([]string, 0, len(events))
 	for _, e := range events {
-		var msg vibekit.ServerEvent
+		var msg marotte.ServerEvent
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
@@ -122,19 +122,19 @@ func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 // payload back off the wire is a two-step round-trip every caller otherwise writes out
 // again; a non-error event and an undecodable payload are SKIPPED rather than fatal,
 // since the buffer legitimately carries unrelated frames.
-func errorPayloadsSince(t *testing.T, h *Runtime, sinceID uint64) []vibekit.ErrorPayload {
+func errorPayloadsSince(t *testing.T, h *Runtime, sinceID uint64) []marotte.ErrorPayload {
 	t.Helper()
-	var out []vibekit.ErrorPayload
+	var out []marotte.ErrorPayload
 	for _, e := range bufferedSince(h, sinceID) {
-		var msg vibekit.ServerEvent
-		if json.Unmarshal(e.Event.Data, &msg) != nil || msg.Type != vibekit.EventError {
+		var msg marotte.ServerEvent
+		if json.Unmarshal(e.Event.Data, &msg) != nil || msg.Type != marotte.EventError {
 			continue
 		}
 		raw, err := json.Marshal(msg.Payload)
 		if err != nil {
 			continue
 		}
-		var p vibekit.ErrorPayload
+		var p marotte.ErrorPayload
 		if json.Unmarshal(raw, &p) == nil {
 			out = append(out, p)
 		}
@@ -170,13 +170,13 @@ func mustJSON(t testing.TB, v any) json.RawMessage {
 // are how a consumer came to read the kind off the outer object and drop every chunk
 // while its own tests stayed green. It takes no testing.TB so the fake bridge's Call
 // can use it: a builder callable from a fake must not end a test from another goroutine.
-func newChunkMsg(text string) *vibekit.RPCResponse {
+func newChunkMsg(text string) *marotte.RPCResponse {
 	return newSessionChunkMsg("", text)
 }
 
 // newSessionChunkMsg sets the envelope's `sessionId`, which the utility bridge's
 // own-session screen reads. An empty id omits the key.
-func newSessionChunkMsg(sessionID, text string) *vibekit.RPCResponse {
+func newSessionChunkMsg(sessionID, text string) *marotte.RPCResponse {
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "agent_message_chunk",
 		"content":       map[string]any{"type": "text", "text": text},
@@ -188,13 +188,13 @@ func newSessionChunkMsg(sessionID, text string) *vibekit.RPCResponse {
 		env["sessionId"] = sessionID
 	}
 	params, _ := json.Marshal(env)
-	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
 // newStepChunkMsg is the shape a chat-parented run's step frames arrive in on the
 // LAUNCHING chat's connection: the subtask id is empty exactly as KAS sends it, so
 // `_meta.kiro.workflow` is the whole attribution.
-func newStepChunkMsg(text, workflowID, nodePath string) *vibekit.RPCResponse {
+func newStepChunkMsg(text, workflowID, nodePath string) *marotte.RPCResponse {
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "agent_message_chunk",
 		"content":       map[string]any{"type": "text", "text": text},
@@ -209,10 +209,10 @@ func newStepChunkMsg(text, workflowID, nodePath string) *vibekit.RPCResponse {
 		},
 	})
 	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
-	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-func newToolCallMsg(t *testing.T, id, title, status string) *vibekit.RPCResponse {
+func newToolCallMsg(t *testing.T, id, title, status string) *marotte.RPCResponse {
 	t.Helper()
 	raw := mustJSON(t, map[string]any{
 		"sessionUpdate": "tool_call",
@@ -221,7 +221,7 @@ func newToolCallMsg(t *testing.T, id, title, status string) *vibekit.RPCResponse
 		"kind":          "read",
 		"status":        status,
 	})
-	return &vibekit.RPCResponse{
+	return &marotte.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	}
@@ -285,28 +285,28 @@ func quietLogs(b *testing.B) {
 // --- Turn buffer helpers ---
 
 // stageTurnBuffer opens a wireTurnStart turn when none is open, the test-side equivalent
-// of the first frame of a turn vibekit did not prompt. There is no buffer store: a
+// of the first frame of a turn marotte did not prompt. There is no buffer store: a
 // buffer belongs to the turn record that installed it.
-func (rt *Runtime) stageTurnBuffer(tb testing.TB, chatID vibekit.ChatID) *buffer.Buffer {
+func (rt *Runtime) stageTurnBuffer(tb testing.TB, chatID marotte.ChatID) *buffer.Buffer {
 	tb.Helper()
-	return rt.coord.TurnFoldTarget(tb.Context(), chatID, vibekit.TurnSourceWireTurnStart)
+	return rt.coord.TurnFoldTarget(tb.Context(), chatID, marotte.TurnSourceWireTurnStart)
 }
 
 // stagePromptTurn hands back the epoch as well as the buffer, and the epoch is the point:
 // an epoch-scoped closer handed zero closes nothing (zero is what StartTurn answers when
 // it refuses), so a test passing zero exercises the fallthrough rather than its closer.
-func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID vibekit.ChatID) (vibekit.TurnEpoch, *buffer.Buffer) {
+func (rt *Runtime) stagePromptTurn(tb testing.TB, chatID marotte.ChatID) (marotte.TurnEpoch, *buffer.Buffer) {
 	tb.Helper()
-	epoch := rt.coord.StartTurn(tb.Context(), chatID, vibekit.TurnSourcePrompt)
+	epoch := rt.coord.StartTurn(tb.Context(), chatID, marotte.TurnSourcePrompt)
 	if epoch == 0 {
 		tb.Fatalf("StartTurn(%q) refused, so there is no turn to stage", chatID)
 	}
-	return epoch, rt.coord.TurnFoldTarget(tb.Context(), chatID, vibekit.TurnSourceWireTurnStart)
+	return epoch, rt.coord.TurnFoldTarget(tb.Context(), chatID, marotte.TurnSourceWireTurnStart)
 }
 
 // liveTurnBuffer is what the NEXT turn would read, which is what a released-buffer
 // assertion is about. Nil when no turn is open.
-func (rt *Runtime) liveTurnBuffer(chatID vibekit.ChatID) *buffer.Buffer {
+func (rt *Runtime) liveTurnBuffer(chatID marotte.ChatID) *buffer.Buffer {
 	facts, open := rt.coord.turns.openTurns()[chatID]
 	if !open {
 		return nil
@@ -317,25 +317,25 @@ func (rt *Runtime) liveTurnBuffer(chatID vibekit.ChatID) *buffer.Buffer {
 // --- session_info_update builders ---
 
 // newSessionInfoMsg takes the `_meta.kiro` block because session_info_update is a
-// CARRIER — 22+ sub-kinds multiplex through it and vibekit dispatches on which sub-BLOCK
+// CARRIER — 22+ sub-kinds multiplex through it and marotte dispatches on which sub-BLOCK
 // is present, so each helper below fills the one member its frame is about.
-func newSessionInfoMsg(kiro map[string]any) *vibekit.RPCResponse {
+func newSessionInfoMsg(kiro map[string]any) *marotte.RPCResponse {
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "session_info_update",
 		"_meta":         map[string]any{"kiro": kiro},
 	})
 	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
-	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
-// newTurnStartMsg: KAS emits this bracket for every turn, one vibekit never prompted
+// newTurnStartMsg: KAS emits this bracket for every turn, one marotte never prompted
 // included.
-func newTurnStartMsg() *vibekit.RPCResponse {
+func newTurnStartMsg() *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{"kind": "turn_start", "turnStart": true})
 }
 
 // newTurnEndMsg carries the outcome no local closer can know.
-func newTurnEndMsg(stop string) *vibekit.RPCResponse {
+func newTurnEndMsg(stop string) *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{
 		"kind":    "turn_end",
 		"turnEnd": map[string]any{"stopReason": stop},
@@ -344,7 +344,7 @@ func newTurnEndMsg(stop string) *vibekit.RPCResponse {
 
 // newTurnCompletionMsg consumes a notification and folds NOTHING, the shape a settle
 // bounded by folds alone parks behind forever.
-func newTurnCompletionMsg() *vibekit.RPCResponse {
+func newTurnCompletionMsg() *marotte.RPCResponse {
 	return newSessionInfoMsg(map[string]any{
 		"kind":                "turn_completion",
 		"promptTurnSummaries": []map[string]any{{"unit": "credit", "usage": 0.01}},
@@ -353,7 +353,7 @@ func newTurnCompletionMsg() *vibekit.RPCResponse {
 }
 
 // newReplayedTurnEndMsg is a turn_end from a session/load replay: history, not now.
-func newReplayedTurnEndMsg(stop string) *vibekit.RPCResponse {
+func newReplayedTurnEndMsg(stop string) *marotte.RPCResponse {
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "session_info_update",
 		"_meta": map[string]any{"kiro": map[string]any{
@@ -363,20 +363,20 @@ func newReplayedTurnEndMsg(stop string) *vibekit.RPCResponse {
 		}},
 	})
 	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
-	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
 // newAgentInitiatedChunkMsg carries the ONE flag that tells a prompted turn from an
 // agent-initiated one. It rides content and never the bracket, which is why
 // acknowledgement is provisional.
-func newAgentInitiatedChunkMsg(text string) *vibekit.RPCResponse {
+func newAgentInitiatedChunkMsg(text string) *marotte.RPCResponse {
 	update, _ := json.Marshal(map[string]any{
 		"sessionUpdate": "agent_message_chunk",
 		"content":       map[string]any{"type": "text", "text": text},
 		"_meta":         map[string]any{"kiro": map[string]any{"agentInitiated": true}},
 	})
 	params, _ := json.Marshal(map[string]any{"update": json.RawMessage(update)})
-	return &vibekit.RPCResponse{Method: vibekit.MethodSessionUpdate, Params: params}
+	return &marotte.RPCResponse{Method: marotte.MethodSessionUpdate, Params: params}
 }
 
 // --- sequence helpers ---
@@ -384,7 +384,7 @@ func newAgentInitiatedChunkMsg(text string) *vibekit.RPCResponse {
 // waitForParkedSettle proves the settle is PARKED before the folder is let move. It
 // polls the registry's own state rather than sleeping: the discriminator is that no
 // frame has been consumed yet, and a sleep would only make that likely.
-func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, want uint64) {
+func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID marotte.ChatID, epoch marotte.TurnEpoch, want uint64) {
 	tb.Helper()
 	lc := reg.lifecycleFor(chatID)
 	deadline := time.Now().Add(5 * time.Second)
@@ -403,12 +403,12 @@ func waitForParkedSettle(tb testing.TB, reg *turnRegistry, chatID vibekit.ChatID
 
 // payloadsOfType is generic over the payload so a caller reads the FIELD it cares about
 // rather than a decoded map, where a lookup would pass on a renamed field.
-func payloadsOfType[T any](tb testing.TB, events []sse.ReplayEvent, want vibekit.EventType) []T {
+func payloadsOfType[T any](tb testing.TB, events []sse.ReplayEvent, want marotte.EventType) []T {
 	tb.Helper()
 	var out []T
 	for _, e := range events {
 		var env struct {
-			Type    vibekit.EventType `json:"type"`
+			Type    marotte.EventType `json:"type"`
 			Payload T                 `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
@@ -421,12 +421,12 @@ func payloadsOfType[T any](tb testing.TB, events []sse.ReplayEvent, want vibekit
 	return out
 }
 
-func hasAssistantContent(c *vibekit.Chat, want string) bool {
+func hasAssistantContent(c *marotte.Chat, want string) bool {
 	if c == nil {
 		return false
 	}
 	for i := range c.Messages {
-		if c.Messages[i].Role == vibekit.RoleAssistant && strings.Contains(c.Messages[i].Content, want) {
+		if c.Messages[i].Role == marotte.RoleAssistant && strings.Contains(c.Messages[i].Content, want) {
 			return true
 		}
 	}

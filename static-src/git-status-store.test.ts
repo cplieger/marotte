@@ -112,8 +112,8 @@ describe("statusFor", () => {
 // repo), never by an absolute path — see discoverRepos in internal/git/repos.go.
 // These cases used to fabricate absolute names (`repo("/w/r", …)`), which made the
 // index keys look absolute and the assertions pass while the real product built
-// keys like "vibekit/static-src/a.ts" and looked them up with
-// "/workspace/vibekit/static-src/a.ts". No key ever matched, so the browser's
+// keys like "marotte/static-src/a.ts" and looked them up with
+// "/workspace/marotte/static-src/a.ts". No key ever matched, so the browser's
 // status letters and every directory rollup were silently empty for every file,
 // with a green suite. The join now goes through workspace.ts.
 describe("statusForPath", () => {
@@ -123,8 +123,8 @@ describe("statusForPath", () => {
 
   it("answers for an absolute path, so a consumer needs no repo split rule", () => {
     expect.assertions(1);
-    _setReposForTest([repo("vibekit", [{ path: "static-src/files.ts", status: "M" }])]);
-    expect(statusForPath("/workspace/vibekit/static-src/files.ts")).toBe("M");
+    _setReposForTest([repo("marotte", [{ path: "static-src/files.ts", status: "M" }])]);
+    expect(statusForPath("/workspace/marotte/static-src/files.ts")).toBe("M");
   });
 
   it("answers for a file in the workspace-root repo, reported as '.'", () => {

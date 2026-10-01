@@ -1,13 +1,13 @@
 // D101 / D104, client side.
 //
 // Three things are pinned here, and the first is a CROSS-LANGUAGE contract with no
-// codegen behind it: the PR subject prefix is spelled in Go (vibekit.PRSubjectPrefix)
+// codegen behind it: the PR subject prefix is spelled in Go (marotte.PRSubjectPrefix)
 // and once in TypeScript (push-subject.ts, which is DOM-free, so the worker and the
 // page both take it from there). Two copies of one literal is what the read below
 // turns into a test rather than a hope.
 import { describe, it, expect, beforeEach } from "vitest";
 import { settingsPayload } from "./__test-helpers__/settings.js";
-import pushTypesGo from "../internal/vibekit/push_types.go?raw";
+import pushTypesGo from "../internal/marotte/push_types.go?raw";
 import pushServiceGo from "../internal/push/service.go?raw";
 import settingsDefaultsGo from "../internal/settings/defaults.go?raw";
 import settingsEffectiveGo from "../internal/settings/effective.go?raw";
@@ -29,7 +29,7 @@ describe("subject prefixes", () => {
   for (const { goConst, tsConst } of prefixes) {
     it(`${goConst} is the same literal in Go and in the one TypeScript module`, () => {
       const m = new RegExp(`${goConst} = "([^"]+)"`).exec(pushTypesGo);
-      expect(m, `vibekit.${goConst} not found in internal/vibekit/push_types.go`).not.toBeNull();
+      expect(m, `marotte.${goConst} not found in internal/marotte/push_types.go`).not.toBeNull();
       const want = m?.[1] ?? "";
       expect(want).not.toBe("");
       for (const [rel, ts] of Object.entries(tsCopies)) {
@@ -46,10 +46,10 @@ describe("subject prefixes", () => {
 describe("keyed push kinds", () => {
   it("names every kind the server registry gives a settings key, and no other", async () => {
     const { KEYED_PUSH_KINDS } = await import("./notify.js");
-    // Each keyed entry reads {vibekit.PushKind<Name>, settings.Key<Name>, <default>};
+    // Each keyed entry reads {marotte.PushKind<Name>, settings.Key<Name>, <default>};
     // the floor is the one entry whose key is the empty string.
     const entries = [
-      ...pushServiceGo.matchAll(/\{vibekit\.PushKind(\w+),\s*(settings\.Key\w+|""),/g),
+      ...pushServiceGo.matchAll(/\{marotte\.PushKind(\w+),\s*(settings\.Key\w+|""),/g),
     ];
     expect(entries.length, "no kindRegistry entries parsed").toBeGreaterThan(1);
     const keyedCount = entries.filter((e) => e[2] !== '""').length;

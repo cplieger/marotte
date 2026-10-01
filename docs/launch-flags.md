@@ -1,12 +1,12 @@
-# Extra kiro-cli launch flags (`VIBEKIT_KIRO_ACP_ARGS`)
+# Extra kiro-cli launch flags (`MAROTTE_KIRO_ACP_ARGS`)
 
-An escape hatch for a `kiro-cli acp` flag vibekit does not pass yet, without
+An escape hatch for a `kiro-cli acp` flag marotte does not pass yet, without
 waiting for a release. Whitespace-separated, appended to every chat's launch
 command:
 
 ```yaml
 environment:
-  VIBEKIT_KIRO_ACP_ARGS: "-v"
+  MAROTTE_KIRO_ACP_ARGS: "-v"
 ```
 
 Only the values are appended; nothing is interpreted as a shell command.
@@ -16,7 +16,7 @@ does nothing:
 
 | Flag                                 | Why it is refused                                                                            |
 | ------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `--agent-engine`                     | vibekit speaks only the v3 wire                                                              |
+| `--agent-engine`                     | marotte speaks only the v3 wire                                                              |
 | `--trust-all-tools`, `--trust-tools` | inert on v3, where tool approval is the policy you edit in **Settings → Permissions**        |
 | `--model`, `--effort`                | kiro-cli rejects both and exits before the session opens; pick them per chat in the composer |
 

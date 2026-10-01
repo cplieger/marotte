@@ -32,7 +32,7 @@ const ICON_COMPACT =
  *  Mirrored so the field can bound its own control and the composed suffix is
  *  always a value the parser keeps. KAS's DEFAULT is deliberately not mirrored:
  *  an unset cap omits the suffix entirely, so the default that applies is
- *  whatever KAS's parser says it is rather than a number vibekit restates and
+ *  whatever KAS's parser says it is rather than a number marotte restates and
  *  can drift from. */
 const GOAL_MAX_FLOOR = 1;
 const GOAL_MAX_CEILING = 200;
@@ -219,7 +219,7 @@ function compactRow(): HTMLElement {
  *  A typed `/goal` is NOT the `/compact` failure shape, and the difference is the
  *  whole reason this row sends text. `/compact` reached the model because nothing
  *  parsed it. `/goal` is intercepted on the prompt path BEFORE the model is
- *  invoked: with `_meta.kiro.settings.goal` declared (vibekit declares it —
+ *  invoked: with `_meta.kiro.settings.goal` declared (marotte declares it —
  *  `internal/kascap/table.go`), `session/prompt` runs `parseGoalCommand(userText)`
  *  and, on a match, `launchGoal(...)` and returns `end_turn` without ever calling
  *  the model.

@@ -14,9 +14,9 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/vibekit/internal/modeltext"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/modeltext"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestSyncPushPreferences(t *testing.T) {
@@ -28,7 +28,7 @@ func TestSyncPushPreferences(t *testing.T) {
 
 	// Both true by default.
 	s.syncPushPreferences(map[string]json.RawMessage{})
-	if !mp.prefs[vibekit.PushKindAgentFinished] || !mp.prefs[vibekit.PushKindPermission] {
+	if !mp.prefs[marotte.PushKindAgentFinished] || !mp.prefs[marotte.PushKindPermission] {
 		t.Error("defaults should be true")
 	}
 
@@ -36,16 +36,16 @@ func TestSyncPushPreferences(t *testing.T) {
 	s.syncPushPreferences(map[string]json.RawMessage{
 		"notify_agent_finished": json.RawMessage(`false`),
 	})
-	if mp.prefs[vibekit.PushKindAgentFinished] {
+	if mp.prefs[marotte.PushKindAgentFinished] {
 		t.Error("agent_finished should be false")
 	}
-	if !mp.prefs[vibekit.PushKindPermission] {
+	if !mp.prefs[marotte.PushKindPermission] {
 		t.Error("permission should be true")
 	}
 }
 
 type testPush struct {
-	prefs map[vibekit.PushKind]bool
+	prefs map[marotte.PushKind]bool
 }
 
 var _ pushService = (*testPush)(nil)
@@ -53,7 +53,7 @@ var _ pushService = (*testPush)(nil)
 // Two methods, because pushService is two methods. This fake used to carry
 // eight, six of which this package can never call.
 func (p *testPush) RegisterRoutes(*http.ServeMux)                  {}
-func (p *testPush) SetPreferences(prefs map[vibekit.PushKind]bool) { p.prefs = prefs }
+func (p *testPush) SetPreferences(prefs map[marotte.PushKind]bool) { p.prefs = prefs }
 
 func TestSafeKiroSetting(t *testing.T) {
 	tests := []struct {
@@ -74,8 +74,8 @@ func TestSafeKiroSetting(t *testing.T) {
 		{"api.timeout", ""},
 		{"arbitrary.key", ""},
 		// Removed from the allowlist: it only affected kiro-cli's own TUI
-		// prompt line (which vibekit never renders) and is absent from
-		// kiro-cli 2.12; vibekit reads context usage from usage_update.
+		// prompt line (which marotte never renders) and is absent from
+		// kiro-cli 2.12; marotte reads context usage from usage_update.
 		{"chat.enableContextUsageIndicator", ""},
 		// Removed 2026-08 on a measurement of the stock 2.19.2 bundle, and the
 		// two groups are rejected for DIFFERENT reasons — which is why they are
@@ -723,7 +723,7 @@ func TestSyncPushPreferences_permissionIsAFloor(t *testing.T) {
 
 			s.syncPushPreferences(patch)
 
-			if !mp.prefs[vibekit.PushKindPermission] {
+			if !mp.prefs[marotte.PushKindPermission] {
 				t.Errorf("syncPushPreferences(%s) -> prefs[Permission] = false, want true (the ask is a floor)", body)
 			}
 		})
@@ -731,7 +731,7 @@ func TestSyncPushPreferences_permissionIsAFloor(t *testing.T) {
 }
 
 // TestNotifyPermissionKeyIsUnreachable pins the setting as GONE rather than
-// merely hidden: the key is not in the vibekit-managed set, so a write carrying
+// merely hidden: the key is not in the marotte-managed set, so a write carrying
 // it is reported as unknown and no reader resolves it.
 func TestNotifyPermissionKeyIsUnreachable(t *testing.T) {
 	if _, known := settings.KnownKeys["notify_permission"]; known {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // runOriginAgent labels a run KAS parented on a chat session, the population with no
@@ -58,23 +58,23 @@ type kasRunComplete struct {
 // append-only lines correlated by workflow_id, because such a run has no record, no supervisor
 // and no host-lost detection, so otherwise the only evidence it existed is a chat transcript
 // somebody has to open. It holds no state, so it cannot see a run whose host died between the
-// two lines. Silent for a run VIBEKIT launched, which a person or a schedule already holds a
+// two lines. Silent for a run MAROTTE launched, which a person or a schedule already holds a
 // run id and a lease for, so logging it would dilute the class this line exists to make
 // greppable.
 //
 // The discriminator is the frame's DELIVERY ADDRESS, not `parentSessionId`. It used to be that
-// payload field, on the premise that vibekit's own launch path sent none — a premise
+// payload field, on the premise that marotte's own launch path sent none — a premise
 // `_kiro/workflow/new` retired in 0.63.3 by REQUIRING one, so every manual and scheduled run
 // would now log as origin=agent and the class would be worthless. The address is a fact
-// vibekit owns rather than one upstream owns: (*Runtime).dispatch hands a run-bridge lifecycle
+// marotte owns rather than one upstream owns: (*Runtime).dispatch hands a run-bridge lifecycle
 // frame an EMPTY chat id, while a chat bridge's Forward stamps that chat's real id. So a
 // non-empty chat id IS "launched from inside a chat session", and HandleRunStart already rests
 // on the same property one line below for the Scheduled flag.
 //
 // Not the lease, and the ordering is why: observeComplete calls forgetBounds — which releases
 // the lease — BEFORE HandleRunComplete, so a lease-existence predicate reads false for every
-// terminal run vibekit launched, mis-classifying exactly the frame it has to get right.
-func logAgentRun(msg string, chatID vibekit.ChatID, workflowID, recipe string, extra ...any) {
+// terminal run marotte launched, mis-classifying exactly the frame it has to get right.
+func logAgentRun(msg string, chatID marotte.ChatID, workflowID, recipe string, extra ...any) {
 	if chatID == "" {
 		return
 	}
@@ -89,13 +89,13 @@ func logAgentRun(msg string, chatID vibekit.ChatID, workflowID, recipe string, e
 // HandleRunStart translates _kiro/workflow/run_start → the run_started SSE. It fires again on
 // every resume, which is why the client treats it as "this run exists and something changed"
 // rather than as a create; an insert keyed on workflow id is idempotent.
-func (t *Translator) HandleRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandleRunStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[kasRunStart](msg, "workflow/run_start")
 	if !ok || p.WorkflowID == "" {
 		return
 	}
 	logAgentRun("agent-launched workflow run started", chatID, p.WorkflowID, p.WorkflowName)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunStarted, chatID, vibekit.RunStartedPayload{
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunStarted, chatID, marotte.RunStartedPayload{
 		WorkflowID: p.WorkflowID,
 		Name:       p.WorkflowName,
 		// Keyed on the workflow id, not chatID: this frame's chat id is empty for exactly
@@ -111,14 +111,14 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID vibekit.ChatID, 
 // It does NOT forget the run's step sessions: `paused` reaches this frame on a run that is
 // still going, so the bound has to test the status, and the caller already does for the run's
 // own bounds. The hook is agent.observeComplete's terminal branch, through ForgetRunSteps.
-func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandleRunComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[kasRunComplete](msg, "workflow/run_complete")
 	if !ok || p.WorkflowID == "" {
 		return
 	}
 	logAgentRun("agent-launched workflow run finished", chatID, p.WorkflowID,
 		p.FinalState.WorkflowName, "status", p.Status)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunFinished, chatID, vibekit.RunFinishedPayload{
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunFinished, chatID, marotte.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,
 		// This frame's one name for the run, inside the state rather than at the top level
@@ -130,8 +130,8 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID vibekit.ChatI
 // RunProgressHandler returns the handler for one of the seven progress kinds. One function
 // rather than seven: they share a payload shape, and the kind stamped on the event tells the
 // client how eagerly to refetch, never how to reconstruct state.
-func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
-	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
+	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		p, ok := unmarshalParams[kasRunNode](msg, "workflow/"+string(kind))
 		if !ok || p.WorkflowID == "" {
 			return
@@ -139,10 +139,10 @@ func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(conte
 		node := cmp.Or(p.NodeID, p.LoopID)
 		// The ONE frame that announces a step's session id. Recorded before the broadcast so
 		// a permission ask racing the event still classifies.
-		if kind == vibekit.RunProgressNodeStart && p.SessionID != "" {
+		if kind == marotte.RunProgressNodeStart && p.SessionID != "" {
 			t.steps.record(p.SessionID, p.WorkflowID, node)
 		}
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventRunProgress, chatID,
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunProgress, chatID,
 			runProgress(kind, node, &p, time.Now())))
 	}
 }
@@ -152,31 +152,31 @@ func (t *Translator) RunProgressHandler(kind vibekit.RunProgressKind) func(conte
 // the signal, not a gap — a client applies a named node and refetches otherwise,
 // which is the contract the three tree-shape kinds keep.
 func runProgress(
-	kind vibekit.RunProgressKind, node string, p *kasRunNode, at time.Time,
-) vibekit.RunProgressPayload {
-	out := vibekit.RunProgressPayload{WorkflowID: p.WorkflowID, NodeID: node, Kind: kind}
+	kind marotte.RunProgressKind, node string, p *kasRunNode, at time.Time,
+) marotte.RunProgressPayload {
+	out := marotte.RunProgressPayload{WorkflowID: p.WorkflowID, NodeID: node, Kind: kind}
 	stamp := at.UTC().Format(time.RFC3339Nano)
 	switch kind {
-	case vibekit.RunProgressNodeStart:
+	case marotte.RunProgressNodeStart:
 		out.NodePath = runNodePathOf(p, node)
 		out.Status = runNodeStatusRunning
 		out.StartedAt = stamp
-	case vibekit.RunProgressNodeComplete:
+	case marotte.RunProgressNodeComplete:
 		out.NodePath = runNodePathOf(p, node)
 		// KAS's own word, forwarded: it is already the client tree's NodeState
 		// vocabulary, so mapping it here would be a second enumeration.
 		out.Status = p.Status
 		out.EndedAt = stamp
 		out.FailureReason = p.Reason
-	case vibekit.RunProgressNodePaused:
+	case marotte.RunProgressNodePaused:
 		out.NodePath = runNodePathOf(p, node)
 		out.Status = runNodeStatusPaused
-	case vibekit.RunProgressWatchPoll:
+	case marotte.RunProgressWatchPoll:
 		// A poll only says it looked, so it re-states `running`: a frame stating
 		// nothing is a frame the client cannot apply.
 		out.NodePath = runNodePathOf(p, node)
 		out.Status = runNodeStatusRunning
-	case vibekit.RunProgressLoopIteration, vibekit.RunProgressPaused, vibekit.RunProgressStepsQueued:
+	case marotte.RunProgressLoopIteration, marotte.RunProgressPaused, marotte.RunProgressStepsQueued:
 	}
 	return out
 }

@@ -17,19 +17,19 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func effortReq(t *testing.T, chatID vibekit.ChatID, level string) *vibekit.ClientCommand {
+func effortReq(t *testing.T, chatID marotte.ChatID, level string) *marotte.ClientCommand {
 	t.Helper()
 	payload, err := json.Marshal(map[string]string{"level": level})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetEffort,
+	return &marotte.ClientCommand{
+		Type:    marotte.CmdSetEffort,
 		ChatID:  chatID,
 		Payload: payload,
 	}
@@ -38,7 +38,7 @@ func effortReq(t *testing.T, chatID vibekit.ChatID, level string) *vibekit.Clien
 // setEffort drives the command with one double answering the bridge, the store
 // and the bus. An empty configDir means the seed is not this case's subject: the
 // per-model memory is skipped, and nothing touches a settings file.
-func setEffort(t *testing.T, host hostDouble, configDir string, chatID vibekit.ChatID, level string) (any, error) {
+func setEffort(t *testing.T, host hostDouble, configDir string, chatID marotte.ChatID, level string) (any, error) {
 	t.Helper()
 	return CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir},
 		effortReq(t, chatID, level))
@@ -47,14 +47,14 @@ func setEffort(t *testing.T, host hostDouble, configDir string, chatID vibekit.C
 // recordingBus counts the events a command published, so a test can tell a seed
 // write that landed from one that was refused.
 type recordingBus struct {
-	events []vibekit.ServerEvent
+	events []marotte.ServerEvent
 }
 
-func (b *recordingBus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (b *recordingBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.events = append(b.events, evt)
 }
 
-func (b *recordingBus) countOf(kind vibekit.EventType) int {
+func (b *recordingBus) countOf(kind marotte.EventType) int {
 	n := 0
 	for _, e := range b.events {
 		if e.Type == kind {
@@ -64,9 +64,9 @@ func (b *recordingBus) countOf(kind vibekit.EventType) int {
 	return n
 }
 
-func seedChatOnModel(t *testing.T, store ChatStore, id vibekit.ChatID, model string) {
+func seedChatOnModel(t *testing.T, store ChatStore, id marotte.ChatID, model string) {
 	t.Helper()
-	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "a chat"
 		c.Model = model
 		return true
@@ -121,7 +121,7 @@ func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
 	if got := effortSeeds(t, dir)["opus-5"]; got != "low" {
 		t.Errorf("seed for opus-5 = %q, want %q; a refused level was remembered as a preference", got, "low")
 	}
-	if n := bus.countOf(vibekit.EventSettingsUpdated); n != 0 {
+	if n := bus.countOf(marotte.EventSettingsUpdated); n != 0 {
 		t.Errorf("settings_updated broadcasts = %d, want 0 after a refusal", n)
 	}
 }
@@ -152,7 +152,7 @@ func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
 	if theme := storedKey(t, dir, settings.KeyTheme); theme != `"dark"` {
 		t.Errorf("theme = %s, want \"dark\"; the seed write replaced the document", theme)
 	}
-	if n := bus.countOf(vibekit.EventSettingsUpdated); n != 1 {
+	if n := bus.countOf(marotte.EventSettingsUpdated); n != 1 {
 		t.Errorf("settings_updated broadcasts = %d, want 1 so the other devices converge", n)
 	}
 }
@@ -206,11 +206,11 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	if c.Effort != "high" {
 		t.Errorf("Effort = %q, want %q; the level has to survive a restart to reach StartOpts.Effort", c.Effort, "high")
 	}
-	if b.gotMethod != vibekit.MethodSetConfigOption {
-		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSetConfigOption)
+	if b.gotMethod != marotte.MethodSetConfigOption {
+		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodSetConfigOption)
 	}
-	if b.gotParams["configId"] != vibekit.ConfigOptionEffort {
-		t.Errorf("configId = %v, want %q", b.gotParams["configId"], vibekit.ConfigOptionEffort)
+	if b.gotParams["configId"] != marotte.ConfigOptionEffort {
+		t.Errorf("configId = %v, want %q", b.gotParams["configId"], marotte.ConfigOptionEffort)
 	}
 	if b.gotParams["value"] != "high" {
 		t.Errorf("value = %v, want high", b.gotParams["value"])
@@ -239,7 +239,7 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 // prompt.
 type noBridgeDeps struct{ *storeDeps }
 
-func (d *noBridgeDeps) Bridge(vibekit.ChatID) Bridge { return nil }
+func (d *noBridgeDeps) Bridge(marotte.ChatID) Bridge { return nil }
 
 // A bridgeless chat used to answer 409, which is why the client had a second
 // path that wrote a GLOBAL setting instead — a different store and a different
@@ -280,7 +280,7 @@ func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	if c.Effort != "xhigh" {
 		t.Errorf("Effort = %q, want xhigh", c.Effort)
 	}
-	if c.Name != vibekit.DefaultChatName {
+	if c.Name != marotte.DefaultChatName {
 		t.Errorf("Name = %q, want the default so the row is not blank", c.Name)
 	}
 }
@@ -351,11 +351,11 @@ func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
 	}
 }
 
-// vibekit.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
+// marotte.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
 // has to carry it too: the effort control renders the ACTIVE chat's level, and an
 // empty chat never fetches its full record.
 func TestChatHeader_CarriesEffort(t *testing.T) {
-	c := &vibekit.Chat{ID: "c1", Effort: "high"}
+	c := &marotte.Chat{ID: "c1", Effort: "high"}
 	if got := c.Header().Effort; got != "high" {
 		t.Errorf("Header().Effort = %q, want high", got)
 	}

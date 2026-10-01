@@ -15,8 +15,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // newTestMembership builds a coordinator over a chat store and NO tab store.
@@ -71,11 +71,11 @@ func newTornDownMembership(t *testing.T, chats ChatStore) (*Membership, *tabs.St
 // coordinator, and capturingBus appends without a lock. A shared double that is
 // only safe for some of its users is worse than two.
 type tabBus struct {
-	events []vibekit.ServerEvent
+	events []marotte.ServerEvent
 	mu     sync.Mutex
 }
 
-func (b *tabBus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (b *tabBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.events = append(b.events, evt)
@@ -84,18 +84,18 @@ func (b *tabBus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 // frames returns the tabs_changed payloads seen so far, in arrival order. The
 // type assertion is a Fatalf rather than a skip: a frame of another shape on this
 // event type is the bug, not a case to tolerate.
-func (b *tabBus) frames(t *testing.T) []vibekit.TabsChangedPayload {
+func (b *tabBus) frames(t *testing.T) []marotte.TabsChangedPayload {
 	t.Helper()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	var out []vibekit.TabsChangedPayload
+	var out []marotte.TabsChangedPayload
 	for _, evt := range b.events {
-		if evt.Type != vibekit.EventTabsChanged {
+		if evt.Type != marotte.EventTabsChanged {
 			continue
 		}
-		p, ok := evt.Payload.(vibekit.TabsChangedPayload)
+		p, ok := evt.Payload.(marotte.TabsChangedPayload)
 		if !ok {
-			t.Fatalf("tabs_changed payload = %T, want vibekit.TabsChangedPayload", evt.Payload)
+			t.Fatalf("tabs_changed payload = %T, want marotte.TabsChangedPayload", evt.Payload)
 		}
 		out = append(out, p)
 	}

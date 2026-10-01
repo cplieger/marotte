@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 

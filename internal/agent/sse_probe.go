@@ -8,7 +8,7 @@ import (
 )
 
 // The SSE probe: the counters and the close-after hook internal/server's test-only
-// control surface (built with -tags vibekit_test) reads and arms. Exported here
+// control surface (built with -tags marotte_test) reads and arms. Exported here
 // because the server package reaches the runtime only through its role interfaces.
 
 // SSEClientCount is the number of connections the hub is serving right now.

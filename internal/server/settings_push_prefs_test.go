@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/push"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/push"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind is the claim that
@@ -113,14 +113,14 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 
 			s.syncPushPreferences(patch)
 
-			if got := mp.prefs[vibekit.PushKindAgentFinished]; got != tc.wantFinished {
+			if got := mp.prefs[marotte.PushKindAgentFinished]; got != tc.wantFinished {
 				t.Errorf("prefs[%s] = %v, want %v (%s)", finished, got, tc.wantFinished, tc.why)
 			}
-			if got := mp.prefs[vibekit.PushKindPRStatus]; got != tc.wantPR {
+			if got := mp.prefs[marotte.PushKindPRStatus]; got != tc.wantPR {
 				t.Errorf("prefs[%s] = %v, want %v (%s)", prStatus, got, tc.wantPR, tc.why)
 			}
 			// The floor rides every case: no resolution path may lower it.
-			if !mp.prefs[vibekit.PushKindPermission] {
+			if !mp.prefs[marotte.PushKindPermission] {
 				t.Errorf("prefs[Permission] = false, want true (the ask is a floor, %s)", tc.why)
 			}
 		})
@@ -150,7 +150,7 @@ func TestSyncPushPreferences_CarriesTheRunOutcomeKind(t *testing.T) {
 
 			s.syncPushPreferences(patch)
 
-			got, known := mp.prefs[vibekit.PushKindRunOutcome]
+			got, known := mp.prefs[marotte.PushKindRunOutcome]
 			if !known {
 				t.Fatal("run_outcome reached SetPreferences with no entry; preflightSend drops such a kind")
 			}
@@ -180,7 +180,7 @@ func TestSyncPushPreferences_MergedPatchNeedsNoDiskRead(t *testing.T) {
 		settings.KeyNotifyPRStatus:      json.RawMessage(`false`),
 	})
 
-	if mp.prefs[vibekit.PushKindAgentFinished] || mp.prefs[vibekit.PushKindPRStatus] {
+	if mp.prefs[marotte.PushKindAgentFinished] || mp.prefs[marotte.PushKindPRStatus] {
 		t.Errorf("prefs = %+v, want both false: a key the patch carries must not be re-read from disk", mp.prefs)
 	}
 }
@@ -334,13 +334,13 @@ func TestSyncPushPreferences_MasterSwitch(t *testing.T) {
 
 			s.syncPushPreferences(patch)
 
-			if got := mp.prefs[vibekit.PushKindAgentFinished]; got != tc.wantFinished {
+			if got := mp.prefs[marotte.PushKindAgentFinished]; got != tc.wantFinished {
 				t.Errorf("prefs[%s] = %v, want %v (%s)",
 					settings.KeyNotifyAgentFinished, got, tc.wantFinished, tc.why)
 			}
 			// The permission floor is unsilenceable by its OWN key and silenceable by
 			// the master, which is the one place those two rules meet.
-			if got := mp.prefs[vibekit.PushKindPermission]; got != tc.wantPermission {
+			if got := mp.prefs[marotte.PushKindPermission]; got != tc.wantPermission {
 				t.Errorf("prefs[Permission] = %v, want %v (%s)", got, tc.wantPermission, tc.why)
 			}
 		})

@@ -132,7 +132,7 @@ export interface AccountUsageBreakdown {
  * AgentNoticePayload is the payload for type="agent_notice": a progress notice a workflow step
  * or subagent reported into the session that launched it. KAS decides this by sniffing the text
  * for a `[notification/<severity>]` prefix and delivers it through the steering buffer, and
- * vibekit refuses to SEND that shape, so a notice here is never the user's words. Severity
+ * marotte refuses to SEND that shape, so a notice here is never the user's words. Severity
  * (info/success/warning/error) is why this is its own event rather than a field on a steer: a
  * consumer never has to decide whose voice a message is in. There is no id — a notice has no
  * later state to address.
@@ -435,7 +435,7 @@ export interface ConnectedPayload {
  */
   busy_chats?: string[];
   /**
- * LiveRuns is every run vibekit's lease registry says is in flight, the same
+ * LiveRuns is every run marotte's lease registry says is in flight, the same
  * projection GET /api/runs/live serves. Here because every connect wants it and the
  * client's own fetch was three serialized round trips behind whoami; costs no KAS
  * call, because the projection is a lease-store read.
@@ -499,7 +499,7 @@ export interface DraftChangedPayload {
 
 /**
  * EffectiveSettings is what GET /api/settings answers: the value in force for
- * every vibekit-owned preference the client renders, resolved against the stored
+ * every marotte-owned preference the client renders, resolved against the stored
  * config.json rather than echoed from it.
  * //
  * NO FIELD CARRIES omitempty, and that is the contract rather than a style
@@ -963,7 +963,7 @@ export interface KiroDoc {
  * what went is the wrong derivation.
  * //
  * `omitempty`, so absent means writable and read-only is asserted explicitly.
- * Same default direction as vibekit.Origin's adaptOrigin (mcp-state.ts), and for
+ * Same default direction as marotte.Origin's adaptOrigin (mcp-state.ts), and for
  * the same reason: a read-only row must only ever be produced by the server
  * saying so, never by a field failing to arrive.
  */
@@ -1000,7 +1000,7 @@ export interface Label {
 }
 
 /**
- * LiveRun is one row of GET /api/runs/live: a run vibekit's own lease registry says
+ * LiveRun is one row of GET /api/runs/live: a run marotte's own lease registry says
  * is in flight, named with the chat whose agent launched it. ChatID is empty for a
  * parentless run and for a lease predating the field — both mean "no chat to launch
  * a tab under". Executing is a FIELD rather than a filter applied here because
@@ -1501,7 +1501,7 @@ export interface PolicyRuleCore {
  * Capabilities and RelaxCapabilities answer different questions and neither is a
  * filter on the other. Capabilities is what the rule-adder's dropdown OFFERS —
  * the suggested set unioned with every capability the live rules already use, so
- * it can learn a name vibekit shipped without. RelaxCapabilities is the fixed
+ * it can learn a name marotte shipped without. RelaxCapabilities is the fixed
  * membership of the LOOSEST security profile's file rules, derived in policyfile
  * and deliberately not discovered: it decides what picking that rung grants, so it
  * may not grow from whatever happens to be in the returned rules. (It named the
@@ -1711,7 +1711,7 @@ export interface Repo {
 /**
  * ResumableSession is one stored KAS session offered by the previous-session
  * picker (GET /api/sessions). KAS owns the inventory and the transcript, so
- * vibekit keeps no archive of its own. Field order is fieldalignment's.
+ * marotte keeps no archive of its own. Field order is fieldalignment's.
  */
 export interface ResumableSession {
   session_id: string;
@@ -1725,7 +1725,7 @@ export interface ResumableSession {
  */
   description?: string;
   /**
- * ChatID names the vibekit chat that already owns this session, empty when none
+ * ChatID names the marotte chat that already owns this session, empty when none
  * does. A claimed session is one the user can simply open.
  */
   chat_id?: string;
@@ -1997,7 +1997,7 @@ export interface SafetyPropertiesPayload {
 
 /**
  * SafetyProperty is one formalized Infrastructure-Safety property. Authored OUT-OF-BAND by
- * KAS via a remote MCP tool; there is no client RPC to create, set or toggle one, so vibekit
+ * KAS via a remote MCP tool; there is no client RPC to create, set or toggle one, so marotte
  * only ever displays them.
  */
 export interface SafetyProperty {
@@ -2269,7 +2269,7 @@ export interface SteerInjectedPayload {
   text: string;
   /**
  * Ack is the agent's own statement of what it did, lifted out of the acknowledgement
- * marker vibekit hides from the transcript: "read" becomes "read: rebased onto main
+ * marker marotte hides from the transcript: "read" becomes "read: rebased onto main
  * instead". Empty on the read frame, and empty when the agent emitted no marker.
  */
   ack?: string;
@@ -3010,8 +3010,8 @@ export interface WorkflowRun {
   /** Status is run-level: paused / completed / failed. */
   status?: RunStatus;
   /**
- * ParentChatID is the vibekit chat that launched the run, resolved through the
- * launching session's chain. Empty for a run with no vibekit parent.
+ * ParentChatID is the marotte chat that launched the run, resolved through the
+ * launching session's chain. Empty for a run with no marotte parent.
  */
   parent_chat_id?: string;
   /**

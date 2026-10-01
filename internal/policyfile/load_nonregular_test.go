@@ -50,7 +50,7 @@ func TestLoad_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 
 // TestLoad_RefusesASymlink matches Save, which cannot write through one:
 // atomicfile's write entry points already refuse a symlink at the target, so a
-// policy vibekit would not write is now one it will not read either.
+// policy marotte would not write is now one it will not read either.
 func TestLoad_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "elsewhere.yaml")

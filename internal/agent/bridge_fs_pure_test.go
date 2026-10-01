@@ -14,7 +14,7 @@ import (
 
 // TestTruncateForStaging_Table is GONE with truncateForStaging. It capped the
 // old/new text a staged write carried in its SSE payload, and there is no staged
-// write: KAS holds the content and vibekit's fs handler writes through.
+// write: KAS holds the content and marotte's fs handler writes through.
 
 // TestCurrentMessageCount is GONE with currentMessageCount. It counted a chat's
 // persisted messages as the "restore watermark on every snapshot", and snapshots

@@ -3,7 +3,7 @@ package chat
 import (
 	"time"
 
-	"github.com/cplieger/vibekit/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/chat/archive"
 )
 
 // NewPurgeScheduler builds a scheduler that runs purges based on the

@@ -92,7 +92,7 @@
  *  synchronisation at the price of invalidating the whole document's inherited
  *  style every frame, forever, whether or not a dot was on screen. The per-dot
  *  replacement measured at the floor even at 48 dots, and its own claim to the
- *  contrary did not reproduce: `03-base.css` "THE DOT BEAT" and `vibekit-ui.md`
+ *  contrary did not reproduce: `03-base.css` "THE DOT BEAT" and `marotte-ui.md`
  *  "Entry motion is a GPU budget". Synchronisation is now a shared phase ORIGIN
  *  (`--beat-phase`, an unregistered plain custom property, so it needs no
  *  registration here — nothing interpolates it; it is read once as a delay). */

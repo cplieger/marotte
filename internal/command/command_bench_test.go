@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // benchDeps is a minimal host double for benchmarking dispatch overhead.
@@ -18,43 +18,43 @@ type benchDeps struct {
 	// test picks the admission window a steer meets: a prime for that refusal,
 	// a shell, or nothing for an idle chat. newBenchDeps defaults to a held
 	// PROMPT turn, the situation a steer exists for.
-	holder     vibekit.TurnOpenSource
+	holder     marotte.TurnOpenSource
 	holderOpen bool
 }
 
 func newBenchDeps() *benchDeps {
-	return &benchDeps{holder: vibekit.TurnSourcePrompt, holderOpen: true}
+	return &benchDeps{holder: marotte.TurnSourcePrompt, holderOpen: true}
 }
 
 // The store methods are answered directly now: Roles holds ChatStore, so the
 // ChatStore() getter it used to return is gone.
-func (d *benchDeps) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) { return nil, false }
+func (d *benchDeps) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) { return nil, false }
 
-func (d *benchDeps) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+func (d *benchDeps) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
 	return "", nil
 }
 
-func (d *benchDeps) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {
+func (d *benchDeps) AppendMessage(context.Context, marotte.ChatID, *marotte.Message) error {
 	return nil
 }
 
-func (d *benchDeps) SetDraft(context.Context, vibekit.ChatID, string) (*vibekit.ComposerState, error) {
+func (d *benchDeps) SetDraft(context.Context, marotte.ChatID, string) (*marotte.ComposerState, error) {
 	return nil, nil
 }
 
-func (d *benchDeps) SetAttachments(context.Context, vibekit.ChatID, []string) (*vibekit.ComposerState, error) {
+func (d *benchDeps) SetAttachments(context.Context, marotte.ChatID, []string) (*marotte.ComposerState, error) {
 	return nil, nil
 }
-func (d *benchDeps) Delete(context.Context, vibekit.ChatID) error   { return nil }
-func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent) {}
-func (d *benchDeps) Bridge(vibekit.ChatID) Bridge                   { return nil }
-func (d *benchDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (d *benchDeps) Delete(context.Context, marotte.ChatID) error   { return nil }
+func (d *benchDeps) Broadcast(context.Context, marotte.ServerEvent) {}
+func (d *benchDeps) Bridge(marotte.ChatID) Bridge                   { return nil }
+func (d *benchDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
-func (d *benchDeps) CloseBridge(vibekit.ChatID)                                    {}
-func (d *benchDeps) ClearPendingPermsForChat(vibekit.ChatID)                       {}
-func (d *benchDeps) TakePendingPerm(vibekit.ChatID, int64, vibekit.SettledBy) bool { return true }
-func (d *benchDeps) TakePendingPermissionOption(vibekit.ChatID, int64, string, vibekit.SettledBy) (bool, bool) {
+func (d *benchDeps) CloseBridge(marotte.ChatID)                                    {}
+func (d *benchDeps) ClearPendingPermsForChat(marotte.ChatID)                       {}
+func (d *benchDeps) TakePendingPerm(marotte.ChatID, int64, marotte.SettledBy) bool { return true }
+func (d *benchDeps) TakePendingPermissionOption(marotte.ChatID, int64, string, marotte.SettledBy) (bool, bool) {
 	return true, true
 }
 
@@ -63,56 +63,56 @@ func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, contex
 }
 func (d *benchDeps) InflightAdd(int)                                 {}
 func (d *benchDeps) InflightDone()                                   {}
-func (d *benchDeps) DeleteChatState(context.Context, vibekit.ChatID) {}
-func (d *benchDeps) DeleteChatStateByChain(context.Context, vibekit.ChatID, []string) {
+func (d *benchDeps) DeleteChatState(context.Context, marotte.ChatID) {}
+func (d *benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string) {
 }
-func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)   {}
-func (d *benchDeps) KillForTurn(vibekit.ChatID)                       {}
+func (d *benchDeps) CloseChatState(context.Context, marotte.ChatID)   {}
+func (d *benchDeps) KillForTurn(marotte.ChatID)                       {}
 func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool { return true }
 func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary { return MCPPendingSummary{} }
-func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)    {}
-func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)     {}
+func (d *benchDeps) PrimeIfNeeded(context.Context, marotte.ChatID)    {}
+func (d *benchDeps) PrimeFromChat(marotte.ChatID, marotte.ChatID)     {}
 
 // AwaitReplayAdopted answers adopted: no double here runs a session/load, so
 // there is never a replay to wait for. bridgeDeps overrides it to record the
 // call order and to drive the refusal.
-func (d *benchDeps) AwaitReplayAdopted(context.Context, vibekit.ChatID) error { return nil }
+func (d *benchDeps) AwaitReplayAdopted(context.Context, marotte.ChatID) error { return nil }
 
 // StartTurn answers a real epoch, not zero. Zero is the REFUSAL — the local-shell
 // source rule declines while another turn is open — so a stub returning it makes
 // every `!cmd` test 409.
-func (d *benchDeps) StartTurn(context.Context, vibekit.ChatID, vibekit.TurnOpenSource) vibekit.TurnEpoch {
+func (d *benchDeps) StartTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource) marotte.TurnEpoch {
 	return 1
 }
 
 // ReserveTurnForPrompt admits every prompt: contention is a per-test double's
 // business, not the bench stub's.
-func (d *benchDeps) ReserveTurnForPrompt(context.Context, vibekit.ChatID, time.Duration) AdmissionOutcome {
+func (d *benchDeps) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
 	return AdmissionAcquired
 }
 
-func (d *benchDeps) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource) bool { return true }
-func (d *benchDeps) ReleaseTurnReservation(vibekit.ChatID)                      {}
+func (d *benchDeps) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool { return true }
+func (d *benchDeps) ReleaseTurnReservation(marotte.ChatID)                      {}
 
-func (d *benchDeps) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) (vibekit.TurnResult, error) {
-	return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
+func (d *benchDeps) AwaitTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) (marotte.TurnResult, error) {
+	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
 }
 
-func (d *benchDeps) ReleaseTurn(vibekit.ChatID, vibekit.TurnEpoch) {}
-func (d *benchDeps) SettleTurnOnResponse(context.Context, vibekit.ChatID, vibekit.TurnEpoch, uint64, *vibekit.RPCResponse) {
+func (d *benchDeps) ReleaseTurn(marotte.ChatID, marotte.TurnEpoch) {}
+func (d *benchDeps) SettleTurnOnResponse(context.Context, marotte.ChatID, marotte.TurnEpoch, uint64, *marotte.RPCResponse) {
 }
 
-func (d *benchDeps) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool { return false }
+func (d *benchDeps) TurnOpenedAfter(marotte.ChatID, marotte.TurnEpoch) bool { return false }
 
 // AdmissionHolderSource reports the configured admission holder.
-func (d *benchDeps) AdmissionHolderSource(vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+func (d *benchDeps) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return d.holder, d.holderOpen
 }
 
-func (d *benchDeps) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
+func (d *benchDeps) FinalizeLocalShellTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) {
 }
 
-func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, vibekit.StopReason, string) {
+func (d *benchDeps) AbandonInFlightTurn(context.Context, marotte.ChatID, marotte.TurnEpoch, marotte.StopReason, string) {
 }
 
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called
@@ -132,15 +132,15 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	}
 
 	// No-op methods must not panic.
-	d.Broadcast(t.Context(), vibekit.ServerEvent{})
+	d.Broadcast(t.Context(), marotte.ServerEvent{})
 	d.CloseBridge("x")
 	d.ClearPendingPermsForChat("x")
-	d.TakePendingPerm("x", 0, vibekit.SettledByUser)
+	d.TakePendingPerm("x", 0, marotte.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.DeleteChatState(t.Context(), "x")
 	d.PrimeIfNeeded(t.Context(), "x")
-	d.StartTurn(t.Context(), "x", vibekit.TurnSourcePrompt)
+	d.StartTurn(t.Context(), "x", marotte.TurnSourcePrompt)
 	d.ReleaseTurn("x", 0)
 }
 
@@ -168,10 +168,10 @@ func TestBenchDeps_Contract(t *testing.T) {
 
 	// --- No-panic on zero-value calls ---
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
-		d.Broadcast(t.Context(), vibekit.ServerEvent{})
+		d.Broadcast(t.Context(), marotte.ServerEvent{})
 		d.CloseBridge("x")
 		d.ClearPendingPermsForChat("x")
-		d.TakePendingPerm("x", 0, vibekit.SettledByUser)
+		d.TakePendingPerm("x", 0, marotte.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
 		d.DeleteChatState(t.Context(), "x")
@@ -198,11 +198,11 @@ func TestBenchDeps_Contract(t *testing.T) {
 // benchmarked with it.
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	d := New()
-	d.Register("create_chat", func(context.Context, *vibekit.ClientCommand) (any, error) {
+	d.Register("create_chat", func(context.Context, *marotte.ClientCommand) (any, error) {
 		return responseOK, nil
 	})
 
-	body, _ := json.Marshal(vibekit.ClientCommand{
+	body, _ := json.Marshal(marotte.ClientCommand{
 		Type:   "create_chat",
 		ChatID: "chat-bench-1",
 	})
@@ -217,7 +217,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	})
 
 	b.Run("unknown_command", func(b *testing.B) {
-		unknownBody, _ := json.Marshal(vibekit.ClientCommand{
+		unknownBody, _ := json.Marshal(marotte.ClientCommand{
 			Type:   "nonexistent_cmd",
 			ChatID: "chat-bench-1",
 		})

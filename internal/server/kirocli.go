@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/pinstall/v3"
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -18,7 +18,7 @@ const kiroRescanPath = "/api/kiro-cli/rescan"
 // kiroRescanSurface is what a refused caller is told declined the request.
 const kiroRescanSurface = "the kiro-cli repair hook"
 
-// The readiness reasons vibekit puts on the wire, one per operator situation.
+// The readiness reasons marotte puts on the wire, one per operator situation.
 //
 // The install manager reports a TYPED reason (pinstall.Reason) that names only
 // the distinction — "installing", "unavailable" — because the wording a consumer
@@ -36,7 +36,7 @@ const (
 	// read, and for a reason a future library version adds: a state we cannot
 	// name still blocks chats, and the terminal wording says so.
 	reasonUnavailable = "kiro-cli unavailable"
-	// reasonSettings is pinstall.ReasonAssertion in vibekit's terms. The only
+	// reasonSettings is pinstall.ReasonAssertion in marotte's terms. The only
 	// REQUIRED assertion here is the profile's mandatory app.disableAutoupdates
 	// (every setting kiroSettings passes is best-effort), so a withheld verdict
 	// means exactly that the binary may replace itself and invalidate the

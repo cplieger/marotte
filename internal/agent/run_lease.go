@@ -1,7 +1,7 @@
 package agent
 
 // The runtime side of a run lease. One record answers four questions: is a blocking
-// row vibekit's own orphan, when must the run end, does it run unattended, and which
+// row marotte's own orphan, when must the run end, does it run unattended, and which
 // schedule row gets the outcome.
 
 import (
@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/schedule"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // launchOrigin is what a launch verb knows about the run it is about to start — the
@@ -90,7 +90,7 @@ func (rs *Runs) leaseStore() *runlease.Store {
 	return rs.leases
 }
 
-// grantLease records the envelope of a run vibekit just put on the wire.
+// grantLease records the envelope of a run marotte just put on the wire.
 //
 // Called between `new` and `invoke`: the earliest point the workflow id exists and
 // still before anything can execute, so no permission request slips through
@@ -139,10 +139,10 @@ func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 // run HAS a lease and no chat.
 //
 // Lock order Membership.mu -> Runs.mu -> the lease store's.
-func (rs *Runs) RunChat(workflowID string) (vibekit.ChatID, bool) {
+func (rs *Runs) RunChat(workflowID string) (marotte.ChatID, bool) {
 	l, ok := rs.lease(workflowID)
 	if !ok {
 		return "", false
 	}
-	return vibekit.ChatID(l.ChatID), true
+	return marotte.ChatID(l.ChatID), true
 }

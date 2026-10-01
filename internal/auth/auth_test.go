@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/marotte/internal/procout"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -429,7 +429,7 @@ func TestWhoamiInfo(t *testing.T) {
 			},
 		},
 		{
-			// A payload vibekit RECEIVED with no email in it is kiro-cli saying
+			// A payload marotte RECEIVED with no email in it is kiro-cli saying
 			// nobody is signed in. It must never read as `unavailable`, which is
 			// reserved for not having been able to ask.
 			name: "null json object is signed_out",

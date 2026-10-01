@@ -3,7 +3,7 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestAskHandlers_AnswerAnUndecodableRequest is the red check for the wedge
@@ -29,15 +29,15 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 	// change to a field — including a decorative one.
 	cases := map[string]struct {
 		params map[string]any
-		call   func(tr *Translator, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
+		call   func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse)
 		want   any
 	}{
 		"permission: options is not an array": {
 			params: map[string]any{"sessionId": "s", "options": 7},
-			call: func(tr *Translator, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 				tr.HandlePermissionRequest(t.Context(), chatID, msg)
 			},
-			want: vibekit.PermissionOutcomeCancelled(),
+			want: marotte.PermissionOutcomeCancelled(),
 		},
 		"permission: a decorative meta field changed shape": {
 			// _meta.kiro.consent is 2.19.1 decoration that shares the struct with
@@ -46,24 +46,24 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 				"sessionId": "s",
 				"_meta":     map[string]any{"kiro": map[string]any{"consent": true}},
 			},
-			call: func(tr *Translator, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 				tr.HandlePermissionRequest(t.Context(), chatID, msg)
 			},
-			want: vibekit.PermissionOutcomeCancelled(),
+			want: marotte.PermissionOutcomeCancelled(),
 		},
 		"elicitation: the body is not an object": {
 			params: map[string]any{"sessionId": "s", "elicitation": "not-an-object"},
-			call: func(tr *Translator, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 				tr.HandleElicitationCreate(t.Context(), chatID, msg)
 			},
-			want: vibekit.ElicitationResult{Action: vibekit.ElicitationActionCancel},
+			want: marotte.ElicitationResult{Action: marotte.ElicitationActionCancel},
 		},
 		"user input: options is not an array": {
 			params: map[string]any{"sessionId": "s", "question": "Which?", "options": 7},
-			call: func(tr *Translator, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+			call: func(tr *Translator, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 				tr.HandleUserInput(t.Context(), chatID, msg)
 			},
-			want: vibekit.UserInputResult{Action: vibekit.UserInputActionDismissed},
+			want: marotte.UserInputResult{Action: marotte.UserInputActionDismissed},
 		},
 	}
 
@@ -73,7 +73,7 @@ func TestAskHandlers_AnswerAnUndecodableRequest(t *testing.T) {
 			tr := New(rolesOf(deps))
 			id := int64(4242)
 
-			tc.call(tr, "c1", &vibekit.RPCResponse{ID: &id, Params: mustJSON(t, tc.params)})
+			tc.call(tr, "c1", &marotte.RPCResponse{ID: &id, Params: mustJSON(t, tc.params)})
 
 			if len(deps.asked) != 1 {
 				t.Fatalf("got %d answers, want 1 — an unanswered request wedges the tool batch", len(deps.asked))
@@ -105,7 +105,7 @@ func TestHandlePermissionRequest_RefusalNamesNoOption(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(7)
 
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID:     &id,
 		Params: mustJSON(t, map[string]any{"options": 7}),
 	})
@@ -113,15 +113,15 @@ func TestHandlePermissionRequest_RefusalNamesNoOption(t *testing.T) {
 	if len(deps.asked) != 1 {
 		t.Fatalf("got %d answers, want 1", len(deps.asked))
 	}
-	out, ok := deps.asked[0].result.(*vibekit.PermissionOutcome)
+	out, ok := deps.asked[0].result.(*marotte.PermissionOutcome)
 	if !ok {
-		t.Fatalf("answer = %T, want *vibekit.PermissionOutcome", deps.asked[0].result)
+		t.Fatalf("answer = %T, want *marotte.PermissionOutcome", deps.asked[0].result)
 	}
 	if out.Outcome.OptionID != "" {
 		t.Errorf("OptionID = %q, want empty — the refusal must name no option", out.Outcome.OptionID)
 	}
-	if out.Outcome.Outcome != string(vibekit.StopReasonCancelled) {
-		t.Errorf("outcome = %q, want %q", out.Outcome.Outcome, vibekit.StopReasonCancelled)
+	if out.Outcome.Outcome != string(marotte.StopReasonCancelled) {
+		t.Errorf("outcome = %q, want %q", out.Outcome.Outcome, marotte.StopReasonCancelled)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestAskHandlers_DecodedFrameStillReachesTheTracker(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(11)
 
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "s",

@@ -652,7 +652,7 @@
    The state channels are `.icon-btn`'s, by user instruction — the footer's two
    controls are a PAIR and must answer the pointer alike — so the hover value below
    is deliberately the shared class's rather than the app's row-hover recipe
-   (`--c-hover`, vibekit-ui.md "ONE HOVER RECIPE"). `account-btn-css.test.ts` reads
+   (`--c-hover`, marotte-ui.md "ONE HOVER RECIPE"). `account-btn-css.test.ts` reads
    both rules out of the sheet and fails when they diverge.
 
    Button chrome is stripped by NAMED declarations rather than `all: unset`, and
@@ -1090,7 +1090,7 @@
    body below it, and `--chev-size` is the one other knob a site turns.
 
    Both custom properties are DECLARED here rather than left to a `var()`
-   fallback, per the no-phantom-token rule in vibekit-ui.md: a default that
+   fallback, per the no-phantom-token rule in marotte-ui.md: a default that
    lives only in a fallback is a literal wearing a token's name.
 
    Declaring them on the chevron also enforces the one hazard worth naming.
@@ -1111,7 +1111,7 @@
   --chev-turn: -90deg;
   /* 16px, matching `--icon-ui`. The chevron's own coordinates are multiples of 3, and
      at 16/24 those map to whole css pixels — ONE phase class, so the snap aligns all
-     of them (`vibekit-ui.md` "Icon crispness"). 14px gives 4 classes and 12px gives 2. */
+     of them (`marotte-ui.md` "Icon crispness"). 14px gives 4 classes and 12px gives 2. */
   --chev-size: 1rem;
 
   display: grid;

@@ -11,7 +11,7 @@
 // into this panel's header; see `keys` below). The engine
 // (@cplieger/web-terminal-engine) underneath owns the wire
 // protocol, the reconnect/resume reliability layer, and the render/scroll
-// modules. vibekit keeps only its panel chrome (the slide-up panel, the header
+// modules. marotte keeps only its panel chrome (the slide-up panel, the header
 // open/close/restart/full-screen buttons) and its lifecycle (device-view
 // persistence, and the bounded reattach policy below).
 //
@@ -52,11 +52,11 @@ const SHELL_FONT_READY = '14px "Monaspace Neon NF"';
 // snapshots sitting in this origin's localStorage indefinitely, which is the exact
 // accumulation the sweep exists to prevent. It opens no connection and touches no
 // DOM, so it costs a synchronous pass over this prefix's keys at boot.
-const shellScrollback = localScrollbackStorage({ prefix: "vibekit.shell-scrollback." });
+const shellScrollback = localScrollbackStorage({ prefix: "marotte.shell-scrollback." });
 
-// The shell terminal recolored to vibekit's palette. The engine renderer reads
+// The shell terminal recolored to marotte's palette. The engine renderer reads
 // default fg/bg (and inverse) from --bg / --text, and the UI chrome reads
-// --accent / --surface / --border; pointing them at vibekit's theme-reactive
+// --accent / --surface / --border; pointing them at marotte's theme-reactive
 // terminal tokens makes the shell follow the app's light/dark theme with no
 // per-theme code. Set on the #shell-terminal root by createTerminal, so only
 // the terminal subtree is affected.
@@ -91,7 +91,7 @@ function hostSend(bytes: Uint8Array): void {
 // is DEFINITIVE, so it does not reconnect, and it is right not to on a
 // per-session server, where reconnecting would earn the same close again.
 //
-// vibekit's server is the other shape. It holds ONE handler for a global PTY and
+// marotte's server is the other shape. It holds ONE handler for a global PTY and
 // replaces a spent one lazily, inside the next CONNECT (ShellManager.current), so
 // the connection the engine declines is exactly what produces a new shell. That
 // mismatch stranded the panel in both directions: the Restart button killed the
@@ -510,7 +510,7 @@ function ensureTerminal(): void {
     // first resume and cleared behind the loading overlay (and discarded outright
     // if that session is already gone), so a container restart cannot leave a
     // previous shell's output on screen. The store is built at module load — see
-    // shellScrollback — and namespaced beside `vibekit.ui-state`.
+    // shellScrollback — and namespaced beside `marotte.ui-state`.
     persistScrollback: shellScrollback,
   });
 }

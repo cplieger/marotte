@@ -14,7 +14,7 @@ package bridge
 // These tests drive the expiry through the SHIPPED budgets, shortened for the
 // duration of one test, rather than through a short parent context.
 // context.WithTimeout takes the earlier of the two deadlines, so a short parent
-// expires the handshake whether or not vibekit has a budget of its own — a test
+// expires the handshake whether or not marotte has a budget of its own — a test
 // written that way passes with the budget deleted, which is the one thing it is
 // supposed to catch. Shortening the budget instead means the assertion fails if
 // the timer is removed. The budgets are package vars for this reason and no
@@ -41,7 +41,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // stallingFake writes a fake kiro-cli that answers every request EXCEPT the named
@@ -139,7 +139,7 @@ func TestStart_ExpiresOnAnUnansweredHandshake(t *testing.T) {
 			// A parent with NO deadline: the budget under test has to be the
 			// thing that fires, or the assertion proves only that a context is
 			// honoured.
-			err := b.Start(context.Background(), &vibekit.StartOpts{
+			err := b.Start(context.Background(), &marotte.StartOpts{
 				Lifetime: context.Background(), SessionID: tc.sessionID,
 			})
 			elapsed := time.Since(start)
@@ -181,7 +181,7 @@ func TestStart_ReapsTheSubprocessOnExpiry(t *testing.T) {
 	b := New(scriptPath, dir)
 	t.Cleanup(b.Stop)
 
-	if err := b.Start(context.Background(), &vibekit.StartOpts{Lifetime: context.Background()}); err == nil {
+	if err := b.Start(context.Background(), &marotte.StartOpts{Lifetime: context.Background()}); err == nil {
 		t.Fatal("Start returned nil on a handshake that was never answered")
 	}
 
@@ -216,7 +216,7 @@ func TestStart_FailsClosedWhenTheBudgetExpiresInsideTheAppliers(t *testing.T) {
 	// Model differs from the currentValue the fake reports, which is what makes
 	// applyInitialModel issue the call that stalls. Supervised is set too, so the
 	// case carries the applier whose loss actually matters.
-	err := b.Start(context.Background(), &vibekit.StartOpts{
+	err := b.Start(context.Background(), &marotte.StartOpts{
 		Lifetime: context.Background(), Model: "claude-opus-5", Supervised: true,
 	})
 
@@ -250,7 +250,7 @@ func TestHandshakeTimeout_LeavesOtherFailuresAlone(t *testing.T) {
 		"nil":            nil,
 		"plain":          errors.New("session/new: Invalid params"),
 		"cancelled":      context.Canceled,
-		"bridge exited":  vibekit.ErrBridgeExited,
+		"bridge exited":  marotte.ErrBridgeExited,
 		"wrapped cancel": errors.New("session/load: " + context.Canceled.Error()),
 	} {
 		t.Run(name, func(t *testing.T) {

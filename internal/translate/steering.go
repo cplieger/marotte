@@ -3,7 +3,7 @@ package translate
 // Mid-turn steering, the inbound half.
 //
 // KAS multiplexes three steering signals through session_info_update, and
-// vibekit forwards all three as distinct SSE events rather than collapsing them.
+// marotte forwards all three as distinct SSE events rather than collapsing them.
 // The distinction is the feature: a steer that has been BUFFERED and a steer the
 // model has actually READ look identical to a user otherwise, and that is the
 // one thing somebody correcting a live turn wants to know.
@@ -30,8 +30,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Steering sub-kind names as they appear in `_meta.kiro.kind`.
@@ -46,14 +46,14 @@ const (
 //
 // Returning a bool rather than being another silent cascade arm keeps the caller
 // honest: a steering frame must not fall through to the usage/unknown-kind tail,
-// where it would be logged as "carries nothing vibekit consumes" — which is the
+// where it would be logged as "carries nothing marotte consumes" — which is the
 // opposite of true now.
 //
 // A frame whose kind is one of the three but whose ids are empty is dropped
 // rather than broadcast. It is still consumed (the kind was recognised), because
 // forwarding an event with no id would put a chip on screen that nothing can
 // ever resolve or clear.
-func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.ChatID, u *sessionInfoUpdate) bool {
+func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID marotte.ChatID, u *sessionInfoUpdate) bool {
 	k := &u.Meta.Kiro
 	switch k.Kind {
 	case kindSteeringQueued:
@@ -62,7 +62,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		}
 		// KAS multiplexes two different authors onto this one sub-kind, and the
 		// severity is the only thing that separates them: it is set when KAS
-		// sniffed a `[notification/<severity>]` prefix, which vibekit refuses to
+		// sniffed a `[notification/<severity>]` prefix, which marotte refuses to
 		// send (command/steer.go), so a severity here means a workflow step or a
 		// subagent is reporting into this chat rather than the user speaking.
 		//
@@ -74,13 +74,13 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		// consumer, and the client got it wrong: an agent's own progress line
 		// rendered inside the message box as something the user had typed.
 		if k.NotificationSeverity != "" {
-			t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventAgentNotice, chatID, vibekit.AgentNoticePayload{
+			t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventAgentNotice, chatID, marotte.AgentNoticePayload{
 				Severity: k.NotificationSeverity,
 				Text:     k.Content,
 			}))
 			return true
 		}
-		queued := vibekit.SteerQueuedPayload{
+		queued := marotte.SteerQueuedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
 			Origin:  t.steerOrigin(chatID, k.MessageID),
@@ -91,7 +91,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		// Recorded from the SAME payload the broadcast carries, so a replay and a
 		// live frame are indistinguishable to the client's own reconcile.
 		t.steerBufferWaiting(chatID, queued)
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerQueued, chatID, queued))
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerQueued, chatID, queued))
 		return true
 
 	case kindSteeringInjected:
@@ -104,8 +104,8 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		t.steerBufferRead(chatID, k.MessageID)
 		// DURABLE before the broadcast, because the broadcast's own surface dies
 		// with the page: see persistSteer.
-		t.persistSteer(ctx, chatID, k.MessageID, k.Content, origin, vibekit.SteerStateRead)
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
+		t.persistSteer(ctx, chatID, k.MessageID, k.Content, origin, marotte.SteerStateRead)
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerInjected, chatID, marotte.SteerInjectedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
 			Origin:  origin,
@@ -124,9 +124,9 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 		// BACK is the subset the buffer still held, which is exactly the steers
 		// nothing read — an injected frame removed the others above.
 		for _, p := range t.steerBufferForgotten(chatID, k.MessageIDs) {
-			t.persistSteer(ctx, chatID, p.SteerID, p.Text, p.Origin, vibekit.SteerStateDropped)
+			t.persistSteer(ctx, chatID, p.SteerID, p.Text, p.Origin, marotte.SteerStateDropped)
 		}
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerCleared, chatID, vibekit.SteerClearedPayload{
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerCleared, chatID, marotte.SteerClearedPayload{
 			SteerIDs: k.MessageIDs,
 		}))
 		return true
@@ -144,17 +144,17 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 // here; a failure is swallowed, chat.ErrTombstoned being ordinary here.
 func (t *Translator) persistSteer(
 	ctx context.Context,
-	chatID vibekit.ChatID,
+	chatID marotte.ChatID,
 	steerID, text string,
-	origin vibekit.SteerOrigin,
-	state vibekit.SteerState,
+	origin marotte.SteerOrigin,
+	state marotte.SteerState,
 ) {
 	if steerID == "" || text == "" {
 		// A boundary row carries no text, and a row with none renders an empty
 		// note — the replay projection drops the same shape for the same reason.
 		return
 	}
-	_, err := t.chats.Mutate(durable.Context(ctx), chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := t.chats.Mutate(durable.Context(ctx), chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -167,10 +167,10 @@ func (t *Translator) persistSteer(
 				return false
 			}
 		}
-		c.Messages = append(c.Messages, vibekit.Message{
+		c.Messages = append(c.Messages, marotte.Message{
 			ID:          steerID,
-			Role:        vibekit.RoleUser,
-			UserKind:    vibekit.UserKindSteer,
+			Role:        marotte.RoleUser,
+			UserKind:    marotte.UserKindSteer,
 			SteerState:  state,
 			SteerOrigin: origin,
 			Content:     text,
@@ -188,19 +188,19 @@ func (t *Translator) persistSteer(
 // the role is optional at construction, and a Translator built without it has to
 // translate rather than panic.
 
-func (t *Translator) steerBufferWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload) {
+func (t *Translator) steerBufferWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
 	if t.steerBuffer != nil {
 		t.steerBuffer.SteerWaiting(chatID, p)
 	}
 }
 
-func (t *Translator) steerBufferRead(chatID vibekit.ChatID, steerID string) {
+func (t *Translator) steerBufferRead(chatID marotte.ChatID, steerID string) {
 	if t.steerBuffer != nil {
 		t.steerBuffer.SteerRead(chatID, steerID)
 	}
 }
 
-func (t *Translator) steerBufferForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
+func (t *Translator) steerBufferForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	if t.steerBuffer == nil {
 		return nil
 	}
@@ -211,7 +211,7 @@ func (t *Translator) steerBufferForgotten(chatID vibekit.ChatID, steerIDs []stri
 //
 // The severity check above cannot stand in for it: that catches the one shape KAS
 // marks (a `[notification/<sev>]` prefix), while the auto-wake nudge carries none
-// and a `send_message` note reaches vibekit only on the INJECTED frame.
+// and a `send_message` note reaches marotte only on the INJECTED frame.
 //
 // TWO pieces of evidence, and THE ID LEADS because it is structural where the
 // ledger is a cache. KAS mints `steer-<messageID>` by prefixing the messageId a
@@ -231,14 +231,14 @@ func (t *Translator) steerBufferForgotten(chatID vibekit.ChatID, steerIDs []stri
 // KAS's own `steering_queued` frame, which is folded on the bridge's Forward
 // goroutine with nothing serializing the two.
 //
-// The ledger still decides for an id vibekit did not derive, which is the case
+// The ledger still decides for an id marotte did not derive, which is the case
 // CmdSteer warns about when KAS returns an id other than SteerIDFor's.
-func (t *Translator) steerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin {
-	if strings.HasPrefix(steerID, vibekit.SteerIDPrefix) {
-		return vibekit.SteerOriginUser
+func (t *Translator) steerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin {
+	if strings.HasPrefix(steerID, marotte.SteerIDPrefix) {
+		return marotte.SteerOriginUser
 	}
 	if t.steers == nil {
-		return vibekit.SteerOriginAgent
+		return marotte.SteerOriginAgent
 	}
 	return t.steers.SteerOrigin(chatID, steerID)
 }

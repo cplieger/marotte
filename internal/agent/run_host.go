@@ -5,7 +5,7 @@ package agent
 // here; a manual or scheduled one gets ONE bridge of its own under the synthetic chat
 // id `run:<workflowId>`, which every response path already resolves by chat id. That
 // id gets no chat file. Which bridge holds what, and why the lease outlives the
-// process: vibekit-runtime.md. The KAS-side shapes: vibekit-acp.md.
+// process: marotte-runtime.md. The KAS-side shapes: marotte-acp.md.
 
 import (
 	"cmp"
@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Workflow RPC param keys, shared across the five verbs.
@@ -34,18 +34,18 @@ const (
 const runChatPrefix = "run:"
 
 // runChatID is the bridge-manager key for a run's bridge.
-func runChatID(workflowID string) vibekit.ChatID {
-	return vibekit.ChatID(runChatPrefix + workflowID)
+func runChatID(workflowID string) marotte.ChatID {
+	return marotte.ChatID(runChatPrefix + workflowID)
 }
 
 // isRunChat reports whether a chat id names a run bridge.
-func isRunChat(chatID vibekit.ChatID) bool {
+func isRunChat(chatID marotte.ChatID) bool {
 	return strings.HasPrefix(string(chatID), runChatPrefix)
 }
 
 // workflowIDOf recovers the run a bridge hosts from its synthetic chat id, or "" for
 // anything that is not one.
-func workflowIDOf(chatID vibekit.ChatID) string {
+func workflowIDOf(chatID marotte.ChatID) string {
 	if !isRunChat(chatID) {
 		return ""
 	}
@@ -93,7 +93,7 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 	// Started OUTSIDE the manager: the map key is the workflow id, which only `new`'s
 	// reply knows. Call replies ride the readLoop, so Forward can attach afterwards.
 	bridge := rs.bridges.factory()
-	if sErr := bridge.Start(cctx, &vibekit.StartOpts{
+	if sErr := bridge.Start(cctx, &marotte.StartOpts{
 		Lifetime: rs.lifecycle.shutdownCtx,
 		// Named rather than inherited from buildACPArgs's default, so a change there
 		// cannot launch a run bridge on the legacy engine. Same argv today.
@@ -247,7 +247,7 @@ var errRetryOutcomeUnreadable = errors.New(
 )
 
 // kasRetryOutcome is `_kiro/workflow/retry`'s reply in KAS's own spelling, the
-// decode target only; the verb answers vibekit.RunRetriedResponse.
+// decode target only; the verb answers marotte.RunRetriedResponse.
 //
 // RetriedNodeIDs is why Retry returns a value at all: a retry that reset five
 // nodes and one that reset none are otherwise indistinguishable, which is what
@@ -268,9 +268,9 @@ type kasRetryOutcome struct {
 // because KAS's retry refuses a run it has never seen.
 func (rs *Runs) Retry(
 	ctx context.Context, workflowID string, aff runAffordance,
-) (vibekit.RunRetriedResponse, error) {
+) (marotte.RunRetriedResponse, error) {
 	if workflowID == "" {
-		return vibekit.RunRetriedResponse{}, errors.New("missing workflow id")
+		return marotte.RunRetriedResponse{}, errors.New("missing workflow id")
 	}
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
@@ -289,7 +289,7 @@ func (rs *Runs) Retry(
 			if errors.Is(err, errRetryOutcomeUnreadable) {
 				rs.rearmRetried(cctx, workflowID, recipe)
 			}
-			return vibekit.RunRetriedResponse{}, err
+			return marotte.RunRetriedResponse{}, err
 		}
 		// Only on success: a refused retry re-drove nothing, so the run's previous
 		// terminal reason is still the truth about it.
@@ -308,13 +308,13 @@ func (rs *Runs) Retry(
 // once the run is re-driving.
 func (rs *Runs) retryRehosted(
 	ctx context.Context, workflowID, recipe string,
-) (vibekit.RunRetriedResponse, error) {
+) (marotte.RunRetriedResponse, error) {
 	// The shared re-host: it registers the carrier before the verb, because retry's
 	// first lifecycle frame follows the call at once, and hands back the teardown
 	// this call owes on a failure.
 	sb, discard, err := rs.rehost(ctx, workflowID)
 	if err != nil {
-		return vibekit.RunRetriedResponse{}, rs.retryStartErr(ctx, err)
+		return marotte.RunRetriedResponse{}, rs.retryStartErr(ctx, err)
 	}
 	rs.carriers.enter(sb)
 	defer rs.carriers.leave(sb)
@@ -332,7 +332,7 @@ func (rs *Runs) retryRehosted(
 		// KAS ACCEPTED the retry, so the run may be re-driving inside this bridge:
 		// only the report is lost, and tearing down would kill the work mid-node.
 		rs.rearmRetried(ctx, workflowID, recipe)
-		return vibekit.RunRetriedResponse{}, err
+		return marotte.RunRetriedResponse{}, err
 	}
 	if err != nil {
 		// Nothing is executing, so the carrier goes — except on a CONTEXT error,
@@ -343,7 +343,7 @@ func (rs *Runs) retryRehosted(
 			rs.releaseLease(ctx, workflowID)
 		}
 		discard(err)
-		return vibekit.RunRetriedResponse{}, err
+		return marotte.RunRetriedResponse{}, err
 	}
 	// A fresh clock and a clean row, now that the retry has landed: the run's
 	// recorded termination is no longer a fact about it.
@@ -359,13 +359,13 @@ func (rs *Runs) retryRehosted(
 // says so ("not registered. Load or create it first.").
 func (rs *Runs) loadThenRetry(
 	ctx context.Context, bridge acpCaller, workflowID string,
-) (vibekit.RunRetriedResponse, error) {
+) (marotte.RunRetriedResponse, error) {
 	resp, err := bridge.Call(ctx, methodKiroWorkflowLoad, map[string]any{
 		keyWorkflowID:     workflowID,
 		keyWorkspacePaths: []string{rs.lifecycle.workDir},
 	})
 	if cErr := runCallErr(resp, err); cErr != nil {
-		return vibekit.RunRetriedResponse{}, fmt.Errorf("workflow load: %w", rs.retryDeadlineErr(ctx, cErr))
+		return marotte.RunRetriedResponse{}, fmt.Errorf("workflow load: %w", rs.retryDeadlineErr(ctx, cErr))
 	}
 	return rs.retryCall(ctx, bridge, workflowID)
 }
@@ -375,8 +375,8 @@ func (rs *Runs) loadThenRetry(
 // `error` member is not read as a success.
 func (rs *Runs) retryCall(
 	ctx context.Context, bridge acpCaller, workflowID string,
-) (vibekit.RunRetriedResponse, error) {
-	none := vibekit.RunRetriedResponse{}
+) (marotte.RunRetriedResponse, error) {
+	none := marotte.RunRetriedResponse{}
 	resp, err := bridge.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
 	if cErr := runCallErr(resp, err); cErr != nil {
 		return none, fmt.Errorf("workflow retry: %w", rs.retryDeadlineErr(ctx, cErr))
@@ -401,7 +401,7 @@ func (rs *Runs) retryCall(
 	if nodes == nil {
 		nodes = []string{}
 	}
-	return vibekit.RunRetriedResponse{Status: out.Status, RetriedNodeIDs: nodes}, nil
+	return marotte.RunRetriedResponse{Status: out.Status, RetriedNodeIDs: nodes}, nil
 }
 
 // retryStartErr labels a failed bridge start: this call's deadline, or the start
@@ -450,7 +450,7 @@ var errStepStatusUnreadable = fmt.Errorf(
 // SetStepStatus marks a step completed, failed, or running so a wedged run can
 // advance. The verb carries NO node id, so KAS resolves its target positionally and a
 // client naming node X can have KAS mark node Y — the tree is READ first and the write
-// withheld unless the two agree. Schema and resolver: vibekit-acp.md.
+// withheld unless the two agree. Schema and resolver: marotte-acp.md.
 func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status string) error {
 	if nodeID == "" {
 		return errors.New("missing node id")
@@ -490,7 +490,7 @@ func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status st
 	if status == runStepRunning {
 		// Re-driven WITHOUT the user's words, so whatever it asked is no longer
 		// answerable. SettledByUser because this IS the reader's decision.
-		rs.settleAskForNode(ctx, workflowID, nodeID, vibekit.SettledByUser)
+		rs.settleAskForNode(ctx, workflowID, nodeID, marotte.SettledByUser)
 	}
 	return nil
 }
@@ -498,7 +498,7 @@ func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status st
 // stepStatusRefusal returns KAS's reason when it declined the update, "" when it took
 // it. `Updated` is a *bool so ABSENT reads as taken: an unstated field must not make a
 // verb that worked report a refusal. A queued update was taken, so `queued` is unread.
-func stepStatusRefusal(resp *vibekit.RPCResponse) string {
+func stepStatusRefusal(resp *marotte.RPCResponse) string {
 	if resp == nil || len(resp.Result) == 0 {
 		return ""
 	}
@@ -575,10 +575,10 @@ func stepTargets(n *askNode) (running, paused *askNode) {
 		return nil, nil
 	}
 	if n.Type == stepNodeType {
-		if n.Status == vibekit.RunNodeStatusRunning {
+		if n.Status == marotte.RunNodeStatusRunning {
 			return n, nil
 		}
-		if n.Status == vibekit.RunNodeStatusPaused {
+		if n.Status == marotte.RunNodeStatusPaused {
 			paused = n
 		}
 	}
@@ -596,7 +596,7 @@ func stepTargets(n *askNode) (running, paused *askNode) {
 
 // The step statuses a human may set. `running` is the CONTINUE-WITHOUT-ANSWERING
 // verb rather than a mark, and plain Resume cannot substitute for it — the KAS-side
-// mechanics and what `update` also carries are in vibekit-acp.md.
+// mechanics and what `update` also carries are in marotte-acp.md.
 const (
 	runStepCompleted = "completed"
 	runStepFailed    = "failed"
@@ -616,7 +616,7 @@ var errAskAlreadySettled = errors.New(
 // `session/prompt` addressed to the PAUSED STEP's own session.
 //
 // THE ORDER IS THE CONTRACT: carrier, then claim, then address, then send. Each
-// step guards a window the next one would open — see vibekit-runtime.md's
+// step guards a window the next one would open — see marotte-runtime.md's
 // liveness-split block. A failed send puts the claim back.
 func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string) error {
 	if workflowID == "" || askID == "" {
@@ -647,7 +647,7 @@ func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string)
 		// Nobody has to answer this any more, so it is MOOT rather than restored:
 		// re-offering a card for a step that has moved on asks the reader to
 		// answer a question KAS has stopped waiting on.
-		rs.announceSettled(ctx, a, vibekit.SettledByMoot)
+		rs.announceSettled(ctx, a, marotte.SettledByMoot)
 		discard(errAskAlreadySettled)
 		return errAskAlreadySettled
 	}
@@ -665,9 +665,9 @@ func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string)
 		discard(unaddressable)
 		return unaddressable
 	}
-	resp, cErr := sb.bridge.Call(ctx, vibekit.MethodPrompt, map[string]any{
-		vibekit.KeySessionID: session,
-		vibekit.KeyPrompt:    []any{vibekit.TextBlock(text)},
+	resp, cErr := sb.bridge.Call(ctx, marotte.MethodPrompt, map[string]any{
+		marotte.KeySessionID: session,
+		marotte.KeyPrompt:    []any{marotte.TextBlock(text)},
 	})
 	if callErr := runCallErr(resp, cErr); callErr != nil {
 		rs.restoreAsk(ctx, a)
@@ -676,7 +676,7 @@ func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string)
 	}
 	// A FRESH budget, the rule Resume follows: each arm bounds EXECUTING time.
 	rs.armDeadline(ctx, workflowID)
-	rs.announceSettled(ctx, a, vibekit.SettledByUser)
+	rs.announceSettled(ctx, a, marotte.SettledByUser)
 	slog.Info("answered a parked workflow step", "workflow_id", workflowID,
 		"node_id", a.payload.NodeID, "ask_id", askID)
 	return nil
@@ -706,9 +706,9 @@ const (
 //
 // THE FRESH READ LEADS and the ask's own address is only the fallback, because a
 // prompt KAS does not reroute runs as an ordinary turn on that session —
-// vibekit-acp.md "A step's answer is a plain `session/prompt`". An UNREADABLE run
+// marotte-acp.md "A step's answer is a plain `session/prompt`". An UNREADABLE run
 // falls back rather than refusing: a failed read never destroys work here. The three
-// verdicts: vibekit-runtime.md's liveness-split block.
+// verdicts: marotte-runtime.md's liveness-split block.
 func (rs *Runs) answerAddress(
 	ctx context.Context, workflowID string, a *runAsk,
 ) (session string, verdict answerVerdict) {
@@ -743,7 +743,7 @@ func (rs *Runs) answerAddress(
 // askedStep finds the PARKED step one ask belongs to, or nil when that step is not
 // parked right now. Addressed by the ask's own NODE ID rather than by pausedLeaf's
 // first depth-first match, which is what makes a parallel run's second parked branch
-// answerable — the divergence is in vibekit-runtime.md's liveness-split block.
+// answerable — the divergence is in marotte-runtime.md's liveness-split block.
 //
 // An EMPTY id matches any parked step: such an ask was minted before that field
 // existed, so it keeps pausedLeaf's older behaviour rather than being refused. A
@@ -753,7 +753,7 @@ func askedStep(n *askNode, nodeID string) *askNode {
 		return nil
 	}
 	if len(n.Children) == 0 {
-		if n.Status == vibekit.RunNodeStatusPaused && (nodeID == "" || n.NodeID == nodeID) {
+		if n.Status == marotte.RunNodeStatusPaused && (nodeID == "" || n.NodeID == nodeID) {
 			return n
 		}
 		return nil
@@ -797,7 +797,7 @@ var errRunHostStart = errors.New("a process for this run could not be started")
 // `discard` is a no-op for an already-hosted run — a bridge THIS call started must
 // go, one that was already there belongs to a launch or a conversation — and it
 // takes the CAUSE, because a context error keeps the carrier. Both asymmetries are
-// in vibekit-runtime.md's liveness-split block. It never releases the LEASE.
+// in marotte-runtime.md's liveness-split block. It never releases the LEASE.
 func (rs *Runs) hostOrRehost(
 	ctx context.Context, workflowID string,
 ) (sb *sharedBridge, discard func(error), err error) {
@@ -808,20 +808,20 @@ func (rs *Runs) hostOrRehost(
 }
 
 // rehost starts a process for a run nothing hosts and registers it under the run's
-// synthetic `run:<id>` chat id. KAS rehydrates from disk, so vibekit supplies the
+// synthetic `run:<id>` chat id. KAS rehydrates from disk, so marotte supplies the
 // carrier and nothing else.
 //
 // Registration precedes the verb, whose first lifecycle frame can arrive before the
 // call returns, and the bridge OUTLIVES the bounded start — StartOpts.Lifetime is
 // what it lives on. A LOST race hands back the incumbent with a no-op discard, for
-// the three reasons in vibekit-runtime.md's liveness-split block.
+// the three reasons in marotte-runtime.md's liveness-split block.
 func (rs *Runs) rehost(
 	ctx context.Context, workflowID string,
 ) (sb *sharedBridge, discard func(error), err error) {
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
 	bridge := rs.bridges.factory()
-	if sErr := bridge.Start(cctx, &vibekit.StartOpts{
+	if sErr := bridge.Start(cctx, &marotte.StartOpts{
 		Lifetime:    rs.lifecycle.shutdownCtx,
 		AgentEngine: resolveAgentEngine(),
 		Presets:     securityPresets(cctx, rs.lifecycle.configDir),
@@ -856,7 +856,7 @@ func (rs *Runs) rehost(
 // carrierUse counts the run verbs currently HOLDING each carrier, so the kept-carrier
 // bound asks rather than inferring — the premise it replaces held for Retry's call
 // alone, and the key is the CARRIER because a lost insert race hands back the
-// incumbent. Both: vibekit-runtime.md's liveness-split block.
+// incumbent. Both: marotte-runtime.md's liveness-split block.
 type carrierUse struct {
 	held map[*sharedBridge]int
 	// onIdle is the close a lifecycle frame deferred because a verb was holding the
@@ -914,7 +914,7 @@ func (c *carrierUse) busy(sb *sharedBridge) bool {
 // It is what lets a LIFECYCLE frame ask the kept-carrier bound's question without a
 // timer, and TWO INDEPENDENT terminators end the wait: the caller's context, and KAS
 // answering — likely here, a terminal frame just arrived. Bridge exit is NOT a third,
-// being the close being deferred. The residual: vibekit-runtime.md. A repeat frame
+// being the close being deferred. The residual: marotte-runtime.md. A repeat frame
 // REPLACES the pending closer rather than queueing beside it — one carrier, one close,
 // so exactly-once is the whole requirement.
 func (c *carrierUse) whenIdle(sb *sharedBridge, closeFn func()) {
@@ -957,8 +957,8 @@ const (
 // below make a late firing cost one inspect instead of a wrong close. A BUSY verdict
 // RE-ARMS, and that re-arm is NOT self-terminating — while a verb blocks on this
 // carrier nothing here closes it, so the loop ends at that verb's own end or at
-// shutdown. Why each of those ends it, plus the residual: vibekit-runtime.md.
-func (rs *Runs) boundKeptCarrier(chatID vibekit.ChatID, workflowID string, kept *sharedBridge) {
+// shutdown. Why each of those ends it, plus the residual: marotte-runtime.md.
+func (rs *Runs) boundKeptCarrier(chatID marotte.ChatID, workflowID string, kept *sharedBridge) {
 	time.AfterFunc(keptCarrierGrace, func() {
 		if rs.closeKeptCarrier(chatID, workflowID, kept) == carrierBusy {
 			rs.boundKeptCarrier(chatID, workflowID, kept)
@@ -973,7 +973,7 @@ func (rs *Runs) boundKeptCarrier(chatID vibekit.ChatID, workflowID string, kept 
 // re-arms forever over one nothing will close; USE comes next because it is a local
 // read and needs no RPC to decline.
 func (rs *Runs) closeKeptCarrier(
-	chatID vibekit.ChatID, workflowID string, kept *sharedBridge,
+	chatID marotte.ChatID, workflowID string, kept *sharedBridge,
 ) carrierVerdict {
 	if rs.bridges.get(chatID) != kept {
 		return carrierSpared
@@ -987,7 +987,7 @@ func (rs *Runs) closeKeptCarrier(
 	if !ok || res.WorkflowID != workflowID {
 		return carrierSpared
 	}
-	if !res.State.Status.Terminal() && res.State.Status != vibekit.RunStatusPaused {
+	if !res.State.Status.Terminal() && res.State.Status != marotte.RunStatusPaused {
 		return carrierSpared
 	}
 	slog.Info("closing a run carrier kept for a verb KAS never took",
@@ -1005,7 +1005,7 @@ func isCtxErr(err error) bool {
 
 // hostBridge resolves the bridge whose process holds the run's registry entry.
 //
-// Two ways a run is hosted (vibekit-runtime.md): its own `run:<id>` bridge, or the
+// Two ways a run is hosted (marotte-runtime.md): its own `run:<id>` bridge, or the
 // LAUNCHING CHAT's, since KAS parents an agent-launched run on that session. Costs
 // one `workflow/list` round trip on the second path only.
 func (rs *Runs) hostBridge(ctx context.Context, workflowID string) *sharedBridge {
@@ -1019,7 +1019,7 @@ func (rs *Runs) hostBridge(ctx context.Context, workflowID string) *sharedBridge
 // dock. One function rather than two, to pay the `workflow/list` trip once.
 func (rs *Runs) hostBridgeChat(
 	ctx context.Context, workflowID string,
-) (vibekit.ChatID, *sharedBridge) {
+) (marotte.ChatID, *sharedBridge) {
 	if sb := rs.runOwnBridge(workflowID); sb != nil {
 		return runChatID(workflowID), sb
 	}
@@ -1047,8 +1047,8 @@ func (rs *Runs) runOwnBridge(workflowID string) *sharedBridge {
 // scan, and two reads can DISAGREE, leaving the verb acting on a different answer
 // than the gate approved.
 func (rs *Runs) hostBridgeFor(
-	workflowID string, parentChat vibekit.ChatID,
-) (vibekit.ChatID, *sharedBridge) {
+	workflowID string, parentChat marotte.ChatID,
+) (marotte.ChatID, *sharedBridge) {
 	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil {
 		return runChatID(workflowID), sb
 	}
@@ -1093,7 +1093,7 @@ func (rs *Runs) listedRun(ctx context.Context, workflowID string) kasWorkflowRun
 // The utility session is REFUSED while the owner lives — KAS checks ownership on every
 // branch but its own registry hit — so routing is what makes these two land. Resolving
 // it needs no re-host (hostBridgeChat), so the fallback costs one `workflow/list` trip
-// and a carrier the CALLER resolved (cancelOn) costs none. Bundle: vibekit-acp.md.
+// and a carrier the CALLER resolved (cancelOn) costs none. Bundle: marotte-acp.md.
 func (rs *Runs) control(
 	ctx context.Context, workflowID, method, logLabel string, carrier *sharedBridge,
 ) error {
@@ -1115,7 +1115,7 @@ func (rs *Runs) control(
 // synthetic id. LIFECYCLE frames go out workspace-global with an EMPTY chat id,
 // because a parentless run is owned by no chat. session/update is PROJECTED as
 // `run_step` and never buffered — there is no transcript to buffer into.
-func (rt *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) dispatch(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID != nil {
 		rt.dispatchRequest(ctx, chatID, msg)
 		return
@@ -1136,7 +1136,7 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vib
 		}
 		return
 	}
-	if msg.Method == vibekit.MethodSessionUpdate {
+	if msg.Method == marotte.MethodSessionUpdate {
 		rt.translator.HandleRunStepFrame(ctx, workflowIDOf(chatID), msg.Params)
 		return
 	}
@@ -1146,7 +1146,7 @@ func (rt *Runtime) dispatch(ctx context.Context, chatID vibekit.ChatID, msg *vib
 // dispatchRequest answers an A→C request on a run bridge, mirroring
 // translateACPEvent's request half minus the chat-only concerns. An unmatched
 // request is REFUSED rather than dropped: an unanswered one wedges the step's turn.
-func (rt *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) dispatchRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	switch {
 	case rt.inbound.handleFSRequest(ctx, chatID, msg),
 		rt.inbound.handleKiroFSRequest(ctx, chatID, msg),
@@ -1158,35 +1158,35 @@ func (rt *Runtime) dispatchRequest(ctx context.Context, chatID vibekit.ChatID, m
 		return
 	}
 	if fn, ok := rt.chatHandlers[msg.Method]; ok &&
-		(msg.Method == vibekit.MethodRequestPermission ||
-			msg.Method == vibekit.MethodElicitationCreate ||
-			msg.Method == vibekit.MethodKiroUserInput) {
+		(msg.Method == marotte.MethodRequestPermission ||
+			msg.Method == marotte.MethodElicitationCreate ||
+			msg.Method == marotte.MethodKiroUserInput) {
 		fn(ctx, chatID, msg)
 		return
 	}
 	slog.Warn("run bridge: refusing unexpected request", "method", msg.Method, "chat_id", chatID)
-	_ = rt.BridgeRespond(ctx, chatID, *msg.ID, nil, &vibekit.RPCError{
-		Code:    vibekit.RPCCodeMethodNotFound,
+	_ = rt.BridgeRespond(ctx, chatID, *msg.ID, nil, &marotte.RPCError{
+		Code:    marotte.RPCCodeMethodNotFound,
 		Message: "unsupported on a run bridge: " + msg.Method,
 	})
 }
 
 // closeStoppedBridge closes a run bridge once its run STOPPED EXECUTING, terminal or
 // paused alike; hostOrRehost re-hosts a parked one on demand. Run bridges only, no
-// lease released, an unrecognised status kept: vibekit-runtime.md for each.
+// lease released, an unrecognised status kept: marotte-runtime.md for each.
 //
 // The close is a goroutine because this runs FROM the forward loop, whose channel
 // CloseBridge → Stop closes. It ASKS about a verb in flight, closeKeptCarrier's own
 // question, and DEFERS rather than re-arming: it holds a terminal frame, so the held
 // span's end is a signal it can wait on. That and the identity re-check: same doc.
-func (rt *Runtime) closeStoppedBridge(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rt *Runtime) closeStoppedBridge(chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
-		Status vibekit.RunStatus `json:"status"`
+		Status marotte.RunStatus `json:"status"`
 	}
 	if json.Unmarshal(msg.Params, &p) != nil {
 		return
 	}
-	if !p.Status.Terminal() && p.Status != vibekit.RunStatusPaused {
+	if !p.Status.Terminal() && p.Status != marotte.RunStatusPaused {
 		return
 	}
 	sb := rt.bridge.mgr.get(chatID)
@@ -1203,27 +1203,27 @@ func (rt *Runtime) closeStoppedBridge(chatID vibekit.ChatID, msg *vibekit.RPCRes
 }
 
 // recipeBySource resolves a launch source against the CURRENT recipe list.
-func (rs *Runs) recipeBySource(ctx context.Context, source string) (vibekit.Recipe, error) {
+func (rs *Runs) recipeBySource(ctx context.Context, source string) (marotte.Recipe, error) {
 	if source == "" {
-		return vibekit.Recipe{}, errors.New("missing recipe source")
+		return marotte.Recipe{}, errors.New("missing recipe source")
 	}
 	recipes, err := rs.listRecipes(ctx)
 	if err != nil {
-		return vibekit.Recipe{}, err
+		return marotte.Recipe{}, err
 	}
 	for _, r := range recipes {
 		if r.Source == source {
 			return r, nil
 		}
 	}
-	return vibekit.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
+	return marotte.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
 }
 
 // recipeIdle enforces the single-run rule against the current run list.
 //
 // KAS's list is the source of truth, deliberately: it is the only thing that sees
-// the runs vibekit did not launch. The leases add the ability to EXPLAIN a blocking
-// row — ask whether it is an orphan vibekit itself left behind before refusing.
+// the runs marotte did not launch. The leases add the ability to EXPLAIN a blocking
+// row — ask whether it is an orphan marotte itself left behind before refusing.
 func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 	runs, err := rs.list(ctx, nil)
 	if err != nil {
@@ -1231,7 +1231,7 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 		// Run ⇄ Cancel row cannot represent.
 		return fmt.Errorf("run list unavailable: %w", err)
 	}
-	status := make(map[string]vibekit.RunStatus, len(runs))
+	status := make(map[string]marotte.RunStatus, len(runs))
 	for i := range runs {
 		status[runs[i].WorkflowID] = runs[i].Status
 	}
@@ -1255,7 +1255,7 @@ func (rs *Runs) recipeIdle(ctx context.Context, name string) error {
 }
 
 // kasRecipe is one listRecipes entry as KAS reports it; `plan` rides through as
-// raw JSON — see vibekit.Recipe.
+// raw JSON — see marotte.Recipe.
 type kasRecipe struct {
 	Inputs      map[string]string `json:"inputs"`
 	Name        string            `json:"name"`
@@ -1267,7 +1267,7 @@ type kasRecipe struct {
 
 // listRecipes fetches the launchable recipe list (bundled + workspace) through
 // the utility session — a pure read, safe on the shared connection.
-func (rs *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
+func (rs *Runs) listRecipes(ctx context.Context) ([]marotte.Recipe, error) {
 	u := rs.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -1282,12 +1282,12 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
 	if err := json.Unmarshal(raw, &list); err != nil {
 		return nil, err
 	}
-	out := make([]vibekit.Recipe, 0, len(list.Recipes))
+	out := make([]marotte.Recipe, 0, len(list.Recipes))
 	for _, r := range list.Recipes {
 		if r.Name == "" || r.Source == "" {
 			continue
 		}
-		out = append(out, vibekit.Recipe{
+		out = append(out, marotte.Recipe{
 			Name:        r.Name,
 			Description: r.Description,
 			Source:      r.Source,
@@ -1308,7 +1308,7 @@ func (rs *Runs) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
 // workspacePaths STAYS: 0.63.3 resolves the roots from the parent session and only
 // shape-validates the param, but a pre-0.63.3 engine reads it, and the value it
 // yields either way is the same [workDir].
-func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string, parent vibekit.SessionID) (string, error) {
+func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string, parent marotte.SessionID) (string, error) {
 	// Always a map, never nil: KAS answers "inputs is not iterable" without it.
 	in := map[string]any{}
 	for k, v := range inputs {
@@ -1333,7 +1333,7 @@ func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string
 }
 
 // runCallErr folds a bridge Call's two failure channels into one error.
-func runCallErr(resp *vibekit.RPCResponse, err error) error {
+func runCallErr(resp *marotte.RPCResponse, err error) error {
 	if err != nil {
 		return err
 	}
@@ -1364,7 +1364,7 @@ const (
 // transientErrorClass is the `pauseDetail.class` KAS stamps for every transient
 // fault, the MACHINE-READABLE half of the reasons above. It reaches a pause a REASON
 // cannot, because a parallel branch's prose is re-rendered around it — see
-// vibekit-acp.md.
+// marotte-acp.md.
 const transientErrorClass = "transient-error"
 
 // pauseDetail is KAS's machine-readable pause CLASSIFICATION, on both the
@@ -1380,7 +1380,7 @@ type pauseDetail struct {
 }
 
 // resumablePause reports whether a pause means the run stopped for a cause nobody
-// chose, and is therefore vibekit's to resume unasked.
+// chose, and is therefore marotte's to resume unasked.
 //
 // REASON **OR** DETAIL, and both arms are load-bearing: the literals cover the
 // pauses that carry no detail, the detail arm covers the ones whose prose is
@@ -1403,7 +1403,7 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 //
 // Scoped twice: to this chat's session chain (never resumeAll, which would sweep
 // runs another chat or the TUI paused on purpose), and to the involuntary reasons.
-func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID vibekit.ChatID) {
+func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID marotte.ChatID) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return
@@ -1421,7 +1421,7 @@ func (rs *Runs) resumeInterruptedRuns(ctx context.Context, chatID vibekit.ChatID
 	}
 	for i := range runs {
 		r := &runs[i]
-		if vibekit.RunStatus(r.Status) != vibekit.RunStatusPaused || !chain[r.ParentSessionID] {
+		if marotte.RunStatus(r.Status) != marotte.RunStatusPaused || !chain[r.ParentSessionID] {
 			continue
 		}
 		rs.resumeIfInterrupted(ctx, chatID, r.WorkflowID)
@@ -1443,9 +1443,9 @@ var healBaseDelay = 5 * time.Second
 //
 // Runs AFTER `next`, so the client renders the pause before anything undoes it.
 func (rs *Runs) healPaused(
-	next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse),
-) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
-	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+	next func(context.Context, marotte.ChatID, *marotte.RPCResponse),
+) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
+	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		next(ctx, chatID, msg)
 		f := decodePauseFrame(msg)
 		if f.WorkflowID == "" || chatID == "" {
@@ -1455,7 +1455,7 @@ func (rs *Runs) healPaused(
 			// Without this line the decline is silent and `observePaused` writes
 			// nothing either, so the frame's arrival had to be inferred. Debug
 			// because a run parked ON PURPOSE takes this branch too.
-			slog.Debug("a paused run was left alone: its pause is not one vibekit resumes unasked",
+			slog.Debug("a paused run was left alone: its pause is not one marotte resumes unasked",
 				"workflow_id", scrubLog(f.WorkflowID), "chat_id", chatID,
 				"pause_reason", scrubLog(f.PauseReason),
 				"pause_class", scrubLog(pauseClassOf(f.PauseDetail)),
@@ -1528,7 +1528,7 @@ func unmarshalKeepingReadable(data []byte, dst any) bool {
 	return errors.As(err, &typeErr)
 }
 
-func decodePauseFrame(msg *vibekit.RPCResponse) pauseFrame {
+func decodePauseFrame(msg *marotte.RPCResponse) pauseFrame {
 	var f pauseFrame
 	if msg == nil || len(msg.Params) == 0 {
 		return f
@@ -1548,9 +1548,9 @@ func decodePauseFrame(msg *vibekit.RPCResponse) pauseFrame {
 // with it. It also covers the step answered from the TUI, which no path here claimed.
 // Both budgets are keyed on the RUN, so they are refilled per frame.
 func (rs *Runs) healProgress(
-	next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse),
-) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
-	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+	next func(context.Context, marotte.ChatID, *marotte.RPCResponse),
+) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
+	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		if f := decodeNodeFrame(msg); f.WorkflowID != "" {
 			rs.clearHeals(f.WorkflowID)
 			// The cancel ladder too: a refusal is evidence about a MOMENT, and a
@@ -1565,8 +1565,8 @@ func (rs *Runs) healProgress(
 			// parentless run and a chat-parented one share.
 			rs.refillDeadline(ctx, f.WorkflowID)
 			// SettledByMoot rather than SettledByUser: the frame says only that the node
-			// moved on, and the answer path already settled anything vibekit accepted.
-			rs.settleAskForNode(ctx, f.WorkflowID, f.NodeID, vibekit.SettledByMoot)
+			// moved on, and the answer path already settled anything marotte accepted.
+			rs.settleAskForNode(ctx, f.WorkflowID, f.NodeID, marotte.SettledByMoot)
 		}
 		next(ctx, chatID, msg)
 	}
@@ -1583,7 +1583,7 @@ type nodeFrame struct {
 	NodeID     string `json:"nodeId"`
 }
 
-func decodeNodeFrame(msg *vibekit.RPCResponse) nodeFrame {
+func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
 	var f nodeFrame
 	if msg == nil || len(msg.Params) == 0 {
 		return f
@@ -1596,7 +1596,7 @@ func decodeNodeFrame(msg *vibekit.RPCResponse) nodeFrame {
 
 // resumeIfInterrupted inspects one paused run and resumes it when the pause was
 // involuntary. Resumed on the CHAT's bridge, so that process owns the run again.
-func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID vibekit.ChatID, workflowID string) {
+func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) {
 	// The wider involuntary set, because this RESUMES; the orphan sweep's
 	// narrower `restartPaused` cancels.
 	if !rs.involuntarilyPaused(ctx, workflowID) {
@@ -1640,7 +1640,7 @@ func (rs *Runs) listRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 // is durable state, so killing the chat's process only PAUSES it — each must be told
 // to cancel while the owning bridge is alive to say it. Begins with a record read,
 // so it no-ops on a deleted chat.
-func (rs *Runs) CancelForChat(ctx context.Context, chatID vibekit.ChatID) {
+func (rs *Runs) CancelForChat(ctx context.Context, chatID marotte.ChatID) {
 	chat, ok := rs.chats.Get(ctx, chatID)
 	if !ok {
 		return
@@ -1656,7 +1656,7 @@ func (rs *Runs) CancelForChat(ctx context.Context, chatID vibekit.ChatID) {
 // ONE inventory read, not N+1, and NO chat-record read: the carrier comes off the two
 // things this loop already knows. A plain Cancel re-reads the inventory per run for
 // the parent session, and the record-matching resolver cannot answer here at all.
-func (rs *Runs) CancelForSessions(ctx context.Context, chatID vibekit.ChatID, sessionChain []string) {
+func (rs *Runs) CancelForSessions(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
 	if len(sessionChain) == 0 {
 		return
 	}
@@ -1671,7 +1671,7 @@ func (rs *Runs) CancelForSessions(ctx context.Context, chatID vibekit.ChatID, se
 	}
 	for i := range runs {
 		r := &runs[i]
-		if vibekit.RunStatus(r.Status).Terminal() || !chain[r.ParentSessionID] {
+		if marotte.RunStatus(r.Status).Terminal() || !chain[r.ParentSessionID] {
 			continue
 		}
 		carrier := rs.runOwnBridge(r.WorkflowID)

@@ -9,13 +9,13 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestBufferSnapshot covers the read that replaced agent/turn_mirror.go's parallel
 // replica of the in-flight turn.
 //
-// The mirror re-folded every broadcast event into its own vibekit.Message — a second
+// The mirror re-folded every broadcast event into its own marotte.Message — a second
 // implementation of the block assembly this package already does, free to drift
 // from it. These cases pin that the buffer's own snapshot carries what the transcript
 // GET's live_turn needs.
@@ -47,7 +47,7 @@ func TestBufferSnapshot(t *testing.T) {
 		buf.AppendTextDelta("hello ", "")
 		buf.AppendThinkingDelta("pondering", "")
 		buf.AppendToolUseBlock("tool-1", "")
-		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1", Title: "Read File"})
+		buf.AppendToolCall(&marotte.ToolCall{ID: "tool-1", Title: "Read File"})
 		buf.AppendTextDelta("world", "")
 
 		snap, ok := buf.SnapshotCapped(SnapshotCaps{})
@@ -58,7 +58,7 @@ func TestBufferSnapshot(t *testing.T) {
 		if msg.ID != "m1" {
 			t.Errorf("id = %q, want m1", msg.ID)
 		}
-		if msg.Role != vibekit.RoleAssistant {
+		if msg.Role != marotte.RoleAssistant {
 			t.Errorf("role = %q, want assistant", msg.Role)
 		}
 		if msg.Content != "hello world" {
@@ -92,7 +92,7 @@ func TestBufferSnapshot(t *testing.T) {
 		// would be a data race the -race gate cannot always catch.
 		buf := Buffer{MessageID: "m1"}
 		buf.AppendTextDelta("hi", "")
-		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1"})
+		buf.AppendToolCall(&marotte.ToolCall{ID: "tool-1"})
 
 		snap, ok := buf.SnapshotCapped(SnapshotCaps{})
 		if !ok {
@@ -154,7 +154,7 @@ func newCapFixture(tb testing.TB) capFixture {
 		buf.AppendTextDelta(strings.Repeat("c", chunk), sub)
 	}
 	for i := range toolCalls {
-		buf.AppendToolCall(&vibekit.ToolCall{
+		buf.AppendToolCall(&marotte.ToolCall{
 			ID:     "tool-" + strconv.Itoa(i),
 			Title:  "Run Command",
 			Output: strings.Repeat("o", toolOutput),
@@ -173,7 +173,7 @@ func newCapFixture(tb testing.TB) capFixture {
 
 // blockTextLen is the dimension BlockTextBytes bounds: Text+Thinking summed over
 // every block, which is where the second copy of the turn's text lives.
-func blockTextLen(blocks []vibekit.Block) int {
+func blockTextLen(blocks []marotte.Block) int {
 	n := 0
 	for _, b := range blocks {
 		n += len(b.Text) + len(b.Thinking)
@@ -228,7 +228,7 @@ func TestSnapshotCapped_KeepsTheTailAndMarksTruncated(t *testing.T) {
 	buf.StartTurn("m1")
 	buf.AppendThinkingDelta("OLD-reasoning"+strings.Repeat("r", 4096)+"NEW-reasoning", "")
 	buf.AppendTextDelta("OLD-content"+strings.Repeat("c", 4096)+"NEW-content", "")
-	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: "OLD-out" + strings.Repeat("o", 4096) + "NEW-out"})
+	buf.AppendToolCall(&marotte.ToolCall{ID: "t1", Output: "OLD-out" + strings.Repeat("o", 4096) + "NEW-out"})
 
 	snap, ok := buf.SnapshotCapped(SnapshotCaps{
 		ReasoningBytes:  64,
@@ -275,7 +275,7 @@ func TestSnapshotCapped_ASmallTurnIsNotMarkedTruncated(t *testing.T) {
 	buf.StartTurn("m1")
 	buf.AppendThinkingDelta("pondering", "")
 	buf.AppendTextDelta("hello world", "")
-	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: "ok"})
+	buf.AppendToolCall(&marotte.ToolCall{ID: "t1", Output: "ok"})
 
 	snap, ok := buf.SnapshotCapped(connectCapsForTest())
 	if !ok {
@@ -326,12 +326,12 @@ func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
 	tests := []struct {
 		name  string
 		caps  SnapshotCaps
-		check func(t *testing.T, fx capFixture, msg vibekit.Message)
+		check func(t *testing.T, fx capFixture, msg marotte.Message)
 	}{
 		{
 			name: "reasoning bytes",
 			caps: SnapshotCaps{ReasoningBytes: 512},
-			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+			check: func(t *testing.T, fx capFixture, msg marotte.Message) {
 				if len(msg.Reasoning) > 512 {
 					t.Errorf("reasoning = %d bytes, want <= 512", len(msg.Reasoning))
 				}
@@ -346,7 +346,7 @@ func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
 		{
 			name: "content bytes",
 			caps: SnapshotCaps{ContentBytes: 512},
-			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+			check: func(t *testing.T, fx capFixture, msg marotte.Message) {
 				if len(msg.Content) > 512 {
 					t.Errorf("content = %d bytes, want <= 512", len(msg.Content))
 				}
@@ -361,7 +361,7 @@ func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
 		{
 			name: "block text bytes",
 			caps: SnapshotCaps{BlockTextBytes: 512},
-			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+			check: func(t *testing.T, fx capFixture, msg marotte.Message) {
 				if got := blockTextLen(msg.Blocks); got > 512 {
 					t.Errorf("block text = %d bytes, want <= 512", got)
 				}
@@ -377,7 +377,7 @@ func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
 		{
 			name: "block count",
 			caps: SnapshotCaps{Blocks: 3},
-			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+			check: func(t *testing.T, fx capFixture, msg marotte.Message) {
 				if len(msg.Blocks) != 3 {
 					t.Errorf("blocks = %d, want 3", len(msg.Blocks))
 				}
@@ -394,7 +394,7 @@ func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
 		{
 			name: "tool call count",
 			caps: SnapshotCaps{ToolCalls: 5},
-			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+			check: func(t *testing.T, fx capFixture, msg marotte.Message) {
 				if len(msg.ToolCalls) != 5 {
 					t.Fatalf("tool calls = %d, want 5", len(msg.ToolCalls))
 				}
@@ -412,7 +412,7 @@ func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
 		{
 			name: "tool output bytes",
 			caps: SnapshotCaps{ToolOutputBytes: 256},
-			check: func(t *testing.T, fx capFixture, msg vibekit.Message) {
+			check: func(t *testing.T, fx capFixture, msg marotte.Message) {
 				if len(msg.ToolCalls) != fx.toolCalls {
 					t.Fatalf("tool calls = %d, want the full %d", len(msg.ToolCalls), fx.toolCalls)
 				}
@@ -454,7 +454,7 @@ func TestSnapshotCapped_CutsOnARuneBoundary(t *testing.T) {
 	buf.StartTurn("m1")
 	buf.AppendThinkingDelta(strings.Repeat(glyph, 400), "")
 	buf.AppendTextDelta(strings.Repeat(glyph, 400), "")
-	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: strings.Repeat(glyph, 400)})
+	buf.AppendToolCall(&marotte.ToolCall{ID: "t1", Output: strings.Repeat(glyph, 400)})
 
 	for _, n := range []int{100, 101, 102} {
 		t.Run("cap "+strconv.Itoa(n), func(t *testing.T) {
@@ -535,7 +535,7 @@ func TestSnapshotCapped_MarshalsInsideTheTextCeiling(t *testing.T) {
 
 // toolOutputLen is the dimension ToolOutputTotalBytes bounds: Output summed over every
 // carried call, which is the product the per-call cap alone cannot bound.
-func toolOutputLen(calls []vibekit.ToolCall) int {
+func toolOutputLen(calls []marotte.ToolCall) int {
 	n := 0
 	for _, c := range calls {
 		n += len(c.Output)

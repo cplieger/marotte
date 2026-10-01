@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // HandleElicitationCreate processes a _kiro/mcp/elicitation request from
@@ -20,7 +20,7 @@ import (
 // pending-permissions tracker for SSE replay so a dialog survives a
 // reconnect, exactly like a permission prompt. There is no v3
 // elicitation-complete method (upstream cancel is not signalled).
-func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
 		// The request must be answerable; without an id we cannot route
 		// a response, so drop rather than show a dialog the user's
@@ -29,7 +29,7 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit
 		return
 	}
 	type elicitBody struct {
-		RequestedSchema *vibekit.ElicitationRequestSchema `json:"requestedSchema"`
+		RequestedSchema *marotte.ElicitationRequestSchema `json:"requestedSchema"`
 		Mode            string                            `json:"mode"`
 		Message         string                            `json:"message"`
 		URL             string                            `json:"url"`
@@ -42,19 +42,19 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit
 	reqID := *msg.ID
 	p, err := decodeParams[elicitParams](msg)
 	if err != nil {
-		t.refuseAsk(ctx, chatID, vibekit.MethodElicitationCreate, reqID,
-			vibekit.ElicitationResult{Action: vibekit.ElicitationActionCancel}, err)
+		t.refuseAsk(ctx, chatID, marotte.MethodElicitationCreate, reqID,
+			marotte.ElicitationResult{Action: marotte.ElicitationActionCancel}, err)
 		return
 	}
 
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 
 	step := t.steps.refFor(p.SessionID)
-	evt := vibekit.NewEvent(vibekit.EventElicitationNeeded, chatID, vibekit.ElicitationNeededPayload{
+	evt := marotte.NewEvent(marotte.EventElicitationNeeded, chatID, marotte.ElicitationNeededPayload{
 		RequestID: reqID,
 		Mode:      p.Elicitation.Mode,
 		// The message is what the user is accepting or declining, and an MCP
-		// server is further from vibekit's trust than the agent is, so it gets
+		// server is further from marotte's trust than the agent is, so it gets
 		// the same treatment as a permission title. Mode, URL and the requested
 		// schema are not display text: the first two the client resolves, and
 		// the schema's own labels are a nested foreign document whose rendering
@@ -69,6 +69,6 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit
 	})
 	t.bus.Broadcast(ctx, evt)
 	t.pendingPerms.PendingPermsAdd(reqID, evt)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
-	t.push.NotifyPush(ctx, "Input needed", vibekit.PushKindPermission, chatID)
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelInput}))
+	t.push.NotifyPush(ctx, "Input needed", marotte.PushKindPermission, chatID)
 }

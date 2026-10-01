@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestLineTracker_Record_Basic(t *testing.T) {
@@ -60,7 +60,7 @@ func TestLineTracker_Record_MaxFiles(t *testing.T) {
 
 func TestLineTracker_RecordFromDiffs(t *testing.T) {
 	lt := NewLineTracker()
-	diffs := []vibekit.ToolDiff{
+	diffs := []marotte.ToolDiff{
 		{Path: "a.go", NewText: "line1\nline2\nline3\n"},
 		{Path: "", NewText: "ignored"},
 		{Path: "b.go", NewText: ""},
@@ -154,7 +154,7 @@ func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lt := NewLineTracker()
-			lt.RecordFromDiffs("chat", []vibekit.ToolDiff{{Path: "f.go", NewText: tt.newText}}, 5, "edit")
+			lt.RecordFromDiffs("chat", []marotte.ToolDiff{{Path: "f.go", NewText: tt.newText}}, 5, "edit")
 			ranges := lt.Get("chat", "f.go")
 			if len(ranges) != 1 {
 				t.Fatalf("ranges = %d, want 1", len(ranges))
@@ -175,7 +175,7 @@ func TestLineTracker_RecordFromDiffs_LineCounts(t *testing.T) {
 func TestLineTracker_RecordFromDiffs_OneLineEdit(t *testing.T) {
 	old := bigFile(300)
 	lt := NewLineTracker()
-	lt.RecordFromDiffs("chat", []vibekit.ToolDiff{
+	lt.RecordFromDiffs("chat", []marotte.ToolDiff{
 		{Path: "big.go", OldText: old, NewText: replaceLine(old, 149, "line 149 EDITED")},
 	}, 1, "edit")
 	ranges := lt.Get("chat", "big.go")
@@ -192,7 +192,7 @@ func TestLineTracker_RecordFromDiffs_OneLineEdit(t *testing.T) {
 func TestLineTracker_RecordFromDiffs_NoOpWrite(t *testing.T) {
 	same := "a\nb\nc\n"
 	lt := NewLineTracker()
-	lt.RecordFromDiffs("chat", []vibekit.ToolDiff{{Path: "f.go", OldText: same, NewText: same}}, 1, "edit")
+	lt.RecordFromDiffs("chat", []marotte.ToolDiff{{Path: "f.go", OldText: same, NewText: same}}, 1, "edit")
 	if got := lt.Get("chat", "f.go"); got != nil {
 		t.Errorf("no-op write recorded %+v, want no ranges", got)
 	}

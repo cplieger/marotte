@@ -1,11 +1,11 @@
 // Environment screening for terminal/create.
 //
-// Declaring terminal: true makes vibekit responsible for executing the agent's
+// Declaring terminal: true makes marotte responsible for executing the agent's
 // shell commands, and os/exec keeps the LAST value for a repeated env key, so an
 // agent-supplied variable wins over the process environment. A handful of names
 // redirect execution rather than carry data (LD_PRELOAD, PATH, ...), so an
 // approved command with one of those set can run different code than the user
-// approved. Authorization is per command (vibekit seeds zero Cedar rules), so
+// approved. Authorization is per command (marotte seeds zero Cedar rules), so
 // this is what keeps that per-command approval meaningful.
 
 package agent
@@ -19,11 +19,11 @@ import (
 
 // envAllowVar lets an operator re-permit specific names, comma-separated (a
 // preload-based profiler, a vendored NODE_PATH).
-const envAllowVar = "VIBEKIT_ALLOW_AGENT_ENV"
+const envAllowVar = "MAROTTE_ALLOW_AGENT_ENV"
 
 // dangerousAgentEnv is upstream kiro-cli's own `dangerous_env_vars` list (read
 // verbatim off the 2.18.1 binary) so the same agent behaves the same whether it
-// runs through the TUI or through vibekit. Matched EXACTLY, not case-folded: POSIX
+// runs through the TUI or through marotte. Matched EXACTLY, not case-folded: POSIX
 // env vars are case-sensitive and the loader reads LD_PRELOAD and nothing else.
 //
 // Grouped by how each one reaches execution:
@@ -76,7 +76,7 @@ var operatorAllowedEnv = sync.OnceValue(func() map[string]struct{} {
 	return parseAllowedEnv(envx.String(envAllowVar))
 })
 
-// screenAgentEnv returns the names vibekit refuses to set for the agent, in the
+// screenAgentEnv returns the names marotte refuses to set for the agent, in the
 // order the agent asked for them.
 //
 // Reports rather than filters: dropping a variable silently would leave the

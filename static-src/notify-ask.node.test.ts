@@ -7,7 +7,7 @@
 // loading. `notify.ts` owns the browser binding and `notify-permission.test.ts` is
 // its sibling in the browser project.
 //
-// Two rules are vibekit's own rather than the reference's, and both fail silently if
+// Two rules are marotte's own rather than the reference's, and both fail silently if
 // a port gets them wrong:
 //
 //  1. ONE ASK PER DEVICE, not one per page. Settings is a standing door to the same

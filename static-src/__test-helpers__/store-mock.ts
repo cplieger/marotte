@@ -112,7 +112,7 @@ export const storeMock = {
   setAgentStatus: vi.fn(),
   setWorkingLabel: vi.fn(),
 
-  // Mirrors `internal/vibekit`'s derived id, so a suite that spreads this and
+  // Mirrors `internal/marotte`'s derived id, so a suite that spreads this and
   // asserts on a steer id gets the real shape rather than a placeholder.
   steerIDFor: vi.fn((messageID: string) => `steer-${messageID}`),
   steerCount: vi.fn(() => 0),

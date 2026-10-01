@@ -7,7 +7,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // userMessageIDParams is the whole `session/update` params object, `_meta` nested inside
@@ -18,7 +18,7 @@ func userMessageIDParams(t *testing.T, sessionID, kasID string) []byte {
 	return mustJSON(t, map[string]any{
 		"sessionId": sessionID,
 		"update": map[string]any{
-			"sessionUpdate": string(vibekit.ACPUpdateSessionInfo),
+			"sessionUpdate": string(marotte.ACPUpdateSessionInfo),
 			"_meta": map[string]any{
 				"kiro": map[string]any{
 					"kind":          "user_message_id_assigned",
@@ -30,15 +30,15 @@ func userMessageIDParams(t *testing.T, sessionID, kasID string) []byte {
 }
 
 // seedPromptRow gives the chat one prompt-class user row for the stamp to land on.
-func seedPromptRow(cs *fakeChatStore, chatID vibekit.ChatID, msgID string) {
-	cs.Chats[chatID] = &vibekit.Chat{
+func seedPromptRow(cs *fakeChatStore, chatID marotte.ChatID, msgID string) {
+	cs.Chats[chatID] = &marotte.Chat{
 		ID:       string(chatID),
-		Messages: []vibekit.Message{{ID: msgID, Role: vibekit.RoleUser, Content: "prompt"}},
+		Messages: []marotte.Message{{ID: msgID, Role: marotte.RoleUser, Content: "prompt"}},
 	}
 }
 
 // kasIDOfFirstRow reads the stamp back off the store.
-func kasIDOfFirstRow(t *testing.T, h *Runtime, chatID vibekit.ChatID) string {
+func kasIDOfFirstRow(t *testing.T, h *Runtime, chatID marotte.ChatID) string {
 	t.Helper()
 	c, ok := h.chatStore.Get(t.Context(), chatID)
 	if !ok {
@@ -50,17 +50,17 @@ func kasIDOfFirstRow(t *testing.T, h *Runtime, chatID vibekit.ChatID) string {
 	return c.Messages[0].KASMessageID
 }
 
-// The id KAS assigns on the chat's OWN session names the prompt vibekit just persisted,
+// The id KAS assigns on the chat's OWN session names the prompt marotte just persisted,
 // and it is the only id `_kiro/checkpoint/revertMultiple` accepts — so it has to reach
 // the record, through a frame whose `_meta` sits one level in.
 func TestHandleSessionUpdate_StampsTheKASMessageIDFromTheChatsOwnSession(t *testing.T) {
-	const chatID = vibekit.ChatID("chat-own")
+	const chatID = marotte.ChatID("chat-own")
 	h, cs, _ := newTestHub()
 	defer shutdownHub(t, h)
 	registerParentSession(t, h, chatID, "parent-A")
 	seedPromptRow(cs, chatID, "m-1")
 
-	h.handleSessionUpdate(t.Context(), chatID, &vibekit.RPCResponse{
+	h.handleSessionUpdate(t.Context(), chatID, &marotte.RPCResponse{
 		Method: "session/update",
 		Params: userMessageIDParams(t, "parent-A", "kas-own"),
 	})
@@ -76,7 +76,7 @@ func TestHandleSessionUpdate_StampsTheKASMessageIDFromTheChatsOwnSession(t *test
 // and stamping it would point rewind at a row the id does not name.
 func TestHandleSessionUpdate_AStepSessionsAssignedIDStampsNothing(t *testing.T) {
 	const (
-		chatID  = vibekit.ChatID("chat-step-id")
+		chatID  = marotte.ChatID("chat-step-id")
 		stepSID = "step-session-1"
 	)
 	h, cs, _ := newTestHub()
@@ -85,7 +85,7 @@ func TestHandleSessionUpdate_AStepSessionsAssignedIDStampsNothing(t *testing.T) 
 	h.translator.RecordStepSession(stepSID, "wf_1", "build")
 	seedPromptRow(cs, chatID, "m-1")
 
-	h.handleSessionUpdate(t.Context(), chatID, &vibekit.RPCResponse{
+	h.handleSessionUpdate(t.Context(), chatID, &marotte.RPCResponse{
 		Method: "session/update",
 		Params: userMessageIDParams(t, stepSID, "kas-step"),
 	})

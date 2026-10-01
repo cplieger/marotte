@@ -1,4 +1,4 @@
-// Package composition wires all vibekit services together and manages application lifecycle.
+// Package composition wires all marotte services together and manages application lifecycle.
 package composition
 
 import (
@@ -16,32 +16,32 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/toolbelt/v3"
-	"github.com/cplieger/vibekit/internal/agent"
-	"github.com/cplieger/vibekit/internal/auth"
-	"github.com/cplieger/vibekit/internal/bridge"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/chat/archive"
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/filebrowse"
-	"github.com/cplieger/vibekit/internal/forges"
-	"github.com/cplieger/vibekit/internal/git"
-	"github.com/cplieger/vibekit/internal/kirosession"
-	"github.com/cplieger/vibekit/internal/logctl"
-	"github.com/cplieger/vibekit/internal/mcp"
-	"github.com/cplieger/vibekit/internal/mcp/prewarm"
-	"github.com/cplieger/vibekit/internal/push"
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/schedule"
-	"github.com/cplieger/vibekit/internal/server"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/steering"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/agent"
+	"github.com/cplieger/marotte/internal/auth"
+	"github.com/cplieger/marotte/internal/bridge"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/forges"
+	"github.com/cplieger/marotte/internal/git"
+	"github.com/cplieger/marotte/internal/kirosession"
+	"github.com/cplieger/marotte/internal/logctl"
+	"github.com/cplieger/marotte/internal/mcp"
+	"github.com/cplieger/marotte/internal/mcp/prewarm"
+	"github.com/cplieger/marotte/internal/push"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/server"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/steering"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
-// App holds all wired-up services for the vibekit server.
+// App holds all wired-up services for the marotte server.
 type App struct {
 	Runtime        *agent.Runtime
 	Server         *server.Server
@@ -65,7 +65,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// flock, so the lock auto-releases on SIGKILL: two processes on one configDir
 	// corrupt chat files.
 	if err := acquireInstanceLock(cfg.ConfigDir); err != nil {
-		return nil, fmt.Errorf("another vibekit instance is running on %s: %w", cfg.ConfigDir, err)
+		return nil, fmt.Errorf("another marotte instance is running on %s: %w", cfg.ConfigDir, err)
 	}
 
 	if err := validateConfig(ctx, cfg); err != nil {
@@ -82,7 +82,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	logctl.Install(ctx, cfg.ConfigDir)
 
 	// The three paths a boot's blast radius derives from, on one line; otherwise a boot
-	// pointed at the wrong one is diagnosable only by reading which envs vibekit consults.
+	// pointed at the wrong one is diagnosable only by reading which envs marotte consults.
 	// KIRO_HOME decides whose KAS session trees a sweep may delete and does NOT follow the
 	// config dir. AFTER Install, or it bypasses logfmt.
 	slog.Info("boot paths resolved",
@@ -134,7 +134,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub, push.WithPresence(presence))
 
 	// The second argument is WHO this reaper answers for, and only the workspace root
-	// is correct — see vibekit-runtime.md, "What the reaper may delete".
+	// is correct — see marotte-runtime.md, "What the reaper may delete".
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"), cfg.WorkDir)
 	// Closed by the server once its listener has bound; the destructive session sweep
 	// waits on it. Created here because the runtime is built before the server.
@@ -168,13 +168,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
 	mcpPrewarm.OnStatus = func(pkg string, state prewarm.State) {
-		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPPrewarm, "", vibekit.MCPPrewarmPayload{
+		h.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPPrewarm, "", marotte.MCPPrewarmPayload{
 			Package: pkg,
 			State:   string(state),
 		}))
 	}
 	mcpStore.SetOnChange(func(ctx context.Context) {
-		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPConfigChanged, "", vibekit.MCPConfigChangedPayload{}))
+		h.Broadcast(ctx, marotte.NewEvent(marotte.EventMCPConfigChanged, "", marotte.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)
 		// No bridge restart and nothing to forward: the persist renders KAS's own config
 		// file, whose watcher reconnects in place, so a change reaches every LIVE session.
@@ -254,7 +254,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// that finds a chat busy at connect renders the prompt over an empty body until the
 	// turn ends.
 	chat.WithLiveTurn(h.LiveTurn)(chatStore)
-	chat.WithOnPurge(func(id vibekit.ChatID, sessionChain []string) {
+	chat.WithOnPurge(func(id marotte.ChatID, sessionChain []string) {
 		// After the per-chat record lock is released: it keeps the lock order acyclic.
 		// RetentionClose reaps the chain itself, through the same reaper wired above, so
 		// a loop here would be a second reap site for one purge.
@@ -576,7 +576,7 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*to
 	return toolsEngine, nil
 }
 
-// buildToolsEngine constructs the shared toolbelt engine with vibekit's SSE adapters and
+// buildToolsEngine constructs the shared toolbelt engine with marotte's SSE adapters and
 // enqueues the boot jobs, reconcile first; a failed enqueue is logged rather than fatal
 // because installed tools persist on the volume. (nil, nil) is the root-integrity DEGRADED
 // verdict, not an omission — every other New failure still stops the boot.
@@ -598,8 +598,8 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 		Seed:                toolbelt.DefaultSeed(),
 		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
 		OnJobChanged: func(j *toolbelt.Job) {
-			h.Broadcast(context.Background(), vibekit.NewEvent(vibekit.EventToolJobChanged, "",
-				vibekit.ToolJobChangedPayload{Job: j}))
+			h.Broadcast(context.Background(), marotte.NewEvent(marotte.EventToolJobChanged, "",
+				marotte.ToolJobChangedPayload{Job: j}))
 			// Async because a job callback fires under the queue lock and must not
 			// block; the call itself is idempotent.
 			if j != nil && j.State == toolbelt.JobDone {
@@ -609,8 +609,8 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 			}
 		},
 		OnJobOutput: func(jobID string, lines []string) {
-			h.Broadcast(context.Background(), vibekit.NewEvent(vibekit.EventToolJobOutput, "",
-				vibekit.ToolJobOutputPayload{JobID: jobID, Lines: lines}))
+			h.Broadcast(context.Background(), marotte.NewEvent(marotte.EventToolJobOutput, "",
+				marotte.ToolJobOutputPayload{JobID: jobID, Lines: lines}))
 		},
 	})
 	if err != nil {
@@ -643,7 +643,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 	return toolsEngine, nil
 }
 
-// toolsEngineFailure decides what a toolbelt.New failure costs vibekit. A nil return is
+// toolsEngineFailure decides what a toolbelt.New failure costs marotte. A nil return is
 // the DEGRADED verdict and only the root-integrity refusal earns it; every other failure
 // stays fatal. Degraded rather than fatal because an unfit root is persistent-volume state
 // this process cannot repair, and refusing to boot removes the only way in (invariant 6).
@@ -670,7 +670,7 @@ func logRootIntegrityRefusal(err error) {
 		slog.Error("tools: managed root is not fit to execute from",
 			"path", f.Path, "reason", f.Reason)
 	}
-	slog.Warn("tools engine disabled: vibekit is running without the tools subsystem; "+
+	slog.Warn("tools engine disabled: marotte is running without the tools subsystem; "+
 		"Settings -> Tools is unavailable and forge CLIs will not auto-install",
 		"finding_count", len(refusal.Findings),
 		"hint", "the check reports only and never repairs: fix the paths above from inside the container "+
@@ -720,9 +720,9 @@ func openScheduleStore(dir string) *schedule.Store {
 // IN to fix it (invariant 6). The image creates the directory at build time for
 // the non-root case, so this covers a local `go run` and a volume mounted empty.
 func ensureUploadDir() {
-	if err := os.MkdirAll(vibekit.DefaultUploadDir, 0o755); err != nil {
+	if err := os.MkdirAll(marotte.DefaultUploadDir, 0o755); err != nil {
 		slog.Warn("composer uploads will be refused until this directory exists",
-			"path", vibekit.DefaultUploadDir, "error", err)
+			"path", marotte.DefaultUploadDir, "error", err)
 	}
 }
 
@@ -745,11 +745,11 @@ func pruneTabs(ctx context.Context, st *tabs.Store, chats *chat.Store) {
 	if st == nil {
 		return
 	}
-	dropped, _, err := st.Prune(ctx, func(t vibekit.TabSubject) bool {
-		if t.Kind != vibekit.TabKindChat {
+	dropped, _, err := st.Prune(ctx, func(t marotte.TabSubject) bool {
+		if t.Kind != marotte.TabKindChat {
 			return true
 		}
-		_, ok := chats.Get(ctx, vibekit.ChatID(t.Ref))
+		_, ok := chats.Get(ctx, marotte.ChatID(t.Ref))
 		return ok
 	})
 	if err != nil {

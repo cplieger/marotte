@@ -11,9 +11,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // fsReadCap caps text reads at 8 MiB. kiro-cli's scratch reads are tiny
@@ -85,7 +85,7 @@ func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 // policy rejections (ignore-list denial, cap-exceeded) stay at Debug and
 // don't trip operator alert dashboards that key off Warn+. Real OS /
 // parse failures remain at Warn for triage.
-func (in *inbound) respondFSError(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, err error) {
+func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, err error) {
 	safe := logsafe.Field(err.Error())
 	if fsErrorIsRoutine(err) {
 		slog.Debug("fs request denied", "chat_id", chatID, "method", msg.Method, "error", safe)
@@ -110,7 +110,7 @@ func fsErrorIsRoutine(err error) bool {
 // respondBridge routes a response back to the bridge that issued the
 // request. msg.ID is required; if the bridge is gone, we drop silently
 // (the agent's Call will time out on its side).
-func (in *inbound) respondBridge(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any, err error) {
+func (in *inbound) respondBridge(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, result any, err error) {
 	if msg.ID == nil {
 		slog.Warn("fs request missing id", "chat_id", chatID, "method", msg.Method)
 		return
@@ -127,14 +127,14 @@ func (in *inbound) respondBridge(ctx context.Context, chatID vibekit.ChatID, msg
 
 // --- ACP request/response helpers (consolidated from bridge_respond.go) ---
 
-func parseRequest(msg *vibekit.RPCResponse, v any) error {
+func parseRequest(msg *marotte.RPCResponse, v any) error {
 	if msg.Params == nil {
 		return io.ErrUnexpectedEOF
 	}
 	return json.Unmarshal(msg.Params, v)
 }
 
-func respondOK(ctx context.Context, bridges *bridgeManager, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any) {
+func respondOK(ctx context.Context, bridges *bridgeManager, chatID marotte.ChatID, msg *marotte.RPCResponse, result any) {
 	if msg.ID == nil {
 		return
 	}
@@ -147,7 +147,7 @@ func respondOK(ctx context.Context, bridges *bridgeManager, chatID vibekit.ChatI
 	}
 }
 
-func respondErr(ctx context.Context, bridges *bridgeManager, chatID vibekit.ChatID, msg *vibekit.RPCResponse, errMsg string) {
+func respondErr(ctx context.Context, bridges *bridgeManager, chatID marotte.ChatID, msg *marotte.RPCResponse, errMsg string) {
 	if msg.ID == nil {
 		return
 	}
@@ -155,7 +155,7 @@ func respondErr(ctx context.Context, bridges *bridgeManager, chatID vibekit.Chat
 	if sb == nil {
 		return
 	}
-	if err := sb.bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{Code: -1, Message: errMsg}); err != nil {
+	if err := sb.bridge.Respond(ctx, *msg.ID, nil, &marotte.RPCError{Code: -1, Message: errMsg}); err != nil {
 		slog.Warn("respondErr: bridge respond failed", "error", err)
 	}
 }

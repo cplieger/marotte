@@ -1,5 +1,5 @@
 // The status card names WHICH build it is talking to, on both of its first two
-// lines: the vibekit version on the connected line, the kiro-cli version on the
+// lines: the marotte version on the connected line, the kiro-cli version on the
 // agent-runtime line.
 //
 // The pair arrives after the card is painted (the server spawns a `--version`
@@ -88,17 +88,17 @@ describe("the status card's version lines", () => {
     expect(kiro()).toBe("kiro-cli unknown");
   });
 
-  it("names the vibekit build on the connected line once it lands", async () => {
+  it("names the marotte build on the connected line once it lands", async () => {
     initStatusVersions();
     setStatus("connected");
-    mocks.apiGet.mockResolvedValue({ vibekit: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
-    expect(ws()).toBe("connected to vibekit v0.5.61");
+    expect(ws()).toBe("connected to marotte v0.5.61");
   });
 
   it("names the kiro-cli build on the ready line once it lands", async () => {
     initStatusVersions();
-    mocks.apiGet.mockResolvedValue({ vibekit: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
     await refreshRuntimeLine();
     expect(kiro()).toBe("kiro-cli 2.20.1 ready");
@@ -108,7 +108,7 @@ describe("the status card's version lines", () => {
     // The line describes THIS page's socket; naming a build beside "disconnected"
     // would claim knowledge of a server it has just lost contact with.
     initStatusVersions();
-    mocks.apiGet.mockResolvedValue({ vibekit: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
     setStatus("disconnected");
     expect(ws()).toBe("disconnected");
@@ -131,7 +131,7 @@ describe("the status card's version lines", () => {
     // version appended to `kiro-cli installing` would name the pin rather than
     // anything running.
     initStatusVersions();
-    mocks.apiGet.mockResolvedValue({ vibekit: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
     mocks.apiGetOrError.mockResolvedValue({
       ok: false,
@@ -142,7 +142,7 @@ describe("the status card's version lines", () => {
   });
 
   it("reads /api/version exactly once per page load", async () => {
-    mocks.apiGet.mockResolvedValue({ vibekit: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
     await loadVersions();
     await loadVersions();
@@ -152,7 +152,7 @@ describe("the status card's version lines", () => {
   it("drops the program name kiro-cli prints beside its version", async () => {
     // Both consumers already supply the word: the ready line reads
     // `kiro-cli <build> ready` and Settings → About labels the row `kiro-cli`.
-    mocks.apiGet.mockResolvedValue({ vibekit: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: KIRO_VERSION_STDOUT });
     await loadVersions();
     expect(getVersions().kiroCli).toBe("2.20.1");
   });
@@ -160,7 +160,7 @@ describe("the status card's version lines", () => {
   it("keeps a build string that does not carry the program name", async () => {
     // A fork, or a future --version that prints the bare number. The strip is
     // that one exact token, not a hunt for a version-shaped substring.
-    mocks.apiGet.mockResolvedValue({ vibekit: "v0.5.61", kiro_cli: "2.99.0-rc1" });
+    mocks.apiGet.mockResolvedValue({ marotte: "v0.5.61", kiro_cli: "2.99.0-rc1" });
     await loadVersions();
     expect(getVersions().kiroCli).toBe("2.99.0-rc1");
   });

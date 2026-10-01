@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/marotte/internal/schedule"
 )
 
 // TestRegisterSchedule_MountsTheSurfaceOnlyWithAStoreBehindIt pins the guard that

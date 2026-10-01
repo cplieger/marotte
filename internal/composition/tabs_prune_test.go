@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest is the whole resolver
@@ -33,7 +33,7 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chat store: %v", err)
 	}
-	if _, err := chatStore.Mutate(t.Context(), "c-live", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := chatStore.Mutate(t.Context(), "c-live", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "still here"
 		return true
 	}); err != nil {
@@ -44,12 +44,12 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 		t.Fatalf("tab store: %v", err)
 	}
 	opened := map[string]string{}
-	for _, spec := range []vibekit.OpenTab{
-		{Kind: vibekit.TabKindChat, Ref: "c-live"},
-		{Kind: vibekit.TabKindChat, Ref: "c-gone"},
-		{Kind: vibekit.TabKindEditor, Ref: "/workspace/deleted-by-a-branch-switch.go"},
-		{Kind: vibekit.TabKindRun, Ref: "wf-finished"},
-		{Kind: vibekit.TabKindSettings},
+	for _, spec := range []marotte.OpenTab{
+		{Kind: marotte.TabKindChat, Ref: "c-live"},
+		{Kind: marotte.TabKindChat, Ref: "c-gone"},
+		{Kind: marotte.TabKindEditor, Ref: "/workspace/deleted-by-a-branch-switch.go"},
+		{Kind: marotte.TabKindRun, Ref: "wf-finished"},
+		{Kind: marotte.TabKindSettings},
 	} {
 		sub, _, _, openErr := tabStore.Open(t.Context(), spec)
 		if openErr != nil {

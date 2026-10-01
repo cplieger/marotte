@@ -12,7 +12,7 @@
 // Deliberately not a YAML library: handles only the subset `.kiro`
 // front-matter uses (flat/block/quoted scalars, flow/block sequences), and a
 // malformed header degrades to empty fields rather than an error — a bad
-// front-matter block is the author's own file, not vibekit's to reject.
+// front-matter block is the author's own file, not marotte's to reject.
 
 package steering
 

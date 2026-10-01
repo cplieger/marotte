@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
-import pushTypesGo from "../internal/vibekit/push_types.go?raw";
+import pushTypesGo from "../internal/marotte/push_types.go?raw";
 import {
   askTarget,
   chatTarget,
@@ -61,16 +61,16 @@ describe("pushTargetRoute", () => {
 describe("pushTargetTag", () => {
   it("gives a keyed subject, a chat and the workspace their own tray slot", () => {
     expect(pushTargetTag({ kind: "pr", identity: "gh:github.com:a/b#1" })).toBe(
-      "vibekit:pr:gh:github.com:a/b#1",
+      "marotte:pr:gh:github.com:a/b#1",
     );
-    expect(pushTargetTag({ kind: "run", workflowID: "wf_1" })).toBe("vibekit:run:wf_1");
-    expect(pushTargetTag({ kind: "chat", chatID: "c1" })).toBe("vibekit:c1");
-    expect(pushTargetTag({ kind: "workspace" })).toBe("vibekit");
+    expect(pushTargetTag({ kind: "run", workflowID: "wf_1" })).toBe("marotte:run:wf_1");
+    expect(pushTargetTag({ kind: "chat", chatID: "c1" })).toBe("marotte:c1");
+    expect(pushTargetTag({ kind: "workspace" })).toBe("marotte");
   });
 });
 
 describe("prIdentity", () => {
-  it("is vibekit.PRSubject's composition minus the prefix", () => {
+  it("is marotte.PRSubject's composition minus the prefix", () => {
     // The Go side reads `PRSubjectPrefix + forgeID + ":" + repo + "#" + strconv.Itoa(number)`;
     // this is the same key with the prefix stripped, which is what makes the identity
     // comparable against one the PRs tab builds for its own rows.
@@ -78,12 +78,12 @@ describe("prIdentity", () => {
       /func PRSubject\([^)]*\)[^{]*\{\s*return PushSubject\{Key: PRSubjectPrefix \+ ([^}]+)\}/.exec(
         pushTypesGo,
       );
-    expect(m, "vibekit.PRSubject's composition not found").not.toBeNull();
+    expect(m, "marotte.PRSubject's composition not found").not.toBeNull();
     expect((m?.[1] ?? "").replace(/\s+/g, " ").trim()).toBe(
       'forgeID + ":" + repo + "#" + strconv.Itoa(number)',
     );
-    expect(prIdentity("gh:github.com", "cplieger/vibekit", 42)).toBe(
-      "gh:github.com:cplieger/vibekit#42",
+    expect(prIdentity("gh:github.com", "cplieger/marotte", 42)).toBe(
+      "gh:github.com:cplieger/marotte#42",
     );
   });
 });

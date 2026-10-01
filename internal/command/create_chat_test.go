@@ -21,45 +21,45 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // createReq builds a create_chat envelope. chatID is normally EMPTY — that
 // absence is what tells the handler to mint.
-func createReq(t *testing.T, chatID vibekit.ChatID, p vibekit.CreateChatCommand) *vibekit.ClientCommand {
+func createReq(t *testing.T, chatID marotte.ChatID, p marotte.CreateChatCommand) *marotte.ClientCommand {
 	t.Helper()
 	payload, err := json.Marshal(p)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: vibekit.CmdCreateChat, ChatID: chatID, Payload: payload}
+	return &marotte.ClientCommand{Type: marotte.CmdCreateChat, ChatID: chatID, Payload: payload}
 }
 
 // chatIDOfResponse reads the id out of a create's reply. The reply is what makes
 // server minting workable at all, so a test that only inspected the store would
 // pass with the chat returned to nobody.
-func chatIDOfResponse(t *testing.T, body any) vibekit.ChatID {
+func chatIDOfResponse(t *testing.T, body any) marotte.ChatID {
 	t.Helper()
 	m, ok := body.(map[string]any)
 	if !ok {
 		t.Fatalf("response is %T, want a map carrying the chat", body)
 	}
-	h, ok := m["chat"].(vibekit.ChatHeader)
+	h, ok := m["chat"].(marotte.ChatHeader)
 	if !ok {
 		t.Fatalf("response has no chat header: %+v", m)
 	}
-	return vibekit.ChatID(h.ID)
+	return marotte.ChatID(h.ID)
 }
 
 // storedIDs is every chat the store holds, which is the population "one chat, not
 // two" is a claim about.
-func storedIDs(t *testing.T, store *testsupport.InMemoryChatStore) []vibekit.ChatID {
+func storedIDs(t *testing.T, store *testsupport.InMemoryChatStore) []marotte.ChatID {
 	t.Helper()
-	var out []vibekit.ChatID
+	var out []marotte.ChatID
 	for _, h := range store.List(t.Context()) {
-		out = append(out, vibekit.ChatID(h.ID))
+		out = append(out, marotte.ChatID(h.ID))
 	}
 	return out
 }
@@ -69,7 +69,7 @@ func TestCmdCreateChat_MintsAndReturns(t *testing.T) {
 	host := newTestHost(t, store)
 
 	body, err := CmdCreateChat(t.Context(), newTestMembership(t, host),
-		createReq(t, "", vibekit.CreateChatCommand{OpID: "op-1", Name: "Tangent notes", Model: "claude-opus-5"}))
+		createReq(t, "", marotte.CreateChatCommand{OpID: "op-1", Name: "Tangent notes", Model: "claude-opus-5"}))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
@@ -95,8 +95,8 @@ func TestCmdCreateChat_RepeatOpReturnsOneChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newTestHost(t, store)
 	ops := newTestMembership(t, host)
-	req := func() *vibekit.ClientCommand {
-		return createReq(t, "", vibekit.CreateChatCommand{OpID: "op-retry"})
+	req := func() *marotte.ClientCommand {
+		return createReq(t, "", marotte.CreateChatCommand{OpID: "op-retry"})
 	}
 
 	first, err := CmdCreateChat(t.Context(), ops, req())
@@ -135,7 +135,7 @@ func TestCmdCreateChat_OpMintedPerAttemptMakesTwoChats(t *testing.T) {
 
 	for _, op := range []string{"op-attempt-1", "op-attempt-2"} {
 		if _, err := CmdCreateChat(t.Context(), ops,
-			createReq(t, "", vibekit.CreateChatCommand{OpID: op})); err != nil {
+			createReq(t, "", marotte.CreateChatCommand{OpID: op})); err != nil {
 			t.Fatalf("attempt %s: %v", op, err)
 		}
 	}
@@ -157,7 +157,7 @@ func TestCmdCreateChat_NoOpIDMintsEveryTime(t *testing.T) {
 
 	for range 2 {
 		if _, err := CmdCreateChat(t.Context(), ops,
-			createReq(t, "", vibekit.CreateChatCommand{})); err != nil {
+			createReq(t, "", marotte.CreateChatCommand{})); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 	}
@@ -174,7 +174,7 @@ func TestCmdCreateChat_AcceptsAnExplicitID(t *testing.T) {
 	host := newTestHost(t, store)
 
 	body, err := CmdCreateChat(t.Context(), newTestMembership(t, host),
-		createReq(t, "c-chosen", vibekit.CreateChatCommand{}))
+		createReq(t, "c-chosen", marotte.CreateChatCommand{}))
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", statusOf(err), errText(err))
 	}
@@ -190,12 +190,12 @@ func TestCmdCreateChat_AcceptsAnExplicitID(t *testing.T) {
 func TestCmdCreateChat_Refusals(t *testing.T) {
 	cases := []struct {
 		desc    string
-		payload vibekit.CreateChatCommand
+		payload marotte.CreateChatCommand
 	}{
-		{desc: "a model id that is not an identifier", payload: vibekit.CreateChatCommand{Model: "../etc/passwd"}},
-		{desc: "a name over the cap", payload: vibekit.CreateChatCommand{Name: strings.Repeat("n", vibekit.MaxChatNameBytes+1)}},
-		{desc: "an op id with a path separator", payload: vibekit.CreateChatCommand{OpID: "op/../x"}},
-		{desc: "an op id over the identifier cap", payload: vibekit.CreateChatCommand{OpID: strings.Repeat("o", 129)}},
+		{desc: "a model id that is not an identifier", payload: marotte.CreateChatCommand{Model: "../etc/passwd"}},
+		{desc: "a name over the cap", payload: marotte.CreateChatCommand{Name: strings.Repeat("n", marotte.MaxChatNameBytes+1)}},
+		{desc: "an op id with a path separator", payload: marotte.CreateChatCommand{OpID: "op/../x"}},
+		{desc: "an op id over the identifier cap", payload: marotte.CreateChatCommand{OpID: strings.Repeat("o", 129)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -222,9 +222,9 @@ func TestCmdCreateChat_Refusals(t *testing.T) {
 func TestCreateLedger_ResolvesOncePerOp(t *testing.T) {
 	l := newCreateLedger()
 	mints := 0
-	mint := func() vibekit.ChatID {
+	mint := func() marotte.ChatID {
 		mints++
-		return vibekit.NewChatID()
+		return marotte.NewChatID()
 	}
 
 	first, replay := l.resolve("op-a", mint)
@@ -253,9 +253,9 @@ func TestCreateLedger_ExpiresAndBounds(t *testing.T) {
 		now := time.Now()
 		l.now = func() time.Time { return now }
 
-		first, _ := l.resolve("op-a", vibekit.NewChatID)
+		first, _ := l.resolve("op-a", marotte.NewChatID)
 		now = now.Add(createOpTTL + time.Second)
-		second, replay := l.resolve("op-a", vibekit.NewChatID)
+		second, replay := l.resolve("op-a", marotte.NewChatID)
 
 		if replay {
 			t.Error("an expired op reported a replay")
@@ -269,7 +269,7 @@ func TestCreateLedger_ExpiresAndBounds(t *testing.T) {
 		l := newCreateLedger()
 		l.maxN = 8
 		for i := range 200 {
-			l.resolve("op-"+string(rune('a'+i%26))+string(rune('a'+i/26)), vibekit.NewChatID)
+			l.resolve("op-"+string(rune('a'+i%26))+string(rune('a'+i/26)), marotte.NewChatID)
 		}
 
 		l.mu.Lock()
@@ -282,8 +282,8 @@ func TestCreateLedger_ExpiresAndBounds(t *testing.T) {
 
 	t.Run("an empty op is never recorded", func(t *testing.T) {
 		l := newCreateLedger()
-		first, replay := l.resolve("", vibekit.NewChatID)
-		second, _ := l.resolve("", vibekit.NewChatID)
+		first, replay := l.resolve("", marotte.NewChatID)
+		second, _ := l.resolve("", marotte.NewChatID)
 
 		if replay {
 			t.Error("an empty op reported a replay")

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestOpen_ConcurrentOpensSurviveInMemoryAndOnDisk IS THE TEST THE LOCK ORDERING
@@ -32,7 +32,7 @@ func TestOpen_ConcurrentOpensSurviveInMemoryAndOnDisk(t *testing.T) {
 	const opens = 8
 	for round := range 4 {
 		s, dir := newTestStore(t)
-		got := make([]vibekit.TabSubject, opens)
+		got := make([]marotte.TabSubject, opens)
 		errs := make([]error, opens)
 
 		var wg sync.WaitGroup
@@ -80,7 +80,7 @@ func TestOpen_ConcurrentOpensSurviveInMemoryAndOnDisk(t *testing.T) {
 func TestOpen_AgainstReorderLosesNothing(t *testing.T) {
 	const opens = 12
 	s, dir := newTestStore(t)
-	opened := make([]vibekit.TabSubject, opens)
+	opened := make([]marotte.TabSubject, opens)
 
 	var wg sync.WaitGroup
 	wg.Go(func() {

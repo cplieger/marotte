@@ -113,7 +113,7 @@ describe("the dropped state", () => {
 
 // The reported defect: a workflow injects its result through the same steering
 // tools the user's own message rides, and the note said the same thing about
-// both. Nothing on the wire separated them either — see vibekit.SteerOrigin.
+// both. Nothing on the wire separated them either — see marotte.SteerOrigin.
 describe("whose words the note holds", () => {
   it("names a workflow's report as one, and never as the reader's message", () => {
     const n = note({ text: "The review finished with 3 findings.", origin: "agent" });

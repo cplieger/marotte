@@ -2,7 +2,7 @@
 //
 // It holds no run state: a run's state lives at
 // ~/.kiro/sessions/<hash>/workflows/<workflowId>/ and `_kiro/workflow/inspect`
-// returns it whole, which vibekit's read endpoints pass through verbatim. What is
+// returns it whole, which marotte's read endpoints pass through verbatim. What is
 // left here is the one question that passthrough cannot answer — which ACP session
 // executed a given step — plus the error unwrapping KAS's `-32603` shape requires.
 //
@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
 // Node is one node of a run's state tree: a sequence, parallel or repeat node
@@ -44,7 +44,7 @@ type State struct {
 }
 
 // InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the one part
-// vibekit reads. `nodePlan` rides through undecoded — see the package comment.
+// marotte reads. `nodePlan` rides through undecoded — see the package comment.
 type InspectResult struct {
 	State *State `json:"state"`
 }

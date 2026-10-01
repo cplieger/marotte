@@ -1107,7 +1107,7 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
 
 // PR-create dialog controller, adopted from @cplieger/ui-primitives/dialog:
 // bundles open + drag-safe backdrop dismissal + the fade-out close lifecycle
-// (the shared .uip-dialog skin, which vibekit maps to --dur-exit/--ease-exit)
+// (the shared .uip-dialog skin, which marotte maps to --dur-exit/--ease-exit)
 // that this native <dialog> otherwise hand-wires. Created once and reused
 // across opens so the backdrop/Escape listeners aren't stacked. Unlike the
 // permission/elicitation prompts (kept non-backdrop-dismissable — an

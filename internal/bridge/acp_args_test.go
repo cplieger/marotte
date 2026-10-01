@@ -16,7 +16,7 @@ func TestFilterACPArgs(t *testing.T) {
 		{"keeps verbose", []string{"-v"}, []string{"-v"}},
 		{"keeps agent", []string{"--agent", "my-agent"}, []string{"--agent", "my-agent"}},
 		{
-			// The refusal that protects an invariant: vibekit removed the v2
+			// The refusal that protects an invariant: marotte removed the v2
 			// handlers, so an operator v1/v2 stalls session/new.
 			name: "refuses agent-engine and its value",
 			in:   []string{"--agent-engine", "v2", "-v"},
@@ -147,7 +147,7 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 		{flagTrustAllShort, []string{"inert", "permissions.yaml"}},
 		{flagTrustTools, []string{"inert", "permissions.yaml"}},
 		// The fatal pair must say WHY it is fatal and where the real control
-		// lives, or an operator reads the refusal as vibekit being obstructive.
+		// lives, or an operator reads the refusal as marotte being obstructive.
 		{flagModel, []string{"exits before initialize", "composer"}},
 		{flagEffort, []string{"exits before initialize", "composer"}},
 	}
@@ -171,7 +171,7 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 
 // TestBuildACPArgsPrecedesExtraArgs pins the ordering the design calls for: a
 // launch flag is an INITIAL value, so it lands after the derived args (kiro-cli
-// takes the last spelling of a repeated flag) and vibekit's own switch_model /
+// takes the last spelling of a repeated flag) and marotte's own switch_model /
 // set_effort still win afterwards over session/set_config_option.
 func TestBuildACPArgsPrecedesExtraArgs(t *testing.T) {
 	derived := buildACPArgs("v3")

@@ -192,7 +192,7 @@ func resolveRealPath(clean string) (string, error) {
 }
 
 // ParseBrowseRoots normalises a colon-separated root list (the
-// VIBEKIT_BROWSE_ROOTS format, PATH-style) into cleaned absolute
+// MAROTTE_BROWSE_ROOTS format, PATH-style) into cleaned absolute
 // directories. Relative entries and "/" are rejected with an error
 // listing so the caller can log them; duplicates collapse.
 func ParseBrowseRoots(raw string) (roots, invalid []string) {

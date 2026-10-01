@@ -81,7 +81,7 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
     path: "/api/kiro-settings",
     body: { key, value },
   }),
-  // Checkbox-only, because every kiro-cli setting vibekit still exposes is one.
+  // Checkbox-only, because every kiro-cli setting marotte still exposes is one.
   // The non-checkbox arm this used to carry took a focus-time snapshot so a
   // rollback restored the true previous value rather than the rejected one, and
   // its only two inputs were the compaction number fields — removed once their

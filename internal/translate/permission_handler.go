@@ -4,11 +4,11 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // permOptionWire decodes one inbound permission option. ACP sends the id
-// as camelCase `optionId`; the SSE-facing vibekit.PermissionOption tags it
+// as camelCase `optionId`; the SSE-facing marotte.PermissionOption tags it
 // `option_id`, and Go's case-insensitive match does not bridge the
 // underscore — so we decode from this wire struct and map to the SSE type.
 // approvalTypeTurn is the `_meta.kiro.type` marking a turn approval.
@@ -30,7 +30,7 @@ type permOptionWire struct {
 // and request_id=0 (the outcome would then be answered on id 0, wedging the
 // tool call and disabling the shell auto-policy). Mirror HandleElicitationCreate,
 // which decodes flat and reads *msg.ID.
-func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if msg.ID == nil {
 		// Without an id we cannot route the outcome back to the agent, so
 		// drop rather than show a dialog whose answer can never arrive.
@@ -51,7 +51,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		ToolCall  struct {
 			ToolCallID string           `json:"toolCallId"`
 			Title      string           `json:"title"`
-			Kind       vibekit.ToolKind `json:"kind"`
+			Kind       marotte.ToolKind `json:"kind"`
 		} `json:"toolCall"`
 		Options []permOptionWire `json:"options"`
 	}
@@ -62,13 +62,13 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		// whose options[] could not be read: inventing an option id would answer
 		// with a choice the request never offered. run_unattended.go refuses to
 		// fabricate one for the same reason.
-		t.refuseAsk(ctx, chatID, vibekit.MethodRequestPermission, reqID, vibekit.PermissionOutcomeCancelled(), err)
+		t.refuseAsk(ctx, chatID, marotte.MethodRequestPermission, reqID, marotte.PermissionOutcomeCancelled(), err)
 		return
 	}
 
 	subSessionID := t.deriveSubSession(chatID, req.SessionID)
 
-	options := make([]vibekit.PermissionOption, len(req.Options))
+	options := make([]marotte.PermissionOption, len(req.Options))
 	for i, o := range req.Options {
 		// Name is the text ON the button the user clicks, so it is as much a
 		// decision surface as the title: a card whose title is safe and whose
@@ -76,21 +76,21 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 		// Kind are opaque identifiers the client echoes back, not display text,
 		// so they are left exactly as received — sanitizing an identifier would
 		// change what the answer means.
-		options[i] = vibekit.PermissionOption{OptionID: o.OptionID, Name: displayText(o.Name), Kind: o.Kind}
+		options[i] = marotte.PermissionOption{OptionID: o.OptionID, Name: displayText(o.Name), Kind: o.Kind}
 	}
 
 	// No secondary shell classifier: kiro-cli's native Cedar policy
 	// already auto-resolved everything it could — a request that
-	// reaches vibekit is a genuine ask and always surfaces to the user.
+	// reaches marotte is a genuine ask and always surfaces to the user.
 
 	// A turn approval's files, workspace-relative. relPath because every other
-	// path vibekit puts on the wire is relative and a client that had to handle
+	// path marotte puts on the wire is relative and a client that had to handle
 	// both would get it wrong somewhere.
-	var files []vibekit.ApprovalFile
+	var files []marotte.ApprovalFile
 	if req.Meta.Kiro.Type == approvalTypeTurn {
-		files = make([]vibekit.ApprovalFile, 0, len(req.Meta.Kiro.Files))
+		files = make([]marotte.ApprovalFile, 0, len(req.Meta.Kiro.Files))
 		for _, f := range req.Meta.Kiro.Files {
-			files = append(files, vibekit.ApprovalFile{
+			files = append(files, marotte.ApprovalFile{
 				Path:        t.relPath(f.Path),
 				SnapshotURI: f.SnapshotURI,
 				ActionID:    f.ToolCallID,
@@ -99,7 +99,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 	}
 
 	// Whether the card may offer to persist a rule for this command, translated
-	// to a vibekit CODE rather than forwarded as KAS's reason string. Absent
+	// to a marotte CODE rather than forwarded as KAS's reason string. Absent
 	// means persistable, so nil is a yes and only present-and-false blocks the
 	// offer — a plain bool here would read false for every pre-2.19.1 frame and
 	// suppress the Always-allow row everywhere.
@@ -109,9 +109,9 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 	// both directions — it suppressed `git commit -m "fix"` (a quote, though
 	// `git *` matches it) and it offered the row for a command KAS cannot parse
 	// at all, where the click wrote a rule that could never match.
-	var alwaysAllowBlocked vibekit.AlwaysAllowBlock
+	var alwaysAllowBlocked marotte.AlwaysAllowBlock
 	if c := req.Meta.Kiro.Consent.PersistableConsent; c != nil && !*c {
-		alwaysAllowBlocked = vibekit.AlwaysAllowBlockUnparseable
+		alwaysAllowBlocked = marotte.AlwaysAllowBlockUnparseable
 	}
 
 	// A workflow STEP's ask is attributed to its run, whichever bridge it
@@ -120,14 +120,14 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 	// keyed to a different surface, and the node id is what makes the card say
 	// WHO is asking.
 	step := t.steps.refFor(req.SessionID)
-	var mcpTool *vibekit.MCPToolIdentity
+	var mcpTool *marotte.MCPToolIdentity
 	serverName := displayText(req.Meta.Kiro.MCPTool.Identity.ServerName)
 	toolName := displayText(req.Meta.Kiro.MCPTool.Identity.ToolName)
 	if serverName != "" && toolName != "" {
-		mcpTool = &vibekit.MCPToolIdentity{ServerName: serverName, ToolName: toolName}
+		mcpTool = &marotte.MCPToolIdentity{ServerName: serverName, ToolName: toolName}
 	}
 
-	evt := vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID, vibekit.PermissionNeededPayload{
+	evt := marotte.NewEvent(marotte.EventPermissionNeeded, chatID, marotte.PermissionNeededPayload{
 		MCPTool:    mcpTool,
 		RequestID:  reqID,
 		ToolCallID: req.ToolCall.ToolCallID,
@@ -149,6 +149,6 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 	})
 	t.bus.Broadcast(ctx, evt)
 	t.pendingPerms.PendingPermsAdd(reqID, evt)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelApproval}))
-	t.push.NotifyPush(ctx, "Permission needed", vibekit.PushKindPermission, chatID)
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventWorkingLabel, chatID, marotte.WorkingLabelPayload{Label: marotte.WorkingLabelApproval}))
+	t.push.NotifyPush(ctx, "Permission needed", marotte.PushKindPermission, chatID)
 }

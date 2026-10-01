@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestUnattendedBudget_MatchesTheDisclaimer pins a cross-language constant.
@@ -126,12 +126,12 @@ func TestUnattendedFloor_ArmsNothingForAnUnanswerableAsk(t *testing.T) {
 	}
 
 	inner := 0
-	noteAsk := func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) { inner++ }
+	noteAsk := func(context.Context, marotte.ChatID, *marotte.RPCResponse) { inner++ }
 	wrapped := rs.permissionWithUnattendedFloor(noteAsk)
 
 	// A permission frame with no id: nothing can answer it, and nothing may try.
-	wrapped(t.Context(), runChatID("wf_1"), &vibekit.RPCResponse{
-		Method: vibekit.MethodRequestPermission,
+	wrapped(t.Context(), runChatID("wf_1"), &marotte.RPCResponse{
+		Method: marotte.MethodRequestPermission,
 		ID:     nil,
 	})
 
@@ -162,7 +162,7 @@ func TestPermissionToolName_PrefersTheMachineAuthoredName(t *testing.T) {
 			params: `{"toolCall":{"title":"pre-commit"},"_meta":{"kiro":{"hookName":"lint","command":"make lint"}}}`,
 			want:   "lint",
 		},
-		"turn approval gets vibekit's own name": {
+		"turn approval gets marotte's own name": {
 			// KAS titles this one the literal "Review changes", which tells an
 			// operator nothing about what the run needed.
 			params: `{"toolCall":{"title":"Review changes"},"_meta":{"kiro":{"type":"turn_approval","executionId":"e1"}}}`,
@@ -327,7 +327,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 		},
 		"no reject option advertised falls back to cancelled": {
 			options:     `[{"optionId":"accept","kind":"allow_once"}]`,
-			wantOutcome: string(vibekit.StopReasonCancelled),
+			wantOutcome: string(marotte.StopReasonCancelled),
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -336,8 +336,8 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			h.bridge.mgr.insert(chatID, &sharedBridge{bridge: br, state: bridgeIdle})
 
 			id := int64(90210)
-			h.bus.pendingPerms.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID,
-				vibekit.PermissionNeededPayload{RequestID: id}))
+			h.bus.pendingPerms.Add(id, marotte.NewEvent(marotte.EventPermissionNeeded, chatID,
+				marotte.PermissionNeededPayload{RequestID: id}))
 
 			h.runs.answerUnattended(chatID, id, "sched-1", "execute_bash",
 				[]byte(`{"options":`+tc.options+`}`))
@@ -351,7 +351,7 @@ func TestAnswerUnattended_DenyUsesTheAdvertisedRejectOption(t *testing.T) {
 			got := br.response
 			br.respMu.Unlock()
 
-			outcome, ok := got.result.(*vibekit.PermissionOutcome)
+			outcome, ok := got.result.(*marotte.PermissionOutcome)
 			if !ok {
 				t.Fatalf("answered with %T (%v), want a permission outcome", got.result, got.result)
 			}

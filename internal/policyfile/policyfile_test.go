@@ -41,7 +41,7 @@ func TestWorkspaceHash(t *testing.T) {
 
 // TestWorkspaceHashGolden pins WorkspaceHash to a hardcoded value for the real
 // default workspace root (/workspace, KIRO_WORK_DIR's default). This is the
-// KAS-agreement contract: vibekit must write workspace-scope permissions.yaml
+// KAS-agreement contract: marotte must write workspace-scope permissions.yaml
 // under workspace-roots/<this hash>/ or KAS silently never reads the rules
 // (they persist but are never enforced). The literal is hex(sha256("/workspace"))[:16];
 // any change to the canonicalization or the hash breaks this test loudly
@@ -112,7 +112,7 @@ func TestLoadBlockYAML(t *testing.T) {
 }
 
 func TestLoadJSONInYAML(t *testing.T) {
-	// JSON is valid YAML 1.2 — Load must accept vibekit's own writes even if
+	// JSON is valid YAML 1.2 — Load must accept marotte's own writes even if
 	// they were emitted as JSON.
 	path := filepath.Join(t.TempDir(), "permissions.yaml")
 	if err := os.WriteFile(path, []byte(`{"rules":[{"capability":"shell","effect":"ask"}]}`), 0o600); err != nil {
@@ -245,11 +245,11 @@ func TestSanitizeRule_BareRuleStaysWritable(t *testing.T) {
 // SKIPS an unrecognised rule as non-fatal, reporting it on
 // _kiro/policy/changed's errors array rather than on _kiro/policy/error (which is
 // fatal-only); see SanitizeRule's doc comment. So refusing here only meant
-// vibekit could not write a rule for any capability newer than its own
+// marotte could not write a rule for any capability newer than its own
 // hand-copied list, which is exactly the rule a new capability exists for.
 func TestSanitizeRule_ForwardsUnrecognisedCapability(t *testing.T) {
 	// "hooks" is the concrete case: an upstream security report asked for it, and
-	// under the old check vibekit would have refused the rule that uses it.
+	// under the old check marotte would have refused the rule that uses it.
 	for _, capability := range []string{"hooks", "some_future_capability", "nope"} {
 		got, err := SanitizeRule(&Rule{Capability: capability, Effect: "deny"})
 		if err != nil {
@@ -263,7 +263,7 @@ func TestSanitizeRule_ForwardsUnrecognisedCapability(t *testing.T) {
 }
 
 // TestSanitizeRule_RejectsMalformedCapability pins the line the T67 change did
-// NOT cross. A vocabulary check is KAS's; a SHAPE check is vibekit's, same class
+// NOT cross. A vocabulary check is KAS's; a SHAPE check is marotte's, same class
 // as the pattern checks. None of these is a capability KAS could ever have, so
 // writing one only puts a rule in a security policy file that the user has to
 // hand-edit out.

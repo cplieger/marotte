@@ -14,20 +14,20 @@ func TestParseRemoteSlug(t *testing.T) {
 		slug string
 	}{
 		{
-			name: "SCPStyle", raw: "git@github.com:cplieger/vibekit.git",
-			host: "github.com", slug: "cplieger/vibekit",
+			name: "SCPStyle", raw: "git@github.com:cplieger/marotte.git",
+			host: "github.com", slug: "cplieger/marotte",
 		},
 		{
-			name: "SCPStyleNoSuffix", raw: "git@github.com:cplieger/vibekit",
-			host: "github.com", slug: "cplieger/vibekit",
+			name: "SCPStyleNoSuffix", raw: "git@github.com:cplieger/marotte",
+			host: "github.com", slug: "cplieger/marotte",
 		},
 		{
-			name: "HTTPS", raw: "https://github.com/cplieger/vibekit.git",
-			host: "github.com", slug: "cplieger/vibekit",
+			name: "HTTPS", raw: "https://github.com/cplieger/marotte.git",
+			host: "github.com", slug: "cplieger/marotte",
 		},
 		{
-			name: "HTTPSNoSuffix", raw: "https://github.com/cplieger/vibekit",
-			host: "github.com", slug: "cplieger/vibekit",
+			name: "HTTPSNoSuffix", raw: "https://github.com/cplieger/marotte",
+			host: "github.com", slug: "cplieger/marotte",
 		},
 		{
 			name: "SSHURL", raw: "ssh://git@gitlab.com/group/project.git",
@@ -40,8 +40,8 @@ func TestParseRemoteSlug(t *testing.T) {
 			host: "gitlab.com", slug: "group/sub/deeper/project",
 		},
 		{
-			name: "TrailingSlash", raw: "https://github.com/cplieger/vibekit/",
-			host: "github.com", slug: "cplieger/vibekit",
+			name: "TrailingSlash", raw: "https://github.com/cplieger/marotte/",
+			host: "github.com", slug: "cplieger/marotte",
 		},
 		{
 			name: "LeadingAndTrailingSpace", raw: "  git@github.com:a/b.git\n",
@@ -110,7 +110,7 @@ func TestParseRemoteSlug(t *testing.T) {
 // through.
 func FuzzParseRemoteSlug(f *testing.F) {
 	for _, seed := range []string{
-		"git@github.com:cplieger/vibekit.git",
+		"git@github.com:cplieger/marotte.git",
 		"https://gitlab.com/group/sub/project.git",
 		"ssh://git@host/a/b",
 		"ext::sh -c whoami",

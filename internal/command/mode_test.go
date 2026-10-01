@@ -7,17 +7,17 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func setModeReq(t *testing.T, chatID vibekit.ChatID, modeID string) *vibekit.ClientCommand {
+func setModeReq(t *testing.T, chatID marotte.ChatID, modeID string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.SetModeCommand{ModeID: modeID})
+	payload, err := json.Marshal(marotte.SetModeCommand{ModeID: modeID})
 	if err != nil {
 		t.Fatalf("marshal set_mode payload: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: vibekit.CmdSetMode, ChatID: chatID, Payload: payload}
+	return &marotte.ClientCommand{Type: marotte.CmdSetMode, ChatID: chatID, Payload: payload}
 }
 
 // A mode pick on a tombstoned id is a 404, and it now comes from the store's own
@@ -60,7 +60,7 @@ func TestCmdSetMode_NoOpAndAutoCreate(t *testing.T) {
 			t.Fatalf("repeat pick: %v", err)
 		}
 		for _, evt := range spy.events[before:] {
-			if evt.Type == vibekit.EventModeChanged {
+			if evt.Type == marotte.EventModeChanged {
 				t.Error("a repeat pick of the mode already in force broadcast mode_changed")
 			}
 		}
@@ -101,7 +101,7 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 		wantApplied bool
 	}{
 		"a cold-spawning bridge persists": {
-			callErr:     fmt.Errorf("write frame: %w", vibekit.ErrBridgeNotStarted),
+			callErr:     fmt.Errorf("write frame: %w", marotte.ErrBridgeNotStarted),
 			wantApplied: true,
 		},
 		"a session refusal is reported and persists nothing": {
@@ -127,17 +127,17 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 			t.Run("set_effort", func(t *testing.T) {
 				store := testsupport.NewInMemoryChatStore()
 				host := newBridgeHost(store, &recordingBridge{callErr: test.callErr})
-				payload, err := json.Marshal(vibekit.SetEffortCommand{Level: vibekit.EffortMax})
+				payload, err := json.Marshal(marotte.SetEffortCommand{Level: marotte.EffortMax})
 				if err != nil {
 					t.Fatalf("marshal set_effort payload: %v", err)
 				}
-				cmd := &vibekit.ClientCommand{Type: vibekit.CmdSetEffort, ChatID: "c1", Payload: payload}
+				cmd := &marotte.ClientCommand{Type: marotte.CmdSetEffort, ChatID: "c1", Payload: payload}
 
 				_, err = CmdSetEffort(t.Context(), host, host, host, Workspace{}, cmd)
 
 				assertConfigOutcome(t, err, test.wantStatus)
 				c, ok := store.Get(t.Context(), "c1")
-				if got := ok && c.Effort == string(vibekit.EffortMax); got != test.wantApplied {
+				if got := ok && c.Effort == string(marotte.EffortMax); got != test.wantApplied {
 					t.Errorf("effort persisted = %v, want %v", got, test.wantApplied)
 				}
 			})

@@ -1,4 +1,4 @@
-// The keepalive acknowledgement and the presence row it feeds, against the REAL vibekit
+// The keepalive acknowledgement and the presence row it feeds, against the REAL marotte
 // binary (design 12.8, the browser-mode list's two presence bullets). A connected client
 // that acknowledges reads present; one whose acknowledgements stop while its socket
 // keeps reading keepalives reads gone at the alive window, with its socket still
@@ -23,7 +23,7 @@ import {
 } from "@cplieger/sse";
 
 const SKIP_REASON =
-  "vibekit fixture not started: set SSE_FIXTURE to a vibekit binary built with -tags vibekit_test";
+  "marotte fixture not started: set SSE_FIXTURE to a marotte binary built with -tags marotte_test";
 const FIXTURE = process.env["SSE_FIXTURE"];
 if (FIXTURE === undefined || FIXTURE === "") {
   console.warn(`[vitest] ${SKIP_REASON}`);
@@ -66,7 +66,7 @@ function until(predicate: () => boolean, what: string, timeoutMs: number): Promi
 }
 
 describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the alive acknowledgement", () => {
-  const base = (): string => inject("vibekitURL");
+  const base = (): string => inject("marotteURL");
   const tag = `e2e_alive_${Math.random().toString(36).slice(2, 12)}`;
   let stream: Stream | null = null;
   const lifecycle: LifecycleEvent[] = [];

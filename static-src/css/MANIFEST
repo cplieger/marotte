@@ -1,4 +1,4 @@
-# vibekit/web/static/style.css bundle manifest
+# marotte/web/static/style.css bundle manifest
 # Files concatenated in declared order at Docker build time.
 #
 # THE CASCADE MODEL (simplified 2026-08-31): SOURCE ORDER IS THE CASCADE.
@@ -43,7 +43,7 @@
 # cascade at all.
 00-fonts.css
 01-tokens.css
-# @cplieger/ui-primitives headless base (structure + motion), then vibekit's
+# @cplieger/ui-primitives headless base (structure + motion), then marotte's
 # skin. Both unlayered so the skin's .uip-* rules win by source order. The base
 # is the vendored package stylesheet (resolved via ../node_modules at build).
 ../node_modules/@cplieger/ui-primitives/css/ui-primitives.css

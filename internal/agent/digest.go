@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const (
@@ -46,7 +46,7 @@ func (rt *Runtime) resolveOne(h *sse.Held) sse.State {
 	st := sse.State{Subject: h.Subject}
 	switch subject.Kind(h.Kind) {
 	case subject.KindChat:
-		if !rt.chatStore.Exists(vibekit.ChatID(h.Ref)) {
+		if !rt.chatStore.Exists(marotte.ChatID(h.Ref)) {
 			st.Status = sse.StatusGone
 			return st
 		}
@@ -56,7 +56,7 @@ func (rt *Runtime) resolveOne(h *sse.Held) sse.State {
 	case subject.KindLiveTurn:
 		// The turn registry, never Buffer.Started or MessageID: a SplitSegment
 		// leaves MessageID empty on a turn that is still live.
-		facts, open := rt.coord.turns.openTurnFor(vibekit.ChatID(h.Ref))
+		facts, open := rt.coord.turns.openTurnFor(marotte.ChatID(h.Ref))
 		if !open || facts.Buf == nil {
 			st.Status = sse.StatusGone
 			return st

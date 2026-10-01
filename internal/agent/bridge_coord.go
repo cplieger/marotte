@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/push"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/push"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // BridgeCoordinator owns bridge lifecycle, notification forwarding, model
@@ -31,8 +31,8 @@ type BridgeCoordinator struct {
 	// Per-chat turn lifecycle; the exclusion every terminal step claims through.
 	// See turn.go.
 	turns          *turnRegistry
-	broadcast      func(ctx context.Context, e vibekit.ServerEvent)
-	translateEvent func(chatID vibekit.ChatID, msg *vibekit.RPCResponse)
+	broadcast      func(ctx context.Context, e marotte.ServerEvent)
+	translateEvent func(chatID marotte.ChatID, msg *marotte.RPCResponse)
 	// Optional; nil means no notification rather than a refusal to run.
 	push        pushNotifier `wiring:"optional"`
 	mcpRegistry *mcpRegistry
@@ -51,14 +51,14 @@ type BridgeCoordinator struct {
 	replayProjection replayProjector
 	// onSessionRehydrated fires after a successful session/load, off the spawn
 	// path: the runtime heals the runs that chat's dying process paused.
-	onSessionRehydrated func(vibekit.ChatID)
+	onSessionRehydrated func(marotte.ChatID)
 	// dischargeWaiting drops a chat's retained waiting_on_user claim when the agent
 	// that raised it dies. Nil in tests.
-	dischargeWaiting func(context.Context, vibekit.ChatID)
+	dischargeWaiting func(context.Context, marotte.ChatID)
 	// onTurnClosed fires from the WINNING closer once a turn has finalized; the
 	// agent-terminal registry evicts that turn's retired output. A closure rather
 	// than the collaborator, which is built after this literal. Nil in tests.
-	onTurnClosed func(vibekit.ChatID, vibekit.TurnEpoch)
+	onTurnClosed func(marotte.ChatID, marotte.TurnEpoch)
 	// secretStorage reports whether the runtime holds a credential store, read at
 	// SPAWN time: a bool captured here runs before NewHub opens the store, so it
 	// would be false for every bridge this process ever starts.
@@ -72,14 +72,14 @@ type BridgeCoordinator struct {
 	//
 	// Nil means "nothing outstanding" — the pre-fix behaviour — so a test
 	// constructing this type directly does not start withholding.
-	chatHasLiveRun func(vibekit.ChatID) bool `wiring:"optional"`
+	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// unknownStops records the stop reasons already warned about, so an unmapped
 	// wire value produces one line rather than one per turn.
 	unknownStops sync.Map
 	// agentEngine is the kiro-cli agent engine, hard-pinned to v3 by
 	// resolveAgentEngine.
 	agentEngine string
-	// acpArgs are the filtered operator launch flags (VIBEKIT_KIRO_ACP_ARGS), set on
+	// acpArgs are the filtered operator launch flags (MAROTTE_KIRO_ACP_ARGS), set on
 	// CHAT spawns only: an `--effort max` on the utility bridge would spend real
 	// credits on a two-word title.
 	acpArgs []string `wiring:"optional"`
@@ -108,15 +108,15 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },
-		chatHasLiveRun: func(chatID vibekit.ChatID) bool {
+		chatHasLiveRun: func(chatID marotte.ChatID) bool {
 			return chatHoldsLiveRun(h.runs.leaseStore().List(), chatID)
 		},
-		onSessionRehydrated: func(chatID vibekit.ChatID) {
+		onSessionRehydrated: func(chatID marotte.ChatID) {
 			ctx, cancel := h.lifecycle.derivedContext()
 			defer cancel()
 			h.runs.resumeInterruptedRuns(ctx, chatID)
 		},
-		onTurnClosed: func(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+		onTurnClosed: func(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
 			h.agentTerms.CloseTurn(chatID, epoch)
 		},
 		dischargeWaiting: h.DischargeWaiting,
@@ -138,17 +138,17 @@ func (bc *BridgeCoordinator) processLifetimeCtx() context.Context {
 }
 
 // resolveAgentEngine returns the kiro-cli agent engine, hard-pinned to v3 (KAS). A
-// stray KIRO_AGENT_ENGINE=v1/v2 is ignored: vibekit cannot talk to a legacy engine
+// stray KIRO_AGENT_ENGINE=v1/v2 is ignored: marotte cannot talk to a legacy engine
 // at all, so honouring it stalls session/new and fails every turn.
 func resolveAgentEngine() string {
-	return vibekit.AgentEngineV3
+	return marotte.AgentEngineV3
 }
 
 // OpenBridge returns an existing bridge for chatID, or creates one. Concurrent
 // callers for the same chatID coalesce via singleflight, keyed by bridgeSpawnKey.
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within agent use the methods on it. Exporting would leak ACP wiring outside the runtime package.
-func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Before the fast path: an account switch has to retire the existing bridge
 	// rather than be noticed after this call handed it back.
 	if bc.ensureIdentity != nil {
@@ -187,14 +187,14 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.Chat
 // bridgeSpawnKey composes the bridge-spawn singleflight key over (chatID,
 // modelOverride). keyenc keeps it injective even if either alphabet widens: a
 // collision would hand a coalesced caller another chat's bridge.
-func bridgeSpawnKey(chatID vibekit.ChatID, modelOverride string) string {
+func bridgeSpawnKey(chatID marotte.ChatID, modelOverride string) string {
 	return keyenc.Join(string(chatID), modelOverride)
 }
 
 // spawnBridge creates (or returns the just-created) bridge for chatID, inside the
 // singleflight. On any start failure it rolls the half-registered bridge back out
 // of the map and returns the error.
-func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID marotte.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Double-check after winning the singleflight race.
 	sb, existed := bc.bridge.mgr.orInsert(chatID)
 	if existed {
@@ -220,14 +220,14 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// rather than a pick the user just made, and kiro-cli would reject it mid-prompt
 	// on every later turn. An explicit pick is refused loudly, in cmdSwitchModel. An
 	// empty advertised set means unknowable and allows.
-	if !vibekit.ModelServed(model, chat.ServedModelIDs) {
+	if !marotte.ModelServed(model, chat.ServedModelIDs) {
 		slog.Warn("withholding a model this account does not serve; using the backend default",
 			"chat_id", chatID, "model", model)
 		model = ""
 	}
 
 	// No mcpServers parameter: KAS reads its own hot-reloading config file, which
-	// vibekit renders (internal/mcp/kasfile.go), and an inline copy would WIN over
+	// marotte renders (internal/mcp/kasfile.go), and an inline copy would WIN over
 	// the file and make every config edit look like a no-op.
 	if bc.preBridgeSpawn != nil {
 		bc.preBridgeSpawn(ctx)
@@ -248,14 +248,14 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	}
 
 	// EnableHooks:true opts chat bridges into KAS's v2 hook engine, so workspace
-	// hooks autofire without vibekit serving executeHook.
+	// hooks autofire without marotte serving executeHook.
 	//
 	// Forward MUST drain NotifCh before Start: the relay owns authentication now,
 	// but _kiro/terminal/shell_type is still a server->client REQUEST on the
 	// session-creation path, so attaching Forward after Start deadlocks every
 	// fresh session.
 	bc.goForward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
+	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -279,14 +279,14 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 // re-ask. Here the record keeps the REQUEST, because supervised is the safer intent to
 // remember — so the next spawn WILL re-assert, and this event is a report rather than
 // the only chance to act.
-func (bc *BridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, chatID vibekit.ChatID, requested, applied bool) {
+func (bc *BridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, chatID marotte.ChatID, requested, applied bool) {
 	if !requested || applied {
 		return
 	}
 	slog.Error("supervised mode not applied at the session door; this chat will NOT ask before writing",
 		"chat_id", chatID)
-	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-		Code: vibekit.ErrCodeSupervisedNotApplied,
+	bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+		Code: marotte.ErrCodeSupervisedNotApplied,
 		Message: "This chat asked to review writes before they land, but the session refused. " +
 			"It is running unsupervised. Toggle supervised mode again to retry.",
 	}))
@@ -296,7 +296,7 @@ func (bc *BridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 // the chat's supervised gate so the load can re-assert it (why a resume needs that
 // at all: bridge.loadSession).
 func (bc *BridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge,
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge,
 	acpSessionID, model, effort string, supervised bool,
 ) bool {
 	// Forward attaches BEFORE Start, as on the session/new path: session/load also
@@ -311,7 +311,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// position below is only comparable within one attachment. See replay_drain.go.
 	gen := bc.turns.attachForward(chatID)
 	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, sb.bridge, gen) })
-	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
+	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so a partial replay must not
@@ -322,7 +322,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		old := sb.bridge
 		sb.bridge = bc.bridge.mgr.factory()
 		old.Stop()
-		if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+		if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
@@ -345,7 +345,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	title := sb.bridge.SessionTitle()
 	bc.catalog.SetModes(sb.bridge.Modes())
 	bc.catalog.SetModels(sb.bridge.Models())
-	if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -373,9 +373,9 @@ func (bc *BridgeCoordinator) tryLoadSession(
 // pre-gate build or renamed from the IDE re-offers it on every resume. Every refusal
 // is Warn, where the focus door drops the routine one to Debug — this rung is reached
 // only while a chat is still default-named, so it carries no volume to bury a signal.
-func adoptKASTitle(c *vibekit.Chat, stored string) {
+func adoptKASTitle(c *marotte.Chat, stored string) {
 	title := translate.SanitizeTitle(stored)
-	if title == "" || c.Name != vibekit.DefaultChatName {
+	if title == "" || c.Name != marotte.DefaultChatName {
 		return
 	}
 	if reason := translate.TitleRefusal(title); reason != "" {
@@ -390,13 +390,13 @@ func adoptKASTitle(c *vibekit.Chat, stored string) {
 // freshly constructed, so an omitted field reads as the zero value, and
 // `session/load` omits the model catalog routinely. Modes have no repair channel, so
 // an emptied mode list stays empty for the rest of the session.
-func applyLoadedSessionFacts(c *vibekit.Chat, facts acpSessionFacts, title string) {
+func applyLoadedSessionFacts(c *marotte.Chat, facts acpSessionFacts, title string) {
 	if mode := facts.CurrentMode(); mode != "" {
 		c.CurrentModeID = mode
 	}
 	// Keeps its own previous set on an absent catalog: ApplyServedModels answers
 	// false for an empty one, so a load that omitted it refuses nothing later.
-	vibekit.ApplyServedModels(c, facts.Catalog())
+	marotte.ApplyServedModels(c, facts.Catalog())
 	summarization, truncation := facts.ContextThresholds()
 	if summarization > 0 {
 		c.Usage.SummarizationThresholdPct = summarization
@@ -407,7 +407,7 @@ func applyLoadedSessionFacts(c *vibekit.Chat, facts acpSessionFacts, title strin
 	adoptKASTitle(c, title)
 }
 
-func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID vibekit.ChatID, bridge acpSessionFacts) {
+func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID marotte.ChatID, bridge acpSessionFacts) {
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
@@ -420,7 +420,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	bc.catalog.SetModels(bridge.Models())
 	// requestedMode is read before the line below overwrites it with what landed.
 	var requestedMode string
-	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -430,7 +430,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 			c.Model = string(newModelID)
 		}
 		c.CurrentModeID = currentMode
-		vibekit.ApplyServedModels(c, catalog)
+		marotte.ApplyServedModels(c, catalog)
 		adoptKASTitle(c, title)
 		return true
 	}); err != nil {
@@ -447,14 +447,14 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 // asked for. A banner rather than an automatic retry: the record keeps the ACTUAL
 // mode, so the request is no longer stored and the next spawn's requested id equals
 // the current one, which applyInitialMode's own guard reads as nothing to do.
-func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID vibekit.ChatID, requested, actual string) {
+func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID marotte.ChatID, requested, actual string) {
 	if requested == "" || requested == actual {
 		return
 	}
 	slog.Error("session mode not applied; the chat's mode was reset to the session's",
 		"chat_id", chatID, "requested", requested, "actual", actual)
-	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-		Code: vibekit.ErrCodeModeNotApplied,
+	bc.broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+		Code: marotte.ErrCodeModeNotApplied,
 		Message: "Could not start this chat in \"" + requested + "\" mode; it is running as \"" +
 			actual + "\". Pick the mode again to retry.",
 	}))
@@ -463,21 +463,21 @@ func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID vi
 // Bridge returns the bridge for chatID, or nil.
 //
 //nolint:revive // unexported-return: see OpenBridge above.
-func (bc *BridgeCoordinator) Bridge(chatID vibekit.ChatID) *sharedBridge {
+func (bc *BridgeCoordinator) Bridge(chatID marotte.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 
 // HasLiveBridge reports whether a chat currently has a bridge. Retention's exemption
 // reads this: a chat with a live bridge is never purged, however old
 // (archive.WithLiveChats).
-func (rt *Runtime) HasLiveBridge(chatID vibekit.ChatID) bool {
+func (rt *Runtime) HasLiveBridge(chatID marotte.ChatID) bool {
 	return rt.bridge.mgr.get(chatID) != nil
 }
 
 // TurnOpenState reports whether a chat has a turn in flight and whose it is. Composition
 // injects it into the chat store (chat.WithTurnOpen) so `GET /api/chats/{id}` can state
 // both facts rather than leave the client to guess them from an absent carrier.
-func (rt *Runtime) TurnOpenState(chatID vibekit.ChatID) vibekit.TurnOpenState {
+func (rt *Runtime) TurnOpenState(chatID marotte.ChatID) marotte.TurnOpenState {
 	return rt.coord.turns.openTurnState(chatID)
 }
 
@@ -492,19 +492,19 @@ func (rt *Runtime) TurnOpenState(chatID vibekit.ChatID) vibekit.TurnOpenState {
 //
 // The snapshot is taken with the buffer's own mutex and no lifecycle lock held, which is
 // what lets two clients read one turn independently; neither mutates the buffer.
-func (rt *Runtime) LiveTurn(chatID vibekit.ChatID) (vibekit.LiveTurn, bool) {
+func (rt *Runtime) LiveTurn(chatID marotte.ChatID) (marotte.LiveTurn, bool) {
 	facts, open := rt.coord.turns.openTurnFor(chatID)
 	if !open {
-		return vibekit.LiveTurn{}, false
+		return marotte.LiveTurn{}, false
 	}
 	snap, ok := facts.Buf.SnapshotCapped(liveTurnGETCaps)
 	if !ok {
 		// A turn that has produced nothing yet. `turn_open` still says it is running;
 		// there is simply no carrier to describe, and an empty message would name an id
 		// the client would then treat as its unpersisted live turn.
-		return vibekit.LiveTurn{}, false
+		return marotte.LiveTurn{}, false
 	}
-	return vibekit.LiveTurn{
+	return marotte.LiveTurn{
 		Message:   snap.Message,
 		ChunkSeq:  snap.ChunkSeq,
 		BlockBase: snap.BlockBase,
@@ -513,7 +513,7 @@ func (rt *Runtime) LiveTurn(chatID vibekit.ChatID) (vibekit.LiveTurn, bool) {
 }
 
 // CloseBridge stops a bridge and removes it from the map.
-func (bc *BridgeCoordinator) CloseBridge(chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) CloseBridge(chatID marotte.ChatID) {
 	bc.bridge.mgr.close(chatID)
 }
 
@@ -529,17 +529,17 @@ func (bc *BridgeCoordinator) RetireBridges(reason string) {
 // replayProjector is the slice of the Runtime's replay-projection lifecycle the
 // coordinator drives. See agent/load_projection.go for the settle barrier.
 type replayProjector interface {
-	OpenReplayProjection(vibekit.ChatID)
-	MarkReplayLoadedAt(chatID vibekit.ChatID, at drainPoint)
-	DiscardReplayProjection(vibekit.ChatID)
-	SettleReplayProjection(chatID vibekit.ChatID, at drainPoint, force bool)
-	ReplaySettled(chatID vibekit.ChatID) <-chan struct{}
+	OpenReplayProjection(marotte.ChatID)
+	MarkReplayLoadedAt(chatID marotte.ChatID, at drainPoint)
+	DiscardReplayProjection(marotte.ChatID)
+	SettleReplayProjection(chatID marotte.ChatID, at drainPoint, force bool)
+	ReplaySettled(chatID marotte.ChatID) <-chan struct{}
 }
 
 // Forward is the ACP notification → domain event translator, run as a
 // goroutine per bridge. It takes the chat's forward attachment itself, which is
 // every caller that has no local decision to order against that attachment.
-func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
+func (bc *BridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
 	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
 }
 
@@ -561,7 +561,7 @@ func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 // bridge BEFORE this wait, which closes `NotifCh` and ends the range. A bridge that
 // somehow never closes it costs the ctx budget and is NAMED ("in-flight handlers")
 // instead of being silently overrun.
-func (bc *BridgeCoordinator) goForward(chatID vibekit.ChatID, bridge ACPBridge) {
+func (bc *BridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) {
 	bc.lifecycle.inflight.Go(func() { bc.Forward(chatID, bridge) })
 }
 
@@ -569,7 +569,7 @@ func (bc *BridgeCoordinator) goForward(chatID vibekit.ChatID, bridge ACPBridge) 
 // caller that has to name it: tryLoadSession orders the load's own read-loop
 // position against this goroutine's, so it cannot let the goroutine take the
 // attachment asynchronously and then guess which one the position belongs to.
-func (bc *BridgeCoordinator) forwardAt(chatID vibekit.ChatID, bridge ACPBridge, gen uint64) {
+func (bc *BridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, gen uint64) {
 	ch := bridge.NotifCh()
 	// The generation keeps a straggler from the previous bridge from advancing a
 	// counter that restarted at zero.
@@ -626,12 +626,12 @@ func (bc *BridgeCoordinator) forwardAt(chatID vibekit.ChatID, bridge ACPBridge, 
 // position, whatever the frame did. DEFERRED, and per FRAME rather than per fold:
 // the advance acknowledges work that is done, and many paths through the
 // session-update cascade consume a frame without touching a turn.
-func (bc *BridgeCoordinator) consumeFrame(chatID vibekit.ChatID, gen uint64, n vibekit.Notification) {
+func (bc *BridgeCoordinator) consumeFrame(chatID marotte.ChatID, gen uint64, n marotte.Notification) {
 	defer bc.turns.observe(chatID, gen, n.Seq)
 	bc.translateEvent(chatID, n.Msg)
 }
 
-// Effort is a field on the chat record (vibekit.Chat.Effort), read at spawn and
+// Effort is a field on the chat record (marotte.Chat.Effort), read at spawn and
 // written by CmdSetEffort — deliberately not a global setting keyed by the last
 // model, which two chats could not disagree about.
 
@@ -639,8 +639,8 @@ func (bc *BridgeCoordinator) consumeFrame(chatID vibekit.ChatID, gen uint64, n v
 // configured. The chat-id convenience stays because every caller in this file is
 // chat-scoped, so the conversion to a subject belongs at this one boundary;
 // NotifyPushSubject below is what a notification with NO chat behind it uses.
-func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID) {
-	bc.NotifyPushSubject(ctx, body, kind, vibekit.ChatSubject(chatID))
+func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind marotte.PushKind, chatID marotte.ChatID) {
+	bc.NotifyPushSubject(ctx, body, kind, marotte.ChatSubject(chatID))
 }
 
 // NotifyPushSubject sends a push notification about any SUBJECT if the push service
@@ -649,7 +649,7 @@ func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind v
 // A nil service is silent: composition always builds one, so that branch is a
 // direct package test rather than a state an operator can be in.
 func (bc *BridgeCoordinator) NotifyPushSubject(
-	ctx context.Context, body string, kind vibekit.PushKind, subj vibekit.PushSubject,
+	ctx context.Context, body string, kind marotte.PushKind, subj marotte.PushSubject,
 ) {
 	if bc.push == nil {
 		return
@@ -669,7 +669,7 @@ func (bc *BridgeCoordinator) NotifyPushSubject(
 // nudge about it never lands after the answer. A run ask has no retraction here:
 // nothing pushes about one, and a run's subject is what its OUTCOME push carries,
 // which the run's own teardown would otherwise retract.
-func (bc *BridgeCoordinator) RetractPush(subj vibekit.PushSubject) {
+func (bc *BridgeCoordinator) RetractPush(subj marotte.PushSubject) {
 	if bc.push == nil {
 		return
 	}
@@ -685,7 +685,7 @@ func (bc *BridgeCoordinator) RetractPush(subj vibekit.PushSubject) {
 // Both halves of the subject are logged and either is legitimately empty — a chat
 // notification carries no key and a run's carries no chat — so the line still names
 // what was dropped whichever kind it was.
-func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, subj vibekit.PushSubject) {
+func (bc *BridgeCoordinator) reportNoSubscribers(kind marotte.PushKind, subj marotte.PushSubject) {
 	if !bc.noSubscribers.CompareAndSwap(false, true) {
 		return
 	}
@@ -699,13 +699,13 @@ func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, subj vib
 //
 // seq is the read loop position the response arrived at. Zero skips the wait,
 // which is what the two paths that deliberately reach no bracket want.
-func (bc *BridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, seq uint64, resp *vibekit.RPCResponse) {
+func (bc *BridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, seq uint64, resp *marotte.RPCResponse) {
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptResponse, Resp: resp, Epoch: epoch, Seq: seq})
 }
 
 // TurnOpenedAfter reports whether any turn on the chat opened after epoch — the
 // structural half of the empty-turn gate. See turnRegistry.openedAfter.
-func (bc *BridgeCoordinator) TurnOpenedAfter(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) bool {
+func (bc *BridgeCoordinator) TurnOpenedAfter(chatID marotte.ChatID, epoch marotte.TurnEpoch) bool {
 	return bc.turns.openedAfter(chatID, epoch)
 }
 
@@ -726,7 +726,7 @@ func agentFinishedBodyFrom(description string) string {
 // A failed append is survivable through KAS's own log — measured to flush each
 // sub-message as it COMPLETES, so a session/load replay carries the turn and the
 // projection rebuilds it. What neither covers is the final streaming fragment.
-func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) {
+func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) {
 	if err := bc.chatStore.AppendMessage(ctx, chatID, msg); err != nil {
 		slog.Error("persist assistant turn; the replay projection is the fallback",
 			"chat_id", chatID, "error", err)
@@ -741,12 +741,12 @@ func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID vibekit.Cha
 // already on disk. A plain append records the reply as FOLLOWING it, which
 // projectTurns reads as a headerless turn below — while the client's array has it
 // above, since the broadcast carries the streamed message's id and merges in place.
-func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) {
+func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) {
 	if msg.Ts == 0 {
 		msg.Ts = time.Now().UnixMilli()
 	}
 	var inserted bool
-	version, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -764,8 +764,8 @@ func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vi
 		return
 	}
 	if inserted {
-		frame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg)
-		frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+		frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
+		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 		bc.broadcast(ctx, frame)
 	}
 }
@@ -777,13 +777,13 @@ func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vi
 // persisted AHEAD of the turn, while a steer row was persisted INSIDE it
 // (translate.persistSteer), so the reply belongs after it — the order the ordinary
 // path produces anyway, since the reply is flushed at turn end and the steer is not.
-func isPendingPrompt(m *vibekit.Message) bool {
-	return m.Role == vibekit.RoleUser && m.UserKind != vibekit.UserKindSteer
+func isPendingPrompt(m *marotte.Message) bool {
+	return m.Role == marotte.RoleUser && m.UserKind != marotte.UserKindSteer
 }
 
 // TryFastModelSwitch attempts an in-session model swap via
 // session/set_config_option on the running bridge, then re-applies effort.
-func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID vibekit.ChatID, model, effort string) bool {
+func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID marotte.ChatID, model, effort string) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
 		return false
@@ -810,7 +810,7 @@ func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID vibe
 // it up safely: re-resolving by id on the restart path could answer with a DIFFERENT
 // bridge, so the pick would land on a session the caller never loaded.
 func (bc *BridgeCoordinator) applyModelSwitch(
-	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge, model, effort string,
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, model, effort string,
 ) bool {
 	if err := sb.bridge.SetModel(ctx, model); err != nil {
 		slog.Info("model switch: fast path failed, falling back to restart",
@@ -837,7 +837,7 @@ func (bc *BridgeCoordinator) applyModelSwitch(
 //
 // At the prompt rather than reactively: a Call from the Forward goroutine would block
 // the drain it waits on. Best-effort and log-only.
-func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge) {
+func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge) {
 	chat, ok := bc.chatStore.Get(ctx, chatID)
 	if !ok {
 		return
@@ -861,7 +861,7 @@ func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID vibekit.Ch
 // DURING the turn. LATCHED once per bridge: the repair produces another
 // config_option_update, so an unbounded reactive repair is a loop.
 func (bc *BridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdateHandler {
-	return func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
+	return func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
 		next(ctx, chatID, raw, attr)
 		// The chat's OWN frame only: a step's session reports the level IT runs at, and
 		// a subagent's frame is attributed too. Both fields are tested, because an empty
@@ -919,7 +919,7 @@ func (bc *BridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdate
 // The catalog rung is what keeps DRIFT repairable: repairEffort and healEffort both
 // return on an empty level, so a chat that has chosen nothing and whose model has no
 // remembered level would otherwise have no level to be corrected against.
-func (bc *BridgeCoordinator) effortFor(ctx context.Context, chat *vibekit.Chat) string {
+func (bc *BridgeCoordinator) effortFor(ctx context.Context, chat *marotte.Chat) string {
 	if chat.Effort != "" {
 		return chat.Effort
 	}
@@ -944,7 +944,7 @@ func (bc *BridgeCoordinator) effortSeedFor(ctx context.Context, model string) st
 		return ""
 	}
 	level := byModel[model]
-	if !vibekit.EffortLevel(level).Valid() {
+	if !marotte.EffortLevel(level).Valid() {
 		return ""
 	}
 	return level
@@ -966,21 +966,21 @@ func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, model string) 
 
 // PersistModelSwitch records the switch event and updates the chat's
 // model + resets usage counters.
-func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibekit.ChatID, model string, contextSize int) {
+func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID marotte.ChatID, model string, contextSize int) {
 	// Both writes are one record of one switch: an event saying the model changed beside
 	// a record still naming the old one is worse than neither.
 	ctx = durable.Context(ctx)
-	evt := vibekit.Message{
+	evt := marotte.Message{
 		ID:        newMessageID(),
-		Role:      vibekit.RoleEvent,
+		Role:      marotte.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
-		EventKind: vibekit.EventModelSwitched,
+		EventKind: marotte.EventModelSwitched,
 		Content:   model,
 	}
 	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("switch_model: append event", "chat_id", chatID, "error", err)
 	}
-	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -989,7 +989,7 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibe
 		// does not survive: resolution falls to the model-scoped seed, else the new
 		// model's own default. Switching back re-applies the seed.
 		c.Effort = ""
-		c.Usage = vibekit.Usage{ContextSize: contextSize}
+		c.Usage = marotte.Usage{ContextSize: contextSize}
 		return true
 	}); err != nil {
 		slog.Error("switch_model: persist model", "chat_id", chatID, "error", err)
@@ -998,7 +998,7 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibe
 
 // FlushInFlightTurnOnSwitch discards the chat's turn before a bridge restart,
 // announcing the interruption when a turn was in flight.
-func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID marotte.ChatID) {
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerModelSwitch, AnyOpen: true})
 }
 
@@ -1008,11 +1008,11 @@ func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chat
 //
 // It takes the SNAPSHOT rather than the buffer, so every field comes from ONE guarded
 // read rather than eight off the dispatch goroutine.
-func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model string, c vibekit.TurnConclusion) vibekit.Message {
-	return vibekit.Message{
+func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model string, c marotte.TurnConclusion) marotte.Message {
+	return marotte.Message{
 		ID:           snap.MessageID,
 		KASMessageID: snap.KASMessageID,
-		Role:         vibekit.RoleAssistant,
+		Role:         marotte.RoleAssistant,
 		Ts:           time.Now().UnixMilli(),
 		Content:      snap.Content,
 		Reasoning:    snap.Reasoning,
@@ -1057,17 +1057,17 @@ func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model strin
 // StopReason's zero value resolves to TurnOutcomeUnknown through ConcludeStopReason,
 // which grades `stopped` — so an unset stop would silently report a prompt failure as a
 // turn that merely stopped.
-func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, stop vibekit.StopReason, reason string) {
-	if stop != vibekit.StopReasonInterrupted && stop != vibekit.StopReasonCancelled {
+func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, stop marotte.StopReason, reason string) {
+	if stop != marotte.StopReasonInterrupted && stop != marotte.StopReasonCancelled {
 		slog.Warn("a prompt failure named a stop this close cannot conclude, so it concludes interrupted",
 			"chat_id", chatID, "epoch", epoch, "stop", stop)
-		stop = vibekit.StopReasonInterrupted
+		stop = marotte.StopReasonInterrupted
 	}
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptFailure, Stop: stop, Reason: reason, Epoch: epoch})
 }
 
-// FinalizeLocalShellTurn closes a `!cmd` turn vibekit ran itself.
-func (bc *BridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself.
+func (bc *BridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) {
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerLocalShell, Epoch: epoch})
 }
 
@@ -1078,7 +1078,7 @@ func (bc *BridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID 
 // previous turn's end never arrived, so that turn closes `unknown` and a
 // wireTurnStart turn opens in its place, holding no prompt slot for admission
 // control to have refused.
-func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.ChatID) {
 	bound, displaced := bc.turns.bindPending(chatID)
 	if !bound && displaced != 0 {
 		// A pre-open is owed this bracket while another turn is still folding, so
@@ -1091,8 +1091,8 @@ func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID vibekit.C
 		return
 	}
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, AnyOpen: true})
-	model, credits := bc.turnOpenFacts(ctx, chatID, vibekit.TurnSourceWireTurnStart)
-	bc.turns.openWire(ctx, chatID, vibekit.TurnSourceWireTurnStart, model, credits)
+	model, credits := bc.turnOpenFacts(ctx, chatID, marotte.TurnSourceWireTurnStart)
+	bc.turns.openWire(ctx, chatID, marotte.TurnSourceWireTurnStart, model, credits)
 }
 
 // WireTurnEnd is the engine's own turn_end bracket, and the closer whose outcome
@@ -1103,7 +1103,7 @@ func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID vibekit.C
 // bracket, and the fold-with-no-open-turn rule would manufacture a spurious
 // empty persisted turn out of it. A replayed bracket is filtered upstream, so
 // this is the live path only.
-func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason, details string) {
+func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason, details string) {
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireEnd, Stop: stop, Reason: details, AnyOpen: true})
 }
 
@@ -1114,7 +1114,7 @@ func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID vibekit.Cha
 // EPOCH-scoped rather than AnyOpen, which is the difference that matters: AnyOpen
 // describes the CHAT, so it would claim the chat's own live prompt turn if the user
 // prompted between the step turn being displaced and the run's end.
-func (bc *BridgeCoordinator) CloseStepTurn(ctx context.Context, chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) CloseStepTurn(ctx context.Context, chatID marotte.ChatID) {
 	epoch, ok := bc.turns.stepTurnEpoch(chatID)
 	if !ok {
 		return
@@ -1124,13 +1124,13 @@ func (bc *BridgeCoordinator) CloseStepTurn(ctx context.Context, chatID vibekit.C
 
 // TurnFoldTarget returns the buffer this chat's frames fold into, opening a turn
 // of the caller's stated source when none is open: a fold with no open turn is a
-// turn vibekit did not prompt, and it needs a record like any other. The SOURCE
+// turn marotte did not prompt, and it needs a record like any other. The SOURCE
 // comes from the frame, because a step of a chat-parented run folds here and the
 // turn opened for it belongs to the RUN.
 //
 // The CHEAP question comes first: the open facts cost a full chat-file read under
 // the per-chat mutex, per delta. Lock order is lifecycle then chat store, never back.
-func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer {
+func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) *buffer.Buffer {
 	if buf, ok := bc.turns.foldTarget(chatID); ok {
 		return buf
 	}
@@ -1147,14 +1147,14 @@ func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID vibekit.
 // OpenTurnBuffer returns the chat's open turn buffer without opening one —
 // the read TurnFoldTarget's minting makes unavailable to a caller that must
 // stay side-effect-free on a missing turn.
-func (bc *BridgeCoordinator) OpenTurnBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool) {
+func (bc *BridgeCoordinator) OpenTurnBuffer(chatID marotte.ChatID) (*buffer.Buffer, bool) {
 	return bc.turns.foldTarget(chatID)
 }
 
 // ReviseTurnBinding acts on a frame that PROVES the open turn is the agent's own
 // rather than the prompt's: `agentInitiated` rides content frames and never the
 // bracket, so this is the only discriminator there is. See turnRegistry.reclassify.
-func (bc *BridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID) {
 	bc.turns.reclassify(ctx, chatID)
 }
 
@@ -1166,7 +1166,7 @@ func (bc *BridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID vibek
 // It never OPENS a turn: a chat with none has no point inside a turn to seal at.
 // Declined-and-logged for an unsettled tool call, because an update resolves its
 // call against the CURRENT buffer and splitting freezes that card mid-flight.
-func (bc *BridgeCoordinator) SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) bool {
+func (bc *BridgeCoordinator) SealTurnSegment(ctx context.Context, chatID marotte.ChatID) bool {
 	buf, ok := bc.turns.foldTarget(chatID)
 	if !ok || buf == nil {
 		return false
@@ -1202,11 +1202,11 @@ func (bc *BridgeCoordinator) SealTurnSegment(ctx context.Context, chatID vibekit
 // closer stamps them on the last message it persists, or on an outcome marker when
 // there is none. A segment claiming any of them would open a second turn for both
 // projections and double the footer's numbers.
-func segmentMessage(snap *buffer.TurnContent) vibekit.Message {
-	return vibekit.Message{
+func segmentMessage(snap *buffer.TurnContent) marotte.Message {
+	return marotte.Message{
 		ID:             snap.MessageID,
 		KASMessageID:   snap.KASMessageID,
-		Role:           vibekit.RoleAssistant,
+		Role:           marotte.RoleAssistant,
 		Ts:             time.Now().UnixMilli(),
 		Content:        snap.Content,
 		Reasoning:      snap.Reasoning,
@@ -1221,14 +1221,14 @@ func segmentMessage(snap *buffer.TurnContent) vibekit.Message {
 // any turn still open, because nothing else is going to.
 //
 // It fires only on an UNEXPECTED exit, and the discriminator is whether the bridge
-// was still registered when it died: every teardown vibekit performs itself
+// was still registered when it died: every teardown marotte performs itself
 // removes the bridge from the map first and has its own closer, so a deliberate
 // stop must not also read as a death.
-func (bc *BridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID vibekit.ChatID) {
+func (bc *BridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID marotte.ChatID) {
 	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerBridgeDeath, AnyOpen: true})
 }
 
-const stopReasonCancelled = vibekit.StopReasonCancelled
+const stopReasonCancelled = marotte.StopReasonCancelled
 
 // InterruptTurn records why kiro-cli abandoned a turn without answering it, and trips
 // that turn's prompt call so the ordinary failure path finalizes it. The cause lands
@@ -1237,13 +1237,13 @@ const stopReasonCancelled = vibekit.StopReasonCancelled
 // The bridge is left ALIVE and the session untouched: only the tool call was
 // cancelled, so the chat is immediately promptable. No open turn, no bridge, or a
 // cause already claimed is not a failure — a user cancel may have ended the turn.
-func (bc *BridgeCoordinator) InterruptTurn(chatID vibekit.ChatID, reason string) {
+func (bc *BridgeCoordinator) InterruptTurn(chatID marotte.ChatID, reason string) {
 	epoch, open := bc.turns.openEpoch(chatID)
 	if !open {
 		slog.Debug("interrupt turn: no turn open", "chat_id", chatID, "reason", reason)
 		return
 	}
-	if !bc.turns.interrupt(chatID, epoch, vibekit.InterruptCause(reason)) {
+	if !bc.turns.interrupt(chatID, epoch, marotte.InterruptCause(reason)) {
 		slog.Debug("interrupt turn: another cause already claimed this turn",
 			"chat_id", chatID, "epoch", epoch, "reason", reason)
 		return
@@ -1259,12 +1259,12 @@ func (bc *BridgeCoordinator) InterruptTurn(chatID vibekit.ChatID, reason string)
 	}
 }
 
-func extractStopReason(resp *vibekit.RPCResponse) vibekit.StopReason {
+func extractStopReason(resp *marotte.RPCResponse) marotte.StopReason {
 	if resp == nil || resp.Result == nil {
 		return ""
 	}
 	var result struct {
-		StopReason vibekit.StopReason `json:"stopReason"`
+		StopReason marotte.StopReason `json:"stopReason"`
 	}
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		slog.Debug("turn_ended: parse result", "error", err)
@@ -1276,7 +1276,7 @@ func extractStopReason(resp *vibekit.RPCResponse) vibekit.StopReason {
 // BridgeRespond answers an ACP request on the chat's bridge, and is a no-op when
 // that chat has none: a response to a request whose bridge already went away has
 // nowhere to go and is not an error.
-func (rt *Runtime) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error {
+func (rt *Runtime) BridgeRespond(ctx context.Context, chatID marotte.ChatID, requestID int64, result any, err error) error {
 	sb := rt.bridge.mgr.get(chatID)
 	if sb == nil {
 		return nil
@@ -1287,7 +1287,7 @@ func (rt *Runtime) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, req
 // ParentACPSession returns the ACP session id of the running bridge for chatID, or
 // "" when no bridge exists. Translator helpers use it to short-circuit
 // notifications whose top-level sessionId belongs to a subagent.
-func (bc *BridgeCoordinator) ParentACPSession(chatID vibekit.ChatID) string {
+func (bc *BridgeCoordinator) ParentACPSession(chatID marotte.ChatID) string {
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
 		return ""

@@ -271,7 +271,7 @@ setSwitchMode((kind, slug, identifier, fields) => {
     fillNpmForm(slug, identifier, fields);
   } else {
     // Any non-npm registry hit lands on the remote panel. `kind` is the
-    // normalised vibekit transport ("http" or "sse", mapped from the
+    // normalised marotte transport ("http" or "sse", mapped from the
     // registry's remote type by supportedRemoteTypes server-side), so we
     // preselect it in the panel's transport selector. That holds only because
     // npm is the one package registry the server surfaces

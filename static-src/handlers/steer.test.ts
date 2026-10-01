@@ -433,7 +433,7 @@ describe("steer_cleared", () => {
 
   // IT ARMS AND DOES NOT FIRE. This frame arrives while the turn is still
   // finishing — KAS emits it from inside `cancel()` and from the end of its prompt
-  // handler, both before the response vibekit finalizes the turn on — so a send
+  // handler, both before the response marotte finalizes the turn on — so a send
   // here would take a 409 and submit.ts would convert it back into a steer, putting
   // it straight into the buffer the boundary just drained.
   it("sends nothing itself, leaving the fire to the settled turn frame", () => {

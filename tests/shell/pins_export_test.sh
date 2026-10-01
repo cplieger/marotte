@@ -33,10 +33,10 @@ REPO=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 # file and confirms the new assertion actually fails against it. Half of these
 # assertions read the Go side, so without this seam that half could not be
 # red-checked at all -- and an assertion nobody has seen fail is not evidence.
-CONFIG_GO="${VIBEKIT_CONFIG_GO:-$REPO/internal/composition/config.go}"
-KIROCLI_GO="${VIBEKIT_KIROCLI_GO:-$REPO/internal/composition/kirocli.go}"
-GO_SOURCE_ROOT="${VIBEKIT_GO_SOURCE_ROOT:-$REPO}"
-README="${VIBEKIT_README:-$REPO/README.md}"
+CONFIG_GO="${MAROTTE_CONFIG_GO:-$REPO/internal/composition/config.go}"
+KIROCLI_GO="${MAROTTE_KIROCLI_GO:-$REPO/internal/composition/kirocli.go}"
+GO_SOURCE_ROOT="${MAROTTE_GO_SOURCE_ROOT:-$REPO}"
+README="${MAROTTE_README:-$REPO/README.md}"
 # A precondition, not decoration: an unreadable config.go makes every cross-file
 # assertion below fail for the same reason a genuine drift would, so it has to be
 # fatal for the section rather than reported as a drift.
@@ -100,10 +100,10 @@ done
 
 # --- KIRO_CLI_PATH is GONE, on both surfaces --------------------------------
 # It was an operator env var whose whole effect was to stand the install manager
-# down: vibekit ran that binary verbatim and /api/health stopped reporting
+# down: marotte ran that binary verbatim and /api/health stopped reporting
 # kiro-cli readiness. Deleting the variable deleted that mode, so the manager is
 # now the only source of the binary path. Re-adding the read is the way the mode
-# comes back, and it comes back SILENTLY (vibekit still resolves *a* kiro-cli), so
+# comes back, and it comes back SILENTLY (marotte still resolves *a* kiro-cli), so
 # its absence is asserted on both surfaces an operator or a developer would reach
 # for: the Go sources that could read it, and the README table that would
 # advertise it.
@@ -118,15 +118,15 @@ else
 fi
 
 grep -q 'KIRO_CLI_PATH' "$README" \
-  && no "KIRO_CLI_PATH in the README" "the README still documents KIRO_CLI_PATH; an operator setting a variable vibekit ignores gets no error and no managed install either" \
+  && no "KIRO_CLI_PATH in the README" "the README still documents KIRO_CLI_PATH; an operator setting a variable marotte ignores gets no error and no managed install either" \
   || ok "the README config table does not offer KIRO_CLI_PATH"
 
 # --- the tools tree both halves compute independently -------------------------
 # The manager installs into <tools dir>/kiro-cli-versions/<version>/, and the tools dir
 # is NOT exported: the entrypoint derives it from CONFIG_DIR and the server derives
 # it from KIRO_CONFIG_DIR. Deliberately one contract with two derivations rather
-# than a second env var for a path vibekit already has a knob for
-# (VIBEKIT_TOOLS_DIR) -- but that makes the two derivations the thing to pin.
+# than a second env var for a path marotte already has a knob for
+# (MAROTTE_TOOLS_DIR) -- but that makes the two derivations the thing to pin.
 grep -q '^TOOLS="\$CONFIG_DIR/tools"$' "$ENTRYPOINT" \
   && ok "the entrypoint derives \$TOOLS as \$CONFIG_DIR/tools" \
   || no "entrypoint tools dir" "TOOLS is no longer \$CONFIG_DIR/tools, so it may not be the tree the server installs into"
@@ -136,7 +136,7 @@ grep -q '^TOOLS="\$CONFIG_DIR/tools"$' "$ENTRYPOINT" \
 # pinned is unchanged -- both halves must derive <configDir>/tools -- and this
 # grep is deliberately loose about the wrapper so it pins the DERIVATION rather
 # than one spelling of it.
-grep -qF 'envx.String("VIBEKIT_TOOLS_DIR")' "$CONFIG_GO" \
+grep -qF 'envx.String("MAROTTE_TOOLS_DIR")' "$CONFIG_GO" \
   && grep -qF 'filepath.Join(configDir, "tools")' "$CONFIG_GO" \
   && ok "the server derives the same tools dir from its config dir" \
   || no "server tools dir" "config.go no longer defaults ToolsDir to <configDir>/tools; the server may install outside the tree this script created"
@@ -178,7 +178,7 @@ grep -q '^prune_superseded_kas_runtimes()' "$ENTRYPOINT" \
 # web-terminal-kiro exports KIRO_CLI_TOOLS_TAINTED=1 when its hardening pass found
 # the tools tree writable by others, and its manager then refuses to activate any
 # pre-existing version directory (a `.complete` sentinel is forgeable, unlike a
-# digest). vibekit has no hardening pass to make that observation, so it exports
+# digest). marotte has no hardening pass to make that observation, so it exports
 # nothing and reads nothing -- and this assertion pins that AGREEMENT, because
 # either half alone is worse than neither: an export nothing reads is a no-op that
 # looks like a guard, and a read with no producer reports every boot as clean.
@@ -188,7 +188,7 @@ if grep -q 'KIRO_CLI_TOOLS_TAINTED' "$ENTRYPOINT" || grep -q 'KIRO_CLI_TOOLS_TAI
     && ok "the taint flag is exported by the entrypoint AND read by config.go" \
     || no "taint flag half-wired" "only one side mentions KIRO_CLI_TOOLS_TAINTED: an export nothing reads is a no-op that looks like a guard, and a read with no producer reports every boot as clean"
 else
-  ok "neither side claims a taint observation vibekit cannot make (no hardening pass here)"
+  ok "neither side claims a taint observation marotte cannot make (no hardening pass here)"
 fi
 
 # --- the LIBRARY half of the same non-claim: pinstall.Untrusted --------------
@@ -197,13 +197,13 @@ fi
 # the old spelling passes vacuously and this one has to name the current field.
 # Untrusted restricts activation to versions THIS process installed, on the
 # strength of having found the install root writable by others -- an observation
-# only a hardening pass produces, and vibekit has none. Setting it would be a
+# only a hardening pass produces, and marotte has none. Setting it would be a
 # guard with no producer, which reports every boot as clean while looking like a
 # check. kirocli.go states that non-claim in a comment and CITES this assertion;
 # without it the citation names nothing, and the field can be set by anyone who
 # reads pinstall's docs and not that comment.
 if grep -q 'Untrusted:' "$KIROCLI_GO"; then
-  no "Untrusted claimed" "internal/composition/kirocli.go now sets pinstall.Untrusted, but vibekit has no hardening pass to make that observation: the field then reports every boot as clean while looking like a check"
+  no "Untrusted claimed" "internal/composition/kirocli.go now sets pinstall.Untrusted, but marotte has no hardening pass to make that observation: the field then reports every boot as clean while looking like a check"
 else
   ok "the Go side sets no pinstall.Untrusted (the observation has no producer here)"
 fi

@@ -373,7 +373,7 @@ func TestParse_MalformedDegradesQuietly(t *testing.T) {
 }
 
 // FuzzParse checks the parser against arbitrary document heads. `.kiro` files
-// are workspace content, which is attacker-controlled from vibekit's point of
+// are workspace content, which is attacker-controlled from marotte's point of
 // view, and the parsed description is rendered into the agent-facing
 // environment.md — so the invariants are: never panic, always a valid inclusion,
 // and never leak a block-scalar indicator as a value (the bug this replaced).

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/git"
-	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/marotte/internal/git"
+	"github.com/cplieger/marotte/internal/sanitize"
 )
 
 func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, forgeKinds map[string]bool) {

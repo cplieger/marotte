@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestBlockAccumulators(t *testing.T) {
@@ -18,7 +18,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if got, want := len(buf.Blocks), 1; got != want {
 			t.Fatalf("len(Blocks) = %d, want %d", got, want)
 		}
-		if got, want := buf.Blocks[0].Type, vibekit.BlockText; got != want {
+		if got, want := buf.Blocks[0].Type, marotte.BlockText; got != want {
 			t.Errorf("Blocks[0].Type = %q, want %q", got, want)
 		}
 		if got, want := buf.Blocks[0].Text, "hello world"; got != want {
@@ -37,7 +37,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if got, want := len(buf.Blocks), 3; got != want {
 			t.Fatalf("len(Blocks) = %d, want %d", got, want)
 		}
-		want := []vibekit.BlockType{vibekit.BlockText, vibekit.BlockToolUse, vibekit.BlockText}
+		want := []marotte.BlockType{marotte.BlockText, marotte.BlockToolUse, marotte.BlockText}
 		for i, w := range want {
 			if buf.Blocks[i].Type != w {
 				t.Errorf("Blocks[%d].Type = %q, want %q", i, buf.Blocks[i].Type, w)
@@ -55,7 +55,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if i0 != 0 || i1 != 1 {
 			t.Errorf("indices = %d / %d, want 0 / 1", i0, i1)
 		}
-		if buf.Blocks[0].Type != vibekit.BlockThinking || buf.Blocks[1].Type != vibekit.BlockText {
+		if buf.Blocks[0].Type != marotte.BlockThinking || buf.Blocks[1].Type != marotte.BlockText {
 			t.Errorf("kinds = %q / %q, want thinking / text", buf.Blocks[0].Type, buf.Blocks[1].Type)
 		}
 	})
@@ -94,7 +94,7 @@ func TestBlockAccumulators(t *testing.T) {
 		if got, want := len(buf.Blocks), 2; got != want {
 			t.Fatalf("len(Blocks) = %d, want %d", got, want)
 		}
-		if got, want := buf.Blocks[1].Type, vibekit.BlockThinking; got != want {
+		if got, want := buf.Blocks[1].Type, marotte.BlockThinking; got != want {
 			t.Errorf("Blocks[1].Type = %q, want %q", got, want)
 		}
 		if got, want := buf.Blocks[1].Thinking, "reasoning"; got != want {
@@ -265,18 +265,18 @@ func TestBlockAccumulators(t *testing.T) {
 func TestTrackFileChanges(t *testing.T) {
 	tests := []struct {
 		name      string
-		diffs     []vibekit.ToolDiff
+		diffs     []marotte.ToolDiff
 		isNewFile bool
 		wantFiles int
 	}{
 		{"empty diffs", nil, false, 0},
-		{"single diff", []vibekit.ToolDiff{{Path: "a.go", NewText: "x\ny\n"}}, false, 1},
-		{"multiple diffs same file", []vibekit.ToolDiff{
+		{"single diff", []marotte.ToolDiff{{Path: "a.go", NewText: "x\ny\n"}}, false, 1},
+		{"multiple diffs same file", []marotte.ToolDiff{
 			{Path: "a.go", NewText: "x\n"},
 			{Path: "a.go", NewText: "y\n"},
 		}, false, 1},
-		{"empty path skipped", []vibekit.ToolDiff{{Path: "", NewText: "x\n"}}, false, 0},
-		{"isNewFile propagation", []vibekit.ToolDiff{{Path: "new.go", NewText: "x\n"}}, true, 1},
+		{"empty path skipped", []marotte.ToolDiff{{Path: "", NewText: "x\n"}}, false, 0},
+		{"isNewFile propagation", []marotte.ToolDiff{{Path: "new.go", NewText: "x\n"}}, true, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -302,18 +302,18 @@ func TestTrackFileChanges(t *testing.T) {
 func TestMarkInFlightToolsAborted(t *testing.T) {
 	tests := []struct {
 		name    string
-		tools   []vibekit.ToolCall
+		tools   []marotte.ToolCall
 		wantLen int
 	}{
 		{"no tool calls", nil, 0},
-		{"all completed", []vibekit.ToolCall{
-			{Status: vibekit.ToolCompleted},
-			{Status: vibekit.ToolCompleted},
+		{"all completed", []marotte.ToolCall{
+			{Status: marotte.ToolCompleted},
+			{Status: marotte.ToolCompleted},
 		}, 0},
-		{"mix of statuses", []vibekit.ToolCall{
-			{Status: vibekit.ToolInProgress},
-			{Status: vibekit.ToolPending},
-			{Status: vibekit.ToolCompleted},
+		{"mix of statuses", []marotte.ToolCall{
+			{Status: marotte.ToolInProgress},
+			{Status: marotte.ToolPending},
+			{Status: marotte.ToolCompleted},
 		}, 2},
 	}
 	for _, tt := range tests {
@@ -324,7 +324,7 @@ func TestMarkInFlightToolsAborted(t *testing.T) {
 				t.Errorf("changed = %d, want %d", len(changed), tt.wantLen)
 			}
 			for _, tc := range changed {
-				if tc.Status != vibekit.ToolAborted {
+				if tc.Status != marotte.ToolAborted {
 					t.Errorf("status = %q, want aborted", tc.Status)
 				}
 			}
@@ -383,7 +383,7 @@ func TestRecordToolStart(t *testing.T) {
 // removed and every line of the new side added: 4 old lines out, 3 new lines in.
 func TestTrackFileChanges_CountsARealDiff(t *testing.T) {
 	buf := &Buffer{}
-	buf.TrackFileChanges([]vibekit.ToolDiff{
+	buf.TrackFileChanges([]marotte.ToolDiff{
 		{Path: "f.go", NewText: "a\nb\nc", OldText: "x\ny\nz\nw"},
 	}, false)
 	fc := buf.ChangedFiles["f.go"]
@@ -404,7 +404,7 @@ func TestTrackFileChanges_CountsARealDiff(t *testing.T) {
 func TestTrackFileChanges_OneLineEditInALargeFile(t *testing.T) {
 	old := bigFile(300)
 	buf := &Buffer{}
-	buf.TrackFileChanges([]vibekit.ToolDiff{
+	buf.TrackFileChanges([]marotte.ToolDiff{
 		{Path: "big.go", OldText: old, NewText: replaceLine(old, 149, "line 149 EDITED")},
 	}, false)
 	fc := buf.ChangedFiles["big.go"]
@@ -424,7 +424,7 @@ func TestTrackFileChanges_OneLineEditInALargeFile(t *testing.T) {
 func TestTrackFileChanges_NoOpWriteStillRecordsThePath(t *testing.T) {
 	same := "a\nb\nc\n"
 	buf := &Buffer{}
-	buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "f.go", OldText: same, NewText: same}}, false)
+	buf.TrackFileChanges([]marotte.ToolDiff{{Path: "f.go", OldText: same, NewText: same}}, false)
 	fc := buf.ChangedFiles["f.go"]
 	if fc == nil {
 		t.Fatal(`ChangedFiles["f.go"] is nil for a no-op write`)
@@ -438,7 +438,7 @@ func TestTrackFileChanges_NoOpWriteStillRecordsThePath(t *testing.T) {
 // edits to one path in one turn report that turn's whole churn.
 func TestTrackFileChanges_SumsFragments(t *testing.T) {
 	buf := &Buffer{}
-	buf.TrackFileChanges([]vibekit.ToolDiff{
+	buf.TrackFileChanges([]marotte.ToolDiff{
 		{Path: "f.go", OldText: "a\nb\nc\n", NewText: "a\nB\nc\n"},
 		{Path: "f.go", OldText: "a\nB\nc\n", NewText: "a\nB\nC\n"},
 	}, false)
@@ -522,8 +522,8 @@ func TestSetModel_LatchesFirstWrite(t *testing.T) {
 // so a tool call would sit in the transcript never progressing past "started".
 func TestAppendToolCall_IndexAddressesTheAppendedCall(t *testing.T) {
 	buf := &Buffer{}
-	first, _ := buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1", Title: "Read File"})
-	second, _ := buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-2", Title: "Write File"})
+	first, _ := buf.AppendToolCall(&marotte.ToolCall{ID: "tool-1", Title: "Read File"})
+	second, _ := buf.AppendToolCall(&marotte.ToolCall{ID: "tool-2", Title: "Write File"})
 	if first != 0 || second != 1 {
 		t.Fatalf("AppendToolCall() returned %d then %d, want 0 then 1", first, second)
 	}
@@ -551,23 +551,23 @@ func TestAppendToolCall_IndexAddressesTheAppendedCall(t *testing.T) {
 func TestBuffer_HasToolInFlightSince(t *testing.T) {
 	cutoff := time.UnixMilli(1_000_000)
 	cases := map[string]struct {
-		status  vibekit.ToolStatus
+		status  marotte.ToolStatus
 		started time.Time
 		record  bool
 		want    bool
 	}{
-		"pending started inside the window":     {status: vibekit.ToolPending, started: cutoff.Add(time.Millisecond), record: true, want: true},
-		"in_progress started inside the window": {status: vibekit.ToolInProgress, started: cutoff.Add(time.Millisecond), record: true, want: true},
-		"in_progress started on the cutoff":     {status: vibekit.ToolInProgress, started: cutoff, record: true, want: true},
-		"in_progress started before the window": {status: vibekit.ToolInProgress, started: cutoff.Add(-time.Millisecond), record: true, want: false},
-		"in_progress with no recorded start":    {status: vibekit.ToolInProgress, record: false, want: false},
-		"completed inside the window":           {status: vibekit.ToolCompleted, started: cutoff.Add(time.Millisecond), record: true, want: false},
-		"failed inside the window":              {status: vibekit.ToolFailed, started: cutoff.Add(time.Millisecond), record: true, want: false},
-		"aborted inside the window":             {status: vibekit.ToolAborted, started: cutoff.Add(time.Millisecond), record: true, want: false},
+		"pending started inside the window":     {status: marotte.ToolPending, started: cutoff.Add(time.Millisecond), record: true, want: true},
+		"in_progress started inside the window": {status: marotte.ToolInProgress, started: cutoff.Add(time.Millisecond), record: true, want: true},
+		"in_progress started on the cutoff":     {status: marotte.ToolInProgress, started: cutoff, record: true, want: true},
+		"in_progress started before the window": {status: marotte.ToolInProgress, started: cutoff.Add(-time.Millisecond), record: true, want: false},
+		"in_progress with no recorded start":    {status: marotte.ToolInProgress, record: false, want: false},
+		"completed inside the window":           {status: marotte.ToolCompleted, started: cutoff.Add(time.Millisecond), record: true, want: false},
+		"failed inside the window":              {status: marotte.ToolFailed, started: cutoff.Add(time.Millisecond), record: true, want: false},
+		"aborted inside the window":             {status: marotte.ToolAborted, started: cutoff.Add(time.Millisecond), record: true, want: false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			buf := &Buffer{ToolCalls: []vibekit.ToolCall{{ID: "tc", Status: tc.status}}}
+			buf := &Buffer{ToolCalls: []marotte.ToolCall{{ID: "tc", Status: tc.status}}}
 			if tc.record {
 				buf.ToolStartTimes = map[string]int64{"tc": tc.started.UnixMilli()}
 			}

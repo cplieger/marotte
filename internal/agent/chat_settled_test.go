@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chatHoldsLiveRun is the server's half of "is everything this chat started actually
@@ -27,7 +27,7 @@ func TestChatHoldsLiveRun(t *testing.T) {
 
 	tests := map[string]struct {
 		leases []runlease.Lease
-		chatID vibekit.ChatID
+		chatID marotte.ChatID
 		want   bool
 		why    string
 	}{

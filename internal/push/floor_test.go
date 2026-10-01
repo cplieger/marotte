@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestPermissionKindHasNoSettingsKey is the structural half of the
@@ -21,7 +21,7 @@ import (
 func TestPermissionKindHasNoSettingsKey(t *testing.T) {
 	var found bool
 	for _, kr := range kindRegistry {
-		if kr.Kind != vibekit.PushKindPermission {
+		if kr.Kind != marotte.PushKindPermission {
 			continue
 		}
 		found = true
@@ -46,14 +46,14 @@ func TestPermissionKindHasNoSettingsKey(t *testing.T) {
 // produces a kind that is permanently on and unreachable from config.json, with
 // no error anywhere.
 func TestKeylessKindIsPermissionOnly(t *testing.T) {
-	var keyless []vibekit.PushKind
+	var keyless []marotte.PushKind
 	for _, kr := range kindRegistry {
 		if kr.SettingsKey == "" {
 			keyless = append(keyless, kr.Kind)
 		}
 	}
-	if len(keyless) != 1 || keyless[0] != vibekit.PushKindPermission {
-		t.Errorf("keyless kinds = %v, want exactly [%s]", keyless, vibekit.PushKindPermission)
+	if len(keyless) != 1 || keyless[0] != marotte.PushKindPermission {
+		t.Errorf("keyless kinds = %v, want exactly [%s]", keyless, marotte.PushKindPermission)
 	}
 	// The live table has to satisfy the rule the validator enforces, or the
 	// package would not have loaded.
@@ -72,15 +72,15 @@ func TestValidateKindRegistry_RejectsAForgottenKey(t *testing.T) {
 	}{
 		"the live table": {entries: kindRegistry},
 		"another kind forgot its key": {
-			entries: []KindPref{{vibekit.PushKindAgentFinished, "", true}},
+			entries: []KindPref{{marotte.PushKindAgentFinished, "", true}},
 			wantErr: "only the permission floor may omit one",
 		},
 		"the floor is not default-on": {
-			entries: []KindPref{{vibekit.PushKindPermission, "", false}},
+			entries: []KindPref{{marotte.PushKindPermission, "", false}},
 			wantErr: "must be DefaultOn",
 		},
 		"an unknown kind": {
-			entries: []KindPref{{vibekit.PushKind("notify_smoke_signal"), "notify_smoke", true}},
+			entries: []KindPref{{marotte.PushKind("notify_smoke_signal"), "notify_smoke", true}},
 			wantErr: "invalid PushKind",
 		},
 	}
@@ -130,7 +130,7 @@ func TestPermissionKindSurvivesEveryConfig(t *testing.T) {
 			t.Cleanup(func() { s.Close() })
 
 			s.mu.Lock()
-			on := s.prefs[vibekit.PushKindPermission]
+			on := s.prefs[marotte.PushKindPermission]
 			s.mu.Unlock()
 			if !on {
 				t.Errorf("config %s silenced the permission ask; it is a floor, not a preference", body)

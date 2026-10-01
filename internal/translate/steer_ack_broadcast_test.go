@@ -3,19 +3,19 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // steerAcksFrom pulls the ack-bearing steer_injected frames out of a capture.
 // The read frame KAS sends carries no Ack, so filtering on that field is what
 // separates the two halves of the event rather than counting frames.
-func steerAcksFrom(events []vibekit.ServerEvent) []vibekit.SteerInjectedPayload {
-	var out []vibekit.SteerInjectedPayload
+func steerAcksFrom(events []marotte.ServerEvent) []marotte.SteerInjectedPayload {
+	var out []marotte.SteerInjectedPayload
 	for _, e := range events {
-		if e.Type != vibekit.EventSteerInjected {
+		if e.Type != marotte.EventSteerInjected {
 			continue
 		}
-		p, ok := e.Payload.(vibekit.SteerInjectedPayload)
+		p, ok := e.Payload.(marotte.SteerInjectedPayload)
 		if ok && p.Ack != "" {
 			out = append(out, p)
 		}
@@ -24,7 +24,7 @@ func steerAcksFrom(events []vibekit.ServerEvent) []vibekit.SteerInjectedPayload 
 }
 
 // feedChunk streams one text delta through the live handler.
-func feedChunk(t *testing.T, tr *Translator, chatID vibekit.ChatID, text string) {
+func feedChunk(t *testing.T, tr *Translator, chatID marotte.ChatID, text string) {
 	t.Helper()
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": text},
@@ -36,7 +36,7 @@ func feedChunk(t *testing.T, tr *Translator, chatID vibekit.ChatID, text string)
 func TestHandleAssistantChunk_BroadcastsTheAgentsAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "Done. [STEERING steer-abc: rebased onto main instead]")
 
@@ -64,7 +64,7 @@ func TestHandleAssistantChunk_BroadcastsTheAgentsAcknowledgement(t *testing.T) {
 func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "All set.")
 	feedChunk(t, tr, chatID, "[STEERING steer-solo: switched to the new API]")
@@ -89,7 +89,7 @@ func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing
 func TestHandleAssistantChunk_AcknowledgementFiresOnceWhenSplit(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	for _, part := range []string{"ok ", "[STEERING ste", "er-split: kept the ", "existing shape]", " bye"} {
 		feedChunk(t, tr, chatID, part)
@@ -110,7 +110,7 @@ func TestHandleAssistantChunk_AcknowledgementFiresOnceWhenSplit(t *testing.T) {
 func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "[STEERING steer-x: a thought]"},
@@ -128,7 +128,7 @@ func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 func TestHandleAssistantChunk_EmptyAcknowledgementIsNotBroadcast(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "done [STEERING steer-blank:    ]")
 
@@ -145,7 +145,7 @@ func TestHandleAssistantChunk_EmptyAcknowledgementIsNotBroadcast(t *testing.T) {
 func TestHandleAssistantChunk_AcknowledgementCarriesAnOrigin(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	// An id the ledger does not know, which is the ORDINARY case for an ack: the
 	// steer was sent before this process started, or its TTL has expired.
@@ -155,9 +155,9 @@ func TestHandleAssistantChunk_AcknowledgementCarriesAnOrigin(t *testing.T) {
 	if len(acks) != 1 {
 		t.Fatalf("got %d ack frames, want 1: %v", len(acks), eventTypes(*events))
 	}
-	if got := acks[0].Origin; got != vibekit.SteerOriginUser && got != vibekit.SteerOriginAgent {
+	if got := acks[0].Origin; got != marotte.SteerOriginUser && got != marotte.SteerOriginAgent {
 		t.Errorf("Origin = %q, want %q or %q — the client rejects anything else and drops the frame",
-			got, vibekit.SteerOriginUser, vibekit.SteerOriginAgent)
+			got, marotte.SteerOriginUser, marotte.SteerOriginAgent)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestHandleAssistantChunk_AcknowledgementCarriesTheLedgersOrigin(t *testing.
 	deps, events := newEventCaptureDeps()
 	deps.userSteers = map[string]bool{"steer-mine": true}
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "done [STEERING steer-mine: rebased onto main instead]")
 
@@ -176,8 +176,8 @@ func TestHandleAssistantChunk_AcknowledgementCarriesTheLedgersOrigin(t *testing.
 	if len(acks) != 1 {
 		t.Fatalf("got %d ack frames, want 1: %v", len(acks), eventTypes(*events))
 	}
-	if got := acks[0].Origin; got != vibekit.SteerOriginUser {
+	if got := acks[0].Origin; got != marotte.SteerOriginUser {
 		t.Errorf("Origin = %q, want %q for a steer the ledger records as the user's",
-			got, vibekit.SteerOriginUser)
+			got, marotte.SteerOriginUser)
 	}
 }

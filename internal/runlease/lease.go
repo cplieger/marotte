@@ -1,10 +1,10 @@
-// Package runlease holds what vibekit knows about a workflow run KAS owns.
+// Package runlease holds what marotte knows about a workflow run KAS owns.
 //
-// KAS owns the run; vibekit owns the ENVELOPE — whether it may start, how long it
+// KAS owns the run; marotte owns the ENVELOPE — whether it may start, how long it
 // may execute, whether it runs unattended, and what its ending is called.
 //
-// One lease per run vibekit itself put on the wire. That scoping is the safety
-// property of the restart-orphan sweep: a lease exists if and only if vibekit
+// One lease per run marotte itself put on the wire. That scoping is the safety
+// property of the restart-orphan sweep: a lease exists if and only if marotte
 // minted one, so a TUI-launched run can never be swept.
 package runlease
 
@@ -17,7 +17,7 @@ import "time"
 // and excluded from the orphan sweep's CANCEL arm.
 type Origin string
 
-// The three launches vibekit knows about. There is deliberately no `tui` value: a
+// The three launches marotte knows about. There is deliberately no `tui` value: a
 // TUI-launched run has no lease at all, and that absence keeps the sweep off it.
 const (
 	OriginScheduled Origin = "scheduled"
@@ -31,14 +31,14 @@ func (o Origin) Valid() bool {
 	return o == OriginScheduled || o == OriginManual || o == OriginAgent
 }
 
-// Lease is vibekit's record of one run. Field order is govet fieldalignment's:
+// Lease is marotte's record of one run. Field order is govet fieldalignment's:
 // times first (each carries a *Location in its tail), then strings, then the bool.
 type Lease struct {
-	// StartedAt is when vibekit put the run on the wire; diagnosis only.
+	// StartedAt is when marotte put the run on the wire; diagnosis only.
 	StartedAt time.Time `json:"started_at"`
 	// Deadline is the ONE instant at which this run is cancelled, MUTABLE: re-stamped
 	// on every start, cleared on every pause, and rolled forward by observable
-	// progress, so the primary bound is on time spent making none. ZERO means vibekit
+	// progress, so the primary bound is on time spent making none. ZERO means marotte
 	// is not bounding the run — parked, or read back from disk.
 	Deadline time.Time `json:"deadline,omitzero"`
 	// SlotAt is when this run's own next scheduled slot comes due — an INPUT to
@@ -61,7 +61,7 @@ type Lease struct {
 	Unattended bool `json:"unattended"`
 }
 
-// Bounded reports whether vibekit believes the run to be EXECUTING under a deadline it set.
+// Bounded reports whether marotte believes the run to be EXECUTING under a deadline it set.
 func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }
 
 // expired reports whether the lease's deadline has passed; a parked lease is never

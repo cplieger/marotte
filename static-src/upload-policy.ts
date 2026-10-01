@@ -29,7 +29,7 @@
  *  a relative "uploads" would be refused by the first and resolved under the
  *  workspace by the second — two different directories for one string.
  *
- *  Mirrors DefaultUploadDir in internal/vibekit/domain_paths.go;
+ *  Mirrors DefaultUploadDir in internal/marotte/domain_paths.go;
  *  TestUploadPolicyMatchesClient pins the two together. */
 export const UPLOADS_DIR = "/uploads";
 

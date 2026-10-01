@@ -1,7 +1,7 @@
 // The transcript's depth ladder and its one hover recipe, in BOTH themes, because
 // the claim being guarded is that the two are one ladder run in opposite
 // directions. The ladder, the numbers and what a collapse looked like:
-// vibekit-ui.md "Color system".
+// marotte-ui.md "Color system".
 //
 // Shelling out to `scripts/css-contrast.py` rather than reimplementing the colour
 // maths, for the reason `rail-mark-contrast.node.test.ts` records: a second

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // One token pass derives both header facts a raw messages array carries. A wrong count
@@ -121,8 +121,8 @@ func FuzzDecodeChatHeaderMessageCount(f *testing.F) {
 
 // The obvious implementation the streaming scan must agree with. A non-object element
 // contributes nothing, matching encoding/json's refusal to unmarshal a scalar into a struct.
-func oracleLastOutcome(arr []json.RawMessage) vibekit.TurnOutcome {
-	var last vibekit.TurnOutcome
+func oracleLastOutcome(arr []json.RawMessage) marotte.TurnOutcome {
+	var last marotte.TurnOutcome
 	for _, elem := range arr {
 		var probe outcomeProbe
 		if err := json.Unmarshal(elem, &probe); err != nil {

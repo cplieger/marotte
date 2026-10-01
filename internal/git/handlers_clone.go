@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/webhttp/v3"
 )
 

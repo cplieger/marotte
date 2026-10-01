@@ -4,7 +4,7 @@ package translate
 // carries a workflow step's question.
 //
 // The tool splits one `send_message(severity:"warning")` into three independent
-// signals, and vibekit used to consume the two that carry no question text:
+// signals, and marotte used to consume the two that carry no question text:
 //
 //   - the run PAUSE (`node_paused`, then a run-level `paused` whose `pauseReason`
 //     is a fixed literal and whose `pauseDetail` is empty) — consumed, which is
@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // kasSessionNotify mirrors `_kiro/session/notify`'s params.
@@ -77,16 +77,16 @@ const severityWarning = "warning"
 //
 // Returns the payload rather than broadcasting it, so this derivation can be
 // tested against a frame with no host at all.
-func (t *Translator) SessionNotifyAsk(msg *vibekit.RPCResponse) (vibekit.RunInputNeededPayload, bool) {
+func (t *Translator) SessionNotifyAsk(msg *marotte.RPCResponse) (marotte.RunInputNeededPayload, bool) {
 	p, ok := unmarshalParams[kasSessionNotify](msg, "_kiro/session/notify")
 	if !ok || p.Severity != severityWarning || p.WorkflowID == "" || p.Message == "" {
-		return vibekit.RunInputNeededPayload{}, false
+		return marotte.RunInputNeededPayload{}, false
 	}
 	node := p.NodeID
 	if node == "" {
 		node = t.steps.refFor(p.CallerSessionID).NodeID
 	}
-	return vibekit.RunInputNeededPayload{
+	return marotte.RunInputNeededPayload{
 		WorkflowID: p.WorkflowID,
 		// The notification's own id when KAS sent one, so a repeat pass of a loop
 		// body cannot collide with the previous pass's ask; the caller session plus

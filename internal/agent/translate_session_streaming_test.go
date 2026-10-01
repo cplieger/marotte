@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func BenchmarkHandleAssistantChunk(b *testing.B) {
@@ -32,7 +32,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			h, cs, _ := newTestHub()
-			_, _ = cs.Mutate(b.Context(), "bench", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(b.Context(), "bench", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "bench"
 				return true
 			})
@@ -54,7 +54,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 // lets the client merge by id instead of mounting a second card.
 func TestHandlePlan_OneRowPerTurnCarryingTheNewestEntries(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	pending := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"pending"},{"content":"step 2","priority":"medium","status":"pending"}]}`)
 	h.translator.HandlePlan(t.Context(), "c1", pending)
@@ -79,8 +79,8 @@ func TestHandlePlan_OneRowPerTurnCarryingTheNewestEntries(t *testing.T) {
 		t.Errorf("plan row id = %q, want the first frame's %q; the client merges by id, so a new id mounts a second card", got, firstID)
 	}
 	for i, e := range c.Messages[0].Plan {
-		if e.Status != vibekit.PlanCompleted {
-			t.Errorf("entry %d status = %q, want %q: the row must carry the NEWEST entries", i, e.Status, vibekit.PlanCompleted)
+		if e.Status != marotte.PlanCompleted {
+			t.Errorf("entry %d status = %q, want %q: the row must carry the NEWEST entries", i, e.Status, marotte.PlanCompleted)
 		}
 	}
 }
@@ -90,13 +90,13 @@ func TestHandlePlan_OneRowPerTurnCarryingTheNewestEntries(t *testing.T) {
 // every plan in a chat would fold onto the first one ever recorded.
 func TestHandlePlan_AUserMessageStartsANewTurnsPlan(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	first := json.RawMessage(`{"entries":[{"content":"turn one","priority":"high","status":"pending"}]}`)
 	h.translator.HandlePlan(t.Context(), "c1", first)
 
-	_ = cs.AppendMessage(t.Context(), "c1", &vibekit.Message{
-		ID: "m-user", Role: vibekit.RoleUser, Content: "next thing please",
+	_ = cs.AppendMessage(t.Context(), "c1", &marotte.Message{
+		ID: "m-user", Role: marotte.RoleUser, Content: "next thing please",
 	})
 
 	second := json.RawMessage(`{"entries":[{"content":"turn two","priority":"high","status":"pending"}]}`)
@@ -116,7 +116,7 @@ func TestHandlePlan_AUserMessageStartsANewTurnsPlan(t *testing.T) {
 
 func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.CurrentModeID = "code"
 		return true

@@ -252,7 +252,7 @@ func TestIdentityCache_PublishWinsAgainstAnInFlightRead(t *testing.T) {
 	c.snapshot()
 	waitForCalls(t, r, 1)
 
-	// The logout: vibekit knows the outcome, so it publishes rather than forking.
+	// The logout: marotte knows the outcome, so it publishes rather than forking.
 	signedOut := signedOutIdentity()
 	c.publish(&signedOut)
 	if got := c.snapshot(); got.State != WhoamiSignedOut {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestTemplateToResponse(t *testing.T) {
@@ -57,9 +57,9 @@ func TestTemplateToResponse(t *testing.T) {
 	if got.Models[1].RateMultiplier != 2.5 || !got.Models[1].HasEffort {
 		t.Errorf("model meta mapping: %+v", got.Models[1])
 	}
-	if got.Catalog != vibekit.CatalogReady {
+	if got.Catalog != marotte.CatalogReady {
 		t.Errorf("catalog = %q, want %q: a decoded `model` option is a catalog KAS answered with",
-			got.Catalog, vibekit.CatalogReady)
+			got.Catalog, marotte.CatalogReady)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t 
 	  {"id": "effortLevel", "currentValue": "high", "options": [{"value": "high", "name": "High"}]}
 	]}`
 
-	verdict := func(raw string) vibekit.CatalogState {
+	verdict := func(raw string) marotte.CatalogState {
 		t.Helper()
 		var tpl kasConfigTemplate
 		if err := json.Unmarshal([]byte(raw), &tpl); err != nil {
@@ -84,13 +84,13 @@ func TestTemplateToResponse_DistinguishesAnAbsentModelOptionFromAPopulatedOne(t 
 		return withCatalogVerdict(templateToResponse(&tpl)).Catalog
 	}
 
-	if got := verdict(present); got != vibekit.CatalogReady {
-		t.Errorf("a template carrying a model option: catalog = %q, want %q", got, vibekit.CatalogReady)
+	if got := verdict(present); got != marotte.CatalogReady {
+		t.Errorf("a template carrying a model option: catalog = %q, want %q", got, marotte.CatalogReady)
 	}
-	if got := verdict(absent); got != vibekit.CatalogEmpty {
+	if got := verdict(absent); got != marotte.CatalogEmpty {
 		t.Errorf("a template with no model option: catalog = %q, want %q. The two outcomes must "+
 			"differ, or a client cannot tell a cache that answered nothing from one that answered",
-			got, vibekit.CatalogEmpty)
+			got, marotte.CatalogEmpty)
 	}
 }
 
@@ -111,8 +111,8 @@ func TestTemplateToResponse_APresentOptionWhoseEntriesAllFilterOutIsStillReady(t
 	if len(got.Models) != 0 {
 		t.Fatalf("models = %+v, want the deprecated entry filtered out", got.Models)
 	}
-	if got.Catalog != vibekit.CatalogReady {
-		t.Errorf("catalog = %q, want %q", got.Catalog, vibekit.CatalogReady)
+	if got.Catalog != marotte.CatalogReady {
+		t.Errorf("catalog = %q, want %q", got.Catalog, marotte.CatalogReady)
 	}
 }
 
@@ -147,7 +147,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 	  ]
 	}`
 
-	serve := func(t *testing.T, h *Runtime) vibekit.ConfigTemplateResponse {
+	serve := func(t *testing.T, h *Runtime) marotte.ConfigTemplateResponse {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/config-template", nil)
 		rec := httptest.NewRecorder()
@@ -156,7 +156,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 			t.Fatalf("status = %d, want 200: the client has no error path here, it reads the body",
 				rec.Code)
 		}
-		var got vibekit.ConfigTemplateResponse
+		var got marotte.ConfigTemplateResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("decode reply %q: %v", rec.Body.String(), err)
 		}
@@ -177,9 +177,9 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		if got.DefaultModel != "m-default" {
 			t.Errorf("default model = %q, want m-default", got.DefaultModel)
 		}
-		if got.Catalog != vibekit.CatalogReady || got.CatalogReason != "" {
+		if got.Catalog != marotte.CatalogReady || got.CatalogReason != "" {
 			t.Errorf("catalog = %q/%q, want %q with no reason", got.Catalog, got.CatalogReason,
-				vibekit.CatalogReady)
+				marotte.CatalogReady)
 		}
 		out := logs.String()
 		if strings.Contains(out, `"msg":"config template failed"`) ||
@@ -197,9 +197,9 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		if len(got.Modes) != 0 || len(got.Models) != 0 {
 			t.Errorf("got %+v, want empty lists so the client keeps its fallbacks", got)
 		}
-		if got.Catalog != vibekit.CatalogUnavailable || got.CatalogReason != vibekit.CatalogReasonRPC {
+		if got.Catalog != marotte.CatalogUnavailable || got.CatalogReason != marotte.CatalogReasonRPC {
 			t.Errorf("catalog = %q/%q, want %q/%q: a failed read is the one outcome retrying can fix",
-				got.Catalog, got.CatalogReason, vibekit.CatalogUnavailable, vibekit.CatalogReasonRPC)
+				got.Catalog, got.CatalogReason, marotte.CatalogUnavailable, marotte.CatalogReasonRPC)
 		}
 		const wantLine = "config template failed"
 		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
@@ -219,14 +219,14 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		if len(got.Modes) != 0 || len(got.Models) != 0 {
 			t.Errorf("got %+v, want empty lists so the client keeps its fallbacks", got)
 		}
-		if got.Catalog != vibekit.CatalogUnavailable || got.CatalogReason != vibekit.CatalogReasonDecode {
+		if got.Catalog != marotte.CatalogUnavailable || got.CatalogReason != marotte.CatalogReasonDecode {
 			t.Errorf("catalog = %q/%q, want %q/%q: a contract that moved is a different failure "+
 				"from a bridge that died, and only one of them is worth retrying",
-				got.Catalog, got.CatalogReason, vibekit.CatalogUnavailable, vibekit.CatalogReasonDecode)
+				got.Catalog, got.CatalogReason, marotte.CatalogUnavailable, marotte.CatalogReasonDecode)
 		}
 		const wantLine = "config template decode failed"
 		if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
-			t.Errorf("a template vibekit could not read said nothing; want a line reading %q. "+
+			t.Errorf("a template marotte could not read said nothing; want a line reading %q. "+
 				"Got: %s", wantLine, out)
 		}
 	})
@@ -238,7 +238,7 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		br.callResults = map[string]json.RawMessage{
 			methodKiroConfigTemplate: json.RawMessage(goodReply),
 		}
-		h.catalog.SetModes([]vibekit.SessionMode{
+		h.catalog.SetModes([]marotte.SessionMode{
 			{ID: "vibe", Name: "Default", Source: "bundled"},
 			{ID: "reviewer", Name: "reviewer", Source: "workspace"},
 		})
@@ -258,12 +258,12 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		}
 	})
 
-	// A template outage must not hide a catalog vibekit already holds.
+	// A template outage must not hide a catalog marotte already holds.
 	t.Run("a live catalog survives a template outage", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroConfigTemplate: errors.New("kas gone")}
-		h.catalog.SetModes([]vibekit.SessionMode{{ID: "reviewer", Name: "reviewer", Source: "workspace"}})
-		h.catalog.SetModels([]vibekit.SessionModel{{ID: "m-live", Name: "Live"}})
+		h.catalog.SetModes([]marotte.SessionMode{{ID: "reviewer", Name: "reviewer", Source: "workspace"}})
+		h.catalog.SetModels([]marotte.SessionModel{{ID: "m-live", Name: "Live"}})
 
 		got := serve(t, h)
 
@@ -273,9 +273,9 @@ func TestHandleConfigTemplate_DegradesToEmptyListsAndSaysSo(t *testing.T) {
 		if len(got.Models) != 1 || got.Models[0].ID != "m-live" {
 			t.Errorf("models = %+v, want the live catalog's entry", got.Models)
 		}
-		if got.Catalog != vibekit.CatalogReady || got.CatalogReason != vibekit.CatalogReasonRPC {
+		if got.Catalog != marotte.CatalogReady || got.CatalogReason != marotte.CatalogReasonRPC {
 			t.Errorf("handleConfigTemplate catalog = %q/%q, want %q/%q with live models",
-				got.Catalog, got.CatalogReason, vibekit.CatalogReady, vibekit.CatalogReasonRPC)
+				got.Catalog, got.CatalogReason, marotte.CatalogReady, marotte.CatalogReasonRPC)
 		}
 	})
 }

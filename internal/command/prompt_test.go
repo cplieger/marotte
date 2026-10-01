@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestValidatePromptPayload(t *testing.T) {
 	valid := func(text, msgID, model string) []byte {
-		b, _ := json.Marshal(vibekit.PromptCommand{Text: text, MessageID: msgID, Model: model})
+		b, _ := json.Marshal(marotte.PromptCommand{Text: text, MessageID: msgID, Model: model})
 		return b
 	}
 
@@ -35,7 +35,7 @@ func TestValidatePromptPayload(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := &vibekit.ClientCommand{Payload: tc.payload}
+			cmd := &marotte.ClientCommand{Payload: tc.payload}
 			_, status, err := validatePromptPayload(cmd)
 			if tc.wantErr && err == nil {
 				t.Fatal("expected error, got nil")
@@ -77,7 +77,7 @@ func TestAppendUserMessage_DerivesTheChatNameFromTheFirstMessage(t *testing.T) {
 
 			err := appendUserMessage(t.Context(), deps, deps,
 				Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1",
-				&vibekit.PromptCommand{Text: tc.text, MessageID: "m-1"})
+				&marotte.PromptCommand{Text: tc.text, MessageID: "m-1"})
 			if err != nil {
 				t.Fatalf("appendUserMessage: %v", err)
 			}
@@ -100,7 +100,7 @@ func TestAppendUserMessage_LeavesTheNameAloneAfterTheFirstMessage(t *testing.T) 
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 	ws := Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}
 
-	for _, m := range []*vibekit.PromptCommand{
+	for _, m := range []*marotte.PromptCommand{
 		{Text: "the opening question", MessageID: "m-1"},
 		{Text: "a follow up nobody wants in the tab title", MessageID: "m-2"},
 	} {

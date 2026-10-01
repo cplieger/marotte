@@ -1,8 +1,8 @@
 // Package version holds the single-source-of-truth build version string for
-// vibekit, stamped by the release image build.
+// marotte, stamped by the release image build.
 //
 // The -X path must be the FULL module path — `-ldflags "-X
-// github.com/cplieger/vibekit/internal/version.Build=<tag>"`. A path that
+// github.com/cplieger/marotte/internal/version.Build=<tag>"`. A path that
 // matches no package in the build is discarded silently: the linker reports
 // nothing, the build succeeds, and Build keeps its default. This file
 // documented the module-relative spelling for its whole life, and the

@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // replayAdoptBudget bounds the wait, because the caller's context cannot: a
@@ -27,7 +27,7 @@ var ErrReplayNotAdopted = errors.New("session/load replay not adopted within the
 //
 // A non-nil error means DO NOT REWRITE: ErrReplayNotAdopted for the budget, the
 // caller's own context error otherwise.
-func (bc *BridgeCoordinator) AwaitReplayAdopted(ctx context.Context, chatID vibekit.ChatID) error {
+func (bc *BridgeCoordinator) AwaitReplayAdopted(ctx context.Context, chatID marotte.ChatID) error {
 	if bc.replayProjection == nil {
 		return nil
 	}

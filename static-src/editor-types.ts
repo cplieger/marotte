@@ -19,7 +19,7 @@ const DIFF_LABEL_WORKING_TREE = "working tree";
 
 // THE `pending:` VIRTUAL PATH FAMILY IS GONE. isPendingPath, makePendingPath,
 // parsePendingPath and pendingDiffSource addressed a staged write held in
-// vibekit's memory and served from GET /api/pending-changes/. There are no staged
+// marotte's memory and served from GET /api/pending-changes/. There are no staged
 // writes and no such endpoint: KAS holds the content and reviews a whole turn at
 // once, so a path scheme with nothing behind it is a route to a 404.
 //

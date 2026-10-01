@@ -36,10 +36,10 @@ describe("joinPath", () => {
   const cases: [string, string, string][] = [
     ["/", "workspace", "/workspace"],
     ["/", "file.txt", "/file.txt"],
-    ["/workspace", "vibekit", "/workspace/vibekit"],
-    ["/workspace/vibekit", "static-src", "/workspace/vibekit/static-src"],
-    ["/workspace/", "vibekit", "/workspace/vibekit"],
-    ["/workspace//", "vibekit", "/workspace/vibekit"],
+    ["/workspace", "marotte", "/workspace/marotte"],
+    ["/workspace/marotte", "static-src", "/workspace/marotte/static-src"],
+    ["/workspace/", "marotte", "/workspace/marotte"],
+    ["/workspace//", "marotte", "/workspace/marotte"],
   ];
 
   for (const [base, name, expected] of cases) {
@@ -54,8 +54,8 @@ describe("parentPath", () => {
     ["/", "/"],
     ["", "/"],
     ["/workspace", "/"],
-    ["/workspace/vibekit", "/workspace"],
-    ["/workspace/vibekit/static-src", "/workspace/vibekit"],
+    ["/workspace/marotte", "/workspace"],
+    ["/workspace/marotte/static-src", "/workspace/marotte"],
     ["/a/b/c/d", "/a/b/c"],
   ];
 

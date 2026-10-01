@@ -1,7 +1,7 @@
 //
 // Drift guard for the anti-FOUC theme-init script inlined in static/index.html.
 // That inline <head> IIFE must stay byte-identical to @cplieger/ui-primitives'
-// themeInitSnippetFromJSON("vibekit.ui-state", "theme") output: the library owns
+// themeInitSnippetFromJSON("marotte.ui-state", "theme") output: the library owns
 // the pre-paint theme resolution, and internal/server/security.go hashes the
 // exact bytes into the CSP. If the library changes the snippet, this test fails
 // and forces a regeneration of the inline block rather than letting it drift.

@@ -9,21 +9,21 @@ package command
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeRunOwner answers which chat launched a run, as *agent.Runs does off the
 // lease. `ok` and an empty chat id are DIFFERENT answers — a parentless run has a
 // lease and no chat, a released one has neither — so both are expressible.
 type fakeRunOwner struct {
-	chats map[string]vibekit.ChatID
+	chats map[string]marotte.ChatID
 	// known is the lease's existence, independent of the chat id.
 	known map[string]bool
 }
 
-func (f *fakeRunOwner) RunChat(workflowID string) (vibekit.ChatID, bool) {
+func (f *fakeRunOwner) RunChat(workflowID string) (marotte.ChatID, bool) {
 	if f.known != nil && !f.known[workflowID] {
 		return "", false
 	}
@@ -51,7 +51,7 @@ func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
 	t.Helper()
 	open, _ := st.List()
 	for _, tab := range open {
-		if tab.Kind == vibekit.TabKindRun && tab.Ref == workflowID {
+		if tab.Kind == marotte.TabKindRun && tab.Ref == workflowID {
 			return tab.Parent
 		}
 	}
@@ -65,15 +65,15 @@ func runTabParent(t *testing.T, st *tabs.Store, workflowID string) string {
 // good, because Parent is set once.
 func TestOpenTab_FillsARunsParentFromItsLease(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	runs := &fakeRunOwner{chats: map[string]vibekit.ChatID{"wf_1": "c-launcher"}}
+	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-launcher"}}
 	mem, st, _ := newRunTabMembership(t, store, runs)
 	seedRecord(t, store, "c-launcher")
-	chatTab, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-launcher"}, "op-chat")
+	chatTab, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-launcher"}, "op-chat")
 	if err != nil {
 		t.Fatalf("open the launching chat's tab: %v", err)
 	}
 
-	opened, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf_1"}, "op-run")
+	opened, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run")
 	if err != nil {
 		t.Fatalf("OpenTab(run) = %v", err)
 	}
@@ -93,20 +93,20 @@ func TestOpenTab_FillsARunsParentFromItsLease(t *testing.T) {
 // been released, so the coordinator has nothing to answer with there.
 func TestOpenTab_AClientSuppliedParentWins(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	runs := &fakeRunOwner{chats: map[string]vibekit.ChatID{"wf_1": "c-lease"}}
+	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"wf_1": "c-lease"}}
 	mem, st, _ := newRunTabMembership(t, store, runs)
 	seedRecord(t, store, "c-lease")
 	seedRecord(t, store, "c-explicit")
-	if _, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-lease"}, "op-a"); err != nil {
+	if _, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-lease"}, "op-a"); err != nil {
 		t.Fatalf("open c-lease: %v", err)
 	}
-	explicit, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-explicit"}, "op-b")
+	explicit, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-explicit"}, "op-b")
 	if err != nil {
 		t.Fatalf("open c-explicit: %v", err)
 	}
 
-	if _, err := mem.OpenTab(t.Context(), vibekit.OpenTab{
-		Kind:   vibekit.TabKindRun,
+	if _, err := mem.OpenTab(t.Context(), marotte.OpenTab{
+		Kind:   marotte.TabKindRun,
 		Ref:    "wf_1",
 		Parent: explicit.Subject.ID,
 	}, "op-run"); err != nil {
@@ -125,7 +125,7 @@ func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	for name, runs := range map[string]RunOwner{
 		"a parentless run's lease carries no chat": &fakeRunOwner{
-			chats: map[string]vibekit.ChatID{"wf_1": ""},
+			chats: map[string]marotte.ChatID{"wf_1": ""},
 			known: map[string]bool{"wf_1": true},
 		},
 		"a finished run has no lease at all": &fakeRunOwner{known: map[string]bool{}},
@@ -134,7 +134,7 @@ func TestOpenTab_LeavesAParentlessRunTopLevel(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			mem, st, _ := newRunTabMembership(t, store, runs)
 			if _, err := mem.OpenTab(t.Context(),
-				vibekit.OpenTab{Kind: vibekit.TabKindRun, Ref: "wf_1"}, "op-run"); err != nil {
+				marotte.OpenTab{Kind: marotte.TabKindRun, Ref: "wf_1"}, "op-run"); err != nil {
 				t.Fatalf("OpenTab(run) = %v", err)
 			}
 			if got := runTabParent(t, st, "wf_1"); got != "" {
@@ -151,17 +151,17 @@ func TestOpenTab_FillsNoParentForAnyOtherKind(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	// A run owner that would answer for ANY ref, so a kind leaking through the
 	// gate is visible rather than merely unproven.
-	runs := &fakeRunOwner{chats: map[string]vibekit.ChatID{"/workspace/a.go": "c-launcher", "c-other": "c-launcher"}}
+	runs := &fakeRunOwner{chats: map[string]marotte.ChatID{"/workspace/a.go": "c-launcher", "c-other": "c-launcher"}}
 	mem, st, _ := newRunTabMembership(t, store, runs)
 	seedRecord(t, store, "c-launcher")
 	seedRecord(t, store, "c-other")
-	if _, err := mem.OpenTab(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-launcher"}, "op-a"); err != nil {
+	if _, err := mem.OpenTab(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-launcher"}, "op-a"); err != nil {
 		t.Fatalf("open c-launcher: %v", err)
 	}
 
-	for _, spec := range []vibekit.OpenTab{
-		{Kind: vibekit.TabKindEditor, Ref: "/workspace/a.go"},
-		{Kind: vibekit.TabKindChat, Ref: "c-other"},
+	for _, spec := range []marotte.OpenTab{
+		{Kind: marotte.TabKindEditor, Ref: "/workspace/a.go"},
+		{Kind: marotte.TabKindChat, Ref: "c-other"},
 	} {
 		opened, err := mem.OpenTab(t.Context(), spec, "op-"+spec.Ref)
 		if err != nil {

@@ -11,7 +11,7 @@ import { registerCleanup } from "./actions/index.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
 // The GET /api/settings payload. GENERATED from the Go struct
-// vibekit.EffectiveSettings (see internal/wirespec), so it is not maintained
+// marotte.EffectiveSettings (see internal/wirespec), so it is not maintained
 // here and cannot drift from what the server sends.
 //
 // Every field is REQUIRED, which is the whole point. The hand-written interface

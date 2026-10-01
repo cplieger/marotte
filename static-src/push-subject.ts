@@ -3,13 +3,13 @@
 
 import type { Route } from "./route-path.js";
 
-/** vibekit.PRSubjectPrefix. The ONLY TypeScript copy. */
+/** marotte.PRSubjectPrefix. The ONLY TypeScript copy. */
 const PR_SUBJECT_PREFIX = "pr:";
 
-/** vibekit.RunSubjectPrefix. The ONLY TypeScript copy. */
+/** marotte.RunSubjectPrefix. The ONLY TypeScript copy. */
 const RUN_SUBJECT_PREFIX = "run:";
 
-/** The two subject fields as they travel (vibekit.PushSubject, push_types.go:83-86). */
+/** The two subject fields as they travel (marotte.PushSubject, push_types.go:83-86). */
 interface PushWire {
   readonly chatId: string;
   readonly subject: string;
@@ -53,13 +53,13 @@ export function pushTargetRoute(target: PushTarget): Route {
 export function pushTargetTag(target: PushTarget): string {
   switch (target.kind) {
     case "chat":
-      return `vibekit:${target.chatID}`;
+      return `marotte:${target.chatID}`;
     case "pr":
-      return `vibekit:${PR_SUBJECT_PREFIX}${target.identity}`;
+      return `marotte:${PR_SUBJECT_PREFIX}${target.identity}`;
     case "run":
-      return `vibekit:${RUN_SUBJECT_PREFIX}${target.workflowID}`;
+      return `marotte:${RUN_SUBJECT_PREFIX}${target.workflowID}`;
     case "workspace":
-      return "vibekit";
+      return "marotte";
   }
 }
 
@@ -67,11 +67,11 @@ export function pushTargetTag(target: PushTarget): string {
  *  pull request's banner has no ask to be settled by and is never retracted, and the
  *  constant tag is the cue this page showed for no one chat. */
 export function settleableTag(tag: string): boolean {
-  return tag.startsWith("vibekit:") && !tag.startsWith(`vibekit:${PR_SUBJECT_PREFIX}`);
+  return tag.startsWith("marotte:") && !tag.startsWith(`marotte:${PR_SUBJECT_PREFIX}`);
 }
 
 /** A pull request's identity as both halves of the app spell it: the subject key
- *  minus its prefix. Twin of the composition in vibekit.PRSubject.
+ *  minus its prefix. Twin of the composition in marotte.PRSubject.
  *
  *  OPAQUE, and never parsed: `forgeID` is itself `<kind>:<host>` (forges.MakeID), so
  *  the key contains a colon and is not self-delimiting. The PRs tab COMPARES the

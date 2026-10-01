@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // TestSettingsWrite_PUTCarriesOverAManagedKeyItOmits is the claim that a

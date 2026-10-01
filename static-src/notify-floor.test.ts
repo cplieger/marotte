@@ -94,7 +94,7 @@ describe("no client code can address the removed setting", () => {
   // Reads the GENERATED type, not persist.ts. This case was written against a
   // hand-written `AppSettings` interface in persist.ts; that interface is deleted
   // and persist.ts now re-exports EffectiveSettings, which cmd/wire-codegen emits
-  // from internal/vibekit. So the old assertion had stopped looking at the file
+  // from internal/marotte. So the old assertion had stopped looking at the file
   // that declares the field and could not have failed. The field is also REQUIRED
   // now rather than optional, hence the `\??`.
   it("the generated settings type declares no field for the key", () => {
@@ -119,7 +119,7 @@ describe("the master switch still governs everything", () => {
     // Nothing has enabled notifications, so the ask notification is suppressed
     // by the master gate — the one switch that is still a preference.
     expect(notify.areNotificationsEnabled()).toBe(false);
-    expect(notify.notifyIfHidden("Vibekit", "Permission needed", chatTarget(""))).toBe(false);
+    expect(notify.notifyIfHidden("Marotte", "Permission needed", chatTarget(""))).toBe(false);
 
     // And a settings payload still carrying the removed key changes nothing
     // about the permission channel: there is no field left to land in.

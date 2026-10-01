@@ -108,7 +108,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 // nil policy is a pass-through (unset ALLOWED_HOSTS stays backward
 // compatible).
 func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
-	policy, invalid := webhttp.ParseHostList([]string{"vibekit.example.com"},
+	policy, invalid := webhttp.ParseHostList([]string{"marotte.example.com"},
 		webhttp.WithLoopbackExempt(true),
 		webhttp.WithHostAllowlistError("",
 			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
@@ -144,14 +144,14 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	})
 
 	t.Run("allowed host passes through to the handler", func(t *testing.T) {
-		rec := do(http.MethodPost, "vibekit.example.com", "http://vibekit.example.com", "192.168.1.50:44444")
+		rec := do(http.MethodPost, "marotte.example.com", "http://marotte.example.com", "192.168.1.50:44444")
 		if rec.Code != http.StatusOK {
 			t.Errorf("status = %d, want 200", rec.Code)
 		}
 	})
 
 	t.Run("allowed host still gets the CSRF check", func(t *testing.T) {
-		rec := do(http.MethodPost, "vibekit.example.com", "http://attacker.evil", "192.168.1.50:44444")
+		rec := do(http.MethodPost, "marotte.example.com", "http://attacker.evil", "192.168.1.50:44444")
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("status = %d, want 403 (the host gate must not swallow the cross-origin rejection)", rec.Code)
 		}

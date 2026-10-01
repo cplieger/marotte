@@ -49,7 +49,7 @@ import type { ModelInfo, SessionEffortLevel } from "./types.js";
 
 // There is no exported EffortLevel type. Its one consumer was AppSettings'
 // `model_effort` field, which is gone: effort is a per-chat string on the chat
-// record, validated server-side by vibekit.EffortLevel.Valid().
+// record, validated server-side by marotte.EffortLevel.Valid().
 
 /** Dispatch a reasoning-effort change through the actions framework — the
  *  established command path, never a hand-rolled transport.send.
@@ -243,7 +243,7 @@ class ModelSwitchController {
   /** The tier marked live, resolved by effortVocabulary (the chat's own choice,
    *  else the level the session reports, else the model or template default). Not
    *  persisted anywhere: writing a service default onto the chat would turn it
-   *  into a vibekit choice that `StartOpts.Effort` pins to every later session. */
+   *  into a marotte choice that `StartOpts.Effort` pins to every later session. */
   private effortActive = "";
 
   /** The scrolling half of the card. The model options live in here and the

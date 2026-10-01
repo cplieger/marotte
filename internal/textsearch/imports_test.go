@@ -11,7 +11,7 @@ import (
 )
 
 // TestPackageIsLibraryClean asserts every file in this directory, tests
-// included, imports only the standard library: nothing from vibekit and no
+// included, imports only the standard library: nothing from marotte and no
 // third-party module, so the directory lifts into its own module unchanged.
 func TestPackageIsLibraryClean(t *testing.T) {
 	files, err := filepath.Glob("*.go")

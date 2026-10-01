@@ -15,14 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type:    "prompt",
 		ChatID:  "c-test-1",
 		Payload: json.RawMessage(`{"text":"hello","message_id":"m-1"}`),
@@ -39,7 +39,7 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	if len(c.Messages) < 1 {
 		t.Fatalf("user message not persisted: %+v", c.Messages)
 	}
-	if c.Messages[0].Role != vibekit.RoleUser || c.Messages[0].Content != "hello" {
+	if c.Messages[0].Role != marotte.RoleUser || c.Messages[0].Content != "hello" {
 		t.Errorf("first message mismatch: %+v", c.Messages[0])
 	}
 	if c.Messages[0].ID != "m-1" {
@@ -57,7 +57,7 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 // waitForSessionID polls until the chat carries an ACP session id, failing
 // closed with a diagnostic: the prompt acks before its turn spawns the bridge,
 // so session metadata lands asynchronously.
-func waitForSessionID(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
+func waitForSessionID(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -73,7 +73,7 @@ func waitForSessionID(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) {
 
 func TestPrompt_RejectsEmptyText(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c-2",
 		Payload: json.RawMessage(`{"text":"","message_id":"m-2"}`),
 	})
@@ -84,7 +84,7 @@ func TestPrompt_RejectsEmptyText(t *testing.T) {
 
 func TestPrompt_RejectsMissingMessageID(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c-3",
 		Payload: json.RawMessage(`{"text":"hi"}`),
 	})
@@ -97,7 +97,7 @@ func TestCreateChat_Idempotent(t *testing.T) {
 	h, cs, _ := newTestHub()
 
 	post := func(reqID string) int {
-		return postCmd(t, h, vibekit.ClientCommand{
+		return postCmd(t, h, marotte.ClientCommand{
 			Type: "create_chat", ChatID: "c-dup",
 			Payload: json.RawMessage(`{"name":"X"}`),
 		}).Code
@@ -116,9 +116,9 @@ func TestCreateChat_Idempotent(t *testing.T) {
 
 func TestDeleteChat_IsUserOnly(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c-del", func(c *vibekit.Chat, _ bool) bool { c.Name = "to-delete"; return true })
+	_, _ = cs.Mutate(t.Context(), "c-del", func(c *marotte.Chat, _ bool) bool { c.Name = "to-delete"; return true })
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "delete_chat", ChatID: "c-del",
 	})
 	if rec.Code != http.StatusOK {
@@ -131,7 +131,7 @@ func TestDeleteChat_IsUserOnly(t *testing.T) {
 
 func TestUnknownCommandReturns400(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "nonsense",
 	})
 	if rec.Code != http.StatusBadRequest {
@@ -143,7 +143,7 @@ func TestUnknownCommandReturns400(t *testing.T) {
 
 func TestCancel_NoBridgeIsOK(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{Type: "cancel", ChatID: "no-bridge"})
+	rec := postCmd(t, h, marotte.ClientCommand{Type: "cancel", ChatID: "no-bridge"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("code = %d, want 200 (cancel is a no-op without a bridge)", rec.Code)
 	}
@@ -151,7 +151,7 @@ func TestCancel_NoBridgeIsOK(t *testing.T) {
 
 func TestCancel_NotifiesBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
@@ -161,7 +161,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	fb := sb.bridge.(*fakeBridge)
 	fb.sessionID = "sess"
 
-	rec := postCmd(t, h, vibekit.ClientCommand{Type: "cancel", ChatID: "c1"})
+	rec := postCmd(t, h, marotte.ClientCommand{Type: "cancel", ChatID: "c1"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("code = %d", rec.Code)
 	}
@@ -171,7 +171,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 
 func TestPermission_RequiresBridge(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "no-bridge",
 		Payload: json.RawMessage(`{"request_id":1,"option_id":"allow"}`),
 	})
@@ -182,12 +182,12 @@ func TestPermission_RequiresBridge(t *testing.T) {
 
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "c1",
 		Payload: json.RawMessage(`{bad`),
 	})
@@ -198,19 +198,19 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 
 func TestPermission_ForwardsToBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The request has to BE pending: the handler claims it before answering, so
 	// a tracked entry is what makes the answer legal.
-	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
-		vibekit.PermissionNeededPayload{
+	h.bus.pendingPerms.Add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{
 			RequestID: 42,
-			Options:   []vibekit.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+			Options:   []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
 		}))
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "c1",
 		Payload: json.RawMessage(`{"request_id":42,"option_id":"allow"}`),
 	})
@@ -225,18 +225,18 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 // is refused instead of being forwarded and silently dropped by kiro-cli.
 func TestPermission_SecondAnswerIs409(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
-	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
-		vibekit.PermissionNeededPayload{
+	h.bus.pendingPerms.Add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{
 			RequestID: 42,
-			Options:   []vibekit.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
+			Options:   []marotte.PermissionOption{{OptionID: "allow", Name: "Allow", Kind: "allow_once"}},
 		}))
 
 	answer := func(reqID string) int {
-		return postCmd(t, h, vibekit.ClientCommand{
+		return postCmd(t, h, marotte.ClientCommand{
 			Type: "permission_response", ChatID: "c1",
 			Payload: json.RawMessage(`{"request_id":42,"option_id":"allow"}`),
 		}).Code
@@ -269,8 +269,8 @@ func TestCommand_RejectsInvalidChatID(t *testing.T) {
 		"has..dots",
 	}
 	for _, id := range bad {
-		body, _ := json.Marshal(vibekit.ClientCommand{
-			Type: "prompt", ChatID: vibekit.ChatID(id),
+		body, _ := json.Marshal(marotte.ClientCommand{
+			Type: "prompt", ChatID: marotte.ChatID(id),
 			Payload: json.RawMessage(`{"text":"hi","message_id":"m1"}`),
 		})
 		req := newCmdReq(t, body)
@@ -284,7 +284,7 @@ func TestCommand_RejectsInvalidChatID(t *testing.T) {
 
 func TestPrompt_RejectsOversizedText(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// 513 KiB — exceeds maxPromptBytes. Cap is smaller than the 1 MiB
 	// JSON body limit so the check fires cleanly with a 413.
@@ -295,7 +295,7 @@ func TestPrompt_RejectsOversizedText(t *testing.T) {
 	payload, _ := json.Marshal(map[string]string{
 		"text": string(big), "message_id": "m-big",
 	})
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: payload,
 	})
@@ -306,7 +306,7 @@ func TestPrompt_RejectsOversizedText(t *testing.T) {
 
 func TestPrompt_RejectsBadMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Control characters, newlines, and overlong strings must all
 	// be rejected so the id can't smuggle through SSE framing or
@@ -322,7 +322,7 @@ func TestPrompt_RejectsBadMessageID(t *testing.T) {
 		payload, _ := json.Marshal(map[string]string{
 			"text": "hi", "message_id": id,
 		})
-		rec := postCmd(t, h, vibekit.ClientCommand{
+		rec := postCmd(t, h, marotte.ClientCommand{
 			Type: "prompt", ChatID: "c1",
 			Payload: payload,
 		})
@@ -349,7 +349,7 @@ func newCmdRec() *httptest.ResponseRecorder {
 
 func TestCreateHook_RequiresNameAndEventType(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type:    "create_hook",
 		ChatID:  "c1",
 		Payload: mustJSON(t, map[string]string{}),
@@ -362,7 +362,7 @@ func TestCreateHook_RequiresNameAndEventType(t *testing.T) {
 func TestCreateHook_WritesFile(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type:   "create_hook",
 		ChatID: "c1",
 		Payload: mustJSON(t, map[string]string{
@@ -436,7 +436,7 @@ func TestCreateHook_WritesFile(t *testing.T) {
 func TestCreateHook_RunCommandBranchWritesCommand(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "create_hook", ChatID: "c1",
 		Payload: mustJSON(t, map[string]string{
 			"name": "Lint", "event_type": "fileEdited",
@@ -486,7 +486,7 @@ func TestCreateHook_RejectsTraversal(t *testing.T) {
 		"-leading-hyphen",
 	}
 	for _, name := range bad {
-		rec := postCmd(t, h, vibekit.ClientCommand{
+		rec := postCmd(t, h, marotte.ClientCommand{
 			Type: "create_hook", ChatID: "c1",
 			Payload: mustJSON(t, map[string]string{
 				"name": name, "event_type": "fileEdited",
@@ -510,7 +510,7 @@ func TestCreateHook_RejectsTraversal(t *testing.T) {
 func TestCreateHook_RejectsOversizeField(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
 	big := strings.Repeat("a", command.MaxHookField+1)
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "create_hook", ChatID: "c1",
 		Payload: mustJSON(t, map[string]string{
 			"name": "ok", "event_type": "fileEdited",
@@ -526,7 +526,7 @@ func TestCreateHook_RejectsOversizeField(t *testing.T) {
 
 func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	h, cs, _ := newTestHubIn(t.TempDir())
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c-sh",
 		Payload: json.RawMessage(`{"text":"!printf hi","message_id":"m-1"}`),
 	})
@@ -540,10 +540,10 @@ func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	if len(c.Messages) != 2 {
 		t.Fatalf("messages = %d, want 2 (user + assistant)", len(c.Messages))
 	}
-	if c.Messages[0].Role != vibekit.RoleUser || c.Messages[0].Content != "!printf hi" {
+	if c.Messages[0].Role != marotte.RoleUser || c.Messages[0].Content != "!printf hi" {
 		t.Errorf("user msg = %+v", c.Messages[0])
 	}
-	if c.Messages[1].Role != vibekit.RoleAssistant {
+	if c.Messages[1].Role != marotte.RoleAssistant {
 		t.Errorf("assistant msg role = %q", c.Messages[1].Role)
 	}
 	if !strings.Contains(c.Messages[1].Content, "```") {
@@ -559,7 +559,7 @@ func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 // succeed with empty output and confuse the transcript).
 func TestPrompt_ShellInterception_EmptyAfterTrim(t *testing.T) {
 	h, _, _ := newTestHubIn(t.TempDir())
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c-empty",
 		Payload: json.RawMessage(`{"text":"!   \t","message_id":"m-1"}`),
 	})
@@ -573,7 +573,7 @@ func TestPrompt_ShellInterception_EmptyAfterTrim(t *testing.T) {
 // output so the user sees why their command failed.
 func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	h, cs, _ := newTestHubIn(t.TempDir())
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c-fail",
 		Payload: json.RawMessage(`{"text":"!false","message_id":"m-1"}`),
 	})
@@ -600,12 +600,12 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 // the way the prompt goroutine does: the reservation plus the bridge slot.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
@@ -614,7 +614,7 @@ func TestPrompt_BusyReturns409(t *testing.T) {
 	}
 	t.Cleanup(sb.ReleaseAfterPrompt)
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-2"}`),
 	})
@@ -640,7 +640,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 		wantContains    string
 		wantNotContains string
 		wantMIME        string
-		attachments     []vibekit.Attachment
+		attachments     []marotte.Attachment
 		wantLen         int
 	}{
 		{
@@ -656,7 +656,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 			// union; embeddedContext is always advertised true).
 			name:        "SupportedDocumentInlinedAsResource",
 			text:        "hi",
-			attachments: []vibekit.Attachment{{Name: "doc.pdf", Path: "doc.pdf"}},
+			attachments: []marotte.Attachment{{Name: "doc.pdf", Path: "doc.pdf"}},
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "doc.pdf"), []byte("%PDF-1.7 fake"), 0o644)
 			},
@@ -670,7 +670,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 			// path-reference branch with a note — never a dropped block.
 			name:        "UnsupportedDocEmitsAnnotatedPathRef",
 			text:        "hi",
-			attachments: []vibekit.Attachment{{Name: "deck.pptx", Path: "deck.pptx"}},
+			attachments: []marotte.Attachment{{Name: "deck.pptx", Path: "deck.pptx"}},
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "deck.pptx"), []byte("PK fake pptx"), 0o644)
 			},
@@ -681,7 +681,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 		{
 			name:        "OversizeDocumentFallsBackToText",
 			text:        "hi",
-			attachments: []vibekit.Attachment{{Name: "big.pdf", Path: "big.pdf"}},
+			attachments: []marotte.Attachment{{Name: "big.pdf", Path: "big.pdf"}},
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "big.pdf"), make([]byte, command.MaxDocumentBytes+1), 0o644)
 			},
@@ -692,7 +692,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 		{
 			name:         "UnreadableDocumentFallsBackToText",
 			text:         "hi",
-			attachments:  []vibekit.Attachment{{Name: "ghost.pdf", Path: "ghost.pdf"}},
+			attachments:  []marotte.Attachment{{Name: "ghost.pdf", Path: "ghost.pdf"}},
 			wantLen:      2,
 			wantType:     "text",
 			wantContains: "unreadable",
@@ -700,7 +700,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 		{
 			name:        "CodeFileEmitsPathReference",
 			text:        "hi",
-			attachments: []vibekit.Attachment{{Name: "main.go", Path: "main.go"}},
+			attachments: []marotte.Attachment{{Name: "main.go", Path: "main.go"}},
 			setupFile: func(dir string) {
 				os.WriteFile(filepath.Join(dir, "main.go"), []byte("package x"), 0o644)
 			},
@@ -711,7 +711,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 		{
 			name:            "RejectsTraversalDocument",
 			text:            "hi",
-			attachments:     []vibekit.Attachment{{Name: "passwd.pdf", Path: "../../../../etc/passwd"}},
+			attachments:     []marotte.Attachment{{Name: "passwd.pdf", Path: "../../../../etc/passwd"}},
 			wantLen:         2,
 			wantType:        "text",
 			wantNotContains: "..",
@@ -768,17 +768,17 @@ func TestBuildPromptBlocks(t *testing.T) {
 // dedup is the header middleware's, outside this handler.
 func BenchmarkHandleCommand(b *testing.B) {
 	quietLogs(b)
-	payloads := map[string]vibekit.ClientCommand{
+	payloads := map[string]marotte.ClientCommand{
 		"prompt": {
-			Type: vibekit.CmdPrompt, ChatID: "c-bench",
+			Type: marotte.CmdPrompt, ChatID: "c-bench",
 			Payload: json.RawMessage(`{"text":"hello world","message_id":"m-bench"}`),
 		},
 		"create_chat": {
-			Type: vibekit.CmdCreateChat, ChatID: "c-bench-new",
+			Type: marotte.CmdCreateChat, ChatID: "c-bench-new",
 			Payload: json.RawMessage(`{"name":"bench","model":"gpt-4"}`),
 		},
 		"cancel": {
-			Type: vibekit.CmdCancel, ChatID: "c-bench",
+			Type: marotte.CmdCancel, ChatID: "c-bench",
 		},
 	}
 
@@ -804,8 +804,8 @@ func BenchmarkHandleCommand(b *testing.B) {
 	// cache_hit: pre-seed the idempotency cache and measure replay path.
 	b.Run("cache_hit", func(b *testing.B) {
 		h, _, _ := newTestHub()
-		cmd := vibekit.ClientCommand{
-			Type: vibekit.CmdCreateChat, ChatID: "c-cached",
+		cmd := marotte.ClientCommand{
+			Type: marotte.CmdCreateChat, ChatID: "c-cached",
 			Payload: json.RawMessage(`{"name":"cached","model":"gpt-4"}`),
 		}
 		// Seed the cache with a first call.
@@ -826,17 +826,17 @@ func BenchmarkHandleCommand(b *testing.B) {
 
 func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
-	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
-		vibekit.PermissionNeededPayload{
+	h.bus.pendingPerms.Add(42, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{
 			RequestID: 42,
-			Options:   []vibekit.PermissionOption{{OptionID: "allow-once", Name: "Allow", Kind: "allow_once"}},
+			Options:   []marotte.PermissionOption{{OptionID: "allow-once", Name: "Allow", Kind: "allow_once"}},
 		}))
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "permission_response", ChatID: "c1",
 		Payload: json.RawMessage(`{"request_id":42,"option_id":"allow-always"}`),
 	})

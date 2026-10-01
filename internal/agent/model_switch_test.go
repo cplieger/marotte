@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // --- switch_model ---
 
 func TestSwitchModel_MissingChatID(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{Type: "switch_model"})
+	rec := postCmd(t, h, marotte.ClientCommand{Type: "switch_model"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
 	}
@@ -20,7 +20,7 @@ func TestSwitchModel_MissingChatID(t *testing.T) {
 
 func TestSwitchModel_ChatNotFound(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "nope",
 	})
 	if rec.Code != http.StatusNotFound {
@@ -32,14 +32,14 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 // carries a new model, so isSwitch=true.
 func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
 		return true
 	})
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
@@ -52,21 +52,21 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	if c.ACPSessionID == "" {
 		t.Errorf("acp_session_id was cleared, want preserved for fast path")
 	}
-	if len(c.Messages) != 1 || c.Messages[0].EventKind != vibekit.EventModelSwitched {
+	if len(c.Messages) != 1 || c.Messages[0].EventKind != marotte.EventModelSwitched {
 		t.Errorf("expected model_switched event, got %+v", c.Messages)
 	}
 }
 
 func TestSwitchModel_WithModelOverride(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "claude-opus"
 		c.ACPSessionID = "old-acp"
 		return true
 	})
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"claude-sonnet"}`),
 	})
@@ -84,17 +84,17 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 // A new model preserves the chat's context_size while resetting credit counters.
 func TestSwitchModel_PreservesContextSize(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-old"
-		c.Usage = vibekit.Usage{
+		c.Usage = marotte.Usage{
 			ContextSize: 200000, ContextPct: 80, Credits: 1.23, TurnCount: 12,
 		}
 		return true
 	})
 
-	_ = postCmd(t, h, vibekit.ClientCommand{
+	_ = postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
@@ -112,18 +112,18 @@ func TestSwitchModel_PreservesContextSize(t *testing.T) {
 // emits no event and resets no Usage counters: those are for a real model change.
 func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-same"
-		c.Usage = vibekit.Usage{
+		c.Usage = marotte.Usage{
 			ContextSize: 200000, ContextPct: 80, Credits: 1.23, TurnCount: 12,
 		}
 		return true
 	})
 
 	// Empty payload: bare restart.
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 	})
 	if rec.Code != http.StatusOK {
@@ -139,7 +139,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	}
 
 	// Same-model payload: also bare restart, same invariants.
-	rec2 := postCmd(t, h, vibekit.ClientCommand{
+	rec2 := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-same"}`),
 	})
@@ -159,13 +159,13 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 // without mutating chat state.
 func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		return true
 	})
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"bad<script>"}`),
 	})
@@ -185,7 +185,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 // Fast path: in-session model switch (set_config_option) succeeds, bridge stays alive.
 func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "old-model"
 		return true
@@ -198,7 +198,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	fb := sb.bridge.(*fakeBridge)
 	origSessionID := fb.SessionID()
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"new-model"}`),
 	})
@@ -242,14 +242,14 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 // before the id reaches the wire.
 func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		c.ServedModelIDs = []string{"m-old", "m-other"}
 		return true
 	})
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-unentitled"}`),
 	})
@@ -281,13 +281,13 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Model = "m-old"
 				c.ServedModelIDs = tc.served
 				return true
 			})
-			rec := postCmd(t, h, vibekit.ClientCommand{
+			rec := postCmd(t, h, marotte.ClientCommand{
 				Type: "switch_model", ChatID: "c1",
 				Payload: json.RawMessage(`{"model":"m-anything"}`),
 			})
@@ -303,7 +303,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 // the gate prevents. The gate reads the unfiltered served set.
 func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// The display catalog omits it; the served set does not. That divergence is
@@ -312,7 +312,7 @@ func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 		return true
 	})
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-deprecated"}`),
 	})
@@ -348,7 +348,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, br := newTestHub()
-			if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Model = "m-old"
 				c.ServedModelIDs = tc.recorded
@@ -358,7 +358,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 			}
 			h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 
-			rec := postCmd(t, h, vibekit.ClientCommand{
+			rec := postCmd(t, h, marotte.ClientCommand{
 				Type: "switch_model", ChatID: "c1",
 				Payload: json.RawMessage(`{"model":"` + tc.model + `"}`),
 			})
@@ -376,7 +376,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 // model keeps answering and the load's config_option_update races it back.
 func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testing.T) {
 	h, cs, br := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
@@ -385,7 +385,7 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 		c.Effort = "max"
 		return true
 	})
-	h.catalog.SetModels([]vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "high"}})
+	h.catalog.SetModels([]marotte.SessionModel{{ID: "m-new", DefaultEffortLevel: "high"}})
 	// A LIVE bridge, because the fast path returns early when there is none and
 	// would consume no failure: the fallback has to be reached by a swap that was
 	// actually refused, not by an absent bridge.
@@ -399,7 +399,7 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 	br.effort = ""
 	br.mu.Unlock()
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
@@ -423,7 +423,7 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 // is a session/load, and a truly empty chat takes the pre-session persist instead.
 func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 	h, cs, br := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// Chosen under m-old, so the fresh spawn resolves against the TARGET:
@@ -431,12 +431,12 @@ func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 		c.Effort = "max"
 		// History with no session id: the shell-intercept shape, which is what
 		// makes the switch spawn a FRESH session rather than persist-and-return.
-		c.Messages = []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: "!ls"}}
+		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: "!ls"}}
 		return true
 	})
-	h.catalog.SetModels([]vibekit.SessionModel{{ID: "m-new", DefaultEffortLevel: "medium"}})
+	h.catalog.SetModels([]marotte.SessionModel{{ID: "m-new", DefaultEffortLevel: "medium"}})
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
@@ -460,7 +460,7 @@ func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 // clobber it back.
 func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	h, cs, br := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// A tier chosen before the model pick was chosen under m-old; the pick
@@ -469,7 +469,7 @@ func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 		return true
 	})
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "switch_model", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})

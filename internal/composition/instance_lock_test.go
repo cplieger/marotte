@@ -13,7 +13,7 @@ import (
 //
 // flock locks obtained through distinct open file descriptions
 // conflict even within one process, so two acquireInstanceLock calls
-// on the same path is a faithful stand-in for two vibekit processes.
+// on the same path is a faithful stand-in for two marotte processes.
 func TestAcquireInstanceLock(t *testing.T) {
 	t.Run("fresh dir acquires", func(t *testing.T) {
 		dir := t.TempDir()

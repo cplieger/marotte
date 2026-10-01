@@ -750,11 +750,11 @@ describe("pending_snapshot handler", () => {
         getNotifications: () =>
           Promise.resolve(
             [
-              "vibekit:a",
-              "vibekit:b",
-              "vibekit:run:wf_1",
-              "vibekit:run:wf_2",
-              "vibekit:pr:x#1",
+              "marotte:a",
+              "marotte:b",
+              "marotte:run:wf_1",
+              "marotte:run:wf_2",
+              "marotte:pr:x#1",
             ].map((tag) => ({ tag, close: () => closed.push(tag) }) as unknown as Notification),
           ),
       }),
@@ -790,7 +790,7 @@ describe("pending_snapshot handler", () => {
         ],
       });
       await vi.waitFor(() => {
-        expect(closed).toEqual(["vibekit:a", "vibekit:run:wf_1"]);
+        expect(closed).toEqual(["marotte:a", "marotte:run:wf_1"]);
       });
     } finally {
       _setRegistrationForTest(null);
@@ -808,7 +808,7 @@ describe("pending_snapshot handler", () => {
       Promise.resolve({
         getNotifications: () =>
           Promise.resolve(
-            ["vibekit:a", "vibekit:run:wf_3"].map(
+            ["marotte:a", "marotte:run:wf_3"].map(
               (tag) => ({ tag, close: () => closed.push(tag) }) as unknown as Notification,
             ),
           ),
@@ -826,7 +826,7 @@ describe("pending_snapshot handler", () => {
         ],
       });
       await vi.waitFor(() => {
-        expect(closed).toEqual(["vibekit:a"]);
+        expect(closed).toEqual(["marotte:a"]);
       });
     } finally {
       _setRegistrationForTest(null);

@@ -53,7 +53,7 @@ function mountSidebar(): { header: HTMLElement; footer: HTMLElement } {
   header.className = "sidebar-header";
   const logo = document.createElement("div");
   logo.className = "logo";
-  logo.textContent = "vibekit";
+  logo.textContent = "marotte";
   const headerActions = document.createElement("div");
   headerActions.className = "sidebar-header-actions";
   const settings = document.createElement("button");

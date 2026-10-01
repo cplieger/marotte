@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The headline ordering property, and the fault it closes: a settle taken on the
@@ -26,16 +26,16 @@ import (
 func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	// The pipe: the wire has already delivered the bracket and the reply, and the
 	// folder has consumed neither.
-	queued := []vibekit.Notification{
+	queued := []marotte.Notification{
 		{Msg: newTurnStartMsg(), Seq: 1},
 		{Msg: newChunkMsg("the whole reply"), Seq: 2},
 		{Msg: newTurnEndMsg("refusal"), Seq: 3},
@@ -46,7 +46,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	go func() {
 		defer close(settled)
 		h.SettleTurnOnResponse(ctx, chatID, epoch, 3,
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 3)
 
@@ -55,7 +55,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	}
 	<-settled
 
-	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, before), vibekit.EventTurnEnded)
+	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded)
 	if len(ends) != 1 {
 		t.Fatalf("turn_ended count = %d, want exactly 1 complete turn", len(ends))
 	}
@@ -87,16 +87,16 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	epoch := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
 
 	// No turn_end: this is the fault path where the bracket never comes, and the
 	// trailing frame is metering.
-	queued := []vibekit.Notification{
+	queued := []marotte.Notification{
 		{Msg: newChunkMsg("half an answer"), Seq: 1},
 		{Msg: newTurnCompletionMsg(), Seq: 2},
 	}
@@ -106,7 +106,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	go func() {
 		defer close(settled)
 		h.SettleTurnOnResponse(ctx, chatID, epoch, 2,
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 2)
 
@@ -115,7 +115,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	}
 	<-settled
 
-	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, before), vibekit.EventTurnEnded)
+	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded)
 	if len(ends) != 1 {
 		t.Fatalf("turn_ended count = %d, want 1: the settle parked behind a frame that folds nothing", len(ends))
 	}
@@ -137,22 +137,22 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	first := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	first := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, first)
 	h.SettleTurnOnResponse(ctx, chatID, first, 0,
-		&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
-	second := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	second := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, second)
 
 	before := h.bus.fanout.Position().Head
 	h.SettleTurnOnResponse(ctx, chatID, first, 0,
-		&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})})
+		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})})
 
-	if ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, before), vibekit.EventTurnEnded); len(ends) != 0 {
+	if ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded); len(ends) != 0 {
 		t.Errorf("a closer armed for turn %d announced an end after turn %d opened: %+v", first, second, ends)
 	}
 	if _, open := h.coord.turns.openEpoch(chatID); !open {
@@ -170,7 +170,7 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	// A turn mid-stream: content folded, no bracket yet, which is what "dying
 	// mid-prompt" looks like from the turn's side.
 	startedTurnOn(t, h, cs, chatID, "half an answer")
@@ -188,7 +188,7 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 		defer close(settled)
 		// A position the dead bridge will never deliver.
 		h.SettleTurnOnResponse(ctx, chatID, epoch, 99,
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, epoch, 99)
 
@@ -197,7 +197,7 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 	<-forwardDone
 	<-settled
 
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(vibekit.StopReasonInterrupted)}) {
+	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonInterrupted)}) {
 		t.Errorf("turn_ended stops = %v, want exactly one interrupted: the parked settle "+
 			"either beat the death closer or announced a second end", got)
 	}
@@ -226,10 +226,10 @@ func TestBridgeDeath_ClosesTheTurnOnceAndTheParkedSettleDefers(t *testing.T) {
 func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	gen := r.attachForward(chatID)
 
-	turn := r.open(ctx, chatID, vibekit.TurnSourcePrompt, "", 0)
+	turn := r.open(ctx, chatID, marotte.TurnSourcePrompt, "", 0)
 	if turn == nil {
 		t.Fatal("open returned no turn")
 	}
@@ -239,7 +239,7 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 	if !won {
 		t.Fatal("claimOpen lost the claim on a freshly opened turn")
 	}
-	r.finish(claimed, vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn})
+	r.finish(claimed, marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
 
 	reached := make(chan bool, 1)
 	go func() { reached <- r.awaitPosition(ctx, chatID, turn.Epoch, 5) }()
@@ -268,30 +268,30 @@ func TestAwaitPosition_DoesNotStopAtTheAwaitedTurnsOwnClose(t *testing.T) {
 func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	const chatID marotte.ChatID = "c1"
+	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
-	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
+	preOpen := h.StartTurn(ctx, chatID, marotte.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
 
 	// The auto-wake's bracket pair mis-binds and closes the pre-open; the prompted
 	// turn's own bracket is still queued behind the response.
-	h.coord.consumeFrame(chatID, gen, vibekit.Notification{Msg: newTurnStartMsg(), Seq: 1})
-	h.coord.consumeFrame(chatID, gen, vibekit.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
+	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 1})
+	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 2})
 
 	var openedAfterAtSettle bool
 	settled := make(chan struct{})
 	go func() {
 		defer close(settled)
 		h.SettleTurnOnResponse(ctx, chatID, preOpen, 4,
-			&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+			&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 		openedAfterAtSettle = h.coord.TurnOpenedAfter(chatID, preOpen)
 	}()
 	waitForParkedSettle(t, h.coord.turns, chatID, preOpen, 4)
 
-	h.coord.consumeFrame(chatID, gen, vibekit.Notification{Msg: newTurnStartMsg(), Seq: 3})
-	h.coord.consumeFrame(chatID, gen, vibekit.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 4})
+	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnStartMsg(), Seq: 3})
+	h.coord.consumeFrame(chatID, gen, marotte.Notification{Msg: newTurnEndMsg("end_turn"), Seq: 4})
 	<-settled
 
 	if !openedAfterAtSettle {

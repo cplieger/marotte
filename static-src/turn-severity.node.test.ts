@@ -1,6 +1,6 @@
 // The TypeScript half of the turn-severity cross-language pin.
 //
-// The Go half is `TestTurnSeverityContract` in `internal/vibekit/turns_test.go`,
+// The Go half is `TestTurnSeverityContract` in `internal/marotte/turns_test.go`,
 // and both read ONE fixture. A rule changed in only one language fails in the
 // other, which is the only mechanism keeping the two honest — there is no code
 // generation for behaviour, only for the value's spelling.
@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import { severityOf, isBroken, defaultFailureReason } from "./turn-severity.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 
-const FIXTURE_PATH = "../internal/vibekit/testdata/turn_severity.json";
+const FIXTURE_PATH = "../internal/marotte/testdata/turn_severity.json";
 
 interface SeverityCase {
   readonly outcome: string;

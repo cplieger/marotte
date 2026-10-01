@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 var errBoom = errors.New("persist boom")
@@ -29,20 +29,20 @@ type recStore struct {
 	upsertCalls int
 }
 
-func (s *recStore) AppendMessage(_ context.Context, _ vibekit.ChatID, _ *vibekit.Message) error {
+func (s *recStore) AppendMessage(_ context.Context, _ marotte.ChatID, _ *marotte.Message) error {
 	s.appendCalls++
 	return s.appendErr
 }
 
-func (s *recStore) UpsertTurnPlan(_ context.Context, _ vibekit.ChatID, _ *vibekit.Message) error {
+func (s *recStore) UpsertTurnPlan(_ context.Context, _ marotte.ChatID, _ *marotte.Message) error {
 	s.upsertCalls++
 	return s.upsertErr
 }
 
-func (s *recStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
+func (s *recStore) Mutate(_ context.Context, _ marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
 	s.mutateCalls++
 	if fn != nil {
-		_ = fn(&vibekit.Chat{}, true)
+		_ = fn(&marotte.Chat{}, true)
 	}
 	if s.mutateErr != nil {
 		return "", s.mutateErr
@@ -76,7 +76,7 @@ func captureSlog(buf *bytes.Buffer) func() {
 func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) bool {
 	t.Helper()
 	deps, events := newEventCaptureDeps()
-	chatID := vibekit.ChatID("cap")
+	chatID := marotte.ChatID("cap")
 	buf := deps.bufStore.GetOrInit(chatID)
 	if contentLen > 0 {
 		buf.Content.WriteString(strings.Repeat("a", contentLen))
@@ -90,16 +90,16 @@ func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) boo
 	buf.MessageID = "cap-mid"
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "cap-mid" }))
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-		"content": map[string]any{"type": vibekit.ContentTypeText, "text": text},
+		"content": map[string]any{"type": marotte.ContentTypeText, "text": text},
 	}), false)
 	// The chunk's OWN text, not merely "some chunk was broadcast": crossing the
 	// cap now emits a one-off truncation notice, and counting that as processed
 	// would make these cases pass whether the text was dropped or not.
 	for _, e := range *events {
-		if e.Type != vibekit.EventMessageChunk {
+		if e.Type != marotte.EventMessageChunk {
 			continue
 		}
-		if p, ok := e.Payload.(vibekit.MessageChunkPayload); ok && p.Delta == text {
+		if p, ok := e.Payload.(marotte.MessageChunkPayload); ok && p.Delta == text {
 			return true
 		}
 	}
@@ -111,7 +111,7 @@ func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) boo
 // nothing in the transcript to say why.
 func truncationNotices(t *testing.T, contentLen, chunks int) int {
 	t.Helper()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	deps, events, _ := depsWithStore(t, chatID)
 	buf := deps.bufStore.GetOrInit(chatID)
 	buf.Content.WriteString(strings.Repeat("a", contentLen))
@@ -120,15 +120,15 @@ func truncationNotices(t *testing.T, contentLen, chunks int) int {
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "cap-mid" }))
 	for range chunks {
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
-			"content": map[string]any{"type": vibekit.ContentTypeText, "text": "a"},
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "a"},
 		}), false)
 	}
 	n := 0
 	for _, e := range *events {
-		if e.Type != vibekit.EventMessageChunk {
+		if e.Type != marotte.EventMessageChunk {
 			continue
 		}
-		if p, ok := e.Payload.(vibekit.MessageChunkPayload); ok && strings.Contains(p.Delta, "Reply truncated") {
+		if p, ok := e.Payload.(marotte.MessageChunkPayload); ok && strings.Contains(p.Delta, "Reply truncated") {
 			n++
 		}
 	}
@@ -188,7 +188,7 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if rec.upsertCalls != 1 {
 			t.Errorf("valid plan JSON: UpsertTurnPlan calls = %d, want 1", rec.upsertCalls)
 		}
@@ -201,7 +201,7 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{`))
+		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{`))
 		if rec.upsertCalls != 0 {
 			t.Errorf("invalid plan JSON: UpsertTurnPlan calls = %d, want 0", rec.upsertCalls)
 		}
@@ -220,7 +220,7 @@ func TestHandlePlan_LogsOnlyOnUpsertError(t *testing.T) {
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if !strings.Contains(logbuf.String(), "persist plan") {
 			t.Errorf("UpsertTurnPlan error not logged; log=%q, want it to contain %q", logbuf.String(), "persist plan")
 		}
@@ -233,7 +233,7 @@ func TestHandlePlan_LogsOnlyOnUpsertError(t *testing.T) {
 		deps := newBaseDeps()
 		deps.store = rec
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-		tr.HandlePlan(t.Context(), vibekit.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
+		tr.HandlePlan(t.Context(), marotte.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if strings.Contains(logbuf.String(), "persist plan") {
 			t.Errorf("unexpected error log on UpsertTurnPlan success; log=%q", logbuf.String())
 		}
@@ -252,9 +252,9 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	store := testsupport.NewRecordingChatStore()
 	deps.store = store
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	// Pre-create the chat so HandleModeUpdate's Mutate sees exists=true.
-	_, _ = store.Mutate(t.Context(), chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
+	_, _ = store.Mutate(t.Context(), chatID, func(_ *marotte.Chat, _ bool) bool { return true })
 
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 	tr.HandleModeUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -273,12 +273,12 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	// Broadcast mode_changed carrying the new mode id.
 	found := false
 	for _, e := range *events {
-		if e.Type != vibekit.EventModeChanged {
+		if e.Type != marotte.EventModeChanged {
 			continue
 		}
-		p, isModePayload := e.Payload.(vibekit.ModeChangedPayload)
+		p, isModePayload := e.Payload.(marotte.ModeChangedPayload)
 		if !isModePayload {
-			t.Fatalf("mode_changed payload type = %T, want vibekit.ModeChangedPayload", e.Payload)
+			t.Fatalf("mode_changed payload type = %T, want marotte.ModeChangedPayload", e.Payload)
 		}
 		if p.ModeID != "plan" {
 			t.Errorf("mode_changed ModeID = %q, want %q", p.ModeID, "plan")
@@ -302,7 +302,7 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 	newChunk := func(meta map[string]any) map[string]any {
 		c := map[string]any{
-			"content": map[string]any{"type": vibekit.ContentTypeText, "text": "I can't continue."},
+			"content": map[string]any{"type": marotte.ContentTypeText, "text": "I can't continue."},
 		}
 		if meta != nil {
 			c["_meta"] = map[string]any{"kiro": meta}
@@ -312,7 +312,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("tagged text chunk stamps buffer and rides the chunk event", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
-		chatID := vibekit.ChatID("rf1")
+		chatID := marotte.ChatID("rf1")
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{
@@ -329,10 +329,10 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 		if buf.Refusal.Category != "safety" || buf.Refusal.RecommendedModel != "model-x" {
 			t.Errorf("refusal fields: %+v", buf.Refusal)
 		}
-		var chunkPayloads []vibekit.MessageChunkPayload
+		var chunkPayloads []marotte.MessageChunkPayload
 		for _, e := range *events {
-			if e.Type == vibekit.EventMessageChunk {
-				chunkPayloads = append(chunkPayloads, e.Payload.(vibekit.MessageChunkPayload))
+			if e.Type == marotte.EventMessageChunk {
+				chunkPayloads = append(chunkPayloads, e.Payload.(marotte.MessageChunkPayload))
 			}
 		}
 		if len(chunkPayloads) != 1 || chunkPayloads[0].Refusal == nil {
@@ -345,7 +345,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("first refusal wins", func(t *testing.T) {
 		deps, _ := newEventCaptureDeps()
-		chatID := vibekit.ChatID("rf2")
+		chatID := marotte.ChatID("rf2")
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{"category": "first"},
@@ -361,7 +361,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("reasoning chunk cannot mark the turn", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
-		chatID := vibekit.ChatID("rf3")
+		chatID := marotte.ChatID("rf3")
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{"category": "safety"},
@@ -370,7 +370,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 			t.Error("reasoning chunk must not stamp refusal")
 		}
 		for _, e := range *events {
-			if e.Type == vibekit.EventMessageChunk && e.Payload.(vibekit.MessageChunkPayload).Refusal != nil {
+			if e.Type == marotte.EventMessageChunk && e.Payload.(marotte.MessageChunkPayload).Refusal != nil {
 				t.Error("reasoning chunk must not carry refusal on the wire")
 			}
 		}
@@ -378,14 +378,14 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 
 	t.Run("untagged chunk stays clean", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
-		chatID := vibekit.ChatID("rf4")
+		chatID := marotte.ChatID("rf4")
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, newChunk(nil)), false)
 		if buf := deps.bufStore.Get(chatID); buf != nil && buf.Refusal != nil {
 			t.Error("untagged chunk must not stamp refusal")
 		}
 		for _, e := range *events {
-			if e.Type == vibekit.EventMessageChunk && e.Payload.(vibekit.MessageChunkPayload).Refusal != nil {
+			if e.Type == marotte.EventMessageChunk && e.Payload.(marotte.MessageChunkPayload).Refusal != nil {
 				t.Error("untagged chunk must not carry refusal")
 			}
 		}
@@ -418,10 +418,10 @@ func TestHandleAssistantChunk_AStepsFrameStatesTheRunsTurnSource(t *testing.T) {
 	cases := []struct {
 		name string
 		meta map[string]any
-		want vibekit.TurnOpenSource
+		want marotte.TurnOpenSource
 	}{
-		{name: "a workflow step's frame", meta: stepMeta, want: vibekit.TurnSourceWorkflowStep},
-		{name: "the chat's own frame", meta: nil, want: vibekit.TurnSourceWireTurnStart},
+		{name: "a workflow step's frame", meta: stepMeta, want: marotte.TurnSourceWorkflowStep},
+		{name: "the chat's own frame", meta: nil, want: marotte.TurnSourceWireTurnStart},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

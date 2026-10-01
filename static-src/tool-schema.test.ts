@@ -372,7 +372,7 @@ describe("the status predicates partition the wire enum", () => {
    *
    *  `active` and `done` must stay complements: `messages-tools.ts` stamps a duration
    *  and collapses a group on `done`, and a status answering neither is a card that
-   *  never settles. That is why `aborted` is here — a call vibekit settled at turn
+   *  never settles. That is why `aborted` is here — a call marotte settled at turn
    *  close is terminal, not a third state. */
   const PREDICATES: Readonly<Record<ToolStatus, { active: boolean; done: boolean }>> = {
     pending: { active: true, done: false },

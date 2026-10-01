@@ -98,7 +98,7 @@ var spawnMatrix = []struct {
 // Spawn is no longer the only runtime input: an env-bearing row reads the
 // process environment, so the ambient environment is part of this fixture and
 // neutralizeEnvOverrides makes it an explicit one. Without that, a machine
-// carrying VIBEKIT_AGENT_WORKFLOWS=false fails both goldens for a reason the
+// carrying MAROTTE_AGENT_WORKFLOWS=false fails both goldens for a reason the
 // diff does not explain.
 func renderMatrix(t *testing.T, build func(Spawn) map[string]any) string {
 	t.Helper()
@@ -209,7 +209,7 @@ func TestSessionDoorDeclaresExactly(t *testing.T) {
 // is not the same message as no `settings` key: KAS's resolvers read an absent
 // key as false, which is exactly what withholding a row is asking for, so sending
 // `{"settings":{}}` puts a key on the wire whose only content is the claim that
-// vibekit had something to say about settings. That is the failure this guard
+// marotte had something to say about settings. That is the failure this guard
 // exists for, and no spawn combination produces it — only the override does.
 func TestSessionDoor_WithdrawnRowsLeaveNoSettingsObject(t *testing.T) {
 	neutralizeEnvOverrides(t)

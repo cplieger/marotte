@@ -6,7 +6,7 @@
 // font size per block. The app's diff rows are exactly that shape — a
 // `white-space: pre` line inside a horizontal scroller — and a phone rendered a
 // tool card's inline diff at a different size per line. Full measurement:
-// `vibekit-ui.md` "Text inflation".
+// `marotte-ui.md` "Text inflation".
 //
 // Chromium's own autosizing is Android-only and gated off by this app's
 // `width=device-width` viewport, so a rendered assertion reads identically with

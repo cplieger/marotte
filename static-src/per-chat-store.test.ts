@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 
 import { readPerChat, writePerChat, MAX_TRACKED_CHATS } from "./per-chat-store.js";
 
-const KEY = "vibekit.test-per-chat";
+const KEY = "marotte.test-per-chat";
 
 /** The only value shape these tests need: a list of codes, like a dismissal set. */
 function validCodes(v: unknown): string[] | undefined {

@@ -131,7 +131,7 @@
      alone fixes nothing on the one engine that has the behaviour. `100%` and not
      `none`, which also blocks the reader's own zoom-to-scale text in older
      WebKit. Measurement, the reported surface and the affected set:
-     `vibekit-ui.md` "Text inflation". */
+     `marotte-ui.md` "Text inflation". */
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
@@ -192,7 +192,7 @@
     touch-action: pan-x pan-y pinch-zoom;
     /* The web-terminal-ui bundle (in the lowest `web-terminal-ui` layer) sets
        `body { color-scheme: dark }` for its standalone full-page terminal.
-       vibekit drives color-scheme from :root per theme, so inherit it here to
+       marotte drives color-scheme from :root per theme, so inherit it here to
        keep light-theme scrollbars/native controls correct. */
     color-scheme: inherit;
   }

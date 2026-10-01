@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // DefaultOutputCap is the shared byte budget for subprocess output buffers. 64 KiB covers a
@@ -42,11 +42,11 @@ func New() *Buffer {
 type Buffer struct {
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
-	ChangedFiles   map[string]*vibekit.FileChange
+	ChangedFiles   map[string]*marotte.FileChange
 	MessageID      string
 	// KASMessageID is the id KAS's own session log holds this segment's message under
 	// (`<uuid>-say`), so a later replay can pair its projected row with the persisted
-	// one. KAS's id space, never the MessageID above, which is vibekit's own.
+	// one. KAS's id space, never the MessageID above, which is marotte's own.
 	KASMessageID string
 	// steerCarry is text withheld because it might still grow into a steering acknowledgement
 	// marker; steerCarrySubtask attributes the delta it came from, so a flush puts the bytes
@@ -63,10 +63,10 @@ type Buffer struct {
 	Model string
 	// Refusal marks the in-flight turn as a model refusal, set once from the explanation
 	// chunk's _meta.kiro.refusal and persisted at turn end. Guarded by mu.
-	Refusal        *vibekit.RefusalInfo
-	ToolCalls      []vibekit.ToolCall
-	Blocks         []vibekit.Block
-	CodeReferences []vibekit.CodeReference
+	Refusal        *marotte.RefusalInfo
+	ToolCalls      []marotte.ToolCall
+	Blocks         []marotte.Block
+	CodeReferences []marotte.CodeReference
 	// chunkSeq counts text/thinking deltas this turn (1-based). Every broadcast chunk carries
 	// it as MessageChunkPayload.Seq so a client holding the GET's live_turn snapshot has a
 	// watermark and drops deltas already folded in. Read from the Append*Delta returns or
@@ -159,8 +159,8 @@ func (buf *Buffer) BufferedBytes() (n int) {
 // so field-by-field reads race a strings.Builder and three slices and can persist a torn
 // Content as the turn's final text. Slices and maps are COPIES for the same reason.
 type TurnContent struct {
-	ChangedFiles map[string]*vibekit.FileChange
-	Refusal      *vibekit.RefusalInfo
+	ChangedFiles map[string]*marotte.FileChange
+	Refusal      *marotte.RefusalInfo
 	// MessageID is the id the streamed message went out under, and the id the
 	// persisted message keeps.
 	MessageID      string
@@ -168,9 +168,9 @@ type TurnContent struct {
 	Model          string
 	Content        string
 	Reasoning      string
-	ToolCalls      []vibekit.ToolCall
-	Blocks         []vibekit.Block
-	CodeReferences []vibekit.CodeReference
+	ToolCalls      []marotte.ToolCall
+	Blocks         []marotte.Block
+	CodeReferences []marotte.CodeReference
 	// Started is whether a message id was minted and a message_created went out. Not the same
 	// question as EmittedNothing: a turn whose every delta was withheld still started, and
 	// its empty message is the outcome's carrier.
@@ -257,9 +257,9 @@ func (buf *Buffer) ToolsSettled() (settled bool) {
 // contentLocked is the one capture of a buffer's content, shared by TakeTurn and SplitSegment
 // so the two cannot report a turn differently. Must be called with mu held.
 func (buf *Buffer) contentLocked() TurnContent {
-	var changed map[string]*vibekit.FileChange
+	var changed map[string]*marotte.FileChange
 	if buf.ChangedFiles != nil {
-		changed = make(map[string]*vibekit.FileChange, len(buf.ChangedFiles))
+		changed = make(map[string]*marotte.FileChange, len(buf.ChangedFiles))
 		for path, fc := range buf.ChangedFiles {
 			copied := *fc
 			changed[path] = &copied
@@ -288,7 +288,7 @@ func (buf *Buffer) contentLocked() TurnContent {
 // AppendToolCall records a newly opened tool call and returns its index, keeping the id index
 // in step with the slice under one lock. By pointer because the struct is 264 bytes; the append
 // copies it, so the caller keeps ownership.
-func (buf *Buffer) AppendToolCall(call *vibekit.ToolCall) (idx int, version string) {
+func (buf *Buffer) AppendToolCall(call *marotte.ToolCall) (idx int, version string) {
 	version = buf.write(func() {
 		buf.ToolCalls = append(buf.ToolCalls, *call)
 		if buf.ToolCallIndex == nil {
@@ -305,7 +305,7 @@ func (buf *Buffer) AppendToolCall(call *vibekit.ToolCall) (idx int, version stri
 // calls out to the terminal registry, the line tracker and the event bus, none of which can run
 // under this mutex (two re-enter it). Read-modify-write is sound because the dispatch loop is
 // the only writer: a concurrent SnapshotCapped sees the whole old call or the whole new one.
-func (buf *Buffer) ToolCall(id string) (call vibekit.ToolCall, idx int, ok bool) {
+func (buf *Buffer) ToolCall(id string) (call marotte.ToolCall, idx int, ok bool) {
 	buf.read(func() {
 		idx, ok = buf.ToolCallIndex[id]
 		if !ok || idx < 0 || idx >= len(buf.ToolCalls) {
@@ -320,7 +320,7 @@ func (buf *Buffer) ToolCall(id string) (call vibekit.ToolCall, idx int, ok bool)
 // SetToolCall writes a folded call back at idx. A stale index is dropped rather than panicking:
 // nothing removes a tool call mid-turn, so an out-of-range idx means the caller's own bookkeeping
 // is wrong and the turn should not die for it.
-func (buf *Buffer) SetToolCall(idx int, call *vibekit.ToolCall) string {
+func (buf *Buffer) SetToolCall(idx int, call *marotte.ToolCall) string {
 	return buf.write(func() {
 		if idx < 0 || idx >= len(buf.ToolCalls) {
 			return
@@ -358,9 +358,9 @@ func (buf *Buffer) SetSteerCarry(text, subtaskID string) string {
 // (licenseName, repository, url) so neither the KAS fan-out nor a snippet reproduced twice
 // yields duplicate chips. Returns the full deduped list, because the client REPLACES its own
 // rather than appending. Empty entries are dropped by the caller before this point.
-func (buf *Buffer) AppendCodeReferences(refs []vibekit.CodeReference) (all []vibekit.CodeReference, version string) {
+func (buf *Buffer) AppendCodeReferences(refs []marotte.CodeReference) (all []marotte.CodeReference, version string) {
 	version = buf.write(func() {
-		seen := make(map[vibekit.CodeReference]struct{}, len(buf.CodeReferences))
+		seen := make(map[marotte.CodeReference]struct{}, len(buf.CodeReferences))
 		for _, r := range buf.CodeReferences {
 			seen[r] = struct{}{}
 		}
@@ -411,7 +411,7 @@ func (buf *Buffer) HasModel() (has bool) {
 
 // SetRefusal records the turn's model-refusal metadata. First write wins: KAS emits at most one
 // refusal chunk per turn, so a duplicate is a replay and keeps the original.
-func (buf *Buffer) SetRefusal(r *vibekit.RefusalInfo) string {
+func (buf *Buffer) SetRefusal(r *marotte.RefusalInfo) string {
 	return buf.write(func() {
 		if r != nil && buf.Refusal == nil {
 			buf.Refusal = r
@@ -433,12 +433,12 @@ func (buf *Buffer) AppendTextDelta(delta, subtaskID string) (idx int, seq int64,
 		buf.Content.WriteString(delta)
 		buf.chunkSeq++
 		seq = buf.chunkSeq
-		if i := buf.lastBlockOfSubtask(subtaskID); i >= 0 && buf.Blocks[i].Type == vibekit.BlockText {
+		if i := buf.lastBlockOfSubtask(subtaskID); i >= 0 && buf.Blocks[i].Type == marotte.BlockText {
 			buf.Blocks[i].Text += delta
 			idx = i
 			return
 		}
-		buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockText, Text: delta, AgentSubtaskID: subtaskID})
+		buf.Blocks = append(buf.Blocks, marotte.Block{Type: marotte.BlockText, Text: delta, AgentSubtaskID: subtaskID})
 		idx = len(buf.Blocks) - 1
 	})
 	return idx, seq, version
@@ -468,12 +468,12 @@ func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) (idx int, seq in
 		buf.Reasoning.WriteString(delta)
 		buf.chunkSeq++
 		seq = buf.chunkSeq
-		if i := buf.lastBlockOfSubtask(subtaskID); i >= 0 && buf.Blocks[i].Type == vibekit.BlockThinking {
+		if i := buf.lastBlockOfSubtask(subtaskID); i >= 0 && buf.Blocks[i].Type == marotte.BlockThinking {
 			buf.Blocks[i].Thinking += delta
 			idx = i
 			return
 		}
-		buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockThinking, Thinking: delta, AgentSubtaskID: subtaskID})
+		buf.Blocks = append(buf.Blocks, marotte.Block{Type: marotte.BlockThinking, Thinking: delta, AgentSubtaskID: subtaskID})
 		idx = len(buf.Blocks) - 1
 	})
 	return idx, seq, version
@@ -483,7 +483,7 @@ func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) (idx int, seq in
 // index. Always a NEW block: one per tool call, never coalesced the way a text run is.
 func (buf *Buffer) AppendToolUseBlock(toolCallID, subtaskID string) (idx int, version string) {
 	version = buf.write(func() {
-		buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockToolUse, ToolCallID: toolCallID, AgentSubtaskID: subtaskID})
+		buf.Blocks = append(buf.Blocks, marotte.Block{Type: marotte.BlockToolUse, ToolCallID: toolCallID, AgentSubtaskID: subtaskID})
 		idx = len(buf.Blocks) - 1
 	})
 	return idx, version
@@ -498,7 +498,7 @@ func (buf *Buffer) AppendToolUseBlock(toolCallID, subtaskID string) (idx int, ve
 // computed BEFORE the lock, which also serves SnapshotCapped on the streaming goroutine. With
 // no delta to record the buffer is not written and the CURRENT version is returned, never an
 // empty string, so an emitter stamping from it stamps a real value.
-func (buf *Buffer) TrackFileChanges(diffs []vibekit.ToolDiff, isNewFile bool) string {
+func (buf *Buffer) TrackFileChanges(diffs []marotte.ToolDiff, isNewFile bool) string {
 	type delta struct {
 		path    string
 		added   int
@@ -517,12 +517,12 @@ func (buf *Buffer) TrackFileChanges(diffs []vibekit.ToolDiff, isNewFile bool) st
 	}
 	return buf.write(func() {
 		if buf.ChangedFiles == nil {
-			buf.ChangedFiles = make(map[string]*vibekit.FileChange)
+			buf.ChangedFiles = make(map[string]*marotte.FileChange)
 		}
 		for _, d := range deltas {
 			fc, ok := buf.ChangedFiles[d.path]
 			if !ok {
-				fc = &vibekit.FileChange{IsNewFile: isNewFile}
+				fc = &marotte.FileChange{IsNewFile: isNewFile}
 				buf.ChangedFiles[d.path] = fc
 			}
 			fc.LinesAdded += d.added
@@ -572,7 +572,7 @@ func (buf *Buffer) HasToolInFlightSince(since time.Time) (inFlight bool) {
 	cutoff := since.UnixMilli()
 	buf.read(func() {
 		for i := range buf.ToolCalls {
-			if buf.ToolCalls[i].Status != vibekit.ToolInProgress && buf.ToolCalls[i].Status != vibekit.ToolPending {
+			if buf.ToolCalls[i].Status != marotte.ToolInProgress && buf.ToolCalls[i].Status != marotte.ToolPending {
 				continue
 			}
 			if start, ok := buf.ToolStartTimes[buf.ToolCalls[i].ID]; ok && start >= cutoff {
@@ -589,11 +589,11 @@ func (buf *Buffer) HasToolInFlightSince(since time.Time) (inFlight bool) {
 // because nothing malfunctioned: the turn ended under the call. The id travels WITH the calls
 // because the caller broadcasts each one keyed by it, and reading it separately would be an
 // unguarded field read off the dispatch goroutine.
-func (buf *Buffer) MarkInFlightToolsAborted() (messageID string, changed []vibekit.ToolCall, version string) {
+func (buf *Buffer) MarkInFlightToolsAborted() (messageID string, changed []marotte.ToolCall, version string) {
 	version = buf.write(func() {
 		for i := range buf.ToolCalls {
-			if buf.ToolCalls[i].Status == vibekit.ToolInProgress || buf.ToolCalls[i].Status == vibekit.ToolPending {
-				buf.ToolCalls[i].Status = vibekit.ToolAborted
+			if buf.ToolCalls[i].Status == marotte.ToolInProgress || buf.ToolCalls[i].Status == marotte.ToolPending {
+				buf.ToolCalls[i].Status = marotte.ToolAborted
 				changed = append(changed, buf.ToolCalls[i])
 			}
 		}

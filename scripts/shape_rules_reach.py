@@ -507,7 +507,7 @@ def rule_deep_forward(report):
     iface = _interface_member_names() | dependency_interface_members()
     owners = _method_names_by_type()
     # A struct with NO methods is a field GROUP, not an object. Reaching through
-    # one is a single logical hop: vibekit's `bridges` (factory, mgr,
+    # one is a single logical hop: marotte's `bridges` (factory, mgr,
     # assistantBufs) and `bus` (fanout, pendingPerms, chatStatus) exist only to
     # keep related collaborators together, and both are shared by two types that
     # each reach past them. There is no encapsulation to violate, so

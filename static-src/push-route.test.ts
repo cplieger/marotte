@@ -42,12 +42,12 @@ const rows: readonly Row[] = [
   {
     name: "a pull request",
     chatId: "",
-    subject: "pr:github:github.com:cplieger/vibekit#42",
-    route: { kind: "git", tab: "prs", pr: "github:github.com:cplieger/vibekit#42" },
+    subject: "pr:github:github.com:cplieger/marotte#42",
+    route: { kind: "git", tab: "prs", pr: "github:github.com:cplieger/marotte#42" },
     // The identity rides as a `#pr=` fragment, so a cold click from the tray carries
     // the pull request into `openWindow` rather than only the tab. The `#` inside it
     // percent-encodes to `%23`, which is why the fragment is one encoded value.
-    url: "/git/prs#pr=github%3Agithub.com%3Acplieger%2Fvibekit%2342",
+    url: "/git/prs#pr=github%3Agithub.com%3Acplieger%2Fmarotte%2342",
   },
   {
     name: "a workflow run",
@@ -89,7 +89,7 @@ describe("one subject, one destination", () => {
         reason: "clicked",
         chatId: row.chatId,
         subject: row.subject,
-        title: "Vibekit",
+        title: "Marotte",
         body: "",
       });
       expect(opened).toHaveBeenCalledTimes(1);
@@ -113,7 +113,7 @@ describe("an unregistered opener", () => {
         reason: "clicked",
         chatId: "c1",
         subject: "",
-        title: "Vibekit",
+        title: "Marotte",
         body: "",
       });
     }).toThrow(/no opener registered/);

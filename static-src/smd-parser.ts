@@ -23,9 +23,9 @@
 // text, which is honest but is not display math.
 //
 // DIVERGENCE REGISTER. Reasoning, measurements and the append-only dependency
-// list live in `.kiro/steering/vibekit-ui.md`; this is the index.
+// list live in `.kiro/steering/marotte-ui.md`; this is the index.
 //
-// THE STANDING PRINCIPLE. vibekit is a PUBLIC app: anyone can paste anything
+// THE STANDING PRINCIPLE. marotte is a PUBLIC app: anyone can paste anything
 // into it, and a corpus of one person's writing style predicts nothing about
 // what arrives next. Zero corpus occurrences is therefore NOT a reason to leave
 // a markdown fault unfixed — the corpus measures what this installation has

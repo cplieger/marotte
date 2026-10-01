@@ -582,7 +582,7 @@
   /* The entry, plus the SETTLE into the confirmed state. Without the second pair
      the row's edge and wash snapped between the two `data-state` treatments in one
      frame, which read as a second flicker on top of the geometry one; both are
-     paint-only properties at `--dur-micro`, which is the exception `vibekit-ui.md`
+     paint-only properties at `--dur-micro`, which is the exception `marotte-ui.md`
      names to the transform-and-opacity rule. Geometry is deliberately NOT
      animated: the row's height is reserved instead, so there is nothing to
      interpolate. */
@@ -636,7 +636,7 @@
    the rest: motion means in flight, and a steer is parked in KAS's buffer, so
    12-tabs.css stopped animating its `waiting` dot for this exact reason ("an
    animated one nags indefinitely with nothing in flight"), and a surface the
-   reader is already watching earns no beat (vibekit-ui.md). The state is carried
+   reader is already watching earns no beat (marotte-ui.md). The state is carried
    by the word, the ink and the dashed edge. */
 .steer-state-icon svg {
   width: 0.85rem;

@@ -4,13 +4,13 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/policyfile"
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // securityPresets resolves the configured security profile into the KAS policy
 // preset ids a session opens with, for StartOpts.Presets. One resolver for every
-// session vibekit starts, so no spawn site can disagree about the global posture.
+// session marotte starts, so no spawn site can disagree about the global posture.
 //
 // An empty result is the Custom profile (permissions files are the whole
 // policy), not a failure; the kascap row withholds the wire key entirely for it.

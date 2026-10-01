@@ -178,11 +178,11 @@ describe("runToExec reads what nothing read before", () => {
   it("carries the run's inputs", () => {
     const run = runToExec(
       "wf_1",
-      stateWith(step("a", "running"), { inputs: { repo: "vibekit" } }),
+      stateWith(step("a", "running"), { inputs: { repo: "marotte" } }),
       undefined,
       NO_ASKS,
     );
-    expect(run.inputs).toEqual({ repo: "vibekit" });
+    expect(run.inputs).toEqual({ repo: "marotte" });
   });
 
   // `nodePlan` had zero readers: passed through verbatim by GET /api/runs/{id} and

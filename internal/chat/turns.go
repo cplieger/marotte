@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // turnFirstLineMax caps the hover label: long enough to recognise a request, short
@@ -16,14 +16,14 @@ const turnFirstLineMax = 120
 // first message of a turn with no user trigger (opensHeaderlessTurn), or an
 // agent-initiated reply lands in the PREVIOUS turn's body. `thinking` marks the LAST
 // turn as running and is the caller's: a chat file cannot see a live bridge.
-func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnSummary {
+func projectTurnSummaries(msgs []marotte.Message, thinking bool) []marotte.TurnSummary {
 	if len(msgs) == 0 {
-		return []vibekit.TurnSummary{}
+		return []marotte.TurnSummary{}
 	}
 	// bodies[i] holds turn i's non-trigger messages, kept beside the summaries
 	// rather than on them because the wire shape must not carry a turn's content.
-	out := make([]vibekit.TurnSummary, 0, 8)
-	bodies := make([][]vibekit.Message, 0, 8)
+	out := make([]marotte.TurnSummary, 0, 8)
+	bodies := make([][]marotte.Message, 0, 8)
 	closed := false
 	for i := range msgs {
 		m := &msgs[i]
@@ -32,11 +32,11 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 		}
 		// A prompt opens a turn; a steer joins the one already running.
 		if opensTurn(m, len(out) == 0, closed) {
-			var body []vibekit.Message
+			var body []marotte.Message
 			if !m.IsPrompt() {
 				body = append(body, *m)
 			}
-			summary := vibekit.TurnSummary{
+			summary := marotte.TurnSummary{
 				ID:             m.ID,
 				N:              len(out) + 1,
 				Ts:             m.Ts,
@@ -66,7 +66,7 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 // One predicate with two callers — projectTurnSummaries and turnWindowBase — so the
 // boundary rule has exactly one home and a window's ordinals cannot disagree with
 // the summaries the rail draws from.
-func opensTurn(m *vibekit.Message, first, prevClosed bool) bool {
+func opensTurn(m *marotte.Message, first, prevClosed bool) bool {
 	return m.IsPrompt() || first || opensHeaderlessTurn(m, prevClosed)
 }
 
@@ -78,7 +78,7 @@ func opensTurn(m *vibekit.Message, first, prevClosed bool) bool {
 // The offset counts to the CONTAINING turn rather than to the window, because those
 // differ by one exactly when the window opens mid-turn — the common case, since the
 // cut falls at a message boundary. A `start` past len(msgs) is an empty window.
-func turnWindowBase(msgs []vibekit.Message, start int) (offset int, segmentClosed bool) {
+func turnWindowBase(msgs []marotte.Message, start int) (offset int, segmentClosed bool) {
 	start = max(start, 0)
 	count := 0
 	closed := false
@@ -117,19 +117,19 @@ func turnWindowBase(msgs []vibekit.Message, start int) (offset int, segmentClose
 // does; "unknown" does not, since it marks a fragment whose end never arrived, and
 // treating that as a terminator split the turn in two. A fragment JOINS the segment
 // it interrupted, and deriveTurnOutcome lets the reply's outcome supersede it.
-func closesTurn(outcome vibekit.TurnOutcome) bool {
-	return outcome != "" && outcome != vibekit.TurnOutcomeUnknown
+func closesTurn(outcome marotte.TurnOutcome) bool {
+	return outcome != "" && outcome != marotte.TurnOutcomeUnknown
 }
 
 // isStepMessage reports whether every one of m's blocks is workflow-step content.
-func isStepMessage(m *vibekit.Message) bool {
+func isStepMessage(m *marotte.Message) bool {
 	// "every block parses" is vacuously true of a message with NO blocks, so without
 	// this an empty assistant or event message would lose the turn it opens.
 	if len(m.Blocks) == 0 {
 		return false
 	}
 	for i := range m.Blocks {
-		if _, ok := vibekit.ParseStepSubtask(m.Blocks[i].AgentSubtaskID); !ok {
+		if _, ok := marotte.ParseStepSubtask(m.Blocks[i].AgentSubtaskID); !ok {
 			return false
 		}
 	}
@@ -141,8 +141,8 @@ func isStepMessage(m *vibekit.Message) bool {
 // set deriveTurnOutcome's sawAssistant and flip a carrier-less turn from "unknown"
 // to "completed". Assistant-only, because an event row renders a badge and may
 // carry the turn's outcome, and a user row is a trigger.
-func carriesNothing(m *vibekit.Message) bool {
-	return m.Role == vibekit.RoleAssistant &&
+func carriesNothing(m *marotte.Message) bool {
+	return m.Role == marotte.RoleAssistant &&
 		m.Content == "" &&
 		m.Reasoning == "" &&
 		len(m.Blocks) == 0 &&
@@ -156,11 +156,11 @@ func carriesNothing(m *vibekit.Message) bool {
 // opensHeaderlessTurn reports whether m is the first persisted message of a turn
 // with no user trigger. All three clauses are load-bearing; the shared fixture's
 // _segmentation_comment owns the reasoning, and closesTurn the fragment carve-out.
-func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
+func opensHeaderlessTurn(m *marotte.Message, prevClosed bool) bool {
 	if !prevClosed || isStepMessage(m) {
 		return false
 	}
-	return m.Role == vibekit.RoleAssistant || m.TurnOutcome != ""
+	return m.Role == marotte.RoleAssistant || m.TurnOutcome != ""
 }
 
 // deriveTurnOutcome reads a turn's outcome off its persisted body: the DURABLE
@@ -171,14 +171,14 @@ func opensHeaderlessTurn(m *vibekit.Message, prevClosed bool) bool {
 // the next turn's stream has opened. The TAIL clause is the honest answer for a turn
 // NOTHING closed, and its predicate is "no ASSISTANT message" rather than "empty
 // body", which is what keeps a legacy transcript reading `completed`.
-func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
+func deriveTurnOutcome(body []marotte.Message, isLive bool) marotte.TurnOutcome {
 	var w turnWalk
 	for i := range body {
 		m := &body[i]
-		if m.Role == vibekit.RoleAssistant {
+		if m.Role == marotte.RoleAssistant {
 			w.sawAssistant = true
 		}
-		if m.TurnOutcome == vibekit.TurnOutcomeUnknown {
+		if m.TurnOutcome == marotte.TurnOutcomeUnknown {
 			// A fragment's non-verdict (see closesTurn), remembered as the fallback
 			// since the segment usually continues into the reply that settles it.
 			w.sawUnknown = true
@@ -188,14 +188,14 @@ func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome 
 			return m.TurnOutcome
 		}
 		if m.Refusal != nil {
-			return vibekit.TurnOutcomeFailed
+			return marotte.TurnOutcomeFailed
 		}
 		switch m.EventKind {
-		case vibekit.EventCompactFailed, vibekit.EventInfraSafetyBlocked:
-			return vibekit.TurnOutcomeFailed
-		case vibekit.EventInterrupted:
+		case marotte.EventCompactFailed, marotte.EventInfraSafetyBlocked:
+			return marotte.TurnOutcomeFailed
+		case marotte.EventInterrupted:
 			w.interrupted = true
-		case vibekit.EventCancelled:
+		case marotte.EventCancelled:
 			w.cancelled = true
 		}
 	}
@@ -218,18 +218,18 @@ type turnWalk struct {
 // broke, so `interrupted` is answered first. Both outrank isLive, because a marker
 // is a statement about an end while `thinking` can still be true once the next
 // turn's stream has opened.
-func (w turnWalk) outcome(isLive bool) vibekit.TurnOutcome {
+func (w turnWalk) outcome(isLive bool) marotte.TurnOutcome {
 	switch {
 	case w.interrupted:
-		return vibekit.TurnOutcomeInterrupted
+		return marotte.TurnOutcomeInterrupted
 	case w.cancelled:
-		return vibekit.TurnOutcomeCancelled
+		return marotte.TurnOutcomeCancelled
 	case isLive:
-		return vibekit.TurnOutcomeRunning
+		return marotte.TurnOutcomeRunning
 	case w.sawUnknown, !w.sawAssistant:
-		return vibekit.TurnOutcomeUnknown
+		return marotte.TurnOutcomeUnknown
 	}
-	return vibekit.TurnOutcomeCompleted
+	return marotte.TurnOutcomeCompleted
 }
 
 // firstLine collapses every whitespace run to one space and truncates on a rune

@@ -14,14 +14,14 @@ import (
 
 	"github.com/cplieger/sse"
 	"github.com/cplieger/sse/ssetest"
-	"github.com/cplieger/vibekit/internal/liveness"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/liveness"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The SSE transport (fan-out, replay ring, the hello, Last-Event-ID resume,
 // slow-client eviction, keepalives) is github.com/cplieger/sse and is
-// tested there. These tests pin vibekit's layer: emit marshaling + chat topics,
+// tested there. These tests pin marotte's layer: emit marshaling + chat topics,
 // the frame-cap substitute, the connected handshake, the initial-state hook, and
 // the draining gate.
 
@@ -29,8 +29,8 @@ import (
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 
 	evts := h.bus.fanout.Snapshot()
 	if len(evts) != 2 {
@@ -50,7 +50,7 @@ func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 	h, _, _ := newTestHub()
 	for range replayBufSize + 100 {
-		h.bus.emit(vibekit.ServerEvent{Type: "test"})
+		h.bus.emit(marotte.ServerEvent{Type: "test"})
 	}
 	pos := h.bus.fanout.Position()
 	if pos.Head-pos.Floor+1 != uint64(replayBufSize) {
@@ -59,13 +59,13 @@ func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 }
 
 func TestEmit_TopicCarriesChatID(t *testing.T) {
-	// vibekit's contract is that emit maps ChatID onto the event topic (empty
+	// marotte's contract is that emit maps ChatID onto the event topic (empty
 	// ChatID = global broadcast); nothing subscribes with a topic since the
 	// stream is unfiltered, so the topic is diagnostic.
 	h, _, _ := newTestHub()
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
-	h.bus.emit(vibekit.ServerEvent{Type: "connected"}) // global: empty topic
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(marotte.ServerEvent{Type: "connected"}) // global: empty topic
 
 	got := h.bus.fanout.Snapshot()
 	if len(got) != 3 {
@@ -91,17 +91,17 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	h, _, _ := newTestHub()
 
-	huge := &vibekit.Message{ID: "m1", Role: vibekit.RoleAssistant}
+	huge := &marotte.Message{ID: "m1", Role: marotte.RoleAssistant}
 	perCall := strings.Repeat("o", maxTurnToolOutputOne)
 	for len(huge.ToolCalls)*maxTurnToolOutputOne < maxTurnToolOutputTotal {
-		huge.ToolCalls = append(huge.ToolCalls, vibekit.ToolCall{ID: fmt.Sprintf("tc%d", len(huge.ToolCalls)), Output: perCall})
+		huge.ToolCalls = append(huge.ToolCalls, marotte.ToolCall{ID: fmt.Sprintf("tc%d", len(huge.ToolCalls)), Output: perCall})
 	}
-	stamped := vibekit.NewEvent(vibekit.EventMessageAppended, "c1", huge)
-	stamped.Subject = &vibekit.SubjectStamp{Kind: string(subject.KindChat), Ref: "c1", Version: "7"}
+	stamped := marotte.NewEvent(marotte.EventMessageAppended, "c1", huge)
+	stamped.Subject = &marotte.SubjectStamp{Kind: string(subject.KindChat), Ref: "c1", Version: "7"}
 	h.bus.emit(stamped)
 
-	small := vibekit.NewEvent(vibekit.EventToolCall, "c1", vibekit.ToolCallPayload{
-		MessageID: "m1", ToolCall: vibekit.ToolCall{ID: "tc-one", Output: perCall},
+	small := marotte.NewEvent(marotte.EventToolCall, "c1", marotte.ToolCallPayload{
+		MessageID: "m1", ToolCall: marotte.ToolCall{ID: "tc-one", Output: perCall},
 	})
 	h.bus.emit(small)
 
@@ -109,11 +109,11 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	if len(ring) != 2 {
 		t.Fatalf("ring holds %d frames, want 2 (the substitute and the intact tool_call)", len(ring))
 	}
-	var substitute vibekit.ServerEvent
+	var substitute marotte.ServerEvent
 	if err := reencodeBytes(ring[0].Event.Data, &substitute); err != nil {
 		t.Fatalf("decode ring[0]: %v", err)
 	}
-	if substitute.Type != vibekit.EventSubjectChanged || substitute.ChatID != "c1" {
+	if substitute.Type != marotte.EventSubjectChanged || substitute.ChatID != "c1" {
 		t.Fatalf("ring[0] = %s for %q, want subject_changed for c1", substitute.Type, substitute.ChatID)
 	}
 	if substitute.Subject == nil || *substitute.Subject != *stamped.Subject {
@@ -137,7 +137,7 @@ func TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	h, _, _ := newTestHub()
 
-	h.bus.emit(vibekit.NewEvent(vibekit.EventError, "c1", vibekit.ErrorPayload{
+	h.bus.emit(marotte.NewEvent(marotte.EventError, "c1", marotte.ErrorPayload{
 		Code: "huge", Message: strings.Repeat("x", sse.MaxFrameBytes+1),
 	}))
 
@@ -166,7 +166,7 @@ func (r rawJSON) MarshalJSON() ([]byte, error) { return []byte(r), nil }
 // field is not a frame, so it carries no type and no id to assert on.
 func TestHandleSSE_AdvertisesReconnectDelay(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 
 	body := coldConnect(t, h, "").Body.String()
 	want := fmt.Sprintf("retry: %d\n\n", liveness.ReconnectDelay.Milliseconds())
@@ -191,7 +191,7 @@ func TestHandleSSE_KeepaliveIsANamedIDLessFrameOutsideTheRing(t *testing.T) {
 	t.Cleanup(func() { keepaliveInterval = prev })
 	h, _, _ := newTestHub()
 	t.Cleanup(func() { shutdownHub(t, h) })
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 	headBefore := h.bus.fanout.Position().Head
 
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Millisecond)
@@ -238,9 +238,9 @@ func cursorAt(h *Runtime, offset uint64) string {
 func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
-	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c3"})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
@@ -268,7 +268,7 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 func TestHandleSSE_AResumePastTheReplyCapIsAGap(t *testing.T) {
 	h, _, _ := newTestHub()
 	for i := 1; i <= replyMaxEvents+50; i++ {
-		h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: vibekit.ChatID(fmt.Sprintf("c%d", i))})
+		h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: marotte.ChatID(fmt.Sprintf("c%d", i))})
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
@@ -346,7 +346,7 @@ func TestRegisterRoutes_DrainingGate(t *testing.T) {
 				t.Errorf("status = %d, want 503 while draining", rec.Code)
 			}
 			if !strings.Contains(rec.Body.String(), "shutting down") {
-				t.Errorf("body = %q, want vibekit's shutting-down envelope", rec.Body.String())
+				t.Errorf("body = %q, want marotte's shutting-down envelope", rec.Body.String())
 			}
 		})
 	}
@@ -388,7 +388,7 @@ func (w *nonFlusherWriter) WriteHeader(code int)        { w.status = code }
 // scaling is benchmarked in the sse library).
 func BenchmarkEmit(b *testing.B) {
 	h, _, _ := newTestHub()
-	evt := vibekit.ServerEvent{Type: "chat_updated", ChatID: "bench"}
+	evt := marotte.ServerEvent{Type: "chat_updated", ChatID: "bench"}
 	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
@@ -405,35 +405,35 @@ func BenchmarkEmit(b *testing.B) {
 func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.T) {
 	h, _, br := newTestHub()
 
-	h.bus.pendingPerms.Add(9, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
-		vibekit.PermissionNeededPayload{RequestID: 9}))
+	h.bus.pendingPerms.Add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
+		marotte.PermissionNeededPayload{RequestID: 9}))
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-	if h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt) == 0 {
+	if h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt) == 0 {
 		t.Fatal("the fixture could not open a turn")
 	}
 
 	for _, legacy := range []bool{false, true} {
 		frames := connectFrames(t, h, legacy)
-		if _, ok := frameOfType(frames, vibekit.EventConnected); !ok {
+		if _, ok := frameOfType(frames, marotte.EventConnected); !ok {
 			t.Fatalf("legacy=%v: no handshake, so the stream never opened", legacy)
 		}
 		if !busySetOf(connectedOf(t, frames))["c1"] {
 			t.Errorf("legacy=%v: the chat mid-turn is absent from busy_chats", legacy)
 		}
-		if n := countType(frames, vibekit.EventType("turn_state")); n != 0 {
+		if n := countType(frames, marotte.EventType("turn_state")); n != 0 {
 			t.Errorf("legacy=%v: the connect synthesized %d turn_state frames; that channel is gone", legacy, n)
 		}
 		if legacy {
-			if n := countType(frames, vibekit.EventPermissionNeeded); n != 1 {
+			if n := countType(frames, marotte.EventPermissionNeeded); n != 1 {
 				t.Errorf("legacy connect replayed %d permission_needed frames, want 1", n)
 			}
 			continue
 		}
-		snap, ok := frameOfType(frames, vibekit.EventPendingSnapshot)
+		snap, ok := frameOfType(frames, marotte.EventPendingSnapshot)
 		if !ok {
 			t.Fatal("v3 connect wrote no pending_snapshot")
 		}
-		var payload vibekit.PendingSnapshotPayload
+		var payload marotte.PendingSnapshotPayload
 		if err := reencode(snap.Payload, &payload); err != nil {
 			t.Fatalf("decode pending_snapshot: %v", err)
 		}
@@ -450,7 +450,7 @@ func TestHandleSSE_ReplaysAParkedStepsQuestion(t *testing.T) {
 	h, _, _ := newTestHub()
 	h.runs.asks.Add(&runAsk{
 		chatID: "c1",
-		payload: vibekit.RunInputNeededPayload{
+		payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", Question: "which branch?",
 		},
 	})
@@ -502,8 +502,8 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 				func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 			cs.Bus = h
 			h.mcpRegistry.SignalReady()
-			h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-			h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 
 			ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 			defer cancel()
@@ -523,10 +523,10 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 
 // openSmallTurn opens a prompt turn on id and gives its buffer a started message
 // with text, the fixture the transcript GET's live_turn is read from.
-func openSmallTurn(tb testing.TB, rt *Runtime, id vibekit.ChatID, text string) {
+func openSmallTurn(tb testing.TB, rt *Runtime, id marotte.ChatID, text string) {
 	tb.Helper()
 	rt.bridge.mgr.orInsert(id)
-	if epoch := rt.coord.StartTurn(tb.Context(), id, vibekit.TurnSourcePrompt); epoch == 0 {
+	if epoch := rt.coord.StartTurn(tb.Context(), id, marotte.TurnSourcePrompt); epoch == 0 {
 		tb.Fatalf("StartTurn(%q) refused, so the chat is not busy", id)
 	}
 	buf := rt.liveTurnBuffer(id)

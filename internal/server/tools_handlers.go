@@ -1,6 +1,6 @@
 // Tools feature-gating probe. The tools REST surface itself is the
 // cplieger/toolbelt httpapi projection, mounted in server.go; this
-// file keeps the one vibekit-specific endpoint on that prefix.
+// file keeps the one marotte-specific endpoint on that prefix.
 
 package server
 
@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"os/exec"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 
 // statusBinaries is the set of binaries /api/tools/status probes. Each
-// key is a name kiro-cli or a vibekit feature panel expects on PATH
+// key is a name kiro-cli or a marotte feature panel expects on PATH
 // (the MCP add modal gates on node/npx/uv, Sources on the forge CLIs).
 var statusBinaries = []string{
 	"node", "npm", "npx",

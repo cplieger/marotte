@@ -39,7 +39,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"`/cfg` is the persistent volume",
 		"`/cfg/tools/bin/gh`",
 		"`HOME=/cfg/home`",
-		"/etc/profile.d/10-vibekit-path.sh",
+		"/etc/profile.d/10-marotte-path.sh",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeRuntime output missing %q:\n%s", want, out)
@@ -283,7 +283,7 @@ func TestWriteCapabilities(t *testing.T) {
 			t.Errorf("writeCapabilities output missing %q:\n%s", want, out)
 		}
 	}
-	// The retired claim: vibekit captures nothing, KAS snapshots only its own
+	// The retired claim: marotte captures nothing, KAS snapshots only its own
 	// edit tools, and the one user affordance is Rewind.
 	if strings.Contains(out, "checkpointed server-side") {
 		t.Errorf("writeCapabilities repeated the retired per-turn checkpoint claim:\n%s", out)

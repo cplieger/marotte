@@ -3,7 +3,7 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestHandleToolCall_InternalToolSuppression pins the internal-tool drop: KAS
@@ -27,7 +27,7 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 	t.Run("CallIsDropped", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, cloudConfig), FrameAttribution{})
 		if hasToolCallEvent(events) {
 			t.Error("internal tool call broadcast a tool_call event; want suppressed")
@@ -40,7 +40,7 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 	t.Run("UpdateIsDroppedWithoutTouchingTheFoldTarget", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, cloudConfig), FrameAttribution{})
 		for range 2 {
 			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -49,7 +49,7 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 			}), FrameAttribution{})
 		}
 		for _, e := range *events {
-			if e.Type == vibekit.EventToolCallUpdate {
+			if e.Type == marotte.EventToolCallUpdate {
 				t.Error("suppressed internal tool's update was broadcast; want dropped")
 			}
 		}
@@ -64,7 +64,7 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 	t.Run("OrdinaryOtherKindToolIsShown", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "ws-1",
 			"title":      "web_search",
 			"kind":       "other",

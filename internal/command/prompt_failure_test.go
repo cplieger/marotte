@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // rpcErr builds an RPCError with an optional data payload, the way the bridge
 // hands one to the command layer.
 func rpcErr(t *testing.T, code int, msg string, data any) error {
 	t.Helper()
-	e := &vibekit.RPCError{Code: code, Message: msg}
+	e := &marotte.RPCError{Code: code, Message: msg}
 	if data != nil {
 		raw, err := json.Marshal(data)
 		if err != nil {
@@ -40,31 +40,31 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// it three times against a closed done channel, burning four seconds of
 		// wall clock to arrive at the same error.
 		"dead bridge is not retryable": {
-			err:  &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true},
+			err:  &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true},
 			want: classPipeDeath,
 		},
 		"dead bridge survives wrapping": {
-			err:  fmt.Errorf("prompt: %w", &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true}),
+			err:  fmt.Errorf("prompt: %w", &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}),
 			want: classPipeDeath,
 		},
 		"write failure is transient": {
-			err:  &vibekit.TransportError{Err: errors.New("write to ACP: broken pipe"), Retryable: true},
+			err:  &marotte.TransportError{Err: errors.New("write to ACP: broken pipe"), Retryable: true},
 			want: classTransient,
 		},
 		"non-retryable transport is fatal": {
-			err:  &vibekit.TransportError{Err: errors.New("bad frame"), Retryable: false},
+			err:  &marotte.TransportError{Err: errors.New("bad frame"), Retryable: false},
 			want: classFatal,
 		},
 		"session busy by sentinel": {
-			err:  fmt.Errorf("ACP error -32001: %w", vibekit.ErrNotIdle),
+			err:  fmt.Errorf("ACP error -32001: %w", marotte.ErrNotIdle),
 			want: classBusy,
 		},
 		"session busy by code": {
-			err:  rpcErr(t, vibekit.RPCCodeNotIdle, "session is not idle", nil),
+			err:  rpcErr(t, marotte.RPCCodeNotIdle, "session is not idle", nil),
 			want: classBusy,
 		},
 		"internal error is transient": {
-			err:  rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": "transient upstream fault"}),
+			err:  rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": "transient upstream fault"}),
 			want: classTransient,
 		},
 		// Retrying an expired token is pure latency, and KAS collapses auth
@@ -72,11 +72,11 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// classFatal, because the remedy is a sign-in and only a class can carry
 		// that to the client — see classAuth.
 		"auth failure is auth, not transient": {
-			err:  rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}),
+			err:  rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}),
 			want: classAuth,
 		},
 		"expired token is auth": {
-			err:  rpcErr(t, vibekit.RPCCodeInternal, "ExpiredToken: refresh required", nil),
+			err:  rpcErr(t, marotte.RPCCodeInternal, "ExpiredToken: refresh required", nil),
 			want: classAuth,
 		},
 		// The eight auth messages measured off the KAS bundle. Every one of them
@@ -86,31 +86,31 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// One case per name, because a partial table is the failure mode: a name
 		// left out is silently back on the old behaviour.
 		"invalid token names its class": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": `{"errorType":"TokenInvalidError"}`,
 			}),
 			want: classAuth,
 		},
 		"expired token names its class": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": `{"errorType":"TokenExpiredError"}`,
 			}),
 			want: classAuth,
 		},
 		"a failed auth refresh names its class": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": `{"errorType":"AuthRefreshFailedError"}`,
 			}),
 			want: classAuth,
 		},
 		"the signed-out model registry names its class": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": `{"errorType":"ModelRegistryUnauthenticatedError"}`,
 			}),
 			want: classAuth,
 		},
 		"a bare name code is enough": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "INVALID_SSO_AUTH",
 			}),
 			want: classAuth,
@@ -118,11 +118,11 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// The two phrases the backend emits as prose, for the errors that carry
 		// no class name at all — the population the upstream fix was written for.
 		"the sign-in-again sentence is auth": {
-			err:  rpcErr(t, vibekit.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
+			err:  rpcErr(t, marotte.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
 			want: classAuth,
 		},
 		"a token sentence is auth": {
-			err:  rpcErr(t, vibekit.RPCCodeInternal, "Authentication token has expired", nil),
+			err:  rpcErr(t, marotte.RPCCodeInternal, "Authentication token has expired", nil),
 			want: classAuth,
 		},
 		// The marker that had to GO. This is an AWS SDK message that says a
@@ -130,7 +130,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// retry it is asking for and, after this change, would put a Sign in
 		// banner over a working session.
 		"an SDK credential-refresh notice stays transient": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "a credential service availability issue. A refresh of these credentials will be attempted after Tue Jan 01 2030",
 			}),
 			want: classTransient,
@@ -138,15 +138,15 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// Same marker, the other two texts it reached: a header name echoed back
 		// in a proxy response, and a gRPC channel error.
 		"an echoed credentials header stays transient": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "access-control-allow-credentials: true",
 			}),
 			want: classTransient,
 		},
-		// KAS reports a throttle on the same -32000 vibekit uses for its own
+		// KAS reports a throttle on the same -32000 marotte uses for its own
 		// bridge-exited constant. The data payload is the distinguisher.
 		"throttle is not retryable": {
-			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Too many requests, please wait.", mappedErrorData{
+			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Too many requests, please wait.", mappedErrorData{
 				ErrorType:      "ClientThrottleError",
 				RetryErrorType: "THROTTLING",
 				RequestID:      "abc-123",
@@ -160,7 +160,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// rate limit. A validation failure telling the user to wait and retry is
 		// worse than the bare "Internal error" it replaced.
 		"validation error is not a throttle": {
-			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
+			err: rpcErr(t, marotte.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
 				ErrorType:      "GenericValidationError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
@@ -171,7 +171,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// authentication. The name is what separates it from its ModelRegistry
 		// sibling below, whose text says the account lacks access.
 		"access denied is auth, and is not a throttle": {
-			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Access denied.", mappedErrorData{
+			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Access denied.", mappedErrorData{
 				ErrorType:      "AccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
@@ -181,7 +181,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// retryErrorType: on this code the machine name is the field, and every
 		// mapped error carries the same data block, so presence proves nothing.
 		"a mapped auth class is auth": {
-			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Authentication failed. Please sign in again.", mappedErrorData{
+			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Authentication failed. Please sign in again.", mappedErrorData{
 				ErrorType:      "TokenExpiredError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
@@ -192,7 +192,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// sign-in fixes, so it must not earn a Sign in banner. Exact-name matching
 		// on this path is what keeps it out while its bare sibling above is in.
 		"an entitlement refusal is not auth": {
-			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "…this account does not have access to them.", mappedErrorData{
+			err: rpcErr(t, marotte.RPCCodeBridgeExited, "…this account does not have access to them.", mappedErrorData{
 				ErrorType:      "ModelRegistryAccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
@@ -202,21 +202,21 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// the retry classification is checked first, and a Sign in banner over a
 		// rate limit is advice that cannot work.
 		"a throttle outranks auth prose": {
-			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Authentication token refresh throttled.", mappedErrorData{
+			err: rpcErr(t, marotte.RPCCodeBridgeExited, "Authentication token refresh throttled.", mappedErrorData{
 				ErrorType:      "ClientThrottleError",
 				RetryErrorType: "THROTTLING",
 			}),
 			want: classThrottled,
 		},
 		"server error is not a throttle": {
-			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
+			err: rpcErr(t, marotte.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
 				ErrorType:      "InternalServerError",
 				RetryErrorType: "SERVER_ERROR",
 			}),
 			want: classFatal,
 		},
 		"mapped error with no retry classification is fatal": {
-			err:  rpcErr(t, vibekit.RPCCodeBridgeExited, "some other mapped failure", nil),
+			err:  rpcErr(t, marotte.RPCCodeBridgeExited, "some other mapped failure", nil),
 			want: classFatal,
 		},
 		"nil is fatal":         {err: nil, want: classFatal},
@@ -225,19 +225,19 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// request IS what was refused, so the two extra attempts upload the same
 		// rejected bytes again. One case per shape the backend can refuse on.
 		"oversized image is rejected": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "ImageSizeExceeded: image exceeds 5 MB maximum: 6714372 bytes > 5242880",
 			}),
 			want: classRejected,
 		},
 		"oversized prompt is rejected": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "PromptTooLong",
 			}),
 			want: classRejected,
 		},
 		"unsupported document type is rejected": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "DisallowedFileType",
 			}),
 			want: classRejected,
@@ -245,14 +245,14 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// The name can also arrive in the MESSAGE rather than in data, so the
 		// predicate must search both halves the way isAuthShaped does.
 		"validation name in the message is rejected": {
-			err:  rpcErr(t, vibekit.RPCCodeInternal, "ImageDimensionExceeded", nil),
+			err:  rpcErr(t, marotte.RPCCodeInternal, "ImageDimensionExceeded", nil),
 			want: classRejected,
 		},
 		// The other side of the same coin: adding the table must not swallow the
 		// transient arm, which is still the right answer for a -32603 nobody has
 		// classified.
 		"unclassified internal error is still transient": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "upstream connection reset",
 			}),
 			want: classTransient,
@@ -261,7 +261,7 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// payload, so it must not inherit the shrink-your-prompt remedy. It keeps
 		// whatever the unclassified arm gives it.
 		"a spent monthly allowance is not a validation refusal": {
-			err: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			err: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "MonthlyRequestCount limit reached",
 			}),
 			want: classTransient,
@@ -300,12 +300,12 @@ func retriesFor(err error) bool {
 // corpse cannot answer, and KAS's own client already spent five adaptive
 // attempts on the throttle before handing it over, so a sixth only deepens it.
 func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
-	dead := &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true}
+	dead := &marotte.TransportError{Err: marotte.ErrBridgeExited, Retryable: true}
 	if retriesFor(dead) {
 		t.Error("a dead bridge is reported retryable; every attempt fails instantly against a closed done channel")
 	}
 
-	throttle := rpcErr(t, vibekit.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
+	throttle := rpcErr(t, marotte.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 	})
@@ -315,10 +315,10 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 
 	// The two classes that SHOULD still retry, so the fix cannot be "return
 	// false for everything".
-	if !retriesFor(fmt.Errorf("ACP error -32001: %w", vibekit.ErrNotIdle)) {
+	if !retriesFor(fmt.Errorf("ACP error -32001: %w", marotte.ErrNotIdle)) {
 		t.Error("a busy session must still be retried")
 	}
-	if !retriesFor(&vibekit.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {
+	if !retriesFor(&marotte.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {
 		t.Error("a transient write failure must still be retried")
 	}
 
@@ -327,7 +327,7 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 	// the class exists to change the CODE the user is told, and a class added to
 	// the retry set by accident would spend three prompt sends per dead token
 	// before saying so.
-	if retriesFor(rpcErr(t, vibekit.RPCCodeInternal, "Authentication failed. Please sign in again.", nil)) {
+	if retriesFor(rpcErr(t, marotte.RPCCodeInternal, "Authentication failed. Please sign in again.", nil)) {
 		t.Error("an auth failure is reported retryable; no number of attempts fixes a token the backend rejected")
 	}
 }
@@ -338,7 +338,7 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 // both are known.
 func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	const kasMsg = "Too many requests, please wait before trying again."
-	err := rpcErr(t, vibekit.RPCCodeBridgeExited, kasMsg, mappedErrorData{
+	err := rpcErr(t, marotte.RPCCodeBridgeExited, kasMsg, mappedErrorData{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-9",
@@ -359,7 +359,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	}
 
 	// A non-throttle mapped error must NOT gain the wait-and-retry advice.
-	other := rpcErr(t, vibekit.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
+	other := rpcErr(t, marotte.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
 		ErrorType:      "GenericValidationError",
 		RetryErrorType: "CLIENT_ERROR",
 	})
@@ -372,7 +372,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	// shapes and would return the JSON verbatim — the rendering this function's
 	// own comment names as the regression. The cases above cannot reach that
 	// branch, because KAS normally fills `message`.
-	blank := rpcErr(t, vibekit.RPCCodeBridgeExited, "", mappedErrorData{
+	blank := rpcErr(t, marotte.RPCCodeBridgeExited, "", mappedErrorData{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-11",
@@ -399,7 +399,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 }
 
 func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing.T) {
-	err := rpcErr(t, vibekit.RPCCodeBridgeExited, "Kiro could not load the available models.", mappedErrorData{
+	err := rpcErr(t, marotte.RPCCodeBridgeExited, "Kiro could not load the available models.", mappedErrorData{
 		ErrorType:      "ModelRegistryUnavailableError",
 		RetryErrorType: "SERVER_ERROR",
 	})
@@ -413,7 +413,7 @@ func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing
 		t.Error("ModelRegistryUnavailableError is retryable, want a terminal login remedy")
 	}
 
-	other := rpcErr(t, vibekit.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
+	other := rpcErr(t, marotte.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
 		ErrorType:      "InternalServerError",
 		RetryErrorType: "SERVER_ERROR",
 	})
@@ -432,7 +432,7 @@ func TestPromptFailureReason_ModelRegistryUnavailableNamesLoginRemedy(t *testing
 // rational next move is to press Send again and watch it fail identically.
 func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 	const cause = "ImageSizeExceeded: image exceeds 5 MB maximum: 6714372 bytes > 5242880"
-	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
+	err := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
 	got := promptFailureReason(err, true)
 
 	// The backend's account survives: it carries the numbers, which is the only
@@ -449,7 +449,7 @@ func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 	// An unclassified -32603 must NOT gain the advice. It is the retryable class,
 	// so telling that user to shrink their prompt would send them after the wrong
 	// bug — the same defect shape as the throttle regression above, one class over.
-	other := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+	other := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 		"details": "upstream connection reset",
 	})
 	if reason := promptFailureReason(other, false); strings.Contains(reason, "refused as sent") {
@@ -464,7 +464,7 @@ func TestPromptFailureReason_NamesTheRefusalAsTerminal(t *testing.T) {
 // enough on its own.
 func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 	t.Run("retryErrorType alone still classifies the throttle", func(t *testing.T) {
-		err := rpcErr(t, vibekit.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
+		err := rpcErr(t, marotte.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
 			RetryErrorType: "THROTTLING",
 		})
 		if got := classifyPromptFailure(err); got != classThrottled {
@@ -476,7 +476,7 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 	})
 
 	t.Run("errorType alone still names the failure", func(t *testing.T) {
-		err := rpcErr(t, vibekit.RPCCodeBridgeExited, "", mappedErrorData{
+		err := rpcErr(t, marotte.RPCCodeBridgeExited, "", mappedErrorData{
 			ErrorType: "ImprovementServiceUnavailable",
 		})
 		got := promptFailureReason(err, false)
@@ -491,7 +491,7 @@ func TestPromptFailureReason_HandlesAHalfFilledTriplet(t *testing.T) {
 
 func TestPromptFailureReason_HistoryShapedRefusalNamesRewind(t *testing.T) {
 	const cause = "ImageCountExceeded: too many images"
-	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
+	err := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
 
 	got := promptFailureReason(err, false)
 	for _, want := range []string{"Rewind", "Reopen the chat", "file or MCP tool"} {
@@ -503,7 +503,7 @@ func TestPromptFailureReason_HistoryShapedRefusalNamesRewind(t *testing.T) {
 
 func TestPromptFailureReason_PromptShapedRefusalKeepsSmallerAdvice(t *testing.T) {
 	const cause = "ImageSizeExceeded: image exceeds the maximum"
-	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
+	err := rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{"details": cause})
 
 	got := promptFailureReason(err, true)
 	if !strings.Contains(got, "Make the prompt or its attachments smaller") {
@@ -512,7 +512,7 @@ func TestPromptFailureReason_PromptShapedRefusalKeepsSmallerAdvice(t *testing.T)
 }
 
 func TestContextWindowExceededIsPermanentAndNamesRecovery(t *testing.T) {
-	err := rpcErr(t, vibekit.RPCCodeInternal, "Internal error", mappedErrorData{
+	err := rpcErr(t, marotte.RPCCodeInternal, "Internal error", mappedErrorData{
 		ErrorType:      "ContextWindowExceededError",
 		RetryErrorType: "CLIENT_ERROR",
 		RequestID:      "req-context",
@@ -544,7 +544,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 	const bidi = "\u202e"
 	const c1 = "\u0085"
 
-	err := rpcErr(t, vibekit.RPCCodeBridgeExited, "Agent 'a"+bidi+"b' pins model 'm"+c1+"n'.", mappedErrorData{
+	err := rpcErr(t, marotte.RPCCodeBridgeExited, "Agent 'a"+bidi+"b' pins model 'm"+c1+"n'.", mappedErrorData{
 		ErrorType:      "AgentModelPinUnservableError",
 		RetryErrorType: "CLIENT_ERROR",
 		RequestID:      "req" + bidi + "-3",
@@ -563,7 +563,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 	}
 
 	// The same holds when `message` is empty and errorType is what surfaces.
-	blank := rpcErr(t, vibekit.RPCCodeBridgeExited, "", mappedErrorData{
+	blank := rpcErr(t, marotte.RPCCodeBridgeExited, "", mappedErrorData{
 		ErrorType:      "Bad" + bidi + "Error",
 		RetryErrorType: "CLIENT_ERROR",
 	})
@@ -573,7 +573,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 
 	// And on the ModelRegistryUnavailableError branch, which composes its own
 	// remedy around the same raw message.
-	login := rpcErr(t, vibekit.RPCCodeBridgeExited, "Kiro could not"+bidi+" load models.", mappedErrorData{
+	login := rpcErr(t, marotte.RPCCodeBridgeExited, "Kiro could not"+bidi+" load models.", mappedErrorData{
 		ErrorType: "ModelRegistryUnavailableError",
 	})
 	reason := promptFailureReason(login, false)
@@ -592,7 +592,7 @@ func TestPromptFailureReason_SanitizesUpstreamText(t *testing.T) {
 // a reader can act on — the remedy sentence and the request id.
 func TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy(t *testing.T) {
 	huge := strings.Repeat("model-id-that-is-not-served, ", 4000)
-	err := rpcErr(t, vibekit.RPCCodeBridgeExited, huge, mappedErrorData{
+	err := rpcErr(t, marotte.RPCCodeBridgeExited, huge, mappedErrorData{
 		ErrorType:      "AgentModelPinUnservableError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-42",
@@ -609,7 +609,7 @@ func TestPromptFailureReason_BoundsUpstreamProseAndKeepsTheRemedy(t *testing.T) 
 	}
 
 	// A request id longer than an id can be is truncated rather than trusted.
-	long := rpcErr(t, vibekit.RPCCodeBridgeExited, "refused", mappedErrorData{
+	long := rpcErr(t, marotte.RPCCodeBridgeExited, "refused", mappedErrorData{
 		ErrorType: "AgentModelPinUnservableError",
 		RequestID: strings.Repeat("z", 5000),
 	})

@@ -1,7 +1,7 @@
 {
   "type": "module",
   "sseFixture": ".",
-  "sseFixtureTags": "vibekit_test",
+  "sseFixtureTags": "marotte_test",
   "scripts": {
     "pretest": "rm -rf node_modules/.vite",
     "test": "vitest --run",

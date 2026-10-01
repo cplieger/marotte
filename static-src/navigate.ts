@@ -24,7 +24,7 @@
 //     it is not in the transcript at all. A router is the thing it can call
 //     without importing the chat's internals.
 //   - `Review changes` had no surface, and inventing one would have broken the
-//     ladder's own rule: depth 2 lands in an EXISTING vibekit surface. Routing
+//     ladder's own rule: depth 2 lands in an EXISTING marotte surface. Routing
 //     it to the git view's changes tab is what keeps that rule true.
 //
 // NOT here: the command card's full output, which stays inside its own

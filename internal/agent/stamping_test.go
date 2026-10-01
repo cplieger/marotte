@@ -252,7 +252,7 @@ func versionIsHonest(expr ast.Expr, d definitions) (bool, string) {
 	return false, "Version is not an identifier, a field read or an allowlisted call"
 }
 
-// frameEventsOf traces X in `X.Subject = ...` to `X := vibekit.NewEvent(Event*, ...)`
+// frameEventsOf traces X in `X.Subject = ...` to `X := marotte.NewEvent(Event*, ...)`
 // and names the Event* constants the first argument can hold: a selector directly,
 // or a local whose every definition is one.
 func frameEventsOf(x ast.Expr, d definitions) []string {

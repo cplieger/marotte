@@ -53,7 +53,7 @@ func NewManagerPRSource(mgr *Manager, repos func(context.Context) []PRRepo) PRSo
 // across the watched repos.
 //
 // The author filter is CLIENT-side because there is no author filter on the wire:
-// none of `gh pr list`, `glab mr list` or `tea` takes one in the shape vibekit
+// none of `gh pr list`, `glab mr list` or `tea` takes one in the shape marotte
 // calls them, so the identity comes from Whoami and the comparison happens here.
 // Whoami is resolved once per forge per sweep and cached for that sweep, since
 // several watched repos usually share one connection.
@@ -109,7 +109,7 @@ func (s *managerPRSource) OpenAuthoredPRs(ctx context.Context) ([]WatchedPR, err
 
 // whoamier is the identity read. Declared here because this is the only
 // consumer: the author filter for open PRs is client-side (no forge CLI takes an
-// author filter in the shape vibekit calls them), so the connected login has to
+// author filter in the shape marotte calls them), so the connected login has to
 // be resolved before the listing can be filtered.
 type whoamier interface {
 	// Whoami returns the authenticated account, or an error if not

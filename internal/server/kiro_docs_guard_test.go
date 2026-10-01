@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/filebrowse"
 )
 
 // These cases need a REAL filesystem, not fstest.MapFS: the whole subject is

@@ -1,4 +1,4 @@
-// The per-device localStorage fields. ONE OWNER of the `vibekit.ui-state` key,
+// The per-device localStorage fields. ONE OWNER of the `marotte.ui-state` key,
 // and no second writer may be added: every write is a read-modify-write of one
 // JSON blob, so a second module doing its own drops whatever landed between its
 // read and its write. The key name cannot change either — nothing is migrated.

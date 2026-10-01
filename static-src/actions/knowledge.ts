@@ -1,7 +1,7 @@
 // Knowledge-base actions: add / remove workspace knowledge contexts.
 //
 // The knowledge list is server-canonical (it lives in kiro-cli's global store,
-// not vibekit's chat store) and is refetched after every mutation, so these
+// not marotte's chat store) and is refetched after every mutation, so these
 // actions carry no optimistic state — `add` is async/background anyway (the
 // server returns a "indexing in background" message). See knowledge.ts.
 // ---------------------------------------------------------------------------

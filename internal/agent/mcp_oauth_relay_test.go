@@ -37,7 +37,7 @@ func authURLFor(t *testing.T, listenerURL, state string) string {
 	}
 	redirect := "http://127.0.0.1:" + lu.Port() + "/oauth/callback"
 	q := url.Values{
-		"client_id":     {"vibekit-test"},
+		"client_id":     {"marotte-test"},
 		"response_type": {"code"},
 		"redirect_uri":  {redirect},
 		"state":         {state},

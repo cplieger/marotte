@@ -91,7 +91,7 @@ describe("adaptStatus", () => {
       input: { name: "", state: "connected" },
       expected: { name: "", origin: "user", state: "connected" },
     },
-    // A server KAS reports as off. Only ever sent for one vibekit did not
+    // A server KAS reports as off. Only ever sent for one marotte did not
     // configure, so it must survive adaptation rather than degrading to idle:
     // "off" and "no chat is running" are different rows.
     {

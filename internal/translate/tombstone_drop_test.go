@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // lateWrites are the handlers in this package that persist something AFTER the
@@ -16,42 +16,42 @@ import (
 //
 // Keyed by the log message the site emits on a real failure, so a case whose
 // drop regresses names the exact slog line to look for.
-func lateWrites() map[string]func(*Translator, context.Context, vibekit.ChatID) {
+func lateWrites() map[string]func(*Translator, context.Context, marotte.ChatID) {
 	permID := int64(1)
-	return map[string]func(*Translator, context.Context, vibekit.ChatID){
-		"persist plan": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
+	return map[string]func(*Translator, context.Context, marotte.ChatID){
+		"persist plan": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			tr.HandlePlan(ctx, id, mustJSONCtx(map[string]any{
 				"entries": []map[string]any{{"content": "step", "status": "pending"}},
 			}))
 		},
-		"mode update persist": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
+		"mode update persist": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			tr.HandleModeUpdate(ctx, id, mustJSONCtx(map[string]any{"currentModeId": "spec"}))
 		},
-		"compaction: append event / set watermark": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
+		"compaction: append event / set watermark": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			summary := "rolled up"
 			tr.handleCompactionCompleted(ctx, id, &summary)
 		},
-		"compaction: append failed event": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
+		"compaction: append failed event": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			tr.handleCompactionFailed(ctx, id, "out of context")
 		},
-		"safety: append block event": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
-			tr.HandleSafetyStatusChanged(ctx, id, &vibekit.RPCResponse{
+		"safety: append block event": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
+			tr.HandleSafetyStatusChanged(ctx, id, &marotte.RPCResponse{
 				Params: mustJSONCtx(map[string]any{"status": "blocked", "detail": "refused"}),
 			})
 		},
-		"focus title: persist": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
+		"focus title: persist": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			tr.handleFocusUpdate(ctx, id, &focusUpdate{Title: "Agent picked this"})
 		},
-		"agent_not_found: persist fallback": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
-			tr.HandleAgentNotFound(ctx, id, &vibekit.RPCResponse{
+		"agent_not_found: persist fallback": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
+			tr.HandleAgentNotFound(ctx, id, &marotte.RPCResponse{
 				ID:     &permID,
 				Params: mustJSONCtx(map[string]any{"requestedAgent": "nope", "fallbackAgent": "vibe"}),
 			})
 		},
-		"persist v3 usage": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
+		"persist v3 usage": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			tr.HandleUsageUpdate(ctx, id, mustJSONCtx(map[string]any{"size": 100, "used": 50}))
 		},
-		"persist v3 config catalog": func(tr *Translator, ctx context.Context, id vibekit.ChatID) {
+		"persist v3 config catalog": func(tr *Translator, ctx context.Context, id marotte.ChatID) {
 			tr.HandleConfigOptionUpdate(ctx, id, mustJSONCtx(map[string]any{
 				"configOptions": []map[string]any{{
 					"id":      "model",
@@ -125,7 +125,7 @@ func TestHandleCompactionFailed_TombstonedChatGetsNoBanner(t *testing.T) {
 	tr.handleCompactionFailed(t.Context(), "c1", "out of context")
 
 	for _, e := range *events {
-		if e.Type == vibekit.EventError {
+		if e.Type == marotte.EventError {
 			t.Errorf("broadcast %s for a deleted chat", e.Type)
 		}
 	}

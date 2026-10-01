@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // newTabsServer is a server wired to a real tab store over a temp dir. A real
@@ -25,11 +25,11 @@ func newTabsServer(t *testing.T) (*Server, *tabs.Store) {
 }
 
 // getTabs drives the handler and decodes its body.
-func getTabs(t *testing.T, s *Server) (vibekit.TabList, int) {
+func getTabs(t *testing.T, s *Server) (marotte.TabList, int) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	s.handleTabs(rec, httptest.NewRequest(http.MethodGet, "/api/tabs", http.NoBody))
-	var out vibekit.TabList
+	var out marotte.TabList
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode %s: %v", rec.Body.String(), err)
@@ -40,11 +40,11 @@ func getTabs(t *testing.T, s *Server) (vibekit.TabList, int) {
 
 func TestTabs_GetReturnsTheSetAndItsVersion(t *testing.T) {
 	s, st := newTabsServer(t)
-	first, _, _, err := st.Open(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindChat, Ref: "c-a"})
+	first, _, _, err := st.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindChat, Ref: "c-a"})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if _, _, _, err := st.Open(t.Context(), vibekit.OpenTab{Kind: vibekit.TabKindSettings}); err != nil {
+	if _, _, _, err := st.Open(t.Context(), marotte.OpenTab{Kind: marotte.TabKindSettings}); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 
@@ -130,11 +130,11 @@ type movingTabs struct {
 	calls uint64
 }
 
-func (m *movingTabs) List() ([]vibekit.TabSubject, uint64) {
+func (m *movingTabs) List() ([]marotte.TabSubject, uint64) {
 	m.calls++
-	out := make([]vibekit.TabSubject, 0, m.calls)
+	out := make([]marotte.TabSubject, 0, m.calls)
 	for i := range m.calls {
-		out = append(out, vibekit.TabSubject{ID: "t" + strconv.FormatUint(i, 10), Kind: vibekit.TabKindSettings})
+		out = append(out, marotte.TabSubject{ID: "t" + strconv.FormatUint(i, 10), Kind: marotte.TabKindSettings})
 	}
 	return out, m.calls
 }
@@ -180,8 +180,8 @@ func TestTabs_AReadRacingAMutationPairsTheVersionWithItsOwnSet(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		for i := range opens {
-			if _, _, _, err := st.Open(t.Context(), vibekit.OpenTab{
-				Kind: vibekit.TabKindEditor,
+			if _, _, _, err := st.Open(t.Context(), marotte.OpenTab{
+				Kind: marotte.TabKindEditor,
 				Ref:  "/workspace/f" + string(rune('a'+i%26)) + string(rune('a'+i/26)) + ".go",
 			}); err != nil {
 				return // the store's own limit; the reads are what this asserts

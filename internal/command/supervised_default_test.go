@@ -24,9 +24,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // supervisedConfigDir writes doc as the settings file in a fresh temp dir. An
@@ -77,7 +77,7 @@ func TestCmdCreateChat_SeedsTheSupervisedDefault(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			mem := newSupervisedMembership(t, store, supervisedConfigDir(t, tc.doc))
 
-			body, err := CmdCreateChat(t.Context(), mem, createReq(t, "", vibekit.CreateChatCommand{}))
+			body, err := CmdCreateChat(t.Context(), mem, createReq(t, "", marotte.CreateChatCommand{}))
 			if err != nil {
 				t.Fatalf("CmdCreateChat = %v", err)
 			}
@@ -175,9 +175,9 @@ func TestCmdForkChat_InheritsTheParentsSupervisedMode(t *testing.T) {
 
 // setSupervised flips one chat's posture without touching seedParent, which every
 // other fork test shares.
-func setSupervised(t *testing.T, store ChatStore, id vibekit.ChatID, supervised bool) {
+func setSupervised(t *testing.T, store ChatStore, id marotte.ChatID, supervised bool) {
 	t.Helper()
-	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.SupervisedMode = supervised
 		return true
 	}); err != nil {

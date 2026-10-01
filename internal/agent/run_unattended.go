@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // unattendedApprovalBudget is how long a scheduled run's permission request
@@ -48,7 +48,7 @@ const maxToolNameBytes = 128
 // approvalTypeTurn is the `_meta.kiro.type` marking a TURN APPROVAL.
 const approvalTypeTurn = "turn_approval"
 
-// turnApprovalName is vibekit's own name for a turn approval, which carries no
+// turnApprovalName is marotte's own name for a turn approval, which carries no
 // tool name and titles itself the literal "Review changes".
 const turnApprovalName = "this turn's file changes"
 
@@ -90,9 +90,9 @@ const outcomeOverran = "failed: still running when its next slot came due, so it
 // permissionWithUnattendedFloor wraps the ordinary permission handler.
 //
 // The request still reaches the client exactly as it would otherwise; what the
-// wrapper adds is a deadline after which vibekit answers for them.
+// wrapper adds is a deadline after which marotte answers for them.
 func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
-	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		inner(ctx, chatID, msg)
 
 		// The lease's own mark, which is why the floor now survives a restart.
@@ -117,7 +117,7 @@ func (rs *Runs) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 
 // answerUnattended settles a still-pending request for an absent
 // user: refuse by default, or approve when the operator opted in.
-func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
+func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
 	ctx, cancel := rs.lifecycle.derivedContext()
 	defer cancel()
 
@@ -129,9 +129,9 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 	// Refuse with the reject option the request ADVERTISED — answer with a
 	// choice the request offered, same rule the approve side below follows.
 	// Cancelled is the FALL-BACK for a request advertising none.
-	outcome := vibekit.PermissionOutcomeCancelled()
+	outcome := marotte.PermissionOutcomeCancelled()
 	if opt := optionIDByKind(msgParams, optionKindRejectOnce); opt != "" {
-		outcome = vibekit.PermissionOutcomeSelected(opt)
+		outcome = marotte.PermissionOutcomeSelected(opt)
 	}
 	verb := outcomeRefused
 	if approve {
@@ -142,7 +142,7 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 			slog.Warn("unattended auto-approve: request offered no allow option, refusing instead",
 				"chat_id", chatID, "tool", tool)
 		} else {
-			outcome = vibekit.PermissionOutcomeSelected(opt)
+			outcome = marotte.PermissionOutcomeSelected(opt)
 			verb = outcomeApproved
 		}
 	}
@@ -155,7 +155,7 @@ func (rs *Runs) answerUnattended(chatID vibekit.ChatID, requestID int64, schedul
 	// Taking it also retires the entry, and announces the answer as the
 	// MACHINE's: a card collapsing under a reader who was deciding must say
 	// that a deadline answered it, and which way.
-	if !rs.perms.TakePendingPerm(chatID, requestID, vibekit.SettledByUnattended) {
+	if !rs.perms.TakePendingPerm(chatID, requestID, marotte.SettledByUnattended) {
 		return
 	}
 	// A FIXED message with the outcome as a field, not a message built from the

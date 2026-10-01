@@ -12,7 +12,7 @@ import (
 	"os"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // respondFSWrite handles fs/write_text_file. Request params:
@@ -27,7 +27,7 @@ import (
 // action, sent back as an ordinary fs/write_text_file. Do not gate, stage,
 // snapshot or attribute that write as agent work: it would double-count the
 // changed-files ledger, and under any surviving gate it would deadlock.
-func (in *inbound) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -84,5 +84,5 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, ms
 // THERE IS NO WRITE GATE. KAS reviews a whole TURN (`autopilot: false` → a
 // turn_approval permission request), so a write arriving here is already
 // authorized and goes to disk unconditionally. Do not add a second gate: KAS
-// restores a rejected action from its own snapshot, and a vibekit-side hold
+// restores a rejected action from its own snapshot, and a marotte-side hold
 // would make that restore operate on content KAS never wrote.

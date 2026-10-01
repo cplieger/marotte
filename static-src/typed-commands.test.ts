@@ -1,5 +1,5 @@
 // The typed-command table. Small on purpose, and what matters is the BOUNDARY:
-// everything the table does not claim must fall through untouched, or vibekit
+// everything the table does not claim must fall through untouched, or marotte
 // starts silently swallowing text KAS itself parses.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -57,7 +57,7 @@ describe("handleTypedCommand", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  // Slash text KAS parses itself must reach KAS. vibekit deliberately does not
+  // Slash text KAS parses itself must reach KAS. marotte deliberately does not
   // enumerate that list — it is KAS's and it moves.
   it("leaves other slash commands to KAS", () => {
     expect(handleTypedCommand("c1", "/goal")).toBe(false);

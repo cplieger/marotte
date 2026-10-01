@@ -8,8 +8,8 @@ package command
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestCreateChatAndOpen_OpensAnOwnedTab(t *testing.T) {
@@ -33,8 +33,8 @@ func TestCreateChatAndOpen_ATangentsSubTabIsOwnedToo(t *testing.T) {
 	parent := createChat(t, mem, "op-parent")
 	tangent, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{
 		OpID:       "op-tangent",
-		Init:       func(c *vibekit.Chat) { c.Name = vibekit.DefaultChatName },
-		ParentChat: vibekit.ChatID(parent.Chat.ID),
+		Init:       func(c *marotte.Chat) { c.Name = marotte.DefaultChatName },
+		ParentChat: marotte.ChatID(parent.Chat.ID),
 	})
 	if err != nil {
 		t.Fatalf("CreateChatAndOpen(parent %q) = %v, want it to succeed", parent.Chat.ID, err)

@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // policyCallTimeout bounds one _kiro/permissions/{list,explain} round-trip.
@@ -31,7 +31,7 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 			onPolicyNotification: rt.forwardPolicyNotification,
 			// The step-transcript seam: a `session/load` of a step's session replays
 			// frames the utility session reads as foreign. No-ops until a read is open.
-			onForeignUpdate: func(sessionID string, kind vibekit.ACPUpdateKind, update json.RawMessage) bool {
+			onForeignUpdate: func(sessionID string, kind marotte.ACPUpdateKind, update json.RawMessage) bool {
 				return rt.runs.stepReplays.ingest(sessionID, kind, update)
 			},
 			onFrameDrained: func(at drainPoint, force bool) {
@@ -50,7 +50,7 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 // UTILITY session received to the same translator the chat dispatch table uses, so
 // one decode serves both doors. Broadcast workspace-global (empty chatID), on
 // context.Background(): forward is a goroutine with no request behind it.
-func (rt *Runtime) forwardPolicyNotification(msg *vibekit.RPCResponse) {
+func (rt *Runtime) forwardPolicyNotification(msg *marotte.RPCResponse) {
 	switch msg.Method {
 	case methodV3PolicyChanged:
 		rt.translator.HandlePolicyChanged(context.Background(), "", msg)
@@ -62,7 +62,7 @@ func (rt *Runtime) forwardPolicyNotification(msg *vibekit.RPCResponse) {
 // PolicyList returns the native policy rules, optionally filtered to one
 // scope (empty = all scopes). Backed by _kiro/permissions/list on the
 // utility bridge.
-func (st *Settings) PolicyList(ctx context.Context, scope string) ([]vibekit.PolicyRule, error) {
+func (st *Settings) PolicyList(ctx context.Context, scope string) ([]marotte.PolicyRule, error) {
 	extra := map[string]any{}
 	if scope != "" {
 		extra["scope"] = scope
@@ -74,16 +74,16 @@ func (st *Settings) PolicyList(ctx context.Context, scope string) ([]vibekit.Pol
 		return nil, err
 	}
 	var out struct {
-		Rules []vibekit.PolicyRule `json:"rules"`
+		Rules []marotte.PolicyRule `json:"rules"`
 	}
 	if len(raw) == 0 {
-		return []vibekit.PolicyRule{}, nil
+		return []marotte.PolicyRule{}, nil
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("parse permissions/list: %w", err)
 	}
 	if out.Rules == nil {
-		out.Rules = []vibekit.PolicyRule{}
+		out.Rules = []marotte.PolicyRule{}
 	}
 	return out.Rules, nil
 }
@@ -108,7 +108,7 @@ type explainWire struct {
 // WITHOUT executing anything or raising a consent prompt (KAS
 // evaluateSingleResource). Exactly one of Capability / ToolID is required;
 // KAS additionally requires a resource for the shell capability.
-func (st *Settings) PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
+func (st *Settings) PolicyExplain(ctx context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error) {
 	extra := map[string]any{}
 	switch {
 	case req.Capability != "":
@@ -131,7 +131,7 @@ func (st *Settings) PolicyExplain(ctx context.Context, req vibekit.PolicyExplain
 	if err := json.Unmarshal(raw, &w); err != nil {
 		return nil, fmt.Errorf("parse permissions/explain: %w", err)
 	}
-	res := &vibekit.PolicyExplainResult{
+	res := &marotte.PolicyExplainResult{
 		Capability:    w.Capability,
 		Resource:      w.Resource,
 		Effect:        w.Effect,
@@ -140,7 +140,7 @@ func (st *Settings) PolicyExplain(ctx context.Context, req vibekit.PolicyExplain
 		Source:        w.Source,
 	}
 	if w.MatchedRule != nil {
-		res.MatchedRule = &vibekit.PolicyRuleCore{
+		res.MatchedRule = &marotte.PolicyRuleCore{
 			Capability: w.MatchedRule.Capability,
 			Match:      w.MatchedRule.Match,
 			Exclude:    w.MatchedRule.Exclude,

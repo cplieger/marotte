@@ -4,23 +4,23 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // findPermissionNeeded returns the first permission_needed payload broadcast.
-func findPermissionNeeded(t *testing.T, events *[]vibekit.ServerEvent) (vibekit.PermissionNeededPayload, bool) {
+func findPermissionNeeded(t *testing.T, events *[]marotte.ServerEvent) (marotte.PermissionNeededPayload, bool) {
 	t.Helper()
 	for _, e := range *events {
-		if e.Type != vibekit.EventPermissionNeeded {
+		if e.Type != marotte.EventPermissionNeeded {
 			continue
 		}
-		p, ok := e.Payload.(vibekit.PermissionNeededPayload)
+		p, ok := e.Payload.(marotte.PermissionNeededPayload)
 		if !ok {
-			t.Fatalf("permission_needed payload type = %T, want vibekit.PermissionNeededPayload", e.Payload)
+			t.Fatalf("permission_needed payload type = %T, want marotte.PermissionNeededPayload", e.Payload)
 		}
 		return p, true
 	}
-	return vibekit.PermissionNeededPayload{}, false
+	return marotte.PermissionNeededPayload{}, false
 }
 
 // TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID pins the v3 decode
@@ -35,7 +35,7 @@ func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(4242)
-	msg := &vibekit.RPCResponse{
+	msg := &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",
@@ -77,7 +77,7 @@ func TestHandlePermissionRequest_MissingIDDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 
-	msg := &vibekit.RPCResponse{ // no ID
+	msg := &marotte.RPCResponse{ // no ID
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "s",
 			"toolCall":  map[string]any{"toolCallId": "tc", "title": "x", "kind": "edit"},
@@ -127,7 +127,7 @@ func turnApprovalParams(t *testing.T, files []map[string]any) []byte {
 
 // TestHandlePermissionRequest_TurnApprovalCarriesFiles pins the decode of
 // `_meta.kiro.files`: KAS sends ABSOLUTE paths and names the action id
-// `toolCallId`, and vibekit puts workspace-relative paths on the wire under
+// `toolCallId`, and marotte puts workspace-relative paths on the wire under
 // `action_id`. A client that received the absolute path would render the
 // operator's whole home directory in a file row, and one that lost the action
 // id could not answer at all — the decision map is keyed by it.
@@ -137,7 +137,7 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(77)
-	msg := &vibekit.RPCResponse{
+	msg := &marotte.RPCResponse{
 		ID: &id,
 		Params: turnApprovalParams(t, []map[string]any{
 			{"path": "/work/src/a.ts", "snapshotUri": "kiro-snapshot-v2://s:abc/", "toolCallId": "act-1"},
@@ -153,7 +153,7 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 	if len(got.Files) != 2 {
 		t.Fatalf("Files length = %d, want 2: %+v", len(got.Files), got.Files)
 	}
-	want := []vibekit.ApprovalFile{
+	want := []marotte.ApprovalFile{
 		{Path: "src/a.ts", SnapshotURI: "kiro-snapshot-v2://s:abc/", ActionID: "act-1"},
 		{Path: "src/b.ts", ActionID: "act-2"},
 	}
@@ -176,7 +176,7 @@ func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(78)
-	msg := &vibekit.RPCResponse{
+	msg := &marotte.RPCResponse{
 		ID: &id,
 		Params: turnApprovalParams(t, []map[string]any{
 			{"path": "/work/old.py", "toolCallId": "ren-1"},
@@ -206,7 +206,7 @@ func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 	id := int64(79)
 	// _meta present but a DIFFERENT type, with files attached: the type is what
 	// decides, not the presence of the array.
-	msg := &vibekit.RPCResponse{
+	msg := &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",
@@ -275,7 +275,7 @@ func TestHandlePermissionRequest_AbsentConsentIsNotBlocked(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(3001)
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID:     &id,
 		Params: consentParams(t, nil),
 	})
@@ -299,7 +299,7 @@ func TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow(t *testing.T)
 	tr := New(rolesOf(deps))
 
 	id := int64(3002)
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: consentParams(t, map[string]any{
 			"persistableConsent":       false,
@@ -311,9 +311,9 @@ func TestHandlePermissionRequest_PersistableFalseBlocksAlwaysAllow(t *testing.T)
 	if !ok {
 		t.Fatal("no permission_needed event broadcast")
 	}
-	if got.AlwaysAllowBlocked != vibekit.AlwaysAllowBlockUnparseable {
+	if got.AlwaysAllowBlocked != marotte.AlwaysAllowBlockUnparseable {
 		t.Errorf("AlwaysAllowBlocked = %q, want %q",
-			got.AlwaysAllowBlocked, vibekit.AlwaysAllowBlockUnparseable)
+			got.AlwaysAllowBlocked, marotte.AlwaysAllowBlockUnparseable)
 	}
 }
 
@@ -326,7 +326,7 @@ func TestHandlePermissionRequest_PersistableTrueIsNotBlocked(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	id := int64(3003)
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: consentParams(t, map[string]any{
 			"persistableConsent": true,
@@ -348,7 +348,7 @@ func TestHandlePermissionRequest_CarriesVerifiedMCPIdentity(t *testing.T) {
 	tr := New(rolesOf(deps))
 	id := int64(4243)
 
-	tr.HandlePermissionRequest(t.Context(), "c1", &vibekit.RPCResponse{
+	tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",

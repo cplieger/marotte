@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { info, success, error, showToast, _resetForTest } from "./toast.js";
 
 // toast.ts delegates to @cplieger/ui-primitives' default toaster; these tests
-// exercise the vibekit wrapper (info/success/error/showToast) against the
+// exercise the marotte wrapper (info/success/error/showToast) against the
 // library's DOM contract (.uip-toast + .uip-toast--<level>, the announce()
 // live region for a11y) and behavior (auto-dismiss, queue, pause, retry).
 //

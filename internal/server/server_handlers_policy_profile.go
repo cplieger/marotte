@@ -10,10 +10,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/policyfile"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -23,7 +23,7 @@ import (
 // shape it does. The presets ride the session door (_meta.kiro.policyPreset on
 // session/new), and KAS injects them at SESSION scope bound to the one session
 // they arrived on. KAS creates a workflow STEP's session itself, with no _meta and
-// no vibekit involvement, so a preset can never reach one — measured on this
+// no marotte involvement, so a preset can never reach one — measured on this
 // container: 280 permission prompts, every one of them on a step session and none
 // on a seeded one. A USER-scope rule in permissions.yaml IS evaluated for every
 // session in the process, step sessions included, so the loosest rung writes its
@@ -163,9 +163,9 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	slog.Info("security profile selected", "profile", profile.ID,
 		"presets", profile.Presets, "seeded_rules", len(seeded), "file_rules", len(userRules))
 	webhttp.Ok(w)
-	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
-	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventPermissionsChanged, "",
-		vibekit.PermissionsChangedPayload{Status: "success"}))
+	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
+	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventPermissionsChanged, "",
+		marotte.PermissionsChangedPayload{Status: "success"}))
 }
 
 // rulesInForce is what the OUTGOING profile currently contributes to policy, as
@@ -260,7 +260,7 @@ func writableScopes() []string {
 
 // snapshotPolicyFiles reads both writable files so a failed selection can be put
 // back. A parse error propagates: the caller refuses the request rather than
-// overwriting a file vibekit could not understand.
+// overwriting a file marotte could not understand.
 //
 // The middle result is the scope whose file could not be read, and it is
 // meaningful ONLY when the error is non-nil. It exists because this reads TWO
@@ -375,10 +375,10 @@ func restorePolicyFiles(ctx context.Context, roots policyfile.Roots, snap policy
 // visibly disagree with the picker beside it, instead of that disagreement waiting
 // on KAS's own reload notification to happen to arrive.
 //
-// ErrTooManyRules is separated from the generic 500 because it is not vibekit
+// ErrTooManyRules is separated from the generic 500 because it is not marotte
 // failing: it is the user's own file at the 512-rule cap, a condition they caused
 // and can fix, and the sibling rule endpoint already answers 400 for it. Folding
-// it into an internal error made every profile selection report a bug in vibekit
+// it into an internal error made every profile selection report a bug in marotte
 // for a full file.
 //
 // The sentinel is tested BEFORE the restore because on that path there is nothing
@@ -398,8 +398,8 @@ func (s *Server) failProfileSelection(ctx context.Context, w http.ResponseWriter
 		return
 	}
 	if err := restorePolicyFiles(ctx, roots, snap); err != nil {
-		s.agent.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPermissionsChanged, "",
-			vibekit.PermissionsChangedPayload{Status: "failed"}))
+		s.agent.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
+			marotte.PermissionsChangedPayload{Status: "failed"}))
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
 			"the profile could not be applied and the previous rules could not be put back; "+
 				"inspect permissions.yaml under ~/.kiro/settings and ~/.kiro/workspace-roots",
@@ -426,11 +426,11 @@ func (s *Server) persistProfile(ctx context.Context, id string) error {
 }
 
 // securityProfileCatalog projects policyfile's ladder onto the wire, order intact.
-func securityProfileCatalog() []vibekit.SecurityProfile {
+func securityProfileCatalog() []marotte.SecurityProfile {
 	src := policyfile.Profiles()
-	out := make([]vibekit.SecurityProfile, 0, len(src))
+	out := make([]marotte.SecurityProfile, 0, len(src))
 	for i := range src {
-		out = append(out, vibekit.SecurityProfile{ID: src[i].ID, Presets: src[i].Presets})
+		out = append(out, marotte.SecurityProfile{ID: src[i].ID, Presets: src[i].Presets})
 	}
 	return out
 }

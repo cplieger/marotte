@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // splitVersion parses "<id>:<rev>" and fails the test on any other shape.
@@ -47,14 +47,14 @@ func TestMutators_ReturnStrictlyIncreasingVersionsOnOneID(t *testing.T) {
 	if prevRev != 0 {
 		t.Fatalf("fresh buffer rev = %d, want 0", prevRev)
 	}
-	call := vibekit.ToolCall{ID: "tc1", Status: vibekit.ToolInProgress}
+	call := marotte.ToolCall{ID: "tc1", Status: marotte.ToolInProgress}
 	mutators := []struct {
 		name string
 		do   func() string
 	}{
 		{"StartTurn", func() string { _, v := buf.StartTurn("m1"); return v }},
 		{"SetModel", func() string { return buf.SetModel("claude") }},
-		{"SetRefusal", func() string { return buf.SetRefusal(&vibekit.RefusalInfo{Category: "x"}) }},
+		{"SetRefusal", func() string { return buf.SetRefusal(&marotte.RefusalInfo{Category: "x"}) }},
 		{"AppendTextDelta", func() string { _, _, v := buf.AppendTextDelta("hi", ""); return v }},
 		{"AppendThinkingDelta", func() string { _, _, v := buf.AppendThinkingDelta("hm", ""); return v }},
 		{"AppendToolCall", func() string { _, v := buf.AppendToolCall(&call); return v }},
@@ -63,11 +63,11 @@ func TestMutators_ReturnStrictlyIncreasingVersionsOnOneID(t *testing.T) {
 		{"SetToolCall", func() string { return buf.SetToolCall(0, &call) }},
 		{"SetSteerCarry", func() string { return buf.SetSteerCarry("[", "") }},
 		{"AppendCodeReferences", func() string {
-			_, v := buf.AppendCodeReferences([]vibekit.CodeReference{{URL: "u"}})
+			_, v := buf.AppendCodeReferences([]marotte.CodeReference{{URL: "u"}})
 			return v
 		}},
 		{"TrackFileChanges", func() string {
-			return buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "a.go", OldText: "a\n", NewText: "b\n"}}, false)
+			return buf.TrackFileChanges([]marotte.ToolDiff{{Path: "a.go", OldText: "a\n", NewText: "b\n"}}, false)
 		}},
 		{"ComputeDuration", func() string { _, v := buf.ComputeDuration("tc1"); return v }},
 		{"MarkOverCap", func() string { _, v := buf.MarkOverCap(); return v }},
@@ -93,7 +93,7 @@ func TestMutators_ReturnStrictlyIncreasingVersionsOnOneID(t *testing.T) {
 func TestReaders_MoveNothing(t *testing.T) {
 	buf := New()
 	buf.StartTurn("m1")
-	call := vibekit.ToolCall{ID: "tc1", Status: vibekit.ToolInProgress}
+	call := marotte.ToolCall{ID: "tc1", Status: marotte.ToolInProgress}
 	buf.AppendToolCall(&call)
 	buf.AppendTextDelta("text", "")
 	before := buf.Version()
@@ -118,7 +118,7 @@ func TestReaders_MoveNothing(t *testing.T) {
 func TestTrackFileChanges_NoDeltaReturnsTheCurrentVersion(t *testing.T) {
 	buf := New()
 	before := buf.Version()
-	got := buf.TrackFileChanges([]vibekit.ToolDiff{{Path: ""}}, false)
+	got := buf.TrackFileChanges([]marotte.ToolDiff{{Path: ""}}, false)
 	if got != before {
 		t.Errorf("TrackFileChanges with no delta returned %q, want the current version %q", got, before)
 	}

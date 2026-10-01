@@ -16,13 +16,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-const replayGapChat vibekit.ChatID = "c-replay-gap"
+const replayGapChat marotte.ChatID = "c-replay-gap"
 
 const (
 	replayGapReasoning = "weighing the two shapes before answering"
@@ -36,7 +36,7 @@ const (
 // itself and pass through a rename.
 type transcriptPage struct {
 	LiveTurn *struct {
-		Message   vibekit.Message `json:"message"`
+		Message   marotte.Message `json:"message"`
 		ChunkSeq  int64           `json:"chunk_seq"`
 		Truncated bool            `json:"truncated"`
 	} `json:"live_turn"`
@@ -58,8 +58,8 @@ func newReplayGapRuntime(t *testing.T) (*Runtime, *chat.Store, *http.ServeMux) {
 	}
 	var rt *Runtime
 	cs, err := chat.NewStore(t.TempDir(),
-		chat.WithTurnOpen(func(id vibekit.ChatID) vibekit.TurnOpenState { return rt.TurnOpenState(id) }),
-		chat.WithLiveTurn(func(id vibekit.ChatID) (vibekit.LiveTurn, bool) { return rt.LiveTurn(id) }),
+		chat.WithTurnOpen(func(id marotte.ChatID) marotte.TurnOpenState { return rt.TurnOpenState(id) }),
+		chat.WithLiveTurn(func(id marotte.ChatID) (marotte.LiveTurn, bool) { return rt.LiveTurn(id) }),
 	)
 	if err != nil {
 		t.Fatalf("chat.NewStore: %v", err)
@@ -92,10 +92,10 @@ func openReplayGapTurn(t *testing.T, rt *Runtime) {
 // `messages` and every assertion below would pass for the wrong reason.
 func seedReplayGapPrompt(t *testing.T, cs *chat.Store) {
 	t.Helper()
-	if _, err := cs.Mutate(t.Context(), replayGapChat, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), replayGapChat, func(c *marotte.Chat, _ bool) bool {
 		c.Name = string(replayGapChat)
-		c.Messages = []vibekit.Message{
-			{ID: "u1", Role: vibekit.RoleUser, Content: replayGapPrompt, Ts: 1},
+		c.Messages = []marotte.Message{
+			{ID: "u1", Role: marotte.RoleUser, Content: replayGapPrompt, Ts: 1},
 		}
 		return true
 	}); err != nil {
@@ -107,7 +107,7 @@ func seedReplayGapPrompt(t *testing.T, cs *chat.Store) {
 // about the field — the older-page withhold, an unwired reader, the byte charge — are
 // internal/chat's and are tested there; this file's subject is whether the reader reaches
 // the wire at all.
-func getTranscript(t *testing.T, mux *http.ServeMux, id vibekit.ChatID) transcriptPage {
+func getTranscript(t *testing.T, mux *http.ServeMux, id marotte.ChatID) transcriptPage {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id), nil)
 	rec := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
 	// what makes the GET the only channel for the in-flight reply. The retired frame
 	// type is checked by name so its return would fail here rather than pass by luck.
 	body := coldConnect(t, rt, "").Body.String()
-	if strings.Contains(body, string(vibekit.EventType("turn_state"))) || strings.Contains(body, replayGapText) {
+	if strings.Contains(body, string(marotte.EventType("turn_state"))) || strings.Contains(body, replayGapText) {
 		t.Fatalf("the connect carries turn content; the GET assertions below would pass without it: %q", body)
 	}
 	if !connectPayload(t, rt, "").BusyStated || !busySetOf(connectPayload(t, rt, ""))[replayGapChat] {
@@ -177,7 +177,7 @@ func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
 
 // openTurnFrom opens a turn of the given source on chatID and returns its buffer, so a
 // test can choose what the turn then produces — including nothing.
-func openTurnFrom(t *testing.T, rt *Runtime, id vibekit.ChatID, src vibekit.TurnOpenSource) *buffer.Buffer {
+func openTurnFrom(t *testing.T, rt *Runtime, id marotte.ChatID, src marotte.TurnOpenSource) *buffer.Buffer {
 	t.Helper()
 	rt.bridge.mgr.orInsert(id)
 	if epoch := rt.coord.StartTurn(t.Context(), id, src); epoch == 0 {
@@ -199,8 +199,8 @@ func openTurnFrom(t *testing.T, rt *Runtime, id vibekit.ChatID, src vibekit.Turn
 // unpersisted live turn and mounts a blank assistant row under the prompt.
 func TestLiveTurn_WithholdsATurnThatHasProducedNothing(t *testing.T) {
 	rt, _, _ := newReplayGapRuntime(t)
-	const quiet vibekit.ChatID = "c-quiet"
-	openTurnFrom(t, rt, quiet, vibekit.TurnSourcePrompt)
+	const quiet marotte.ChatID = "c-quiet"
+	openTurnFrom(t, rt, quiet, marotte.TurnSourcePrompt)
 
 	if !rt.TurnOpenState(quiet).Open {
 		t.Fatalf("the fixture's turn is not open, so nothing below measures the empty case")
@@ -225,11 +225,11 @@ func TestLiveTurn_WithholdsAnIdleChat(t *testing.T) {
 // TestRuntimeLiveTurn_CarriesTheBase is the GET channel's COPY, which is the one fact
 // bridge_coord's LiveTurn can get wrong on its own — and it needs its own test because
 // this channel's base is almost always 0 in production, so nothing else would exercise
-// the field's journey onto vibekit.LiveTurn at all.
+// the field's journey onto marotte.LiveTurn at all.
 func TestRuntimeLiveTurn_CarriesTheBase(t *testing.T) {
 	rt, _, _ := newReplayGapRuntime(t)
-	const cut vibekit.ChatID = "c-get-cut"
-	buf := openTurnFrom(t, rt, cut, vibekit.TurnSourcePrompt)
+	const cut marotte.ChatID = "c-get-cut"
+	buf := openTurnFrom(t, rt, cut, marotte.TurnSourcePrompt)
 	// The caps test's own fixture, shared rather than re-sized here: it is built to exceed
 	// liveTurnGETCaps.BlockTextBytes, the one dimension that cuts this channel's block
 	// array at a size worth building.

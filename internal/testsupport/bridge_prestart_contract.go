@@ -3,7 +3,7 @@ package testsupport
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // ACPPreStartBridge is the subject of ACPBridgePreStartContractTest: the 5
@@ -12,11 +12,11 @@ import (
 // widths, up to 15 methods — and a contract suite has no business naming a
 // method it does not exercise.
 type ACPPreStartBridge interface {
-	NotifCh() <-chan vibekit.Notification
+	NotifCh() <-chan marotte.Notification
 	Stop()
 	CurrentMode() string
-	Modes() []vibekit.SessionMode
-	Models() []vibekit.SessionModel
+	Modes() []marotte.SessionMode
+	Models() []marotte.SessionModel
 }
 
 // ACPBridgePreStartContractTest verifies behavioral contracts that any ACP

@@ -1,6 +1,6 @@
 /** Aligns every dot beat to one origin, so N dots that start at N different moments
  *  still breathe together. Mechanism and the measurements: `03-base.css` "THE DOT
- *  BEAT" and `vibekit-ui.md` "Entry motion is a GPU budget". */
+ *  BEAT" and `marotte-ui.md` "Entry motion is a GPU budget". */
 
 const NAME = "vk-dot-beat";
 

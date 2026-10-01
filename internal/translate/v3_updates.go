@@ -15,8 +15,8 @@ import (
 	"strings"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // v3Summarization is session_info_update's _meta.kiro.summarization block.
@@ -57,7 +57,7 @@ type sessionInfoKiroBlock struct {
 	// Hook is the kind=="hook_update" block, one per hook execution (see hook_status.go).
 	Hook *hookUpdateBlock `json:"hook"`
 	// TurnStart and TurnEnd are the wire's own turn bracket, emitted for EVERY
-	// turn including one vibekit never prompted. Pointers because KAS gives
+	// turn including one marotte never prompted. Pointers because KAS gives
 	// turn_end a nested object and turn_start a flat `true`.
 	TurnStart *bool         `json:"turnStart"`
 	TurnEnd   *turnEndBlock `json:"turnEnd"`
@@ -146,7 +146,7 @@ const meteringUnitCredit = "credit"
 // v3 compaction status. Parent-only, so a subagent update cannot overwrite the
 // parent chat — except a workflow step's turn_completion, let through for its
 // metering only (see persistTurnSummary).
-func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, attr FrameAttribution) {
+func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
 		return
@@ -203,7 +203,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 // handleContextUsage is the cascade's last arm: the context-usage channel that
 // actually arrives (usageUpdate records why the standalone frame is only a
 // fallback), and the report for a frame nothing consumed.
-func (t *Translator) handleContextUsage(ctx context.Context, chatID vibekit.ChatID, k *sessionInfoKiroBlock) {
+func (t *Translator) handleContextUsage(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
 	pct := cmp.Or(k.ContextUsage.UsagePercentage, k.UsagePercentage)
 	if pct == nil {
 		logUnconsumedInfoKind(chatID, k.Kind)
@@ -214,7 +214,7 @@ func (t *Translator) handleContextUsage(ctx context.Context, chatID vibekit.Chat
 
 // handleWireTurnEnd closes the chat's live turn on the wire's own turn_end
 // bracket. Reports whether the frame was a turn_end, so the caller stops.
-func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID vibekit.ChatID, e *turnEndBlock) bool {
+func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID marotte.ChatID, e *turnEndBlock) bool {
 	if e == nil {
 		return false
 	}
@@ -225,7 +225,7 @@ func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID vibekit.ChatI
 		slog.Debug("turn_end carried stopDetails in an unread shape",
 			"chat_id", chatID, "stop_reason", e.StopReason, "bytes", len(e.StopDetails))
 	}
-	t.turns.WireTurnEnd(ctx, chatID, vibekit.StopReason(e.StopReason), details)
+	t.turns.WireTurnEnd(ctx, chatID, marotte.StopReason(e.StopReason), details)
 	return true
 }
 
@@ -233,7 +233,7 @@ func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID vibekit.ChatI
 // through session_info_update, enumerated from all 30 buildSessionInfoUpdate call
 // sites plus the two reaching the wire via SessionInfoEmitter.send.
 //
-// It tells a sub-kind vibekit deliberately ignores from one KAS added since this
+// It tells a sub-kind marotte deliberately ignores from one KAS added since this
 // was written; membership implies nothing about consumption.
 var knownSessionInfoKinds = map[string]struct{}{
 	// turn_start, turn_end, user_message_id_assigned and hook_update are ABSENT because
@@ -250,14 +250,14 @@ var knownSessionInfoKinds = map[string]struct{}{
 // dispatch cascade without being consumed. Most sub-kinds legitimately do: a kind
 // absent from knownSessionInfoKinds logs at Warn as a probable KAS addition, a
 // known-but-ignored one at Debug.
-func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
+func logUnconsumedInfoKind(chatID marotte.ChatID, kind string) {
 	if kind == "" {
 		return
 	}
 	// The kind is backend-controlled, and a raw newline forges a log line.
 	safe := runesafe.SanitizeSingleLineBounded(kind, maxCensusNameBytes)
 	if _, known := knownSessionInfoKinds[kind]; known {
-		slog.Debug("session_info_update: known kind carries nothing vibekit consumes",
+		slog.Debug("session_info_update: known kind carries nothing marotte consumes",
 			"chat_id", chatID, "kind", safe)
 		return
 	}
@@ -267,10 +267,10 @@ func logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 
 // handleV3Summarization maps the v3 summarization sub-states onto the compaction
 // domain events.
-func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.ChatID, s *v3Summarization) {
+func (t *Translator) handleV3Summarization(ctx context.Context, chatID marotte.ChatID, s *v3Summarization) {
 	switch s.Status {
 	case "running":
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCompactionStarted, chatID, vibekit.CompactionStartedPayload{}))
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventCompactionStarted, chatID, marotte.CompactionStartedPayload{}))
 	case "success":
 		var summary *string
 		if s.Summary != nil {
@@ -295,7 +295,7 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.C
 // while the turn count and duration describe the CONVERSATION and a step must not
 // touch them. The absolute usage_update.cost channel keeps overwrite precedence
 // if KAS ever ships both.
-func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
+func (t *Translator) persistTurnSummary(ctx context.Context, chatID marotte.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
 		if summaries[i].Unit == "" || summaries[i].Unit == meteringUnitCredit {
@@ -317,7 +317,7 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 // because it is nullish upstream, and absent leaves stored credits untouched.
 //
 // A FALLBACK, not the primary: the frame has no emit site in any KAS build
-// vibekit has run against (one bundle hit on 2.16.1, no emitter), so the live
+// marotte has run against (one bundle hit on 2.16.1, no emitter), so the live
 // channel is the context_usage session_info_update sub-kind.
 type usageUpdate struct {
 	Cost *struct {
@@ -329,7 +329,7 @@ type usageUpdate struct {
 
 // HandleUsageUpdate folds v3 usage_update into the chat's usage. Parent
 // attribution is ignoreSubSession's, in the dispatch table.
-func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
 	var u usageUpdate
 	if json.Unmarshal(raw, &u) != nil || u.Size <= 0 {
 		return
@@ -350,8 +350,8 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatI
 // rewritten wholesale on every Mutate and KAS emits its percentage several times
 // per model response, so an exact-inequality gate turned one 20-tool-call turn
 // into dozens of full-transcript rewrites.
-func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pct float64, size int, credits float64) {
-	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func (t *Translator) persistUsage(ctx context.Context, chatID marotte.ChatID, pct float64, size int, credits float64) {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -439,7 +439,7 @@ type configChoice struct {
 // HandleConfigOptionUpdate refreshes the chat's model catalog. Modes are
 // intentionally NOT refreshed: this catalog omits the bundled/workspace source tag
 // the picker groups by, so the authoritative mode list is session/new's.
-func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
 	var p configOptionUpdate
 	if json.Unmarshal(raw, &p) != nil {
 		return
@@ -449,7 +449,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 		return
 	}
 	t.catalog.SetModels(cat.models)
-	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -464,7 +464,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 }
 
 // configCatalog is what one config_option_update says about the two options
-// vibekit consumes: the model select and the effortLevel select.
+// marotte consumes: the model select and the effortLevel select.
 //
 // sawEffort is tracked apart from the list because an EMPTY effort list is a real
 // answer, reported for a model with no tiers, so it must be applied — while a
@@ -472,8 +472,8 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 type configCatalog struct {
 	currentModel  string
 	currentEffort string
-	models        []vibekit.SessionModel
-	efforts       []vibekit.SessionEffortLevel
+	models        []marotte.SessionModel
+	efforts       []marotte.SessionEffortLevel
 	sawEffort     bool
 }
 
@@ -483,10 +483,10 @@ func readConfigCatalog(opts []configOption) configCatalog {
 	for i := range opts {
 		opt := &opts[i]
 		switch opt.ID {
-		case vibekit.ConfigOptionModel:
+		case marotte.ConfigOptionModel:
 			_ = json.Unmarshal(opt.CurrentValue, &cat.currentModel) // string; ignore non-string
 			cat.models = flattenModelChoices(opt.Options)
-		case vibekit.ConfigOptionEffort:
+		case marotte.ConfigOptionEffort:
 			cat.sawEffort = true
 			_ = json.Unmarshal(opt.CurrentValue, &cat.currentEffort) // string; ignore non-string
 			cat.efforts = flattenEffortChoices(opt.Options)
@@ -498,8 +498,8 @@ func readConfigCatalog(opts []configOption) configCatalog {
 // applyTo writes the catalog onto the chat, reporting whether anything changed:
 // the store persists and broadcasts only on a change, so a repeated frame answers
 // false.
-func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
-	changed := vibekit.ApplyServedModels(c, cat.models)
+func (cat *configCatalog) applyTo(c *marotte.Chat) bool {
+	changed := marotte.ApplyServedModels(c, cat.models)
 	if cat.currentModel != "" && c.Model != cat.currentModel {
 		c.Model = cat.currentModel
 		changed = true
@@ -520,8 +520,8 @@ func (cat *configCatalog) applyTo(c *vibekit.Chat) bool {
 
 // flattenEffortChoices converts the effortLevel option's choices into the domain
 // tier list. Flat by construction, since KAS groups only the model select.
-func flattenEffortChoices(choices []configChoice) []vibekit.SessionEffortLevel {
-	out := make([]vibekit.SessionEffortLevel, 0, len(choices))
+func flattenEffortChoices(choices []configChoice) []marotte.SessionEffortLevel {
+	out := make([]marotte.SessionEffortLevel, 0, len(choices))
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 {
@@ -531,14 +531,14 @@ func flattenEffortChoices(choices []configChoice) []vibekit.SessionEffortLevel {
 		if c.Value == "" {
 			continue
 		}
-		out = append(out, vibekit.SessionEffortLevel{ID: c.Value, Name: c.Name})
+		out = append(out, marotte.SessionEffortLevel{ID: c.Value, Name: c.Name})
 	}
 	return out
 }
 
 // sameEffortLevels reports whether two tier lists carry the same ids in the same
 // order — the change-detector applyTo's answer depends on.
-func sameEffortLevels(a, b []vibekit.SessionEffortLevel) bool {
+func sameEffortLevels(a, b []marotte.SessionEffortLevel) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -553,8 +553,8 @@ func sameEffortLevels(a, b []vibekit.SessionEffortLevel) bool {
 // flattenModelChoices converts select choices, flat or grouped, into the UNFILTERED
 // domain model catalog: it feeds the entitlement set, so dropping an end-of-life
 // entry here would refuse a model the account can still run.
-func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
-	var out []vibekit.SessionModel
+func flattenModelChoices(choices []configChoice) []marotte.SessionModel {
+	var out []marotte.SessionModel
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 { // grouped: recurse into the group's choices
@@ -565,7 +565,7 @@ func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
 			continue
 		}
 		meta := choiceMeta(c.Meta)
-		out = append(out, vibekit.SessionModel{
+		out = append(out, marotte.SessionModel{
 			ID: c.Value, Name: c.Name, Description: c.Description,
 			HasEffort:          meta.Kiro.HasEffort,
 			DefaultEffortLevel: meta.Kiro.DefaultEffortLevel,
@@ -584,8 +584,8 @@ func flattenModelChoices(choices []configChoice) []vibekit.SessionModel {
 //
 // The TIER LIST is deliberately absent from the block — it belongs to the
 // `effortLevel` option, not to a model choice.
-func choiceMeta(raw json.RawMessage) vibekit.ModelChoiceMeta {
-	var m vibekit.ModelChoiceMeta
+func choiceMeta(raw json.RawMessage) marotte.ModelChoiceMeta {
+	var m marotte.ModelChoiceMeta
 	if len(raw) == 0 {
 		return m
 	}

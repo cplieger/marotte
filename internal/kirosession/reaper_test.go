@@ -416,7 +416,7 @@ func TestReap_SkipsASessionInAnotherWorkspacesBucket(t *testing.T) {
 
 // TestSweep_SkipsSessionsThatDoNotNameThisWorkspace protects every session
 // another client in this Kiro home created: unreferenced by construction, since
-// the keep-list is built from vibekit's own chats.
+// the keep-list is built from marotte's own chats.
 //
 // The trailing case is what keeps this from being a hash comparison in disguise:
 // the record decides, not the path.

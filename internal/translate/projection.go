@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // replayInfoMeta decodes the `_meta.kiro` block of a replayed session_info_update. Only
@@ -46,12 +46,12 @@ type replayInfoMeta struct {
 type pendingTurn struct {
 	// conclusion is the turn_end payload, read. nil separates a bracket carrying no
 	// payload — which still closes the turn — from one reporting a stop reason.
-	conclusion *vibekit.TurnConclusion
+	conclusion *marotte.TurnConclusion
 	credits    float64
 	elapsedMs  float64
 }
 
-// replayTS converts KAS's RFC3339 timestamp to the epoch millis vibekit.Message
+// replayTS converts KAS's RFC3339 timestamp to the epoch millis marotte.Message
 // carries. A missing or unparseable value yields 0 for the caller's own fallback —
 // never time.Now(), which would stamp replayed history with the load's clock.
 func replayTS(s string) int64 {
@@ -128,7 +128,7 @@ type Projection struct {
 	// addressable by rewind through the one field a live row is addressable by.
 	userKASID string
 	// userKind is that message's kind, also taken from its FIRST chunk.
-	userKind vibekit.UserKind
+	userKind marotte.UserKind
 	// userTag is _meta.kiro.userMessageTag off that same first chunk: presence marks a row
 	// KAS filed as a prompt rather than as steering.
 	userTag string
@@ -152,7 +152,7 @@ type Projection struct {
 	// indistinguishable there.
 	toolStarts map[string]int64
 
-	messages []vibekit.Message
+	messages []marotte.Message
 
 	userTs    int64
 	turnStart int64
@@ -184,31 +184,31 @@ func (p *Projection) relPath(ref string) string {
 
 // Ingest folds one replayed session/update frame into the projection. Unknown kinds
 // are ignored: a replay carries catalog and telemetry frames a transcript cannot use.
-func (p *Projection) Ingest(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
+func (p *Projection) Ingest(kind marotte.ACPUpdateKind, raw json.RawMessage) {
 	switch kind {
-	case vibekit.ACPUpdateSessionInfo:
+	case marotte.ACPUpdateSessionInfo:
 		p.ingestInfo(raw)
-	case vibekit.ACPUpdateAgentChunk:
+	case marotte.ACPUpdateAgentChunk:
 		p.ingestAgentText(raw, false)
-	case vibekit.ACPUpdateThoughtChunk:
+	case marotte.ACPUpdateThoughtChunk:
 		p.ingestAgentText(raw, true)
-	case vibekit.ACPUpdateToolCall:
+	case marotte.ACPUpdateToolCall:
 		p.ingestToolCall(raw)
-	case vibekit.ACPUpdateToolUpdate:
+	case marotte.ACPUpdateToolUpdate:
 		p.ingestToolUpdate(raw)
 	default:
 		// user_message_chunk is handled here because its kind constant lives outside
-		// the ACPUpdate* set vibekit declares (it has never had a live handler).
+		// the ACPUpdate* set marotte declares (it has never had a live handler).
 		if kind == replayUserChunkKind {
 			p.ingestUserText(raw)
 		}
 	}
 }
 
-// replayUserChunkKind is KAS's user-message replay frame. vibekit declares no
+// replayUserChunkKind is KAS's user-message replay frame. marotte declares no
 // ACPUpdate* constant for it because the LIVE path deliberately has no handler
-// (vibekit echoes its own user bubbles).
-const replayUserChunkKind vibekit.ACPUpdateKind = "user_message_chunk"
+// (marotte echoes its own user bubbles).
+const replayUserChunkKind marotte.ACPUpdateKind = "user_message_chunk"
 
 func (p *Projection) ingestUserText(raw json.RawMessage) {
 	var c replayChunk
@@ -246,7 +246,7 @@ func (p *Projection) ingestUserText(raw json.RawMessage) {
 		// flushUser's `text == ""` check drops it rather than opening a steer row.
 		p.userKind = ""
 		if c.Meta.Kiro.Source == "steer" {
-			p.userKind = vibekit.UserKindSteer
+			p.userKind = marotte.UserKindSteer
 		}
 		p.userTag = c.Meta.Kiro.UserMessageTag
 	}
@@ -375,7 +375,7 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 // would make the difference time-since-turn-start under a duration's name. The buffer's
 // duration helpers read a wall clock, so they would time the load. A fast tool's two records
 // share the millisecond (measured), so 0 is the wire's own resolution rather than a miss.
-func (p *Projection) deriveDuration(tc *vibekit.ToolCall, timestamp string) {
+func (p *Projection) deriveDuration(tc *marotte.ToolCall, timestamp string) {
 	start, ok := p.toolStarts[tc.ID]
 	if tc.DurationMs != 0 || !ok {
 		return
@@ -392,8 +392,8 @@ func (p *Projection) deriveDuration(tc *vibekit.ToolCall, timestamp string) {
 // so counting each arrival would claim a file changed when the write failed. isNewFile is
 // always false: a replayed create already carries `completed`, so the live path's
 // pending-edit discriminator has no state to read here.
-func (p *Projection) trackChangedFiles(tc *vibekit.ToolCall, diffs []vibekit.ToolDiff) {
-	if len(diffs) == 0 || tc.Status != vibekit.ToolCompleted {
+func (p *Projection) trackChangedFiles(tc *marotte.ToolCall, diffs []marotte.ToolDiff) {
+	if len(diffs) == 0 || tc.Status != marotte.ToolCompleted {
 		return
 	}
 	p.buf.TrackFileChanges(diffs, false)
@@ -431,7 +431,7 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 }
 
 // applySummary appends the compaction event for a replayed summary, folding onto the
-// same shape the live path produces. The originals are KEPT: vibekit's model is a
+// same shape the live path produces. The originals are KEPT: marotte's model is a
 // watermark, not a deletion, the context bar counts up to it, and collapsing is a
 // render decision available downstream at no cost.
 func (p *Projection) applySummary(sum *struct {
@@ -449,14 +449,14 @@ func (p *Projection) applySummary(sum *struct {
 	if at > 0 {
 		ts = p.messages[at-1].Ts
 	}
-	evt := vibekit.Message{
+	evt := marotte.Message{
 		ID:        p.compactionID(at),
-		Role:      vibekit.RoleEvent,
-		EventKind: vibekit.EventCompacted,
+		Role:      marotte.RoleEvent,
+		EventKind: marotte.EventCompacted,
 		Content:   sum.Content,
 		Ts:        ts,
 	}
-	p.messages = append(p.messages[:at], append([]vibekit.Message{evt}, p.messages[at:]...)...)
+	p.messages = append(p.messages[:at], append([]marotte.Message{evt}, p.messages[at:]...)...)
 	p.Watermark = evt.ID
 	p.compactAt = -1
 }
@@ -481,7 +481,7 @@ func (p *Projection) noteTurnEnd(e *turnEndBlock) {
 	if e == nil {
 		return
 	}
-	c := vibekit.ConcludeStopReason(vibekit.StopReason(e.StopReason))
+	c := marotte.ConcludeStopReason(marotte.StopReason(e.StopReason))
 	c.Reason = displayText(stopDetailsText(e.StopDetails))
 	p.pending.conclusion = &c
 }
@@ -568,10 +568,10 @@ func (p *Projection) closeTurn() {
 	if snap.EmittedNothing {
 		return
 	}
-	msg := vibekit.Message{
+	msg := marotte.Message{
 		ID:           p.idOr(p.turnID),
 		KASMessageID: p.turnID,
-		Role:         vibekit.RoleAssistant,
+		Role:         marotte.RoleAssistant,
 		Content:      snap.Content,
 		Reasoning:    snap.Reasoning,
 		Blocks:       snap.Blocks,
@@ -587,7 +587,7 @@ func (p *Projection) closeTurn() {
 // stampOn writes the turn's facts onto the message that ends it, which is what restores
 // the footer, the outcome word, the rail tint and the turn BOUNDARY — a present
 // TurnOutcome is what closes a turn for both projections.
-func (t pendingTurn) stampOn(m *vibekit.Message) {
+func (t pendingTurn) stampOn(m *marotte.Message) {
 	m.TurnCredits = t.credits
 	m.TurnElapsedMs = t.elapsedMs
 	if t.conclusion == nil {
@@ -623,10 +623,10 @@ func (p *Projection) appendStepNotice(c *replayChunk) {
 	if c.Content.Text == "" {
 		return
 	}
-	p.messages = append(p.messages, vibekit.Message{
+	p.messages = append(p.messages, marotte.Message{
 		ID:        p.idOr(c.Meta.Kiro.MessageID),
-		Role:      vibekit.RoleEvent,
-		EventKind: vibekit.EventStepNotice,
+		Role:      marotte.RoleEvent,
+		EventKind: marotte.EventStepNotice,
 		Content:   c.Content.Text,
 		Ts:        replayTS(c.Meta.Kiro.Timestamp),
 	})
@@ -647,16 +647,16 @@ func (p *Projection) flushUser() {
 		return
 	}
 	switch {
-	case kind == vibekit.UserKindSteer && id != "":
+	case kind == marotte.UserKindSteer && id != "":
 		// A wire-supplied id is the requirement: idOr mints one for a chunk that carried
 		// none, and a minted id names no row a later mark could find.
 		p.steerCandidates = append(p.steerCandidates, steerCandidate{id: id, text: text})
 	case kind == "" && tag != "":
 		p.markResentSteers(text)
 	}
-	p.messages = append(p.messages, vibekit.Message{
+	p.messages = append(p.messages, marotte.Message{
 		ID:           p.idOr(id),
-		Role:         vibekit.RoleUser,
+		Role:         marotte.RoleUser,
 		UserKind:     kind,
 		KASMessageID: kasID,
 		Content:      text,
@@ -699,8 +699,8 @@ func (p *Projection) markSteerDropped(id string) {
 		if p.messages[i].ID != id {
 			continue
 		}
-		if p.messages[i].UserKind == vibekit.UserKindSteer {
-			p.messages[i].SteerState = vibekit.SteerStateDropped
+		if p.messages[i].UserKind == marotte.UserKindSteer {
+			p.messages[i].SteerState = marotte.SteerStateDropped
 		}
 		return
 	}
@@ -709,7 +709,7 @@ func (p *Projection) markSteerDropped(id string) {
 // Messages closes any still-open turn and returns the projected transcript as a fresh
 // slice, so a caller appending cannot write into the projection's backing array.
 // Idempotent: closeTurn and flushUser are both no-ops once they have run.
-func (p *Projection) Messages() []vibekit.Message {
+func (p *Projection) Messages() []marotte.Message {
 	p.closeTurn()
 	p.flushUser()
 	return slices.Clone(p.messages)

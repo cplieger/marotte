@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/wiregen/v3"
 )
 
-// The bug class these tests exist for: an SSE event vibekit broadcasts whose
+// The bug class these tests exist for: an SSE event marotte broadcasts whose
 // payload type is not in the registry, so the generator emits no decoder for
 // it, so the client hand-declares the shape in bus.ts and validates nothing at
 // runtime. It is not hypothetical — the agent-terminal trio shipped that way
@@ -28,9 +28,9 @@ import (
 // is a type emitted for nobody; a payload declared but unregistered is an
 // event on the wire with no contract behind it.
 
-// vibekitPkgPath is read off a registration rather than written as a literal, so
+// marottePkgPath is read off a registration rather than written as a literal, so
 // renaming the package cannot leave these tests silently scanning nothing.
-var vibekitPkgPath = wiregen.TypeRef[vibekit.Message]().PkgPath
+var marottePkgPath = wiregen.TypeRef[marotte.Message]().PkgPath
 
 // emptySignalPayloads are the payload types deliberately absent from the
 // registry. Each is an empty struct: the event is a pure invalidation signal
@@ -90,7 +90,7 @@ var unboundDataPayloads = []string{
 // tests below hold every entry to both halves of that claim.
 var pendingClientBindings = []string{}
 
-// declaredVibekitPayloads parses internal/vibekit and returns every exported type
+// declaredMarottePayloads parses internal/marotte and returns every exported type
 // whose name ends in Payload, mapped to the field count of its struct
 // definition.
 //
@@ -104,12 +104,12 @@ var pendingClientBindings = []string{}
 // payload declared behind a build tag is on the wire wherever it does build and
 // needs a registration just the same. Excluding it here would be the loader
 // hiding exactly the case this test is for.
-func declaredVibekitPayloads(t *testing.T) map[string]int {
+func declaredMarottePayloads(t *testing.T) map[string]int {
 	t.Helper()
-	dir := filepath.Join("..", "vibekit")
+	dir := filepath.Join("..", "marotte")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("read internal/vibekit: %v", err)
+		t.Fatalf("read internal/marotte: %v", err)
 	}
 	fset := token.NewFileSet()
 	out := map[string]int{}
@@ -141,18 +141,18 @@ func declaredVibekitPayloads(t *testing.T) map[string]int {
 		}
 	}
 	if len(out) == 0 {
-		t.Fatal("parsed internal/vibekit and found no exported *Payload types; the scan is broken, not the registry")
+		t.Fatal("parsed internal/marotte and found no exported *Payload types; the scan is broken, not the registry")
 	}
 	return out
 }
 
-// registeredVibekitPayloads returns the names of the vibekit.*Payload types in the
+// registeredMarottePayloads returns the names of the marotte.*Payload types in the
 // registry.
-func registeredVibekitPayloads(t *testing.T) []string {
+func registeredMarottePayloads(t *testing.T) []string {
 	t.Helper()
 	var out []string
 	for _, wt := range Registry().Types {
-		if wt.PkgPath == vibekitPkgPath && strings.HasSuffix(wt.Name, "Payload") {
+		if wt.PkgPath == marottePkgPath && strings.HasSuffix(wt.Name, "Payload") {
 			out = append(out, wt.Name)
 		}
 	}
@@ -160,11 +160,11 @@ func registeredVibekitPayloads(t *testing.T) []string {
 }
 
 // TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt is the table walk: a
-// new vibekit.*Payload type cannot reach the SSE wire without either a
+// new marotte.*Payload type cannot reach the SSE wire without either a
 // registration or an explicit entry in one of the two exemption lists above.
 func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
-	declared := declaredVibekitPayloads(t)
-	registered := registeredVibekitPayloads(t)
+	declared := declaredMarottePayloads(t)
+	registered := registeredMarottePayloads(t)
 
 	for name := range declared {
 		switch {
@@ -172,8 +172,8 @@ func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
 		case slices.Contains(emptySignalPayloads, name):
 		case slices.Contains(unboundDataPayloads, name):
 		default:
-			t.Errorf("vibekit.%s is declared but has no wire registration.\n"+
-				"Add wiregen.TypeRef[vibekit.%s]() to wireTypes plus its {EventType, TypeName} entry in sseEvents,\n"+
+			t.Errorf("marotte.%s is declared but has no wire registration.\n"+
+				"Add wiregen.TypeRef[marotte.%s]() to wireTypes plus its {EventType, TypeName} entry in sseEvents,\n"+
 				"or — if it is an empty invalidation signal with no field to decode — add it to emptySignalPayloads with that reason.",
 				name, name)
 		}
@@ -192,12 +192,12 @@ func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 		bound = append(bound, e.TypeName)
 	}
 
-	for _, name := range registeredVibekitPayloads(t) {
+	for _, name := range registeredMarottePayloads(t) {
 		if slices.Contains(pendingClientBindings, name) {
 			continue
 		}
 		if !slices.Contains(bound, name) {
-			t.Errorf("vibekit.%s is registered in wireTypes but bound to no SSE event.\n"+
+			t.Errorf("marotte.%s is registered in wireTypes but bound to no SSE event.\n"+
 				"Add its {EventType: \"…\", TypeName: %q} entry to sseEvents, or drop the registration.",
 				name, name)
 		}
@@ -209,19 +209,19 @@ func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 // unboundDataPayloads instead (a different, worse gap), and one that HAS been
 // bound has spent its exemption — leaving it would hide the next real omission.
 func TestPendingClientBindings_AreRegisteredAndUnbound(t *testing.T) {
-	registered := registeredVibekitPayloads(t)
+	registered := registeredMarottePayloads(t)
 	bound := make([]string, 0, len(Registry().SSEEvents))
 	for _, e := range Registry().SSEEvents {
 		bound = append(bound, e.TypeName)
 	}
 	for _, name := range pendingClientBindings {
 		if !slices.Contains(registered, name) {
-			t.Errorf("pendingClientBindings names vibekit.%s, which is not registered in wireTypes.\n"+
+			t.Errorf("pendingClientBindings names marotte.%s, which is not registered in wireTypes.\n"+
 				"This list is for a REGISTERED payload whose SSE binding is waiting on the client; "+
 				"an unregistered one belongs in unboundDataPayloads.", name)
 		}
 		if slices.Contains(bound, name) {
-			t.Errorf("pendingClientBindings names vibekit.%s, but it IS bound now; drop the entry (the exemption is spent)", name)
+			t.Errorf("pendingClientBindings names marotte.%s, but it IS bound now; drop the entry (the exemption is spent)", name)
 		}
 	}
 }
@@ -261,15 +261,15 @@ func TestRegistry_NoDuplicateSSEEventTypes(t *testing.T) {
 // to its stated reason. The moment one of those payloads gains a field, the
 // argument for exempting it ("nothing to decode") stops being true.
 func TestPayloadExemptions_AreStillEmptyStructs(t *testing.T) {
-	declared := declaredVibekitPayloads(t)
+	declared := declaredMarottePayloads(t)
 	for _, name := range emptySignalPayloads {
 		fields, ok := declared[name]
 		if !ok {
-			t.Errorf("emptySignalPayloads names vibekit.%s, which no longer exists in internal/vibekit; drop the entry", name)
+			t.Errorf("emptySignalPayloads names marotte.%s, which no longer exists in internal/marotte; drop the entry", name)
 			continue
 		}
 		if fields != 0 {
-			t.Errorf("vibekit.%s is exempt as an empty invalidation signal but now has %d field(s).\n"+
+			t.Errorf("marotte.%s is exempt as an empty invalidation signal but now has %d field(s).\n"+
 				"It carries data, so it needs a registration and an SSE binding; remove it from emptySignalPayloads.",
 				name, fields)
 		}
@@ -281,8 +281,8 @@ func TestPayloadExemptions_AreStillEmptyStructs(t *testing.T) {
 // registered, or whose type is gone, must leave the list — otherwise the list
 // stops describing the gap and starts hiding a fixed one.
 func TestPayloadExemptions_AreNotStale(t *testing.T) {
-	declared := declaredVibekitPayloads(t)
-	registered := registeredVibekitPayloads(t)
+	declared := declaredMarottePayloads(t)
+	registered := registeredMarottePayloads(t)
 
 	for _, list := range []struct {
 		name    string
@@ -293,11 +293,11 @@ func TestPayloadExemptions_AreNotStale(t *testing.T) {
 	} {
 		for _, name := range list.entries {
 			if _, ok := declared[name]; !ok {
-				t.Errorf("%s names vibekit.%s, which is not declared in internal/vibekit any more; drop the entry",
+				t.Errorf("%s names marotte.%s, which is not declared in internal/marotte any more; drop the entry",
 					list.name, name)
 			}
 			if slices.Contains(registered, name) {
-				t.Errorf("%s names vibekit.%s, but it IS registered now; drop the entry (the exemption is spent)",
+				t.Errorf("%s names marotte.%s, but it IS registered now; drop the entry (the exemption is spent)",
 					list.name, name)
 			}
 		}
@@ -316,11 +316,11 @@ func TestPayloadExemptions_AreNotStale(t *testing.T) {
 // ever shows — silently stopped matching on the toolchain bump: no error, and a
 // wire field emitted with the built-in fallback type instead of the mapped one.
 //
-// Measured with go/packages on go1.27.0 against vibekit's own types: ToolCall.Input,
+// Measured with go/packages on go1.27.0 against marotte's own types: ToolCall.Input,
 // Recipe.Plan and RPCError.Data are each a *types.Alias whose own key is
 // "encoding/json.RawMessage" and whose resolved key is
 // "encoding/json/jsontext.Value". So the precondition is live here; what makes
-// vibekit immune is that it registers no mapping at all, which is a property of
+// marotte immune is that it registers no mapping at all, which is a property of
 // the registry VALUE and therefore worth asserting rather than grepping for.
 // Both artifacts regenerate byte-identically across the library fix, confirming
 // nothing depended on either map.
@@ -350,7 +350,7 @@ func TestRegistry_DeclaresNoTypeOrDecoderMappings(t *testing.T) {
 // snapshot. Required makes that drift class unrepresentable instead of tested for, so
 // the tag is the contract and this is what holds it.
 func TestLiveTurn_TruncatedIsRequiredOnTheWire(t *testing.T) {
-	rt := reflect.TypeFor[vibekit.LiveTurn]()
+	rt := reflect.TypeFor[marotte.LiveTurn]()
 	f, ok := rt.FieldByName("Truncated")
 	if !ok {
 		t.Fatal("LiveTurn has no Truncated field; a capped snapshot then reaches the client unmarked")
@@ -378,31 +378,31 @@ func TestLiveTurn_TruncatedIsRequiredOnTheWire(t *testing.T) {
 // a field carrying it, and an optional member is what lets a reader supply the `?? 0`
 // that IS the corruption this field exists to remove.
 func TestBlockBaseIsRequiredOnLiveTurn(t *testing.T) {
-	rt := reflect.TypeFor[vibekit.LiveTurn]()
+	rt := reflect.TypeFor[marotte.LiveTurn]()
 	f, ok := rt.FieldByName("BlockBase")
 	if !ok {
-		t.Fatal("vibekit.LiveTurn has no BlockBase field; a capped snapshot then reaches the " +
+		t.Fatal("marotte.LiveTurn has no BlockBase field; a capped snapshot then reaches the " +
 			"client with its blocks re-indexed from zero and nothing naming the offset")
 	}
 	if f.Type.Kind() != reflect.Int {
-		t.Errorf("vibekit.LiveTurn.BlockBase is %s, want int: a pointer generates an OPTIONAL "+
+		t.Errorf("marotte.LiveTurn.BlockBase is %s, want int: a pointer generates an OPTIONAL "+
 			"member read with optNum, so an absent base answers undefined and every call "+
 			"site is one `?? 0` from the corruption", f.Type)
 	}
 	tag := f.Tag.Get("json")
 	if got, _, _ := strings.Cut(tag, ","); got != "block_base" {
-		t.Errorf("vibekit.LiveTurn.BlockBase json name = %q, want %q", got, "block_base")
+		t.Errorf("marotte.LiveTurn.BlockBase json name = %q, want %q", got, "block_base")
 	}
 	if strings.Contains(tag, "omitempty") {
-		t.Errorf("vibekit.LiveTurn.BlockBase carries omitempty (tag %q); a base of 0 is a POSITIVE "+
+		t.Errorf("marotte.LiveTurn.BlockBase carries omitempty (tag %q); a base of 0 is a POSITIVE "+
 			"statement that these blocks start at 0, and omitting it makes an absent base "+
 			"indistinguishable from it", tag)
 	}
 }
 
 // TestLiveTurnIsRegistered pins the registration itself, which no existing test
-// reaches: all three registry walks go through registeredVibekitPayloads, which
-// filters on a `Payload` suffix, so vibekit.LiveTurn is invisible to every one of
+// reaches: all three registry walks go through registeredMarottePayloads, which
+// filters on a `Payload` suffix, so marotte.LiveTurn is invisible to every one of
 // them. That same filter is what makes the type's SSE-binding exemption structural
 // rather than a list entry — the binding walk cannot see it either, exactly as it
 // cannot see ToolCallBulk.
@@ -413,18 +413,18 @@ func TestBlockBaseIsRequiredOnLiveTurn(t *testing.T) {
 func TestLiveTurnIsRegistered(t *testing.T) {
 	names := make([]string, 0, len(Registry().Types))
 	for _, wt := range Registry().Types {
-		if wt.PkgPath == vibekitPkgPath {
+		if wt.PkgPath == marottePkgPath {
 			names = append(names, wt.Name)
 		}
 	}
 	if !slices.Contains(names, "LiveTurn") {
-		t.Errorf("vibekit.LiveTurn is not in Registry().Types, so the client reads a hand-written "+
+		t.Errorf("marotte.LiveTurn is not in Registry().Types, so the client reads a hand-written "+
 			"decoder for the chat GET's live_turn and a required field can be optional on one side "+
-			"only.\nAdd wiregen.TypeRef[vibekit.LiveTurn]() to wireTypes.\nRegistered vibekit types: %v",
+			"only.\nAdd wiregen.TypeRef[marotte.LiveTurn]() to wireTypes.\nRegistered marotte types: %v",
 			names)
 	}
-	if got := registeredVibekitPayloads(t); slices.Contains(got, "LiveTurn") {
-		t.Errorf("registeredVibekitPayloads names LiveTurn, so the SSE-binding walk now demands an " +
+	if got := registeredMarottePayloads(t); slices.Contains(got, "LiveTurn") {
+		t.Errorf("registeredMarottePayloads names LiveTurn, so the SSE-binding walk now demands an " +
 			"event binding for a REST reply; that exemption is supposed to hold by the `Payload` " +
 			"suffix rather than by a list")
 	}

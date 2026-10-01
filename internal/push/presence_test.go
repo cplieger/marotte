@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/liveness"
+	"github.com/cplieger/marotte/internal/liveness"
 )
 
 // presenceClock drives a Presence through time without sleeping. Locked, because

@@ -8,7 +8,7 @@ import (
 // TestProfiles_OnlyTheLoosestRungWritesFileRules is the restrictive-rung guard,
 // and the reason the fix is scoped the way it is.
 //
-// A rule at USER scope is durable: it survives a vibekit restart and applies to
+// A rule at USER scope is durable: it survives a marotte restart and applies to
 // every ACP client sharing this HOME, with no session boundary to expire it. So
 // materialising guarded, read-only or trusted would WIDEN those postures rather
 // than deliver them — read-only's read-all in particular would leave every file on
@@ -70,7 +70,7 @@ func TestProfiles_FileRulesAreBareAllows(t *testing.T) {
 // TestProfileUnrestricted_FileRulesMatchRelaxCapabilities pins the two
 // derivations together.
 //
-// RelaxCapabilities() is vibekit's tested answer to "the broadest grant a
+// RelaxCapabilities() is marotte's tested answer to "the broadest grant a
 // permissions file can express" — `all`, plus the one vocabulary member that alias
 // genuinely does not reach — and the loosest rung claims exactly that ("Never
 // asks"). A drift between the two would be a rung whose description promises a

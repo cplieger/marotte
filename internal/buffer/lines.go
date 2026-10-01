@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // LineRange is a range of lines modified by the agent.
@@ -56,13 +56,13 @@ type chatLineState struct {
 
 // LineTracker tracks per-file line changes across all chats.
 type LineTracker struct {
-	data map[vibekit.ChatID]*chatLineState
+	data map[marotte.ChatID]*chatLineState
 	mu   sync.RWMutex
 }
 
 // NewLineTracker creates a new LineTracker.
 func NewLineTracker() *LineTracker {
-	return &LineTracker{data: make(map[vibekit.ChatID]*chatLineState)}
+	return &LineTracker{data: make(map[marotte.ChatID]*chatLineState)}
 }
 
 // Record adds a line range for a file change.
@@ -75,7 +75,7 @@ func NewLineTracker() *LineTracker {
 // files by lastTurn and a line number used as a turn makes the wrong file the
 // oldest. The struct is the one the tracker stores anyway, so this also deletes
 // a field-by-field copy that could drift from it.
-func (lt *LineTracker) Record(chatID vibekit.ChatID, filePath string, r LineRange) {
+func (lt *LineTracker) Record(chatID marotte.ChatID, filePath string, r LineRange) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	state := lt.data[chatID]
@@ -115,7 +115,7 @@ func (lt *LineTracker) Record(chatID vibekit.ChatID, filePath string, r LineRang
 // of the file as agent-modified — so a one-line edit painted accent dots down
 // the whole editor gutter. A whole-file rewrite still yields one full-span
 // range, which is correct; see lineHunks for the deletion case.
-func (lt *LineTracker) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string) {
+func (lt *LineTracker) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string) {
 	for _, d := range diffs {
 		if d.Path == "" || d.NewText == "" {
 			continue
@@ -135,7 +135,7 @@ func (lt *LineTracker) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.To
 // read depend on Record's growth pattern — today's appends only ever write at or
 // past the returned length, so nothing overlapped, but that is a property of the
 // current eviction code rather than of this contract.
-func (lt *LineTracker) Get(chatID vibekit.ChatID, filePath string) []LineRange {
+func (lt *LineTracker) Get(chatID marotte.ChatID, filePath string) []LineRange {
 	lt.mu.RLock()
 	defer lt.mu.RUnlock()
 	state := lt.data[chatID]
@@ -146,7 +146,7 @@ func (lt *LineTracker) Get(chatID vibekit.ChatID, filePath string) []LineRange {
 }
 
 // Clear removes all tracking data for a chat.
-func (lt *LineTracker) Clear(chatID vibekit.ChatID) {
+func (lt *LineTracker) Clear(chatID marotte.ChatID) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	delete(lt.data, chatID)

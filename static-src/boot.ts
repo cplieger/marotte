@@ -164,7 +164,7 @@ function adoptSettings(settings: EffectiveSettings | null): void {
  *
  *  `signed_out` raises the login modal over an already-painted shell and holds the
  *  post-auth fetches back, so the login screen makes no API calls. `unavailable`
- *  means vibekit could not ASK, so it comes up working with a re-read offered.
+ *  means marotte could not ASK, so it comes up working with a re-read offered.
  *  `workspace` is awaited because "is there anything to show" needs the chats, the
  *  tab set and any share to have landed; that region has painted by then. */
 async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): Promise<void> {
@@ -366,7 +366,7 @@ export function initPostAuth(): void {
   // each fire-and-forget with a usable empty state, so the app still reads a chat. The
   // two above are KEPT: one gates capability, the other reports a degraded runtime.
   if (bootMode() === "full") {
-    // The vibekit + kiro-cli build pair. Fire-and-forget: the lines repaint through a
+    // The marotte + kiro-cli build pair. Fire-and-forget: the lines repaint through a
     // signal, so nothing waits on the `--version` subprocess behind it.
     initStatusVersions();
     void loadVersions();

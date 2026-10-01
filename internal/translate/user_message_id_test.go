@@ -10,8 +10,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // commitCountingStore records how many Mutate calls actually committed, which is the
@@ -22,8 +22,8 @@ type commitCountingStore struct {
 	commits int
 }
 
-func (s *commitCountingStore) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
-	return s.ChatRecords.Mutate(ctx, id, func(c *vibekit.Chat, exists bool) bool {
+func (s *commitCountingStore) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
+	return s.ChatRecords.Mutate(ctx, id, func(c *marotte.Chat, exists bool) bool {
 		changed := fn(c, exists)
 		if changed {
 			s.commits++
@@ -48,9 +48,9 @@ func userMessageIDFrame(t *testing.T, kasID string) []byte {
 }
 
 // seedRows replaces c1's transcript, so each case states the layout it depends on.
-func seedRows(t *testing.T, store *testsupport.InMemoryChatStore, msgs []vibekit.Message) {
+func seedRows(t *testing.T, store *testsupport.InMemoryChatStore, msgs []marotte.Message) {
 	t.Helper()
-	if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Messages = msgs
 		return true
 	}); err != nil {
@@ -77,10 +77,10 @@ func kasIDsOf(t *testing.T, store *testsupport.InMemoryChatStore) []string {
 // between its own append and the model call, so nothing newer can exist yet.
 func TestHandleSessionInfoUpdate_StampsTheNewestPromptRow(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	seedRows(t, store, []vibekit.Message{
-		{ID: "m-1", Role: vibekit.RoleUser, Content: "first"},
-		{ID: "a-1", Role: vibekit.RoleAssistant, Content: "reply"},
-		{ID: "m-2", Role: vibekit.RoleUser, Content: "second"},
+	seedRows(t, store, []marotte.Message{
+		{ID: "m-1", Role: marotte.RoleUser, Content: "first"},
+		{ID: "a-1", Role: marotte.RoleAssistant, Content: "reply"},
+		{ID: "m-2", Role: marotte.RoleUser, Content: "second"},
 	})
 
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
@@ -99,9 +99,9 @@ func TestHandleSessionInfoUpdate_StampsTheNewestPromptRow(t *testing.T) {
 // must reach past it to the prompt that opened the turn.
 func TestHandleSessionInfoUpdate_SkipsASteerToReachThePrompt(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	seedRows(t, store, []vibekit.Message{
-		{ID: "m-1", Role: vibekit.RoleUser, Content: "the prompt"},
-		{ID: "steer-1", Role: vibekit.RoleUser, UserKind: vibekit.UserKindSteer, Content: "mid-turn"},
+	seedRows(t, store, []marotte.Message{
+		{ID: "m-1", Role: marotte.RoleUser, Content: "the prompt"},
+		{ID: "steer-1", Role: marotte.RoleUser, UserKind: marotte.UserKindSteer, Content: "mid-turn"},
 	})
 
 	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
@@ -117,7 +117,7 @@ func TestHandleSessionInfoUpdate_SkipsASteerToReachThePrompt(t *testing.T) {
 // the newer id is the one revertMultiple will accept.
 func TestHandleSessionInfoUpdate_ADifferentIDOverwritesTheStamp(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	seedRows(t, store, []vibekit.Message{{ID: "m-1", Role: vibekit.RoleUser, Content: "prompt"}})
+	seedRows(t, store, []marotte.Message{{ID: "m-1", Role: marotte.RoleUser, Content: "prompt"}})
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", userMessageIDFrame(t, "kas-1"), FrameAttribution{})
@@ -132,7 +132,7 @@ func TestHandleSessionInfoUpdate_ADifferentIDOverwritesTheStamp(t *testing.T) {
 // one — and a repeat is reachable, since a reconnect can redeliver.
 func TestHandleSessionInfoUpdate_ARepeatedIDCommitsNothing(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	seedRows(t, store, []vibekit.Message{{ID: "m-1", Role: vibekit.RoleUser, Content: "prompt"}})
+	seedRows(t, store, []marotte.Message{{ID: "m-1", Role: marotte.RoleUser, Content: "prompt"}})
 	counting := &commitCountingStore{ChatRecords: store}
 	deps.store = counting
 	tr := New(rolesOf(deps))
@@ -149,7 +149,7 @@ func TestHandleSessionInfoUpdate_ARepeatedIDCommitsNothing(t *testing.T) {
 // and the chat KAS's own auto-wake prompts, both reach here with no prompt row.
 func TestHandleSessionInfoUpdate_NoPromptRowCommitsNothing(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	seedRows(t, store, []vibekit.Message{{ID: "e-1", Role: vibekit.RoleEvent, EventKind: vibekit.EventCompacted}})
+	seedRows(t, store, []marotte.Message{{ID: "e-1", Role: marotte.RoleEvent, EventKind: marotte.EventCompacted}})
 	counting := &commitCountingStore{ChatRecords: store}
 	deps.store = counting
 
@@ -171,7 +171,7 @@ func TestHandleSessionInfoUpdate_AForeignFrameStampsNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
-			seedRows(t, store, []vibekit.Message{{ID: "m-1", Role: vibekit.RoleUser, Content: "prompt"}})
+			seedRows(t, store, []marotte.Message{{ID: "m-1", Role: marotte.RoleUser, Content: "prompt"}})
 
 			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 				userMessageIDFrame(t, "kas-1"), attr)

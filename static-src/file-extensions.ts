@@ -174,7 +174,7 @@ export function extOf(path: string): string {
  *  pointing at it — `object-src 'none'` kills `<object>`/`<embed>`, but
  *  `frame-src` falls back to `default-src 'self'`, which PERMITS a same-origin
  *  frame. So a consumer of this predicate must RENDER the file and must never
- *  offer it as a link or a frame on vibekit's own origin. */
+ *  offer it as a link or a frame on marotte's own origin. */
 const VIEWABLE_IMAGE_EXTS: ReadonlySet<string> = new Set([
   "png",
   "jpg",

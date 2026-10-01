@@ -31,7 +31,7 @@ type Entry struct {
 	// slot since the epoch.
 	Anchor time.Time `json:"anchor"`
 	// LastRunAt / LastResult are for display only; the run's own record is the
-	// durable history (see vibekit-acp.md "Workflow runs on the wire").
+	// durable history (see marotte-acp.md "Workflow runs on the wire").
 	LastRunAt  time.Time `json:"last_run_at,omitzero"`
 	ID         string    `json:"id"`
 	Source     string    `json:"source"`

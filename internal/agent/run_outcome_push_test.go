@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // runOutcomePush is recordingPush plus the KIND, which is the field this feature's
@@ -14,13 +14,13 @@ import (
 // run_outcome or its settings key governs nothing.
 type runOutcomePush struct {
 	sent    chan runPushSent
-	subject vibekit.PushSubject
+	subject marotte.PushSubject
 }
 
 type runPushSent struct {
 	body    string
-	kind    vibekit.PushKind
-	subject vibekit.PushSubject
+	kind    marotte.PushKind
+	subject marotte.PushSubject
 }
 
 func newRunOutcomePush() *runOutcomePush {
@@ -28,15 +28,15 @@ func newRunOutcomePush() *runOutcomePush {
 }
 
 func (p *runOutcomePush) RegisterRoutes(*http.ServeMux)            {}
-func (p *runOutcomePush) Subscribe(vibekit.PushSubscription)       {}
+func (p *runOutcomePush) Subscribe(marotte.PushSubscription)       {}
 func (p *runOutcomePush) Unsubscribe(string)                       {}
 func (p *runOutcomePush) HasSubscribers() bool                     { return true }
-func (p *runOutcomePush) SetPreferences(map[vibekit.PushKind]bool) {}
+func (p *runOutcomePush) SetPreferences(map[marotte.PushKind]bool) {}
 func (p *runOutcomePush) ReloadPreferences(context.Context)        {}
 func (p *runOutcomePush) Close()                                   {}
-func (p *runOutcomePush) Retract(vibekit.PushSubject)              {}
+func (p *runOutcomePush) Retract(marotte.PushSubject)              {}
 func (p *runOutcomePush) Send(
-	_ context.Context, _, body string, kind vibekit.PushKind, subject vibekit.PushSubject,
+	_ context.Context, _, body string, kind marotte.PushKind, subject marotte.PushSubject,
 ) {
 	p.subject = subject
 	select {
@@ -95,13 +95,13 @@ func TestObserveComplete_PushesTheRunsOutcome(t *testing.T) {
 			if got.body != tc.want {
 				t.Errorf("push body = %q, want %q", got.body, tc.want)
 			}
-			if got.kind != vibekit.PushKindRunOutcome {
+			if got.kind != marotte.PushKindRunOutcome {
 				t.Errorf("push kind = %q, want %q; the settings key governs this kind alone",
-					got.kind, vibekit.PushKindRunOutcome)
+					got.kind, marotte.PushKindRunOutcome)
 			}
-			if got.subject.Key != vibekit.RunSubjectPrefix+"wf_1" {
+			if got.subject.Key != marotte.RunSubjectPrefix+"wf_1" {
 				t.Errorf("push subject key = %q, want %q; the worker routes on that prefix",
-					got.subject.Key, vibekit.RunSubjectPrefix+"wf_1")
+					got.subject.Key, marotte.RunSubjectPrefix+"wf_1")
 			}
 			if got.subject.ChatID != "" {
 				t.Errorf("push subject carries chat id %q; a run's notification is about the RUN",
@@ -147,14 +147,14 @@ func TestObserveComplete_LabelFallsBackToTheLeasesRecipe(t *testing.T) {
 	}
 }
 
-// A run vibekit did not put on the wire (a TUI launch, or a lease already released)
+// A run marotte did not put on the wire (a TUI launch, or a lease already released)
 // has neither a frame name nor a recipe, and the floor is what keeps the notification
 // from reading as a bare verb.
 func TestRunOutcomeBody_FloorsTheLabel(t *testing.T) {
 	t.Parallel()
 	rs := &Runs{}
-	label := rs.runOutcomeLabel(lifecycleFrame{WorkflowID: "wf_1", Status: vibekit.RunStatusFailed})
-	if got := runOutcomeBody(vibekit.RunStatusFailed, label); got != "Workflow run failed" {
+	label := rs.runOutcomeLabel(lifecycleFrame{WorkflowID: "wf_1", Status: marotte.RunStatusFailed})
+	if got := runOutcomeBody(marotte.RunStatusFailed, label); got != "Workflow run failed" {
 		t.Errorf("body with no name anywhere = %q, want %q", got, "Workflow run failed")
 	}
 }

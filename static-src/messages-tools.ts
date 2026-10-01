@@ -99,7 +99,7 @@ function removeSlot(chatID: string, toolID: string, card: HTMLDivElement): void 
 
 /** What a terminal id resolves to: the tool call that claimed it AND the chat
  *  that owns the card, because the slot lookup needs both halves of the
- *  composite key. The KEY stays the bare terminal id — vibekit mints terminal
+ *  composite key. The KEY stays the bare terminal id — marotte mints terminal
  *  ids, so they are globally unique where tool ids are not. */
 interface TermLink {
   chatID: string;

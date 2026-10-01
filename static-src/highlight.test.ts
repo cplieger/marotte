@@ -676,7 +676,7 @@ describe("resolveLangHint", () => {
     { name: "a fence alias", tag: "typescript", want: "ts" },
     { name: "a bare filename", tag: "main.go", want: "go" },
     { name: "a repo-relative path", tag: "internal/git/exec.go", want: "go" },
-    { name: "an absolute path", tag: "/workspace/vibekit/static-src/diff.ts", want: "ts" },
+    { name: "an absolute path", tag: "/workspace/marotte/static-src/diff.ts", want: "ts" },
     { name: "a dotted path with an unknown extension", tag: "notes/todo.zzz", want: "" },
     { name: "a dotfile with no extension", tag: ".gitignore", want: "" },
     { name: "a path whose directory holds the dot", tag: "v1.2/README", want: "" },

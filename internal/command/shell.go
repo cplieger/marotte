@@ -18,11 +18,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/procout"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
@@ -37,13 +37,13 @@ const ShellTimeout = 30 * time.Second
 // chat's first message, derives an initial chat name from the command text.
 // Returns whether the message was persisted (false when the chat record
 // doesn't exist).
-func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
-	version, err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, chatID marotte.ChatID, msg *marotte.Message, text string) (persisted bool, err error) {
+	version, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
-			c.Name = vibekit.DefaultChatName
+			c.Name = marotte.DefaultChatName
 		}
 		c.Messages = append(c.Messages, *msg)
-		if c.Name == vibekit.DefaultChatName && len(c.Messages) == 1 {
+		if c.Name == marotte.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(text, 80)
 			if name != text {
 				name += ellipsis
@@ -58,14 +58,14 @@ func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaste
 	}
 	// After the save, stamped from its return: the frame completes the transcript
 	// projection for this mutation.
-	frame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg)
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+	frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
 	bus.Broadcast(ctx, frame)
 	return persisted, nil
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
-func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientCommand, p *vibekit.PromptCommand) (any, error) {
+func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand, p *marotte.PromptCommand) (any, error) {
 	shellCmd := strings.TrimPrefix(p.Text, "!")
 	shellCmd = strings.TrimSpace(shellCmd)
 	if shellCmd == "" {
@@ -75,7 +75,7 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 	// Admission: the same per-chat reservation a prompt takes, as a try —
 	// never a wait. One mechanism serializes prompts and shells, whatever
 	// state the bridge is in.
-	if !roles.turnOutcome.TryReserveTurn(cmd.ChatID, vibekit.TurnSourceLocalShell) {
+	if !roles.turnOutcome.TryReserveTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}
 	defer roles.turnOutcome.ReleaseTurnReservation(cmd.ChatID)
@@ -84,8 +84,8 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 	defer roles.lifecycle.InflightDone()
 
 	// Persist the user message.
-	userMsg := vibekit.Message{
-		ID: p.MessageID, Role: vibekit.RoleUser, Ts: time.Now().UnixMilli(),
+	userMsg := marotte.Message{
+		ID: p.MessageID, Role: marotte.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
 	persisted, err := appendShellUserMessage(ctx, roles.chats, roles.bus, cmd.ChatID, &userMsg, p.Text)
@@ -99,7 +99,7 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 	// The shell turn opens a turn like any other: without a record its end
 	// would be a broadcast nothing owned. A zero epoch is the source rule
 	// refusing while an agent turn is open.
-	epoch := roles.turnOutcome.StartTurn(ctx, cmd.ChatID, vibekit.TurnSourceLocalShell)
+	epoch := roles.turnOutcome.StartTurn(ctx, cmd.ChatID, marotte.TurnSourceLocalShell)
 	if epoch == 0 {
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}
@@ -139,8 +139,8 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 
 	content := renderShellResult(output, runErr, timedOut)
 	msgID := ids.NewMessageID()
-	assistantMsg := vibekit.Message{
-		ID: msgID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli(),
+	assistantMsg := marotte.Message{
+		ID: msgID, Role: marotte.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
 	}
 	// AppendMessage broadcasts the message_appended itself, stamped from the save;

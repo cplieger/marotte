@@ -6,7 +6,7 @@
 // unconditionally. The LSP half needs a one-time per-workspace
 // activation: .kiro/settings/lsp.json under the work dir, written by KAS's
 // `init` subcommand; this is what chat sessions read to spawn language
-// servers on demand — vibekit never manages server processes itself.
+// servers on demand — marotte never manages server processes itself.
 //
 // EnsureCodeIntelligence runs init exactly when useful: the config file
 // does not exist yet AND at least one lsp-marked tool is enabled and

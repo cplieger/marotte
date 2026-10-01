@@ -18,11 +18,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/ansitext"
-	"github.com/cplieger/vibekit/internal/procgroup"
-	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/vibekit/internal/systembin"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ansitext"
+	"github.com/cplieger/marotte/internal/procgroup"
+	"github.com/cplieger/marotte/internal/sanitize"
+	"github.com/cplieger/marotte/internal/systembin"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // keySignal is the wire key for a terminating signal in an ACP terminal
@@ -68,11 +68,11 @@ type agentTerminal struct {
 	// owns the running UTF-16 offset the wire reports as a chunk's base. LIVE stream
 	// only. Owned by the pump goroutine alone, or two streams' styles bleed together.
 	ansi   *ansitext.Parser
-	chatID vibekit.ChatID
+	chatID marotte.ChatID
 	signal string
 	// epoch is the turn that spawned this terminal, so an interrupt can kill the
 	// turn's own processes without touching an earlier turn's background command.
-	epoch    vibekit.TurnEpoch
+	epoch    marotte.TurnEpoch
 	exitCode int
 	mu       sync.Mutex
 }
@@ -80,7 +80,7 @@ type agentTerminal struct {
 // newAgentTerminal builds one terminal with every field a running terminal needs.
 // A constructor rather than a literal because two of them fail silently: without
 // `ansi` the pump nil-panics, and without `output` terminal/output returns nothing.
-func newAgentTerminal(cmd *exec.Cmd, chatID vibekit.ChatID, limit int) *agentTerminal {
+func newAgentTerminal(cmd *exec.Cmd, chatID marotte.ChatID, limit int) *agentTerminal {
 	return &agentTerminal{
 		cmd:    cmd,
 		done:   make(chan struct{}),
@@ -104,14 +104,14 @@ func (t *agentTerminal) rawOutput() string {
 
 // wireSpans converts the parser's spans to the wire shape. The two structs are
 // deliberately separate: internal/ansitext stays a stdlib-only leaf that owns the
-// parse, and internal/vibekit owns every shape codegen projects into TypeScript.
-func wireSpans(in []ansitext.Span) []vibekit.TextSpan {
+// parse, and internal/marotte owns every shape codegen projects into TypeScript.
+func wireSpans(in []ansitext.Span) []marotte.TextSpan {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]vibekit.TextSpan, len(in))
+	out := make([]marotte.TextSpan, len(in))
 	for i, s := range in {
-		out[i] = vibekit.TextSpan{Start: s.Start, End: s.End, FG: s.FG, BG: s.BG, Attrs: s.Attrs}
+		out[i] = marotte.TextSpan{Start: s.Start, End: s.End, FG: s.FG, BG: s.BG, Attrs: s.Attrs}
 	}
 	return out
 }
@@ -186,16 +186,16 @@ func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
 // output records of terminals that have since gone away.
 type agentTerminals struct {
 	terms    map[string]*agentTerminal
-	byChatID map[vibekit.ChatID][]string // chatID → []terminalID
+	byChatID map[marotte.ChatID][]string // chatID → []terminalID
 	// retired holds the RAW output of terminals no longer in terms: a terminal's
 	// output outlives the terminal, since KAS releases it within milliseconds of
 	// creating it. Bounded by the turn, each record holding at most one 64 KiB ring.
 	retired map[string]retiredOutput
 	// currentEpoch reads which turn a chat's activity belongs to right now, so a
 	// terminal is stamped with the lifecycle's identity, not a parallel count.
-	currentEpoch func(vibekit.ChatID) (vibekit.TurnEpoch, bool)
+	currentEpoch func(marotte.ChatID) (marotte.TurnEpoch, bool)
 	// broadcast publishes a terminal's lifecycle and output frames.
-	broadcast func(context.Context, vibekit.ServerEvent)
+	broadcast func(context.Context, marotte.ServerEvent)
 	// bridges answers the ACP request a terminal operation arrived on.
 	bridges *bridgeManager
 	// lifecycle supplies the process lifetime, the in-flight counter a pump must
@@ -211,19 +211,19 @@ type agentTerminals struct {
 // indistinguishable from a lost one.
 type retiredOutput struct {
 	raw    string
-	chatID vibekit.ChatID
+	chatID marotte.ChatID
 	// epoch is the turn that spawned the terminal, or zero when the chat had no
 	// turn open at the time. A zero is evicted by the chat's NEXT turn close.
-	epoch vibekit.TurnEpoch
+	epoch marotte.TurnEpoch
 }
 
 func newAgentTerminals(bridges *bridgeManager, lc *lifetime,
-	broadcast func(context.Context, vibekit.ServerEvent),
-	currentEpoch func(vibekit.ChatID) (vibekit.TurnEpoch, bool),
+	broadcast func(context.Context, marotte.ServerEvent),
+	currentEpoch func(marotte.ChatID) (marotte.TurnEpoch, bool),
 ) *agentTerminals {
 	return &agentTerminals{
 		terms:        make(map[string]*agentTerminal),
-		byChatID:     make(map[vibekit.ChatID][]string),
+		byChatID:     make(map[marotte.ChatID][]string),
 		retired:      make(map[string]retiredOutput),
 		bridges:      bridges,
 		lifecycle:    lc,
@@ -265,7 +265,7 @@ func (at *agentTerminals) peekRetired(id string) (string, bool) {
 // later cancel kill them. A turn ends only after every tool call has settled, so a
 // record still here has had its chance. Epochs are monotonic per chat, so `<=` also
 // collects one left behind by an earlier turn that never closed.
-func (at *agentTerminals) CloseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+func (at *agentTerminals) CloseTurn(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
 	at.mu.Lock()
 	for id, rec := range at.retired {
 		if rec.chatID == chatID && rec.epoch <= epoch {
@@ -278,7 +278,7 @@ func (at *agentTerminals) CloseTurn(chatID vibekit.ChatID, epoch vibekit.TurnEpo
 // turnEpochOf reads which turn a chat's activity belongs to right now, or zero
 // when the chat is idle. Nil-safe: a registry built without the reader attributes
 // nothing, the honest answer for a runtime with no turn lifecycle either.
-func (at *agentTerminals) turnEpochOf(chatID vibekit.ChatID) vibekit.TurnEpoch {
+func (at *agentTerminals) turnEpochOf(chatID marotte.ChatID) marotte.TurnEpoch {
 	if at.currentEpoch == nil {
 		return 0
 	}
@@ -290,7 +290,7 @@ func (at *agentTerminals) turnEpochOf(chatID vibekit.ChatID) vibekit.TurnEpoch {
 // other chat process alone, so it does not also kill a background command an
 // earlier turn started. An idle chat kills nothing, and epoch zero is never this
 // turn's to kill.
-func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
+func (at *agentTerminals) KillForTurn(chatID marotte.ChatID) {
 	cur := at.turnEpochOf(chatID)
 	if cur == 0 {
 		return
@@ -331,7 +331,7 @@ func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
 //
 // The one removal path that does NOT retire the output: the chat is being deleted,
 // so there is no transcript left to adopt into. It drops any record it already had.
-func (at *agentTerminals) KillForChat(chatID vibekit.ChatID) {
+func (at *agentTerminals) KillForChat(chatID marotte.ChatID) {
 	at.mu.Lock()
 	ids := at.byChatID[chatID]
 	delete(at.byChatID, chatID)
@@ -389,7 +389,7 @@ func (at *agentTerminals) drainAll() {
 		at.retire(id, term)
 		delete(at.terms, id)
 	}
-	at.byChatID = make(map[vibekit.ChatID][]string)
+	at.byChatID = make(map[marotte.ChatID][]string)
 	at.mu.Unlock()
 }
 
@@ -417,7 +417,7 @@ func (at *agentTerminals) release(terminalID string) (*agentTerminal, bool) {
 }
 
 // handleTerminalRequest dispatches terminal/* ACP requests.
-func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID vibekit.ChatID, method string, msg *vibekit.RPCResponse) {
+func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID marotte.ChatID, method string, msg *marotte.RPCResponse) {
 	switch method {
 	case methodTermCreate:
 		rt.agentTerms.respondCreate(ctx, chatID, msg)
@@ -440,8 +440,8 @@ func (rt *Runtime) handleTerminalRequest(ctx context.Context, chatID vibekit.Cha
 		slog.Warn("chat bridge: refusing an unimplemented terminal verb",
 			"method", method, "chat_id", chatID, "id", *msg.ID)
 		if err := rt.BridgeRespond(ctx, chatID, *msg.ID, nil,
-			&vibekit.RPCError{
-				Code:    vibekit.RPCCodeMethodNotFound,
+			&marotte.RPCError{
+				Code:    marotte.RPCCodeMethodNotFound,
 				Message: "unimplemented terminal method: " + method,
 			}); err != nil {
 			slog.Error("chat bridge: terminal refusal could not be delivered; the turn may be wedged",
@@ -496,7 +496,7 @@ func derefArgs(args *[]string) []string {
 // failCreate answers a terminal/create that could not start, and logs it. Every
 // failure path goes through this one door, because a command that failed to exec
 // otherwise leaves NO server-side trace: only the agent's tool result learns.
-func (at *agentTerminals) failCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, command, reason string) {
+func (at *agentTerminals) failCreate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, command, reason string) {
 	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", command, "reason", reason)
 	respondErr(ctx, at.bridges, chatID, msg, reason)
 }
@@ -506,13 +506,13 @@ func (at *agentTerminals) failCreate(ctx context.Context, chatID vibekit.ChatID,
 // The id is already verified non-nil by the router and KAS awaits these with no
 // timeout, so a bare return strands the promise. The request's OWN chatID is
 // load-bearing: respondErr resolves the reply bridge by chat id.
-func (at *agentTerminals) failParse(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, method string, err error) {
+func (at *agentTerminals) failParse(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, method string, err error) {
 	slog.Warn("agent terminal request had undecodable params",
 		"method", method, "chat_id", chatID, "error", err)
 	respondErr(ctx, at.bridges, chatID, msg, "invalid params")
 }
 
-func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var params struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
@@ -628,7 +628,7 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.Chat
 	at.mu.Unlock()
 
 	slog.Info("agent terminal created", "chat_id", chatID, "term_id", termID, "cmd", params.Command)
-	at.broadcast(ctx, vibekit.NewEvent(vibekit.EventTerminalCreated, chatID, vibekit.TerminalCreatedPayload{
+	at.broadcast(ctx, marotte.NewEvent(marotte.EventTerminalCreated, chatID, marotte.TerminalCreatedPayload{
 		TerminalID: termID,
 		Command:    params.Command,
 		// A plain slice on the wire: the client only labels the tab with it.
@@ -652,7 +652,7 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.Chat
 
 // pumpOutput streams a terminal's combined stdout/stderr into its ring buffer and
 // broadcasts each chunk to SSE clients until the reader hits EOF or an error.
-func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID vibekit.ChatID, r io.Reader) {
+func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID marotte.ChatID, r io.Reader) {
 	// Runtime-scoped context: this goroutine outlives the per-event ctx that spawned
 	// it, so derive one that lives until EOF or shutdown.
 	ctx, cancel := at.lifecycle.derivedContext()
@@ -709,7 +709,7 @@ func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID 
 // sees it, so spans come out empty and output renders unstyled (TestTerminalEmitter_*
 // pins it). Hidden Unicode goes first, so nothing can hide a sequence behind it.
 func (at *agentTerminals) emitter(
-	ctx context.Context, term *agentTerminal, termID string, chatID vibekit.ChatID,
+	ctx context.Context, term *agentTerminal, termID string, chatID marotte.ChatID,
 ) func(string) {
 	return func(raw string) {
 		base := term.ansi.Offset()
@@ -729,10 +729,10 @@ func (at *agentTerminals) emitter(
 // absolute in UTF-16 units, so the base must be the same quantity from the same
 // source, or every live span rebases onto the wrong character.
 func (at *agentTerminals) publishText(
-	ctx context.Context, termID string, chatID vibekit.ChatID,
-	text string, spans []vibekit.TextSpan, base int,
+	ctx context.Context, termID string, chatID marotte.ChatID,
+	text string, spans []marotte.TextSpan, base int,
 ) {
-	at.broadcast(ctx, vibekit.NewEvent(vibekit.EventTerminalOutput, chatID, vibekit.TerminalOutputPayload{
+	at.broadcast(ctx, marotte.NewEvent(marotte.EventTerminalOutput, chatID, marotte.TerminalOutputPayload{
 		TerminalID: termID,
 		Data:       text,
 		Spans:      spans,
@@ -767,7 +767,7 @@ func incompleteTailLen(b []byte) int {
 // signal-killed process records a signal string rather than exitCode -1, because
 // KAS's zTerminalExitStatus requires exitCode>=0.
 func (at *agentTerminals) awaitExit(
-	term *agentTerminal, termID string, chatID vibekit.ChatID, cmd *exec.Cmd,
+	term *agentTerminal, termID string, chatID marotte.ChatID, cmd *exec.Cmd,
 	stop func() bool, cmdCancel context.CancelFunc,
 	drained <-chan struct{}, pr *os.File,
 ) {
@@ -825,16 +825,16 @@ func (at *agentTerminals) awaitExit(
 	code := term.exitCode
 	term.mu.Unlock()
 	close(term.done)
-	payload := vibekit.TerminalExitedPayload{TerminalID: termID}
+	payload := marotte.TerminalExitedPayload{TerminalID: termID}
 	if sig != "" {
 		payload.Signal = sig
 	} else {
 		payload.ExitCode = &code
 	}
-	at.broadcast(ctx, vibekit.NewEvent(vibekit.EventTerminalExited, chatID, payload))
+	at.broadcast(ctx, marotte.NewEvent(marotte.EventTerminalExited, chatID, payload))
 }
 
-func (at *agentTerminals) respondOutput(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondOutput(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -866,7 +866,7 @@ func (at *agentTerminals) respondOutput(ctx context.Context, chatID vibekit.Chat
 	respondOK(ctx, at.bridges, chatID, msg, result)
 }
 
-func (at *agentTerminals) respondRelease(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondRelease(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -895,7 +895,7 @@ func (at *agentTerminals) respondRelease(ctx context.Context, chatID vibekit.Cha
 	respondOK(ctx, at.bridges, chatID, msg, map[string]any{})
 }
 
-func (at *agentTerminals) respondWaitForExit(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondWaitForExit(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -927,7 +927,7 @@ func (at *agentTerminals) respondWaitForExit(ctx context.Context, chatID vibekit
 	})
 }
 
-func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondKill(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -968,7 +968,7 @@ func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID
 // because `retire` kept those bytes under the same id; and the sanitize-then-parse
 // order matches the live pump, so persisted and streamed text cannot disagree. ok
 // reports whether the terminal is KNOWN, so a silent command answers ("", nil, true).
-func (at *agentTerminals) Output(terminalID string) (string, []vibekit.TextSpan, bool) {
+func (at *agentTerminals) Output(terminalID string) (string, []marotte.TextSpan, bool) {
 	at.mu.Lock()
 	term, live := at.terms[terminalID]
 	at.mu.Unlock()

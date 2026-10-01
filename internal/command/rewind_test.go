@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // recordingBridge records the one call made through it and replies with a scripted
@@ -34,10 +34,10 @@ type recordingBridge struct {
 	gotMethod  string
 	gotParams  map[string]any
 	callCount  int
-	sessionID  vibekit.SessionID
+	sessionID  marotte.SessionID
 }
 
-func (b *recordingBridge) Call(_ context.Context, method string, params any) (*vibekit.RPCResponse, error) {
+func (b *recordingBridge) Call(_ context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	b.callCount++
 	if b.order != nil {
 		*b.order = append(*b.order, "call")
@@ -56,19 +56,19 @@ func (b *recordingBridge) Call(_ context.Context, method string, params any) (*v
 	if err != nil {
 		return nil, err
 	}
-	return &vibekit.RPCResponse{Result: raw}, nil
+	return &marotte.RPCResponse{Result: raw}, nil
 }
 
 // CallAt reports position zero, which is what "no ordering to wait for" means: this
 // double is not on a prompt path.
-func (b *recordingBridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+func (b *recordingBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	return resp, 0, err
 }
 
 func (b *recordingBridge) Notify(context.Context, string, any) error        { return nil }
 func (b *recordingBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (b *recordingBridge) SessionID() vibekit.SessionID                     { return b.sessionID }
+func (b *recordingBridge) SessionID() marotte.SessionID                     { return b.sessionID }
 func (b *recordingBridge) TryAcquireForPrompt() bool                        { return true }
 func (b *recordingBridge) ReleaseAfterPrompt()                              {}
 func (b *recordingBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 0 }
@@ -94,13 +94,13 @@ type bridgeDeps struct {
 	awaitErr error
 }
 
-func (d *bridgeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
+func (d *bridgeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 
-func (d *bridgeDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (d *bridgeDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return d.opened, nil
 }
 
-func (d *bridgeDeps) AwaitReplayAdopted(context.Context, vibekit.ChatID) error {
+func (d *bridgeDeps) AwaitReplayAdopted(context.Context, marotte.ChatID) error {
 	if d.order != nil {
 		*d.order = append(*d.order, "await")
 	}
@@ -126,14 +126,14 @@ func newBridgelessHost(store ChatStore, resumed Bridge) hostDouble {
 	}
 }
 
-func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.ClientCommand {
+func rewindReq(t *testing.T, chatID marotte.ChatID, messageID string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.RewindChatCommand{MessageID: messageID})
+	payload, err := json.Marshal(marotte.RewindChatCommand{MessageID: messageID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{
-		Type:    vibekit.CmdRewindChat,
+	return &marotte.ClientCommand{
+		Type:    marotte.CmdRewindChat,
 		ChatID:  chatID,
 		Payload: payload,
 	}
@@ -142,15 +142,15 @@ func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.C
 // seedChat writes u1, a1, u2, a2. The session id matters as much as the messages: rewind
 // captures it before it resumes and refuses on a mismatch, so it has to match
 // recordingBridge{sessionID: "sess-1"} or every rewind test refuses.
-func seedChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
+func seedChat(t *testing.T, store ChatStore, id marotte.ChatID) {
 	t.Helper()
-	_, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	_, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("sess-1")
-		c.Messages = []vibekit.Message{
-			{ID: "u1", Role: vibekit.RoleUser, Content: "first", Ts: 100},
-			{ID: "a1", Role: vibekit.RoleAssistant, Content: "reply one", Ts: 200},
-			{ID: "u2", Role: vibekit.RoleUser, Content: "second", Ts: 300},
-			{ID: "a2", Role: vibekit.RoleAssistant, Content: "reply two", Ts: 400},
+		c.Messages = []marotte.Message{
+			{ID: "u1", Role: marotte.RoleUser, Content: "first", Ts: 100},
+			{ID: "a1", Role: marotte.RoleAssistant, Content: "reply one", Ts: 200},
+			{ID: "u2", Role: marotte.RoleUser, Content: "second", Ts: 300},
+			{ID: "a2", Role: marotte.RoleAssistant, Content: "reply two", Ts: 400},
 		}
 		return true
 	})
@@ -197,19 +197,19 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 
 	_, _ = CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u1"))
 
-	if b.gotMethod != vibekit.MethodCheckpointRevertMultiple {
-		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodCheckpointRevertMultiple)
+	if b.gotMethod != marotte.MethodCheckpointRevertMultiple {
+		t.Errorf("method = %q, want %q", b.gotMethod, marotte.MethodCheckpointRevertMultiple)
 	}
 	if b.gotParams["messageId"] != "u1" {
 		t.Errorf("messageId = %v, want u1", b.gotParams["messageId"])
 	}
 	// SessionParams supplies sessionId; KAS rejects the call without it.
-	if b.gotParams["sessionId"] != vibekit.SessionID("sess-1") {
+	if b.gotParams["sessionId"] != marotte.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", b.gotParams["sessionId"])
 	}
 }
 
-// vibekit checks the target's role first rather than spending a round trip to be told,
+// marotte checks the target's role first rather than spending a round trip to be told,
 // and it cannot address an assistant turn at all: only user ids are shared with KAS.
 func TestCmdRewindChat_RefusesANonUserTarget(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
@@ -259,7 +259,7 @@ func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 	}
 }
 
-// A chat with no live bridge is the NORMAL state — vibekit spawns one on the first
+// A chat with no live bridge is the NORMAL state — marotte spawns one on the first
 // prompt, not the first view — so a rewind resumes the session instead of refusing.
 func TestCmdRewindChat_ResumesABridgelessChatAndReverts(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
@@ -272,7 +272,7 @@ func TestCmdRewindChat_ResumesABridgelessChatAndReverts(t *testing.T) {
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	if b.gotMethod != vibekit.MethodCheckpointRevertMultiple {
+	if b.gotMethod != marotte.MethodCheckpointRevertMultiple {
 		t.Errorf("method = %q, want the revert verb on the resumed bridge", b.gotMethod)
 	}
 	c, _ := store.Get(t.Context(), "c1")
@@ -302,7 +302,7 @@ func TestCmdRewindChat_AFailedResumeIsA502(t *testing.T) {
 func TestCmdRewindChat_RefusesAChatWithNoSession(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("")
 		return true
 	}); err != nil {
@@ -354,7 +354,7 @@ type recordingStore struct {
 	order *[]string
 }
 
-func (s *recordingStore) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
+func (s *recordingStore) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
 	*s.order = append(*s.order, "mutate")
 	return s.ChatStore.Mutate(ctx, id, fn)
 }
@@ -438,7 +438,7 @@ func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
 	if statusOf(err) != http.StatusConflict {
 		t.Errorf("status = %d, want 409", statusOf(err))
 	}
-	// KAS's reason reaches the client: more specific than anything vibekit could infer.
+	// KAS's reason reaches the client: more specific than anything marotte could infer.
 	if body := errText(err); !strings.Contains(body, "still running") {
 		t.Errorf("response %s does not carry KAS's reason", body)
 	}
@@ -490,41 +490,41 @@ func TestCmdRewindChat_ToTheFirstMessageEmptiesTheTranscript(t *testing.T) {
 // outcomes, and which rows carry no Content) with synthetic words. What makes it worth
 // pinning: four rows carry no Content and five carry a turn outcome, so a projection or
 // boundary rule treating either as a turn terminator moves the rewind target.
-func seedLiveLayout(t *testing.T, store ChatStore, id vibekit.ChatID) {
+func seedLiveLayout(t *testing.T, store ChatStore, id marotte.ChatID) {
 	t.Helper()
-	interrupted := func(msgID string, ts int64) vibekit.Message {
-		return vibekit.Message{
-			ID: msgID, Role: vibekit.RoleAssistant, Ts: ts,
-			TurnOutcome:       vibekit.TurnOutcomeInterrupted,
-			TurnStopReasonRaw: vibekit.StopReasonInterrupted,
+	interrupted := func(msgID string, ts int64) marotte.Message {
+		return marotte.Message{
+			ID: msgID, Role: marotte.RoleAssistant, Ts: ts,
+			TurnOutcome:       marotte.TurnOutcomeInterrupted,
+			TurnStopReasonRaw: marotte.StopReasonInterrupted,
 		}
 	}
-	failedMarker := func(msgID string, ts int64) vibekit.Message {
-		return vibekit.Message{
-			ID: msgID, Role: vibekit.RoleEvent, Ts: ts,
-			EventKind:         vibekit.EventTurnOutcome,
-			TurnOutcome:       vibekit.TurnOutcomeFailed,
-			TurnStopReasonRaw: vibekit.StopReasonError,
+	failedMarker := func(msgID string, ts int64) marotte.Message {
+		return marotte.Message{
+			ID: msgID, Role: marotte.RoleEvent, Ts: ts,
+			EventKind:         marotte.EventTurnOutcome,
+			TurnOutcome:       marotte.TurnOutcomeFailed,
+			TurnStopReasonRaw: marotte.StopReasonError,
 		}
 	}
-	_, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	_, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("sess-1")
-		c.Messages = []vibekit.Message{
-			{ID: "m-u1", Role: vibekit.RoleUser, Content: "first", Ts: 100},
+		c.Messages = []marotte.Message{
+			{ID: "m-u1", Role: marotte.RoleUser, Content: "first", Ts: 100},
 			interrupted("a1", 200),
-			{ID: "e1", Role: vibekit.RoleEvent, EventKind: vibekit.EventInterrupted, Content: "Interrupted", Ts: 201},
-			{ID: "m-u2", Role: vibekit.RoleUser, Content: "resume", Ts: 300},
+			{ID: "e1", Role: marotte.RoleEvent, EventKind: marotte.EventInterrupted, Content: "Interrupted", Ts: 201},
+			{ID: "m-u2", Role: marotte.RoleUser, Content: "resume", Ts: 300},
 			interrupted("a2", 400),
-			{ID: "e2", Role: vibekit.RoleEvent, EventKind: vibekit.EventInterrupted, Content: "Interrupted", Ts: 401},
-			{ID: "m-u3", Role: vibekit.RoleUser, Content: "resume", Ts: 500},
+			{ID: "e2", Role: marotte.RoleEvent, EventKind: marotte.EventInterrupted, Content: "Interrupted", Ts: 401},
+			{ID: "m-u3", Role: marotte.RoleUser, Content: "resume", Ts: 500},
 			{
-				ID: "a3", Role: vibekit.RoleAssistant, Content: "the reply", Ts: 600,
-				TurnOutcome:       vibekit.TurnOutcomeCompleted,
-				TurnStopReasonRaw: vibekit.StopReasonEndTurn,
+				ID: "a3", Role: marotte.RoleAssistant, Content: "the reply", Ts: 600,
+				TurnOutcome:       marotte.TurnOutcomeCompleted,
+				TurnStopReasonRaw: marotte.StopReasonEndTurn,
 			},
-			{ID: "m-u4", Role: vibekit.RoleUser, Content: "carry on", Ts: 700},
+			{ID: "m-u4", Role: marotte.RoleUser, Content: "carry on", Ts: 700},
 			failedMarker("e3", 701),
-			{ID: "m-u5", Role: vibekit.RoleUser, Content: "carry on", Ts: 800},
+			{ID: "m-u5", Role: marotte.RoleUser, Content: "carry on", Ts: 800},
 			failedMarker("e4", 801),
 		}
 		return true
@@ -567,11 +567,11 @@ func TestCmdRewindChat_KeepsTurnsOneToThreeOnTheLiveLayout(t *testing.T) {
 }
 
 func TestUserMessageIndex(t *testing.T) {
-	msgs := []vibekit.Message{
-		{ID: "u1", Role: vibekit.RoleUser},
-		{ID: "a1", Role: vibekit.RoleAssistant},
-		{ID: "e1", Role: vibekit.RoleEvent},
-		{ID: "u2", Role: vibekit.RoleUser},
+	msgs := []marotte.Message{
+		{ID: "u1", Role: marotte.RoleUser},
+		{ID: "a1", Role: marotte.RoleAssistant},
+		{ID: "e1", Role: marotte.RoleEvent},
+		{ID: "u2", Role: marotte.RoleUser},
 	}
 	cases := map[string]int{"u1": 0, "u2": 3, "a1": -1, "e1": -1, "missing": -1, "": -1}
 	for id, want := range cases {
@@ -602,15 +602,15 @@ func TestCmdRewindChat_LogsHowManyMessagesItDropped(t *testing.T) {
 // seedKASChat writes u1, a1, u2, a2 where each user row also carries the agent-side id
 // KAS's own log holds it under. That second id is the one revertMultiple accepts, and
 // seedChat above is the same layout WITHOUT it — the legacy population.
-func seedKASChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
+func seedKASChat(t *testing.T, store ChatStore, id marotte.ChatID) {
 	t.Helper()
-	_, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	_, err := store.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("sess-1")
-		c.Messages = []vibekit.Message{
-			{ID: "u1", Role: vibekit.RoleUser, Content: "first", KASMessageID: "kas-1", Ts: 100},
-			{ID: "a1", Role: vibekit.RoleAssistant, Content: "reply one", Ts: 200},
-			{ID: "u2", Role: vibekit.RoleUser, Content: "second", KASMessageID: "kas-2", Ts: 300},
-			{ID: "a2", Role: vibekit.RoleAssistant, Content: "reply two", Ts: 400},
+		c.Messages = []marotte.Message{
+			{ID: "u1", Role: marotte.RoleUser, Content: "first", KASMessageID: "kas-1", Ts: 100},
+			{ID: "a1", Role: marotte.RoleAssistant, Content: "reply one", Ts: 200},
+			{ID: "u2", Role: marotte.RoleUser, Content: "second", KASMessageID: "kas-2", Ts: 300},
+			{ID: "a2", Role: marotte.RoleAssistant, Content: "reply two", Ts: 400},
 		}
 		return true
 	})
@@ -621,7 +621,7 @@ func seedKASChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
 
 // The user's own report, in one assertion: the client addresses a turn by the id it
 // minted, and the wire must carry the id KAS's session log holds that turn under. The two
-// spaces are disjoint, so sending vibekit's own is what KAS answers `not found` to.
+// spaces are disjoint, so sending marotte's own is what KAS answers `not found` to.
 func TestCmdRewindChat_AddressesKASByItsOwnRecordID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedKASChat(t, store, "c1")
@@ -634,7 +634,7 @@ func TestCmdRewindChat_AddressesKASByItsOwnRecordID(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 	if got := b.gotParams["messageId"]; got != "kas-2" {
-		t.Errorf("messageId = %v, want kas-2: vibekit's own id names nothing in KAS's log", got)
+		t.Errorf("messageId = %v, want kas-2: marotte's own id names nothing in KAS's log", got)
 	}
 }
 
@@ -656,8 +656,8 @@ func TestCmdRewindChat_FallsBackToTheRowsOwnIDWhenNoKASIDIsHeld(t *testing.T) {
 	}
 }
 
-// KAS cannot explain a turn vibekit holds no agent-side id for — its reason names an id
-// the reader never saw and offers nothing to do about it. vibekit adds the one thing it
+// KAS cannot explain a turn marotte holds no agent-side id for — its reason names an id
+// the reader never saw and offers nothing to do about it. marotte adds the one thing it
 // knows, and KEEPS KAS's reason, because the refusal may be a specific one worth reading.
 func TestCmdRewindChat_ExplainsARefusalOnATurnItCannotAddress(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
@@ -682,7 +682,7 @@ func TestCmdRewindChat_ExplainsARefusalOnATurnItCannotAddress(t *testing.T) {
 	}
 }
 
-// The same refusal on a turn vibekit CAN address means something else entirely (mid-turn,
+// The same refusal on a turn marotte CAN address means something else entirely (mid-turn,
 // a concurrent revert), so the id explanation must not be attached to it.
 func TestCmdRewindChat_DoesNotBlameIDCaptureWhenTheKASIDWasSent(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
@@ -708,12 +708,12 @@ func TestCmdRewindChat_DoesNotBlameIDCaptureWhenTheKASIDWasSent(t *testing.T) {
 
 // A stamp minted under a session the chat has since retired names a record the current
 // session's log does not hold, so KAS answers `not found` — the original report's toast. The
-// clear is what turns that row into one vibekit can explain: it sends the row's own id and
+// clear is what turns that row into one marotte can explain: it sends the row's own id and
 // appends the sentence instead of forwarding a bare refusal.
 func TestCmdRewindChat_ARetiredSessionsStampIsGoneSoTheRefusalIsExplained(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedKASChat(t, store, "c1")
-	if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.RecordSession("sess-2")
 		return true
 	}); err != nil {

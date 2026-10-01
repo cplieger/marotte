@@ -10,11 +10,11 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // maxBufferBytes caps the per-turn content buffer, so a pathological turn (a cat
@@ -24,9 +24,9 @@ const maxBufferBytes = 32 << 20
 // HandleAssistantChunk streams a text delta to clients and accumulates it for
 // later persistence. isReasoning selects buf.Reasoning over buf.Content and is
 // forwarded on the SSE so the client routes the delta to the right bubble.
-func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, isReasoning bool) {
+func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, isReasoning bool) {
 	var chunk ACPChunkWire
-	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != vibekit.ContentTypeText || chunk.Content.Text == "" {
+	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != marotte.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
 	// Must run before the buffer is read: a revision hands the folded buffer to
@@ -62,7 +62,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	// kiro-cli's security filter cancelled a tool call: this chunk is the whole
 	// notice and no session/prompt response is coming. Detected before the steer
 	// filter so the two never eat each other's text. Skipped for a step frame,
-	// where vibekit issued no prompt call to release; the run ceiling catches it.
+	// where marotte issued no prompt call to release; the run ceiling catches it.
 	interrupted := !isReasoning && workflowSubtask == "" && isInterruptSentinel(chunk.Content.Text)
 
 	// Strip the steering acknowledgement marker before anything reads the text:
@@ -104,8 +104,8 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	} else {
 		blockIndex, seq, version = buf.AppendTextDelta(text, subtask)
 	}
-	frame := vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
-		vibekit.MessageChunkPayload{
+	frame := marotte.NewEvent(marotte.EventMessageChunk, chatID,
+		marotte.MessageChunkPayload{
 			MessageID:      buf.MessageID,
 			Delta:          text,
 			IsReasoning:    isReasoning,
@@ -114,7 +114,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 			AgentSubtaskID: subtask,
 			Refusal:        refusal,
 		})
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
 	t.bus.Broadcast(ctx, frame)
 
 	// Last, and the ordering is the contract: the host's teardown takes the
@@ -135,12 +135,12 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 // decoder reads the field with reqOneOf against user|agent, so a zero value
 // fails the whole frame and the client loses the ack. steerOrigin is total, so
 // this cannot reintroduce one.
-func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, acks []steerAck) {
+func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID marotte.ChatID, acks []steerAck) {
 	for _, ack := range acks {
 		if ack.SteerID == "" || ack.Text == "" {
 			continue
 		}
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerInjected, chatID, marotte.SteerInjectedPayload{
 			SteerID: ack.SteerID,
 			Text:    "",
 			Origin:  t.steerOrigin(chatID, ack.SteerID),
@@ -154,28 +154,28 @@ func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.Chat
 // exists so one turn cannot OOM the process — but dropping silently stopped the
 // reply mid-sentence with nothing saying why. Once, because frames keep arriving.
 func (t *Translator) announceTruncation(
-	ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, subtask string, buffered int,
+	ctx context.Context, chatID marotte.ChatID, buf *buffer.Buffer, subtask string, buffered int,
 ) {
 	if first, _ := buf.MarkOverCap(); !first {
 		return
 	}
-	const notice = "\n\n[Reply truncated: this turn exceeded vibekit's 32 MiB buffer.]"
+	const notice = "\n\n[Reply truncated: this turn exceeded marotte's 32 MiB buffer.]"
 	blockIndex, seq, version := buf.AppendTextDelta(notice, subtask)
 	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
 		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
-	frame := vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
-		vibekit.MessageChunkPayload{
+	frame := marotte.NewEvent(marotte.EventMessageChunk, chatID,
+		marotte.MessageChunkPayload{
 			MessageID:  buf.MessageID,
 			Delta:      notice,
 			BlockIndex: blockIndex,
 			Seq:        seq,
 		})
-	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
 	t.bus.Broadcast(ctx, frame)
 }
 
 // refusalInfo maps a chunk's _meta.kiro.refusal block to the domain shape.
-func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
+func refusalInfo(chunk *ACPChunkWire) *marotte.RefusalInfo {
 	return refusalFrom(chunk.Meta.Kiro.Refusal)
 }
 
@@ -184,7 +184,7 @@ func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
 // classifies it: the buffer stamp is what persists it, the returned value is what
 // makes the callout style live. Gated on !isReasoning so a stray tagged thought
 // cannot mark it.
-func stampRefusal(buf *buffer.Buffer, chunk *ACPChunkWire, isReasoning bool) *vibekit.RefusalInfo {
+func stampRefusal(buf *buffer.Buffer, chunk *ACPChunkWire, isReasoning bool) *marotte.RefusalInfo {
 	if isReasoning {
 		return nil
 	}
@@ -200,11 +200,11 @@ func stampRefusal(buf *buffer.Buffer, chunk *ACPChunkWire, isReasoning bool) *vi
 // itself. The explanation field is dropped as a duplicate of the chunk text; a block
 // with no category and no recommended model still marks the turn (every field
 // optional).
-func refusalFrom(r *ACPRefusalMeta) *vibekit.RefusalInfo {
+func refusalFrom(r *ACPRefusalMeta) *marotte.RefusalInfo {
 	if r == nil {
 		return nil
 	}
-	return &vibekit.RefusalInfo{
+	return &marotte.RefusalInfo{
 		Category:         r.Category,
 		RecommendedModel: r.RecommendedModel,
 	}
@@ -213,14 +213,14 @@ func refusalFrom(r *ACPRefusalMeta) *vibekit.RefusalInfo {
 // HandlePlan persists the agent's plan as one row per turn. ACP resends the
 // whole entries array on every update, so this upserts rather than appends; see
 // chat.Store.UpsertTurnPlan for what appending per frame cost.
-func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+func (t *Translator) HandlePlan(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
 	var p ACPPlanWire
 	if json.Unmarshal(raw, &p) != nil {
 		return
 	}
-	msg := vibekit.Message{
+	msg := marotte.Message{
 		ID:   t.newMsgID(),
-		Role: vibekit.RoleAssistant,
+		Role: marotte.RoleAssistant,
 		Ts:   time.Now().UnixMilli(),
 		Plan: p.Entries,
 	}
@@ -234,13 +234,13 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw 
 }
 
 // HandleModeUpdate persists the agent's new mode and broadcasts mode_changed.
-func (t *Translator) HandleModeUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
+func (t *Translator) HandleModeUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
 	var p ACPModeUpdateWire
 	if json.Unmarshal(raw, &p) != nil || p.ModeID == "" {
 		return
 	}
 	changed := false
-	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex || c.CurrentModeID == p.ModeID {
 			return false
 		}
@@ -255,6 +255,6 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID vibekit.ChatID
 		slog.Error("mode update persist", "chat_id", chatID, "error", err)
 	}
 	if changed {
-		t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, chatID, vibekit.ModeChangedPayload{ModeID: p.ModeID}))
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventModeChanged, chatID, marotte.ModeChangedPayload{ModeID: p.ModeID}))
 	}
 }

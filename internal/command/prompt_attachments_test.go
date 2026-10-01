@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // kasSupportedDocumentMIMEs mirrors KAS's SUPPORTED_DOCUMENT_MIME_TYPES
@@ -31,7 +31,7 @@ var kasSupportedDocumentMIMEs = map[string]bool{
 
 // TestDocumentExtsSubsetOfKAS is the drift guard for the v3 attachment bug:
 // documentExts must be a subset of KAS's SUPPORTED_DOCUMENT_MIME_TYPES.
-// Anything vibekit inlines as an embedded `resource` block whose MIME KAS
+// Anything marotte inlines as an embedded `resource` block whose MIME KAS
 // does not accept is silently dropped (the agent never sees the file and no
 // error surfaces). If this fails, either drop the extension from documentExts
 // or route it through unsupportedDocExts / the path-reference branch.
@@ -122,7 +122,7 @@ func TestAttachmentBlock_ImageInlinesAsImageBlock(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(vibekit.Attachment{Path: abs, Name: "shot.png"},
+	block, spent := attachmentBlock(marotte.Attachment{Path: abs, Name: "shot.png"},
 		resolve, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != "image" {
@@ -155,8 +155,8 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 	resolve := func(string) (string, error) { return abs, nil }
 
 	t.Run("over_turn_budget", func(t *testing.T) {
-		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, 10, true)
-		if got := block[keyType]; got != vibekit.ContentTypeText {
+		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, 10, true)
+		if got := block[keyType]; got != marotte.ContentTypeText {
 			t.Errorf("block type = %v, want text (a path reference)", got)
 		}
 		if spent != 0 {
@@ -166,8 +166,8 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 
 	t.Run("path_escapes_workspace", func(t *testing.T) {
 		deny := func(string) (string, error) { return "", errors.New("escapes") }
-		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, deny, MaxInlineTurnEncodedBytes, true)
-		if got := block[keyType]; got != vibekit.ContentTypeText {
+		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, deny, MaxInlineTurnEncodedBytes, true)
+		if got := block[keyType]; got != marotte.ContentTypeText {
 			t.Errorf("block type = %v, want text", got)
 		}
 		if spent != 0 {
@@ -193,10 +193,10 @@ func TestAttachmentBlock_TextFileTakesPathReference(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(vibekit.Attachment{Path: abs, Name: filepath.Base(abs)},
+	block, spent := attachmentBlock(marotte.Attachment{Path: abs, Name: filepath.Base(abs)},
 		resolve, MaxInlineTurnEncodedBytes, true)
 
-	if got := block[keyType]; got != vibekit.ContentTypeText {
+	if got := block[keyType]; got != marotte.ContentTypeText {
 		t.Fatalf("block type = %v, want text (a path reference)", got)
 	}
 	wantText := "Attached file: " + abs
@@ -248,7 +248,7 @@ func TestReadForInline_ChargesTheBudgetInEncodedBytes(t *testing.T) {
 	encoded := base64.StdEncoding.EncodedLen(len(pixels))
 
 	t.Run("one encoded byte short is refused", func(t *testing.T) {
-		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, encoded-1, true)
+		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, encoded-1, true)
 		if got := block[keyType]; got != "text" {
 			t.Errorf("block type = %v, want a text path reference; the budget is in "+
 				"encoded bytes and %d of them do not fit in %d", got, encoded, encoded-1)
@@ -262,7 +262,7 @@ func TestReadForInline_ChargesTheBudgetInEncodedBytes(t *testing.T) {
 		// Exactly-at-cap must be ACCEPTED, not refused. An off-by-one here is the
 		// classic mutant, and it is invisible in any test that stays away from the
 		// boundary.
-		block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, encoded, true)
+		block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, encoded, true)
 		if got := block[keyType]; got != "image" {
 			t.Errorf("block type = %v, want the image inlined at exactly its encoded cost", got)
 		}
@@ -293,7 +293,7 @@ func TestReadForInline_RefusesAnOversizedEncodedPayload(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(vibekit.Attachment{Path: abs},
+	block, spent := attachmentBlock(marotte.Attachment{Path: abs},
 		resolve, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != "text" {
@@ -328,7 +328,7 @@ func TestReadForInline_OversizedFileNamesThePath(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, _ := attachmentBlock(vibekit.Attachment{Path: abs},
+	block, _ := attachmentBlock(marotte.Attachment{Path: abs},
 		resolve, MaxInlineTurnEncodedBytes, true)
 
 	text, _ := block["text"].(string)
@@ -354,7 +354,7 @@ func TestReadForInline_EncodedCapAppliesToDocumentsToo(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(vibekit.Attachment{Path: abs},
+	block, spent := attachmentBlock(marotte.Attachment{Path: abs},
 		resolve, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != "text" {
@@ -390,7 +390,7 @@ func TestReadForInline_AcceptsAnEncodedPayloadExactlyAtTheCap(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(vibekit.Attachment{Path: abs},
+	block, spent := attachmentBlock(marotte.Attachment{Path: abs},
 		resolve, MaxInlineTurnEncodedBytes, true)
 
 	if got := block[keyType]; got != "image" {
@@ -418,9 +418,9 @@ func TestReadForInline_OversizedImageDoesNotSendTheAgentToItsFileTools(t *testin
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, MaxInlineTurnEncodedBytes, true)
+	block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, MaxInlineTurnEncodedBytes, true)
 
-	if got := block[keyType]; got != vibekit.ContentTypeText {
+	if got := block[keyType]; got != marotte.ContentTypeText {
 		t.Fatalf("block type = %v, want text (a path reference)", got)
 	}
 	text, _ := block["text"].(string)
@@ -469,9 +469,9 @@ func TestReadForInline_BudgetNoteFlagsBinaryBytesOnly(t *testing.T) {
 
 			// A budget of 10 encoded bytes cannot hold 4 KiB, so this is the
 			// turn-budget gate rather than either size cap.
-			block, spent := attachmentBlock(vibekit.Attachment{Path: abs}, resolve, 10, true)
+			block, spent := attachmentBlock(marotte.Attachment{Path: abs}, resolve, 10, true)
 
-			if got := block[keyType]; got != vibekit.ContentTypeText {
+			if got := block[keyType]; got != marotte.ContentTypeText {
 				t.Fatalf("attachmentBlock(%q) type = %v, want text (a path reference)", tc.file, got)
 			}
 			text, _ := block["text"].(string)
@@ -502,8 +502,8 @@ func TestBuildPromptBlocks_HistoryImageBudgetDegradesToPathReference(t *testing.
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	blocks := BuildPromptBlocks(t.Context(), "see this", []vibekit.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
-	if got := blocks[1][keyType]; got != vibekit.ContentTypeText {
+	blocks := BuildPromptBlocks(t.Context(), "see this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
+	if got := blocks[1][keyType]; got != marotte.ContentTypeText {
 		t.Errorf("BuildPromptBlocks history-budget block type = %v, want text", got)
 	}
 	text, _ := blocks[1]["text"].(string)
@@ -513,12 +513,12 @@ func TestBuildPromptBlocks_HistoryImageBudgetDegradesToPathReference(t *testing.
 }
 
 func TestHistoryInlineImageCount_StopsAtTheCompactionWatermark(t *testing.T) {
-	chat := &vibekit.Chat{
+	chat := &marotte.Chat{
 		CompactionWatermark: "compact-1",
-		Messages: []vibekit.Message{
-			{ID: "m-old", Role: vibekit.RoleUser, Attachments: []vibekit.Attachment{{Path: "old.png"}}},
-			{ID: "compact-1", Role: vibekit.RoleEvent},
-			{ID: "m-current", Role: vibekit.RoleUser, Attachments: []vibekit.Attachment{{Path: "current.png"}}},
+		Messages: []marotte.Message{
+			{ID: "m-old", Role: marotte.RoleUser, Attachments: []marotte.Attachment{{Path: "old.png"}}},
+			{ID: "compact-1", Role: marotte.RoleEvent},
+			{ID: "m-current", Role: marotte.RoleUser, Attachments: []marotte.Attachment{{Path: "current.png"}}},
 		},
 	}
 
@@ -535,7 +535,7 @@ func TestBuildPromptBlocks_HistoryImageBudgetDoesNotAffectDocuments(t *testing.T
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	blocks := BuildPromptBlocks(t.Context(), "read this", []vibekit.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
+	blocks := BuildPromptBlocks(t.Context(), "read this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
 	if got := blocks[1][keyType]; got != "resource" {
 		t.Errorf("BuildPromptBlocks document type at image budget = %v, want resource", got)
 	}
@@ -550,7 +550,7 @@ func TestBuildPromptBlocks_PerPromptCapsAreUnchanged(t *testing.T) {
 	}
 	resolve := func(string) (string, error) { return abs, nil }
 
-	blocks := BuildPromptBlocks(t.Context(), "see this", []vibekit.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
+	blocks := BuildPromptBlocks(t.Context(), "see this", []marotte.Attachment{{Path: abs}}, MaxHistoryInlineImages, resolve)
 	text, _ := blocks[1]["text"].(string)
 	if !strings.Contains(text, "too large to inline") {
 		t.Errorf("BuildPromptBlocks encoded-cap note = %q, want the per-attachment reason", text)

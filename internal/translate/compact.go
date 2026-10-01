@@ -9,9 +9,9 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/durable"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // handleCompactionCompleted persists the compacted-summary event and records the
@@ -20,7 +20,7 @@ import (
 // The turn is SEALED first, because a compaction point is a position INSIDE the
 // open turn's block stream: the seal puts the event between the two segments,
 // and the segment's message_appended must reach the bus before the event's.
-func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibekit.ChatID, summaryPtr *string) {
+func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marotte.ChatID, summaryPtr *string) {
 	summary := ""
 	if summaryPtr != nil {
 		summary = *summaryPtr
@@ -29,7 +29,7 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 	// neither, so every effect below rides one detached context.
 	ctx = durable.Context(ctx)
 	t.turns.SealTurnSegment(ctx, chatID)
-	evt := t.newEventMessage(vibekit.EventCompacted, summary)
+	evt := t.newEventMessage(marotte.EventCompacted, summary)
 	err := t.chats.AppendMessage(ctx, chatID, &evt)
 	if errors.Is(err, chat.ErrTombstoned) {
 		return
@@ -37,7 +37,7 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 	if err != nil {
 		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
 	}
-	_, err = t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	_, err = t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -56,10 +56,10 @@ const maxCompactionDetailBytes = 200
 
 // handleCompactionFailed persists a compaction-failed event and broadcasts
 // a typed error to the client.
-func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.ChatID, errMsg string) {
+func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.ChatID, errMsg string) {
 	detail := cmp.Or(errMsg, "compaction failed")
 	detail = runesafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
-	evt := t.newEventMessage(vibekit.EventCompactFailed, detail)
+	evt := t.newEventMessage(marotte.EventCompactFailed, detail)
 	err := t.chats.AppendMessage(durable.Context(ctx), chatID, &evt)
 	if errors.Is(err, chat.ErrTombstoned) {
 		return
@@ -68,8 +68,8 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.
 		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
 	}
 	// Turn-scoped: deriveTurnOutcome grades a turn holding this event as failed.
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
-		Code: vibekit.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+		Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
 	}))
 	// A compaction failure does not prove the turn ended, so the host is told rather
 	// than the turn being closed here: it bounds the silence before it interrupts.

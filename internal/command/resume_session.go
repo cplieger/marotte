@@ -1,16 +1,16 @@
 package command
 
-// Resuming a KAS session vibekit has no chat record for.
+// Resuming a KAS session marotte has no chat record for.
 //
 // The previous-session picker lists what KAS stored, including sessions
-// vibekit never had a chat for — a session started from the TUI, or one
+// marotte never had a chat for — a session started from the TUI, or one
 // whose chat the user deleted while retention kept the session. To open
-// one, vibekit needs a chat record to hang it on, since a chat is what its
+// one, marotte needs a chat record to hang it on, since a chat is what its
 // UI, retention and per-chat bridge are keyed by.
 //
 // Resume creates a chat already bound to that session id; the next
 // OpenBridge sees a stored ACPSessionID and takes the session/load path,
-// whose replay turns into the transcript. vibekit copies no messages.
+// whose replay turns into the transcript. marotte copies no messages.
 
 import (
 	"cmp"
@@ -19,26 +19,26 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // CmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened, and returns the chat plus its tab.
 // The id is minted here when the envelope carries none.
-func CmdResumeSession(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.ResumeSessionCommand
+func CmdResumeSession(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	// The session id reaches a filesystem path inside KAS and vibekit's own
+	// The session id reaches a filesystem path inside KAS and marotte's own
 	// reaper keep-list, so it is validated on the same pattern as a chat id
 	// rather than trusted from the client.
 	if !ids.ValidSessionID(p.SessionID) || !ValidIdent(p.OpID) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	name := cmp.Or(p.Name, vibekit.DefaultChatName)
-	if len(name) > vibekit.MaxChatNameBytes {
+	name := cmp.Or(p.Name, marotte.DefaultChatName)
+	if len(name) > marotte.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
@@ -47,7 +47,7 @@ func CmdResumeSession(ctx context.Context, mem *Membership, cmd *vibekit.ClientC
 	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
 		OpID:   p.OpID,
 		ChatID: cmd.ChatID,
-		Init: func(c *vibekit.Chat) {
+		Init: func(c *marotte.Chat) {
 			// Init runs only when the record does not exist, which is
 			// what refuses to rebind an existing chat: pointing a live
 			// chat at another session would strand its own session.

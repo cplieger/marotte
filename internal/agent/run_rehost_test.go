@@ -13,18 +13,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The `_kiro/workflow/run_complete` notification KAS sends when a run stops. One frame
 // reports terminal and paused alike; the status is the only thing separating them.
-func runCompleteFrame(t *testing.T, workflowID, status string) *vibekit.RPCResponse {
+func runCompleteFrame(t *testing.T, workflowID, status string) *marotte.RPCResponse {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"workflowId": workflowID, "status": status})
 	if err != nil {
 		t.Fatalf("marshal run_complete: %v", err)
 	}
-	return &vibekit.RPCResponse{Method: methodWFRunComplete, Params: params}
+	return &marotte.RPCResponse{Method: methodWFRunComplete, Params: params}
 }
 
 // A run whose bridge is registered and whose lease is granted and bounded: EXECUTING.
@@ -55,7 +55,7 @@ func waitForBridge(t *testing.T, h *Runtime, workflowID string, want bool) bool 
 
 // The ruling in one table: no process needs to run for a run that cannot be resumed,
 // and every run stays reachable. The lease a PAUSED run keeps is not an inconsistency
-// (vibekit-runtime.md's liveness-split block). Driven through the real dispatch path
+// (marotte-runtime.md's liveness-split block). Driven through the real dispatch path
 // because observeComplete decides the lease half on that same frame.
 func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 	cases := map[string]struct {
@@ -64,7 +64,7 @@ func TestRunStopped_DropsTheProcessAndAPausedRunKeepsItsLease(t *testing.T) {
 		wantLease  bool
 	}{
 		// The ruling's own row.
-		"a pause drops the process and keeps the lease": {string(vibekit.RunStatusPaused), false, true},
+		"a pause drops the process and keeps the lease": {string(marotte.RunStatusPaused), false, true},
 		// Here so a mutation widening the close cannot pass on the pause row alone.
 		"a completed run drops both":  {"completed", false, false},
 		"a failed run drops both":     {"failed", false, false},
@@ -102,7 +102,7 @@ func TestRunStopped_APausedRunKeepsTheFieldsItsLeaseIsFor(t *testing.T) {
 	h.runs.grantLease(t.Context(), "wf_1", "nightly",
 		scheduledLaunch("sched_1", time.Now().Add(time.Hour)))
 
-	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", string(vibekit.RunStatusPaused)))
+	h.dispatch(t.Context(), runChatID("wf_1"), runCompleteFrame(t, "wf_1", string(marotte.RunStatusPaused)))
 	if !waitForBridge(t, h, "wf_1", false) {
 		t.Fatal("the parked run kept its process")
 	}
@@ -136,7 +136,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 			// SetStepStatus reads the tree first, so the target must resolve to its node.
 			methodKiroWorkflowInspect: parkedInspect(
-				t, vibekit.RunStatusPaused, needInputPauseReason, "sess_step",
+				t, marotte.RunStatusPaused, needInputPauseReason, "sess_step",
 			),
 		}
 		if h.bridge.mgr.get(runChatID("wf_1")) != nil {
@@ -153,7 +153,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 			return h.runs.Resume(context.Background(), "wf_1")
 		}},
 		// KAS's pause REFUSES a run it has forgotten, and the refusal has to come from
-		// KAS rather than vibekit, or the reader is shown vibekit's bookkeeping.
+		// KAS rather than marotte, or the reader is shown marotte's bookkeeping.
 		"pause": {methodKiroWorkflowPause, func(h *Runtime) error {
 			return h.runs.Pause(context.Background(), "wf_1")
 		}},
@@ -182,14 +182,14 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		h, br := seed(t)
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
 			},
 		})
 		if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 			t.Fatalf("AnswerInput on an unhosted run = %v, want nil", err)
 		}
-		if !slices.Contains(br.callLog(), vibekit.MethodPrompt) {
+		if !slices.Contains(br.callLog(), marotte.MethodPrompt) {
 			t.Errorf("the answer never reached KAS; calls were %v", br.callLog())
 		}
 		if h.bridge.mgr.get(runChatID("wf_1")) == nil {
@@ -201,7 +201,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	// a run nothing is executing once the verb fails, so it must go.
 	t.Run("a refused verb tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
-		br.callRPCErrs = map[string]*vibekit.RPCError{
+		br.callRPCErrs = map[string]*marotte.RPCError{
 			methodKiroWorkflowResume: {Code: -32603, Message: "Internal error"},
 		}
 		if err := h.runs.Resume(t.Context(), "wf_1"); err == nil {
@@ -238,7 +238,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	t.Run("a refused verb leaves a bridge it did not start alone", func(t *testing.T) {
 		h, _, br := newTestHub()
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
-		br.callRPCErrs = map[string]*vibekit.RPCError{
+		br.callRPCErrs = map[string]*marotte.RPCError{
 			methodKiroWorkflowPause: {Code: -32603, Message: "Internal error"},
 		}
 		if err := h.runs.Pause(t.Context(), "wf_1"); err == nil {
@@ -251,7 +251,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	})
 }
 
-// The three wrongs discarding `insert`'s refusal produced are in vibekit-runtime.md's
+// The three wrongs discarding `insert`'s refusal produced are in marotte-runtime.md's
 // liveness-split block. The factory is overridden because newTestHub's serves one
 // shared bridge, and the question here is which of TWO processes survives.
 func TestRehost_ALostRaceStopsItsOwnBridgeAndLeavesTheWinnerAlone(t *testing.T) {
@@ -360,7 +360,7 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 	}{
 		// KAS never took the verb: the run is where it was, and nothing is coming.
 		"a parked run's kept carrier is closed": {
-			inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""), false, carrierClosed,
+			inspectReply(t, "wf_1", marotte.RunStatusPaused, ""), false, carrierClosed,
 		},
 		"a terminal run's kept carrier is closed": {
 			inspectReply(t, "wf_1", "failed", ""), false, carrierClosed,
@@ -380,7 +380,7 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 		// reuses the kept carrier, so KAS reports the run parked while that second verb
 		// is in flight on the very process the bound is about to stop.
 		"a carrier a verb is holding is kept, whatever the run reports": {
-			inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""), true, carrierBusy,
+			inspectReply(t, "wf_1", marotte.RunStatusPaused, ""), true, carrierBusy,
 		},
 		// Both directions of that guard, so neither arm can pass by widening the
 		// other: an executing run is spared for its OWN reason, not for this one.
@@ -449,7 +449,7 @@ func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T)
 
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusPaused, ""),
 	}
 	kept := &sharedBridge{bridge: br, state: bridgeIdle}
 	h.bridge.mgr.insert(runChatID("wf_1"), kept)
@@ -497,7 +497,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 			func(t *testing.T, h *Runtime) error {
 				h.runs.asks.Add(&runAsk{
 					chatID: runChatID("wf_1"),
-					payload: vibekit.RunInputNeededPayload{
+					payload: marotte.RunInputNeededPayload{
 						WorkflowID: "wf_1", AskID: "a1", NodeID: "review",
 						StepSessionID: "sess_step",
 					},
@@ -528,7 +528,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 			h, _, br := newTestHub()
 			br.callResults = map[string]json.RawMessage{
 				methodKiroWorkflowInspect: parkedInspect(
-					t, vibekit.RunStatusPaused, needInputPauseReason, "sess_step",
+					t, marotte.RunStatusPaused, needInputPauseReason, "sess_step",
 				),
 				// Retry reads its recipe off the run list before it re-drives.
 				methodKiroWorkflowList: json.RawMessage(
@@ -588,7 +588,7 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 		// KAS never took the resume, so the run is still parked.
-		methodKiroWorkflowInspect: inspectReply(t, "wf_1", vibekit.RunStatusPaused, ""),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusPaused, ""),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: context.Canceled}
 
@@ -604,13 +604,13 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 }
 
 // KAS reroutes a prompt into the run only while the addressed step is parked; past
-// that the same prompt runs as an ordinary turn on that session (vibekit-acp.md "A
+// that the same prompt runs as an ordinary turn on that session (marotte-acp.md "A
 // step's answer is a plain `session/prompt`"). SETTLED rather than restored, because
 // nothing will wait on the question again — the between-steps case below will.
 func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 	cases := map[string]json.RawMessage{
 		"a different step is parked now": parkedInspect(
-			t, vibekit.RunStatusPaused, needInputPauseReason, "sess_other",
+			t, marotte.RunStatusPaused, needInputPauseReason, "sess_other",
 		),
 		"the run is over": inspectReply(t, "wf_1", "failed", ""),
 	}
@@ -624,7 +624,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 			}
 			h.runs.asks.Add(&runAsk{
 				chatID: runChatID("wf_1"),
-				payload: vibekit.RunInputNeededPayload{
+				payload: marotte.RunInputNeededPayload{
 					// A node the reply does NOT report as the parked leaf.
 					WorkflowID: "wf_1", AskID: "a1", NodeID: "plan",
 					StepSessionID: "sess_stale",
@@ -635,7 +635,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 			if !errors.Is(err, errAskAlreadySettled) {
 				t.Fatalf("AnswerInput for a moved-on step = %v, want errAskAlreadySettled", err)
 			}
-			if slices.Contains(br.callLog(), vibekit.MethodPrompt) {
+			if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 				t.Error("the answer was sent anyway; KAS runs it as an ordinary turn on a " +
 					"step nobody asked to steer, and no run frame closes the carrier")
 			}
@@ -643,7 +643,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 				t.Error("the ask was re-offered, so a reader is asked to answer a question " +
 					"the run has stopped waiting on")
 			}
-			if !hasEventType(bufferedEvents(h), string(vibekit.EventRunInputSettled)) {
+			if !hasEventType(bufferedEvents(h), string(marotte.EventRunInputSettled)) {
 				t.Error("no run_input_settled event, so the card stays live on every surface")
 			}
 			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
@@ -666,7 +666,7 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 	}
 	h.runs.asks.Add(&runAsk{
 		chatID: runChatID("wf_1"),
-		payload: vibekit.RunInputNeededPayload{
+		payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
 		},
 	})
@@ -675,7 +675,7 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 	if !errors.Is(err, errRunNotParked) {
 		t.Fatalf("AnswerInput between steps = %v, want errRunNotParked", err)
 	}
-	if slices.Contains(br.callLog(), vibekit.MethodPrompt) {
+	if slices.Contains(br.callLog(), marotte.MethodPrompt) {
 		t.Error("the answer was sent into a run with no parked step, which KAS runs as an " +
 			"ordinary turn on that session")
 	}
@@ -683,11 +683,11 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 		t.Error("the ask was consumed, so the reader's words are gone and the card is off " +
 			"every surface with the question still open")
 	}
-	if hasEventType(bufferedEvents(h), string(vibekit.EventRunInputSettled)) {
+	if hasEventType(bufferedEvents(h), string(marotte.EventRunInputSettled)) {
 		t.Error("the ask was settled, so every surface retires a card the run is still " +
 			"about to wait on")
 	}
-	if !hasEventType(bufferedEvents(h), string(vibekit.EventRunInputNeeded)) {
+	if !hasEventType(bufferedEvents(h), string(marotte.EventRunInputNeeded)) {
 		t.Error("no run_input_needed re-offer, so the card is gone until the next SSE " +
 			"connect refills it from the replay")
 	}
@@ -703,7 +703,7 @@ func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *tes
 func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *testing.T) {
 	tree, err := json.Marshal(map[string]any{
 		"state": map[string]any{
-			"status": string(vibekit.RunStatusPaused),
+			"status": string(marotte.RunStatusPaused),
 			"root": map[string]any{
 				"nodeId": "fanout", "status": "paused",
 				"children": []any{
@@ -724,7 +724,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 	}
 	h.runs.asks.Add(&runAsk{
 		chatID: runChatID("wf_1"),
-		payload: vibekit.RunInputNeededPayload{
+		payload: marotte.RunInputNeededPayload{
 			// The SECOND parked branch, so a first-match check answers "a different
 			// step is parked" and moots it.
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "branch_b", StepSessionID: "sess_stale",
@@ -734,9 +734,9 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 	if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 		t.Fatalf("AnswerInput for the second parked branch = %v, want nil", err)
 	}
-	params := br.paramsFor(vibekit.MethodPrompt)
+	params := br.paramsFor(marotte.MethodPrompt)
 	if params == nil {
-		t.Fatalf("no %s call, calls were %v", vibekit.MethodPrompt, br.callLog())
+		t.Fatalf("no %s call, calls were %v", marotte.MethodPrompt, br.callLog())
 	}
 	if params["sessionId"] != "sess_b" {
 		t.Errorf("sessionId = %v, want sess_b: the answer went to the branch that did not "+
@@ -751,12 +751,12 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
 		methodKiroWorkflowInspect: parkedInspect(
-			t, vibekit.RunStatusPaused, needInputPauseReason, "sess_current",
+			t, marotte.RunStatusPaused, needInputPauseReason, "sess_current",
 		),
 	}
 	h.runs.asks.Add(&runAsk{
 		chatID: runChatID("wf_1"),
-		payload: vibekit.RunInputNeededPayload{
+		payload: marotte.RunInputNeededPayload{
 			// `review` is the leaf parkedInspect reports, so the step has NOT moved —
 			// only the session recorded on the ask is out of date.
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review",
@@ -767,9 +767,9 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 		t.Fatalf("AnswerInput = %v, want nil", err)
 	}
-	params := br.paramsFor(vibekit.MethodPrompt)
+	params := br.paramsFor(marotte.MethodPrompt)
 	if params == nil {
-		t.Fatalf("no %s call, calls were %v", vibekit.MethodPrompt, br.callLog())
+		t.Fatalf("no %s call, calls were %v", marotte.MethodPrompt, br.callLog())
 	}
 	if params["sessionId"] != "sess_current" {
 		t.Errorf("sessionId = %v, want sess_current: the ask's recorded address won, so a "+
@@ -788,7 +788,7 @@ func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testin
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("bridge died")}
 	h.runs.asks.Add(&runAsk{
 		chatID: runChatID("wf_1"),
-		payload: vibekit.RunInputNeededPayload{
+		payload: marotte.RunInputNeededPayload{
 			WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
 		},
 	})
@@ -796,9 +796,9 @@ func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testin
 	if err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch"); err != nil {
 		t.Fatalf("AnswerInput with an unreadable run = %v, want nil", err)
 	}
-	params := br.paramsFor(vibekit.MethodPrompt)
+	params := br.paramsFor(marotte.MethodPrompt)
 	if params == nil {
-		t.Fatalf("no %s call, calls were %v", vibekit.MethodPrompt, br.callLog())
+		t.Fatalf("no %s call, calls were %v", marotte.MethodPrompt, br.callLog())
 	}
 	if params["sessionId"] != "sess_step" {
 		t.Errorf("sessionId = %v, want sess_step", params["sessionId"])
@@ -872,10 +872,10 @@ func TestHandleRun_AParkedRunsPageRendersWithNoLeaseAndNoBridge(t *testing.T) {
 	tree, err := json.Marshal(map[string]any{
 		"workflowId": "wf_1",
 		"state": map[string]any{
-			"status":      string(vibekit.RunStatusPaused),
+			"status":      string(marotte.RunStatusPaused),
 			"pauseReason": "Step 'review' is waiting for user input.",
 			"root": map[string]any{
-				"nodeId": "review", "type": "step", "status": string(vibekit.RunStatusPaused),
+				"nodeId": "review", "type": "step", "status": string(marotte.RunStatusPaused),
 			},
 		},
 		"nodePlan": map[string]any{"type": "sequence"},
@@ -990,7 +990,7 @@ func TestCarrierUse_WhenIdleDefersACloseUnderALiveVerb(t *testing.T) {
 func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	h, _, br := newTestHub()
 	br.setCallResult(methodKiroWorkflowInspect, parkedInspect(
-		t, vibekit.RunStatusPaused, needInputPauseReason, "sess_step",
+		t, marotte.RunStatusPaused, needInputPauseReason, "sess_step",
 	))
 	held := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{methodKiroWorkflowUpdate: held}

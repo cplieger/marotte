@@ -8,7 +8,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestTurnOpenState_ClosedOnAnIdleChat(t *testing.T) {
@@ -20,7 +20,7 @@ func TestTurnOpenState_ClosedOnAnIdleChat(t *testing.T) {
 
 func TestTurnOpenState_OpenWhileATurnIsOpen(t *testing.T) {
 	h, _, _ := newTestHub()
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 
 	got := h.TurnOpenState("c1")
@@ -43,7 +43,7 @@ func TestTurnOpenState_OpenWhileATurnIsOpen(t *testing.T) {
 // race it.
 func TestTurnOpenState_OpenWhileFinalizing(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 
 	// Claiming without finishing IS the window between a closer claiming and its effects landing.
 	turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
@@ -54,7 +54,7 @@ func TestTurnOpenState_OpenWhileFinalizing(t *testing.T) {
 		t.Error("a finalizing turn reports the record final, so a refetch inside the " +
 			"persist window derives a verdict from a carrier that has not landed")
 	}
-	h.coord.turns.finish(turn, vibekit.TurnResult{})
+	h.coord.turns.finish(turn, marotte.TurnResult{})
 	if h.TurnOpenState("c1").Open {
 		t.Error("a finished turn still reports open")
 	}
@@ -96,7 +96,7 @@ func TestTurnOpenState_RecordsNothingAboutTheChatItWasAskedAbout(t *testing.T) {
 // `turn_open: false` mean two different things.
 func TestTurnOpenState_OpenForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("a fresh chat refused a prompt reservation")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
@@ -116,7 +116,7 @@ func TestTurnOpenState_OpenForAnAdmittedPromptWithNoTurnMinted(t *testing.T) {
 // turn emits no chunks either, so the client's one-chunk recovery cannot reach it.
 func TestTurnOpenState_OpenForAnAdmittedShellCommand(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourceLocalShell) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
 		t.Fatal("a fresh chat refused a shell reservation")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
@@ -130,7 +130,7 @@ func TestTurnOpenState_OpenForAnAdmittedShellCommand(t *testing.T) {
 // widens the answer and must not be the only thing producing it.
 func TestTurnOpenState_OpenForAnOpenPromptTurnWithNoReservation(t *testing.T) {
 	h, _, _ := newTestHub()
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 
 	if !h.TurnOpenState("c1").Open {
@@ -143,7 +143,7 @@ func TestTurnOpenState_OpenForAnOpenPromptTurnWithNoReservation(t *testing.T) {
 // content depends on — and the owner marker is what stops the chat reading as running.
 func TestTurnOpenState_DisownsAWorkflowStepTurn(t *testing.T) {
 	h, _, _ := newTestHub()
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
 	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 
 	got := h.TurnOpenState("c1")
@@ -165,9 +165,9 @@ func TestTurnOpenState_DisownsAWorkflowStepTurn(t *testing.T) {
 // StartTurn, one bridge spawn later. The open turn alone reports it as the RUN's work.
 func TestTurnOpenState_KeepsAnAdmittedPromptOwnedOverAnOpenStepTurn(t *testing.T) {
 	h, _, _ := newTestHub()
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
 	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
-	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("a chat holding a step turn refused a prompt reservation, so this window " +
 			"is unreachable and the test asserts nothing")
 	}
@@ -192,29 +192,29 @@ func TestTurnOpenState_OwnTurnAgreesWithTheConnectBusySet(t *testing.T) {
 	}{
 		{"idle", func(*testing.T, *Runtime) {}},
 		{"prompt turn", func(t *testing.T, h *Runtime) {
-			epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+			epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 			t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 		}},
 		{"workflow step turn", func(t *testing.T, h *Runtime) {
-			epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+			epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
 			t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 		}},
 		{"admitted prompt", func(t *testing.T, h *Runtime) {
-			if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+			if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
 				t.Fatal("a fresh chat refused a prompt reservation")
 			}
 			t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 		}},
 		{"admitted prompt over a step turn", func(t *testing.T, h *Runtime) {
-			epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+			epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
 			t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
-			if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+			if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
 				t.Fatal("a chat holding a step turn refused a prompt reservation")
 			}
 			t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 		}},
 		{"admitted shell command", func(t *testing.T, h *Runtime) {
-			if !h.coord.TryReserveTurn("c1", vibekit.TurnSourceLocalShell) {
+			if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
 				t.Fatal("a fresh chat refused a shell reservation")
 			}
 			t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })

@@ -202,7 +202,7 @@ describe("banner-stack: composite key (keyenc)", () => {
     expect(raw).not.toBeNull();
     expect(JSON.parse(raw ?? "{}")).toEqual({ A: ["rate_limit"] });
     // And nothing was written to the synced arrangement's key.
-    expect(localStorage.getItem("vibekit.ui-state")).toBeNull();
+    expect(localStorage.getItem("marotte.ui-state")).toBeNull();
   });
 
   it("does not let one field's content forge the other's boundary", async () => {

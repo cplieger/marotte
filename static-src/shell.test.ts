@@ -377,7 +377,7 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(features.at(-1)).toMatchObject({ name: "mobileToolbar" });
   });
 
-  it("persists the shell scrollback through the library's store, in vibekit's namespace", async () => {
+  it("persists the shell scrollback through the library's store, in marotte's namespace", async () => {
     // The server keeps the PTY across a reload but the client comes back holding
     // nothing, so without this a reopened panel refills its whole buffer over the
     // wire — visible as the history filling in, and routine on a phone where iOS
@@ -386,8 +386,8 @@ describe("shell.ts: lazy terminal creation", () => {
     // It must be the LIBRARY's store: a hand-rolled one here would be another copy
     // of the same logic across the consumers, and the part a copy omits is the
     // orphan sweep, whose absence is invisible until the origin quota fills. The
-    // prefix keeps it in vibekit's own localStorage namespace, beside
-    // `vibekit.ui-state`.
+    // prefix keeps it in marotte's own localStorage namespace, beside
+    // `marotte.ui-state`.
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
@@ -396,7 +396,7 @@ describe("shell.ts: lazy terminal creation", () => {
     // its orphan sweep, and a user who never opens the shell would otherwise leave
     // old snapshots in this origin's localStorage indefinitely.
     expect(h.localScrollbackStorage).toHaveBeenCalledWith({
-      prefix: "vibekit.shell-scrollback.",
+      prefix: "marotte.shell-scrollback.",
     });
     const [, opts] = h.createTerminal.mock.calls.at(0) as [HTMLElement, CreateTerminalOptions];
     expect(opts.persistScrollback).toEqual({ kind: "scrollback-store" });

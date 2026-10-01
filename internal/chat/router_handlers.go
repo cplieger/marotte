@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -44,14 +44,14 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id, sub, ok := strings.Cut(rest, "/"); ok {
-		rt.routeChatSubResource(w, r, vibekit.ChatID(id), sub)
+		rt.routeChatSubResource(w, r, marotte.ChatID(id), sub)
 		return
 	}
 	rt.serveChatMessages(w, r, rest)
 }
 
 // routeChatSubResource dispatches /api/chats/{id}/<sub> to its handler.
-func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid vibekit.ChatID, sub string) {
+func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid marotte.ChatID, sub string) {
 	// The one sub-resource that is itself addressed: /tools/{toolCallID}.
 	if rest, ok := strings.CutPrefix(sub, "tools/"); ok {
 		rt.handleToolCall(w, r, cid, rest)
@@ -75,11 +75,11 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	if !chatIDPattern(vibekit.ChatID(id)) {
+	if !chatIDPattern(marotte.ChatID(id)) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	c, stamp, ok := rt.store.GetStamped(r.Context(), vibekit.ChatID(id))
+	c, stamp, ok := rt.store.GetStamped(r.Context(), marotte.ChatID(id))
 	if !ok {
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
@@ -112,7 +112,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	// and webhttp.WriteJSON copies those bytes into its own buffer. A caller sizing a read
 	// buffer, or an operator setting a proxy body limit, wants those numbers and can derive
 	// them from neither bound alone.
-	liveTurn := rt.liveTurnField(vibekit.ChatID(id), beforeID == "")
+	liveTurn := rt.liveTurnField(marotte.ChatID(id), beforeID == "")
 	window, start := messageWindow(msgs[:end], parseWindowBudget(r))
 	// `start` indexes `msgs` directly: `msgs[:end]` is a PREFIX, so an index into it
 	// is the same index into the whole array and no re-basing is needed.
@@ -124,7 +124,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	// and renders the prompt over an empty body. `has_more`, `turn_offset` and
 	// `turn_segment_closed` all describe the window's LEFT EDGE, which the client's
 	// projection cannot know: its own scan starts at the window.
-	turn := rt.store.TurnOpen(vibekit.ChatID(id))
+	turn := rt.store.TurnOpen(marotte.ChatID(id))
 	page := map[string]any{
 		"chat":                c.Header(),
 		"subject":             stamp,
@@ -160,7 +160,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // Returns the marshalled bytes rather than the value so the field is embedded verbatim
 // with no second marshal. It is NOT charged against the caller's page budget — see
 // serveChatMessages for why the two bounds are independent.
-func (rt *Router) liveTurnField(chatID vibekit.ChatID, newestPage bool) json.RawMessage {
+func (rt *Router) liveTurnField(chatID marotte.ChatID, newestPage bool) json.RawMessage {
 	if !newestPage {
 		return nil
 	}
@@ -218,7 +218,7 @@ func (b windowBudget) breachedBy(spentBytes, msgBytes int, spent, cost messageCo
 // decided on the bytes that go on the wire. It always falls at a message boundary
 // and the newest message always goes through whole, or an over-budget chat's
 // newest message would be unreachable; previewMessage bounds the message ITSELF.
-func messageWindow(msgs []vibekit.Message, budget windowBudget) (window []json.RawMessage, start int) {
+func messageWindow(msgs []marotte.Message, budget windowBudget) (window []json.RawMessage, start int) {
 	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
 	// `null` for an array.
 	window = make([]json.RawMessage, 0, min(budget.Messages, len(msgs)))
@@ -294,7 +294,7 @@ type turnOpeners struct {
 //
 // One forward pass, because opensTurn is stateful: it reads the scan's position
 // and the segmentation state as of the message before it.
-func findTurnOpeners(msgs []vibekit.Message) turnOpeners {
+func findTurnOpeners(msgs []marotte.Message) turnOpeners {
 	o := turnOpeners{opens: make([]bool, len(msgs)), first: len(msgs)}
 	closed := false
 	for i := range msgs {
@@ -320,7 +320,7 @@ func findTurnOpeners(msgs []vibekit.Message) turnOpeners {
 //
 // A start with no opener at or before it is admissible too: no further walking
 // could ever produce a boundary.
-func (o turnOpeners) admitCutAt(msgs []vibekit.Message, start int) bool {
+func (o turnOpeners) admitCutAt(msgs []marotte.Message, start int) bool {
 	if start < o.first {
 		return true
 	}
@@ -338,7 +338,7 @@ type messageCost struct {
 
 // costOfMessage prices one message the way `block-window.ts turnCost` must:
 // measuring differently would cut a page the client still stubs.
-func costOfMessage(m *vibekit.Message) messageCost {
+func costOfMessage(m *marotte.Message) messageCost {
 	return messageCost{Blocks: messageBlockCost(m), ToolCalls: len(m.ToolCalls)}
 }
 
@@ -348,11 +348,11 @@ func costOfMessage(m *vibekit.Message) messageCost {
 // The synthesis mirrors `store.ts normalizeMessage` INCLUDING its role gate: only
 // an ASSISTANT message persisted before the blocks field synthesizes per tool
 // call. Missing either half misprices a legacy many-tool-call turn.
-func messageBlockCost(m *vibekit.Message) int {
+func messageBlockCost(m *marotte.Message) int {
 	if n := len(m.Blocks); n > 0 {
 		return n
 	}
-	if m.Role != vibekit.RoleAssistant {
+	if m.Role != marotte.RoleAssistant {
 		return 1
 	}
 	n := len(m.ToolCalls)
@@ -369,7 +369,7 @@ func messageBlockCost(m *vibekit.Message) int {
 // no message bodies. Server-side because the client's transcript store holds a
 // paginated window, so a rail built from resident turns would grow markers as the
 // reader scrolled up.
-func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
+func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -399,7 +399,7 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vib
 // assistant message being streamed lives in the agent's buffer until turn end.
 // The DOM holds that text, so the client's own pass covers it, which is why the
 // two counts are reported side by side rather than subtracted.
-func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
+func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -519,7 +519,7 @@ func clampedQueryInt(r *http.Request, name string, def, lo, hi int) int {
 // indexOfMessage returns the position of the message with the given id, the
 // exclusive upper bound of the page before it. Returns len(msgs) for an unknown
 // id, so an unknown cursor pages the newest window rather than an empty one.
-func indexOfMessage(msgs []vibekit.Message, id string) int {
+func indexOfMessage(msgs []marotte.Message, id string) int {
 	for i := range slices.Backward(msgs) {
 		if msgs[i].ID == id {
 			return i
@@ -538,7 +538,7 @@ const (
 
 // handleExport serves GET /api/chats/{id}/export?format=md|json as a
 // downloadable Markdown transcript (the default) or the raw chat JSON.
-func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
+func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -586,7 +586,7 @@ func parseExportFormat(v string) (exportFormat, bool) {
 }
 
 // loadForExport returns the chat for chatID.
-func (rt *Router) loadForExport(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, bool) {
+func (rt *Router) loadForExport(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
 	return rt.store.Get(ctx, chatID)
 }
 

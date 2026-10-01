@@ -42,7 +42,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/filebrowse"
 )
 
 // docVerdict is the guard's answer about one entry: whether the scan may read it,
@@ -98,7 +98,7 @@ type docVerdict struct {
 // escaping a real root) while production passes a guard closed over the real
 // directory. A nil guard admits everything with every affordance, which is what the
 // MapFS tests want: absent provenance means unrestricted, and a restriction is
-// asserted rather than inferred (the same default direction as vibekit.Origin's).
+// asserted rather than inferred (the same default direction as marotte.Origin's).
 type pathGuard func(rel string) docVerdict
 
 func (g pathGuard) allows(rel string) bool {

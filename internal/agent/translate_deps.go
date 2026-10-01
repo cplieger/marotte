@@ -3,8 +3,8 @@ package agent
 import (
 	"reflect"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
 )
 
 // IsScheduled reports whether a run was launched by a schedule, reading the LEASE

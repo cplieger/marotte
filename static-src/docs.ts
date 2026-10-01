@@ -114,7 +114,7 @@ interface HookState {
   /** The regex KAS tests this hook's trigger subject against. Display-only. */
   matcher?: string;
   /** What is wrong with the trigger-and-matcher pairing, computed SERVER-side
-   *  (internal/vibekit's ClassifyHookMatcher) so the trigger-to-subject table
+   *  (internal/marotte's ClassifyHookMatcher) so the trigger-to-subject table
    *  exists once. `missing_tool_matcher` = a tool trigger with no matcher, so the
    *  hook runs on every tool call; `ineffective` = a matcher on a trigger with
    *  nothing to match on, so it governs nothing. Absent = nothing to say.
@@ -959,7 +959,7 @@ function splitRepoPath(path: string): { repo: string; rel: string } {
  *
  *  The enable toggle is orthogonal to all three and survives every one of them: it
  *  goes through POST /api/hooks/{id}/enabled and KAS writes the file, so it never
- *  touches vibekit's file surface. A global hook is exactly the row that proves
+ *  touches marotte's file surface. A global hook is exactly the row that proves
  *  this — untouchable through the editor, and still switchable. */
 interface RowGates {
   openable: boolean;
@@ -1192,14 +1192,14 @@ function hookBadges(h: HookState): HTMLElement[] {
  *
  *  A LOOKUP rather than a branch on the string, so an unrecognised value renders
  *  NOTHING instead of an empty badge: the field is a server-side enum, and a
- *  vibekit build older than the server that added a third value should stay quiet
+ *  marotte build older than the server that added a third value should stay quiet
  *  rather than paint a blank chip.
  *
  *  Both are warnings and neither is an error, which is why one badge style covers
  *  them. `every tool` is a legitimate choice the reader may have made on purpose —
  *  the badge exists because upstream keeps that finding in its own log, so without
  *  it a hook that fires on every tool call looks identical to one that is scoped.
- *  `no effect` cannot be created through vibekit at all (the create form refuses
+ *  `no effect` cannot be created through marotte at all (the create form refuses
  *  it), so a row carrying it is a hand-written or copied-in file. */
 const MATCHER_WARNINGS: Record<string, { label: string; detail: string }> = {
   missing_tool_matcher: {

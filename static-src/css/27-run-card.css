@@ -201,7 +201,7 @@
    non-colour channel is the alert's own text: `fundamentals/run-card.ts` writes
    the state into `alert.textContent`, on a `role="status"` live region. */
 /* A notice is a hue wash of its state over the container, never a rung
-   (vibekit-ui.md "Notices"). Every kind `renderAlert` writes has an arm, so the
+   (marotte-ui.md "Notices"). Every kind `renderAlert` writes has an arm, so the
    base carries no fill. */
 .run-alert {
   margin: var(--sp-2) var(--sp-3);
@@ -526,7 +526,7 @@
 
 /* Outside the disclosure, so a collapsed card still states its result. No block
    padding: the row IS `.run-open`'s hit box. Box rung with a rule, like every
-   nested foot (vibekit-ui.md "Bands"). */
+   nested foot (marotte-ui.md "Bands"). */
 .run-foot {
   display: flex;
   align-items: center;

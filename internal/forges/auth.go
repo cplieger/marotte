@@ -1,6 +1,6 @@
-// Each forge CLI owns its own credential store; vibekit speaks to it
+// Each forge CLI owns its own credential store; marotte speaks to it
 // only through documented subcommands. One login serves three
-// consumers: vibekit's ForgeOps HTTP surface, git's credential helper
+// consumers: marotte's ForgeOps HTTP surface, git's credential helper
 // for every git invoker, and the authenticated CLI itself in the
 // shell. Discovery (the read verb) lives in discover.go.
 
@@ -115,7 +115,7 @@ func loginTea(ctx context.Context, host, token string) error {
 }
 
 // logoutTea deletes the tea login for host, resolving the login NAME
-// from tea's own list first: vibekit names logins after their host,
+// from tea's own list first: marotte names logins after their host,
 // but a login added by hand in the shell can carry any name.
 func logoutTea(ctx context.Context, host string) error {
 	logins, err := teaLogins(ctx)

@@ -402,18 +402,18 @@ func TestExecCLIRunner_AppliesTheEnvironmentOverlay(t *testing.T) {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	t.Setenv("VIBEKIT_OVERLAY_PROBE", "inherited")
+	t.Setenv("MAROTTE_OVERLAY_PROBE", "inherited")
 	r := &execCLIRunner{
 		cliPath: func() string { return sh },
-		env:     func() []string { return []string{"VIBEKIT_OVERLAY_PROBE=overlaid"} },
+		env:     func() []string { return []string{"MAROTTE_OVERLAY_PROBE=overlaid"} },
 	}
 
-	out, _, err := r.RunStdoutCapped(t.Context(), 1024, "-c", `printf %s "$VIBEKIT_OVERLAY_PROBE"`)
+	out, _, err := r.RunStdoutCapped(t.Context(), 1024, "-c", `printf %s "$MAROTTE_OVERLAY_PROBE"`)
 	if err != nil {
 		t.Fatalf("RunStdoutCapped: %v", err)
 	}
 	if got := string(out); got != "overlaid" {
-		t.Errorf("child read VIBEKIT_OVERLAY_PROBE=%q, want %q: the overlay has to reach the "+
+		t.Errorf("child read MAROTTE_OVERLAY_PROBE=%q, want %q: the overlay has to reach the "+
 			"spawn and has to win over an inherited value of the same name", got, "overlaid")
 	}
 }
@@ -425,19 +425,19 @@ func TestExecCLIRunner_NoOverlayInheritsTheParentEnvironment(t *testing.T) {
 	if err != nil {
 		t.Skip("sh not available")
 	}
-	t.Setenv("VIBEKIT_OVERLAY_PROBE", "inherited")
+	t.Setenv("MAROTTE_OVERLAY_PROBE", "inherited")
 	r := &execCLIRunner{cliPath: func() string { return sh }}
 
-	out, _, err := r.RunStdoutCapped(t.Context(), 1024, "-c", `printf %s "$VIBEKIT_OVERLAY_PROBE"`)
+	out, _, err := r.RunStdoutCapped(t.Context(), 1024, "-c", `printf %s "$MAROTTE_OVERLAY_PROBE"`)
 	if err != nil {
 		t.Fatalf("RunStdoutCapped: %v", err)
 	}
 	if got := string(out); got != "inherited" {
-		t.Errorf("child read VIBEKIT_OVERLAY_PROBE=%q, want %q", got, "inherited")
+		t.Errorf("child read MAROTTE_OVERLAY_PROBE=%q, want %q", got, "inherited")
 	}
 	// Guard the premise: this test says nothing if the variable never made it
 	// into the test process either.
-	if os.Getenv("VIBEKIT_OVERLAY_PROBE") != "inherited" {
+	if os.Getenv("MAROTTE_OVERLAY_PROBE") != "inherited" {
 		t.Fatal("Setup: the probe variable is not set in the test process")
 	}
 }

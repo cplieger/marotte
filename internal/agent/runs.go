@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/schedule"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the
@@ -46,8 +46,8 @@ type Runs struct {
 // runChatReader is the chat store as the run surface uses it: a chat's session
 // chain, and (via List) the chat owning a given run's parent session.
 type runChatReader interface {
-	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
-	List(ctx context.Context) []vibekit.ChatHeader
+	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
+	List(ctx context.Context) []marotte.ChatHeader
 }
 
 // recordScheduleOutcome puts a run's ending on the launching SCHEDULE's row. It is
@@ -70,21 +70,21 @@ func (rs *Runs) recordScheduleOutcome(ctx context.Context, scheduleID, outcome s
 // runTranslator is the translator as the run surface uses it: the two run-shaped
 // notifications it wraps, the step-session seed, and one ask decode.
 type runTranslator interface {
-	HandleRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
-	HandleRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
+	HandleRunStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
+	HandleRunComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse)
 	RecordRunSteps(raw json.RawMessage)
 	// ForgetRunSteps drops a run's step-session registry entries. The GATE is this
 	// side's, because `paused` reaches `run_complete` on a run still going.
 	ForgetRunSteps(workflowID string)
 	// SessionNotifyAsk derives the ask a `_kiro/session/notify` frame carries, or
 	// reports false. A DERIVATION: this surface owns the ask's whole lifecycle.
-	SessionNotifyAsk(msg *vibekit.RPCResponse) (vibekit.RunInputNeededPayload, bool)
+	SessionNotifyAsk(msg *marotte.RPCResponse) (marotte.RunInputNeededPayload, bool)
 }
 
 // runBroadcaster is the event fan-out as the run surface uses it: publish an ask and
-// its settlement. The ask is the only run event vibekit itself originates.
+// its settlement. The ask is the only run event marotte itself originates.
 type runBroadcaster interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
 // runPermClaimer is the pending-decision tracker as the run surface uses it: claim a
@@ -92,7 +92,7 @@ type runBroadcaster interface {
 // when it ends. The run-terminal clear is here rather than on the chat-scoped door
 // because a step's ask is keyed to the LAUNCHING chat, which outlives the run.
 type runPermClaimer interface {
-	TakePendingPerm(chatID vibekit.ChatID, requestID int64, settledBy vibekit.SettledBy) bool
+	TakePendingPerm(chatID marotte.ChatID, requestID int64, settledBy marotte.SettledBy) bool
 	ClearPendingPermsForRun(workflowID string)
 }
 

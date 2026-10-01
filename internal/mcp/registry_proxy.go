@@ -34,8 +34,8 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/singleflight"
 )
@@ -313,7 +313,7 @@ func (p *RegistryProxy) doFetch(ctx context.Context, q string, limit int) ([]byt
 		return nil, err
 	}
 	req.Header.Set("Accept", httpreply.MIMETypeJSON)
-	req.Header.Set("User-Agent", "vibekit/1.0")
+	req.Header.Set("User-Agent", "marotte/1.0")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -538,7 +538,7 @@ type RegistryHeader struct {
 }
 
 // supportedPackageRegistries defines which package registry types
-// vibekit can install. Only npm is supported (via npx -y).
+// marotte can install. Only npm is supported (via npx -y).
 // This is the single source of truth for install-capability gating:
 // both normaliseRegistryResponse (which filters registry search results
 // for the UI) and extractNpxPackage in prewarm.go (which decides what
@@ -561,7 +561,7 @@ var supportedRemoteTypes = map[string]Transport{
 }
 
 // registryWireResponse mirrors the upstream registry v0.1 search
-// response. Only the fields vibekit surfaces are decoded; everything
+// response. Only the fields marotte surfaces are decoded; everything
 // else (schema URLs, timestamps, OIDC metadata) is ignored. Named
 // (vs an inline anonymous struct) so the per-package / per-remote
 // mapping can be factored into convertRegistryPackage / convertRegistryRemote.
@@ -584,7 +584,7 @@ var errRegistryShape = errors.New("registry reply has no servers list")
 //
 // The lifecycle status lives in `_meta`, NOT on the server object — a
 // deprecated entry is still returned by search (only `deleted` is
-// filtered), which is why vibekit needs `_meta` to badge it.
+// filtered), which is why marotte needs `_meta` to badge it.
 type registryWireEntry struct {
 	Meta   registryWireMeta   `json:"_meta"`
 	Server registryWireServer `json:"server"`
@@ -596,7 +596,7 @@ type registryWireMeta struct {
 	Official registryWireOfficial `json:"io.modelcontextprotocol.registry/official"`
 }
 
-// registryWireOfficial is the subset of RegistryExtensions vibekit surfaces.
+// registryWireOfficial is the subset of RegistryExtensions marotte surfaces.
 // The timestamps and isLatest are decoded by nobody: a row shows a version, and
 // "published 8 months ago" is not a fact that changes an install decision.
 type registryWireOfficial struct {
@@ -686,7 +686,7 @@ func normaliseRegistryResponse(body []byte, limit int) (RegistrySearchResult, er
 // RegistryEntry. The bool is false when the server exposes zero usable
 // install paths (no supported package and no supported remote), in which
 // case the caller skips it — common for schema-only publications or
-// packages using registries vibekit doesn't support.
+// packages using registries marotte doesn't support.
 func buildRegistryEntry(row *registryWireEntry) (RegistryEntry, bool) {
 	srv := &row.Server
 	entry := RegistryEntry{
@@ -718,7 +718,7 @@ func buildRegistryEntry(row *registryWireEntry) (RegistryEntry, bool) {
 
 // convertRegistryPackage maps one upstream package to the browser-facing
 // RegistryPackage. The bool is false when the package uses a registry or
-// transport vibekit can't install (npm-only, stdio/default-only), in
+// transport marotte can't install (npm-only, stdio/default-only), in
 // which case the caller skips it.
 func convertRegistryPackage(pkg *registryWirePackage) (RegistryPackage, bool) {
 	if !supportedPackageRegistries[pkg.RegistryType] {
@@ -748,7 +748,7 @@ func convertRegistryPackage(pkg *registryWirePackage) (RegistryPackage, bool) {
 // convertRegistryRemote maps one upstream remote to the browser-facing
 // RegistryRemote, normalising the transport type via supportedRemoteTypes
 // (e.g. streamable-http to http). The bool is false when the remote type
-// isn't one vibekit surfaces, in which case the caller skips it.
+// isn't one marotte surfaces, in which case the caller skips it.
 func convertRegistryRemote(rem *registryWireRemote) (RegistryRemote, bool) {
 	transport, ok := supportedRemoteTypes[rem.Type]
 	if !ok {

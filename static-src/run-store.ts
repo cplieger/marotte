@@ -1,7 +1,7 @@
 // The one owner of a workflow run's state: refetched on invalidation, cached
 // verbatim, never accumulated from an SSE payload. Its readers, the coalescing,
-// the cache bound and the live-run inventory: vibekit-client.md "The run store";
-// why the run events cannot reconstruct a run: vibekit-acp.md.
+// the cache bound and the live-run inventory: marotte-client.md "The run store";
+// why the run events cannot reconstruct a run: marotte-acp.md.
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
@@ -69,8 +69,8 @@ export interface RunInspect {
   workflowId: string;
   state?: RunState;
   /** KAS's node PLAN, forwarded verbatim. `unknown` because the client walks it
-   *  structurally, so typing it would re-model a structure vibekit does not own;
-   *  `run-exec-source.ts` narrows it at the point of use. Contents: vibekit-acp.md. */
+   *  structurally, so typing it would re-model a structure marotte does not own;
+   *  `run-exec-source.ts` narrows it at the point of use. Contents: marotte-acp.md. */
   nodePlan?: unknown;
 }
 
@@ -507,7 +507,7 @@ export function registerRunStateDemand(fn: (workflowID: string) => boolean): () 
  *  DEMAND: any predicate answering true keeps everything below, because no call site can
  *  enumerate this store's readers. A refused forget is NOT retried, so a demanded cell
  *  lives as long as the page — which is why a predicate asks about state that is still
- *  live rather than about a surface that once existed. vibekit-client.md, "The run
+ *  live rather than about a surface that once existed. marotte-client.md, "The run
  *  store". */
 export function forgetRun(workflowID: string): void {
   if (stateDemands.some((fn) => fn(workflowID))) {
@@ -526,7 +526,7 @@ export function forgetRun(workflowID: string): void {
 
 /** What this run is CALLED, or `""` when nothing has been fetched for it yet: the
  *  launcher's label for this execution first, the recipe's name second. UNTRACKED,
- *  like `runPlan`. Both reasons: vibekit-client.md "The run store". */
+ *  like `runPlan`. Both reasons: marotte-client.md "The run store". */
 export function runLabelOf(workflowID: string): string {
   const state = peekRunState(workflowID);
   const label = state?.runLabel ?? "";
@@ -621,7 +621,7 @@ export function runPlan(workflowID: string): unknown {
 
 /** Which chat's agent launched a run, learned from the SSE envelope, and empty for
  *  a parentless run. A fact ABOUT a run rather than the reading handler's, and the
- *  one `parentSessionId` cannot supply: vibekit-client.md, `run-dots.ts`. */
+ *  one `parentSessionId` cannot supply: marotte-client.md, `run-dots.ts`. */
 const launchedBy = new Map<string, string>();
 
 /** A parentless run's own surface, and NOT a chat id.
@@ -649,7 +649,7 @@ export function runChatID(workflowID: string): string {
 
 // The live-runs inventory: which chats have a run in flight. Event-fed, rebuilt
 // from `GET /api/runs/live`, and a row carries two facts because two readers ask
-// two questions — vibekit-client.md "The run store".
+// two questions — marotte-client.md "The run store".
 
 /** One live run: the chat that launched it ("" for a parentless run), and whether
  *  it is still EXECUTING as opposed to parked. `executing` is
@@ -688,7 +688,7 @@ function bumpLiveRuns(): void {
  *  inventory, which is what the dot painter reads.
  *
  *  `executing` is the CALLER's statement rather than a default — why, and what each
- *  of the five callers knows: vibekit-client.md "The run store". */
+ *  of the five callers knows: marotte-client.md "The run store". */
 export function noteRunLive(workflowID: string, chatID: string, executing: boolean): void {
   if (workflowID === "") {
     return;
@@ -706,7 +706,7 @@ export function noteRunSettled(workflowID: string): void {
 /** Whether this chat has a run that is still EXECUTING — the store-eviction
  *  exemption, and the only reader that filters on `executing`. It asks "are frames
  *  still arriving into this chat's transcript", which a PARKED run answers no to.
- *  Why the narrowing: vibekit-client.md "The run store". */
+ *  Why the narrowing: marotte-client.md "The run store". */
 export function hasExecutingRunForChat(chatID: string): boolean {
   return anyRunForChat(chatID, (r) => r.executing);
 }
@@ -714,7 +714,7 @@ export function hasExecutingRunForChat(chatID: string): boolean {
 /** Whether this chat has ANY live run, parked ones included — a DIFFERENT question
  *  from the one above, which is why these are two predicates rather than one
  *  filtered. Its consumer is the ask sweep in `handlers/run.ts`; narrowing it to
- *  `executing` would strand a parked run's ask. vibekit-client.md has the rest. */
+ *  `executing` would strand a parked run's ask. marotte-client.md has the rest. */
 export function hasLiveRunForChat(chatID: string): boolean {
   return anyRunForChat(chatID, () => true);
 }
@@ -724,7 +724,7 @@ export function hasLiveRunForChat(chatID: string): boolean {
  *  tab dot already surfacing them (`run-dots.ts`).
  *
  *  The one TRACKED read of the inventory here, because this caller is a reactive
- *  effect where the two booleans' are not: vibekit-client.md "The run store". A
+ *  effect where the two booleans' are not: marotte-client.md "The run store". A
  *  reader takes the whole row, `executing` included: the fetched cell can be absent
  *  for a run this client saw no frames for, and the row is then the only thing that
  *  says anything about it. */
@@ -797,7 +797,7 @@ export async function rebuildLiveRuns(cause = "", signal?: AbortSignal): Promise
 
 /** Adopt an inventory somebody else already read.
  *
- *  The three seeds per row are what a reload would otherwise lose — vibekit-client.md
+ *  The three seeds per row are what a reload would otherwise lose — marotte-client.md
  *  "The run store". The per-row `invalidateRun` is the one thing a caller opts into, by
  *  PASSING a cause rather than by passing a non-empty one: a gap threads `""`-or-token
  *  through legitimately and `invalidateRun(id, "")` is legal, so gating on `!== ""`
@@ -865,7 +865,7 @@ export function leafNodes(root: RunNode | undefined): RunNode[] {
 
 /** What KAS calls this node in a node PATH, which for a repeat's per-iteration
  *  container is not what it calls it in the state tree — the two spellings and why
- *  the frame's is canonical: vibekit-acp.md "Workflow runs on the wire".
+ *  the frame's is canonical: marotte-acp.md "Workflow runs on the wire".
  *
  *  A repeat child carrying no `iteration` falls back to its `nodeId`: a row in the
  *  wrong place beats content that vanishes, the same call the server's own
@@ -889,7 +889,7 @@ export interface NodeAddress {
 /** A leaf's stable address within its run, plus whether the walk placed it.
  *
  *  Rebuilt from the tree rather than read off the node, because `NodeState` carries
- *  no path — the join and who owns it: vibekit-client.md "The run card". */
+ *  no path — the join and who owns it: marotte-client.md "The run card". */
 export function nodeAddressOf(root: RunNode | undefined, target: RunNode): NodeAddress {
   const found: string[] = [];
   const walk = (n: RunNode, parent: RunNode | undefined, trail: string[]): boolean => {
@@ -930,7 +930,7 @@ export interface RunCounters {
   done: number;
   failed: number;
   /** The 1-based position of the RUNNING leaf, or 0 when none is — the header's
-   *  "step N of M", and not `done + 1`: vibekit-client.md "The run store". */
+   *  "step N of M", and not `done + 1`: marotte-client.md "The run store". */
   current: number;
 }
 
@@ -1059,7 +1059,7 @@ export function isNeedInputPause(reason: string | undefined): boolean {
 
 /** The paused node whose own completion signal says it is waiting on a person.
  *  Depth-first, first match wins. Why the per-NODE signal is the only thing left of
- *  a park inside a parallel branch: vibekit-acp.md. */
+ *  a park inside a parallel branch: marotte-acp.md. */
 function needInputNode(n: RunNode | undefined): RunNode | undefined {
   if (n === undefined) {
     return undefined;
@@ -1111,7 +1111,7 @@ function pauseClassLabel(cls: string): string | undefined {
  *  budget read as "a transient error", which it is not and which points the
  *  reader at the wrong next action. An unrecognised class claims nothing.
  *  An ABSENT class takes the transient label: that is every pre-2.21.1 engine's
- *  wire, and the field is optional. Rule: `vibekit-acp.md` single-member enums. */
+ *  wire, and the field is optional. Rule: `marotte-acp.md` single-member enums. */
 export function pauseDetailPhrase(detail: RunState["pauseDetail"]): string | undefined {
   const code = detail?.code;
   if (code === undefined || code === "") {

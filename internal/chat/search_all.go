@@ -27,9 +27,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/parallel"
-	"github.com/cplieger/vibekit/internal/textsearch"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/parallel"
+	"github.com/cplieger/marotte/internal/textsearch"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The result cap and title boost are KiroCrew's `search_sessions(limit=50)` and
@@ -51,7 +51,7 @@ type Match struct {
 	// Absent on a title-only match, which has no line inside the transcript.
 	Best *Hit           `json:"best,omitempty"`
 	Name string         `json:"name"`
-	ID   vibekit.ChatID `json:"id"`
+	ID   marotte.ChatID `json:"id"`
 	// Hits is every occurrence the chat holds, so a row can say "and 11 more".
 	Hits int `json:"hits"`
 	// Score ranks the row; see scoreChat for what it balances.
@@ -138,8 +138,8 @@ type chatScan struct {
 // searchWorkers of them run at once, so an unlimited cap bounds the fan-out by
 // nothing but the chats on disk.
 func (s *Store) searchOneChat(ce chatEntry, query string, want []uint64) chatScan {
-	id := vibekit.ChatID(ce.id)
-	var c *vibekit.Chat
+	id := marotte.ChatID(ce.id)
+	var c *marotte.Chat
 	var err error
 	if f, ok := s.index.lookup(id); ok {
 		if !f.holdsAll(want) {
@@ -167,7 +167,7 @@ func (s *Store) searchOneChat(ce chatEntry, query string, want []uint64) chatSca
 	}
 	m := Match{
 		Name:      c.Name,
-		ID:        vibekit.ChatID(c.ID),
+		ID:        marotte.ChatID(c.ID),
 		Hits:      res.Matched,
 		Score:     scoreChat(res.Matched, titles, chars),
 		UpdatedAt: c.UpdatedAt,
@@ -188,8 +188,8 @@ func (s *Store) searchOneChat(ce chatEntry, query string, want []uint64) chatSca
 // write drops it rather than racing it. Two queries missing on one chat at once
 // both build; the second put replaces an equal filter, which costs the hashing
 // and nothing else.
-func (s *Store) indexedRead(ce chatEntry) (*vibekit.Chat, error) {
-	id := vibekit.ChatID(ce.id)
+func (s *Store) indexedRead(ce chatEntry) (*marotte.Chat, error) {
+	id := marotte.ChatID(ce.id)
 	m := s.lock(id)
 	m.Lock()
 	defer m.Unlock()
@@ -221,7 +221,7 @@ func (s *Store) chatEntries(ctx context.Context) (entries []chatEntry, truncated
 			continue
 		}
 		id := strings.TrimSuffix(name, chatFileSuffix)
-		if !chatIDPattern(vibekit.ChatID(id)) {
+		if !chatIDPattern(marotte.ChatID(id)) {
 			continue
 		}
 		entries = append(entries, chatEntry{id: id, path: filepath.Join(s.dir, name)})

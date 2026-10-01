@@ -1,5 +1,5 @@
 /** Snaps icon boxes onto the pixel grid so a 1px stroke paints one whole pixel.
- *  Rule, measurement and the rejected alternatives: `vibekit-ui.md` "Icon crispness". */
+ *  Rule, measurement and the rejected alternatives: `marotte-ui.md` "Icon crispness". */
 
 const TIERS = ".ic-inline, .ic-ui, .ic-lg, .ic-hero";
 

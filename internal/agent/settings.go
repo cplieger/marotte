@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Settings owns the KAS CONFIGURATION surface: knowledge bases, hooks, the
@@ -25,10 +25,10 @@ type Settings struct {
 	// and the process lifetime (the governance warm outlives its request).
 	lifecycle *lifetime
 	// broadcast publishes hooks_changed when a hook file changes underneath us.
-	broadcast func(context.Context, vibekit.ServerEvent)
+	broadcast func(context.Context, marotte.ServerEvent)
 }
 
-func newSettings(lc *lifetime, broadcast func(context.Context, vibekit.ServerEvent)) *Settings {
+func newSettings(lc *lifetime, broadcast func(context.Context, marotte.ServerEvent)) *Settings {
 	return &Settings{
 		governance: newGovernanceCache(),
 		lifecycle:  lc,

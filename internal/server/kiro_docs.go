@@ -47,8 +47,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -124,7 +124,7 @@ type KiroDoc struct {
 	// what went is the wrong derivation.
 	//
 	// `omitempty`, so absent means writable and read-only is asserted explicitly.
-	// Same default direction as vibekit.Origin's adaptOrigin (mcp-state.ts), and for
+	// Same default direction as marotte.Origin's adaptOrigin (mcp-state.ts), and for
 	// the same reason: a read-only row must only ever be produced by the server
 	// saying so, never by a field failing to arrive.
 	ReadOnly bool `json:"read_only,omitempty"`

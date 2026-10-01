@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/pinstall/v3/kirocli"
 )
 
-// The layout facts vibekit brings to the install: where the convenience symlink goes, and
+// The layout facts marotte brings to the install: where the convenience symlink goes, and
 // what its own SHELL-era installer left on the volume.
 const (
 	// kiroLinkDir holds the non-authoritative `docker exec … kiro-cli` symlink. Co-owned
@@ -133,7 +133,7 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 // cancellation. Generous, because expiring it means giving up on a guarantee.
 const kiroStopGrace = 5 * time.Second
 
-// kiroInstallConfig is vibekit's whole deployment of the kiro-cli release: the pins, the
+// kiroInstallConfig is marotte's whole deployment of the kiro-cli release: the pins, the
 // tools tree, and the local policy. The release PROFILE is kirocli.Release()'s, shared with
 // every other consumer of the same upstream. A function rather than an inline literal so the
 // namespace test builds a manager from the EXACT configuration production runs — the
@@ -155,23 +155,23 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 		// every chat bridge invokes it. `--version` is answered by the MAIN binary, so
 		// without this a sidecar-less directory passed the boot probe, published
 		// `.complete`, reported READY, and then failed at every chat spawn. -term stays
-		// Optional: no subcommand vibekit uses re-execs it.
+		// Optional: no subcommand marotte uses re-execs it.
 		Require:  []string{kirocli.Name + "-chat"},
 		Optional: []string{kirocli.Name + "-term"},
 		Assert:   kiroSettings(),
 		Purge:    kiroLegacyPurge(),
 		// Untrusted stays unset: it records that the install root was found writable by
-		// others, and vibekit runs no hardening pass that could make that observation, so
+		// others, and marotte runs no hardening pass that could make that observation, so
 		// claiming it would be a guard with no producer reporting every boot clean.
-		// TrustedUIDs is a different kind of statement and IS vibekit's to make — a fact
+		// TrustedUIDs is a different kind of statement and IS marotte's to make — a fact
 		// about who the volume's ACL names. Empty by default, so custody fully enforces.
 		TrustedUIDs: cfg.TrustedInstallUIDs,
 	}
 }
 
-// kiroLegacyPurge describes the layout VIBEKIT's shell installer left on the tools volume,
+// kiroLegacyPurge describes the layout MAROTTE's shell installer left on the tools volume,
 // which is caller data: the promoted dispatchers and the orphan staging trees, nothing else.
-// The absent journal, backup and tombstone entries are not an omission — vibekit never wrote
+// The absent journal, backup and tombstone entries are not an omission — marotte never wrote
 // them, so do not copy the sibling app's larger list back. Naming three targets rather than
 // a `kiro-cli*` prefix is what makes the sweep safe in a directory the toolbelt engine
 // co-owns, where a prefix sweep took another owner's live symlink.
@@ -183,17 +183,17 @@ func kiroLegacyPurge() *pinstall.Purge {
 	}
 }
 
-// kiroSettings is vibekit's kiro-cli settings set, re-asserted against the active binary on
+// kiroSettings is marotte's kiro-cli settings set, re-asserted against the active binary on
 // every boot rather than by entrypoint.sh, whose gate is false on every first boot.
 //
 // A key belongs here ONLY if it has a kiro-cli-SIDE role: KAS's ACP path reads no kiro-cli
-// setting at all, so a seed reaches the TUI, the knowledge index and vibekit's own
+// setting at all, so a seed reaches the TUI, the knowledge index and marotte's own
 // suppression logic, never a chat. app.disableAutoupdates is deliberately absent —
 // kirocli.Release() declares it Mandatory and the library merges it in, so the integrity
 // gate cannot be dropped from here. Every assertion is best-effort; a failure warns.
 func kiroSettings() []pinstall.Assertion {
 	return []pinstall.Assertion{
-		// Features vibekit renders natively.
+		// Features marotte renders natively.
 		kirocli.Setting("chat.enableKnowledge", true),
 		kirocli.Setting("chat.enableSubagent", true),
 		kirocli.Setting("chat.enablePromptHints", true),
@@ -202,7 +202,7 @@ func kiroSettings() []pinstall.Assertion {
 		// reflects reality rather than an unset-means-on fallback.
 		kirocli.Setting("telemetry.enabled", false),
 		kirocli.Setting("chat.disableInheritingDefaultResources", false),
-		// vibekit owns chat retention end to end, so kiro-cli's competing purge is pinned
+		// marotte owns chat retention end to end, so kiro-cli's competing purge is pinned
 		// off: 0 = never. Raw because the value is not a boolean.
 		kirocli.SettingRaw("cleanup.periodDays", "0"),
 	}

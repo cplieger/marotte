@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/cplieger/sse/ssetest"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // dataFrames parses a recorded stream into its data-bearing frames, the hello
@@ -55,10 +55,10 @@ func TestCloseNextSSEAfter_CutsTheNextConnectionAfterNFrames(t *testing.T) {
 	if len(frames) != 2 {
 		t.Fatalf("frames on the cut stream = %d, want exactly 2: %q", len(frames), body)
 	}
-	if !strings.Contains(frames[1].Data, string(vibekit.EventConnected)) {
+	if !strings.Contains(frames[1].Data, string(marotte.EventConnected)) {
 		t.Errorf("second frame = %q, want the connected envelope", frames[1].Data)
 	}
-	if strings.Contains(body, string(vibekit.EventPendingSnapshot)) {
+	if strings.Contains(body, string(marotte.EventPendingSnapshot)) {
 		t.Errorf("the cut stream carries pending_snapshot; the cut must land before frame 3")
 	}
 

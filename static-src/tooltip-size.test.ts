@@ -61,7 +61,7 @@ const SAMPLES: readonly { readonly what: string; readonly text: string }[] = [
   },
   {
     what: "the longest file path on the live volume",
-    text: "/workspace/vibekit/.worktrees/tool-card-bare-disclosure/static-src/node_modules/@cplieger/ui-primitives/src/disclosure.ts",
+    text: "/workspace/marotte/.worktrees/tool-card-bare-disclosure/static-src/node_modules/@cplieger/ui-primitives/src/disclosure.ts",
   },
   { what: "a two-clause icon hint", text: "Mouse mode. Switch to touch mode" },
   { what: "an icon hint", text: "Toggle theme" },

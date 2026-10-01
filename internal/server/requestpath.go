@@ -3,7 +3,7 @@
 // http.ServeMux canonicalizes a request path BEFORE it selects a pattern and
 // answers 307 with a Location when the cleaned path differs. No registered
 // pattern can intercept that, because the cleaning runs first. For a browser
-// the redirect is invisible and correct. For the two machine senders vibekit
+// the redirect is invisible and correct. For the two machine senders marotte
 // actually documents it is neither, because 307 is a SUCCESS status to a client
 // that does not follow redirects:
 //
@@ -27,11 +27,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 
-// apiPathPrefix is the subtree this guard covers, and it is vibekit's whole
+// apiPathPrefix is the subtree this guard covers, and it is marotte's whole
 // HTTP surface bar one mount: every route registered in ListenAndServe and in
 // every RegisterRoutes under internal/{agent,chat,git,filebrowse,auth,mcp,
 // forges,push} sits under /api/, and the single exception is the "/" catch-all
@@ -45,7 +45,7 @@ import (
 // redirect and the SPA's index fallback keep answering exactly as before.
 const apiPathPrefix = "/api/"
 
-// msgNonCanonicalPath is the refusal, in vibekit's bare {"error": …} taxonomy.
+// msgNonCanonicalPath is the refusal, in marotte's bare {"error": …} taxonomy.
 // It names the CLASS and not the path: the cleaned spelling is derived from
 // caller-controlled bytes, and the access line already carries the path (capped
 // by webhttp), the status, the request id and client_ip for correlation.
@@ -57,7 +57,7 @@ const msgNonCanonicalPath = "non-canonical request path"
 //
 // # Status and body
 //
-// 400 with vibekit's bare error envelope (httpreply.BadRequest). The status is the
+// 400 with marotte's bare error envelope (httpreply.BadRequest). The status is the
 // load-bearing half: >= 400 is what makes `curl -f` / `curl -sf` exit non-zero,
 // which is the entire point — the failure has to become visible to the
 // non-following clients above, and any 2xx or 3xx leaves them reporting
@@ -83,7 +83,7 @@ const msgNonCanonicalPath = "non-canonical request path"
 // The wider verdict was measured for false refusals before it was chosen, and
 // it costs nothing here: the extra refusals are exactly the paths with a
 // segment that decodes to "." or ".." (or an empty segment), and no identifier
-// vibekit's routes carry can be one. Every wildcard and subtree route
+// marotte's routes carry can be one. Every wildcard and subtree route
 // (/api/chats/{id}, /api/runs/{id}, /api/hooks/{id}/…, /api/schedules/{id},
 // /api/knowledge/{name}) stays canonical when decoded even with dots inside a
 // segment — "my.base" and "c-1.." both clean to themselves — and a chat id, run
@@ -125,7 +125,7 @@ const msgNonCanonicalPath = "non-canonical request path"
 // pattern is registered — depends on the route table rather than the spelling,
 // so a pure function over the path cannot see it, and this guard neither
 // catches nor disturbs it. It does not arise on today's API surface: every
-// subtree route vibekit registers (/api/chats/, /api/mcp/, /api/forges/,
+// subtree route marotte registers (/api/chats/, /api/mcp/, /api/forges/,
 // /api/tools/) also registers its exact form, so there is no trailing-slash
 // redirect to mislead anyone. A future subtree-only route would reopen this
 // class for a non-following caller, and the fix there is to register both

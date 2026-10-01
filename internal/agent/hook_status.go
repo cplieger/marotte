@@ -6,11 +6,11 @@ import (
 	"sync"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/workspace"
+	"github.com/cplieger/marotte/internal/workspace"
 )
 
 // kiroSettingsPath returns the path to kiro-cli's settings file, via
-// workspace.KiroHome() so vibekit and kiro-cli agree on the location
+// workspace.KiroHome() so marotte and kiro-cli agree on the location
 // regardless of whether KIRO_HOME is set. That file is cli.json —
 // `kiro-cli settings <key> <value>` persists every key there, not the
 // settings.json this used to read.
@@ -100,9 +100,9 @@ func newHookStatusCache(path string) *hookStatusCache {
 // true (show hooks) on any error or when the setting is unset, matching
 // kiro-cli's own default.
 //
-// Read from vibekit's own configDir would be wrong: that file uses
+// Read from marotte's own configDir would be wrong: that file uses
 // underscore keys with no entry for this toggle, so the prior lookup of
-// "hooks_show_status" against it was a permanent no-op. See vibekit.md
+// "hooks_show_status" against it was a permanent no-op. See marotte.md
 // "Experimental kiro-cli flags".
 func (c *hookStatusCache) IsHookStatusEnabled() bool {
 	return c.field.get()

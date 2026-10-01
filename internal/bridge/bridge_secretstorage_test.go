@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestInitialize_SecretStorageTracksTheStore pins that
@@ -55,7 +55,7 @@ done
 		// Knowledge on, so the unrelated-capability check below has a true to look
 		// for: both knowledge keys are gated on it now, and this test's subject is
 		// that gating ONE capability leaves the rest of the block alone.
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", SecretStorage: secretStorage, Knowledge: true}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", SecretStorage: secretStorage, Knowledge: true}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()

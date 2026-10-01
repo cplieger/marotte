@@ -277,7 +277,7 @@
  * DPR 3 is a 47 MB layer, 3.4 full screens, created and destroyed per mount for
  * a 200ms fade. Reported as constant WebKit tab crashes plus a phone that heats
  * up; the reading, the arithmetic and what is left animating are in
- * `vibekit-ui.md` "Entry motion is a GPU budget".
+ * `marotte-ui.md` "Entry motion is a GPU budget".
  *
  * `data-chat-entry` itself STAYS: `messages.ts` `fadeInTranscript` reuses it as
  * the marker for a skeleton hand-off, and the streamed text keeps its own
@@ -293,7 +293,7 @@
    page with no dot on screen re-inheriting a changed property across 8,294
    elements 60 times a second to animate nothing. Measured 3-4ms of every frame
    and 23-55 dropped frames per 90, against per-dot sitting at the floor even at
-   48 dots. Numbers and the refuted claim: `vibekit-ui.md` "Entry motion is a GPU
+   48 dots. Numbers and the refuted claim: `marotte-ui.md` "Entry motion is a GPU
    budget".
 
    A dot declares its PEAK and inherits the rest: `from`/`to` are implicit, so

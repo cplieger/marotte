@@ -3,13 +3,13 @@ package agent
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // cleanupChatState tears down every in-memory bookkeeping entry for a chat.
 // reapDurable is true for a permanent delete (destroys checkpoint history and
 // KAS session state); false for the archive path, which must stay reversible.
-func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
+func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID, reapDurable bool) {
 	rt.bus.ClearPendingPermsForChat(chatID)
 	// A workflow step's question keyed to this chat's dock. The chat going away
 	// also cancels the runs its sessions launched, so such an ask is answerable by
@@ -39,7 +39,7 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, 
 // delete, reaping the whole session CHAIN rather than just the current id —
 // a chat that changed session (failed load, model-switch fallback) leaves
 // state under every id it held.
-func (rt *Runtime) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
+func (rt *Runtime) reapChatSession(ctx context.Context, chatID marotte.ChatID) {
 	c, ok := rt.chatStore.Get(ctx, chatID)
 	if !ok {
 		return

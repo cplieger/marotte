@@ -122,7 +122,7 @@ func TestLoad_RefusesAStoreWhoseModeItCannotVerify(t *testing.T) {
 
 // TestLoad_FirstRunIsStillNotAnError pins that the refusal above is scoped to a
 // file that EXISTS: an absent store is the first-run state, and making it fatal
-// would mean no vibekit container ever persisted a credential.
+// would mean no marotte container ever persisted a credential.
 func TestLoad_FirstRunIsStillNotAnError(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)

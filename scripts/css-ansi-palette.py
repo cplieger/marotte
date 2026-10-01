@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate vibekit's 32 --c-term-* ANSI palette values from kitty's defaults.
+"""Generate marotte's 32 --c-term-* ANSI palette values from kitty's defaults.
 
 THIS SCRIPT IS THE SOURCE OF THOSE VALUES. The declarations in
 static-src/css/01-tokens.css are its output; `check` fails when the two disagree,
@@ -15,11 +15,11 @@ which is what the engine's vt/wire.go basic16RGB does. Those slots are
 terminal-DEFINED — no spec assigns them values — so this is a palette CHOICE, and
 kitty is the reference because it is the only widely-used terminal whose default
 background is pure black, which is web-terminal-ui's default too. Deferring to it
-is what makes SGR 34 the same blue in vibekit's transcript, in vibekit's own shell
+is what makes SGR 34 the same blue in marotte's transcript, in marotte's own shell
 panel, and in both sibling apps.
 
 Layer 2, legibility: kitty's palette clears WCAG AA 4.5:1 on 13 of 16 slots
-against pure black, 10 of 16 against vibekit's dark transcript card and 2 of 16
+against pure black, 10 of 16 against marotte's dark transcript card and 2 of 16
 against the light one, so identity alone ships text nobody can read. The engine
 answers that with vt/contrast.go ensureContrast, which blends the foreground
 toward white or black — away from the background — until it clears the floor, and

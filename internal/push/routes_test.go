@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func newRoutedService(t *testing.T) (*Service, *http.ServeMux) {
@@ -139,7 +139,7 @@ func TestHandleSubscribe_RejectsEmptyEndpoint(t *testing.T) {
 
 func TestHandleUnsubscribe_RemovesSubscription(t *testing.T) {
 	s, mux := newRoutedService(t)
-	s.Subscribe(vibekit.PushSubscription{Endpoint: "https://push.example.com/gone"})
+	s.Subscribe(marotte.PushSubscription{Endpoint: "https://push.example.com/gone"})
 	if !s.HasSubscribers() {
 		t.Fatal("precondition: subscriber not added")
 	}

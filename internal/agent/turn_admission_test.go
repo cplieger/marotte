@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // shrinkAdmissionWait bounds a deliberately contended full-path wait so a
@@ -39,9 +39,9 @@ func setCancelGrace(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { command.CancelGrace = prev })
 }
 
-func seedChat(t *testing.T, cs *fakeChatStore, id vibekit.ChatID) {
+func seedChat(t *testing.T, cs *fakeChatStore, id marotte.ChatID) {
 	t.Helper()
-	if _, err := cs.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 }
@@ -53,19 +53,19 @@ func seedChat(t *testing.T, cs *fakeChatStore, id vibekit.ChatID) {
 func TestReserveTurnForPrompt_RefusalKeysOnTheHoldersSource(t *testing.T) {
 	cases := []struct {
 		name    string
-		holder  vibekit.TurnOpenSource
+		holder  marotte.TurnOpenSource
 		bridged bool
 		want    command.AdmissionOutcome
 	}{
-		{name: "shell holder on a bridgeless chat answers starting", holder: vibekit.TurnSourceLocalShell, want: command.AdmissionStarting},
-		{name: "shell holder on a bridged chat answers starting", holder: vibekit.TurnSourceLocalShell, bridged: true, want: command.AdmissionStarting},
-		{name: "prompt holder with no bridge answers starting at the budget", holder: vibekit.TurnSourcePrompt, want: command.AdmissionStarting},
-		{name: "prompt holder with a live bridge answers busy", holder: vibekit.TurnSourcePrompt, bridged: true, want: command.AdmissionBusy},
+		{name: "shell holder on a bridgeless chat answers starting", holder: marotte.TurnSourceLocalShell, want: command.AdmissionStarting},
+		{name: "shell holder on a bridged chat answers starting", holder: marotte.TurnSourceLocalShell, bridged: true, want: command.AdmissionStarting},
+		{name: "prompt holder with no bridge answers starting at the budget", holder: marotte.TurnSourcePrompt, want: command.AdmissionStarting},
+		{name: "prompt holder with a live bridge answers busy", holder: marotte.TurnSourcePrompt, bridged: true, want: command.AdmissionBusy},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			chatID := vibekit.ChatID("c-admission-" + string(rune('a'+i)))
+			chatID := marotte.ChatID("c-admission-" + string(rune('a'+i)))
 			seedChat(t, cs, chatID)
 			if tc.bridged {
 				if _, err := h.coord.OpenBridge(t.Context(), chatID, ""); err != nil {
@@ -126,7 +126,7 @@ func TestReserveTurnForPrompt_BridgeReadyWakeAnswersTheWaiter(t *testing.T) {
 	br.mu.Lock()
 	br.startGate = startGate
 	br.mu.Unlock()
-	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
@@ -174,12 +174,12 @@ func TestPrompt_FullPath409StartingCarriesTheReason(t *testing.T) {
 	shrinkAdmissionWait(t, 60*time.Millisecond)
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourceLocalShell) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
 		t.Fatal("setup: the admission slot was already held")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	})
@@ -230,7 +230,7 @@ func TestShellDuringABlockedSpawnIsRefusedImmediately(t *testing.T) {
 	entered, gate := gateSpawn(h)
 	defer close(gate)
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
@@ -239,7 +239,7 @@ func TestShellDuringABlockedSpawnIsRefusedImmediately(t *testing.T) {
 	<-entered // the prompt goroutine is parked inside its spawn, holding the reservation
 
 	start := time.Now()
-	rec := postCmd(t, h, vibekit.ClientCommand{
+	rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"!echo hi","message_id":"m-2"}`),
 	})
@@ -271,11 +271,11 @@ func TestShellDuringABlockedSpawnIsRefusedImmediately(t *testing.T) {
 // ring, which is where a double broadcast for the turn under test puts it. Closing the rest
 // needs a settle window, i.e. a bare sleep, which is the thing `testing.md` names as the
 // defect — a test that waits on a clock rather than on the system.
-func waitForTurnEnded(t *testing.T, h *Runtime, want int) []vibekit.TurnEndedPayload {
+func waitForTurnEnded(t *testing.T, h *Runtime, want int) []marotte.TurnEndedPayload {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		got := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, 0), vibekit.EventTurnEnded)
+		got := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, 0), marotte.EventTurnEnded)
 		if len(got) > want {
 			t.Fatalf("turn_ended events = %d, want exactly %d: a turn announced its end "+
 				"more than once, so ended[i] no longer names the turn the test drove", len(got), want)
@@ -299,7 +299,7 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 	seedChat(t, cs, "c1") // cold: no model on the record yet
 	entered, gate := gateSpawn(h)
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
@@ -308,7 +308,7 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 	<-entered
 	// Spend lands while the spawn is still in flight — BEFORE StartTurn. A
 	// baseline stamped at admission would charge it to this turn.
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Usage.Credits = 5
 		c.Usage.HasRealData = true
 		return true
@@ -343,7 +343,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 		if len(minted) == 0 {
 			// Only the FIRST session's prompt is held open, so the wire turn_end
 			// can land while the call is in flight; the retry's flows freely.
-			br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: gate}
+			br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
 		}
 		minted = append(minted, br)
 		return br
@@ -353,7 +353,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	h.mcpRegistry.SignalReady()
 	seedChat(t, cs, "c1")
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
@@ -379,7 +379,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 			time.Sleep(time.Millisecond)
 		}
 	}()
-	waitForCall(t, first, vibekit.MethodPrompt)
+	waitForCall(t, first, marotte.MethodPrompt)
 	first.deliver(newTurnEndMsg("end_turn"))
 	close(gate)
 
@@ -393,7 +393,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 			second = minted[1]
 		}
 		mu.Unlock()
-		if respawned && slices.Contains(second.callLog(), vibekit.MethodPrompt) {
+		if respawned && slices.Contains(second.callLog(), marotte.MethodPrompt) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -405,7 +405,7 @@ func TestPromptTurn_EmptyWireEndedTurnRecoversThroughTheRealRegistry(t *testing.
 	c, _ := cs.Get(t.Context(), "c1")
 	var divider bool
 	for i := range c.Messages {
-		if c.Messages[i].EventKind == vibekit.EventInterrupted && strings.Contains(c.Messages[i].Content, "Session refreshed") {
+		if c.Messages[i].EventKind == marotte.EventInterrupted && strings.Contains(c.Messages[i].Content, "Session refreshed") {
 			divider = true
 		}
 	}
@@ -421,15 +421,15 @@ func TestPromptTurn_ShutdownMidCallDrainsTheTurn(t *testing.T) {
 	seedChat(t, cs, "c1")
 	gate := make(chan struct{})
 	defer close(gate)
-	br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: gate}
+	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
-	waitForCall(t, br, vibekit.MethodPrompt)
+	waitForCall(t, br, marotte.MethodPrompt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -447,7 +447,7 @@ func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	entered, gate := gateSpawn(h)
 	defer close(gate)
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
@@ -463,8 +463,8 @@ func TestPromptTurn_ShutdownPreGoroutineStillDrainsTheTurn(t *testing.T) {
 	// The goroutine ran to a terminal signal under shutdown rather than being
 	// abandoned mid-flight: either the turn completed or its failure broadcast.
 	types := extractTypes(t, bufferedSince(h, 0))
-	if missing := missingEvents(types, string(vibekit.EventTurnEnded)); missing != nil {
-		if missingErr := missingEvents(types, string(vibekit.EventError)); missingErr != nil {
+	if missing := missingEvents(types, string(marotte.EventTurnEnded)); missing != nil {
+		if missingErr := missingEvents(types, string(marotte.EventError)); missingErr != nil {
 			t.Errorf("events = %v, want a terminal turn_ended or error for the in-flight prompt", types)
 		}
 	}
@@ -478,7 +478,7 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	seedChat(t, cs, "c1")
 	entered, gate := gateSpawn(h)
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
@@ -486,7 +486,7 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	}
 	<-entered // parked in the spawn: no BeginPromptCall yet
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{Type: vibekit.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel in the spawn window = %d, want 200", rec.Code)
 	}
 	close(gate)
@@ -495,7 +495,7 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 	// The chat is not wedged: the slots released, so a fresh prompt is admitted.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		rec := postCmd(t, h, vibekit.ClientCommand{
+		rec := postCmd(t, h, marotte.ClientCommand{
 			Type: "prompt", ChatID: "c1",
 			Payload: json.RawMessage(`{"text":"again","message_id":"m-2"}`),
 		})
@@ -511,15 +511,15 @@ func TestPromptTurn_CancelBetweenAckAndBeginPromptCall(t *testing.T) {
 }
 
 // eventKindsIn returns every event-message kind the chat's transcript holds, in order.
-func eventKindsIn(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) []vibekit.EventKind {
+func eventKindsIn(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) []marotte.EventKind {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
 		t.Fatalf("chat %q vanished", chatID)
 	}
-	var kinds []vibekit.EventKind
+	var kinds []marotte.EventKind
 	for i := range c.Messages {
-		if c.Messages[i].Role == vibekit.RoleEvent {
+		if c.Messages[i].Role == marotte.RoleEvent {
 			kinds = append(kinds, c.Messages[i].EventKind)
 		}
 	}
@@ -542,40 +542,40 @@ func TestPromptTurn_UnackedCancelConcludesCancelled(t *testing.T) {
 	seedChat(t, cs, "c1")
 	gate := make(chan struct{})
 	defer close(gate)
-	br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: gate}
+	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
-	waitForCall(t, br, vibekit.MethodPrompt)
+	waitForCall(t, br, marotte.MethodPrompt)
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{Type: vibekit.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel = %d, want 200", rec.Code)
 	}
 	ended := waitForTurnEnded(t, h, 1)
 
 	carrier := carrierOf(t, cs, "c1")
-	if carrier.TurnOutcome != vibekit.TurnOutcomeCancelled {
+	if carrier.TurnOutcome != marotte.TurnOutcomeCancelled {
 		t.Errorf("carrier outcome = %q, want %q: the reader pressed Stop, so nothing failed",
-			carrier.TurnOutcome, vibekit.TurnOutcomeCancelled)
+			carrier.TurnOutcome, marotte.TurnOutcomeCancelled)
 	}
 	if carrier.TurnFailureReason != "" {
 		t.Errorf("carrier failure reason = %q, want empty: a cancel has no account to give",
 			carrier.TurnFailureReason)
 	}
-	if carrier.EventKind != vibekit.EventCancelled {
-		t.Errorf("carrier event_kind = %q, want %q", carrier.EventKind, vibekit.EventCancelled)
+	if carrier.EventKind != marotte.EventCancelled {
+		t.Errorf("carrier event_kind = %q, want %q", carrier.EventKind, marotte.EventCancelled)
 	}
-	if kinds := eventKindsIn(t, cs, "c1"); slices.Contains(kinds, vibekit.EventInterrupted) {
+	if kinds := eventKindsIn(t, cs, "c1"); slices.Contains(kinds, marotte.EventInterrupted) {
 		t.Errorf("event kinds = %v, want no interrupted row: deriveTurnOutcome answers "+
 			"interrupted before cancelled, so one would repaint the turn red", kinds)
 	}
-	if ended[0].Outcome != vibekit.TurnOutcomeCancelled {
+	if ended[0].Outcome != marotte.TurnOutcomeCancelled {
 		t.Errorf("turn_ended outcome = %q, want %q: the live surface must agree with the "+
-			"persisted one", ended[0].Outcome, vibekit.TurnOutcomeCancelled)
+			"persisted one", ended[0].Outcome, marotte.TurnOutcomeCancelled)
 	}
 }
 
@@ -608,17 +608,17 @@ func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
 	seedChat(t, cs, "c1")
 	gate := make(chan struct{})
 	defer close(gate)
-	br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: gate}
+	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: gate}
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("prompt ack = %d, body %s", rec.Code, rec.Body.String())
 	}
-	waitForCall(t, br, vibekit.MethodPrompt)
+	waitForCall(t, br, marotte.MethodPrompt)
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{Type: vibekit.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel = %d, want 200", rec.Code)
 	}
 	sb := h.bridge.mgr.get("c1")
@@ -639,17 +639,17 @@ func TestPromptTurn_ShutdownDuringTheGraceStaysInterrupted(t *testing.T) {
 	}
 
 	ended := waitForTurnEnded(t, h, 1)
-	if ended[0].Outcome != vibekit.TurnOutcomeInterrupted {
+	if ended[0].Outcome != marotte.TurnOutcomeInterrupted {
 		t.Errorf("turn_ended outcome = %q, want %q: a shutdown carries no grace sentinel, "+
 			"so it is a fault rather than a stop the reader asked for",
-			ended[0].Outcome, vibekit.TurnOutcomeInterrupted)
+			ended[0].Outcome, marotte.TurnOutcomeInterrupted)
 	}
 }
 
 // waitForPromptCall blocks until the chat's bridge has registered an in-flight prompt
 // context. That is the state ArmCancelGrace refuses without, so a cancel posted earlier
 // arms nothing and the test would drive a different path than it claims.
-func waitForPromptCall(t *testing.T, h *Runtime, chatID vibekit.ChatID) {
+func waitForPromptCall(t *testing.T, h *Runtime, chatID marotte.ChatID) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -683,7 +683,7 @@ func TestPromptTurn_CancelDuringTheMCPWaitConcludesCancelled(t *testing.T) {
 	h, cs, _ := newTestHubUnready()
 	seedChat(t, cs, "c1")
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{
+	if rec := postCmd(t, h, marotte.ClientCommand{
 		Type: "prompt", ChatID: "c1",
 		Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 	}); rec.Code != http.StatusOK {
@@ -691,7 +691,7 @@ func TestPromptTurn_CancelDuringTheMCPWaitConcludesCancelled(t *testing.T) {
 	}
 	waitForPromptCall(t, h, "c1")
 
-	if rec := postCmd(t, h, vibekit.ClientCommand{Type: vibekit.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
+	if rec := postCmd(t, h, marotte.ClientCommand{Type: marotte.CmdCancel, ChatID: "c1"}); rec.Code != http.StatusOK {
 		t.Fatalf("cancel = %d, want 200", rec.Code)
 	}
 
@@ -709,18 +709,18 @@ func TestPromptTurn_CancelDuringTheMCPWaitConcludesCancelled(t *testing.T) {
 	}
 
 	carrier := carrierOf(t, cs, "c1")
-	if carrier.EventKind != vibekit.EventCancelled {
+	if carrier.EventKind != marotte.EventCancelled {
 		t.Errorf("carrier event_kind = %q, want %q: an interrupted row here grades the turn "+
-			"broken and paints it red", carrier.EventKind, vibekit.EventCancelled)
+			"broken and paints it red", carrier.EventKind, marotte.EventCancelled)
 	}
-	if carrier.TurnOutcome != vibekit.TurnOutcomeCancelled {
-		t.Errorf("carrier outcome = %q, want %q", carrier.TurnOutcome, vibekit.TurnOutcomeCancelled)
+	if carrier.TurnOutcome != marotte.TurnOutcomeCancelled {
+		t.Errorf("carrier outcome = %q, want %q", carrier.TurnOutcome, marotte.TurnOutcomeCancelled)
 	}
 	if carrier.Content != "" || carrier.TurnFailureReason != "" {
 		t.Errorf("carrier content = %q, failure reason = %q, want both empty: a cancel has "+
 			"no account to give", carrier.Content, carrier.TurnFailureReason)
 	}
-	if types := extractTypes(t, bufferedSince(h, 0)); slices.Contains(types, string(vibekit.EventError)) {
+	if types := extractTypes(t, bufferedSince(h, 0)); slices.Contains(types, string(marotte.EventError)) {
 		t.Errorf("events = %v, want no error frame: prompt_failed routes to a toast, and a "+
 			"red toast for a stop the reader asked for is the same wrong signal as the red card",
 			types)

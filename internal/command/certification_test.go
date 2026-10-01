@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // storeAndBus is an in-memory store whose own broadcasts (the header frame) land
@@ -25,16 +25,16 @@ func storeAndBus(t *testing.T) (*testsupport.InMemoryChatStore, *capturingBus, *
 	return store, bus, &storeDeps{benchDeps: newBenchDeps(), store: store}
 }
 
-func typesOf(evts []vibekit.ServerEvent) []vibekit.EventType {
-	out := make([]vibekit.EventType, len(evts))
+func typesOf(evts []marotte.ServerEvent) []marotte.EventType {
+	out := make([]marotte.EventType, len(evts))
 	for i, e := range evts {
 		out[i] = e.Type
 	}
 	return out
 }
 
-func chatStamps(evts []vibekit.ServerEvent) []vibekit.ServerEvent {
-	var out []vibekit.ServerEvent
+func chatStamps(evts []marotte.ServerEvent) []marotte.ServerEvent {
+	var out []marotte.ServerEvent
 	for _, e := range evts {
 		if e.Subject != nil && e.Subject.Kind == "chat" {
 			out = append(out, e)
@@ -48,7 +48,7 @@ func TestAppendUserMessage_HeaderFrameFirstThenTheStampedTranscriptFrame(t *test
 	seedEmptyChat(t, store, "c1")
 	bus.events = nil
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text: "typed and sent without pausing", MessageID: "m-1",
 	})
 	if err != nil {
@@ -56,11 +56,11 @@ func TestAppendUserMessage_HeaderFrameFirstThenTheStampedTranscriptFrame(t *test
 	}
 
 	got := typesOf(bus.events)
-	if len(got) != 2 || got[0] != vibekit.EventChatUpdated || got[1] != vibekit.EventMessageAppended {
+	if len(got) != 2 || got[0] != marotte.EventChatUpdated || got[1] != marotte.EventMessageAppended {
 		t.Fatalf("broadcast order = %v, want [chat_updated message_appended]: the header frame comes from inside the save, the transcript frame after it", got)
 	}
 	stamped := chatStamps(bus.events)
-	if len(stamped) != 1 || stamped[0].Type != vibekit.EventMessageAppended {
+	if len(stamped) != 1 || stamped[0].Type != marotte.EventMessageAppended {
 		t.Fatalf("chat-stamped frames = %v, want exactly message_appended", typesOf(stamped))
 	}
 	if stamped[0].Subject.Ref != "c1" || stamped[0].Subject.Version == "" {
@@ -80,7 +80,7 @@ func TestAppendUserMessage_WithADraftOnlyDraftChangedCarriesTheChatStamp(t *test
 	}
 	bus.events = nil
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text: "the message about to be sent", MessageID: "m-1",
 	})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestAppendUserMessage_WithADraftOnlyDraftChangedCarriesTheChatStamp(t *test
 	}
 
 	got := typesOf(bus.events)
-	want := []vibekit.EventType{vibekit.EventChatUpdated, vibekit.EventMessageAppended, vibekit.EventDraftChanged}
+	want := []marotte.EventType{marotte.EventChatUpdated, marotte.EventMessageAppended, marotte.EventDraftChanged}
 	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Fatalf("broadcast order = %v, want %v", got, want)
 	}
@@ -96,7 +96,7 @@ func TestAppendUserMessage_WithADraftOnlyDraftChangedCarriesTheChatStamp(t *test
 		t.Errorf("message_appended carries %+v; with a draft_changed following it must carry no Subject", *bus.events[1].Subject)
 	}
 	stamped := chatStamps(bus.events)
-	if len(stamped) != 1 || stamped[0].Type != vibekit.EventDraftChanged {
+	if len(stamped) != 1 || stamped[0].Type != marotte.EventDraftChanged {
 		t.Fatalf("chat-stamped frames = %v, want exactly draft_changed", typesOf(stamped))
 	}
 	if stamped[0].Subject.Ref != "c1" || stamped[0].Subject.Version == "" {
@@ -111,7 +111,7 @@ func TestAppendUserMessage_ARetriedPromptBroadcastsNothing(t *testing.T) {
 	store, bus, deps := storeAndBus(t)
 	seedEmptyChat(t, store, "c1")
 	ws := Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}
-	p := &vibekit.PromptCommand{Text: "once", MessageID: "m-1"}
+	p := &marotte.PromptCommand{Text: "once", MessageID: "m-1"}
 	if err := appendUserMessage(t.Context(), deps, bus, ws, "c1", p); err != nil {
 		t.Fatalf("first appendUserMessage: %v", err)
 	}
@@ -129,18 +129,18 @@ func TestAppendShellUserMessage_StampsTheTranscriptFrameAfterTheSave(t *testing.
 	store, bus, deps := storeAndBus(t)
 	seedEmptyChat(t, store, "c1")
 	bus.events = nil
-	msg := &vibekit.Message{ID: "m-1", Role: vibekit.RoleUser, Content: "!ls"}
+	msg := &marotte.Message{ID: "m-1", Role: marotte.RoleUser, Content: "!ls"}
 
 	persisted, err := appendShellUserMessage(t.Context(), deps, bus, "c1", msg, "!ls")
 	if err != nil || !persisted {
 		t.Fatalf("appendShellUserMessage = (%v, %v), want (true, nil)", persisted, err)
 	}
 	got := typesOf(bus.events)
-	if len(got) != 2 || got[0] != vibekit.EventChatUpdated || got[1] != vibekit.EventMessageAppended {
+	if len(got) != 2 || got[0] != marotte.EventChatUpdated || got[1] != marotte.EventMessageAppended {
 		t.Fatalf("broadcast order = %v, want [chat_updated message_appended]", got)
 	}
 	stamped := chatStamps(bus.events)
-	if len(stamped) != 1 || stamped[0].Type != vibekit.EventMessageAppended || stamped[0].Subject.Ref != "c1" || stamped[0].Subject.Version == "" {
+	if len(stamped) != 1 || stamped[0].Type != marotte.EventMessageAppended || stamped[0].Subject.Ref != "c1" || stamped[0].Subject.Version == "" {
 		t.Errorf("chat-stamped frames = %v, want exactly message_appended stamped {chat c1 <version>}", typesOf(stamped))
 	}
 }
@@ -152,7 +152,7 @@ type recordingRoles struct {
 	bus *capturingBus
 }
 
-func (r *recordingRoles) Broadcast(ctx context.Context, evt vibekit.ServerEvent) {
+func (r *recordingRoles) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
 	r.bus.Broadcast(ctx, evt)
 }
 
@@ -172,19 +172,19 @@ func TestHandleShellInterception_OneStampedMessageAppendedPerInterception(t *tes
 	pr.bus = roles
 	bus.events = nil
 
-	if _, err := HandleShellInterception(t.Context(), pr, &vibekit.ClientCommand{Type: "prompt", ChatID: "c1"}, &vibekit.PromptCommand{
+	if _, err := HandleShellInterception(t.Context(), pr, &marotte.ClientCommand{Type: "prompt", ChatID: "c1"}, &marotte.PromptCommand{
 		Text: "!echo shell-output", MessageID: "m-1",
 	}); err != nil {
 		t.Fatalf("HandleShellInterception: %v", err)
 	}
 
-	var assistantFrames []vibekit.ServerEvent
+	var assistantFrames []marotte.ServerEvent
 	for _, e := range bus.events {
-		if e.Type != vibekit.EventMessageAppended {
+		if e.Type != marotte.EventMessageAppended {
 			continue
 		}
-		msg, ok := e.Payload.(*vibekit.Message)
-		if ok && msg.Role == vibekit.RoleAssistant && strings.Contains(msg.Content, "shell-output") {
+		msg, ok := e.Payload.(*marotte.Message)
+		if ok && msg.Role == marotte.RoleAssistant && strings.Contains(msg.Content, "shell-output") {
 			assistantFrames = append(assistantFrames, e)
 		}
 	}
@@ -198,12 +198,12 @@ func TestHandleShellInterception_OneStampedMessageAppendedPerInterception(t *tes
 
 func TestBroadcastComposer_StampsFromTheStateVersion(t *testing.T) {
 	bus := &capturingBus{}
-	broadcastComposer(t.Context(), bus, "c1", &vibekit.ComposerState{Text: "draft", Version: "42"})
+	broadcastComposer(t.Context(), bus, "c1", &marotte.ComposerState{Text: "draft", Version: "42"})
 	if len(bus.events) != 1 {
 		t.Fatalf("broadcast %d frames, want 1", len(bus.events))
 	}
-	want := vibekit.SubjectStamp{Kind: "chat", Ref: "c1", Version: "42"}
-	if bus.events[0].Type != vibekit.EventDraftChanged || bus.events[0].Subject == nil || *bus.events[0].Subject != want {
+	want := marotte.SubjectStamp{Kind: "chat", Ref: "c1", Version: "42"}
+	if bus.events[0].Type != marotte.EventDraftChanged || bus.events[0].Subject == nil || *bus.events[0].Subject != want {
 		t.Errorf("draft_changed = %s with Subject %+v, want Subject %+v", bus.events[0].Type, bus.events[0].Subject, want)
 	}
 }
@@ -218,7 +218,7 @@ func TestCmdSetDraft_DraftChangedCarriesTheStoresVersion(t *testing.T) {
 	if _, err := CmdSetDraft(t.Context(), deps, bus, draftReq(t, "c1", "half a thought")); err != nil {
 		t.Fatalf("CmdSetDraft: %v", err)
 	}
-	if len(bus.events) != 1 || bus.events[0].Type != vibekit.EventDraftChanged {
+	if len(bus.events) != 1 || bus.events[0].Type != marotte.EventDraftChanged {
 		t.Fatalf("broadcasts = %v, want exactly draft_changed", typesOf(bus.events))
 	}
 	state, err := store.SetDraft(t.Context(), "c1", "the next thought")

@@ -117,7 +117,7 @@ describe("the one catalog reader", () => {
 
   it("seeds the active chat's context size from the descriptions it just landed", async () => {
     // The first seed carried over from the deleted reader. Nothing else fills this:
-    // `usage_update` has no emit site in any KAS build vibekit has run against, so
+    // `usage_update` has no emit site in any KAS build marotte has run against, so
     // every chat file persists `context_size: 0` and the client derives it from the
     // model's description string.
     const active = session();

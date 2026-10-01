@@ -8,20 +8,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func msg(id string, role vibekit.Role, content string) vibekit.Message {
-	return vibekit.Message{ID: id, Role: role, Content: content, Ts: 100}
+func msg(id string, role marotte.Role, content string) marotte.Message {
+	return marotte.Message{ID: id, Role: role, Content: content, Ts: 100}
 }
 
 // transcript: turn 1 = u1/a1, turn 2 = u2/a2.
-func transcript() []vibekit.Message {
-	return []vibekit.Message{
-		msg("u1", vibekit.RoleUser, "how does the retry work"),
-		msg("a1", vibekit.RoleAssistant, "The retry uses exponential backoff."),
-		msg("u2", vibekit.RoleUser, "now fix the composer"),
-		msg("a2", vibekit.RoleAssistant, "Done, the composer grows upward."),
+func transcript() []marotte.Message {
+	return []marotte.Message{
+		msg("u1", marotte.RoleUser, "how does the retry work"),
+		msg("a1", marotte.RoleAssistant, "The retry uses exponential backoff."),
+		msg("u2", marotte.RoleUser, "now fix the composer"),
+		msg("a2", marotte.RoleAssistant, "Done, the composer grows upward."),
 	}
 }
 
@@ -45,22 +45,22 @@ func TestSearch_FindsTextAndNamesItsTurn(t *testing.T) {
 // filter that suddenly cared about case would be a behaviour change nobody
 // requested by ticking a box labelled "match case".
 func TestSearch_CaseSensitivity(t *testing.T) {
-	msgs := []vibekit.Message{
-		msg("u1", vibekit.RoleUser, "now fix the composer"),
-		msg("a1", vibekit.RoleAssistant, "Done, the Composer grows upward."),
+	msgs := []marotte.Message{
+		msg("u1", marotte.RoleUser, "now fix the composer"),
+		msg("a1", marotte.RoleAssistant, "Done, the Composer grows upward."),
 	}
-	filtered := []vibekit.Message{{
+	filtered := []marotte.Message{{
 		ID:           "u1",
-		Role:         vibekit.RoleUser,
+		Role:         marotte.RoleUser,
 		Content:      "look at the Composer",
 		Ts:           100,
-		ChangedFiles: map[string]*vibekit.FileChange{"static-src/Composer.ts": {}},
-		ToolCalls:    []vibekit.ToolCall{{ID: "t1", Title: "ReadFile", Kind: vibekit.ToolKindRead}},
+		ChangedFiles: map[string]*marotte.FileChange{"static-src/Composer.ts": {}},
+		ToolCalls:    []marotte.ToolCall{{ID: "t1", Title: "ReadFile", Kind: marotte.ToolKindRead}},
 	}}
 
 	cases := []struct {
 		name          string
-		msgs          []vibekit.Message
+		msgs          []marotte.Message
 		query         string
 		caseSensitive bool
 		want          int
@@ -143,7 +143,7 @@ func TestSearch_CaseSensitiveOffsetsStayRuneIndices(t *testing.T) {
 	// folded string in insensitive mode and the original in sensitive mode. Both
 	// have to land on the same rune index for the client to highlight the right
 	// occurrence.
-	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "héllo wörld Needle")}
+	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "héllo wörld Needle")}
 	for _, cs := range []bool{false, true} {
 		hits := Search(msgs, "Needle", cs).Matches
 		if len(hits) != 1 {
@@ -156,7 +156,7 @@ func TestSearch_CaseSensitiveOffsetsStayRuneIndices(t *testing.T) {
 }
 
 func TestSearch_ReportsEveryOccurrenceInOneMessage(t *testing.T) {
-	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "retry retry retry")}
+	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "retry retry retry")}
 	hits := Search(msgs, "retry", false).Matches
 	if len(hits) != 3 {
 		t.Fatalf("got %d hits, want 3", len(hits))
@@ -171,7 +171,7 @@ func TestSearch_ReportsEveryOccurrenceInOneMessage(t *testing.T) {
 }
 
 func TestSearch_OffsetsAreRuneIndicesNotBytes(t *testing.T) {
-	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "héllo wörld needle")}
+	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "héllo wörld needle")}
 	hits := Search(msgs, "needle", false).Matches
 	if len(hits) != 1 {
 		t.Fatalf("got %d hits, want 1", len(hits))
@@ -201,11 +201,11 @@ func TestSearch_NeverReturnsNil(t *testing.T) {
 }
 
 func TestSearch_SearchesReasoningAndToolOutput(t *testing.T) {
-	msgs := []vibekit.Message{
+	msgs := []marotte.Message{
 		{
-			ID: "a1", Role: vibekit.RoleAssistant, Ts: 1,
+			ID: "a1", Role: marotte.RoleAssistant, Ts: 1,
 			Reasoning: "considering a mutex here",
-			ToolCalls: []vibekit.ToolCall{{ID: "t1", Title: "shell", Output: "permission denied"}},
+			ToolCalls: []marotte.ToolCall{{ID: "t1", Title: "shell", Output: "permission denied"}},
 		},
 	}
 	// "which turn printed that error" is asked more often than "which turn
@@ -219,24 +219,24 @@ func TestSearch_SearchesReasoningAndToolOutput(t *testing.T) {
 }
 
 func TestSearch_ScopedFilters(t *testing.T) {
-	msgs := []vibekit.Message{
-		msg("u1", vibekit.RoleUser, "look at auth"),
+	msgs := []marotte.Message{
+		msg("u1", marotte.RoleUser, "look at auth"),
 		{
-			ID: "a1", Role: vibekit.RoleAssistant, Ts: 2, Content: "reading it",
-			ToolCalls: []vibekit.ToolCall{
-				{ID: "t1", Title: "readFile", Kind: "read", Locations: []vibekit.ToolLocation{{Path: "internal/auth/token.go"}}},
+			ID: "a1", Role: marotte.RoleAssistant, Ts: 2, Content: "reading it",
+			ToolCalls: []marotte.ToolCall{
+				{ID: "t1", Title: "readFile", Kind: "read", Locations: []marotte.ToolLocation{{Path: "internal/auth/token.go"}}},
 			},
 		},
-		msg("u2", vibekit.RoleUser, "and the composer"),
+		msg("u2", marotte.RoleUser, "and the composer"),
 		{
-			ID: "a2", Role: vibekit.RoleAssistant, Ts: 4, Content: "editing it",
-			ChangedFiles: map[string]*vibekit.FileChange{"static-src/composer.ts": {LinesAdded: 3}},
+			ID: "a2", Role: marotte.RoleAssistant, Ts: 4, Content: "editing it",
+			ChangedFiles: map[string]*marotte.FileChange{"static-src/composer.ts": {LinesAdded: 3}},
 		},
 	}
 
 	t.Run("role", func(t *testing.T) {
 		for _, h := range Search(msgs, "role:user", false).Matches {
-			if h.Role != vibekit.RoleUser {
+			if h.Role != marotte.RoleUser {
 				t.Errorf("role:user returned a %s message", h.Role)
 			}
 		}
@@ -297,14 +297,14 @@ func TestSearch_ScopedFilters(t *testing.T) {
 
 // A reader typing a URL means it literally, so an unknown prefix stays text.
 func TestSearch_UnknownPrefixStaysFreeText(t *testing.T) {
-	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "see https://example.com for more")}
+	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "see https://example.com for more")}
 	if len(Search(msgs, "https://example.com", false).Matches) == 0 {
 		t.Error("a colon-bearing term was parsed as a filter and lost")
 	}
 }
 
 func TestSearch_NonNumericTurnStaysFreeText(t *testing.T) {
-	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "the turn:abc marker")}
+	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "the turn:abc marker")}
 	if len(Search(msgs, "turn:abc", false).Matches) == 0 {
 		t.Error("an unparseable turn filter should fall back to text")
 	}
@@ -312,7 +312,7 @@ func TestSearch_NonNumericTurnStaysFreeText(t *testing.T) {
 
 func TestSearch_ExcerptCarriesContextAndCollapsesWhitespace(t *testing.T) {
 	long := strings.Repeat("a ", 100) + "needle " + strings.Repeat("b ", 100)
-	hits := Search([]vibekit.Message{msg("u1", vibekit.RoleUser, long)}, "needle", false).Matches
+	hits := Search([]marotte.Message{msg("u1", marotte.RoleUser, long)}, "needle", false).Matches
 	if len(hits) != 1 {
 		t.Fatalf("got %d hits", len(hits))
 	}
@@ -346,9 +346,9 @@ func TestSearch_MatchedCountsPastTheHitCap(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			msgs := []vibekit.Message{
-				msg("u1", vibekit.RoleUser, strings.Repeat("hit ", tc.occurrences)),
-				msg("a1", vibekit.RoleAssistant, "nothing here"),
+			msgs := []marotte.Message{
+				msg("u1", marotte.RoleUser, strings.Repeat("hit ", tc.occurrences)),
+				msg("a1", marotte.RoleAssistant, "nothing here"),
 			}
 			res := Search(msgs, "hit", false)
 			if len(res.Matches) != tc.wantHits {
@@ -373,16 +373,16 @@ func TestSearch_MatchedCountsPastTheHitCap(t *testing.T) {
 // two must cover one span set or a chat is normalised by text it was never
 // searched for, or searched in text it is not normalised by.
 func TestSearchChat_CharsAreTheSpansTheScanRead(t *testing.T) {
-	msgs := []vibekit.Message{
-		msg("u1", vibekit.RoleUser, "abc"),
+	msgs := []marotte.Message{
+		msg("u1", marotte.RoleUser, "abc"),
 		{
-			ID: "a1", Role: vibekit.RoleAssistant,
-			Blocks: []vibekit.Block{
-				{Type: vibekit.BlockText, Text: "defg"},
-				{Type: vibekit.BlockThinking, Thinking: "hijkl"},
-				{Type: vibekit.BlockToolUse, ToolCallID: "t1"},
+			ID: "a1", Role: marotte.RoleAssistant,
+			Blocks: []marotte.Block{
+				{Type: marotte.BlockText, Text: "defg"},
+				{Type: marotte.BlockThinking, Thinking: "hijkl"},
+				{Type: marotte.BlockToolUse, ToolCallID: "t1"},
 			},
-			ToolCalls: []vibekit.ToolCall{{ID: "t1", Title: "run", Output: "mnopqrs"}},
+			ToolCalls: []marotte.ToolCall{{ID: "t1", Title: "run", Output: "mnopqrs"}},
 		},
 	}
 	tests := []struct {
@@ -424,11 +424,11 @@ func TestSearch_TurnNumbersMatchTheRailProjection(t *testing.T) {
 // than being a default either side could get wrong.
 func TestHandleSearch_CaseParam(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "One"
-		c.Messages = []vibekit.Message{
-			msg("u1", vibekit.RoleUser, "now fix the composer"),
-			msg("a1", vibekit.RoleAssistant, "Done, the Composer grows upward."),
+		c.Messages = []marotte.Message{
+			msg("u1", marotte.RoleUser, "now fix the composer"),
+			msg("a1", marotte.RoleAssistant, "Done, the Composer grows upward."),
 		}
 		return true
 	}); err != nil {
@@ -470,11 +470,11 @@ func TestHandleSearch_CaseParam(t *testing.T) {
 // pinned by testdata/search_hits.json, which the TypeScript decoder reads.
 func TestHandleSearch_ReportsTheTally(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "One"
-		c.Messages = []vibekit.Message{
-			msg("u1", vibekit.RoleUser, strings.Repeat("hit ", maxSearchHits+1)),
-			msg("a1", vibekit.RoleAssistant, "one lonely miss"),
+		c.Messages = []marotte.Message{
+			msg("u1", marotte.RoleUser, strings.Repeat("hit ", maxSearchHits+1)),
+			msg("a1", marotte.RoleAssistant, "one lonely miss"),
 		}
 		return true
 	}); err != nil {
@@ -520,7 +520,7 @@ func TestHandleSearch_ReportsTheTally(t *testing.T) {
 }
 
 // The chat's TITLE is not part of the in-chat search, and this is the layer that
-// can say so: Search takes []vibekit.Message and never sees a name, so only the
+// can say so: Search takes []marotte.Message and never sees a name, so only the
 // handler — which holds the whole record and passes `c.Messages` alone — can pin
 // the decision.
 //
@@ -532,11 +532,11 @@ func TestHandleSearch_ReportsTheTally(t *testing.T) {
 // finds a hit.
 func TestHandleSearch_ChatNameIsNotSearched(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "The needle investigation"
-		c.Messages = []vibekit.Message{
-			msg("u1", vibekit.RoleUser, "what now"),
-			msg("a1", vibekit.RoleAssistant, "nothing to report"),
+		c.Messages = []marotte.Message{
+			msg("u1", marotte.RoleUser, "what now"),
+			msg("a1", marotte.RoleAssistant, "nothing to report"),
 		}
 		return true
 	}); err != nil {
@@ -561,9 +561,9 @@ func TestHandleSearch_ChatNameIsNotSearched(t *testing.T) {
 // `turn:` takes an absolute turn ordinal, and turns are numbered from 1. Turn 0
 // names no turn, so `turn:0` is not a filter — it is the text the user typed.
 func TestSearch_TurnZeroIsNotAFilter(t *testing.T) {
-	msgs := []vibekit.Message{
-		msg("u1", vibekit.RoleUser, "see turn:0 for the trace"),
-		msg("a1", vibekit.RoleAssistant, "acknowledged"),
+	msgs := []marotte.Message{
+		msg("u1", marotte.RoleUser, "see turn:0 for the trace"),
+		msg("a1", marotte.RoleAssistant, "acknowledged"),
 	}
 	hits := Search(msgs, "turn:0", false).Matches
 	if len(hits) != 1 {
@@ -578,10 +578,10 @@ func TestSearch_TurnZeroIsNotAFilter(t *testing.T) {
 // The two are concatenated before the scan, so the buffer sized for them must
 // account for both.
 func TestSearch_MessageWithMoreThinkingThanProse(t *testing.T) {
-	m := msg("a1", vibekit.RoleAssistant, "ok")
+	m := msg("a1", marotte.RoleAssistant, "ok")
 	m.Reasoning = strings.Repeat("thinking ", 200) + "needle"
 
-	hits := Search([]vibekit.Message{m}, "needle", false).Matches
+	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	if len(hits) != 1 {
 		t.Fatalf("Search over a message with a %d-byte reasoning trace and a %d-byte body returned %d hits, want 1",
 			len(m.Reasoning), len(m.Content), len(hits))
@@ -610,7 +610,7 @@ func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hits := Search([]vibekit.Message{msg("u1", vibekit.RoleUser, tc.content)}, "needle", false).Matches
+			hits := Search([]marotte.Message{msg("u1", marotte.RoleUser, tc.content)}, "needle", false).Matches
 			if len(hits) != 1 {
 				t.Fatalf("Search(%q) returned %d hits, want 1", tc.content, len(hits))
 			}
@@ -624,15 +624,15 @@ func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
 // blockMsg builds a block-bearing assistant message whose legacy Content and
 // Reasoning fields mirror the block texts — the shape the buffer persists,
 // since one Append*Delta call fills the block array AND the legacy builders.
-func blockMsg(id string, blocks []vibekit.Block, tools ...vibekit.ToolCall) vibekit.Message {
+func blockMsg(id string, blocks []marotte.Block, tools ...marotte.ToolCall) marotte.Message {
 	var content, reasoning strings.Builder
 	for _, b := range blocks {
 		content.WriteString(b.Text)
 		reasoning.WriteString(b.Thinking)
 	}
-	return vibekit.Message{
+	return marotte.Message{
 		ID:        id,
-		Role:      vibekit.RoleAssistant,
+		Role:      marotte.RoleAssistant,
 		Ts:        100,
 		Content:   content.String(),
 		Reasoning: reasoning.String(),
@@ -685,11 +685,11 @@ func assertBlockHits(t *testing.T, hits []Hit, want []wantHit) {
 // each hit names its own block and subtask, and both offsets are relative to
 // their OWN segment, so the two identical prefixes yield identical offsets.
 func TestSearch_DistinguishesParentAndDelegateBlocks(t *testing.T) {
-	m := blockMsg("a1", []vibekit.Block{
-		{Type: vibekit.BlockText, Text: "the needle in the parent"},
-		{Type: vibekit.BlockText, Text: "the needle in the delegate", AgentSubtaskID: "sub-1"},
+	m := blockMsg("a1", []marotte.Block{
+		{Type: marotte.BlockText, Text: "the needle in the parent"},
+		{Type: marotte.BlockText, Text: "the needle in the delegate", AgentSubtaskID: "sub-1"},
 	})
-	hits := Search([]vibekit.Message{m}, "needle", false).Matches
+	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	assertBlockHits(t, hits, []wantHit{
 		{kind: SegmentContent, blockIndex: new(0), subtask: "", offset: 4, segmentLen: 24},
 		{kind: SegmentContent, blockIndex: new(1), subtask: "sub-1", offset: 4, segmentLen: 26},
@@ -700,14 +700,14 @@ func TestSearch_DistinguishesParentAndDelegateBlocks(t *testing.T) {
 // offsets — not offsets into any concatenation of the message.
 func TestSearch_TwoHitsInOneBlockGetSegmentRelativeOffsets(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{
-			{Type: vibekit.BlockText, Text: "intro paragraph"},
-			{Type: vibekit.BlockToolUse, ToolCallID: "t1"},
-			{Type: vibekit.BlockText, Text: "needle then a needle"},
+		[]marotte.Block{
+			{Type: marotte.BlockText, Text: "intro paragraph"},
+			{Type: marotte.BlockToolUse, ToolCallID: "t1"},
+			{Type: marotte.BlockText, Text: "needle then a needle"},
 		},
-		vibekit.ToolCall{ID: "t1", Title: "shell"},
+		marotte.ToolCall{ID: "t1", Title: "shell"},
 	)
-	hits := Search([]vibekit.Message{m}, "needle", false).Matches
+	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	assertBlockHits(t, hits, []wantHit{
 		{kind: SegmentContent, blockIndex: new(2), offset: 0, segmentLen: 20},
 		{kind: SegmentContent, blockIndex: new(2), offset: 14, segmentLen: 20},
@@ -719,13 +719,13 @@ func TestSearch_TwoHitsInOneBlockGetSegmentRelativeOffsets(t *testing.T) {
 // relative to the output segment, not the title.
 func TestSearch_ToolTitleAndOutputAreSeparateSegmentsSharingTheBlock(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{
-			{Type: vibekit.BlockText, Text: "running the search now"},
-			{Type: vibekit.BlockToolUse, ToolCallID: "t1", AgentSubtaskID: "sub-9"},
+		[]marotte.Block{
+			{Type: marotte.BlockText, Text: "running the search now"},
+			{Type: marotte.BlockToolUse, ToolCallID: "t1", AgentSubtaskID: "sub-9"},
 		},
-		vibekit.ToolCall{ID: "t1", Title: "grep needle", Output: "found a needle here"},
+		marotte.ToolCall{ID: "t1", Title: "grep needle", Output: "found a needle here"},
 	)
-	hits := Search([]vibekit.Message{m}, "needle", false).Matches
+	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	assertBlockHits(t, hits, []wantHit{
 		{kind: SegmentToolTitle, blockIndex: new(1), subtask: "sub-9", offset: 5, segmentLen: 11},
 		{kind: SegmentToolOutput, blockIndex: new(1), subtask: "sub-9", offset: 8, segmentLen: 19},
@@ -740,12 +740,12 @@ func TestSearch_ToolTitleAndOutputAreSeparateSegmentsSharingTheBlock(t *testing.
 // Red check: drop the diff arm from toolSegments and this finds nothing.
 func TestSearch_DiffNewTextIsSearched(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1", AgentSubtaskID: "sub-2"}},
-		vibekit.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []vibekit.ToolDiff{{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1", AgentSubtaskID: "sub-2"}},
+		marotte.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []marotte.ToolDiff{{
 			Path: "needle.go", NewText: "åß needle",
 		}}},
 	)
-	hits := Search([]vibekit.Message{m}, "needle", false).Matches
+	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	// "åß " is 3 runes (5 bytes); the whole segment is 9 runes (11 bytes).
 	assertBlockHits(t, hits, []wantHit{
 		{kind: SegmentToolDiff, blockIndex: new(0), subtask: "sub-2", offset: 3, segmentLen: 9},
@@ -760,13 +760,13 @@ func TestSearch_DiffNewTextIsSearched(t *testing.T) {
 // Red check: add an old_text arm to toolSegments and this finds a hit.
 func TestSearch_DiffOldTextIsNotSearched(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-		vibekit.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []vibekit.ToolDiff{{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+		marotte.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []marotte.ToolDiff{{
 			OldText: "the needle used to live here",
 			NewText: "and now it does not",
 		}}},
 	)
-	if hits := Search([]vibekit.Message{m}, "needle", false).Matches; len(hits) != 0 {
+	if hits := Search([]marotte.Message{m}, "needle", false).Matches; len(hits) != 0 {
 		t.Errorf("Search found %d hits in a diff's old_text, want 0: %+v", len(hits), hits)
 	}
 }
@@ -776,13 +776,13 @@ func TestSearch_DiffOldTextIsNotSearched(t *testing.T) {
 // than emitting an empty span nothing can ever match.
 func TestSearch_DiffWithEmptyNewTextContributesNoSegment(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-		vibekit.ToolCall{ID: "t1", Title: "Delete needle.go", Diffs: []vibekit.ToolDiff{{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+		marotte.ToolCall{ID: "t1", Title: "Delete needle.go", Diffs: []marotte.ToolDiff{{
 			OldText: "the needle used to live here", NewText: "",
 		}}},
 	)
 	// The title is the only span, so the one hit is a title hit.
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolTitle, blockIndex: new(0), offset: 7, segmentLen: 16},
 	})
 }
@@ -793,21 +793,21 @@ func TestSearch_DiffWithEmptyNewTextContributesNoSegment(t *testing.T) {
 // Red check: loop toolSegments over every diff and this finds two hits.
 func TestSearch_OnlyTheFirstDiffIsSearched(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-		vibekit.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []vibekit.ToolDiff{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+		marotte.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []marotte.ToolDiff{
 			{Path: "a.go", NewText: "first needle"},
 			{Path: "b.go", NewText: "second needle"},
 		}},
 	)
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolDiff, blockIndex: new(0), offset: 6, segmentLen: 12},
 	})
 }
 
 // inputCall builds a tool call whose only searchable span is its input, so a
 // hit's kind and offset can be read without a title or an output competing.
-func inputCall(input string) vibekit.ToolCall {
-	return vibekit.ToolCall{ID: "t1", Title: "Write File", Input: json.RawMessage(input)}
+func inputCall(input string) marotte.ToolCall {
+	return marotte.ToolCall{ID: "t1", Title: "Write File", Input: json.RawMessage(input)}
 }
 
 // Only the string LEAF VALUES of an input are searched, and each clause of that
@@ -862,10 +862,10 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 				query = "needle"
 			}
 			m := blockMsg("a1",
-				[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
+				[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
 				inputCall(tc.input),
 			)
-			hits := Search([]vibekit.Message{m}, query, false).Matches
+			hits := Search([]marotte.Message{m}, query, false).Matches
 			if tc.want == nil {
 				if len(hits) != 0 {
 					t.Errorf("Search(%q) found %d hits, want 0: %+v", query, len(hits), hits)
@@ -892,11 +892,11 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 // which is the whole objection to it.
 func TestSearch_ToolInputLeafOrderIsDocumentOrder(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
 		inputCall(`{"z":"needle first","a":"and then a needle"}`),
 	)
 	// "needle first\nand then a needle" is one 30-rune segment.
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolInput, blockIndex: new(0), offset: 0, segmentLen: 30},
 		{kind: SegmentToolInput, blockIndex: new(0), offset: 24, segmentLen: 30},
 	})
@@ -906,11 +906,11 @@ func TestSearch_ToolInputLeafOrderIsDocumentOrder(t *testing.T) {
 // other segment's, even when an earlier leaf carries multi-byte text.
 func TestSearch_ToolInputOffsetIsARuneIndex(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
 		inputCall(`{"a":"åß","b":"ü needle"}`),
 	)
 	// "åß\nü " is 5 runes (8 bytes); the whole segment is 11 runes (14 bytes).
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolInput, blockIndex: new(0), offset: 5, segmentLen: 11},
 	})
 }
@@ -926,14 +926,14 @@ func TestSearch_InputLeafDoesNotDoubleCountItsDiff(t *testing.T) {
 		t.Fatalf("payload is %d bytes, under inputLeafDedupeMin (%d): the skip would not apply", len(payload), inputLeafDedupeMin)
 	}
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-		vibekit.ToolCall{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+		marotte.ToolCall{
 			ID: "t1", Title: "Replace in File",
 			Input: json.RawMessage(`{"path":"fetch.go","newStr":` + strconv.Quote(payload) + `}`),
-			Diffs: []vibekit.ToolDiff{{Path: "fetch.go", NewText: payload}},
+			Diffs: []marotte.ToolDiff{{Path: "fetch.go", NewText: payload}},
 		},
 	)
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolDiff, blockIndex: new(0), offset: 47, segmentLen: 60},
 	})
 }
@@ -957,10 +957,10 @@ func TestSearch_MalformedInputYieldsNoHit(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := blockMsg("a1",
-				[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
+				[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
 				inputCall(tc.input),
 			)
-			if hits := Search([]vibekit.Message{m}, "needle", false).Matches; len(hits) != 0 {
+			if hits := Search([]marotte.Message{m}, "needle", false).Matches; len(hits) != 0 {
 				t.Errorf("Search found %d hits in input %q, want 0: %+v", len(hits), tc.input, hits)
 			}
 		})
@@ -977,12 +977,12 @@ func TestSearch_MalformedInputYieldsNoHit(t *testing.T) {
 //
 // Red check: drop the plan loop from messageTailSegments and this finds nothing.
 func TestSearch_PlanIsSearched(t *testing.T) {
-	m := blockMsg("a1", []vibekit.Block{{Type: vibekit.BlockText, Text: "starting now"}})
-	m.Plan = []vibekit.PlanEntry{
-		{Content: "Read the needle", Status: vibekit.PlanCompleted},
-		{Content: "Fix the needle", Status: vibekit.PlanPending},
+	m := blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "starting now"}})
+	m.Plan = []marotte.PlanEntry{
+		{Content: "Read the needle", Status: marotte.PlanCompleted},
+		{Content: "Fix the needle", Status: marotte.PlanPending},
 	}
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentPlan, offset: 9, segmentLen: 15},
 		{kind: SegmentPlan, offset: 8, segmentLen: 14},
 	})
@@ -996,15 +996,15 @@ func TestSearch_PlanIsSearched(t *testing.T) {
 // Red check: drop the denial arm from toolSegments and this finds nothing.
 func TestSearch_DenialResourceIsSearched(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-		vibekit.ToolCall{ID: "t1", Title: "Run Command", Denial: &vibekit.ToolDenial{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+		marotte.ToolCall{ID: "t1", Title: "Run Command", Denial: &marotte.ToolDenial{
 			Capability: "shell",
 			Resource:   "rm -rf needle",
 			Scope:      "user",
 			Source:     "permissions.yaml",
 		}},
 	)
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolDenial, blockIndex: new(0), offset: 7, segmentLen: 13},
 	})
 }
@@ -1016,9 +1016,9 @@ func TestSearch_DenialResourceIsSearched(t *testing.T) {
 // Red check: drop the turn-failure arm from messageTailSegments and this finds
 // nothing.
 func TestSearch_TurnFailureReasonIsSearched(t *testing.T) {
-	m := blockMsg("a1", []vibekit.Block{{Type: vibekit.BlockText, Text: "partial answer"}})
+	m := blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "partial answer"}})
 	m.TurnFailureReason = "the needle budget ran out"
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentTurnFailure, offset: 4, segmentLen: 25},
 	})
 }
@@ -1029,14 +1029,14 @@ func TestSearch_TurnFailureReasonIsSearched(t *testing.T) {
 //
 // Red check: search Path instead of Name and the second case finds a hit.
 func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
-	m := msg("u1", vibekit.RoleUser, "have a look")
-	m.Attachments = []vibekit.Attachment{
+	m := msg("u1", marotte.RoleUser, "have a look")
+	m.Attachments = []marotte.Attachment{
 		{Path: "docs/haystack/notes.md", Name: "needle-notes.md"},
 	}
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentAttachment, offset: 0, segmentLen: 15},
 	})
-	if hits := Search([]vibekit.Message{m}, "haystack", false).Matches; len(hits) != 0 {
+	if hits := Search([]marotte.Message{m}, "haystack", false).Matches; len(hits) != 0 {
 		t.Errorf("the attachment PATH matched %d times, want 0: %+v", len(hits), hits)
 	}
 }
@@ -1048,44 +1048,44 @@ func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
 // Red check: drop the disclosed arm from toolSegments and this finds nothing.
 func TestSearch_DisclosedDisplayNameIsSearched(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-		vibekit.ToolCall{ID: "t1", Title: "Disclose Context", Disclosed: &vibekit.ToolDisclosed{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+		marotte.ToolCall{ID: "t1", Title: "Disclose Context", Disclosed: &marotte.ToolDisclosed{
 			Type:        "skill",
 			DisplayName: "needle-review",
 			URI:         "file:///workspace/.kiro/skills/haystack/SKILL.md",
 		}},
 	)
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolDisclosed, blockIndex: new(0), offset: 0, segmentLen: 13},
 	})
 	// The URI is not rendered anywhere, so a hit in it would be unreachable.
-	if hits := Search([]vibekit.Message{m}, "haystack", false).Matches; len(hits) != 0 {
+	if hits := Search([]marotte.Message{m}, "haystack", false).Matches; len(hits) != 0 {
 		t.Errorf("the disclosed URI matched %d times, want 0: %+v", len(hits), hits)
 	}
 }
 
 // The fields fix 4 deliberately leaves unsearched, each for a stated reason, and
 // each asserted where a needle in it would otherwise be indistinguishable from a
-// gap. Chat.Name is NOT here — Search takes []vibekit.Message and cannot see a
+// gap. Chat.Name is NOT here — Search takes []marotte.Message and cannot see a
 // name — and has its own test at the layer that can (TestHandleSearch_ChatNameIsNotSearched).
 func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 	tests := []struct {
 		name string
 		why  string
-		mut  func(m *vibekit.Message)
+		mut  func(m *marotte.Message)
 	}{
 		{
 			name: "ToolDiff.OldText",
 			why:  "a line the edit REMOVED has no rendered surface in the card's mini-diff",
-			mut: func(m *vibekit.Message) {
-				m.ToolCalls[0].Diffs = []vibekit.ToolDiff{{Path: "f.go", OldText: "gone needle", NewText: "kept"}}
+			mut: func(m *marotte.Message) {
+				m.ToolCalls[0].Diffs = []marotte.ToolDiff{{Path: "f.go", OldText: "gone needle", NewText: "kept"}}
 			},
 		},
 		{
 			name: "the second diff",
 			why:  "nothing renders or fetches Diffs[1], so a hit there is counted-but-unreachable",
-			mut: func(m *vibekit.Message) {
-				m.ToolCalls[0].Diffs = []vibekit.ToolDiff{
+			mut: func(m *marotte.Message) {
+				m.ToolCalls[0].Diffs = []marotte.ToolDiff{
 					{Path: "a.go", NewText: "first"},
 					{Path: "b.go", NewText: "second needle"},
 				}
@@ -1094,24 +1094,24 @@ func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 		{
 			name: "Attachment.Path",
 			why:  "the path lives in a title ATTRIBUTE the DOM walker cannot mark",
-			mut: func(m *vibekit.Message) {
-				m.Attachments = []vibekit.Attachment{{Path: "needle/notes.md", Name: "notes.md"}}
+			mut: func(m *marotte.Message) {
+				m.Attachments = []marotte.Attachment{{Path: "needle/notes.md", Name: "notes.md"}}
 			},
 		},
 		{
 			name: "Denial.Capability",
 			why:  "a closed vocabulary, not reader-facing text",
-			mut: func(m *vibekit.Message) {
-				m.ToolCalls[0].Denial = &vibekit.ToolDenial{Capability: "needle", Resource: "rm -rf /"}
+			mut: func(m *marotte.Message) {
+				m.ToolCalls[0].Denial = &marotte.ToolDenial{Capability: "needle", Resource: "rm -rf /"}
 			},
 		},
 		{
 			name: "the denial rule's match patterns",
 			why:  "policy text, reachable and editable through Settings -> Permissions",
-			mut: func(m *vibekit.Message) {
-				m.ToolCalls[0].Denial = &vibekit.ToolDenial{
+			mut: func(m *marotte.Message) {
+				m.ToolCalls[0].Denial = &marotte.ToolDenial{
 					Resource: "rm -rf /",
-					Rule: &vibekit.ToolDenialRule{
+					Rule: &marotte.ToolDenialRule{
 						Capability: "shell", Effect: "deny",
 						Match: []string{"needle*"}, Exclude: []string{"needle-safe"},
 					},
@@ -1121,8 +1121,8 @@ func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 		{
 			name: "Disclosed.URI",
 			why:  "the card renders the display name, never the uri",
-			mut: func(m *vibekit.Message) {
-				m.ToolCalls[0].Disclosed = &vibekit.ToolDisclosed{
+			mut: func(m *marotte.Message) {
+				m.ToolCalls[0].Disclosed = &marotte.ToolDisclosed{
 					Type: "skill", DisplayName: "review", URI: "file:///needle/SKILL.md",
 				}
 			},
@@ -1130,26 +1130,26 @@ func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 		{
 			name: "Message.CodeReferences",
 			why:  "attributions are TURN-scoped; KAS drops the span that would locate one",
-			mut: func(m *vibekit.Message) {
-				m.CodeReferences = []vibekit.CodeReference{{LicenseName: "needle", Repository: "needle/repo"}}
+			mut: func(m *marotte.Message) {
+				m.CodeReferences = []marotte.CodeReference{{LicenseName: "needle", Repository: "needle/repo"}}
 			},
 		},
 		{
 			name: "ToolCall.Locations[].Path",
 			why:  "already reachable through the `file:` filter and through the title",
-			mut: func(m *vibekit.Message) {
-				m.ToolCalls[0].Locations = []vibekit.ToolLocation{{Path: "needle.go", Line: 12}}
+			mut: func(m *marotte.Message) {
+				m.ToolCalls[0].Locations = []marotte.ToolLocation{{Path: "needle.go", Line: 12}}
 			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := blockMsg("a1",
-				[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-				vibekit.ToolCall{ID: "t1", Title: "Replace in File"},
+				[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+				marotte.ToolCall{ID: "t1", Title: "Replace in File"},
 			)
 			tc.mut(&m)
-			if hits := Search([]vibekit.Message{m}, "needle", false).Matches; len(hits) != 0 {
+			if hits := Search([]marotte.Message{m}, "needle", false).Matches; len(hits) != 0 {
 				t.Errorf("%s is searched (%d hits) but %s: %+v", tc.name, len(hits), tc.why, hits)
 			}
 		})
@@ -1166,16 +1166,16 @@ func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 // below the diff — and the expected order goes red.
 func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
 	m := blockMsg("a1",
-		[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-		vibekit.ToolCall{
+		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+		marotte.ToolCall{
 			ID: "t1", Title: "grep needle", Output: "found a needle here",
-			Disclosed: &vibekit.ToolDisclosed{Type: "skill", DisplayName: "the needle skill"},
-			Denial:    &vibekit.ToolDenial{Capability: "shell", Resource: "a needle to deny"},
+			Disclosed: &marotte.ToolDisclosed{Type: "skill", DisplayName: "the needle skill"},
+			Denial:    &marotte.ToolDenial{Capability: "shell", Resource: "a needle to deny"},
 			Input:     json.RawMessage(`{"cmd":"a needle in the input"}`),
-			Diffs:     []vibekit.ToolDiff{{Path: "fetch.go", NewText: "a needle in the diff"}},
+			Diffs:     []marotte.ToolDiff{{Path: "fetch.go", NewText: "a needle in the diff"}},
 		},
 	)
-	assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, []wantHit{
+	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
 		{kind: SegmentToolTitle, blockIndex: new(0), offset: 5, segmentLen: 11},
 		{kind: SegmentToolDisclosed, blockIndex: new(0), offset: 4, segmentLen: 16},
 		{kind: SegmentToolDiff, blockIndex: new(0), offset: 2, segmentLen: 20},
@@ -1193,9 +1193,9 @@ func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
 // Red check: reorder the three loops in messageTailSegments, or drop the call
 // from either messageSegments or legacySegments, and one of the two cases fails.
 func TestSearch_MessageLevelSegmentsComeAfterTheBlocks(t *testing.T) {
-	tail := func(m *vibekit.Message) {
-		m.Attachments = []vibekit.Attachment{{Path: "a.md", Name: "needle-a"}}
-		m.Plan = []vibekit.PlanEntry{{Content: "needle-plan", Status: vibekit.PlanPending}}
+	tail := func(m *marotte.Message) {
+		m.Attachments = []marotte.Attachment{{Path: "a.md", Name: "needle-a"}}
+		m.Plan = []marotte.PlanEntry{{Content: "needle-plan", Status: marotte.PlanPending}}
 		m.TurnFailureReason = "needle-reason"
 	}
 	want := []wantHit{
@@ -1206,18 +1206,18 @@ func TestSearch_MessageLevelSegmentsComeAfterTheBlocks(t *testing.T) {
 	}
 
 	t.Run("block-bearing", func(t *testing.T) {
-		m := blockMsg("a1", []vibekit.Block{{Type: vibekit.BlockText, Text: "needle-block!"}})
+		m := blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "needle-block!"}})
 		tail(&m)
-		assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, want)
+		assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, want)
 	})
 
 	t.Run("legacy blockless", func(t *testing.T) {
-		m := vibekit.Message{ID: "a1", Role: vibekit.RoleAssistant, Ts: 1, Content: "needle-block!"}
+		m := marotte.Message{ID: "a1", Role: marotte.RoleAssistant, Ts: 1, Content: "needle-block!"}
 		tail(&m)
 		// The legacy content segment carries no block index; everything else matches.
 		legacy := append([]wantHit(nil), want...)
 		legacy[0].blockIndex = nil
-		assertBlockHits(t, Search([]vibekit.Message{m}, "needle", false).Matches, legacy)
+		assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, legacy)
 	})
 }
 
@@ -1255,13 +1255,13 @@ func TestSearch_SegmentKindsAreExhaustive(t *testing.T) {
 // content/reasoning concatenation (the existing searchable shape), and its
 // tool calls keep their own segments — all without a block index.
 func TestSearch_LegacyBlocklessMessageFallsBackToOneContentSegment(t *testing.T) {
-	m := vibekit.Message{
-		ID: "a1", Role: vibekit.RoleAssistant, Ts: 1,
+	m := marotte.Message{
+		ID: "a1", Role: marotte.RoleAssistant, Ts: 1,
 		Content:   "prose needle",
 		Reasoning: "thinking needle",
-		ToolCalls: []vibekit.ToolCall{{ID: "t1", Title: "shell", Output: "output needle"}},
+		ToolCalls: []marotte.ToolCall{{ID: "t1", Title: "shell", Output: "output needle"}},
 	}
-	hits := Search([]vibekit.Message{m}, "needle", false).Matches
+	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	// "prose needle\nthinking needle" is one 28-rune segment.
 	assertBlockHits(t, hits, []wantHit{
 		{kind: SegmentContent, offset: 6, segmentLen: 28},
@@ -1273,11 +1273,11 @@ func TestSearch_LegacyBlocklessMessageFallsBackToOneContentSegment(t *testing.T)
 // Segment offsets and lengths count RUNES, not bytes, and are relative to the
 // matched segment even when earlier segments hold multi-byte text.
 func TestSearch_SegmentOffsetsAreRuneIndices(t *testing.T) {
-	m := blockMsg("a1", []vibekit.Block{
-		{Type: vibekit.BlockText, Text: "héllo wörld"},
-		{Type: vibekit.BlockThinking, Thinking: "åß needle"},
+	m := blockMsg("a1", []marotte.Block{
+		{Type: marotte.BlockText, Text: "héllo wörld"},
+		{Type: marotte.BlockThinking, Thinking: "åß needle"},
 	})
-	hits := Search([]vibekit.Message{m}, "needle", false).Matches
+	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	// "åß " is 3 runes (5 bytes); the whole segment is 9 runes (11 bytes).
 	assertBlockHits(t, hits, []wantHit{
 		{kind: SegmentReasoning, blockIndex: new(1), offset: 3, segmentLen: 9},
@@ -1289,11 +1289,11 @@ func TestSearch_SegmentOffsetsAreRuneIndices(t *testing.T) {
 // the hit locates the message, not a span inside it. A tool-only assistant
 // message with empty prose is still listed.
 func TestSearch_FilterOnlyHitsAreMessageKind(t *testing.T) {
-	msgs := []vibekit.Message{
-		blockMsg("a1", []vibekit.Block{{Type: vibekit.BlockText, Text: "prose here"}}),
+	msgs := []marotte.Message{
+		blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "prose here"}}),
 		blockMsg("a2",
-			[]vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-			vibekit.ToolCall{ID: "t1", Title: "shell", Output: "ran fine"},
+			[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+			marotte.ToolCall{ID: "t1", Title: "shell", Output: "ran fine"},
 		),
 	}
 	hits := Search(msgs, "role:assistant", false).Matches

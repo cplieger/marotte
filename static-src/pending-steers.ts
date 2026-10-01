@@ -36,7 +36,7 @@
 // distinguish, and there is no checkmark.
 //
 // That replaced a green check on the row plus the agent's own account of what it
-// did (`[STEERING steer-<id>: ...]`, which vibekit strips from the transcript as
+// did (`[STEERING steer-<id>: ...]`, which marotte strips from the transcript as
 // machinery). Both were real information in the wrong place: a tick in the
 // composer while the transcript showed the agent change course with nothing
 // explaining why. The ack rides the transcript note now.

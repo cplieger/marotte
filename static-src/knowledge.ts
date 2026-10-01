@@ -5,7 +5,7 @@
 // context" family.
 //
 // The list is server-canonical (it lives in kiro-cli's global disk store, not
-// vibekit's chat store), so this module fetches GET /api/knowledge and renders
+// marotte's chat store), so this module fetches GET /api/knowledge and renders
 // it; mutations go through the knowledge.add / knowledge.remove actions and
 // refetch. Indexing runs in the BACKGROUND: `add` returns immediately and the
 // new base shows up as an "indexing" row with a live progress bar. A
@@ -182,9 +182,9 @@ export function loadKnowledge(fromPoll = false): void {
   }
 }
 
-/** Show/hide the "knowledge is off" hint from vibekit's own knowledge_enabled
+/** Show/hide the "knowledge is off" hint from marotte's own knowledge_enabled
  *  setting (the General toggle), which is what gates the agent's knowledge tool —
- *  kiro-cli's own knowledge flag drives its TUI and index builder, not a vibekit
+ *  kiro-cli's own knowledge flag drives its TUI and index builder, not a marotte
  *  chat. Management works either way; the hint only explains that the agent won't
  *  consult these bases during chats while it's off. */
 async function refreshHint(signal: AbortSignal): Promise<void> {

@@ -10,20 +10,20 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // steerRows returns the chat's persisted steer rows, in file order.
-func steerRows(t *testing.T, store *testsupport.InMemoryChatStore, chatID vibekit.ChatID) []vibekit.Message {
+func steerRows(t *testing.T, store *testsupport.InMemoryChatStore, chatID marotte.ChatID) []marotte.Message {
 	t.Helper()
 	c, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		t.Fatalf("chat %q not in the store", chatID)
 	}
-	var out []vibekit.Message
+	var out []marotte.Message
 	for i := range c.Messages {
-		if c.Messages[i].UserKind == vibekit.UserKindSteer {
+		if c.Messages[i].UserKind == marotte.UserKindSteer {
 			out = append(out, c.Messages[i])
 		}
 	}
@@ -51,17 +51,17 @@ func TestSteeringInjected_PersistsAReadSteerRow(t *testing.T) {
 	if row.ID != "steer-1" {
 		t.Errorf("ID = %q, want the steer id", row.ID)
 	}
-	if row.Role != vibekit.RoleUser {
-		t.Errorf("Role = %q, want %q", row.Role, vibekit.RoleUser)
+	if row.Role != marotte.RoleUser {
+		t.Errorf("Role = %q, want %q", row.Role, marotte.RoleUser)
 	}
 	if row.Content != "use tabs" {
 		t.Errorf("Content = %q, want the steer's text", row.Content)
 	}
-	if row.SteerState != vibekit.SteerStateRead {
-		t.Errorf("SteerState = %q, want %q", row.SteerState, vibekit.SteerStateRead)
+	if row.SteerState != marotte.SteerStateRead {
+		t.Errorf("SteerState = %q, want %q", row.SteerState, marotte.SteerStateRead)
 	}
-	if row.SteerOrigin != vibekit.SteerOriginUser {
-		t.Errorf("SteerOrigin = %q, want %q", row.SteerOrigin, vibekit.SteerOriginUser)
+	if row.SteerOrigin != marotte.SteerOriginUser {
+		t.Errorf("SteerOrigin = %q, want %q", row.SteerOrigin, marotte.SteerOriginUser)
 	}
 	if row.TurnOutcome != "" {
 		t.Errorf("TurnOutcome = %q, want empty — a steer row must not close a turn", row.TurnOutcome)
@@ -95,8 +95,8 @@ func TestSteeringCleared_PersistsAnUndeliveredSteerRow(t *testing.T) {
 	if rows[0].Content != "use tabs" {
 		t.Errorf("Content = %q, want the steer's text", rows[0].Content)
 	}
-	if rows[0].SteerState != vibekit.SteerStateDropped {
-		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, vibekit.SteerStateDropped)
+	if rows[0].SteerState != marotte.SteerStateDropped {
+		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, marotte.SteerStateDropped)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("persisted %d steer rows, want 1 — the clear is housekeeping", len(rows))
 	}
-	if rows[0].SteerState != vibekit.SteerStateRead {
-		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, vibekit.SteerStateRead)
+	if rows[0].SteerState != marotte.SteerStateRead {
+		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, marotte.SteerStateRead)
 	}
 }
 
@@ -158,12 +158,12 @@ func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("persisted %d steer rows, want 1", len(rows))
 	}
-	if rows[0].SteerOrigin != vibekit.SteerOriginUser {
+	if rows[0].SteerOrigin != marotte.SteerOriginUser {
 		t.Errorf("SteerOrigin = %q, want %q — a %q id is one this server sent",
-			rows[0].SteerOrigin, vibekit.SteerOriginUser, vibekit.SteerIDPrefix)
+			rows[0].SteerOrigin, marotte.SteerOriginUser, marotte.SteerIDPrefix)
 	}
-	if rows[0].SteerState != vibekit.SteerStateDropped {
-		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, vibekit.SteerStateDropped)
+	if rows[0].SteerState != marotte.SteerStateDropped {
+		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, marotte.SteerStateDropped)
 	}
 }
 
@@ -184,8 +184,8 @@ func TestSteeringInjected_PersistsTheAgentOrigin(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("persisted %d steer rows, want 1", len(rows))
 	}
-	if rows[0].SteerOrigin != vibekit.SteerOriginAgent {
-		t.Errorf("SteerOrigin = %q, want %q", rows[0].SteerOrigin, vibekit.SteerOriginAgent)
+	if rows[0].SteerOrigin != marotte.SteerOriginAgent {
+		t.Errorf("SteerOrigin = %q, want %q", rows[0].SteerOrigin, marotte.SteerOriginAgent)
 	}
 }
 

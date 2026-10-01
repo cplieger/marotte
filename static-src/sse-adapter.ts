@@ -1,5 +1,5 @@
 // The server→client half of the transport: `@cplieger/sse`'s client wrapped
-// around vibekit's bus. The library owns the connection (resume cursor, backoff, the
+// around marotte's bus. The library owns the connection (resume cursor, backoff, the
 // silence watchdog, the hidden-tab close, hold-and-drain around a wake); this module
 // owns the envelope decode into the bus, the digest subjects' version map, the
 // `revalidate` body that turns a digest answer into refetches, and the boot hydration

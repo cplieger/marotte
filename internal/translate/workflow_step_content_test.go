@@ -10,7 +10,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // stepFrame builds a run bridge's `session/update` params for one step frame.
@@ -34,18 +34,18 @@ func stepFrame(kind, workflowID string, nodePath []string, update map[string]any
 }
 
 // runSteps decodes every run_step payload out of a captured event slice.
-func runSteps(t *testing.T, events []vibekit.ServerEvent) []vibekit.RunStepPayload {
+func runSteps(t *testing.T, events []marotte.ServerEvent) []marotte.RunStepPayload {
 	t.Helper()
-	var out []vibekit.RunStepPayload
+	var out []marotte.RunStepPayload
 	for _, evt := range events {
-		if evt.Type != vibekit.EventRunStep {
+		if evt.Type != marotte.EventRunStep {
 			continue
 		}
 		raw, err := json.Marshal(evt.Payload)
 		if err != nil {
 			t.Fatalf("Setup: re-marshalling a run_step payload: %s", err)
 		}
-		var p vibekit.RunStepPayload
+		var p marotte.RunStepPayload
 		if err := json.Unmarshal(raw, &p); err != nil {
 			t.Fatalf("Setup: decoding a run_step payload: %s", err)
 		}
@@ -60,7 +60,7 @@ func runSteps(t *testing.T, events []vibekit.ServerEvent) []vibekit.RunStepPaylo
 // and two passes of a loop body would stream into each other's rows.
 func TestHandleRunStepFrame_ForwardsContent(t *testing.T) {
 	t.Parallel()
-	var events []vibekit.ServerEvent
+	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
 	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("agent_message_chunk", "wf_1",
@@ -76,10 +76,10 @@ func TestHandleRunStepFrame_ForwardsContent(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("HandleRunStepFrame produced %d run_step events, want 2", len(got))
 	}
-	if got[0].Kind != vibekit.RunStepText || got[0].Delta != "all green" {
+	if got[0].Kind != marotte.RunStepText || got[0].Delta != "all green" {
 		t.Errorf("first frame = (%q, %q), want (text, %q)", got[0].Kind, got[0].Delta, "all green")
 	}
-	if got[1].Kind != vibekit.RunStepThinking || got[1].Delta != "let me check" {
+	if got[1].Kind != marotte.RunStepThinking || got[1].Delta != "let me check" {
 		t.Errorf("second frame = (%q, %q), want (thinking, %q)", got[1].Kind, got[1].Delta, "let me check")
 	}
 	for i, p := range got {
@@ -101,7 +101,7 @@ func TestHandleRunStepFrame_ForwardsContent(t *testing.T) {
 // right.
 func TestHandleRunStepFrame_FoldsAToolUpdate(t *testing.T) {
 	t.Parallel()
-	var events []vibekit.ServerEvent
+	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
 	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
@@ -134,10 +134,10 @@ func TestHandleRunStepFrame_FoldsAToolUpdate(t *testing.T) {
 	if final.Title != "Run ci-local.sh" {
 		t.Errorf("title = %q, want it kept from the create", final.Title)
 	}
-	if final.Kind != vibekit.ToolKind("execute") {
+	if final.Kind != marotte.ToolKind("execute") {
 		t.Errorf("kind = %q, want it kept from the create", final.Kind)
 	}
-	if final.Status != vibekit.ToolCompleted {
+	if final.Status != marotte.ToolCompleted {
 		t.Errorf("status = %q, want completed", final.Status)
 	}
 	// The trailing newline is `sanitize.Output`'s, which is the point: the output
@@ -161,7 +161,7 @@ func TestHandleRunStepFrame_FoldsStringifiedObjectToItsMessage(t *testing.T) {
 		"message": message,
 		"state":   "running",
 	}
-	var events []vibekit.ServerEvent
+	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
 	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
@@ -270,7 +270,7 @@ func TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards(t *testing.T) {
 // card that says nothing about what ran.
 func TestHandleRunStepFrame_DropsAnOrphanUpdate(t *testing.T) {
 	t.Parallel()
-	var events []vibekit.ServerEvent
+	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
 	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call_update", "wf_1",
@@ -290,7 +290,7 @@ func TestHandleRunStepFrame_DropsAnOrphanUpdate(t *testing.T) {
 // there for the same reason and is fixed by the same fold.
 func TestApplyRunToolUpdate_FailedTakesReason(t *testing.T) {
 	t.Parallel()
-	var events []vibekit.ServerEvent
+	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
 	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
@@ -318,7 +318,7 @@ func TestApplyRunToolUpdate_FailedTakesReason(t *testing.T) {
 	if final == nil {
 		t.Fatal("the update carried no tool call")
 	}
-	if final.Status != vibekit.ToolFailed {
+	if final.Status != marotte.ToolFailed {
 		t.Fatalf("status = %q, want failed", final.Status)
 	}
 	if final.Output != "lock is held by another process" {
@@ -345,7 +345,7 @@ func TestApplyRunToolUpdate_RefusedUpdateReadsAsDeclined(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			var events []vibekit.ServerEvent
+			var events []marotte.ServerEvent
 			tr := New(rolesOf(capturing(&events)))
 
 			tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
@@ -374,9 +374,9 @@ func TestApplyRunToolUpdate_RefusedUpdateReadsAsDeclined(t *testing.T) {
 				t.Errorf("ToolCall.Declined from rawOutput %v = %v, want %v",
 					c.raw, final.Declined, c.wantDeclined)
 			}
-			if final.Status != vibekit.ToolCompleted {
+			if final.Status != marotte.ToolCompleted {
 				t.Errorf("status = %q, want %q (a refusal is still a completion)",
-					final.Status, vibekit.ToolCompleted)
+					final.Status, marotte.ToolCompleted)
 			}
 		})
 	}
@@ -388,7 +388,7 @@ func TestApplyRunToolUpdate_RefusedUpdateReadsAsDeclined(t *testing.T) {
 // session map, rather than holding them for the life of the process.
 func TestHandleRunStepFrame_ForgetsAFinishedRunsTools(t *testing.T) {
 	t.Parallel()
-	var events []vibekit.ServerEvent
+	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
 	tr.HandleRunStepFrame(t.Context(), "wf_1", stepFrame("tool_call", "wf_1",
@@ -442,7 +442,7 @@ func TestHandleRunStepFrame_DropsUnaddressableAndReplayedFrames(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var events []vibekit.ServerEvent
+			var events []marotte.ServerEvent
 			tr := New(rolesOf(capturing(&events)))
 			tr.HandleRunStepFrame(t.Context(), "wf_1", tc.params)
 			if got := runSteps(t, events); len(got) != 0 {
@@ -458,7 +458,7 @@ func TestHandleRunStepFrame_DropsUnaddressableAndReplayedFrames(t *testing.T) {
 // run has no card to reach.
 func TestHandleRunStepFrame_RefusesAnUnidentifiedRun(t *testing.T) {
 	t.Parallel()
-	var events []vibekit.ServerEvent
+	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
 
 	tr.HandleRunStepFrame(t.Context(), "", stepFrame("agent_message_chunk", "wf_1",

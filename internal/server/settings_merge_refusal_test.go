@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead is the claim that a

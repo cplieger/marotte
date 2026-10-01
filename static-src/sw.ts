@@ -33,7 +33,7 @@ const sw = self as unknown as ServiceWorkerGlobalScope;
  *  network), therefore the current chunk names. `syncPrecache` runs off every
  *  navigation rather than off `install`, because a deploy that leaves sw.js
  *  byte-identical fires no `install` at all. */
-const SHELL_CACHE = "vibekit-shell";
+const SHELL_CACHE = "marotte-shell";
 
 /** Where the build's asset list lives (cmd/bundle writes it). */
 const PRECACHE_URL = "/precache.json";
@@ -126,7 +126,7 @@ sw.addEventListener("activate", ((event: ExtendableEvent) => {
       // Any cache from an earlier naming scheme. Nothing else in this origin's
       // storage is this worker's.
       for (const name of await caches.keys()) {
-        if (name !== SHELL_CACHE && name.startsWith("vibekit-")) {
+        if (name !== SHELL_CACHE && name.startsWith("marotte-")) {
           await caches.delete(name);
         }
       }
@@ -174,8 +174,8 @@ sw.addEventListener("fetch", ((event: FetchEvent) => {
   );
 }) as EventListener);
 
-/** The push payload vibekit's server sends (internal/push/send.go pushPayload,
- *  whose subject fields come from vibekit.PushSubject).
+/** The push payload marotte's server sends (internal/push/send.go pushPayload,
+ *  whose subject fields come from marotte.PushSubject).
  *
  *  EXACTLY ONE of the two subject fields is set, and both may be absent for a
  *  workspace-global notification. `chat_id` names the chat a notification belongs
@@ -241,9 +241,9 @@ sw.addEventListener("push", ((event: PushEvent) => {
   try {
     data = event.data.json() as PushData;
   } catch {
-    data = { title: "Vibekit", body: event.data.text() };
+    data = { title: "Marotte", body: event.data.text() };
   }
-  const title = data.title ?? "Vibekit";
+  const title = data.title ?? "Marotte";
   const body = data.body ?? "";
   const chatID = data.chat_id ?? "";
   const subject = data.subject ?? "";
@@ -302,7 +302,7 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
   event.waitUntil(
     (async () => {
       // Focus an existing page and hand it the target, rather than matching on
-      // exact URL equality. vibekit is a single page with a router, so a client
+      // exact URL equality. marotte is a single page with a router, so a client
       // sitting on /settings does not equal /chat/<id> and the documented
       // exact-match pattern would open a SECOND window of the same app. Posting
       // the id also beats WindowClient.navigate(), which is only legal for

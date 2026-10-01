@@ -1,6 +1,6 @@
 # web/static-src
 
-TypeScript source for the Vibekit web UI. Compiled to static assets
+TypeScript source for the Marotte web UI. Compiled to static assets
 served by the Go backend.
 
 ## Structure

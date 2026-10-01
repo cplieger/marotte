@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/logsafe"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 // cloneCeiling bounds the WHOLE clone operation, stall detection included:

@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // seedChat writes one chat file into a store's dir.
-func seedChat(t *testing.T, s *Store, id, name string, msgs []vibekit.Message) {
+func seedChat(t *testing.T, s *Store, id, name string, msgs []marotte.Message) {
 	t.Helper()
 	ctx := t.Context()
-	if _, err := s.Mutate(ctx, vibekit.ChatID(id), func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(ctx, marotte.ChatID(id), func(c *marotte.Chat, _ bool) bool {
 		c.Name = name
 		c.Messages = msgs
 		return true
@@ -80,11 +80,11 @@ func TestTitleHits_IgnoresFilterOnlyQueries(t *testing.T) {
 
 func TestSearchAll(t *testing.T) {
 	s, _ := newTestStore(t)
-	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []vibekit.Message{
-		msg("m1", vibekit.RoleUser, "we moved the cache to redis today"),
+	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []marotte.Message{
+		msg("m1", marotte.RoleUser, "we moved the cache to redis today"),
 	})
-	seedChat(t, s, "c-bbbbbbbb", "Grocery list", []vibekit.Message{
-		msg("m2", vibekit.RoleUser, "nothing relevant here at all"),
+	seedChat(t, s, "c-bbbbbbbb", "Grocery list", []marotte.Message{
+		msg("m2", marotte.RoleUser, "nothing relevant here at all"),
 	})
 	ctx := t.Context()
 
@@ -125,9 +125,9 @@ func TestSearchAll(t *testing.T) {
 func TestSearchAll_HitsCountEveryOccurrencePastTheHitCap(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedMentions := func(id string, n int) {
-		msgs := make([]vibekit.Message, 0, n)
+		msgs := make([]marotte.Message, 0, n)
 		for i := range n {
-			msgs = append(msgs, msg(fmt.Sprintf("%s-%03d", id, i), vibekit.RoleUser, "needle here"))
+			msgs = append(msgs, msg(fmt.Sprintf("%s-%03d", id, i), marotte.RoleUser, "needle here"))
 		}
 		seedChat(t, s, id, "seeded", msgs)
 	}
@@ -164,25 +164,25 @@ func TestSearchAll_RankingDenominatorCoversEverySearchedSpan(t *testing.T) {
 	s, _ := newTestStore(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	prose := "we moved the cache to redis"
-	verbose := &vibekit.Chat{
+	verbose := &marotte.Chat{
 		ID:        "c-aaaaaaaa",
 		Name:      "Verbose",
 		UpdatedAt: base.Add(time.Hour).UnixMilli(),
-		Messages: []vibekit.Message{{
-			ID: "a1", Role: vibekit.RoleAssistant, Content: prose,
-			Blocks: []vibekit.Block{
-				{Type: vibekit.BlockThinking, Thinking: strings.Repeat("weighing the options. ", 2000)},
-				{Type: vibekit.BlockText, Text: prose},
+		Messages: []marotte.Message{{
+			ID: "a1", Role: marotte.RoleAssistant, Content: prose,
+			Blocks: []marotte.Block{
+				{Type: marotte.BlockThinking, Thinking: strings.Repeat("weighing the options. ", 2000)},
+				{Type: marotte.BlockText, Text: prose},
 			},
 		}},
 	}
-	terse := &vibekit.Chat{
+	terse := &marotte.Chat{
 		ID:        "c-bbbbbbbb",
 		Name:      "Terse",
 		UpdatedAt: base.UnixMilli(),
-		Messages: []vibekit.Message{{
-			ID: "b1", Role: vibekit.RoleAssistant, Content: prose,
-			Blocks: []vibekit.Block{{Type: vibekit.BlockText, Text: prose}},
+		Messages: []marotte.Message{{
+			ID: "b1", Role: marotte.RoleAssistant, Content: prose,
+			Blocks: []marotte.Block{{Type: marotte.BlockText, Text: prose}},
 		}},
 	}
 	seedChatFile(t, s, verbose, base.Add(time.Hour))
@@ -230,11 +230,11 @@ func TestSearchAll_AnUnreadChatIsNotScanned(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newCappedTestStore(t, capBytes)
-			seedChat(t, s, "c-aaaaaaaa", "Redis migration", []vibekit.Message{
-				msg("m1", vibekit.RoleUser, "we moved the cache to redis today"),
+			seedChat(t, s, "c-aaaaaaaa", "Redis migration", []marotte.Message{
+				msg("m1", marotte.RoleUser, "we moved the cache to redis today"),
 			})
-			seedChat(t, s, "c-bbbbbbbb", "Grocery list", []vibekit.Message{
-				msg("m2", vibekit.RoleUser, "nothing relevant here at all"),
+			seedChat(t, s, "c-bbbbbbbb", "Grocery list", []marotte.Message{
+				msg("m2", marotte.RoleUser, "nothing relevant here at all"),
 			})
 			tc.plant(t, filepath.Join(s.dir, "c-cccccccc"+chatFileSuffix))
 
@@ -258,8 +258,8 @@ func TestSearchAll_AnUnreadChatIsNotScanned(t *testing.T) {
 // segment kind of "" on the wire, which the generated decoder refuses.
 func TestSearchAll_TitleOnlyMatchCarriesNoBestHit(t *testing.T) {
 	s, _ := newTestStore(t)
-	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []vibekit.Message{
-		msg("m1", vibekit.RoleUser, "we moved the cache today"),
+	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []marotte.Message{
+		msg("m1", marotte.RoleUser, "we moved the cache today"),
 	})
 
 	got := s.SearchAll(t.Context(), "redis")
@@ -323,8 +323,8 @@ func TestSearchAll_MatchedCountsPastTheResultCap(t *testing.T) {
 func TestSearchAll_CancelledCollectionIsNotAnEmptyAnswer(t *testing.T) {
 	s, _ := newTestStore(t)
 	for _, id := range []string{"c-aaaaaaaa", "c-bbbbbbbb", "c-cccccccc"} {
-		seedChat(t, s, id, "Redis migration", []vibekit.Message{
-			msg("m1", vibekit.RoleUser, "we moved the cache to redis today"),
+		seedChat(t, s, id, "Redis migration", []marotte.Message{
+			msg("m1", marotte.RoleUser, "we moved the cache to redis today"),
 		})
 	}
 
@@ -352,8 +352,8 @@ func TestSearchAll_CancelledCollectionIsNotAnEmptyAnswer(t *testing.T) {
 // under any uid: a permission refusal would not reproduce as root.
 func TestSearchAll_UnlistableDirIsNotAnEmptyAnswer(t *testing.T) {
 	s, _ := newTestStore(t)
-	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []vibekit.Message{
-		msg("m1", vibekit.RoleUser, "we moved the cache to redis today"),
+	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []marotte.Message{
+		msg("m1", marotte.RoleUser, "we moved the cache to redis today"),
 	})
 	notADir := filepath.Join(t.TempDir(), "chats")
 	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
@@ -375,7 +375,7 @@ func TestSearchAll_UnlistableDirIsNotAnEmptyAnswer(t *testing.T) {
 // TestSearchAll_EmptyQuery must not fan out over every chat for nothing.
 func TestSearchAll_EmptyQuery(t *testing.T) {
 	s, _ := newTestStore(t)
-	seedChat(t, s, "c-aaaaaaaa", "Redis", []vibekit.Message{msg("m1", vibekit.RoleUser, "redis")})
+	seedChat(t, s, "c-aaaaaaaa", "Redis", []marotte.Message{msg("m1", marotte.RoleUser, "redis")})
 	for _, q := range []string{"", "   "} {
 		got := s.SearchAll(t.Context(), q)
 		if len(got.Matches) != 0 {
@@ -395,13 +395,13 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 	// calibrated in KiB: at a few hundred characters it barely discounts, and
 	// twenty mentions in a tiny document legitimately IS a strong signal.
 	padding := strings.Repeat("context and discussion that surrounds the mention. ", 40)
-	many := make([]vibekit.Message, 0, 20)
+	many := make([]marotte.Message, 0, 20)
 	for i := range 20 {
-		many = append(many, msg(string(rune('a'+i)), vibekit.RoleUser,
+		many = append(many, msg(string(rune('a'+i)), marotte.RoleUser,
 			"some long passage mentioning redis in passing. "+padding))
 	}
 	seedChat(t, s, "c-bbbbbbbb", "Assorted debugging", many)
-	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []vibekit.Message{msg("m1", vibekit.RoleUser, "moved the cache")})
+	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []marotte.Message{msg("m1", marotte.RoleUser, "moved the cache")})
 
 	got := s.SearchAll(t.Context(), "redis")
 	if len(got.Matches) < 2 {
@@ -446,11 +446,11 @@ func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 			// One chat matches only in its TITLE (the titleHits half), the other
 			// only in its BODY (the Search half), and both are spelled in a
 			// case the queries above disagree with.
-			seedChat(t, s, "c-aaaaaaaa", "REDIS migration", []vibekit.Message{
-				msg("m1", vibekit.RoleUser, "moved the cache over"),
+			seedChat(t, s, "c-aaaaaaaa", "REDIS migration", []marotte.Message{
+				msg("m1", marotte.RoleUser, "moved the cache over"),
 			})
-			seedChat(t, s, "c-bbbbbbbb", "Assorted notes", []vibekit.Message{
-				msg("m2", vibekit.RoleUser, "we touched Redis in passing"),
+			seedChat(t, s, "c-bbbbbbbb", "Assorted notes", []marotte.Message{
+				msg("m2", marotte.RoleUser, "we touched Redis in passing"),
 			})
 
 			got := s.SearchAll(t.Context(), tc.query)
@@ -558,15 +558,15 @@ func TestBestHit_PicksTheEarliestTurnAndKeepsTheFirstOfATie(t *testing.T) {
 // seeding loop over hundreds of chats costs a file write each and no broadcast.
 func seedChatFileAt(t *testing.T, s *Store, id, body string, mtime time.Time) {
 	t.Helper()
-	seedChatFile(t, s, &vibekit.Chat{
+	seedChatFile(t, s, &marotte.Chat{
 		ID:       id,
 		Name:     "seeded",
-		Messages: []vibekit.Message{{ID: "m1", Role: vibekit.RoleUser, Content: body}},
+		Messages: []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: body}},
 	}, mtime)
 }
 
 // seedChatFile writes one chat record verbatim, stamped with a chosen mtime.
-func seedChatFile(t *testing.T, s *Store, c *vibekit.Chat, mtime time.Time) {
+func seedChatFile(t *testing.T, s *Store, c *marotte.Chat, mtime time.Time) {
 	t.Helper()
 	data, err := json.Marshal(c)
 	if err != nil {

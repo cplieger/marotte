@@ -1,4 +1,4 @@
-// EVERY BOX SEAM IN A TRANSCRIPT, under the one rule vibekit-ui.md "Seams" states:
+// EVERY BOX SEAM IN A TRANSCRIPT, under the one rule marotte-ui.md "Seams" states:
 // a seam is marked by a FILL step or by a 1px rule, never both.
 //
 //   - a step (a band over the body, a well below a header) → no rule

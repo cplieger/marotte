@@ -70,7 +70,7 @@ func (c chatFileCap) readBound(size int64) int64 {
 //
 // HOST RAM IS NOT READ. It is shared with every other container and is not this
 // process's to claim, so the only honest signal is the limit the operator set
-// on this cgroup. No limit means no cap: vibekit does not invent a bound the
+// on this cgroup. No limit means no cap: marotte does not invent a bound the
 // operator declined to set, and a refused write loses a turn (writeChat).
 func resolveChatFileCap() chatFileCap {
 	limit, signal := readMemLimit()

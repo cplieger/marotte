@@ -1,7 +1,7 @@
 package agent
 
 // The run surface: the two reads, and the routes that forward to KAS's own control verbs.
-// vibekit adds no control of its own. The RUN read passes `state` and `nodePlan` through
+// marotte adds no control of its own. The RUN read passes `state` and `nodePlan` through
 // VERBATIM, rather than hold a second representation of a structure it does not own.
 
 // The STEP read is what passthrough cannot answer, since `inspect` carries only what a
@@ -16,12 +16,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/rpcerr"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/rpcerr"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -50,10 +50,10 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 		}
 		// A 404 here is a SETTLED answer about the run, and the client spends it as one:
 		// it stops re-reading. So a read that never REACHED the engine may not land in
-		// that arm, and only an *vibekit.RPCError is the engine answering — a bridge that
+		// that arm, and only an *marotte.RPCError is the engine answering — a bridge that
 		// would not start, a deadline and a dead read loop each say nothing about whether
 		// the run exists, so each is worth another read.
-		if _, answered := errors.AsType[*vibekit.RPCError](err); !answered {
+		if _, answered := errors.AsType[*marotte.RPCError](err); !answered {
 			slog.Warn("workflow inspect did not reach the engine", "workflow_id", logsafe.Field(id),
 				"error", err, "detail", rpcerr.Details(err))
 			webhttp.WriteJSONStatus(w, http.StatusBadGateway,
@@ -87,13 +87,13 @@ func (rr *runRoutes) handleRun(w http.ResponseWriter, r *http.Request) {
 // key KAS adds later survives, and every nested value stays byte-identical. A nil slice
 // is substituted so the key serialises as [] and never null — an agent reading `null`
 // cannot tell "no open ask" from "this build does not report them".
-func withOpenAsks(raw json.RawMessage, asks []vibekit.RunOpenAsk) (json.RawMessage, error) {
+func withOpenAsks(raw json.RawMessage, asks []marotte.RunOpenAsk) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, err
 	}
 	if asks == nil {
-		asks = []vibekit.RunOpenAsk{}
+		asks = []marotte.RunOpenAsk{}
 	}
 	encoded, err := json.Marshal(asks)
 	if err != nil {
@@ -144,7 +144,7 @@ func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request
 }
 
 // handleLiveRuns: GET /api/runs/live → every live lease as `{workflow_id, chat_id,
-// executing}`. PRESENCE-based over vibekit-local state, so it costs no KAS call: a real
+// executing}`. PRESENCE-based over marotte-local state, so it costs no KAS call: a real
 // status would mean one `inspect` per lease behind a page load. Staleness errs to KEEPING.
 func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -153,31 +153,31 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, stamp := rr.runs.liveRunRowsStamped()
 	stamp.Epoch = rr.epoch()
-	webhttp.WriteJSON(w, vibekit.LiveRunsResponse{Runs: rows, Subject: stamp})
+	webhttp.WriteJSON(w, marotte.LiveRunsResponse{Runs: rows, Subject: stamp})
 }
 
 // liveRunRows projects every held lease. ONE projection with TWO doors — this route and
 // the SSE connect handshake — enforced by a shared function rather than a shared type, so
 // the two answers cannot disagree about what a live run IS. Cannot fail: Store.List
 // returns a clone under its own lock.
-func (rs *Runs) liveRunRows() []vibekit.LiveRun {
+func (rs *Runs) liveRunRows() []marotte.LiveRun {
 	rows, _ := rs.liveRunRowsStamped()
 	return rows
 }
 
 // liveRunRowsStamped is liveRunRows with the `runs` stamp, the lease store's own
 // collection version paired with the set under the store's lock.
-func (rs *Runs) liveRunRowsStamped() ([]vibekit.LiveRun, *vibekit.SubjectStamp) {
+func (rs *Runs) liveRunRowsStamped() ([]marotte.LiveRun, *marotte.SubjectStamp) {
 	held, version := rs.leaseStore().ListStamped()
-	out := make([]vibekit.LiveRun, 0, len(held))
+	out := make([]marotte.LiveRun, 0, len(held))
 	for i := range held {
-		out = append(out, vibekit.LiveRun{
+		out = append(out, marotte.LiveRun{
 			WorkflowID: held[i].WorkflowID,
 			ChatID:     held[i].ChatID,
 			Executing:  held[i].Bounded(),
 		})
 	}
-	return out, vibekit.NewSubjectStamp(string(subject.KindRuns), "", version)
+	return out, marotte.NewSubjectStamp(string(subject.KindRuns), "", version)
 }
 
 // status reads one run's current status, or "" when the run is unknown, which the caller
@@ -214,7 +214,7 @@ func (rr *runRoutes) handleRecipes(w http.ResponseWriter, r *http.Request) {
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
-	webhttp.WriteJSON(w, vibekit.RecipesResponse{Recipes: recipes})
+	webhttp.WriteJSON(w, marotte.RecipesResponse{Recipes: recipes})
 }
 
 // handleLaunch: POST /api/runs → launch one PARENTLESS run. 409 when the recipe already
@@ -224,7 +224,7 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	var req vibekit.RunLaunchRequest
+	var req marotte.RunLaunchRequest
 	if !httpreply.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -240,7 +240,7 @@ func (rr *runRoutes) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, rpcerr.Text(err))
 		return
 	}
-	webhttp.WriteJSON(w, vibekit.RunLaunchedResponse{WorkflowID: id, Name: name})
+	webhttp.WriteJSON(w, marotte.RunLaunchedResponse{WorkflowID: id, Name: name})
 }
 
 // handleCancel: POST /api/runs/{id}/cancel → ask the run to stop. The response confirms
@@ -250,7 +250,7 @@ func (rr *runRoutes) handleCancel(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleControls: GET /api/runs/{id}/controls → what may be done to this run, and
-// one sentence per verb it refuses. See vibekit.RunControlsResponse for why the
+// one sentence per verb it refuses. See marotte.RunControlsResponse for why the
 // server owns the answer.
 //
 // Its own route rather than a field on the passthrough above, which must stay a
@@ -278,7 +278,7 @@ func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aff := rr.runs.affordance(r.Context(), id, status)
-	webhttp.WriteJSON(w, vibekit.RunControlsResponse{
+	webhttp.WriteJSON(w, marotte.RunControlsResponse{
 		Verbs:        aff.Verbs,
 		Refused:      aff.Refused,
 		ParentChatID: string(aff.ParentChat),
@@ -324,7 +324,7 @@ func (rr *runRoutes) handleRetry(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, out)
 }
 
-// handleDelete: DELETE /api/runs/{id} — removes the run from KAS and drops vibekit's
+// handleDelete: DELETE /api/runs/{id} — removes the run from KAS and drops marotte's
 // lease, timer and recorded end reason. Not recoverable, so the client confirms first.
 func (rr *runRoutes) handleDelete(w http.ResponseWriter, r *http.Request) {
 	rr.controlHandler(w, r, runVerbDelete)
@@ -380,7 +380,7 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	var body vibekit.RunAnswerRequest
+	var body marotte.RunAnswerRequest
 	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
@@ -416,7 +416,7 @@ type runVerb struct {
 	// method is EXPLICIT on every verb, or the one DELETE would be the only stated method.
 	method string
 	// from lists the statuses the verb is legal from. Empty means unrestricted.
-	from []vibekit.RunStatus
+	from []marotte.RunStatus
 }
 
 var (
@@ -431,13 +431,13 @@ var (
 		name:   verbPause,
 		issue:  (*Runs).Pause,
 		method: http.MethodPost,
-		from:   []vibekit.RunStatus{vibekit.RunStatusRunning},
+		from:   []marotte.RunStatus{marotte.RunStatusRunning},
 	}
 	runVerbResume = runVerb{
 		name:   verbResume,
 		issue:  (*Runs).Resume,
 		method: http.MethodPost,
-		from:   []vibekit.RunStatus{vibekit.RunStatusPaused},
+		from:   []marotte.RunStatus{marotte.RunStatusPaused},
 	}
 	// Delete is unrestricted like cancel, plus it is the only way a row leaves History.
 	runVerbDelete = runVerb{
@@ -521,7 +521,7 @@ func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err
 // on this side. Matched at any wrapping depth, because the verb helpers wrap with
 // fmt.Errorf on the way up.
 func isRPCRefusal(err error) bool {
-	_, ok := errors.AsType[*vibekit.RPCError](err)
+	_, ok := errors.AsType[*marotte.RPCError](err)
 	return ok
 }
 
@@ -547,7 +547,7 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 			httpreply.NotFound(w, "run not found")
 			return
 		}
-		if !slices.Contains(verb.from, vibekit.RunStatus(status)) {
+		if !slices.Contains(verb.from, marotte.RunStatus(status)) {
 			httpreply.Conflict(w, verb.name+" is not available for a "+status+" run")
 			return
 		}

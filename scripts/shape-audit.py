@@ -91,7 +91,7 @@ RECEIVER = {
 # internal/hub, and every "hub" in it is the shared cplieger/sse library's type —
 # 28 findings, none of them real, the first time the rules were pointed at it.
 STALE_BY_MODULE = {
-    "github.com/cplieger/vibekit": {
+    "github.com/cplieger/marotte": {
         "hub": "internal/hub became internal/agent; Hub became Runtime",
         "Plane": "the plane suffix described the structure of the code, not the problem",
     },

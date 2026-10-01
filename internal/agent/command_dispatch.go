@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // registerCommandHandlers populates the dispatcher with the dispatch table.
@@ -24,7 +24,7 @@ func (rt *Runtime) registerCommandHandlers() {
 			// upload target sits beside the workspace rather than inside it, so
 			// attachment confinement needs it as a second root or every composer
 			// drop degrades to a text block naming the filename.
-			UploadsDir: vibekit.DefaultUploadDir,
+			UploadsDir: marotte.DefaultUploadDir,
 		},
 		Lifecycle:     rt.lifecycle,
 		MCP:           rt.mcpRegistry,
@@ -34,7 +34,7 @@ func (rt *Runtime) registerCommandHandlers() {
 		AuthReadiness: rt.authReadiness,
 	})
 
-	rt.dispatcher.Register(vibekit.CmdSwitchModel, rt.cmdSwitchModel)
+	rt.dispatcher.Register(marotte.CmdSwitchModel, rt.cmdSwitchModel)
 }
 
 func tabSetOrNil(st *tabs.Store) command.TabSet {

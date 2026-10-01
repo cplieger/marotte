@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // focusFrame builds a session_info_update raw payload carrying a
@@ -25,14 +25,14 @@ func focusFrame(t *testing.T, focus map[string]any) []byte {
 
 // chatStatusPayloads filters the captured events down to chat_status
 // payloads.
-func chatStatusPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.ChatStatusPayload {
+func chatStatusPayloads(t *testing.T, events *[]marotte.ServerEvent) []marotte.ChatStatusPayload {
 	t.Helper()
-	var out []vibekit.ChatStatusPayload
+	var out []marotte.ChatStatusPayload
 	for _, e := range *events {
-		if e.Type != vibekit.EventChatStatus {
+		if e.Type != marotte.EventChatStatus {
 			continue
 		}
-		p, ok := e.Payload.(vibekit.ChatStatusPayload)
+		p, ok := e.Payload.(marotte.ChatStatusPayload)
 		if !ok {
 			t.Fatalf("chat_status payload type = %T", e.Payload)
 		}
@@ -110,14 +110,14 @@ func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
 // are verbatim rather than computed, so the case pins what the wire actually
 // carried instead of re-deriving it from the code under test.
 const (
-	safariPrompt = "safari on Mac throws this console error for vibekit: " +
+	safariPrompt = "safari on Mac throws this console error for marotte: " +
 		"[Error] ResizeObserver loop completed\u2026"
-	safariDerivedTitle = "Safari on Mac throws this console error for vibekit: " +
+	safariDerivedTitle = "Safari on Mac throws this console error for marotte: " +
 		"[Error] ResizeObserver l..."
 )
 
 // KAS's first-prompt derivation (SV / deriveSessionTitle, emitted title-only) must
-// not clobber the chat name: vibekit's own label is better and the name only moves UP
+// not clobber the chat name: marotte's own label is better and the name only moves UP
 // the precedence, so a derivation landing first locks the agent's real title out.
 //
 // The first two cases are byte-exact from the live volume and a byte-exact filter
@@ -148,8 +148,8 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
-					c.Messages = append(c.Messages, vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: tc.userMsg})
+				if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+					c.Messages = append(c.Messages, marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: tc.userMsg})
 					return true
 				}); err != nil {
 					t.Fatal(err)
@@ -177,9 +177,9 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 // derivation can produce — an agent that echoes the prompt exactly is authoring a
 // (bad) title, and this filter's job is only to recognise KAS's own output.
 func TestTitleIsPromptDerived(t *testing.T) {
-	chat := &vibekit.Chat{Messages: []vibekit.Message{
-		{Role: vibekit.RoleUser, Content: "  padded prompt text  "},
-		{Role: vibekit.RoleAssistant, Content: "assistant text"},
+	chat := &marotte.Chat{Messages: []marotte.Message{
+		{Role: marotte.RoleUser, Content: "  padded prompt text  "},
+		{Role: marotte.RoleAssistant, Content: "assistant text"},
 	}}
 	cases := []struct {
 		name  string
@@ -283,7 +283,7 @@ func TestKASDerivedTitle_MirrorsUpstream(t *testing.T) {
 			// would only be a second place for the two halves to disagree.
 			name: "an_over_long_derivation_is_NOT_truncated_here",
 			in:   safariPrompt,
-			want: "Safari on Mac throws this console error for vibekit: " +
+			want: "Safari on Mac throws this console error for marotte: " +
 				"[Error] ResizeObserver loop completed\u2026",
 		},
 		{name: "an_empty_prompt_derives_nothing", in: "   ", want: ""},
@@ -299,15 +299,15 @@ func TestKASDerivedTitle_MirrorsUpstream(t *testing.T) {
 
 // The defect this change exists to fix, end to end: KAS asked its fast model to title
 // a conversation whose only content was the word "test", the model answered by asking
-// for more context, and vibekit stored that answer as the chat's name, where it stays.
+// for more context, and marotte stored that answer as the chat's name, where it stays.
 //
-// The assertion is about the ADOPTION, not the request: vibekit does not make the title
+// The assertion is about the ADOPTION, not the request: marotte does not make the title
 // call and cannot stop KAS making it for a content-free prompt (KAS's guard skips only
 // an EMPTY one). Refusing the answer means the chat keeps the name it had.
 func TestHandleSessionInfoUpdate_FocusRefusesRefusalShapedTitle(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
-		c.Messages = append(c.Messages, vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: "test"})
+	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Messages = append(c.Messages, marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: "test"})
 		return true
 	}); err != nil {
 		t.Fatal(err)
@@ -324,10 +324,10 @@ func TestHandleSessionInfoUpdate_FocusRefusesRefusalShapedTitle(t *testing.T) {
 }
 
 // A conversation with no titleable content is the shape that produced the refusal
-// above, and it is the shape vibekit can hold an invariant about: whatever KAS
+// above, and it is the shape marotte can hold an invariant about: whatever KAS
 // derives or generates for one, a reply that is not title-shaped does not become
 // the chat's name. Expressed at the adoption door because that is the only end of
-// the exchange vibekit controls — it neither makes the title call nor sees whether
+// the exchange marotte controls — it neither makes the title call nor sees whether
 // KAS chose to make one.
 func TestHandleSessionInfoUpdate_FocusOnAContentFreeConversation(t *testing.T) {
 	tests := []struct {
@@ -363,9 +363,9 @@ func TestHandleSessionInfoUpdate_FocusOnAContentFreeConversation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+				if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 					c.Messages = append(c.Messages,
-						vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: tc.userMsg})
+						marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: tc.userMsg})
 					return true
 				}); err != nil {
 					t.Fatal(err)
@@ -387,7 +387,7 @@ func TestHandleSessionInfoUpdate_FocusOnAContentFreeConversation(t *testing.T) {
 // KAS re-emits its own placeholder on this channel after a revert empties the
 // transcript (it clears hasReceivedPrompt and calls setSessionTitle with
 // DEFAULT_SESSION_TITLE), so the string arrives on a chat that already has a real
-// name. Adopting it would replace that name with a worse placeholder than vibekit's
+// name. Adopting it would replace that name with a worse placeholder than marotte's
 // own — and on a default-named chat it would ALSO make the chat non-default-named,
 // which is what locks the session/load rung out for good.
 func TestHandleSessionInfoUpdate_FocusRefusesKASPlaceholder(t *testing.T) {
@@ -532,7 +532,7 @@ func TestHandleSessionInfoUpdate_FocusBroadcastsOnlyWhenItHasSomethingToSay(t *t
 // realFocusDescription is the longest of the 57 non-empty focus descriptions measured
 // over 336 live session files, at 303 bytes. It is the fixture that stops the bound and
 // the sanitizer mangling honest text: nothing in it is unsafe and nothing is over 512.
-const realFocusDescription = "Investigated vibekit's empty agent-initiated turns. Root cause is " +
+const realFocusDescription = "Investigated marotte's empty agent-initiated turns. Root cause is " +
 	"workflow-step frames folding onto the launching chat and opening a turn whose blocks " +
 	"the client drops. Found an uncommitted fix already in the tree; now measuring whether " +
 	"it eliminates the empty cards without costing the auto-wake label."

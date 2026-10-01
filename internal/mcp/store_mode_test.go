@@ -58,7 +58,7 @@ func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 //
 // os.Chmod(s.path, 0o600) resolves the name at the instant of the call, so a
 // symlink planted at mcp.json — by anything that can create a name in the config
-// dir — makes vibekit chmod a file it never inspected, anywhere on the host.
+// dir — makes marotte chmod a file it never inspected, anywhere on the host.
 // O_NOFOLLOW makes the kernel refuse instead, so the target keeps its mode and
 // the operator gets a warning naming the exposure.
 //

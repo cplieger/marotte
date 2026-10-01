@@ -1,8 +1,8 @@
-# Security assurance case: vibekit
+# Security assurance case: marotte
 
 This extends the shared
 [default assurance case](https://github.com/cplieger/.github/blob/main/assurance-case.md)
-with the threat model specific to `vibekit`. Read that first. vibekit is
+with the threat model specific to `marotte`. Read that first. marotte is
 **alpha**; this case is honest about that and the [roadmap](../ROADMAP.md)
 lists the hardening in progress.
 
@@ -16,11 +16,11 @@ it and keeping per-chat data isolated, not about sandboxing the agent.
 
 ## Security model
 
-vibekit is a **trusted-operator tool behind a network/auth boundary**, not a
+marotte is a **trusted-operator tool behind a network/auth boundary**, not a
 public multi-tenant service. In a self-hosted deployment it is reachable only on the internal
 network (LAN-gated, behind the reverse proxy). The agent's ability to run
 commands is the product, not a vulnerability; the boundary is "only the operator
-can reach vibekit."
+can reach marotte."
 
 ## Threats and mitigations
 
@@ -31,12 +31,12 @@ can reach vibekit."
 | Push-notification crypto errors                           | push payload crypto exercised under fuzz                                                           | `internal/push/crypto_fuzz_test.go`        |
 | Malformed ACP / wire input                                | hardened decoders; large Go + property/fuzz suite (350+ test files, 160+ fuzz targets)             | weekly fuzz + gremlins                     |
 | Stale/empty embedded UI shipped                           | CI image smoke test starts the container and asserts the health endpoint serves                    | image smoke test (CI docker job)           |
-| Reaching vibekit without authorisation                    | network/auth boundary (LAN gate + reverse proxy)                                                   | self-hosted deployment                     |
+| Reaching marotte without authorisation                    | network/auth boundary (LAN gate + reverse proxy)                                                   | self-hosted deployment                     |
 
 ## Residual risks (stated plainly)
 
 - **Alpha.** The surface is still being tested and hardened; do not expose
-  vibekit to untrusted networks.
+  marotte to untrusted networks.
 - The agent can execute commands and modify files by design; anyone who can
   reach an authenticated session has that capability. Network/auth isolation is
   the control, and it is a deployment responsibility.

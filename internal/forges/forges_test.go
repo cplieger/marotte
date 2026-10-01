@@ -7,7 +7,7 @@ import (
 )
 
 // TestLoadGLabConfig_RealWorldShape parses a config.yml shape that glab
-// itself produces (the read-only discovery parser's contract; vibekit
+// itself produces (the read-only discovery parser's contract; marotte
 // never writes this file).
 func TestLoadGLabConfig_RealWorldShape(t *testing.T) {
 	tmp := t.TempDir()

@@ -14,21 +14,21 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // carrierOf returns the ONE persisted message carrying this chat's turn outcome —
 // the assistant message that finalized the turn, or the marker written when the
 // turn emitted nothing. Exactly one message per turn may carry it, which is what
 // makes "the carrier" a single thing to assert against.
-func carrierOf(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) *vibekit.Message {
+func carrierOf(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) *marotte.Message {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
 		t.Fatalf("chat %q vanished", chatID)
 	}
-	var carrier *vibekit.Message
+	var carrier *marotte.Message
 	for i := range c.Messages {
 		if c.Messages[i].TurnOutcome != "" {
 			carrier = &c.Messages[i]
@@ -48,16 +48,16 @@ func carrierOf(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) *vibekit.
 // no-broadcast assertion must not be built on.
 type eventRecorder struct {
 	mu     sync.Mutex
-	counts map[vibekit.EventType]int
+	counts map[marotte.EventType]int
 }
 
-func (r *eventRecorder) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (r *eventRecorder) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.counts[evt.Type]++
 }
 
-func (r *eventRecorder) count(want vibekit.EventType) int {
+func (r *eventRecorder) count(want marotte.EventType) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.counts[want]
@@ -65,15 +65,15 @@ func (r *eventRecorder) count(want vibekit.EventType) int {
 
 // hubOnDiskWatchingBroadcasts is hubOnDisk with the store's own broadcaster wired,
 // so a test can assert on what the STORE announced rather than only on what landed.
-func hubOnDiskWatchingBroadcasts(t *testing.T, chatID vibekit.ChatID) (*Runtime, *chat.Store, *eventRecorder) {
+func hubOnDiskWatchingBroadcasts(t *testing.T, chatID marotte.ChatID) (*Runtime, *chat.Store, *eventRecorder) {
 	t.Helper()
-	rec := &eventRecorder{counts: map[vibekit.EventType]int{}}
+	rec := &eventRecorder{counts: map[marotte.EventType]int{}}
 	cs, err := chat.NewStore(t.TempDir(), chat.WithBroadcaster(rec))
 	if err != nil {
 		t.Fatalf("chat.NewStore: %v", err)
 	}
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs)
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -88,12 +88,12 @@ func startedTurnReturningEpoch(
 	t *testing.T,
 	h *Runtime,
 	cs *fakeChatStore,
-	chatID vibekit.ChatID,
+	chatID marotte.ChatID,
 	text string,
-) vibekit.TurnEpoch {
+) marotte.TurnEpoch {
 	t.Helper()
 	seedChat(t, cs, chatID)
-	epoch := h.coord.StartTurn(t.Context(), chatID, vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), chatID, marotte.TurnSourcePrompt)
 	buf := h.stageTurnBuffer(t, chatID)
 	buf.Started = true
 	buf.MessageID = newMessageID()
@@ -110,17 +110,17 @@ func TestCloseOnWireEnd_PersistsAReasonWithNothingUpstreamToSayIt(t *testing.T) 
 	startedTurnOn(t, h, cs, "c1", "here is half an answer")
 
 	// No stopDetails, which is every build measured so far.
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "")
 
 	carrier := carrierOf(t, cs, "c1")
-	if carrier.Role != vibekit.RoleAssistant {
+	if carrier.Role != marotte.RoleAssistant {
 		t.Errorf("carrier role = %q, want assistant — a streamed turn carries its own outcome", carrier.Role)
 	}
 	if carrier.TurnFailureReason == "" {
 		t.Fatal("the carrier records no reason; a failed turn with no reason renders " +
 			"as a red mark over an empty body, which is the reported defect")
 	}
-	if want := vibekit.DefaultFailureReason(vibekit.TurnOutcomeFailed); carrier.TurnFailureReason != want {
+	if want := marotte.DefaultFailureReason(marotte.TurnOutcomeFailed); carrier.TurnFailureReason != want {
 		t.Errorf("reason = %q, want the outcome's default %q", carrier.TurnFailureReason, want)
 	}
 }
@@ -132,7 +132,7 @@ func TestCloseOnWireEnd_PrefersTheWiresOwnAccountOfTheStop(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "half an answer")
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "The upstream model dropped the stream.")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "The upstream model dropped the stream.")
 
 	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != "The upstream model dropped the stream." {
 		t.Errorf("reason = %q, want the wire's own stopDetails", got)
@@ -149,7 +149,7 @@ func TestCloseOnWireEnd_SanitizesAndBoundsTheReason(t *testing.T) {
 	// An ANSI escape, a zero-width space and far more bytes than a transcript row
 	// should ever render.
 	hostile := "\x1b[31mred\x1b[0m\u200bzero" + strings.Repeat("x", maxReasonBytes*2)
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, hostile)
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, hostile)
 
 	got := carrierOf(t, cs, "c1").TurnFailureReason
 	if len(got) > maxReasonBytes {
@@ -171,13 +171,13 @@ func TestCloseOnWireEnd_SanitizesAndBoundsTheReason(t *testing.T) {
 func TestCloseOnWireEnd_AnEmptyFailedTurnsMarkerCarriesTheReason(t *testing.T) {
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "")
 
 	carrier := carrierOf(t, cs, "c1")
-	if carrier.Role != vibekit.RoleEvent || carrier.EventKind != vibekit.EventTurnOutcome {
+	if carrier.Role != marotte.RoleEvent || carrier.EventKind != marotte.EventTurnOutcome {
 		t.Fatalf("carrier is %q/%q, want an event/turn_outcome marker", carrier.Role, carrier.EventKind)
 	}
 	if carrier.TurnFailureReason == "" {
@@ -197,15 +197,15 @@ func TestCloseAsInterrupted_StampsTheReasonOnTheCarrierAsWellAsTheDivider(t *tes
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "half an answer")
 
 	const reason = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, reason)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, reason)
 
 	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != reason {
 		t.Errorf("carrier reason = %q, want the prompt failure's own prose %q", got, reason)
 	}
 	c, _ := cs.Get(t.Context(), "c1")
-	var divider *vibekit.Message
+	var divider *marotte.Message
 	for i := range c.Messages {
-		if c.Messages[i].EventKind == vibekit.EventInterrupted {
+		if c.Messages[i].EventKind == marotte.EventInterrupted {
 			divider = &c.Messages[i]
 		}
 	}
@@ -227,14 +227,14 @@ func TestLostClaim_UpgradesTheCarriersReasonToTheLosersProse(t *testing.T) {
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "half an answer")
 
 	// The WIRE wins, with nothing of its own to say.
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
-	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != vibekit.DefaultFailureReason(vibekit.TurnOutcomeFailed) {
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "")
+	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != marotte.DefaultFailureReason(marotte.TurnOutcomeFailed) {
 		t.Fatalf("the fixture did not reproduce the defect: carrier reason = %q, want the default", got)
 	}
 
 	// The prompt failure arrives second and loses the claim.
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, prose)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, prose)
 
 	carrier := carrierOf(t, cs, "c1")
 	if carrier.TurnFailureReason != prose {
@@ -242,11 +242,11 @@ func TestLostClaim_UpgradesTheCarriersReasonToTheLosersProse(t *testing.T) {
 	}
 	// ONLY the reason moves: the winner settled how the turn ended, and changing
 	// that would change every surface's verdict rather than what it says.
-	if carrier.TurnOutcome != vibekit.TurnOutcomeFailed {
+	if carrier.TurnOutcome != marotte.TurnOutcomeFailed {
 		t.Errorf("carrier outcome = %q, want the winner's failed", carrier.TurnOutcome)
 	}
-	if carrier.TurnStopReasonRaw != vibekit.StopReasonError {
-		t.Errorf("carrier raw stop = %q, want the winner's %q", carrier.TurnStopReasonRaw, vibekit.StopReasonError)
+	if carrier.TurnStopReasonRaw != marotte.StopReasonError {
+		t.Errorf("carrier raw stop = %q, want the winner's %q", carrier.TurnStopReasonRaw, marotte.StopReasonError)
 	}
 }
 
@@ -258,17 +258,17 @@ func TestLostClaim_DoesNotDowngradeASuppliedReason(t *testing.T) {
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "half an answer")
 
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, prose)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, prose)
 
 	// The wire's turn_end arrives second, carrying no stopDetails.
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "")
 
 	carrier := carrierOf(t, cs, "c1")
 	if carrier.TurnFailureReason != prose {
 		t.Errorf("carrier reason = %q, want the interrupt path's own prose %q kept; a default "+
 			"overwriting a supplied reason is the rule inverted", carrier.TurnFailureReason, prose)
 	}
-	if carrier.TurnOutcome != vibekit.TurnOutcomeInterrupted {
+	if carrier.TurnOutcome != marotte.TurnOutcomeInterrupted {
 		t.Errorf("carrier outcome = %q, want the winner's interrupted", carrier.TurnOutcome)
 	}
 }
@@ -281,8 +281,8 @@ func TestLostClaim_TwoSuppliedReasonsKeepTheFirst(t *testing.T) {
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "half an answer")
 
 	const first = "The upstream model dropped the stream."
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, first)
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, first)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, "A network error occurred.")
 
 	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != first {
 		t.Errorf("carrier reason = %q, want the winner's own %q", got, first)
@@ -295,23 +295,23 @@ func TestLostClaim_TwoSuppliedReasonsKeepTheFirst(t *testing.T) {
 // chat. It runs against the REAL store because the broadcast is half the property — a
 // recording fake performs the same no-op write and emits nothing either way.
 func TestLostClaim_ADeletedCarrierIsNotResurrected(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	h, cs, rec := hubOnDiskWatchingBroadcasts(t, chatID)
 	epoch, buf := h.stagePromptTurn(t, chatID)
 	buf.StartTurn(newMessageID())
 	buf.AppendTextDelta("half an answer", "")
-	h.coord.WireTurnEnd(t.Context(), chatID, vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), chatID, marotte.StopReasonError, "")
 
 	// A rewind between the two closers: the carrier is gone from the record.
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Messages = nil
 		return true
 	}); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	before := rec.count(vibekit.EventMessageUpdated)
+	before := rec.count(marotte.EventMessageUpdated)
 
-	h.AbandonInFlightTurn(t.Context(), chatID, epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), chatID, epoch, marotte.StopReasonInterrupted, "A network error occurred.")
 
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
@@ -320,7 +320,7 @@ func TestLostClaim_ADeletedCarrierIsNotResurrected(t *testing.T) {
 	if len(c.Messages) != 0 {
 		t.Errorf("the amend re-created %d messages on a truncated turn: %+v", len(c.Messages), c.Messages)
 	}
-	if got := rec.count(vibekit.EventMessageUpdated); got != before {
+	if got := rec.count(marotte.EventMessageUpdated); got != before {
 		t.Errorf("message_updated broadcasts = %d, want %d: an amend that matched nothing "+
 			"still told every client something had changed", got, before)
 	}
@@ -334,16 +334,16 @@ func TestLostClaim_ADeletedCarrierIsNotResurrected(t *testing.T) {
 // case where the outcome was never read. The discriminator is the ABSENCE of the `outcome`
 // attribute, not the wording: an arm may only report a field something read.
 func TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	h, cs, _ := hubOnDiskWatchingBroadcasts(t, chatID)
 	epoch, buf := h.stagePromptTurn(t, chatID)
 	buf.StartTurn(newMessageID())
 	buf.AppendTextDelta("half an answer", "")
-	h.coord.WireTurnEnd(t.Context(), chatID, vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), chatID, marotte.StopReasonError, "")
 
 	// A rewind between the two closers: the carrier's row is gone, so the mutate
 	// closure never runs.
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
 		c.Messages = nil
 		return true
 	}); err != nil {
@@ -351,7 +351,7 @@ func TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining(t *testing.
 	}
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(t.Context(), chatID, epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), chatID, epoch, marotte.StopReasonInterrupted, "A network error occurred.")
 	line := logs.String()
 
 	if !strings.Contains(line, `"loser_had_reason":true`) {
@@ -371,10 +371,10 @@ func TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining(t *testing.
 func TestLostClaim_ACleanCarriersDeclineDoesReportTheOutcome(t *testing.T) {
 	h, cs, _ := newTestHub()
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "the whole answer")
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, "A network error occurred.")
 	line := logs.String()
 
 	if !strings.Contains(line, `"outcome":"completed"`) {
@@ -389,19 +389,19 @@ func TestLostClaim_ACleanCarriersDeclineDoesReportTheOutcome(t *testing.T) {
 // cases above pin the value and this one pins the durability and the fan-out —
 // without which the amended reason is reachable only by a reload.
 func TestLostClaim_AmendsThroughTheRealStoreAndSaysSo(t *testing.T) {
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 	h, cs, rec := hubOnDiskWatchingBroadcasts(t, chatID)
 	epoch, buf := h.stagePromptTurn(t, chatID)
 	buf.StartTurn(newMessageID())
 	buf.AppendTextDelta("half an answer", "")
-	h.coord.WireTurnEnd(t.Context(), chatID, vibekit.StopReasonError, "")
-	before := rec.count(vibekit.EventMessageUpdated)
+	h.coord.WireTurnEnd(t.Context(), chatID, marotte.StopReasonError, "")
+	before := rec.count(marotte.EventMessageUpdated)
 
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), chatID, epoch, vibekit.StopReasonInterrupted, prose)
+	h.AbandonInFlightTurn(t.Context(), chatID, epoch, marotte.StopReasonInterrupted, prose)
 
 	c, _ := cs.Get(t.Context(), chatID)
-	var carrier *vibekit.Message
+	var carrier *marotte.Message
 	for i := range c.Messages {
 		if c.Messages[i].TurnOutcome != "" {
 			carrier = &c.Messages[i]
@@ -413,7 +413,7 @@ func TestLostClaim_AmendsThroughTheRealStoreAndSaysSo(t *testing.T) {
 	if carrier.TurnFailureReason != prose {
 		t.Errorf("persisted reason = %q, want the loser's prose %q", carrier.TurnFailureReason, prose)
 	}
-	if got := rec.count(vibekit.EventMessageUpdated); got != before+1 {
+	if got := rec.count(marotte.EventMessageUpdated); got != before+1 {
 		t.Errorf("message_updated broadcasts = %d, want %d: a landed amend the clients are "+
 			"never told about is a reason only a reload can reach", got, before+1)
 	}
@@ -421,7 +421,7 @@ func TestLostClaim_AmendsThroughTheRealStoreAndSaysSo(t *testing.T) {
 
 // TestSeverityOfEveryClose_RecordsSomethingToShow is the property behind the cases
 // above, over the closers rather than over the outcome table: whatever path ends a
-// turn, a reader must not be left with a mark and no words. `internal/vibekit`'s own
+// turn, a reader must not be left with a mark and no words. `internal/marotte`'s own
 // tests pin the table; this pins that the FINALIZER actually reaches it.
 //
 // `cancelled` is the one close that must record NOTHING, and the expectation is keyed
@@ -429,13 +429,13 @@ func TestLostClaim_AmendsThroughTheRealStoreAndSaysSo(t *testing.T) {
 // and `unknown` alike while only `unknown` still speaks. A cancel is the reader's own
 // gesture and the footer's outcome word already reads "Cancelled".
 func TestSeverityOfEveryClose_RecordsSomethingToShow(t *testing.T) {
-	stops := []vibekit.StopReason{
-		vibekit.StopReasonError,
-		vibekit.StopReasonRefusal,
-		vibekit.StopReasonContentFiltered,
-		vibekit.StopReasonInterrupted,
-		vibekit.StopReasonCancelled,
-		vibekit.StopReasonUnknown,
+	stops := []marotte.StopReason{
+		marotte.StopReasonError,
+		marotte.StopReasonRefusal,
+		marotte.StopReasonContentFiltered,
+		marotte.StopReasonInterrupted,
+		marotte.StopReasonCancelled,
+		marotte.StopReasonUnknown,
 	}
 	for _, stop := range stops {
 		t.Run(string(stop), func(t *testing.T) {
@@ -445,12 +445,12 @@ func TestSeverityOfEveryClose_RecordsSomethingToShow(t *testing.T) {
 
 			carrier := carrierOf(t, cs, "c1")
 			switch carrier.TurnOutcome {
-			case vibekit.TurnOutcomeCancelled:
+			case marotte.TurnOutcomeCancelled:
 				if carrier.TurnFailureReason != "" {
 					t.Errorf("a %q close recorded reason %q; a cancel has no account to give",
 						stop, carrier.TurnFailureReason)
 				}
-			case vibekit.TurnOutcomeCompleted, vibekit.TurnOutcomeRunning:
+			case marotte.TurnOutcomeCompleted, marotte.TurnOutcomeRunning:
 				t.Skipf("%q grades clean, so there is nothing to report", stop)
 			default:
 				if carrier.TurnFailureReason == "" {
@@ -480,17 +480,17 @@ func TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended(t *testing.T) {
 	// The model switch wins, discarding the partial.
 	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
 	carrier := carrierOf(t, cs, "c1")
-	if carrier.Role != vibekit.RoleEvent || carrier.EventKind != vibekit.EventCancelled {
+	if carrier.Role != marotte.RoleEvent || carrier.EventKind != marotte.EventCancelled {
 		t.Fatalf("carrier is %q/%q, want an event/cancelled marker", carrier.Role, carrier.EventKind)
 	}
-	if want := vibekit.DefaultFailureReason(vibekit.TurnOutcomeCancelled); carrier.TurnFailureReason != want {
+	if want := marotte.DefaultFailureReason(marotte.TurnOutcomeCancelled); carrier.TurnFailureReason != want {
 		t.Fatalf("the fixture did not reproduce the shape: carrier reason = %q, want the default %q",
 			carrier.TurnFailureReason, want)
 	}
 
 	// The prompt failure arrives second and loses the claim.
 	const prose = "A network error occurred. Please check your connection and try again."
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, prose)
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, prose)
 
 	got := carrierOf(t, cs, "c1")
 	if got.TurnFailureReason != prose {
@@ -498,7 +498,7 @@ func TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended(t *testing.T) {
 			"carrier silences a closer holding a real transport error", got.TurnFailureReason, prose)
 	}
 	// Only the reason moves — a discard is still a discard.
-	if got.TurnOutcome != vibekit.TurnOutcomeCancelled {
+	if got.TurnOutcome != marotte.TurnOutcomeCancelled {
 		t.Errorf("carrier outcome = %q, want the winner's cancelled", got.TurnOutcome)
 	}
 }
@@ -513,9 +513,9 @@ func TestLostClaim_NeverStampsAReasonOnACleanCarrier(t *testing.T) {
 	epoch := startedTurnReturningEpoch(t, h, cs, "c1", "the whole answer")
 
 	// The wire's end_turn wins: outcome `completed`, carried on the assistant message.
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 	carrier := carrierOf(t, cs, "c1")
-	if carrier.TurnOutcome != vibekit.TurnOutcomeCompleted {
+	if carrier.TurnOutcome != marotte.TurnOutcomeCompleted {
 		t.Fatalf("the fixture did not reproduce the shape: carrier outcome = %q, want completed",
 			carrier.TurnOutcome)
 	}
@@ -524,7 +524,7 @@ func TestLostClaim_NeverStampsAReasonOnACleanCarrier(t *testing.T) {
 	}
 
 	// The prompt failure arrives second, loses the claim, and has prose to offer.
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "A network error occurred.")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, "A network error occurred.")
 
 	if got := carrierOf(t, cs, "c1").TurnFailureReason; got != "" {
 		t.Errorf("carrier reason = %q, want empty: a turn that SUCCEEDED must not record why it failed", got)

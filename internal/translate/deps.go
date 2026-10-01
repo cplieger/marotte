@@ -4,35 +4,35 @@ import (
 	"context"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // BufferAccess resolves the buffer a frame's content folds into.
 type BufferAccess interface {
 	// OpenTurnBuffer returns the chat's open turn without opening one, for a frame
 	// that may fold into a turn but must never start one.
-	OpenTurnBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool)
+	OpenTurnBuffer(chatID marotte.ChatID) (*buffer.Buffer, bool)
 	// TurnFoldTarget returns the chat's open turn's buffer, opening one of the
 	// given source when none is open. Never nil; source is read only on the open.
-	TurnFoldTarget(ctx context.Context, chatID vibekit.ChatID, source vibekit.TurnOpenSource) *buffer.Buffer
+	TurnFoldTarget(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) *buffer.Buffer
 }
 
 // TurnBoundary is the wire's own turn bracket, which KAS emits for every
-// turn, agent-initiated included — plus the one MID-turn boundary vibekit
+// turn, agent-initiated included — plus the one MID-turn boundary marotte
 // declares itself, at a compaction point.
 type TurnBoundary interface {
 	// WireTurnStart binds the bracket to the pending pre-open, or closes a turn
 	// whose own end never arrived.
-	WireTurnStart(ctx context.Context, chatID vibekit.ChatID)
+	WireTurnStart(ctx context.Context, chatID marotte.ChatID)
 	// WireTurnEnd closes the chat's open turn with the wire's own outcome. A no-op
 	// when none is open. `details` is the wire's own account of the stop, empty on
 	// every build that sends none, and the only channel that could explain a
 	// `stopReason: "error"` turn.
-	WireTurnEnd(ctx context.Context, chatID vibekit.ChatID, stop vibekit.StopReason, details string)
+	WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason, details string)
 	// ReviseTurnBinding undoes a provisional binding on an agent-initiated frame.
-	ReviseTurnBinding(ctx context.Context, chatID vibekit.ChatID)
+	ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID)
 	// SealTurnSegment persists what the open turn has produced so far as its
 	// own assistant message and lets the rest of the turn accumulate into a
 	// fresh one, so a boundary inside a turn can be represented as a sibling
@@ -40,18 +40,18 @@ type TurnBoundary interface {
 	// open turn, a turn that emitted nothing, and a turn holding an unsettled
 	// tool call, all of which leave the boundary to land as a sibling of the
 	// whole turn instead.
-	SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) bool
+	SealTurnSegment(ctx context.Context, chatID marotte.ChatID) bool
 }
 
 // LineRecorder records the changed lines a frame's diffs describe.
 type LineRecorder interface {
-	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
+	RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string)
 }
 
 // SteerOrigins answers whose words a mid-turn steer carries. Total by
 // construction: an unknown id still gets an answer.
 type SteerOrigins interface {
-	SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin
+	SteerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin
 }
 
 // SteerBuffer is the host's projection of KAS's own steering buffer: which steers are
@@ -64,27 +64,27 @@ type SteerOrigins interface {
 type SteerBuffer interface {
 	// SteerWaiting records a steer KAS has buffered and the model has not read.
 	// Idempotent by id: a reconnect replays the queued frame.
-	SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload)
+	SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload)
 	// SteerForgotten drops every named steer: KAS's buffer no longer holds them,
 	// whether the model read them or a turn boundary cleared them unread. It
 	// returns the ones it WAS holding, with their payloads, which is the only
 	// evidence anywhere that those were never read — see the host's own doc.
-	SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload
+	SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload
 	// SteerRead is SteerForgotten for the one id an injected frame names.
-	SteerRead(chatID vibekit.ChatID, steerID string)
+	SteerRead(chatID marotte.ChatID, steerID string)
 }
 
 // ChatRecords is the chat store as this package uses it. Every write lands after
 // the frame that caused it, so chat.ErrTombstoned is an expected outcome here.
 type ChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
-	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
+	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
 	// Mutate is the single write primitive: load, apply, save, broadcast.
-	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) (string, error)
+	Mutate(ctx context.Context, id marotte.ChatID, mutate func(c *marotte.Chat, exists bool) bool) (string, error)
 	// AppendMessage appends msg to the chat's messages.
-	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error
 	// UpsertTurnPlan overwrites the turn's plan row, or appends msg when it has none.
-	UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	UpsertTurnPlan(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error
 }
 
 // Roles is the wiring-time role set: the host names which of its interfaces
@@ -132,33 +132,33 @@ type Roles struct {
 
 // Broadcaster publishes a domain event to every connected client.
 type Broadcaster interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
 // PendingPermAdder registers an unanswered decision for reconnect replay.
 type PendingPermAdder interface {
-	PendingPermsAdd(requestID int64, evt vibekit.ServerEvent)
+	PendingPermsAdd(requestID int64, evt marotte.ServerEvent)
 }
 
 // Responder answers a server-to-client ACP request on the chat's bridge.
 //
 // The one role here that writes to the wire rather than the event bus: a request
-// vibekit declines to process still has to be answered, since KAS's sendRequest
+// marotte declines to process still has to be answered, since KAS's sendRequest
 // carries no timeout and an unanswered ask strands the tool batch until teardown.
 // A chat with no bridge is not an error, so an implementation reports nil for it.
 type Responder interface {
-	BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error
+	BridgeRespond(ctx context.Context, chatID marotte.ChatID, requestID int64, result any, err error) error
 }
 
 // Pusher delivers a web-push notification for a chat.
 type Pusher interface {
-	NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID)
+	NotifyPush(ctx context.Context, body string, kind marotte.PushKind, chatID marotte.ChatID)
 }
 
 // SessionResolver answers a chat's parent ACP session id, or "" when no bridge
 // is running.
 type SessionResolver interface {
-	ParentACPSession(chatID vibekit.ChatID) string
+	ParentACPSession(chatID marotte.ChatID) string
 }
 
 // HookStatusReader reports whether hook status display is enabled.
@@ -169,7 +169,7 @@ type HookStatusReader interface {
 // ModelCatalog is the workspace's model vocabulary, which a live
 // config_option_update updates. SetModels reports whether the list changed.
 type ModelCatalog interface {
-	SetModels(models []vibekit.SessionModel) bool
+	SetModels(models []marotte.SessionModel) bool
 }
 
 // TerminalReader returns an agent terminal's rendered output: plain text with
@@ -177,24 +177,24 @@ type ModelCatalog interface {
 // is known, not whether it printed anything — a registered terminal that produced
 // no output answers ("", nil, true).
 type TerminalReader interface {
-	Output(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
+	Output(terminalID string) (text string, spans []marotte.TextSpan, ok bool)
 }
 
 // GovernanceAccess caches the latest governance state so GET /api/governance can
 // serve it with no chat open.
 type GovernanceAccess interface {
 	// SetGovernance replaces the cached governance state.
-	SetGovernance(state vibekit.GovernanceStatePayload)
+	SetGovernance(state marotte.GovernanceStatePayload)
 }
 
 // MCPRecorder groups MCP server state tracking methods.
 type MCPRecorder interface {
 	// RecordConnected marks a server connected and replaces what it advertises
 	// (tools, prompts, resources) wholesale; any of the three may be nil.
-	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo)
+	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []marotte.MCPPromptInfo, resources []marotte.MCPResourceInfo)
 	RecordOAuth(ctx context.Context, serverName, oauthURL string)
 	RecordInitFailure(ctx context.Context, serverName, errMsg string)
-	// RecordDisabled reports a server KAS says is off. Kept only when vibekit
+	// RecordDisabled reports a server KAS says is off. Kept only when marotte
 	// never configured it, so it cannot resurrect one the user switched off.
 	RecordDisabled(ctx context.Context, serverName string)
 	SignalReady()
@@ -274,10 +274,10 @@ func withIDGenerator(fn func() string) Option {
 
 // newEventMessage constructs an event message with a fresh ID, RoleEvent and the
 // current timestamp.
-func (t *Translator) newEventMessage(kind vibekit.EventKind, content string) vibekit.Message {
-	return vibekit.Message{
+func (t *Translator) newEventMessage(kind marotte.EventKind, content string) marotte.Message {
+	return marotte.Message{
 		ID:        t.newMsgID(),
-		Role:      vibekit.RoleEvent,
+		Role:      marotte.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: kind,
 		Content:   content,
@@ -286,7 +286,7 @@ func (t *Translator) newEventMessage(kind vibekit.EventKind, content string) vib
 
 // deriveSubSession returns the sessionID when it belongs to a subagent, and ""
 // for the launching chat itself or for a workflow step.
-func (t *Translator) deriveSubSession(chatID vibekit.ChatID, sessionID string) string {
+func (t *Translator) deriveSubSession(chatID marotte.ChatID, sessionID string) string {
 	if t.ClassifyFrame(chatID, sessionID, false) == OwnerSubagent {
 		return sessionID
 	}
@@ -328,8 +328,8 @@ type RunBoundsAccess interface {
 // compaction failure does not prove the turn ended, so the host bounds silence
 // before it interrupts.
 type TurnInterruptAccess interface {
-	CompactionFailed(chatID vibekit.ChatID, detail string)
-	InterruptTurn(chatID vibekit.ChatID, reason string)
+	CompactionFailed(chatID marotte.ChatID, detail string)
+	InterruptTurn(chatID marotte.ChatID, reason string)
 }
 
 // TurnMetering is the per-turn accounting a turn_completion frame writes, split
@@ -337,8 +337,8 @@ type TurnInterruptAccess interface {
 // conversation turn count and duration are the conversation's.
 type TurnMetering interface {
 	// AccumulateSpend adds a turn_completion's credit spend, step frames included.
-	AccumulateSpend(ctx context.Context, chatID vibekit.ChatID, credits float64)
+	AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64)
 	// StageConversationTurnSummary accumulates a conversation turn's reported
 	// duration, so several frames for one turn sum.
-	StageConversationTurnSummary(ctx context.Context, chatID vibekit.ChatID, elapsedMs float64)
+	StageConversationTurnSummary(ctx context.Context, chatID marotte.ChatID, elapsedMs float64)
 }

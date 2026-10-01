@@ -9,14 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // --- Fake ACP bridge ---
 
 type fakeBridge struct {
-	notifCh chan vibekit.Notification
+	notifCh chan marotte.Notification
 	// deliveredSeq drives the sequence a parked settle waits for.
 	deliveredSeq uint64
 	// loadSeq is the position a `session/load` answered at, recorded after the replay
@@ -25,14 +25,14 @@ type fakeBridge struct {
 	callResults map[string]json.RawMessage
 	callErrs    map[string]error
 	// callRPCErrs is how KAS refuses in-band; callErrs is the transport failing.
-	callRPCErrs  map[string]*vibekit.RPCError
+	callRPCErrs  map[string]*marotte.RPCError
 	lastParams   map[string]map[string]any
 	callDeadline map[string]bool
 	chunksOnCall map[string][]string
 	// notifsOnCall are whole frames delivered after a named Call, unstamped by this
 	// bridge's session id — which is what a `session/load` replay is. chunksOnCall
 	// stamps its own id, so it can only produce frames the own-session screen drops.
-	notifsOnCall map[string][]*vibekit.RPCResponse
+	notifsOnCall map[string][]*marotte.RPCResponse
 	// blockOn parks Call, after recording it, until the method's channel is closed.
 	blockOn   map[string]chan struct{}
 	sessionID string
@@ -45,13 +45,13 @@ type fakeBridge struct {
 	// constructed bridge answers for a threshold the load result omitted.
 	summarizationPct float64
 	truncationPct    float64
-	catalog          []vibekit.SessionModel
-	modes            []vibekit.SessionMode
-	models           []vibekit.SessionModel
+	catalog          []marotte.SessionModel
+	modes            []marotte.SessionMode
+	models           []marotte.SessionModel
 	sessionTitle     string
 	calls            []string
 	// startOpts records what the most recent spawn was actually handed.
-	startOpts *vibekit.StartOpts
+	startOpts *marotte.StartOpts
 	// startGate holds a spawn OPEN, so a bridge-ready test is not saved by the
 	// forward-attach wake racing an instantaneous Start.
 	startGate chan struct{}
@@ -63,7 +63,7 @@ type fakeBridge struct {
 	starts int
 	// notifsOnStart is the transcript a session/load replays; Start owns the
 	// push-before-return ordering it depends on.
-	notifsOnStart []*vibekit.RPCResponse
+	notifsOnStart []*marotte.RPCResponse
 	mu            sync.Mutex
 	responds      int
 	// setModelFailures fails the next N SetModel calls, the only route to the
@@ -87,11 +87,11 @@ func newFakeBridge() *fakeBridge {
 	return &fakeBridge{
 		sessionID: "fake-sess-" + time.Now().Format("150405.000"),
 		modelID:   "fake-model",
-		notifCh:   make(chan vibekit.Notification, 16),
+		notifCh:   make(chan marotte.Notification, 16),
 	}
 }
 
-func (b *fakeBridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
+func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	b.mu.Lock()
 	gate := b.startGate
 	startErr := b.startErr
@@ -148,7 +148,7 @@ func (b *fakeBridge) SessionLoadSeq() uint64 {
 }
 
 // lastStartOpts returns the StartOpts of the most recent Start, or nil.
-func (b *fakeBridge) lastStartOpts() *vibekit.StartOpts {
+func (b *fakeBridge) lastStartOpts() *marotte.StartOpts {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.startOpts
@@ -193,7 +193,7 @@ func (b *fakeBridge) endStream() {
 	b.mu.Unlock()
 }
 
-func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
+func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	b.mu.Lock()
 	b.calls = append(b.calls, method)
 	if p, ok := params.(map[string]any); ok {
@@ -213,7 +213,7 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 	}
 	if rpcErr, ok := b.callRPCErrs[method]; ok {
 		b.mu.Unlock()
-		return &vibekit.RPCResponse{Error: rpcErr}, nil
+		return &marotte.RPCResponse{Error: rpcErr}, nil
 	}
 	res := json.RawMessage(`{"stopReason":"end_turn"}`)
 	if r, ok := b.callResults[method]; ok {
@@ -244,21 +244,21 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibe
 	for _, f := range frames {
 		b.deliver(f)
 	}
-	return &vibekit.RPCResponse{Result: res}, nil
+	return &marotte.RPCResponse{Result: res}, nil
 }
 
 // deliver stamps the next sequence and pushes, as the real read loop does: a counter
 // incremented on receipt instead would skew silently.
-func (b *fakeBridge) deliver(msg *vibekit.RPCResponse) {
+func (b *fakeBridge) deliver(msg *marotte.RPCResponse) {
 	b.mu.Lock()
 	b.deliveredSeq++
 	seq := b.deliveredSeq
 	b.mu.Unlock()
-	b.notifCh <- vibekit.Notification{Msg: msg, Seq: seq}
+	b.notifCh <- marotte.Notification{Msg: msg, Seq: seq}
 }
 
 // CallAt is Call plus the read loop position at which the response arrived.
-func (b *fakeBridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+func (b *fakeBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	resp, err := b.Call(ctx, method, params)
 	b.mu.Lock()
 	seq := b.deliveredSeq
@@ -330,11 +330,11 @@ func (b *fakeBridge) setCallErr(method string, err error) {
 	b.callErrs[method] = err
 }
 
-func (b *fakeBridge) setCallRPCErr(method string, err *vibekit.RPCError) {
+func (b *fakeBridge) setCallRPCErr(method string, err *marotte.RPCError) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.callRPCErrs == nil {
-		b.callRPCErrs = map[string]*vibekit.RPCError{}
+		b.callRPCErrs = map[string]*marotte.RPCError{}
 	}
 	b.callRPCErrs[method] = err
 }
@@ -357,10 +357,10 @@ func (b *fakeBridge) lastCall() string {
 	return b.calls[len(b.calls)-1]
 }
 
-func (b *fakeBridge) SessionID() vibekit.SessionID {
+func (b *fakeBridge) SessionID() marotte.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return vibekit.SessionID(b.sessionID)
+	return marotte.SessionID(b.sessionID)
 }
 
 // SupervisedApplied mirrors the real bridge: it reports whether the SESSION accepted
@@ -373,10 +373,10 @@ func (b *fakeBridge) SupervisedApplied() bool {
 	return b.supervisedApplied
 }
 
-func (b *fakeBridge) ModelID() vibekit.ModelID {
+func (b *fakeBridge) ModelID() marotte.ModelID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return vibekit.ModelID(b.modelID)
+	return marotte.ModelID(b.modelID)
 }
 
 // CurrentMode is the mode the SESSION ended up in, not necessarily the one StartOpts
@@ -404,13 +404,13 @@ func (b *fakeBridge) ContextThresholds() (summarization, truncation float64) {
 
 // Modes and Models are nil by default, which is what a freshly constructed bridge
 // answers for anything a session/load result omitted.
-func (b *fakeBridge) Modes() []vibekit.SessionMode {
+func (b *fakeBridge) Modes() []marotte.SessionMode {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.modes
 }
 
-func (b *fakeBridge) Catalog() []vibekit.SessionModel {
+func (b *fakeBridge) Catalog() []marotte.SessionModel {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.catalog != nil {
@@ -419,7 +419,7 @@ func (b *fakeBridge) Catalog() []vibekit.SessionModel {
 	return b.models
 }
 
-func (b *fakeBridge) Models() []vibekit.SessionModel {
+func (b *fakeBridge) Models() []marotte.SessionModel {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.models
@@ -472,10 +472,10 @@ func (b *fakeBridge) lastEffort() string {
 	return b.effort
 }
 
-func (b *fakeBridge) NotifCh() <-chan vibekit.Notification { return b.notifCh }
+func (b *fakeBridge) NotifCh() <-chan marotte.Notification { return b.notifCh }
 
 // newNoopBridge is for benchmarks where the bridge is never called.
-func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan vibekit.Notification)} }
+func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan marotte.Notification)} }
 
 // --- Fake ChatStore (delegates to testsupport.RecordingChatStore) ---
 

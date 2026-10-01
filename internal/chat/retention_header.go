@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/cplieger/jsoncap/v2"
-	"github.com/cplieger/vibekit/internal/chat/archive"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat/archive"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The projection's keys, which are vibekit.Chat's JSON names — so a rename there
+// The projection's keys, which are marotte.Chat's JSON names — so a rename there
 // has to land here too, the one cost of projecting by key instead of by struct.
 const (
 	keyUpdatedAt     = "updated_at"
@@ -25,7 +25,7 @@ const (
 // The purge used to answer its three small questions by decoding the WHOLE chat,
 // once per chat per pass, over files that reach several MB of tool output no
 // retention decision looks at.
-func (s *Store) LoadRetentionHeader(chatID vibekit.ChatID) (archive.RetentionHeader, error) {
+func (s *Store) LoadRetentionHeader(chatID marotte.ChatID) (archive.RetentionHeader, error) {
 	path, err := s.pathFor(chatID)
 	if err != nil {
 		return archive.RetentionHeader{}, err
@@ -67,7 +67,7 @@ func readRetentionHeader(path, label string, fileCap chatFileCap) (archive.Reten
 func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 	var (
 		h        archive.RetentionHeader
-		sessions vibekit.ChatHeader
+		sessions marotte.ChatHeader
 	)
 	dec := jsoncap.NewDecoder(r, 0)
 	err := dec.Object(func(key string) error {
@@ -100,7 +100,7 @@ func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 	if err != nil {
 		return archive.RetentionHeader{}, err
 	}
-	// vibekit's own composition of the two id fields, called rather than
+	// marotte's own composition of the two id fields, called rather than
 	// reimplemented so this view cannot disagree about a chat's retention set.
 	h.SessionChain = sessions.SessionChain()
 	return h, nil

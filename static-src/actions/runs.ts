@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Workflow-run actions: the recipe list, launch, and the four run controls.
 //
-// Cancel, pause and resume are all KAS's own verbs; vibekit adds no policy
+// Cancel, pause and resume are all KAS's own verbs; marotte adds no policy
 // of its own. Cancel doubles as the tab-close gesture for a launcher-owned
 // run tab.
 // ---------------------------------------------------------------------------

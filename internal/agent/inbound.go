@@ -1,11 +1,11 @@
 package agent
 
 import (
-	"github.com/cplieger/vibekit/internal/ignore"
-	"github.com/cplieger/vibekit/internal/secretstore"
+	"github.com/cplieger/marotte/internal/ignore"
+	"github.com/cplieger/marotte/internal/secretstore"
 )
 
-// inbound answers the requests the agent makes of vibekit over ACP.
+// inbound answers the requests the agent makes of marotte over ACP.
 type inbound struct {
 	lifetime *lifetime
 	coord    *BridgeCoordinator

@@ -6,7 +6,7 @@ package buffer
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // A split hands back everything the sealed segment produced and leaves the buffer
@@ -17,9 +17,9 @@ func TestSplitSegment_SealsTheSegmentAndClearsThePerMessageFields(t *testing.T) 
 	buf.StartTurn("m-1")
 	buf.AppendTextDelta("before", "")
 	buf.AppendThinkingDelta("planning", "")
-	buf.AppendToolCall(&vibekit.ToolCall{ID: "t-1", Status: vibekit.ToolCompleted})
+	buf.AppendToolCall(&marotte.ToolCall{ID: "t-1", Status: marotte.ToolCompleted})
 	buf.AppendToolUseBlock("t-1", "")
-	buf.AppendCodeReferences([]vibekit.CodeReference{{LicenseName: "MIT"}})
+	buf.AppendCodeReferences([]marotte.CodeReference{{LicenseName: "MIT"}})
 
 	snap, _ := buf.SplitSegment()
 
@@ -68,7 +68,7 @@ func TestSplitSegment_KeepsThePerTurnFields(t *testing.T) {
 	buf := New()
 	buf.StartTurn("m-1")
 	buf.SetModel("opus-5")
-	buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
+	buf.TrackFileChanges([]marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
 	_, seqBefore, _ := buf.AppendTextDelta("before", "")
 
 	buf.SplitSegment()
@@ -187,22 +187,22 @@ func TestSplitSegment_ResetsTheAgentSideIDEvenWhenNothingWasEmitted(t *testing.T
 func TestToolsSettled(t *testing.T) {
 	cases := []struct {
 		name   string
-		status []vibekit.ToolStatus
+		status []marotte.ToolStatus
 		want   bool
 	}{
 		{name: "no tool calls at all", status: nil, want: true},
-		{name: "every call completed", status: []vibekit.ToolStatus{vibekit.ToolCompleted}, want: true},
+		{name: "every call completed", status: []marotte.ToolStatus{marotte.ToolCompleted}, want: true},
 		{
 			name:   "a completed and a failed call are both terminal",
-			status: []vibekit.ToolStatus{vibekit.ToolCompleted, vibekit.ToolFailed},
+			status: []marotte.ToolStatus{marotte.ToolCompleted, marotte.ToolFailed},
 			want:   true,
 		},
-		{name: "an aborted call is terminal too", status: []vibekit.ToolStatus{vibekit.ToolAborted}, want: true},
-		{name: "a pending call", status: []vibekit.ToolStatus{vibekit.ToolPending}, want: false},
-		{name: "an in-progress call", status: []vibekit.ToolStatus{vibekit.ToolInProgress}, want: false},
+		{name: "an aborted call is terminal too", status: []marotte.ToolStatus{marotte.ToolAborted}, want: true},
+		{name: "a pending call", status: []marotte.ToolStatus{marotte.ToolPending}, want: false},
+		{name: "an in-progress call", status: []marotte.ToolStatus{marotte.ToolInProgress}, want: false},
 		{
 			name:   "one unsettled call among settled ones",
-			status: []vibekit.ToolStatus{vibekit.ToolCompleted, vibekit.ToolInProgress, vibekit.ToolFailed},
+			status: []marotte.ToolStatus{marotte.ToolCompleted, marotte.ToolInProgress, marotte.ToolFailed},
 			want:   false,
 		},
 	}
@@ -210,7 +210,7 @@ func TestToolsSettled(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			buf := New()
 			for i, st := range tc.status {
-				buf.AppendToolCall(&vibekit.ToolCall{ID: string(rune('a' + i)), Status: st})
+				buf.AppendToolCall(&marotte.ToolCall{ID: string(rune('a' + i)), Status: st})
 			}
 			if got := buf.ToolsSettled(); got != tc.want {
 				t.Errorf("ToolsSettled() with %v = %t, want %t", tc.status, got, tc.want)

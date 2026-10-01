@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
@@ -13,18 +13,18 @@ func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
 	// catalog routinely (KAS resolves it asynchronously), and modes have no repair
 	// channel — a live config_option_update carries models, never modes — so a
 	// write-the-zeros would leave the picker empty for the rest of the session.
-	seededModes := []vibekit.SessionMode{{ID: "spec", Name: "Spec"}}
-	seededModels := []vibekit.SessionModel{{ID: "m1", Name: "One"}}
+	seededModes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
+	seededModels := []marotte.SessionModel{{ID: "m1", Name: "One"}}
 	c := &Catalog{}
 	c.SetModes(seededModes)
 	c.SetModels(seededModels)
 
-	for _, modes := range [][]vibekit.SessionMode{nil, {}} {
+	for _, modes := range [][]marotte.SessionMode{nil, {}} {
 		if c.SetModes(modes) {
 			t.Errorf("SetModes(%v) reported a change, want false", modes)
 		}
 	}
-	for _, models := range [][]vibekit.SessionModel{nil, {}} {
+	for _, models := range [][]marotte.SessionModel{nil, {}} {
 		if c.SetModels(models) {
 			t.Errorf("SetModels(%v) reported a change, want false", models)
 		}
@@ -42,7 +42,7 @@ func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
 func TestCatalog_ReportsAChangeOnlyWhenSomethingChanged(t *testing.T) {
 	// The caller's contract: the chat store only persists and broadcasts on a
 	// change, so a repeated frame must answer false.
-	modes := []vibekit.SessionMode{{ID: "spec", Name: "Spec"}}
+	modes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	c := &Catalog{}
 
 	if !c.SetModes(modes) {
@@ -51,7 +51,7 @@ func TestCatalog_ReportsAChangeOnlyWhenSomethingChanged(t *testing.T) {
 	if c.SetModes(slices.Clone(modes)) {
 		t.Error("an identical SetModes reported a change, want false")
 	}
-	if !c.SetModes([]vibekit.SessionMode{{ID: "spec", Name: "Specification"}}) {
+	if !c.SetModes([]marotte.SessionMode{{ID: "spec", Name: "Specification"}}) {
 		t.Error("a renamed mode reported no change, want true: the NAME is what the picker renders")
 	}
 }
@@ -61,7 +61,7 @@ func TestCatalog_ReturnsACopy(t *testing.T) {
 	// slice. SessionMode holds only strings, so one level of copy is the whole
 	// value.
 	c := &Catalog{}
-	c.SetModes([]vibekit.SessionMode{{ID: "spec", Name: "Spec"}})
+	c.SetModes([]marotte.SessionMode{{ID: "spec", Name: "Spec"}})
 
 	got, _, _ := c.ModesModelsStamped()
 	got[0].Name = "mutated by the caller"
@@ -75,7 +75,7 @@ func TestCatalog_ReturnsACopy(t *testing.T) {
 func TestCatalog_SeedingIsNotSharedWithTheCaller(t *testing.T) {
 	// The other direction: the holder must not alias the slice it was handed, or a
 	// bridge reusing its own buffer would rewrite the catalog behind it.
-	modes := []vibekit.SessionMode{{ID: "spec", Name: "Spec"}}
+	modes := []marotte.SessionMode{{ID: "spec", Name: "Spec"}}
 	c := &Catalog{}
 	c.SetModes(modes)
 
@@ -89,7 +89,7 @@ func TestCatalog_SeedingIsNotSharedWithTheCaller(t *testing.T) {
 
 func TestCatalog_DefaultEffortFor(t *testing.T) {
 	c := &Catalog{}
-	c.SetModels([]vibekit.SessionModel{
+	c.SetModels([]marotte.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high"},
 		{ID: "m2"},
 	})
@@ -113,8 +113,8 @@ func TestCatalog_ConcurrentReadersAndWriters(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Go(func() {
-			c.SetModes([]vibekit.SessionMode{{ID: "m", Name: string(rune('a' + i))}})
-			c.SetModels([]vibekit.SessionModel{{ID: "m", Name: string(rune('a' + i))}})
+			c.SetModes([]marotte.SessionMode{{ID: "m", Name: string(rune('a' + i))}})
+			c.SetModels([]marotte.SessionModel{{ID: "m", Name: string(rune('a' + i))}})
 		})
 		wg.Go(func() {
 			_, _, _ = c.ModesModelsStamped()

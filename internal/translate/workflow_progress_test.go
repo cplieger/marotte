@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // at is a fixed frame-arrival instant, so the stamped timings are assertable.
@@ -17,69 +17,69 @@ const atRFC = "2026-03-04T05:06:07Z"
 func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 	cases := []struct {
 		name  string
-		kind  vibekit.RunProgressKind
+		kind  marotte.RunProgressKind
 		frame kasRunNode
-		want  vibekit.RunProgressPayload
+		want  marotte.RunProgressPayload
 	}{
 		{
 			name: "node_start asserts running and stamps the start",
-			kind: vibekit.RunProgressNodeStart,
+			kind: marotte.RunProgressNodeStart,
 			frame: kasRunNode{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
 			},
-			want: vibekit.RunProgressPayload{
+			want: marotte.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: "seq/coder",
-				Status: "running", StartedAt: atRFC, Kind: vibekit.RunProgressNodeStart,
+				Status: "running", StartedAt: atRFC, Kind: marotte.RunProgressNodeStart,
 			},
 		},
 		{
 			name: "node_complete forwards KAS's own terminal word and stamps the end",
-			kind: vibekit.RunProgressNodeComplete,
+			kind: marotte.RunProgressNodeComplete,
 			frame: kasRunNode{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"seq", "coder"},
 				Status: "completed",
 			},
-			want: vibekit.RunProgressPayload{
+			want: marotte.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: "seq/coder",
-				Status: "completed", EndedAt: atRFC, Kind: vibekit.RunProgressNodeComplete,
+				Status: "completed", EndedAt: atRFC, Kind: marotte.RunProgressNodeComplete,
 			},
 		},
 		{
 			name: "a failed node carries KAS's reason, so the row says why without a refetch",
-			kind: vibekit.RunProgressNodeComplete,
+			kind: marotte.RunProgressNodeComplete,
 			frame: kasRunNode{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: []string{"coder"},
 				Status: "failed", Reason: "the build did not link",
 			},
-			want: vibekit.RunProgressPayload{
+			want: marotte.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "coder", NodePath: "coder",
 				Status: "failed", EndedAt: atRFC, FailureReason: "the build did not link",
-				Kind: vibekit.RunProgressNodeComplete,
+				Kind: marotte.RunProgressNodeComplete,
 			},
 		},
 		{
 			name: "node_paused asserts paused and stamps neither end",
-			kind: vibekit.RunProgressNodePaused,
+			kind: marotte.RunProgressNodePaused,
 			frame: kasRunNode{
 				WorkflowID: "wf1", NodeID: "ask", NodePath: []string{"ask"},
 				Reason: "Step requested user input via send_message.",
 			},
-			want: vibekit.RunProgressPayload{
+			want: marotte.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "ask", NodePath: "ask",
-				Status: "paused", Kind: vibekit.RunProgressNodePaused,
+				Status: "paused", Kind: marotte.RunProgressNodePaused,
 			},
 		},
 		{
 			// A poll re-states running rather than nothing: a frame the client cannot
 			// apply costs a tree rebuild and a re-render for a value it already held.
 			name: "watch_poll names its node and re-states running, stamping neither end",
-			kind: vibekit.RunProgressWatchPoll,
+			kind: marotte.RunProgressWatchPoll,
 			frame: kasRunNode{
 				WorkflowID: "wf1", NodeID: "watch", NodePath: []string{"watch"},
 			},
-			want: vibekit.RunProgressPayload{
+			want: marotte.RunProgressPayload{
 				WorkflowID: "wf1", NodeID: "watch", NodePath: "watch",
-				Status: "running", Kind: vibekit.RunProgressWatchPoll,
+				Status: "running", Kind: marotte.RunProgressWatchPoll,
 			},
 		},
 	}
@@ -101,22 +101,22 @@ func TestRunProgress_NodeFramesCarryTheNodesState(t *testing.T) {
 // cannot be expressed as a per-node patch.
 func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 	cases := []struct {
-		kind  vibekit.RunProgressKind
+		kind  marotte.RunProgressKind
 		frame kasRunNode
 		why   string
 	}{
 		{
-			kind:  vibekit.RunProgressLoopIteration,
+			kind:  marotte.RunProgressLoopIteration,
 			frame: kasRunNode{WorkflowID: "wf1", LoopID: "loop"},
 			why:   "a new iteration container appears in the tree",
 		},
 		{
-			kind:  vibekit.RunProgressStepsQueued,
+			kind:  marotte.RunProgressStepsQueued,
 			frame: kasRunNode{WorkflowID: "wf1"},
 			why:   "steps are appended to the tree",
 		},
 		{
-			kind:  vibekit.RunProgressPaused,
+			kind:  marotte.RunProgressPaused,
 			frame: kasRunNode{WorkflowID: "wf1"},
 			why:   "it is run-level and its pauseReason is on inspect alone",
 		},
@@ -145,7 +145,7 @@ func TestRunProgress_ShapeChangingKindsCarryNoNodePath(t *testing.T) {
 // silently join the run-level kinds.
 func TestRunProgress_FallsBackToTheNodeIDWithNoPath(t *testing.T) {
 	f := kasRunNode{WorkflowID: "wf1", NodeID: "coder"}
-	got := runProgress(vibekit.RunProgressNodeStart, "coder", &f, at)
+	got := runProgress(marotte.RunProgressNodeStart, "coder", &f, at)
 	if got.NodePath != "coder" {
 		t.Errorf("node_path = %q, want %q", got.NodePath, "coder")
 	}

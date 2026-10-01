@@ -8,18 +8,18 @@ package composition
 // convenience symlink.
 //
 // These tests plant a toolbelt footprint for a tool literally named `kiro-cli`.
-// That is the worst case rather than a hypothetical, and vibekit is the more
+// That is the worst case rather than a hypothetical, and marotte is the more
 // exposed of the two consumers: the engine's name validator accepts `kiro-cli`,
-// its manifest is hand-editable and re-read per operation, and vibekit mounts its
+// its manifest is hand-editable and re-read per operation, and marotte mounts its
 // HTTP projection at /api/tools -- so one Add from the BROWSER reaches this state.
 //
 // The subject survived the move to the pinstall library, but the level did not:
-// the collision is a property of the values vibekit passes (Root, LinkDir, the
+// the collision is a property of the values marotte passes (Root, LinkDir, the
 // purge data, and the release name that fixes the install root), so the tests
 // build a manager from kiroInstallConfig -- the exact configuration production
 // runs -- rather than from a copy of it. The library's own suite owns the
 // mechanics these assertions ride on (the purge shape gate, the sentinel, the
-// confined deletes); what is asserted here is that vibekit's configuration keeps
+// confined deletes); what is asserted here is that marotte's configuration keeps
 // the two engines apart.
 
 import (
@@ -58,7 +58,7 @@ func newNSEnv(t *testing.T) *nsEnv {
 	return &nsEnv{t: t, tools: tools, witness: filepath.Join(tools, "foreign-was-run")}
 }
 
-// config is vibekit's real install configuration for this volume.
+// config is marotte's real install configuration for this volume.
 func (e *nsEnv) config() *pinstall.Config {
 	return kiroInstallConfig(&Config{
 		KiroCLIVersion: nsVersion,
@@ -155,8 +155,8 @@ func (e *nsEnv) plantOwnVersion() string {
 	return dir
 }
 
-// plantLegacyResidue plants the genuine shell-era residue vibekit's own installer
-// left, so a sweep assertion cannot pass by doing nothing at all. vibekit wrote no
+// plantLegacyResidue plants the genuine shell-era residue marotte's own installer
+// left, so a sweep assertion cannot pass by doing nothing at all. marotte wrote no
 // journal, no `.prev` backup and no install marker, so its residue is a promoted
 // dispatcher in the shared bin dir plus an orphan staging tree.
 func (e *nsEnv) plantLegacyResidue(dispatchers ...string) []string {
@@ -240,7 +240,7 @@ func (e *nsEnv) assertIntact(survivors []string) {
 
 // TestToolbeltKiroCLIFootprintSurvivesABoot is the whole-boot half of the
 // collision: with a toolbelt-owned `kiro-cli` tool already on the volume, a full
-// Ensure against vibekit's own configuration must neither READ nor DELETE any of
+// Ensure against marotte's own configuration must neither READ nor DELETE any of
 // it, and must activate its own version regardless.
 //
 // Every one of those properties fails if the two roots ever overlap: the partial
@@ -284,7 +284,7 @@ func TestToolbeltKiroCLIFootprintSurvivesABoot(t *testing.T) {
 }
 
 // TestInstallRootIsOutsideTheToolbeltNamespace pins the structural half, which no
-// single behavioral case can pin on its own: the install root vibekit's
+// single behavioral case can pin on its own: the install root marotte's
 // configuration produces is ONE component directly under the tools dir, and it is
 // none of the four directories the toolbelt engine creates and enumerates. Any
 // tool name the engine accepts therefore resolves to a path that cannot contain,
@@ -324,7 +324,7 @@ func TestInstallRootIsOutsideTheToolbeltNamespace(t *testing.T) {
 // unconditionally, on every boot -- so an engine-owned symlink was unlinked while
 // the engine's state row still claimed it, silently, forever.
 //
-// vibekit's purge data names three targets, so a symlink at one of those paths is
+// marotte's purge data names three targets, so a symlink at one of those paths is
 // refused: it is a shape the shell installer never left there. The genuine residue
 // is present at the same time, so the test cannot pass by sweeping nothing; and a
 // refusal must NOT withhold the completion marker, or a volume with a

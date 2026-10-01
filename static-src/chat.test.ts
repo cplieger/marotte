@@ -1040,7 +1040,7 @@ describe("restore: opening a closed conversation from History", () => {
   // The reported symptom was a blank chat page, so the assertion is that the
   // transcript is actually FETCHED and the tab actually opens. Every row the
   // History page offers now carries a chat_id (the server lists a session only
-  // when a vibekit chat owns it), so this one path is the whole restore.
+  // when a marotte chat owns it), so this one path is the whole restore.
   function closedChat(): never {
     return {
       id: "c-closed",
@@ -1110,7 +1110,7 @@ describe("restore: opening a closed conversation from History", () => {
   });
 
   it("ignores a row with no owning chat", async () => {
-    // The adoption path is gone: an unclaimed row was always vibekit's own
+    // The adoption path is gone: an unclaimed row was always marotte's own
     // utility session, and adopting it produced the blank page plus a junk chat.
     // The server no longer emits one; this is the belt-and-braces half.
     await openPreviousSession({ ...row, chat_id: "" });

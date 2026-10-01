@@ -1,7 +1,7 @@
 // The leaf's library question: static-src/textsearch imports nothing from
-// vibekit, and nothing from anywhere else either, so the directory can be lifted
+// marotte, and nothing from anywhere else either, so the directory can be lifted
 // into cplieger/textsearch unchanged. Read off each module's own AST rather than
-// asserted by the realm, because a module that imported a DOM-free vibekit helper
+// asserted by the realm, because a module that imported a DOM-free marotte helper
 // would load fine in any project and every other test would stay green.
 //
 // Node placement because the sources are a disk read.
@@ -63,7 +63,7 @@ describe("static-src/textsearch is a leaf", () => {
         }
       }
     }
-    expect(outside, "a leaf that reaches into vibekit cannot be extracted").toEqual([]);
+    expect(outside, "a leaf that reaches into marotte cannot be extracted").toEqual([]);
   });
 
   it("imports exactly the declared edge list: scan reaches fold, nothing else reaches anything", () => {

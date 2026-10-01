@@ -60,7 +60,7 @@
    Tab activity dot
    ==========================================================================
    Ported from @cplieger/web-terminal-ui's `.wt-status-dot` (css/30-tabs.css),
-   so vibekit and web-terminal-kiro read the same way. On a CHAT tab it is the
+   so marotte and web-terminal-kiro read the same way. On a CHAT tab it is the
    leading element and it REPLACED the per-mode role glyph: the strip's job is
    peripheral awareness of chats you are not looking at, and a chat's role is
    the same every time you glance at it while its activity is the thing that
@@ -228,7 +228,7 @@
    full-opacity disc, plus a ::after wave travelling off its edge — and both are
    gone, each for its own measured reason (the wave below, the overlay at the rule).
 
-   vibekit's own `waiting` state used to animate too, and stopping it is a
+   marotte's own `waiting` state used to animate too, and stopping it is a
    correction rather than a port gap: a waiting_on_user dot persists until the
    next turn, so an animated one nags indefinitely with nothing in flight — the
    exact failure the source names for its `crashed` state ("nothing clears it,
@@ -334,7 +334,7 @@
    breadth tabs.ts's dot phrase is written against. Still, because
    nothing more is coming and nothing clears it until the next prompt; that is
    the source's `crashed` semantics, not its animated `failed` (which is a LIVE
-   OSC 9;4 progress state vibekit has no channel for).
+   OSC 9;4 progress state marotte has no channel for).
 
    A DIAMOND, which is the one deviation from the source's geometry and it is
    forced by measurement. `failed` and `done` are both settled solid discs, so

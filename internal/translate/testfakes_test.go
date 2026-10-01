@@ -3,24 +3,24 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // nopChatRecords is a ChatRecords whose every method is a no-op, for embedding in a double
 // that overrides only the calls its test observes.
 type nopChatRecords struct{}
 
-func (nopChatRecords) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) { return nil, false }
+func (nopChatRecords) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) { return nil, false }
 
-func (nopChatRecords) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+func (nopChatRecords) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
 	return "", nil
 }
 
-func (nopChatRecords) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {
+func (nopChatRecords) AppendMessage(context.Context, marotte.ChatID, *marotte.Message) error {
 	return nil
 }
 
-func (nopChatRecords) UpsertTurnPlan(context.Context, vibekit.ChatID, *vibekit.Message) error {
+func (nopChatRecords) UpsertTurnPlan(context.Context, marotte.ChatID, *marotte.Message) error {
 	return nil
 }
 
@@ -30,7 +30,7 @@ var _ ChatRecords = nopChatRecords{}
 // whose MCP side effects they do not assert on.
 type nopMCPRecorder struct{}
 
-func (nopMCPRecorder) RecordConnected(context.Context, string, []string, []vibekit.MCPPromptInfo, []vibekit.MCPResourceInfo) {
+func (nopMCPRecorder) RecordConnected(context.Context, string, []string, []marotte.MCPPromptInfo, []marotte.MCPResourceInfo) {
 }
 
 func (nopMCPRecorder) RecordOAuth(context.Context, string, string) {}
@@ -62,11 +62,11 @@ type hostDouble interface {
 	Responder
 	BufferAccess
 	TurnBoundary
-	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
-	SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin
+	RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string)
+	SteerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin
 	SteerBuffer
 	MCPRecorder() MCPRecorder
-	SetGovernance(state vibekit.GovernanceStatePayload)
+	SetGovernance(state marotte.GovernanceStatePayload)
 	// WorkDir is a Roles FIELD in production; the double answers it as a method so rolesOf can
 	// fill that field per fixture, because relPath's table drives it.
 	WorkDir() string

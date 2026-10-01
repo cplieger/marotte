@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const jsonRPCVersion = "2.0"
@@ -21,8 +21,8 @@ const jsonRPCVersion = "2.0"
 // compares pointer identity against this value and translates it to
 // errBridgeExited, so "kiro-cli died on its own" and "Stop() races a
 // fresh Call" return the same sentinel without string comparison.
-var bridgeExitedResp = &vibekit.RPCResponse{
-	Error: &vibekit.RPCError{Code: vibekit.RPCCodeBridgeExited, Message: "ACP bridge exited"},
+var bridgeExitedResp = &marotte.RPCResponse{
+	Error: &marotte.RPCError{Code: marotte.RPCCodeBridgeExited, Message: "ACP bridge exited"},
 }
 
 // frameTooLargeResp is the second pointer-identity sentinel, pushed into every
@@ -30,8 +30,8 @@ var bridgeExitedResp = &vibekit.RPCResponse{
 // bridgeExitedResp because the two mean opposite things about the process: this
 // one leaves it running and the session usable, so Call must translate it to a
 // NON-retryable error rather than the retryable dead-bridge one.
-var frameTooLargeResp = &vibekit.RPCResponse{
-	Error: &vibekit.RPCError{Code: vibekit.RPCCodeInternal, Message: vibekit.ErrFrameTooLarge.Error()},
+var frameTooLargeResp = &marotte.RPCResponse{
+	Error: &marotte.RPCError{Code: marotte.RPCCodeInternal, Message: marotte.ErrFrameTooLarge.Error()},
 }
 
 // pendingReply is the answer to one of our requests plus the read loop's position
@@ -42,17 +42,17 @@ var frameTooLargeResp = &vibekit.RPCResponse{
 // consumer has folded. Bundled rather than read back afterwards, so the capture is
 // the moment the response landed.
 type pendingReply struct {
-	resp *vibekit.RPCResponse
+	resp *marotte.RPCResponse
 	seq  uint64
 }
 
 // sendNotif stamps the next sequence on a frame and delivers it. Called only
 // from readLoop, which is what makes the unsynchronized counter sound: one
 // writer, and the value is published on the frame.
-func (b *Bridge) sendNotif(msg *vibekit.RPCResponse) {
+func (b *Bridge) sendNotif(msg *marotte.RPCResponse) {
 	b.deliveredSeq++
 	select {
-	case b.notifCh <- vibekit.Notification{Msg: msg, Seq: b.deliveredSeq}:
+	case b.notifCh <- marotte.Notification{Msg: msg, Seq: b.deliveredSeq}:
 	case <-b.done:
 	}
 }
@@ -72,7 +72,7 @@ func (b *Bridge) readLoop() {
 		if dropped > 0 {
 			continue // the frame's bytes are gone; there is nothing to parse
 		}
-		var msg vibekit.RPCResponse
+		var msg marotte.RPCResponse
 		if uErr := json.Unmarshal(line, &msg); uErr != nil {
 			if b.recordParseError(&tracker, len(line), uErr) {
 				return
@@ -104,14 +104,14 @@ func (b *Bridge) readLoop() {
 //
 // Failing them is also how the user hears about it: the prompt path finalizes
 // through its ordinary failure route (AbandonInFlightTurn plus
-// error{prompt_failed}) carrying vibekit.ErrFrameTooLarge's wording. The process and
+// error{prompt_failed}) carrying marotte.ErrFrameTooLarge's wording. The process and
 // the ACP session both stay alive, so the chat is immediately promptable. One
 // large tool result now kills the TURN instead of the SESSION.
 //
 // A frame dropped while nothing is pending surfaces in this log line only. That
 // is the residual: notifications arrive during a turn, so in practice a prompt
 // Call is pending, but nothing on the wire re-sends a lost notification and
-// vibekit cannot invent its content.
+// marotte cannot invent its content.
 func (b *Bridge) reportDroppedFrame(dropped int) {
 	failed := b.failPending(frameTooLargeResp)
 	slog.Error("ACP read: frame exceeds the size cap; dropped it and failed the pending requests",
@@ -148,7 +148,7 @@ func (b *Bridge) drainPendingAndClose() {
 // The non-blocking send is deliberate — every pending channel is buffered with
 // capacity 1 and a Call that already left through ctx.Done or b.done deregisters
 // itself, so a full or abandoned channel must not stall this loop.
-func (b *Bridge) failPending(resp *vibekit.RPCResponse) int {
+func (b *Bridge) failPending(resp *marotte.RPCResponse) int {
 	b.pendingMu.Lock()
 	n := len(b.pending)
 	// The sequence is the read loop's own count, so a failure carries it too: a
@@ -190,7 +190,7 @@ func (b *Bridge) recordParseError(tracker *parseErrTracker, lineLen int, err err
 // dispatch routes a successfully-decoded frame: a response to one of our
 // requests is handed to the waiting Call; a request from kiro-cli or a
 // server-sent notification is forwarded on notifCh.
-func (b *Bridge) dispatch(msg *vibekit.RPCResponse) {
+func (b *Bridge) dispatch(msg *marotte.RPCResponse) {
 	switch {
 	case msg.ID != nil && msg.Method == "":
 		b.pendingMu.Lock()
@@ -243,7 +243,7 @@ func (b *Bridge) deregisterPending(id int64) {
 // turns can legitimately run for hours; the caller owns turn
 // cancellation via Notify("session/cancel", ...). Shutdown ordering is
 // enforced by Stop → readLoop fanout; no in-Call timeout is needed.
-func (b *Bridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
+func (b *Bridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	resp, _, err := b.CallAt(ctx, method, params)
 	return resp, err
 }
@@ -254,9 +254,9 @@ func (b *Bridge) Call(ctx context.Context, method string, params any) (*vibekit.
 // flight needs it — the prompt paths, whose turn cannot be settled locally until
 // the consumer has folded everything that preceded the response. Everything else
 // takes Call.
-func (b *Bridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+func (b *Bridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	id := b.nextID.Add(1)
-	req := vibekit.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
+	req := marotte.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
 	ch := make(chan pendingReply, 1)
 	b.pendingMu.Lock()
 	b.pending[id] = ch
@@ -269,32 +269,32 @@ func (b *Bridge) CallAt(ctx context.Context, method string, params any) (*vibeki
 	data = append(data, '\n')
 	if writeErr := b.writeFrame(data); writeErr != nil {
 		b.deregisterPending(id)
-		return nil, 0, &vibekit.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
+		return nil, 0, &marotte.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
 	select {
 	case reply := <-ch:
 		resp := reply.resp
 		if resp == bridgeExitedResp {
-			return nil, reply.seq, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
+			return nil, reply.seq, &marotte.TransportError{Err: errBridgeExited, Retryable: true}
 		}
 		if resp == frameTooLargeResp {
 			// NOT retryable: the same prompt would very likely produce the same
 			// oversize payload, so retries buy a re-run of an expensive turn and
-			// the same failure. See vibekit.ErrFrameTooLarge.
-			return nil, reply.seq, &vibekit.TransportError{Err: vibekit.ErrFrameTooLarge, Retryable: false}
+			// the same failure. See marotte.ErrFrameTooLarge.
+			return nil, reply.seq, &marotte.TransportError{Err: marotte.ErrFrameTooLarge, Retryable: false}
 		}
 		if resp.Error != nil {
 			// Classify "not idle" at the bridge layer so callers can
-			// use errors.Is(err, vibekit.ErrNotIdle) without string matching.
-			if resp.Error.Code == vibekit.RPCCodeNotIdle {
-				return resp, reply.seq, fmt.Errorf("ACP error %d: %w", resp.Error.Code, vibekit.ErrNotIdle)
+			// use errors.Is(err, marotte.ErrNotIdle) without string matching.
+			if resp.Error.Code == marotte.RPCCodeNotIdle {
+				return resp, reply.seq, fmt.Errorf("ACP error %d: %w", resp.Error.Code, marotte.ErrNotIdle)
 			}
 			return resp, reply.seq, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
 		}
 		return resp, reply.seq, nil
 	case <-b.done:
 		b.deregisterPending(id)
-		return nil, 0, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
+		return nil, 0, &marotte.TransportError{Err: errBridgeExited, Retryable: true}
 	case <-ctx.Done():
 		b.deregisterPending(id)
 		return nil, 0, ctx.Err()
@@ -306,7 +306,7 @@ func (b *Bridge) Notify(ctx context.Context, method string, params any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	req := vibekit.RPCNotification{JSONRPC: jsonRPCVersion, Method: method, Params: params}
+	req := marotte.RPCNotification{JSONRPC: jsonRPCVersion, Method: method, Params: params}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -320,27 +320,27 @@ func (b *Bridge) Notify(ctx context.Context, method string, params any) error {
 // case), KAS rethrows it into that model's own tool result, and nothing else on
 // this path bounds it. Long enough for an os error sentence carrying a
 // workspace path; short enough that a hostile one cannot flood the context it
-// re-enters. A *vibekit.RPCError's message is app-authored prose and is exempt.
+// re-enters. A *marotte.RPCError's message is app-authored prose and is exempt.
 const maxRespondErrorBytes = 256
 
 // Respond writes a JSON-RPC response to a request we received from
 // kiro-cli (e.g. fs/read_text_file, fs/write_text_file). Pass a non-nil
 // result for success, a non-nil err for failure; exactly one must be
 // set. Errors from the ACP namespace use code -32603 (internal error)
-// unless err unwraps to an *vibekit.RPCError with a specific code.
+// unless err unwraps to an *marotte.RPCError with a specific code.
 func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) error {
 	if cErr := ctx.Err(); cErr != nil {
 		return cErr
 	}
-	resp := vibekit.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
+	resp := marotte.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
 	if err != nil {
-		code := vibekit.RPCCodeInternal
+		code := marotte.RPCCodeInternal
 		msg := runesafe.SanitizeSingleLineBounded(err.Error(), maxRespondErrorBytes)
-		if re, ok := errors.AsType[*vibekit.RPCError](err); ok {
+		if re, ok := errors.AsType[*marotte.RPCError](err); ok {
 			code = re.Code
 			msg = re.Message
 		}
-		resp.Error = &vibekit.RPCErrorOut{Code: code, Message: msg}
+		resp.Error = &marotte.RPCErrorOut{Code: code, Message: msg}
 	} else {
 		resp.Result = result
 	}
@@ -372,7 +372,7 @@ func (b *Bridge) writeFrame(data []byte) error {
 	defer b.writeMu.Unlock()
 	// Before anything touches the handle: it is an interface field Start assigns,
 	// so a write that reaches here without one used to call a method on a nil
-	// interface and panic. See vibekit.ErrBridgeNotStarted for who gets here.
+	// interface and panic. See marotte.ErrBridgeNotStarted for who gets here.
 	pipe := b.stdin.Load()
 	if pipe == nil {
 		return errBridgeNotStarted

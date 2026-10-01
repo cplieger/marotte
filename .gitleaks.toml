@@ -1,4 +1,4 @@
-# gitleaks configuration for cplieger/vibekit
+# gitleaks configuration for cplieger/marotte
 #
 # THE [extend] BLOCK IS THE WHOLE SECRET GATE. Without it a config that defines
 # no `[[rules]]` of its own defines no rules at all, and gitleaks then reports
@@ -19,7 +19,7 @@
 # error, no warning, the entries simply do nothing. If that version pin is ever
 # removed, these allowlists go quiet and the findings below come back.
 
-title = "vibekit gitleaks config"
+title = "marotte gitleaks config"
 
 # Extend the bundled default rule set rather than redefining it.
 [extend]

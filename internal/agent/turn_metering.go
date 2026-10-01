@@ -9,19 +9,19 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // AccumulateSpend adds a turn_completion's credit spend to the chat, step frame or
 // not. Satisfies translate.TurnMetering. A zero-credit summary is skipped, since
 // HasRealData is what switches the context popup from "unknown" to a figure and
 // must not report a measured 0.00 the account never confirmed.
-func (bc *BridgeCoordinator) AccumulateSpend(ctx context.Context, chatID vibekit.ChatID, credits float64) {
+func (bc *BridgeCoordinator) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, credits float64) {
 	if credits <= 0 {
 		return
 	}
-	bc.mutateUsage(ctx, chatID, func(u *vibekit.Usage) {
+	bc.mutateUsage(ctx, chatID, func(u *marotte.Usage) {
 		u.Credits += credits
 		u.HasRealData = true
 	})
@@ -33,9 +33,9 @@ func (bc *BridgeCoordinator) AccumulateSpend(ctx context.Context, chatID vibekit
 // accumulates and staging on the TURN is what bounds that sum and counts one
 // conversation turn per turn; a turn reporting no duration leaves the previous
 // measurement alone.
-func (bc *BridgeCoordinator) StageConversationTurnSummary(ctx context.Context, chatID vibekit.ChatID, elapsedMs float64) {
+func (bc *BridgeCoordinator) StageConversationTurnSummary(ctx context.Context, chatID marotte.ChatID, elapsedMs float64) {
 	total, first := bc.turns.stageTurnSummary(chatID, elapsedMs)
-	bc.mutateUsage(ctx, chatID, func(u *vibekit.Usage) {
+	bc.mutateUsage(ctx, chatID, func(u *marotte.Usage) {
 		if first {
 			u.TurnCount++
 		}
@@ -48,8 +48,8 @@ func (bc *BridgeCoordinator) StageConversationTurnSummary(ctx context.Context, c
 // mutateUsage applies a usage write to the chat. Every write here is LATE — it
 // lands after the frame that caused it, on a chat the user may already have
 // deleted — so chat.ErrTombstoned is the designed outcome rather than a fault.
-func (bc *BridgeCoordinator) mutateUsage(ctx context.Context, chatID vibekit.ChatID, apply func(*vibekit.Usage)) {
-	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func (bc *BridgeCoordinator) mutateUsage(ctx context.Context, chatID marotte.ChatID, apply func(*marotte.Usage)) {
+	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}

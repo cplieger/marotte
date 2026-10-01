@@ -267,9 +267,9 @@ export function restoreAll(s: EffectiveSettings): void {
   initChatRetention(s);
 }
 
-// --- Chat retention (vibekit-owned; /api/settings chat_retention_days) ---
+// --- Chat retention (marotte-owned; /api/settings chat_retention_days) ---
 //
-// kiro-cli's cleanup.periodDays is pinned to 0/never — vibekit owns retention
+// kiro-cli's cleanup.periodDays is pinned to 0/never — marotte owns retention
 // end to end. The Days-kept number field carries 0 (off) .. N (keep N days);
 // the Keep-forever checkbox overrides it to -1 (kept, never purged) and HIDES
 // the Days-kept row. Hiding rather than disabling: -1 has no day count, so a
@@ -442,10 +442,10 @@ function initLogoutButton(): void {
 async function loadAbout(): Promise<void> {
   await loadVersions();
   const v = getVersions();
-  const vibekitEl = document.getElementById("about-vibekit");
+  const marotteEl = document.getElementById("about-marotte");
   const kiroEl = document.getElementById("about-kirocli");
-  if (vibekitEl !== null) {
-    vibekitEl.textContent = v.vibekit === "" ? "—" : v.vibekit;
+  if (marotteEl !== null) {
+    marotteEl.textContent = v.marotte === "" ? "—" : v.marotte;
   }
   if (kiroEl !== null) {
     kiroEl.textContent = v.kiroCli === "" ? "—" : v.kiroCli;
@@ -695,7 +695,7 @@ function setAuthLine(text: string): void {
 // --- Experimental flag toggles (Settings → General) ---
 //
 // kiro-cli experimental features gated by settings keys (see the
-// experimentalFlags registry below for the full set). Vibekit seeds them at
+// experimentalFlags registry below for the full set). Marotte seeds them at
 // container boot (entrypoint.sh); this UI lets the user flip each one.
 
 /** What GET /api/kiro-settings answers: the requested keys and their values, as
@@ -722,8 +722,8 @@ interface KiroSettingsPayload {
 // occurrences of `cli.json`, `kiro-cli/settings`, `readSettingsFile` or
 // `loadCliSettings`, and each `chat.*` literal appears exactly once, as a
 // `@see kiro-cli:` cross-reference inside the settings schema. So a write here
-// reaches the TUI and the index builder, never a vibekit chat. Anything that has
-// to change a vibekit chat goes through `_meta.kiro.settings` instead — the
+// reaches the TUI and the index builder, never a marotte chat. Anything that has
+// to change a marotte chat goes through `_meta.kiro.settings` instead — the
 // kascap table's door — which is where tool search and knowledge now send.
 //
 // `chat.enableCheckpoint` and `chat.enableTodoList` were REMOVED from this list
@@ -737,7 +737,7 @@ interface KiroSettingsPayload {
 // `chat.enableKnowledge` and `toolSearch.enabled` left for the OPPOSITE reason:
 // their ACP counterparts ARE read, so the controls were pointed at the wrong door
 // rather than being inert. Both moved to initAgentCapabilities below, which writes
-// vibekit's own settings and reaches the agent through kascap's gates.
+// marotte's own settings and reaches the agent through kascap's gates.
 const experimentalFlags: readonly {
   key: string;
   inputID: string;
@@ -805,7 +805,7 @@ export function initExperimentalToggles(): void {
 // --- Agent capabilities (Settings → General) ---
 //
 // Two toggles that look like the kiro-cli flags above and are a different
-// mechanism. They write VIBEKIT settings through /api/settings, and
+// mechanism. They write MAROTTE settings through /api/settings, and
 // internal/agent resolves each at spawn time into the `_meta.kiro.settings`
 // handshake keys KAS actually reads (`knowledge` plus its capability twin, and
 // `toolSearch`).
@@ -853,16 +853,16 @@ function initAgentCapabilities(initial: EffectiveSettings): void {
 // REMOVED: a Settings-level *default*-agent picker. Role selection now
 // lives on the prompt-bar role pill (role-picker.ts, #role-pill): it picks
 // the agent per chat (built-in or a workspace custom agent from
-// .kiro/agents/), which fits vibekit's per-chat model better than a
+// .kiro/agents/), which fits marotte's per-chat model better than a
 // persistent default. To set a container-wide default agent instead, use
-// `docker exec vibekit kiro-cli agent set-default <name>`.
+// `docker exec marotte kiro-cli agent set-default <name>`.
 
 // --- Debug logs toggle ---
 //
-// Separate from the kiro-cli experimental flags: this flips vibekit's
+// Separate from the kiro-cli experimental flags: this flips marotte's
 // own slog level via /api/settings rather than the kiro-cli settings
 // endpoint. When on, server-side logs include slog.Debug entries;
-// read them with `docker logs vibekit`.
+// read them with `docker logs marotte`.
 
 function initDebugLogsToggle(initial: EffectiveSettings): void {
   const input = document.getElementById("flag-debug-logs") as HTMLInputElement | null;

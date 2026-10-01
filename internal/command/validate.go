@@ -3,8 +3,8 @@ package command
 import (
 	"errors"
 
-	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // maxPromptBytes caps the text field of a prompt command.
@@ -34,8 +34,8 @@ var (
 	// Appended to a refused revert whose target carries no agent-side id: a turn from
 	// before the id was recorded, one whose assignment frame never arrived, and one whose
 	// id was dropped when the chat retired the session that minted it. One sentence serves
-	// all three — the remedy is identical and vibekit cannot tell which it was.
-	errRewindNoAgentID = errors.New("vibekit has no id for this turn in the agent's current session, so the agent may not be able to locate it; turns sent from now on can be rewound")
+	// all three — the remedy is identical and marotte cannot tell which it was.
+	errRewindNoAgentID = errors.New("marotte has no id for this turn in the agent's current session, so the agent may not be able to locate it; turns sent from now on can be rewound")
 	errBusy            = errors.New("busy")
 	// errAlreadyAnswered is the 409 for a decision another surface settled
 	// first. A code rather than prose: the client keys off it.
@@ -50,7 +50,7 @@ var (
 )
 
 // validChatID reports whether id is safe to use as a chat identifier.
-func validChatID(id vibekit.ChatID) bool {
+func validChatID(id marotte.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 

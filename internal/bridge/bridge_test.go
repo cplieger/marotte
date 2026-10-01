@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/modeltext"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/modeltext"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestNew_FieldsAndAccessors(t *testing.T) {
@@ -308,7 +308,7 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
-		resp *vibekit.RPCResponse
+		resp *marotte.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -454,15 +454,15 @@ func TestRespond_BoundsAndFlattensGenericErrorMessage(t *testing.T) {
 func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
 	cases := map[string]func(*Bridge) error{
 		"Call": func(b *Bridge) error {
-			_, err := b.Call(t.Context(), vibekit.MethodSetMode, nil)
+			_, err := b.Call(t.Context(), marotte.MethodSetMode, nil)
 			return err
 		},
 		"CallAt": func(b *Bridge) error {
-			_, _, err := b.CallAt(t.Context(), vibekit.MethodSetMode, nil)
+			_, _, err := b.CallAt(t.Context(), marotte.MethodSetMode, nil)
 			return err
 		},
 		"Notify": func(b *Bridge) error {
-			return b.Notify(t.Context(), vibekit.MethodCancel, nil)
+			return b.Notify(t.Context(), marotte.MethodCancel, nil)
 		},
 		"Respond": func(b *Bridge) error {
 			return b.Respond(t.Context(), 1, map[string]string{}, nil)
@@ -473,7 +473,7 @@ func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
 			// New, never Start: the state a chat bridge is registered in, and the
 			// state a failed Start leaves behind.
 			err := write(New("/nonexistent", "/work"))
-			if !errors.Is(err, vibekit.ErrBridgeNotStarted) {
+			if !errors.Is(err, marotte.ErrBridgeNotStarted) {
 				t.Errorf("%s on an unstarted bridge = %v, want ErrBridgeNotStarted", name, err)
 			}
 		})
@@ -485,7 +485,7 @@ func TestWrites_OnAnUnstartedBridgeRefuseRatherThanPanic(t *testing.T) {
 // and a later response could be delivered to a caller that is gone.
 func TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	if _, err := b.Call(t.Context(), vibekit.MethodSetMode, nil); err == nil {
+	if _, err := b.Call(t.Context(), marotte.MethodSetMode, nil); err == nil {
 		t.Fatal("Call on an unstarted bridge returned no error")
 	}
 	b.pendingMu.Lock()
@@ -497,7 +497,7 @@ func TestCall_OnAnUnstartedBridgeLeavesNoPendingWaiter(t *testing.T) {
 
 func TestRespond_TypedRPCError(t *testing.T) {
 	b, pr := respondBridge(t)
-	rpcErr := &vibekit.RPCError{Code: -32001, Message: "custom error"}
+	rpcErr := &marotte.RPCError{Code: -32001, Message: "custom error"}
 	if err := b.Respond(t.Context(), 99, nil, rpcErr); err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +538,7 @@ func TestCall_HappyPath(t *testing.T) {
 	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
-		resp *vibekit.RPCResponse
+		resp *marotte.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -561,7 +561,7 @@ func TestCall_HappyPath(t *testing.T) {
 	delete(b.pending, id)
 	b.pendingMu.Unlock()
 
-	successResp := &vibekit.RPCResponse{}
+	successResp := &marotte.RPCResponse{}
 	raw := json.RawMessage(`{"ok":true}`)
 	successResp.Result = raw
 	ch <- pendingReply{resp: successResp}
@@ -589,7 +589,7 @@ func TestCall_ErrorResponse(t *testing.T) {
 	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
-		resp *vibekit.RPCResponse
+		resp *marotte.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -611,8 +611,8 @@ func TestCall_ErrorResponse(t *testing.T) {
 	delete(b.pending, id)
 	b.pendingMu.Unlock()
 
-	errResp := &vibekit.RPCResponse{
-		Error: &vibekit.RPCError{Code: -32600, Message: "invalid request"},
+	errResp := &marotte.RPCResponse{
+		Error: &marotte.RPCError{Code: -32600, Message: "invalid request"},
 	}
 	ch <- pendingReply{resp: errResp}
 
@@ -642,7 +642,7 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 	b.stdin.Store(&stdinPipe{w: pw})
 
 	type result struct {
-		resp *vibekit.RPCResponse
+		resp *marotte.RPCResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -685,12 +685,12 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 func BenchmarkBridgeReadLoop(b *testing.B) {
 	// Pre-build message payloads: half responses, half notifications.
 	respID := int64(1)
-	respMsg, _ := json.Marshal(vibekit.RPCResponse{
+	respMsg, _ := json.Marshal(marotte.RPCResponse{
 		JSONRPC: "2.0",
 		ID:      &respID,
 		Result:  json.RawMessage(`{"status":"ok"}`),
 	})
-	notifMsg, _ := json.Marshal(vibekit.RPCResponse{
+	notifMsg, _ := json.Marshal(marotte.RPCResponse{
 		JSONRPC: "2.0",
 		Method:  "session/update",
 		Params:  json.RawMessage(`{"sessionId":"s1","delta":{"type":"text","text":"hi"}}`),
@@ -706,7 +706,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 		br := &Bridge{
 			stdout:  newFrameReader(bufio.NewReaderSize(pr, stdoutBufSize)),
 			pending: make(map[int64]chan pendingReply),
-			notifCh: make(chan vibekit.Notification, 1024),
+			notifCh: make(chan marotte.Notification, 1024),
 			done:    make(chan struct{}),
 		}
 
@@ -723,7 +723,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 				if j%2 == 0 {
 					// Response with incrementing ID.
 					id := int64(j/2 + 1)
-					msg, _ := json.Marshal(vibekit.RPCResponse{
+					msg, _ := json.Marshal(marotte.RPCResponse{
 						JSONRPC: "2.0",
 						ID:      &id,
 						Result:  json.RawMessage(`{"status":"ok"}`),
@@ -803,7 +803,7 @@ done
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -814,7 +814,7 @@ done
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "existing-sess", Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -825,7 +825,7 @@ done
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -840,7 +840,7 @@ done
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -851,7 +851,7 @@ done
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -869,7 +869,7 @@ done
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -1135,7 +1135,7 @@ done
 	// and "sonnet" is the value under test. A requested model would legitimately
 	// override it via session/set_config_option — see
 	// TestNewSession_AppliesRequestedModelAndEffort.
-	if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context()}); err != nil {
+	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if id := b.SessionID(); id != "lifecycle-001" {
@@ -1203,7 +1203,7 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 			b.stdin.Store(&stdinPipe{w: pw})
 
 			type result struct {
-				resp *vibekit.RPCResponse
+				resp *marotte.RPCResponse
 				err  error
 			}
 			done := make(chan result, 1)
@@ -1223,8 +1223,8 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 			}
 			b.pendingMu.Unlock()
 
-			errResp := &vibekit.RPCResponse{
-				Error: &vibekit.RPCError{Code: tc.code, Message: tc.message},
+			errResp := &marotte.RPCResponse{
+				Error: &marotte.RPCError{Code: tc.code, Message: tc.message},
 			}
 			ch <- pendingReply{resp: errResp}
 
@@ -1234,12 +1234,12 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 					t.Fatal("expected error, got nil")
 				}
 				if tc.wantNotIdle {
-					if !errors.Is(r.err, vibekit.ErrNotIdle) {
-						t.Errorf("err = %v, want vibekit.ErrNotIdle", r.err)
+					if !errors.Is(r.err, marotte.ErrNotIdle) {
+						t.Errorf("err = %v, want marotte.ErrNotIdle", r.err)
 					}
 				} else {
-					if errors.Is(r.err, vibekit.ErrNotIdle) {
-						t.Errorf("err = %v, should NOT be vibekit.ErrNotIdle", r.err)
+					if errors.Is(r.err, marotte.ErrNotIdle) {
+						t.Errorf("err = %v, should NOT be marotte.ErrNotIdle", r.err)
 					}
 					if !strings.Contains(r.err.Error(), tc.wantMsg) {
 						t.Errorf("err = %v, want to contain %q", r.err, tc.wantMsg)
@@ -1282,7 +1282,7 @@ func BenchmarkBridgeRespond(b *testing.B) {
 	br := &Bridge{
 		done:    make(chan struct{}),
 		pending: make(map[int64]chan pendingReply),
-		notifCh: make(chan vibekit.Notification, 16),
+		notifCh: make(chan marotte.Notification, 16),
 	}
 	br.stdin.Store(&stdinPipe{w: pw})
 
@@ -1347,7 +1347,7 @@ func readLoopBridge(r io.Reader) *Bridge {
 	return &Bridge{
 		stdout:  newFrameReader(bufio.NewReaderSize(r, stdoutBufSize)),
 		pending: make(map[int64]chan pendingReply),
-		notifCh: make(chan vibekit.Notification, 1),
+		notifCh: make(chan marotte.Notification, 1),
 		done:    make(chan struct{}),
 	}
 }
@@ -1388,10 +1388,10 @@ func waitPending(t *testing.T, b *Bridge, n int) {
 }
 
 // runLoadSession drives loadSession against an injected RPC response and returns its error.
-func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *vibekit.RPCResponse) error {
+func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *marotte.RPCResponse) error {
 	t.Helper()
 	_, err := runLoadSessionOpts(t, b,
-		&vibekit.StartOpts{SessionID: "acp-session-xyz", Model: fallback}, resp)
+		&marotte.StartOpts{SessionID: "acp-session-xyz", Model: fallback}, resp)
 	return err
 }
 
@@ -1400,7 +1400,7 @@ func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *vibekit.RPCR
 // success, and returns every frame the bridge wrote so a test can assert what the
 // session door carried and what it did NOT have to send afterwards.
 func runNewSession(
-	t *testing.T, b *Bridge, opts *vibekit.StartOpts, resp *vibekit.RPCResponse,
+	t *testing.T, b *Bridge, opts *marotte.StartOpts, resp *marotte.RPCResponse,
 ) ([]byte, error) {
 	t.Helper()
 	return driveSessionCall(t, b, resp, func(ctx context.Context) error {
@@ -1412,7 +1412,7 @@ func runNewSession(
 // hands, returning every frame the bridge wrote so a test can assert WHICH
 // config options the post-load re-assert sent.
 func runLoadSessionOpts(
-	t *testing.T, b *Bridge, opts *vibekit.StartOpts, resp *vibekit.RPCResponse,
+	t *testing.T, b *Bridge, opts *marotte.StartOpts, resp *marotte.RPCResponse,
 ) ([]byte, error) {
 	t.Helper()
 	return driveSessionCall(t, b, resp, func(ctx context.Context) error {
@@ -1429,7 +1429,7 @@ func runLoadSessionOpts(
 // reported), and a helper that answers only the first one hangs the test with
 // "did not return" while naming nothing about the cause.
 func driveSessionCall(
-	t *testing.T, b *Bridge, resp *vibekit.RPCResponse, run func(context.Context) error,
+	t *testing.T, b *Bridge, resp *marotte.RPCResponse, run func(context.Context) error,
 ) ([]byte, error) {
 	t.Helper()
 	pr, pw, err := os.Pipe()
@@ -1468,7 +1468,7 @@ func driveSessionCall(
 			// "this many notifications preceded the response on the wire", which is
 			// the position loadSession records.
 			ch <- pendingReply{resp: answer, seq: b.deliveredSeq}
-			answer = &vibekit.RPCResponse{Result: json.RawMessage(`{}`)}
+			answer = &marotte.RPCResponse{Result: json.RawMessage(`{}`)}
 			continue
 		}
 		if time.Now().After(deadline) {
@@ -1915,8 +1915,8 @@ func TestWriteFrame_WritesThroughAWriterWithNoDeadline(t *testing.T) {
 func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
-		&vibekit.StartOpts{Model: "claude-opus-5", Effort: "max"},
-		&vibekit.RPCResponse{Result: json.RawMessage(
+		&marotte.StartOpts{Model: "claude-opus-5", Effort: "max"},
+		&marotte.RPCResponse{Result: json.RawMessage(
 			`{"sessionId":"acp-session-xyz","configOptions":[` +
 				`{"id":"model","currentValue":"claude-opus-5","options":[{"value":"claude-opus-5","name":"O5","_meta":{"kiro":{"rateMultiplier":1}}}]},` +
 				`{"id":"effortLevel","currentValue":"max","options":[{"value":"max","name":"max"}]}]}`,
@@ -1943,9 +1943,9 @@ func TestNewSession_SendsTheModelAndEffortInSessionMeta(t *testing.T) {
 func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
-		&vibekit.StartOpts{Effort: "max"},
+		&marotte.StartOpts{Effort: "max"},
 		// The session came back at the model's default rather than at max.
-		&vibekit.RPCResponse{Result: json.RawMessage(
+		&marotte.RPCResponse{Result: json.RawMessage(
 			`{"sessionId":"acp-session-xyz","configOptions":[{"id":"effortLevel","currentValue":"high","options":[{"value":"high"},{"value":"max"}]}]}`,
 		)})
 	if err != nil {
@@ -1964,8 +1964,8 @@ func TestNewSession_RepairsWhenTheDoorWasIgnored(t *testing.T) {
 func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
-		&vibekit.StartOpts{Effort: "TURBO"},
-		&vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
+		&marotte.StartOpts{Effort: "TURBO"},
+		&marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
 	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
 	}
@@ -1974,14 +1974,14 @@ func TestNewSession_OmitsAMalformedLevelFromTheDoor(t *testing.T) {
 	}
 }
 
-// A well-formed tier vibekit's own constants do not name still reaches the door:
+// A well-formed tier marotte's own constants do not name still reaches the door:
 // gpt-luna ships a "none" tier, and a closed local set rejecting it is the bug
 // (the catalog is upstream-owned, so a model shipped after this build must work).
 func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	sent, err := runNewSession(t, b,
-		&vibekit.StartOpts{Effort: "none"},
-		&vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
+		&marotte.StartOpts{Effort: "none"},
+		&marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)})
 	if err != nil {
 		t.Fatalf("newSession returned error: %v", err)
 	}
@@ -1996,7 +1996,7 @@ func TestNewSession_SendsAWellFormedUnknownLevel(t *testing.T) {
 // fallback).
 func TestLoadSession_AppliesParsedResult(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &vibekit.RPCResponse{
+	resp := &marotte.RPCResponse{
 		Result: json.RawMessage(`{"sessionId":"acp-session-xyz","configOptions":[{"id":"model","currentValue":"parsed-model","options":[{"value":"parsed-model","name":"Parsed","description":"ok","_meta":{"kiro":{"rateMultiplier":1}}}]}]}`),
 	}
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
@@ -2020,7 +2020,7 @@ func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
 	// Seven replay frames delivered before the result, which is what a real
 	// session/load of a short transcript looks like.
 	b.deliveredSeq = 7
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -2034,8 +2034,8 @@ func TestLoadSession_RecordsTheResponsePosition(t *testing.T) {
 func TestNewSession_LeavesTheLoadPositionUnset(t *testing.T) {
 	b := New("/nonexistent", "/work")
 	b.deliveredSeq = 7
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"fresh"}`)}
-	if _, err := runNewSession(t, b, &vibekit.StartOpts{}, resp); err != nil {
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"fresh"}`)}
+	if _, err := runNewSession(t, b, &marotte.StartOpts{}, resp); err != nil {
 		t.Fatalf("newSession returned error: %v", err)
 	}
 	if got := b.SessionLoadSeq(); got != 0 {
@@ -2047,7 +2047,7 @@ func TestNewSession_LeavesTheLoadPositionUnset(t *testing.T) {
 func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 	c := capture.Default(t)
 	b := New("/nonexistent", "/work")
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -2063,7 +2063,7 @@ func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
 // this pins the model that actually ends up applied.
 func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -2072,11 +2072,11 @@ func TestLoadSession_FallbackModelAppliedOnUnparseableResult(t *testing.T) {
 	}
 }
 
-// A session that resolves settings.workflows against what vibekit declared says
+// A session that resolves settings.workflows against what marotte declared says
 // so in the log, because nothing else would.
 //
 // The session door works only because KiroSessionMetaSchema ends in
-// `.passthrough()`, which is somebody else's schema property. If it goes, vibekit
+// `.passthrough()`, which is somebody else's schema property. If it goes, marotte
 // keeps sending the key and every send-side test keeps passing while the agent
 // loses its whole workflowChatTools array with no error and no -32601 — the exact
 // defect the workflows row exists to fix, recurring with no signal.
@@ -2106,10 +2106,10 @@ func TestApplySessionResult_ReportsAWorkflowsDisagreement(t *testing.T) {
 			c := capture.Default(t)
 			b := New("/nonexistent", "/work")
 			if err := runLoadSession(t, b, "fb-model",
-				&vibekit.RPCResponse{Result: json.RawMessage(tc.result)}); err != nil {
+				&marotte.RPCResponse{Result: json.RawMessage(tc.result)}); err != nil {
 				t.Fatalf("loadSession returned error: %v", err)
 			}
-			got := c.CountExact("session resolved the workflows setting against what vibekit declared; "+
+			got := c.CountExact("session resolved the workflows setting against what marotte declared; "+
 				"the agent's workflow tools are not what this spawn asked for") > 0
 			if got != tc.wantWarn {
 				t.Errorf("warn logged = %v, want %v", got, tc.wantWarn)
@@ -2129,14 +2129,14 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 	b := New("/nonexistent", "/work")
 
 	// Seed the catalog the way a live session does, then resume.
-	seeded := &vibekit.RPCResponse{
+	seeded := &marotte.RPCResponse{
 		Result: json.RawMessage(`{"sessionId":"acp-session-xyz",` +
 			`"modes":{"currentModeId":"vibe","availableModes":[{"id":"vibe","name":"Default"}]},` +
 			`"configOptions":[{"id":"model","currentValue":"seeded-model","options":[` +
 			`{"value":"seeded-model","name":"Seeded","description":"ok"},` +
 			`{"value":"gone-model","name":"Gone","description":"[Deprecated] retired"}]}]}`),
 	}
-	if _, err := runNewSession(t, b, &vibekit.StartOpts{}, seeded); err != nil {
+	if _, err := runNewSession(t, b, &marotte.StartOpts{}, seeded); err != nil {
 		t.Fatalf("seeding newSession returned error: %v", err)
 	}
 	if len(b.Models()) != 1 || len(b.Catalog()) != 2 || len(b.Modes()) != 1 {
@@ -2159,9 +2159,9 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 			`"configOptions":[{"id":"model","currentValue":"seeded-model","options":[]}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			resumed := &vibekit.RPCResponse{Result: json.RawMessage(result)}
+			resumed := &marotte.RPCResponse{Result: json.RawMessage(result)}
 			if _, err := runLoadSessionOpts(t, b,
-				&vibekit.StartOpts{SessionID: "acp-session-xyz"}, resumed); err != nil {
+				&marotte.StartOpts{SessionID: "acp-session-xyz"}, resumed); err != nil {
 				t.Fatalf("loadSession returned error: %v", err)
 			}
 
@@ -2186,10 +2186,10 @@ func TestLoadSession_AbsentCatalogKeepsThePreviousOne(t *testing.T) {
 // and the pill both still read max.
 func TestLoadSession_ReAppliesTheChatsEffort(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
 
 	sent, err := runLoadSessionOpts(t, b,
-		&vibekit.StartOpts{SessionID: "acp-session-xyz", Effort: "max"}, resp)
+		&marotte.StartOpts{SessionID: "acp-session-xyz", Effort: "max"}, resp)
 	if err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -2206,10 +2206,10 @@ func TestLoadSession_ReAppliesTheChatsEffort(t *testing.T) {
 // sent, so an ordinary reopen is one round trip as before.
 func TestLoadSession_SendsNoEffortWhenTheChatChoseNone(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"sessionId":"acp-session-xyz"}`)}
 
 	sent, err := runLoadSessionOpts(t, b,
-		&vibekit.StartOpts{SessionID: "acp-session-xyz"}, resp)
+		&marotte.StartOpts{SessionID: "acp-session-xyz"}, resp)
 	if err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
@@ -2228,7 +2228,7 @@ func TestEnsureEffort_DropsAMalformedLevel(t *testing.T) {
 	for _, level := range []string{"", "HIGH", "max ", "9max"} {
 		t.Run(level, func(t *testing.T) {
 			b := New("/nonexistent", "/work")
-			sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+			sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
 				func(ctx context.Context) error { return b.EnsureEffort(ctx, level) })
 			if err != nil {
 				t.Errorf("EnsureEffort(%q) = %v, want nil", level, err)
@@ -2248,7 +2248,7 @@ func TestEnsureEffort_SkipsTheLevelTheSessionReports(t *testing.T) {
 	b.effortLevel = "max"
 	b.mu.Unlock()
 
-	sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
 		func(ctx context.Context) error { return b.EnsureEffort(ctx, "max") })
 	if err != nil {
 		t.Fatalf("EnsureEffort(the reported level) = %v, want nil", err)
@@ -2268,7 +2268,7 @@ func TestSetModel_ClearsTheCachedEffortLevel(t *testing.T) {
 	b.effortLevel = "max"
 	b.mu.Unlock()
 
-	sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
 		func(ctx context.Context) error { return b.SetModel(ctx, "claude-sonnet-5") })
 	if err != nil {
 		t.Fatalf("SetModel returned error: %v", err)
@@ -2301,7 +2301,7 @@ func TestObserveEffort_MakesTheNextEnsureAssert(t *testing.T) {
 
 	b.ObserveEffort("high") // what the notification says it is running at now
 
-	sent, err := driveSessionCall(t, b, &vibekit.RPCResponse{Result: json.RawMessage(`{}`)},
+	sent, err := driveSessionCall(t, b, &marotte.RPCResponse{Result: json.RawMessage(`{}`)},
 		func(ctx context.Context) error { return b.EnsureEffort(ctx, "max") })
 	if err != nil {
 		t.Fatalf("EnsureEffort after an observation = %v, want nil", err)
@@ -2341,7 +2341,7 @@ func TestObserveEffort_IgnoresAnEmptyReport(t *testing.T) {
 // capabilities are still declared either way.
 func TestInitialize_HooksCapabilityOptIn(t *testing.T) {
 	// Fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE
-	// so the test can assert on the exact clientCapabilities vibekit sent.
+	// so the test can assert on the exact clientCapabilities marotte sent.
 	script := `#!/bin/sh
 while IFS= read -r line; do
   id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -2377,7 +2377,7 @@ done
 		// hooks gate and both knowledge keys are gated on their own field now. The
 		// key still has to appear with a true for the per-key loop below to be
 		// checking anything.
-		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks, Knowledge: true}); err != nil {
+		if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks, Knowledge: true}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -2443,7 +2443,7 @@ done
 // reach it. Every test below pins it EMPTY, which envx reads as unset: without
 // that the assertions depend on the ambient environment, and a machine carrying
 // the variable would fail them for a reason the diff does not show.
-const envAgentWorkflows = "VIBEKIT_AGENT_WORKFLOWS"
+const envAgentWorkflows = "MAROTTE_AGENT_WORKFLOWS"
 
 // sessionDoorScript is a fake kiro-cli that appends EVERY request to
 // $RPC_CAPTURE, one JSON line each, so a test can pick out the session call
@@ -2475,7 +2475,7 @@ done
 // and "the call carried nothing" are different defects. alsoContains narrows the match for a
 // method one start sends more than once — session/set_config_option carries the model, the
 // effort level and autopilot on the same method name, so a caller names the configId too.
-func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts, alsoContains ...string) string {
+func captureRequest(t *testing.T, method string, opts *marotte.StartOpts, alsoContains ...string) string {
 	t.Helper()
 	data := captureRequests(t, opts)
 	needles := append([]string{`"method":"` + method + `"`}, alsoContains...)
@@ -2498,7 +2498,7 @@ func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts, alsoCo
 // captureRequests is captureRequest's whole capture, for an assertion about a call the
 // start must NOT make: captureRequest fails on a miss, which is right for "the call
 // carried the wrong shape" and cannot express "the call did not happen".
-func captureRequests(t *testing.T, opts *vibekit.StartOpts) string {
+func captureRequests(t *testing.T, opts *marotte.StartOpts) string {
 	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
@@ -2559,7 +2559,7 @@ func metaKiroSettings(t *testing.T, line string) map[string]any {
 // every session and the agent had no run_workflow, inspect_workflow, update_workflow,
 // validate_workflow or send_message tool. Nothing logged it and no method 404'd.
 func TestSessionNewCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/new", &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"})
+	line := captureRequest(t, "session/new", &marotte.StartOpts{Lifetime: t.Context(), Model: "m"})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
@@ -2585,7 +2585,7 @@ door. Captured:
 // fresh chat has the workflow tools and a resumed one silently does not, which is
 // the worst shape of the two: it looks like the fix landed.
 func TestSessionLoadCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/load", &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", SessionID: "sess_resume_door"})
+	line := captureRequest(t, "session/load", &marotte.StartOpts{Lifetime: t.Context(), Model: "m", SessionID: "sess_resume_door"})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
@@ -2617,7 +2617,7 @@ func TestSessionDoorOmitsSettingsWhenDisabled(t *testing.T) {
 	t.Setenv("RPC_CAPTURE", capturePath)
 
 	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &vibekit.StartOpts{
+	if err := b.Start(t.Context(), &marotte.StartOpts{
 		Lifetime: t.Context(), Model: "m",
 		// A non-empty set so the policyPreset row rides. Without it the door
 		// carries only workflows, the env override empties the whole projection,
@@ -2675,20 +2675,20 @@ security profile stops reaching the session:
 // bytes, because `false` and `"off"` are both a legal map value.
 func TestApplySupervised_SendsTheStringKASDeclares(t *testing.T) {
 	line := captureRequest(t, "session/set_config_option",
-		&vibekit.StartOpts{Lifetime: t.Context(), Model: "m", Supervised: true},
-		`"configId":"`+vibekit.ConfigOptionAutopilot+`"`)
-	if !strings.Contains(line, `"value":"`+vibekit.ConfigValueAutopilotOff+`"`) {
+		&marotte.StartOpts{Lifetime: t.Context(), Model: "m", Supervised: true},
+		`"configId":"`+marotte.ConfigOptionAutopilot+`"`)
+	if !strings.Contains(line, `"value":"`+marotte.ConfigValueAutopilotOff+`"`) {
 		t.Errorf(`autopilot did not carry "value":%q on the wire; KAS refuses every other
 shape with -32602 and leaves the session in autopilot. Captured:
-%s`, vibekit.ConfigValueAutopilotOff, line)
+%s`, marotte.ConfigValueAutopilotOff, line)
 	}
 	// And the decoded value is a STRING, so a future spelling that happens to
 	// contain the same characters (a "off" nested somewhere else, a boolean with a
 	// type discriminator) cannot satisfy the byte check above alone.
 	params := digObject(t, "the autopilot set_config_option params", line, "params")
-	if got, ok := params[keyConfigValue].(string); !ok || got != vibekit.ConfigValueAutopilotOff {
+	if got, ok := params[keyConfigValue].(string); !ok || got != marotte.ConfigValueAutopilotOff {
 		t.Errorf("autopilot value = %#v (%T), want the string %q",
-			params[keyConfigValue], params[keyConfigValue], vibekit.ConfigValueAutopilotOff)
+			params[keyConfigValue], params[keyConfigValue], marotte.ConfigValueAutopilotOff)
 	}
 }
 
@@ -2753,7 +2753,7 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 			}
 
 			b := New(scriptPath, dir)
-			if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Supervised: tc.supervised}); err != nil {
+			if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Supervised: tc.supervised}); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			defer b.Stop()
@@ -2772,17 +2772,17 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 // looks like it should not need it — KAS persists `autopilot` per session — and a FORKED
 // session is the case that falsifies that: forkSession's new-metadata literal copies no
 // autopilot, and hydrateSessionForLoad applies it only when the metadata defines it, so a
-// supervised chat's tangent runs in AUTOPILOT while vibekit's record says supervised.
+// supervised chat's tangent runs in AUTOPILOT while marotte's record says supervised.
 // Measured on the pinned kiro-cli: the parent's load reports `autopilot: "off"`, the
 // fork's reports `"on"`.
 func TestLoadSession_ReAssertsSupervised(t *testing.T) {
 	line := captureRequest(t, "session/set_config_option",
-		&vibekit.StartOpts{Lifetime: t.Context(), SessionID: "sess_forked", Supervised: true},
-		`"configId":"`+vibekit.ConfigOptionAutopilot+`"`)
-	if !strings.Contains(line, `"value":"`+vibekit.ConfigValueAutopilotOff+`"`) {
+		&marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_forked", Supervised: true},
+		`"configId":"`+marotte.ConfigOptionAutopilot+`"`)
+	if !strings.Contains(line, `"value":"`+marotte.ConfigValueAutopilotOff+`"`) {
 		t.Errorf(`a supervised resume did not carry "value":%q; the forked session then runs
 every turn without asking. Captured:
-%s`, vibekit.ConfigValueAutopilotOff, line)
+%s`, marotte.ConfigValueAutopilotOff, line)
 	}
 }
 
@@ -2790,8 +2790,8 @@ every turn without asking. Captured:
 // unsupervised chat must send nothing, or a restart would pin autopilot off for a reader
 // who never asked to review a write.
 func TestLoadSession_LeavesAnUnsupervisedResumeAlone(t *testing.T) {
-	data := captureRequests(t, &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "sess_plain"})
-	if strings.Contains(data, `"`+vibekit.ConfigOptionAutopilot+`"`) {
+	data := captureRequests(t, &marotte.StartOpts{Lifetime: t.Context(), SessionID: "sess_plain"})
+	if strings.Contains(data, `"`+marotte.ConfigOptionAutopilot+`"`) {
 		t.Errorf("an unsupervised resume sent the autopilot option:\n%s", data)
 	}
 }
@@ -2799,7 +2799,7 @@ func TestLoadSession_LeavesAnUnsupervisedResumeAlone(t *testing.T) {
 // --- _meta.title: the wire shape KAS actually sends ---
 
 // TestApplySessionResult_TakesFlatMetaTitle pins that the session title is read from a FLAT
-// `_meta.title`, not from `_meta.kiro.title`. Every other `_meta` vibekit decodes on this
+// `_meta.title`, not from `_meta.kiro.title`. Every other `_meta` marotte decodes on this
 // wire is nested under `kiro`, so that is the shape a reader expects — and moving the tag
 // there compiles cleanly and silently yields "". Probed 2026-08-02: session/new and
 // session/load both spread KAS's session-metadata object directly onto `_meta`, so `title`
@@ -2940,9 +2940,9 @@ func TestApplySessionResult_KeepsContextThresholdsOnAbsent(t *testing.T) {
 
 // --- R1: the bridge's Cancel must close stdin, not just signal the head ---
 
-// TestCancelClosesStdinSoTheTreeSeesEOF: vibekit runs `kiro-cli acp` on pipes and the head
+// TestCancelClosesStdinSoTheTreeSeesEOF: marotte runs `kiro-cli acp` on pipes and the head
 // passes its stdio down, so the tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) stays in
-// ONE session with no setsid(). Closing vibekit's write end delivers EOF to the whole chain,
+// ONE session with no setsid(). Closing marotte's write end delivers EOF to the whole chain,
 // and that — not the signal — is what reclaims it: WaitDelay's SIGKILL escalation targets the
 // head only, and measured on kiro-cli 2.16.0 signal-without-close leaked 2/2 trials at ~250
 // MB each. The bait isolates the close: the head IGNORES SIGTERM, so only stdin EOF reclaims
@@ -2950,7 +2950,7 @@ func TestApplySessionResult_KeepsContextThresholdsOnAbsent(t *testing.T) {
 func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "grandchild.pid")
-	// The head IGNORES SIGTERM and blocks forever. Its child reads vibekit's stdin pipe
+	// The head IGNORES SIGTERM and blocks forever. Its child reads marotte's stdin pipe
 	// and `head -c 1` returns the moment that pipe closes with no data, so the
 	// grandchild's death proves an EOF reached the TREE: WaitDelay's 5s SIGKILL is past
 	// the deadline and Wait is not called until Stop. `exec 3<&0` is required — POSIX
@@ -3078,11 +3078,11 @@ done
 
 	cases := []struct {
 		name   string
-		opts   *vibekit.StartOpts
+		opts   *marotte.StartOpts
 		method string
 	}{
-		{"session/new", &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"}, "session/new"},
-		{"session/load", &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "existing", Model: "m"}, "session/load"},
+		{"session/new", &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}, "session/new"},
+		{"session/load", &marotte.StartOpts{Lifetime: t.Context(), SessionID: "existing", Model: "m"}, "session/load"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3120,7 +3120,7 @@ done
 // (acp-server.js:464015-464022).
 //
 // KAS ships TWO ExecuteBash implementations and picks between them with
-// `hasClientIOTools = clientTools.some(t => CORE_IO_TOOL_IDS.has(t.id))`. vibekit
+// `hasClientIOTools = clientTools.some(t => CORE_IO_TOOL_IDS.has(t.id))`. marotte
 // gets the CLAMPED one — `min(input.timeout ?? 120000, 1800000)`, a 30 minute
 // ceiling on every agent shell command — precisely because it declares none of
 // these ids.
@@ -3128,7 +3128,7 @@ var coreIOToolIDs = []string{
 	"execute_bash", "read_file", "fs_write", "str_replace", "grep_search", "file_search",
 }
 
-// TestInitialize_DeclaresNoCoreIOTool guards a bound vibekit does not own and cannot see:
+// TestInitialize_DeclaresNoCoreIOTool guards a bound marotte does not own and cannot see:
 // registering any client tool named above flips `hasClientIOTools` and silently promotes the
 // agent to the UNBOUNDED ExecuteBash. Nothing logs the switch and no behaviour changes until
 // some command runs long, so the 30 minute ceiling would vanish as a side effect of an
@@ -3165,7 +3165,7 @@ done
 	}
 
 	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &marotte.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -3199,7 +3199,7 @@ initialize was:
 // --- The initialize wire contract ---
 
 // initializeGoldenPath is the committed byte-for-byte capture of every
-// initialize request vibekit can put on the wire.
+// initialize request marotte can put on the wire.
 const initializeGoldenPath = "testdata/initialize.golden"
 
 // initializeGoldenCmd is the regeneration command, quoted in every failure
@@ -3230,7 +3230,7 @@ var initGateCases = []struct {
 	{"every gate on", true, true, true, true},
 }
 
-// TestInitializeDeclaresExactly pins the exact bytes of every initialize request vibekit can
+// TestInitializeDeclaresExactly pins the exact bytes of every initialize request marotte can
 // send against a committed golden, because every failure mode it guards is silent on the
 // wire: a settings key dropped to a bare true resolves false, a capability renamed by a KAS
 // bump never matches, and a key nested one level wrong is ignored. The capture is the raw
@@ -3271,7 +3271,7 @@ done
 		capturePath := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capturePath)
 		b := New(scriptPath, dir)
-		err := b.Start(t.Context(), &vibekit.StartOpts{
+		err := b.Start(t.Context(), &marotte.StartOpts{
 			Lifetime:      t.Context(),
 			Model:         "m",
 			SecretStorage: tc.secretStorage,
@@ -3339,7 +3339,7 @@ This is a WIRE change, not a refactor. If it is deliberate, regenerate with:
 
 func TestInitialize_RetainsKiroAgentCapabilities(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{
 		"agentCapabilities":{"_meta":{"kiro":{
 			"extensionMethods":["_kiro/one","_kiro/two"],
 			"replayMarking":true,
@@ -3364,7 +3364,7 @@ func TestInitialize_RetainsKiroAgentCapabilities(t *testing.T) {
 
 func TestInitialize_MissingKiroAgentCapabilitiesIsZeroValue(t *testing.T) {
 	b := New("/nonexistent", "/work")
-	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{"protocolVersion":1}`)}
+	resp := &marotte.RPCResponse{Result: json.RawMessage(`{"protocolVersion":1}`)}
 	if _, err := driveSessionCall(t, b, resp, b.initialize); err != nil {
 		t.Fatalf("initialize = %v, want nil", err)
 	}
@@ -3422,14 +3422,14 @@ func TestStdinPublication_IsRaceFree(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			_ = b.Notify(ctx, vibekit.MethodCancel, nil)
+			_ = b.Notify(ctx, marotte.MethodCancel, nil)
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		// Start assigns stdin inside startProcess. It will fail (the handshake
 		// gets no reply from /bin/true), which is irrelevant to the publication.
-		_ = b.Start(ctx, &vibekit.StartOpts{Lifetime: ctx})
+		_ = b.Start(ctx, &marotte.StartOpts{Lifetime: ctx})
 	}()
 	wg.Wait()
 }

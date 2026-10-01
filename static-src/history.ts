@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // History: previous chats and previous workflow runs, both sourced from KAS.
 //
-// This replaces a list of vibekit's OWN archived chat files. vibekit no longer
+// This replaces a list of marotte's OWN archived chat files. marotte no longer
 // archives anything — KAS owns the session inventory and the transcript, so
 // this page is a picker over `GET /api/sessions` and opening a row is a
 // `session/load`, which the replay projection turns into the transcript.
@@ -11,7 +11,7 @@
 // list. Two rules the server's provenance notes explain in full and this file
 // depends on:
 //
-//   - A CHAT row already owned by a vibekit chat carries `chat_id`, so opening
+//   - A CHAT row already owned by a marotte chat carries `chat_id`, so opening
 //     it is just opening that chat. Without one it is adopted first, via
 //     `resume_session`.
 //   - A RUN row is not a session. Workflow runs come from a separate verb
@@ -57,7 +57,7 @@ interface HistoryRow {
   title: string;
   updatedAt: number;
   /** Secondary line: the agent's focus for a chat. On a run, empty unless one of
-   *  vibekit's run bounds stopped it — the one ending the glyph and the status
+   *  marotte's run bounds stopped it — the one ending the glyph and the status
    *  slot cannot express between them (see END_REASON_TEXT). */
   detail: string;
   status: string;
@@ -66,7 +66,7 @@ interface HistoryRow {
    *  client has no verdict for. */
   outcome: RunVerdict | null;
   /** The row's third line: what this conversation or run WAS, in facts. Empty
-   *  entries are dropped by the builder, so a chat vibekit knows nothing about
+   *  entries are dropped by the builder, so a chat marotte knows nothing about
    *  renders two lines like before rather than an empty strip. */
   facts: string[];
   session?: ResumableSession;
@@ -90,7 +90,7 @@ interface HistoryRow {
  *  header read deliberately token-skips the message array without decoding it, so
  *  summing churn would mean decoding every message of every chat on every poll.
  *  It needs a counter maintained at turn end and persisted on the chat; see the
- *  note in vibekit-acp.md. */
+ *  note in marotte-acp.md. */
 function chatFacts(chatID: string): string[] {
   const s = get(chatID);
   if (s === undefined) {
@@ -155,9 +155,9 @@ function formatDuration(ms: number): string {
 type RunVerdict = "completed" | "failed" | "aborted";
 
 /** How a bounded termination reads. The keys are the server's vocabulary
- *  (vibekit.WorkflowRun.EndReason); the sentences are the reader's.
+ *  (marotte.WorkflowRun.EndReason); the sentences are the reader's.
  *
- *  A run stopped by one of vibekit's own bounds is the one ending KAS's status
+ *  A run stopped by one of marotte's own bounds is the one ending KAS's status
  *  cannot describe: both bounds terminate through the same cancel a person uses,
  *  so the status is `aborted` for a backstop and for a click alike. This is where
  *  the difference is stated. */
@@ -177,7 +177,7 @@ const END_REASON_TEXT: Readonly<Record<string, string>> = {
  *
  *  A RECOGNISED `end_reason` OUTRANKS the status, and has to: a bound cancels the
  *  run, so KAS reports it `aborted` at best and `running` if the frame has not
- *  landed yet, and a row that reads "running" for a run vibekit already stopped
+ *  landed yet, and a row that reads "running" for a run marotte already stopped
  *  is the lie the field exists to remove. Recognised rather than merely non-empty,
  *  so one vocabulary decides both the sentence and the verdict: an unknown value
  *  degrades to the status word rather than repainting a completed run as aborted
@@ -287,7 +287,7 @@ function toRows(sessions: ResumableSession[], runs: WorkflowRun[]): HistoryRow[]
       title: r.name === "" ? "Untitled run" : r.name,
       updatedAt: r.updated_at,
       // A bound's reason is stated whatever the run's parentage, unlike the
-      // verdict below: it is a report of what VIBEKIT did to the run, not a
+      // verdict below: it is a report of what MAROTTE did to the run, not a
       // judgement of the run, so withholding it from an agent-parented row would
       // hide the app's own action from the only reader who can see it.
       detail: END_REASON_TEXT[endReason] ?? "",
@@ -589,11 +589,11 @@ function openRow(row: HistoryRow, onGone: () => void): void {
  *
  *  Both kinds delete their own underlying state, and neither is recoverable:
  *
- *    - a CHAT row runs the `delete_chat` command, vibekit's single chat-deletion
+ *    - a CHAT row runs the `delete_chat` command, marotte's single chat-deletion
  *      path, which removes the chat file AND reaps every KAS session in the
  *      chat's chain (`reapChatSession`).
  *    - a RUN row runs `_kiro/workflow/delete`, which cancels the run if it is
- *      still moving and then removes its run directory, plus vibekit's own lease,
+ *      still moving and then removes its run directory, plus marotte's own lease,
  *      timer and recorded end reason.
  *
  *  WHICH ROWS IT REACHES is `buildDeleteButton`'s: everything the list holds except
@@ -646,7 +646,7 @@ function buildRow(row: HistoryRow): HTMLElement {
     el("span", { className: "list-row-name" }, row.title),
     row.detail !== "" ? el("span", { className: "list-row-summary" }, row.detail) : null,
     // The facts line. Present only when there is something factual to say, so a
-    // row vibekit knows nothing about keeps its old two-line height instead of
+    // row marotte knows nothing about keeps its old two-line height instead of
     // reserving a blank strip. Rendered as one element with separators rather
     // than a chip per fact: these are read left to right as a sentence about the
     // conversation, and six bordered chips per row would compete with the kind

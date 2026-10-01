@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"pgregory.net/rapid"
 )
 
@@ -23,7 +23,7 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 		return string(rapid.SliceOfN(rapid.SampledFrom(alphabet), 3, max).Draw(rt, label))
 	}
 	rapid.Check(t, func(rt *rapid.T) {
-		c := &vibekit.Chat{ID: "c-aaaaaaaa", Name: text(rt, "name", 20)}
+		c := &marotte.Chat{ID: "c-aaaaaaaa", Name: text(rt, "name", 20)}
 		n := rapid.IntRange(1, 3).Draw(rt, "messages")
 		for i := range n {
 			c.Messages = append(c.Messages, drawMessage(rt, fmt.Sprintf("m%d", i), text))
@@ -58,35 +58,35 @@ func TestChatFilter_NeverRejectsAChatTheScanMatches(t *testing.T) {
 
 // drawMessage is one message of a random shape, each shape feeding a different
 // set of segment kinds.
-func drawMessage(rt *rapid.T, id string, text func(*rapid.T, string, int) string) vibekit.Message {
+func drawMessage(rt *rapid.T, id string, text func(*rapid.T, string, int) string) marotte.Message {
 	switch rapid.IntRange(0, 3).Draw(rt, id+"_shape") {
 	case 0:
-		return vibekit.Message{
-			ID: id, Role: vibekit.RoleUser, Content: text(rt, id+"_content", 40),
-			Attachments: []vibekit.Attachment{{Path: "x", Name: text(rt, id+"_attachment", 12)}},
+		return marotte.Message{
+			ID: id, Role: marotte.RoleUser, Content: text(rt, id+"_content", 40),
+			Attachments: []marotte.Attachment{{Path: "x", Name: text(rt, id+"_attachment", 12)}},
 		}
 	case 1:
-		return vibekit.Message{
-			ID: id, Role: vibekit.RoleAssistant, Content: text(rt, id+"_content", 40),
-			Reasoning: text(rt, id+"_reasoning", 40), Plan: []vibekit.PlanEntry{{Content: text(rt, id+"_plan", 20)}},
+		return marotte.Message{
+			ID: id, Role: marotte.RoleAssistant, Content: text(rt, id+"_content", 40),
+			Reasoning: text(rt, id+"_reasoning", 40), Plan: []marotte.PlanEntry{{Content: text(rt, id+"_plan", 20)}},
 			TurnFailureReason: text(rt, id+"_failure", 20),
 		}
 	case 2:
-		return vibekit.Message{ID: id, Role: vibekit.RoleAssistant, Blocks: []vibekit.Block{
-			{Type: vibekit.BlockThinking, Thinking: text(rt, id+"_thinking", 40)},
-			{Type: vibekit.BlockText, Text: text(rt, id+"_text", 40)},
+		return marotte.Message{ID: id, Role: marotte.RoleAssistant, Blocks: []marotte.Block{
+			{Type: marotte.BlockThinking, Thinking: text(rt, id+"_thinking", 40)},
+			{Type: marotte.BlockText, Text: text(rt, id+"_text", 40)},
 		}}
 	default:
 		input, err := json.Marshal(map[string]string{"command": text(rt, id+"_input", 20)})
 		if err != nil {
 			rt.Fatalf("marshal input: %v", err)
 		}
-		return vibekit.Message{
-			ID: id, Role: vibekit.RoleAssistant,
-			Blocks: []vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t1"}},
-			ToolCalls: []vibekit.ToolCall{{
+		return marotte.Message{
+			ID: id, Role: marotte.RoleAssistant,
+			Blocks: []marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
+			ToolCalls: []marotte.ToolCall{{
 				ID: "t1", Title: text(rt, id+"_title", 20), Output: text(rt, id+"_output", 40),
-				Input: input, Diffs: []vibekit.ToolDiff{{Path: "p", NewText: text(rt, id+"_diff", 40)}},
+				Input: input, Diffs: []marotte.ToolDiff{{Path: "p", NewText: text(rt, id+"_diff", 40)}},
 			}},
 		}
 	}

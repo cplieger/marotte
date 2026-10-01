@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // newVersionedTestStore is newTestStore with a registry the test can read back.
@@ -17,7 +17,7 @@ func newVersionedTestStore(t *testing.T) (*Store, *fakeBroadcaster, *subject.Ver
 	return s, b, v
 }
 
-func lastEvent(t *testing.T, b *fakeBroadcaster, typ vibekit.EventType) vibekit.ServerEvent {
+func lastEvent(t *testing.T, b *fakeBroadcaster, typ marotte.EventType) marotte.ServerEvent {
 	t.Helper()
 	evts := b.snapshot()
 	for _, evt := range slices.Backward(evts) {
@@ -26,12 +26,12 @@ func lastEvent(t *testing.T, b *fakeBroadcaster, typ vibekit.EventType) vibekit.
 		}
 	}
 	t.Fatalf("no %s frame among %d broadcasts", typ, len(evts))
-	return vibekit.ServerEvent{}
+	return marotte.ServerEvent{}
 }
 
 func TestMutate_ReturnsTheChatVersionTheRegistryReports(t *testing.T) {
 	s, _, v := newVersionedTestStore(t)
-	got, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	got, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "one"
 		return true
 	})
@@ -44,7 +44,7 @@ func TestMutate_ReturnsTheChatVersionTheRegistryReports(t *testing.T) {
 	if cur, ok := v.Current(subject.KindChat, "c1"); !ok || cur != got {
 		t.Errorf("Current(chat, c1) = (%q, %v), want (%q, true)", cur, ok, got)
 	}
-	second, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	second, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "two"
 		return true
 	})
@@ -58,29 +58,29 @@ func TestMutate_ReturnsTheChatVersionTheRegistryReports(t *testing.T) {
 
 func TestMutate_HeaderFrameCarriesChatsAndNoChatStamp(t *testing.T) {
 	s, b, v := newVersionedTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "one"
 		return true
 	}); err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
-	created := lastEvent(t, b, vibekit.EventChatCreated)
+	created := lastEvent(t, b, marotte.EventChatCreated)
 	if created.Subject == nil {
 		t.Fatal("chat_created carries no Subject")
 	}
 	chats, _ := v.Current(subject.KindChats, "")
-	want := vibekit.SubjectStamp{Kind: "chats", Version: chats}
+	want := marotte.SubjectStamp{Kind: "chats", Version: chats}
 	if *created.Subject != want {
 		t.Errorf("chat_created Subject = %+v, want %+v", *created.Subject, want)
 	}
 	b.reset()
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "two"
 		return true
 	}); err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
-	updated := lastEvent(t, b, vibekit.EventChatUpdated)
+	updated := lastEvent(t, b, marotte.EventChatUpdated)
 	if updated.Subject == nil || updated.Subject.Kind != "chats" {
 		t.Fatalf("chat_updated Subject = %+v, want a chats stamp", updated.Subject)
 	}
@@ -91,19 +91,19 @@ func TestMutate_HeaderFrameCarriesChatsAndNoChatStamp(t *testing.T) {
 
 func TestAppendMessage_FrameCarriesTheChatVersionMutateMinted(t *testing.T) {
 	s, b, v := newVersionedTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { return true }); err != nil {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { return true }); err != nil {
 		t.Fatalf("Setup: Mutate: %v", err)
 	}
 	b.reset()
-	if err := s.AppendMessage(t.Context(), "c1", &vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: "hi"}); err != nil {
+	if err := s.AppendMessage(t.Context(), "c1", &marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: "hi"}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	evts := b.snapshot()
-	if len(evts) != 2 || evts[0].Type != vibekit.EventChatUpdated || evts[1].Type != vibekit.EventMessageAppended {
+	if len(evts) != 2 || evts[0].Type != marotte.EventChatUpdated || evts[1].Type != marotte.EventMessageAppended {
 		t.Fatalf("broadcast order = %v, want [chat_updated message_appended]", eventTypes(evts))
 	}
 	cur, _ := v.Current(subject.KindChat, "c1")
-	want := vibekit.SubjectStamp{Kind: "chat", Ref: "c1", Version: cur}
+	want := marotte.SubjectStamp{Kind: "chat", Ref: "c1", Version: cur}
 	if evts[1].Subject == nil || *evts[1].Subject != want {
 		t.Errorf("message_appended Subject = %+v, want %+v", evts[1].Subject, want)
 	}
@@ -114,12 +114,12 @@ func TestAppendMessage_FrameCarriesTheChatVersionMutateMinted(t *testing.T) {
 
 func TestMutate_DeclinedMutatorReturnsNoVersionAndMovesNothing(t *testing.T) {
 	s, _, v := newVersionedTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { return true }); err != nil {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { return true }); err != nil {
 		t.Fatalf("Setup: Mutate: %v", err)
 	}
 	chatBefore, _ := v.Current(subject.KindChat, "c1")
 	chatsBefore, _ := v.Current(subject.KindChats, "")
-	got, err := s.Mutate(t.Context(), "c1", func(*vibekit.Chat, bool) bool { return false })
+	got, err := s.Mutate(t.Context(), "c1", func(*marotte.Chat, bool) bool { return false })
 	if err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestMutate_DeclinedMutatorReturnsNoVersionAndMovesNothing(t *testing.T) {
 
 func TestRemove_ReturnsTheChatsVersionDeleteStamps(t *testing.T) {
 	s, b, v := newVersionedTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { return true }); err != nil {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { return true }); err != nil {
 		t.Fatalf("Setup: Mutate: %v", err)
 	}
 	before, _ := v.Current(subject.KindChats, "")
@@ -148,8 +148,8 @@ func TestRemove_ReturnsTheChatsVersionDeleteStamps(t *testing.T) {
 	if after == before {
 		t.Fatalf("chats version did not move on Delete (still %q)", before)
 	}
-	deleted := lastEvent(t, b, vibekit.EventChatDeleted)
-	want := vibekit.SubjectStamp{Kind: "chats", Version: after}
+	deleted := lastEvent(t, b, marotte.EventChatDeleted)
+	want := marotte.SubjectStamp{Kind: "chats", Version: after}
 	if deleted.Subject == nil || *deleted.Subject != want {
 		t.Errorf("chat_deleted Subject = %+v, want %+v", deleted.Subject, want)
 	}
@@ -164,14 +164,14 @@ func TestDelete_MissingChatCarriesNoStamp(t *testing.T) {
 	if after, _ := v.Current(subject.KindChats, ""); after != before {
 		t.Errorf("chats version moved %q -> %q on a missing chat", before, after)
 	}
-	if deleted := lastEvent(t, b, vibekit.EventChatDeleted); deleted.Subject != nil {
+	if deleted := lastEvent(t, b, marotte.EventChatDeleted); deleted.Subject != nil {
 		t.Errorf("chat_deleted for a missing chat carries %+v, want no Subject", *deleted.Subject)
 	}
 }
 
 func TestSetDraft_FillsComposerStateVersion(t *testing.T) {
 	s, _, v := newVersionedTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { return true }); err != nil {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { return true }); err != nil {
 		t.Fatalf("Setup: Mutate: %v", err)
 	}
 	state, err := s.SetDraft(t.Context(), "c1", "typing")
@@ -194,8 +194,8 @@ func TestSetDraft_FillsComposerStateVersion(t *testing.T) {
 	}
 }
 
-func eventTypes(evts []vibekit.ServerEvent) []vibekit.EventType {
-	out := make([]vibekit.EventType, len(evts))
+func eventTypes(evts []marotte.ServerEvent) []marotte.EventType {
+	out := make([]marotte.EventType, len(evts))
 	for i, e := range evts {
 		out[i] = e.Type
 	}

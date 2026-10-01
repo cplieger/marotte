@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/modeltext"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/modeltext"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -58,7 +58,7 @@ type kasConfigChoice struct {
 	Meta        struct {
 		Kiro struct {
 			// DefaultEffortLevel is the model's own default tier; the tier list is
-			// the `effortLevel` option's own options[] — see vibekit.SessionModel.
+			// the `effortLevel` option's own options[] — see marotte.SessionModel.
 			DefaultEffortLevel string  `json:"defaultEffortLevel"`
 			RateMultiplier     float64 `json:"rateMultiplier"`
 			HasEffort          bool    `json:"hasEffort"`
@@ -67,7 +67,7 @@ type kasConfigChoice struct {
 }
 
 type configTemplateAssembly struct {
-	response           vibekit.ConfigTemplateResponse
+	response           marotte.ConfigTemplateResponse
 	modelOptionPresent bool
 }
 
@@ -75,7 +75,7 @@ type configTemplateAssembly struct {
 // model catalog, and the verdict saying which outcome produced it. Every path
 // answers 200 with non-null lists (the client keeps its static fallbacks and
 // the authoritative per-session catalog arrives with the first bridge); what
-// separates them is vibekit.ConfigTemplateResponse.Catalog.
+// separates them is marotte.ConfigTemplateResponse.Catalog.
 //
 // A LIVE session's report wins over the template's, per list: KAS has already
 // resolved which workspace agent shadows which bundled mode, while the template
@@ -92,12 +92,12 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 	switch {
 	case err != nil:
 		slog.Warn("config template failed", "error", err)
-		out = unavailableTemplate(vibekit.CatalogReasonRPC)
+		out = unavailableTemplate(marotte.CatalogReasonRPC)
 	default:
 		var tpl kasConfigTemplate
 		if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
 			slog.Warn("config template decode failed", "error", uErr)
-			out = unavailableTemplate(vibekit.CatalogReasonDecode)
+			out = unavailableTemplate(marotte.CatalogReasonDecode)
 		} else {
 			out = templateToResponse(&tpl)
 		}
@@ -121,15 +121,15 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 // effort levels are absent; CatalogReason still diagnoses the failed template
 // read. When the list is empty, the model option's presence distinguishes a KAS
 // answer whose entries were filtered from an omitted catalog.
-func withCatalogVerdict(out *configTemplateAssembly) vibekit.ConfigTemplateResponse {
+func withCatalogVerdict(out *configTemplateAssembly) marotte.ConfigTemplateResponse {
 	response := out.response
 	switch {
 	case len(response.Models) > 0 || out.modelOptionPresent:
-		response.Catalog = vibekit.CatalogReady
+		response.Catalog = marotte.CatalogReady
 	case response.CatalogReason != "":
-		response.Catalog = vibekit.CatalogUnavailable
+		response.Catalog = marotte.CatalogUnavailable
 	default:
-		response.Catalog = vibekit.CatalogEmpty
+		response.Catalog = marotte.CatalogEmpty
 	}
 	return response
 }
@@ -137,12 +137,12 @@ func withCatalogVerdict(out *configTemplateAssembly) vibekit.ConfigTemplateRespo
 // unavailableTemplate is the body for a read that produced no catalog. ONE builder
 // for both failure branches, which used to leave EffortLevels nil and so emitted
 // `null` where the success path emits `[]` — one response type with two shapes.
-func unavailableTemplate(reason vibekit.CatalogReason) *configTemplateAssembly {
-	return &configTemplateAssembly{response: vibekit.ConfigTemplateResponse{
+func unavailableTemplate(reason marotte.CatalogReason) *configTemplateAssembly {
+	return &configTemplateAssembly{response: marotte.ConfigTemplateResponse{
 		CatalogReason: reason,
-		Modes:         []vibekit.SessionMode{},
-		Models:        []vibekit.SessionModel{},
-		EffortLevels:  []vibekit.SessionEffortLevel{},
+		Modes:         []marotte.SessionMode{},
+		Models:        []marotte.SessionModel{},
+		EffortLevels:  []marotte.SessionEffortLevel{},
 	}}
 }
 
@@ -151,32 +151,32 @@ func unavailableTemplate(reason vibekit.CatalogReason) *configTemplateAssembly {
 // workspace entries), and the model catalog with the same [Deprecated]/[Legacy]
 // filtering the per-session paths apply.
 func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
-	modes := make([]vibekit.SessionMode, 0, len(tpl.Modes.AvailableModes))
+	modes := make([]marotte.SessionMode, 0, len(tpl.Modes.AvailableModes))
 	for i := range tpl.Modes.AvailableModes {
 		m := &tpl.Modes.AvailableModes[i]
 		if m.ID == "" {
 			continue
 		}
-		modes = append(modes, vibekit.SessionMode{
+		modes = append(modes, marotte.SessionMode{
 			ID:          m.ID,
 			Name:        m.Name,
 			Description: m.Description,
 			Source:      m.Meta.Kiro.Source,
 		})
 	}
-	out := &configTemplateAssembly{response: vibekit.ConfigTemplateResponse{
+	out := &configTemplateAssembly{response: marotte.ConfigTemplateResponse{
 		Modes:        modes,
-		Models:       []vibekit.SessionModel{},
-		EffortLevels: []vibekit.SessionEffortLevel{},
+		Models:       []marotte.SessionModel{},
+		EffortLevels: []marotte.SessionEffortLevel{},
 	}}
 	for i := range tpl.ConfigOptions {
 		opt := &tpl.ConfigOptions[i]
 		switch opt.ID {
-		case vibekit.ConfigOptionModel:
+		case marotte.ConfigOptionModel:
 			out.modelOptionPresent = true
 			_ = json.Unmarshal(opt.CurrentValue, &out.response.DefaultModel) // string; ignore non-string
 			out.response.Models = flattenTemplateModels(opt.Options)
-		case vibekit.ConfigOptionEffort:
+		case marotte.ConfigOptionEffort:
 			_ = json.Unmarshal(opt.CurrentValue, &out.response.EffortActive) // string; ignore non-string
 			out.response.EffortLevels = flattenTemplateEfforts(opt.Options)
 		}
@@ -187,8 +187,8 @@ func templateToResponse(tpl *kasConfigTemplate) *configTemplateAssembly {
 // flattenTemplateEfforts converts the effortLevel option's choices into the
 // domain tier list. Kept separate from the translate-side flattener because the
 // two wire structs differ (a KAS session frame vs this template result).
-func flattenTemplateEfforts(choices []kasConfigChoice) []vibekit.SessionEffortLevel {
-	out := make([]vibekit.SessionEffortLevel, 0, len(choices))
+func flattenTemplateEfforts(choices []kasConfigChoice) []marotte.SessionEffortLevel {
+	out := make([]marotte.SessionEffortLevel, 0, len(choices))
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 {
@@ -198,15 +198,15 @@ func flattenTemplateEfforts(choices []kasConfigChoice) []vibekit.SessionEffortLe
 		if c.Value == "" {
 			continue
 		}
-		out = append(out, vibekit.SessionEffortLevel{ID: c.Value, Name: c.Name})
+		out = append(out, marotte.SessionEffortLevel{ID: c.Value, Name: c.Name})
 	}
 	return out
 }
 
 // flattenTemplateModels converts the model select's choices (flat or grouped)
 // into the domain catalog, dropping hidden-tagged entries.
-func flattenTemplateModels(choices []kasConfigChoice) []vibekit.SessionModel {
-	out := make([]vibekit.SessionModel, 0, len(choices))
+func flattenTemplateModels(choices []kasConfigChoice) []marotte.SessionModel {
+	out := make([]marotte.SessionModel, 0, len(choices))
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 {
@@ -216,7 +216,7 @@ func flattenTemplateModels(choices []kasConfigChoice) []vibekit.SessionModel {
 		if c.Value == "" || modeltext.Hidden(c.Description) {
 			continue
 		}
-		out = append(out, vibekit.SessionModel{
+		out = append(out, marotte.SessionModel{
 			ID:                 c.Value,
 			Name:               c.Name,
 			Description:        c.Description,

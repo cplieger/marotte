@@ -14,8 +14,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // capturingBus records what a handler broadcast. Its own type rather than a
@@ -23,38 +23,38 @@ import (
 // bus as separate parameters and the point of several cases is that ONE of them
 // was reached.
 type capturingBus struct {
-	events []vibekit.ServerEvent
+	events []marotte.ServerEvent
 }
 
-func (b *capturingBus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (b *capturingBus) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	b.events = append(b.events, evt)
 }
 
 // draftFrames returns the draft_changed payloads the bus saw, in order.
-func (b *capturingBus) draftFrames(t *testing.T) []vibekit.DraftChangedPayload {
+func (b *capturingBus) draftFrames(t *testing.T) []marotte.DraftChangedPayload {
 	t.Helper()
-	var out []vibekit.DraftChangedPayload
+	var out []marotte.DraftChangedPayload
 	for _, evt := range b.events {
-		if evt.Type != vibekit.EventDraftChanged {
+		if evt.Type != marotte.EventDraftChanged {
 			continue
 		}
-		p, ok := evt.Payload.(vibekit.DraftChangedPayload)
+		p, ok := evt.Payload.(marotte.DraftChangedPayload)
 		if !ok {
-			t.Fatalf("draft_changed payload = %T, want vibekit.DraftChangedPayload", evt.Payload)
+			t.Fatalf("draft_changed payload = %T, want marotte.DraftChangedPayload", evt.Payload)
 		}
 		out = append(out, p)
 	}
 	return out
 }
 
-func attachmentsReq(t *testing.T, chatID vibekit.ChatID, paths []string) *vibekit.ClientCommand {
+func attachmentsReq(t *testing.T, chatID marotte.ChatID, paths []string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.SetAttachmentsCommand{Paths: paths})
+	payload, err := json.Marshal(marotte.SetAttachmentsCommand{Paths: paths})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetAttachments,
+	return &marotte.ClientCommand{
+		Type:    marotte.CmdSetAttachments,
 		ChatID:  chatID,
 		Payload: payload,
 	}
@@ -71,10 +71,10 @@ func TestCmdSetAttachments(t *testing.T) {
 		// Empty is a VALUE, not a missing field: it is how a send or an emptied
 		// pill row clears, so it must be accepted rather than rejected.
 		{name: "accepts an empty list as a clear", paths: []string{}, wantStatus: http.StatusOK, wantStored: nil},
-		{name: "accepts a list at exactly the cap", paths: manyReqPaths(vibekit.MaxAttachments), wantStatus: http.StatusOK, wantStored: manyReqPaths(vibekit.MaxAttachments)},
-		{name: "refuses one entry over the cap", paths: manyReqPaths(vibekit.MaxAttachments + 1), wantStatus: http.StatusRequestEntityTooLarge, wantStored: nil},
+		{name: "accepts a list at exactly the cap", paths: manyReqPaths(marotte.MaxAttachments), wantStatus: http.StatusOK, wantStored: manyReqPaths(marotte.MaxAttachments)},
+		{name: "refuses one entry over the cap", paths: manyReqPaths(marotte.MaxAttachments + 1), wantStatus: http.StatusRequestEntityTooLarge, wantStored: nil},
 		{name: "refuses an empty path", paths: []string{"a.txt", ""}, wantStatus: http.StatusBadRequest, wantStored: nil},
-		{name: "refuses a path over the per-path cap", paths: []string{strings.Repeat("x", vibekit.MaxAttachmentPathBytes+1)}, wantStatus: http.StatusBadRequest, wantStored: nil},
+		{name: "refuses a path over the per-path cap", paths: []string{strings.Repeat("x", marotte.MaxAttachmentPathBytes+1)}, wantStatus: http.StatusBadRequest, wantStored: nil},
 		{name: "keeps a multibyte path intact", paths: []string{"docs/仕様書.pdf"}, wantStatus: http.StatusOK, wantStored: []string{"docs/仕様書.pdf"}},
 	}
 	for _, tc := range tests {
@@ -117,8 +117,8 @@ func TestCmdSetAttachments_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 
 	// Raw bytes, not json.Marshal: marshalling would sanitize them before the
 	// handler ever saw them, which is the same coercion under test.
-	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetAttachments,
+	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, &marotte.ClientCommand{
+		Type:    marotte.CmdSetAttachments,
 		ChatID:  "c1",
 		Payload: append(append([]byte(`{"paths":["`), 0xff, 0xfe), []byte(`"]}`)...),
 	})
@@ -151,8 +151,8 @@ func TestCmdSetAttachments_RejectsAMalformedPayload(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := newBridgeHost(store, &recordingBridge{})
 
-	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, &vibekit.ClientCommand{
-		Type:    vibekit.CmdSetAttachments,
+	_, err := CmdSetAttachments(t.Context(), host, &capturingBus{}, &marotte.ClientCommand{
+		Type:    marotte.CmdSetAttachments,
 		ChatID:  "c1",
 		Payload: json.RawMessage(`{"paths":"one.txt"}`),
 	})
@@ -261,10 +261,10 @@ func TestAppendUserMessage_ClearsTheStagedAttachments(t *testing.T) {
 	}
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
 		Text:        "have a look",
 		MessageID:   "m-1",
-		Attachments: []vibekit.Attachment{{Path: "docs/spec.pdf", Name: "spec.pdf"}},
+		Attachments: []marotte.Attachment{{Path: "docs/spec.pdf", Name: "spec.pdf"}},
 	})
 	if err != nil {
 		t.Fatalf("appendUserMessage: %v", err)

@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/webhttp/v3"
 )
 

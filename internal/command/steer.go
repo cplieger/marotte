@@ -12,7 +12,7 @@ package command
 // ordinary human turn, resetting the agent's iteration counter. Nothing is
 // cancelled and nothing is discarded.
 //
-// So vibekit keeps no queue: idle sends are prompts, mid-turn sends are
+// So marotte keeps no queue: idle sends are prompts, mid-turn sends are
 // steers, and the buffer that used to live in the browser is KAS's.
 
 import (
@@ -24,7 +24,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // maxSteerBytes caps a steer's text — deliberately the same cap as a
@@ -70,12 +70,12 @@ func CmdSteer(
 	bridges BridgeAccess,
 	outcome TurnOutcomeAccess,
 	steers SteerRecorder,
-	cmd *vibekit.ClientCommand,
+	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	var p vibekit.SteerCommand
+	var p marotte.SteerCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -96,7 +96,7 @@ func CmdSteer(
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
 	}
 	source, held := outcome.AdmissionHolderSource(cmd.ChatID)
-	if !held || source == vibekit.TurnSourceLocalShell {
+	if !held || source == marotte.TurnSourceLocalShell {
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
 	}
 
@@ -108,7 +108,7 @@ func CmdSteer(
 	// store before this moved: 9 of 18 steers whose queued-time origin is
 	// observable were labelled the agent's.
 	//
-	// The id is derivable (vibekit.SteerIDFor) because KAS prefixes the messageId we
+	// The id is derivable (marotte.SteerIDFor) because KAS prefixes the messageId we
 	// send and stamps that on both the reply and the notification. The two shapes
 	// that would make it wrong are already refused above: an empty id by
 	// ValidMessageID, and a notification-prefixed text — which KAS would file under
@@ -116,9 +116,9 @@ func CmdSteer(
 	//
 	// A refused steer leaves a stale entry, deliberately unswept: nothing else can
 	// carry a `steer-` id, so it can mislabel nothing, and the TTL reclaims it.
-	steers.RecordUserSteer(cmd.ChatID, vibekit.SteerIDFor(p.MessageID))
+	steers.RecordUserSteer(cmd.ChatID, marotte.SteerIDFor(p.MessageID))
 
-	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteer, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, marotte.MethodSessionSteer, SessionParams(bridge, map[string]any{
 		"message":   text,
 		"messageId": p.MessageID,
 	}))
@@ -126,7 +126,7 @@ func CmdSteer(
 		// KAS throws (rather than answering) for an unknown session and
 		// an empty message, both already ruled out — so an error here is
 		// a transport or session-liveness failure.
-		steers.ForgetUserSteer(cmd.ChatID, vibekit.SteerIDFor(p.MessageID))
+		steers.ForgetUserSteer(cmd.ChatID, marotte.SteerIDFor(p.MessageID))
 		slog.Warn("steer: bridge call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)
 	}
@@ -144,7 +144,7 @@ func CmdSteer(
 		// KAS was persisting: the message never reached the model. 409
 		// rather than 502 — the client's answer is to send it as an
 		// ordinary prompt.
-		steers.ForgetUserSteer(cmd.ChatID, vibekit.SteerIDFor(p.MessageID))
+		steers.ForgetUserSteer(cmd.ChatID, marotte.SteerIDFor(p.MessageID))
 		slog.Info("steer dropped", "chat", cmd.ChatID, "reason", result.Dropped)
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerDropped)
 	}
@@ -153,7 +153,7 @@ func CmdSteer(
 	// is an idempotent second write; it is kept so a KAS that ever returns an id we
 	// did not derive still gets that steer labelled as the user's.
 	steers.RecordUserSteer(cmd.ChatID, result.MessageID)
-	if result.MessageID != vibekit.SteerIDFor(p.MessageID) {
+	if result.MessageID != marotte.SteerIDFor(p.MessageID) {
 		// The derivation above is what lets the ledger be written before the call,
 		// so a disagreement retires that reasoning rather than merely logging an
 		// oddity. An empty id is the sharper case: RecordUserSteer no-ops on it, so
@@ -162,7 +162,7 @@ func CmdSteer(
 		slog.Warn("steer id is not the derived one; the pre-call ledger entry may not match later frames",
 			"chat", cmd.ChatID,
 			"returned", result.MessageID,
-			"derived", vibekit.SteerIDFor(p.MessageID))
+			"derived", marotte.SteerIDFor(p.MessageID))
 	}
 
 	// No event is broadcast here: KAS answers a successful steer with its
@@ -174,7 +174,7 @@ func CmdSteer(
 
 // CmdSteerClear drops every steer still queued for the chat's session. Does
 // not cancel the turn — only the unread steers go away.
-func CmdSteerClear(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSteerClear(ctx context.Context, bridges BridgeAccess, cmd *marotte.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func CmdSteerClear(ctx context.Context, bridges BridgeAccess, cmd *vibekit.Clien
 		return responseWith(map[string]any{"cleared": []string{}}), nil
 	}
 
-	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteerClear, SessionParams(bridge))
+	resp, err := bridge.Call(ctx, marotte.MethodSessionSteerClear, SessionParams(bridge))
 	if err != nil {
 		slog.Warn("steer_clear: bridge call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)

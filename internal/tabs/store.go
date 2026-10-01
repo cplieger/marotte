@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // state is the pair a mutation works on: the ordered set and the version it
@@ -13,7 +13,7 @@ import (
 // one without the other could pair a stale set with a fresh version, which is the
 // defect an SSE head watermark had and this collection version does not.
 type state struct {
-	tabs    []vibekit.TabSubject
+	tabs    []marotte.TabSubject
 	version uint64
 }
 
@@ -56,7 +56,7 @@ func (s *Store) mutate(ctx context.Context, apply func(st *state) (bool, error))
 }
 
 // snapshot clones the state under stateMu. The clone is SHALLOW because
-// vibekit.TabSubject holds no reference type; a field of slice or map type would
+// marotte.TabSubject holds no reference type; a field of slice or map type would
 // make this a deep clone, and the same sentence is on List.
 func (s *Store) snapshot() state {
 	s.stateMu.Lock()
@@ -94,10 +94,10 @@ func (s *Store) publish(st *state) {
 //
 // The results are named because three of the four are easy to mix up at a call
 // site that only wants one of them.
-func (s *Store) Open(ctx context.Context, spec vibekit.OpenTab) (subject vibekit.TabSubject, created bool, version uint64, err error) {
+func (s *Store) Open(ctx context.Context, spec marotte.OpenTab) (subject marotte.TabSubject, created bool, version uint64, err error) {
 	err = checkSubject(spec.Kind, spec.Ref)
 	if err != nil {
-		return vibekit.TabSubject{}, false, 0, err
+		return marotte.TabSubject{}, false, 0, err
 	}
 	version, err = s.mutate(ctx, func(st *state) (bool, error) {
 		if i := indexOfSubject(st.tabs, spec.Kind, spec.Ref); i >= 0 {
@@ -107,7 +107,7 @@ func (s *Store) Open(ctx context.Context, spec vibekit.OpenTab) (subject vibekit
 		if len(st.tabs) >= MaxOpenTabs {
 			return false, fmt.Errorf("%w: %d open, limit %d", ErrTooMany, len(st.tabs), MaxOpenTabs)
 		}
-		subject = vibekit.TabSubject{
+		subject = marotte.TabSubject{
 			ID:     newID(),
 			Kind:   spec.Kind,
 			Ref:    spec.Ref,
@@ -119,7 +119,7 @@ func (s *Store) Open(ctx context.Context, spec vibekit.OpenTab) (subject vibekit
 		return true, nil
 	})
 	if err != nil {
-		return vibekit.TabSubject{}, false, 0, err
+		return marotte.TabSubject{}, false, 0, err
 	}
 	return subject, created, version, nil
 }
@@ -134,20 +134,20 @@ func (s *Store) Open(ctx context.Context, spec vibekit.OpenTab) (subject vibekit
 //
 // One mutation, one version bump, whatever the size of the subtree. Returns no
 // sentinel of its own; the only error it can report is a failed write.
-func (s *Store) Close(ctx context.Context, id string) ([]vibekit.TabSubject, uint64, error) {
-	var closed []vibekit.TabSubject
+func (s *Store) Close(ctx context.Context, id string) ([]marotte.TabSubject, uint64, error) {
+	var closed []marotte.TabSubject
 	version, err := s.mutate(ctx, func(st *state) (bool, error) {
 		doomed := closure(st.tabs, id)
 		if len(doomed) == 0 {
 			return false, nil
 		}
-		closed = make([]vibekit.TabSubject, 0, len(doomed))
+		closed = make([]marotte.TabSubject, 0, len(doomed))
 		for _, t := range st.tabs {
 			if _, gone := doomed[t.ID]; gone {
 				closed = append(closed, t)
 			}
 		}
-		st.tabs = slices.DeleteFunc(st.tabs, func(t vibekit.TabSubject) bool {
+		st.tabs = slices.DeleteFunc(st.tabs, func(t marotte.TabSubject) bool {
 			_, gone := doomed[t.ID]
 			return gone
 		})
@@ -181,11 +181,11 @@ func (s *Store) Reorder(ctx context.Context, ids []string) (uint64, error) {
 		if len(ids) != len(st.tabs) {
 			return false, fmt.Errorf("%w: %d ids for %d open tabs", ErrOrderMismatch, len(ids), len(st.tabs))
 		}
-		open := make(map[string]vibekit.TabSubject, len(st.tabs))
+		open := make(map[string]marotte.TabSubject, len(st.tabs))
 		for _, t := range st.tabs {
 			open[t.ID] = t
 		}
-		next := make([]vibekit.TabSubject, 0, len(ids))
+		next := make([]marotte.TabSubject, 0, len(ids))
 		seen := make(map[string]struct{}, len(ids))
 		for _, id := range ids {
 			if _, dup := seen[id]; dup {
@@ -228,11 +228,11 @@ func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) (uint64, 
 // List returns the set in order plus the version it reflects, captured in ONE
 // critical section so a caller cannot pair a stale set with a fresh version.
 //
-// The result is a copy. vibekit.TabSubject holds no reference type, so a shallow
+// The result is a copy. marotte.TabSubject holds no reference type, so a shallow
 // clone suffices; a field of slice or map type — an Owns list, a per-tab
 // attribute map — would make this a deep clone, because a shallow one would hand
 // a caller the store's own backing array to reorder through.
-func (s *Store) List() (tabs []vibekit.TabSubject, version uint64) {
+func (s *Store) List() (tabs []marotte.TabSubject, version uint64) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	return slices.Clone(s.tabs), s.version
@@ -246,14 +246,14 @@ func (s *Store) List() (tabs []vibekit.TabSubject, version uint64) {
 //
 // A read under stateMu like List, and a copy for List's reason: the subjects
 // hold no reference type, so element copies are the whole isolation.
-func (s *Store) Subtree(id string) []vibekit.TabSubject {
+func (s *Store) Subtree(id string) []marotte.TabSubject {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	doomed := closure(s.tabs, id)
 	if len(doomed) == 0 {
 		return nil
 	}
-	out := make([]vibekit.TabSubject, 0, len(doomed))
+	out := make([]marotte.TabSubject, 0, len(doomed))
 	for _, t := range s.tabs {
 		if _, gone := doomed[t.ID]; gone {
 			out = append(out, t)
@@ -281,8 +281,8 @@ func (s *Store) Subtree(id string) []vibekit.TabSubject {
 // same answer Open gives an orphan and the client's insertSpec gives one: a tab
 // nobody can see is worse than a tab in the wrong place. Deeper descendants keep
 // their parents, because those parents are still open.
-func (s *Store) Prune(ctx context.Context, exists func(vibekit.TabSubject) bool) ([]vibekit.TabSubject, uint64, error) {
-	var dropped []vibekit.TabSubject
+func (s *Store) Prune(ctx context.Context, exists func(marotte.TabSubject) bool) ([]marotte.TabSubject, uint64, error) {
+	var dropped []marotte.TabSubject
 	version, err := s.mutate(ctx, func(st *state) (bool, error) {
 		kept, gone := partitionByExistence(st.tabs, exists)
 		promoted := promoteOrphans(kept)
@@ -301,11 +301,11 @@ func (s *Store) Prune(ctx context.Context, exists func(vibekit.TabSubject) bool)
 
 // partitionByExistence splits tabs into the ones exists still resolves and the
 // ones it does not. A nil exists resolves everything.
-func partitionByExistence(tabs []vibekit.TabSubject, exists func(vibekit.TabSubject) bool) (kept, gone []vibekit.TabSubject) {
+func partitionByExistence(tabs []marotte.TabSubject, exists func(marotte.TabSubject) bool) (kept, gone []marotte.TabSubject) {
 	if exists == nil {
 		return tabs, nil
 	}
-	kept = make([]vibekit.TabSubject, 0, len(tabs))
+	kept = make([]marotte.TabSubject, 0, len(tabs))
 	for _, t := range tabs {
 		if !exists(t) {
 			gone = append(gone, t)
@@ -322,7 +322,7 @@ func partitionByExistence(tabs []vibekit.TabSubject, exists func(vibekit.TabSubj
 //
 // One pass, deliberately not transitive: a tab whose own parent survives keeps it,
 // even when the GRANDparent went, because that parent is still a tab on the strip.
-func promoteOrphans(tabs []vibekit.TabSubject) int {
+func promoteOrphans(tabs []marotte.TabSubject) int {
 	open := make(map[string]struct{}, len(tabs))
 	for _, t := range tabs {
 		open[t.ID] = struct{}{}
@@ -354,7 +354,7 @@ func promoteOrphans(tabs []vibekit.TabSubject) int {
 //
 // sub is a pointer because the promotion is a decision about the SUBJECT, and the
 // caller returns that subject to a client that will address the tab by it.
-func insert(tabs []vibekit.TabSubject, sub *vibekit.TabSubject) []vibekit.TabSubject {
+func insert(tabs []marotte.TabSubject, sub *marotte.TabSubject) []marotte.TabSubject {
 	at := -1
 	if sub.Parent != "" {
 		at = indexOfID(tabs, sub.Parent)
@@ -381,7 +381,7 @@ func insert(tabs []vibekit.TabSubject, sub *vibekit.TabSubject) []vibekit.TabSub
 // The child index is built here and thrown away, which is the point: a persistent
 // index would be a second representation of the parent pointers, and the two can
 // desync.
-func closure(tabs []vibekit.TabSubject, id string) map[string]struct{} {
+func closure(tabs []marotte.TabSubject, id string) map[string]struct{} {
 	if indexOfID(tabs, id) < 0 {
 		return nil
 	}
@@ -408,15 +408,15 @@ func closure(tabs []vibekit.TabSubject, id string) map[string]struct{} {
 }
 
 // indexOfID returns the position of the tab with this id, or -1.
-func indexOfID(tabs []vibekit.TabSubject, id string) int {
-	return slices.IndexFunc(tabs, func(t vibekit.TabSubject) bool { return t.ID == id })
+func indexOfID(tabs []marotte.TabSubject, id string) int {
+	return slices.IndexFunc(tabs, func(t marotte.TabSubject) bool { return t.ID == id })
 }
 
 // indexOfSubject returns the position of the tab open for this (Kind, Ref), or
 // -1. This is the uniqueness rule that makes Open idempotent, and it is a scan
 // rather than a map because Open builds no other index and MaxOpenTabs is 48.
-func indexOfSubject(tabs []vibekit.TabSubject, kind vibekit.TabKind, ref string) int {
-	return slices.IndexFunc(tabs, func(t vibekit.TabSubject) bool {
+func indexOfSubject(tabs []marotte.TabSubject, kind marotte.TabKind, ref string) int {
+	return slices.IndexFunc(tabs, func(t marotte.TabSubject) bool {
 		return t.Kind == kind && t.Ref == ref
 	})
 }

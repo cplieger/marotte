@@ -1156,7 +1156,7 @@ function paint(): void {
   paintSyncBlocks = PAINT_SYNC_BLOCKS;
   const root = paintRoot();
   // The placeholder never coexists with content, dropped HERE because this is the
-  // line where content lands (`vibekit-ui.md` "A SKELETON MAY ONLY PAINT OVER AN
+  // line where content lands (`marotte-ui.md` "A SKELETON MAY ONLY PAINT OVER AN
   // EMPTY CONTAINER" owns why the activation's continuation is too late). Only with
   // something to replace it: an empty turn list is a chat still loading. Scoped to
   // THIS view, and the load-more furniture is deliberately untouched — that one
@@ -2269,7 +2269,7 @@ function buildTurn(t: Turn): HTMLElement {
   // trigger alone does not mean they asked for anything NOW: this mount also runs
   // for a chat-switch replay, a refetched window and a prepend, and the pin
   // publishes a reader gesture that would revoke the rail's own pick
-  // (`vibekit-client.md` "The timeline rail").
+  // (`marotte-client.md` "The timeline rail").
   if (t.trigger !== undefined && appendNewIds.has(t.id)) {
     scrollToBottom();
   }
@@ -2998,7 +2998,7 @@ function isLikelyLiveStreaming(m: Message): boolean {
 
 /** The row wrapper for a top-level assistant bubble.
  *
- *  No avatar: the card already establishes identity (`vibekit-ui.md` "There are no
+ *  No avatar: the card already establishes identity (`marotte-ui.md` "There are no
  *  bubbles"). The row element stays because the block dispatcher mounts into it. */
 function makeRow(): HTMLDivElement {
   return el("div", { className: "msg-row" }) as HTMLDivElement;

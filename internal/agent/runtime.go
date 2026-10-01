@@ -15,19 +15,19 @@ import (
 	"time"
 
 	"github.com/cplieger/sse"
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/ignore"
-	"github.com/cplieger/vibekit/internal/kirosession"
-	"github.com/cplieger/vibekit/internal/liveness"
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/schedule"
-	"github.com/cplieger/vibekit/internal/secretstore"
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/ignore"
+	"github.com/cplieger/marotte/internal/kirosession"
+	"github.com/cplieger/marotte/internal/liveness"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/schedule"
+	"github.com/cplieger/marotte/internal/secretstore"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -120,7 +120,7 @@ type bridges struct {
 }
 
 // bus groups Runtime fields related to SSE transport, replay and pending
-// permissions. The transport is cplieger/sse's; vibekit layers chat-topic
+// permissions. The transport is cplieger/sse's; marotte layers chat-topic
 // filtering and pending-state replay on top.
 type bus struct {
 	fanout       *sse.Hub
@@ -137,10 +137,10 @@ type bus struct {
 	chatStatus *chatStatusCache
 	// stageStatusDesc records a declared description on the chat's open turn, which is
 	// what the agent_finished push body reads.
-	stageStatusDesc func(vibekit.ChatID, string)
+	stageStatusDesc func(marotte.ChatID, string)
 	// retractPush drops a held push about a subject whose ask was just settled
 	// (BridgeCoordinator.RetractPush); the bus has no push reference of its own.
-	retractPush func(vibekit.PushSubject)
+	retractPush func(marotte.PushSubject)
 	// legacyConnects and v3Connects count connects by wire generation: a legacy
 	// connect (no SSE-Wire header) is the v2 bundle still running somewhere, and
 	// the counter is what says when the overlap can go. Observability only.
@@ -180,7 +180,7 @@ type Runtime struct {
 	// which is what readiness reports now the relay owns token vending.
 	authReadiness      *command.AuthReadiness
 	chatHandlers       map[string]chatHandler
-	sessUpdateHandlers map[vibekit.ACPUpdateKind]sessionUpdateHandler
+	sessUpdateHandlers map[marotte.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
@@ -203,7 +203,7 @@ type Runtime struct {
 	agentTerms *agentTerminals
 	hookStatus *hookStatusCache
 
-	// secrets holds the credential blobs KAS asks vibekit to persist on its behalf
+	// secrets holds the credential blobs KAS asks marotte to persist on its behalf
 	// (bridge_v3_secret.go). ONE store for every bridge, because KAS's key
 	// namespace is global. Nil → the handlers report "absent" rather than failing
 	// an MCP connect.
@@ -414,7 +414,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.replay = &replay{
 		chats: chatStore, lifetime: lc, workDir: workDir,
-		projections: map[vibekit.ChatID]*loadProjection{},
+		projections: map[marotte.ChatID]*loadProjection{},
 		broadcast:   sseP.Broadcast,
 	}
 	h.coord = newBridgeCoordinator(h)
@@ -466,7 +466,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 // UtilityPrompt delegates to the utility text-gen agent, lazily constructing the
 // runtime on first call. effort is the per-task reasoning level; "" keeps the
 // session's current one, and a model with no effort config ignores it.
-func (rt *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
+func (rt *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort marotte.EffortLevel) (string, error) {
 	return rt.utility.get().textgen.UtilityPrompt(ctx, prompt, effort)
 }
 
@@ -477,14 +477,14 @@ func (rt *Runtime) MCPRegistry() RouteRegistrar { return rt.mcpRegistry }
 // MCPSnapshot returns a stable-ordered snapshot of the runtime registry so callers
 // outside agent can read it without taking agent internals as a dependency. Only
 // CONNECTED servers are included: a failed or OAuth-pending one has no live tools.
-func (rt *Runtime) MCPSnapshot() []vibekit.MCPSnapshotServer {
+func (rt *Runtime) MCPSnapshot() []marotte.MCPSnapshotServer {
 	snap := rt.mcpRegistry.Snapshot()
-	out := make([]vibekit.MCPSnapshotServer, 0, len(snap))
+	out := make([]marotte.MCPSnapshotServer, 0, len(snap))
 	for i := range snap {
 		if snap[i].State != mcpStateConnected {
 			continue
 		}
-		out = append(out, vibekit.MCPSnapshotServer{Name: snap[i].Name})
+		out = append(out, marotte.MCPSnapshotServer{Name: snap[i].Name})
 	}
 	return out
 }
@@ -648,7 +648,7 @@ const bridgeIdleTimeout = 30 * time.Minute
 // Every caller INSIDE this package uses h.bus.Broadcast directly. Used by
 // the chat store and by the runtime itself for turn_ended / permission_needed
 // / error.
-func (rt *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (rt *Runtime) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	rt.bus.emit(evt)
 }
 
@@ -747,7 +747,7 @@ func (rt *Runtime) sweepSessionsOnce() {
 	rt.sessionReaper.Sweep(refs)
 }
 
-// liveSessionIDs returns the ACP session id of every bridge vibekit currently
+// liveSessionIDs returns the ACP session id of every bridge marotte currently
 // holds: each chat bridge plus the utility session. These are exempt from
 // the sweep at any age.
 func (rt *Runtime) liveSessionIDs() []string {

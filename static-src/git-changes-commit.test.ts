@@ -21,7 +21,7 @@ const { renderRecentCommits } = await import("./git-changes-commit.js");
 /** A repo status carrying only what renderRecentCommits reads. */
 function repoStatus(): GitRepoStatus {
   return {
-    repo: "vibekit",
+    repo: "marotte",
     is_repo: true,
     branch: "main",
     remote: "origin",
@@ -68,9 +68,9 @@ describe("renderRecentCommits commit hash", () => {
   it("links each hash to the forge commit page the server derived", async () => {
     mockApiGet.mockResolvedValue({
       entries: ["a1b2c3d first subject", "e4f5a6b second subject"],
-      remote: "https://github.com/cplieger/vibekit.git",
+      remote: "https://github.com/cplieger/marotte.git",
       behind: 0,
-      commit_url_prefix: "https://github.com/cplieger/vibekit/commit/",
+      commit_url_prefix: "https://github.com/cplieger/marotte/commit/",
     });
 
     const section = renderRecentCommits(repoStatus(), deps());
@@ -80,8 +80,8 @@ describe("renderRecentCommits commit hash", () => {
     // rather than an indexed pair.
     const links = [...section.querySelectorAll<HTMLAnchorElement>("a.git-recent-commits-sha-link")];
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "https://github.com/cplieger/vibekit/commit/a1b2c3d",
-      "https://github.com/cplieger/vibekit/commit/e4f5a6b",
+      "https://github.com/cplieger/marotte/commit/a1b2c3d",
+      "https://github.com/cplieger/marotte/commit/e4f5a6b",
     ]);
 
     const first = section.querySelector<HTMLAnchorElement>("a.git-recent-commits-sha-link");
@@ -122,7 +122,7 @@ describe("renderRecentCommits commit hash", () => {
   });
 
   // The prefix is built server-side from a repository's own origin remote,
-  // which is config vibekit does not control, so the client re-checks the
+  // which is config marotte does not control, so the client re-checks the
   // scheme rather than rendering whatever it was handed.
   //
   // The `//host/` spellings are the cases that actually exercise the scheme

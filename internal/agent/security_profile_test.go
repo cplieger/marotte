@@ -7,8 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/policyfile"
-	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // writeProfileSetting writes a config.json carrying just the security profile.

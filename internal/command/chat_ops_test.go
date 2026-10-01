@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // closeDeps records the teardown steps and hands out the bridge the test
@@ -23,17 +23,17 @@ import (
 type closeDeps struct {
 	*benchDeps
 	bridge  Bridge
-	cleared []vibekit.ChatID
-	closed  []vibekit.ChatID
+	cleared []marotte.ChatID
+	closed  []marotte.ChatID
 }
 
-func (d *closeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
+func (d *closeDeps) Bridge(marotte.ChatID) Bridge { return d.bridge }
 
-func (d *closeDeps) ClearPendingPermsForChat(id vibekit.ChatID) {
+func (d *closeDeps) ClearPendingPermsForChat(id marotte.ChatID) {
 	d.cleared = append(d.cleared, id)
 }
 
-func (d *closeDeps) CloseChatState(_ context.Context, id vibekit.ChatID) {
+func (d *closeDeps) CloseChatState(_ context.Context, id marotte.ChatID) {
 	d.closed = append(d.closed, id)
 }
 
@@ -74,8 +74,8 @@ func TestCloseChatTeardown_CancelsTheTurnAndLogsNoFailure(t *testing.T) {
 
 	closeChatTeardown(t.Context(), deps, deps, deps, "c1")
 
-	if len(bridge.notified) != 1 || bridge.notified[0] != vibekit.MethodCancel {
-		t.Errorf("bridge saw notifications %v, want exactly [%s]", bridge.notified, vibekit.MethodCancel)
+	if len(bridge.notified) != 1 || bridge.notified[0] != marotte.MethodCancel {
+		t.Errorf("bridge saw notifications %v, want exactly [%s]", bridge.notified, marotte.MethodCancel)
 	}
 	if len(deps.closed) != 1 {
 		t.Errorf("closed state for %v, want exactly [c1]", deps.closed)

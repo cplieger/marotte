@@ -1,6 +1,6 @@
 // Package prewarm handles npx package pre-warming for MCP servers.
 //
-// Vibekit's pitch is "instantly deployable with everything preinstalled",
+// Marotte's pitch is "instantly deployable with everything preinstalled",
 // but MCP servers running via `npx -y <pkg>` pay a one-time install cost
 // on first use (often 5-15s for a mid-sized server). That latency shows
 // up in the user's first chat after a container start, which is exactly
@@ -45,7 +45,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/marotte/internal/buffer"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -296,13 +296,13 @@ func (p *Runner) installOne(ctx context.Context, npmBin, pkg string) {
 
 // stagingManifest is the throwaway tree's own package.json. Private and
 // unversioned, so nothing about it can be mistaken for a publishable package.
-const stagingManifest = `{"name":"vibekit-prewarm","version":"0.0.0","private":true}` + "\n"
+const stagingManifest = `{"name":"marotte-prewarm","version":"0.0.0","private":true}` + "\n"
 
 // stageTree makes one install's throwaway tree and returns its path; the caller
 // removes it. A tree that cannot be given its manifest is removed HERE rather than
 // handed back, so no caller's failure path has to clean up a partial one.
 func stageTree() (string, error) {
-	tree, err := os.MkdirTemp("", "vibekit-prewarm-")
+	tree, err := os.MkdirTemp("", "marotte-prewarm-")
 	if err != nil {
 		return "", err
 	}

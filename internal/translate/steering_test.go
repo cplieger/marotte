@@ -10,7 +10,7 @@ import (
 	"maps"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // steerFrame builds a session_info_update whose steering fields sit FLAT beside
@@ -37,10 +37,10 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
 	}
 	e := (*events)[0]
-	if e.Type != vibekit.EventSteerQueued {
-		t.Fatalf("type = %q, want %q", e.Type, vibekit.EventSteerQueued)
+	if e.Type != marotte.EventSteerQueued {
+		t.Fatalf("type = %q, want %q", e.Type, marotte.EventSteerQueued)
 	}
-	p, ok := e.Payload.(vibekit.SteerQueuedPayload)
+	p, ok := e.Payload.(marotte.SteerQueuedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", e.Payload)
 	}
@@ -66,10 +66,10 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
 	}
 	e := (*events)[0]
-	if e.Type != vibekit.EventAgentNotice {
-		t.Fatalf("type = %q, want %q", e.Type, vibekit.EventAgentNotice)
+	if e.Type != marotte.EventAgentNotice {
+		t.Fatalf("type = %q, want %q", e.Type, marotte.EventAgentNotice)
 	}
-	p, ok := e.Payload.(vibekit.AgentNoticePayload)
+	p, ok := e.Payload.(marotte.AgentNoticePayload)
 	if !ok {
 		t.Fatalf("payload type = %T", e.Payload)
 	}
@@ -89,10 +89,10 @@ func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 			"content":   "use tabs",
 		}), FrameAttribution{})
 
-	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
+	if len(*events) != 1 || (*events)[0].Type != marotte.EventSteerInjected {
 		t.Fatalf("events = %+v, want one steer_injected", *events)
 	}
-	p, ok := (*events)[0].Payload.(vibekit.SteerInjectedPayload)
+	p, ok := (*events)[0].Payload.(marotte.SteerInjectedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
@@ -108,10 +108,10 @@ func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 			"messageIds": []string{"steer-1", "steer-2"},
 		}), FrameAttribution{})
 
-	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerCleared {
+	if len(*events) != 1 || (*events)[0].Type != marotte.EventSteerCleared {
 		t.Fatalf("events = %+v, want one steer_cleared", *events)
 	}
-	p, ok := (*events)[0].Payload.(vibekit.SteerClearedPayload)
+	p, ok := (*events)[0].Payload.(marotte.SteerClearedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
@@ -164,7 +164,7 @@ func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 			"content":   "use tabs",
 		}), FrameAttribution{SubSessionID: "sub-session-7"})
 
-	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
+	if len(*events) != 1 || (*events)[0].Type != marotte.EventSteerInjected {
 		t.Fatalf("events = %+v — a steer consumed inside a subagent must still be reported", *events)
 	}
 }
@@ -186,12 +186,12 @@ func TestSteeringQueued_OriginIsUserForASteerThisServerSent(t *testing.T) {
 			"content":   "use tabs",
 		}), FrameAttribution{})
 
-	p, ok := (*events)[0].Payload.(vibekit.SteerQueuedPayload)
+	p, ok := (*events)[0].Payload.(marotte.SteerQueuedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
-	if p.Origin != vibekit.SteerOriginUser {
-		t.Errorf("origin = %q, want %q for an id the ledger holds", p.Origin, vibekit.SteerOriginUser)
+	if p.Origin != marotte.SteerOriginUser {
+		t.Errorf("origin = %q, want %q for an id the ledger holds", p.Origin, marotte.SteerOriginUser)
 	}
 }
 
@@ -205,12 +205,12 @@ func TestSteeringQueued_OriginIsAgentForAnIDTheLedgerDoesNotHold(t *testing.T) {
 			"content":   "A workflow you launched completed.",
 		}), FrameAttribution{})
 
-	p, ok := (*events)[0].Payload.(vibekit.SteerQueuedPayload)
+	p, ok := (*events)[0].Payload.(marotte.SteerQueuedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
-	if p.Origin != vibekit.SteerOriginAgent {
-		t.Errorf("origin = %q, want %q", p.Origin, vibekit.SteerOriginAgent)
+	if p.Origin != marotte.SteerOriginAgent {
+		t.Errorf("origin = %q, want %q", p.Origin, marotte.SteerOriginAgent)
 	}
 }
 
@@ -227,10 +227,10 @@ func TestSteeringInjected_CarriesTheOrigin(t *testing.T) {
 		name  string
 		id    string
 		known bool
-		want  vibekit.SteerOrigin
+		want  marotte.SteerOrigin
 	}{
-		{"the user's own", "steer-1", true, vibekit.SteerOriginUser},
-		{"a workflow's report", "notify-wf-9", false, vibekit.SteerOriginAgent},
+		{"the user's own", "steer-1", true, marotte.SteerOriginUser},
+		{"a workflow's report", "notify-wf-9", false, marotte.SteerOriginAgent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, events, _ := depsWithStore(t, "c1")
@@ -243,7 +243,7 @@ func TestSteeringInjected_CarriesTheOrigin(t *testing.T) {
 					"content":   "use tabs",
 				}), FrameAttribution{})
 
-			p, ok := (*events)[0].Payload.(vibekit.SteerInjectedPayload)
+			p, ok := (*events)[0].Payload.(marotte.SteerInjectedPayload)
 			if !ok {
 				t.Fatalf("payload type = %T", (*events)[0].Payload)
 			}
@@ -267,7 +267,7 @@ func TestSteeringQueued_ASeverityStillPreemptsTheSteerEntirely(t *testing.T) {
 			"notificationSeverity": "warning",
 		}), FrameAttribution{})
 
-	if len(*events) != 1 || (*events)[0].Type != vibekit.EventAgentNotice {
+	if len(*events) != 1 || (*events)[0].Type != marotte.EventAgentNotice {
 		t.Fatalf("events = %+v, want one agent_notice and no steer", *events)
 	}
 }
@@ -282,9 +282,9 @@ func TestSteeringQueued_ASeverityStillPreemptsTheSteerEntirely(t *testing.T) {
 // projection the connect replay serves from, one per arm of the sub-kind cascade.
 
 // waitingOf returns the buffer's entries for one chat, keyed by steer id.
-func waitingOf(t *testing.T, d *baseDeps, chatID vibekit.ChatID) map[string]vibekit.SteerQueuedPayload {
+func waitingOf(t *testing.T, d *baseDeps, chatID marotte.ChatID) map[string]marotte.SteerQueuedPayload {
 	t.Helper()
-	out := map[string]vibekit.SteerQueuedPayload{}
+	out := map[string]marotte.SteerQueuedPayload{}
 	for _, p := range d.waiting[chatID] {
 		out[p.SteerID] = p
 	}
@@ -305,7 +305,7 @@ func TestSteeringQueued_RecordsTheSteerAsWaiting(t *testing.T) {
 		t.Fatalf("waiting = %+v, want one entry", got)
 	}
 	e := got["steer-1"]
-	if e.Text != "use tabs" || e.Origin != vibekit.SteerOriginUser {
+	if e.Text != "use tabs" || e.Origin != marotte.SteerOriginUser {
 		t.Errorf("entry = %+v, want the text and the resolved origin", e)
 	}
 }

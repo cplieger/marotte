@@ -676,11 +676,11 @@ describe("the path filter", () => {
     // not happen to repeat the repo name rendered "No paths match the filter."
     // under its own heading, which is the opposite of what naming it asked for.
     const mount = await paintRepos([
-      repo([file("src/a.ts", "M"), file("src/b.ts", "M")], { repo: "vibekit" }),
+      repo([file("src/a.ts", "M"), file("src/b.ts", "M")], { repo: "marotte" }),
     ]);
 
-    // Neither path contains "vibekit".
-    applyFilter("vibekit");
+    // Neither path contains "marotte".
+    applyFilter("marotte");
 
     expect(rowPaths(mount)).toEqual(["src/a.ts", "src/b.ts"]);
   });
@@ -1015,7 +1015,7 @@ describe("Pull all", () => {
 // The half with a real trap behind it is the SECOND case: `status-all` is polled
 // (SSE debounce, post-action refreshes, tab activation), so a skeleton armed on
 // "a request is in flight" rather than on "the mount is empty" would paint over
-// real content several times a minute. `vibekit-ui.md` states that rule and this
+// real content several times a minute. `marotte-ui.md` states that rule and this
 // pins it.
 //
 // Fake timers are scoped to this block rather than the file: the suite above runs

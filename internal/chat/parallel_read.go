@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cplieger/vibekit/internal/parallel"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/parallel"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // chatEntry is a chat file's (id, full path) pair gathered during a
@@ -26,13 +26,13 @@ func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
 	fileCap chatFileCap,
-) (headersOut []vibekit.ChatHeader, complete bool) {
+) (headersOut []marotte.ChatHeader, complete bool) {
 	if len(valid) == 0 {
 		return nil, true
 	}
 	const maxWorkers = 8
 	type result struct {
-		header vibekit.ChatHeader
+		header marotte.ChatHeader
 		ok     bool
 		// lost: the chat EXISTS but could not be read; !ok also covers a vanished one.
 		lost bool
@@ -54,7 +54,7 @@ func readHeadersParallel(
 		results[idx] = result{header: *h, ok: true}
 	})
 
-	headers := make([]vibekit.ChatHeader, 0, len(valid))
+	headers := make([]marotte.ChatHeader, 0, len(valid))
 	// An unvisited slot is zero-valued, so neither ok nor lost: completeness has to
 	// come from the item count. A truncated scan marked complete authorises the
 	// session reaper to delete the KAS sessions of every chat it missed.

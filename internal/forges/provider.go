@@ -2,13 +2,13 @@
 // by orchestrating their first-party CLI tools (gh, glab, tea).
 //
 // Design: the CLI tools own API pagination, error mapping, the git
-// credential helpers, AND their own credential stores — vibekit talks
+// credential helpers, AND their own credential stores — marotte talks
 // to each store exclusively through the CLI's documented subcommands
 // (login/logout/status; see auth.go and discover.go) and never reads
 // or writes another program's config file. The one documented
 // exception is glab's read-only discovery parser (glab_config.go),
 // kept only because glab ships no machine-readable status output.
-// vibekit owns the UX, the unified API surface that the agent and the
+// marotte owns the UX, the unified API surface that the agent and the
 // web UI both consume, and the GitHub OAuth device flow
 // (oauth/device_flow.go — see login.go for the split). No token-refresh
 // path exists on either side: PATs and device-flow tokens are used

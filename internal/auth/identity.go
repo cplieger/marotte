@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/marotte/internal/procout"
 )
 
 const identityProbeTTL = time.Minute

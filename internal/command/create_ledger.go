@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // createOpTTL is how long an op_id resolves to the chat it created. Longer
@@ -42,7 +42,7 @@ type createLedger struct {
 
 type createOp struct {
 	expires time.Time
-	chatID  vibekit.ChatID
+	chatID  marotte.ChatID
 }
 
 func newCreateLedger() *createLedger {
@@ -60,7 +60,7 @@ func newCreateLedger() *createLedger {
 // An empty op always mints and records nothing (no key to record it under).
 // Reserve and mint happen under one lock, so two attempts of one op cannot
 // mint two chats even if they overlap.
-func (l *createLedger) resolve(op string, mint func() vibekit.ChatID) (id vibekit.ChatID, replay bool) {
+func (l *createLedger) resolve(op string, mint func() marotte.ChatID) (id marotte.ChatID, replay bool) {
 	if op == "" {
 		return mint(), false
 	}
@@ -86,7 +86,7 @@ func (l *createLedger) resolve(op string, mint func() vibekit.ChatID) (id vibeki
 // Exists for a caller that must decide something before it is allowed to
 // mint: a create whose capacity reservation must run before the mint needs
 // to know whether this op already owns a tab.
-func (l *createLedger) peek(op string) (vibekit.ChatID, bool) {
+func (l *createLedger) peek(op string) (marotte.ChatID, bool) {
 	if op == "" {
 		return "", false
 	}

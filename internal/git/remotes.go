@@ -96,7 +96,7 @@ func ParseRemoteSlug(raw string) (host, slug string) {
 
 // cleanSlug normalises a remote path into an owner/name slug: no leading or
 // trailing slash, no `.git` suffix, and at least two segments (a single segment
-// is not a repository address on any forge vibekit talks to).
+// is not a repository address on any forge marotte talks to).
 func cleanSlug(path string) string {
 	s := strings.Trim(path, "/")
 	s = strings.TrimSuffix(s, ".git")
@@ -124,7 +124,7 @@ func cleanSlug(path string) string {
 // into u.Path as a real NUL; a slug carrying one fails at os/exec argument
 // construction on every sweep, and the other controls reach forge CLI diagnostics
 // and this app's log stream as raw bytes. Backslash goes with them because it is not
-// a path separator in any forge slug vocabulary vibekit talks to — accepting it only
+// a path separator in any forge slug vocabulary marotte talks to — accepting it only
 // widens the language for no address it could express. `?` and `#` stay refused as
 // URL delimiters that would change what the path means.
 //

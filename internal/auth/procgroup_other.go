@@ -7,7 +7,7 @@ import (
 	"os/exec"
 )
 
-// setProcGroup is a no-op on non-unix platforms; vibekit runs in Linux
+// setProcGroup is a no-op on non-unix platforms; marotte runs in Linux
 // containers. Tests on Windows fall back to a single-PID kill via
 // cmd.Process.Kill() in killProcessGroup.
 //

@@ -60,7 +60,7 @@ func TestIsHookStatusEnabled_cases(t *testing.T) {
 		{"key_null", `{"hooks.showStatus":null}`, false},
 		{"other_keys_only", `{"telemetry.enabled":true}`, true},
 		// Regression for the pre-fix bug: the old code read the
-		// underscore form from vibekit's configDir, which meant
+		// underscore form from marotte's configDir, which meant
 		// flipping the toggle did nothing. Assert the new key wins.
 		{"snake_case_key_ignored", `{"hooks_show_status":false}`, true},
 	}

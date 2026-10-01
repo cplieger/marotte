@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"pgregory.net/rapid"
 )
 
@@ -18,7 +18,7 @@ import (
 // SPECIFICATION, not a copy of production code — nothing in the server applies a
 // delta, so it mirrors the client fold in static-src/store.ts, the only consumer a
 // delta has.
-func applyDelta(before vibekit.ToolCall, d *vibekit.ToolCallUpdatePayload) vibekit.ToolCall {
+func applyDelta(before marotte.ToolCall, d *marotte.ToolCallUpdatePayload) marotte.ToolCall {
 	out := before
 	if d.Title != "" {
 		out.Title = d.Title
@@ -39,7 +39,7 @@ func applyDelta(before vibekit.ToolCall, d *vibekit.ToolCallUpdatePayload) vibek
 		out.OutputSpans = d.OutputSpans
 	}
 	if len(d.DiffsAppended) > 0 {
-		out.Diffs = append(append([]vibekit.ToolDiff(nil), before.Diffs...), d.DiffsAppended...)
+		out.Diffs = append(append([]marotte.ToolDiff(nil), before.Diffs...), d.DiffsAppended...)
 	}
 	if len(d.Locations) > 0 {
 		out.Locations = d.Locations
@@ -81,11 +81,11 @@ func applyDelta(before vibekit.ToolCall, d *vibekit.ToolCallUpdatePayload) vibek
 // folds applyToolCallUpdate performs and nothing else.
 func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		tc := vibekit.ToolCall{
+		tc := marotte.ToolCall{
 			ID:     "call-1",
 			Title:  "Reading",
-			Kind:   vibekit.ToolKindRead,
-			Status: vibekit.ToolPending,
+			Kind:   marotte.ToolKindRead,
+			Status: marotte.ToolPending,
 		}
 		for range rapid.IntRange(1, 20).Draw(rt, "steps") {
 			before := tc
@@ -106,13 +106,13 @@ func TestToolCallDelta_RoundTripsOverAFoldSequence(t *testing.T) {
 }
 
 // foldStep applies one of the mutations the server's fold performs.
-func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
+func foldStep(rt *rapid.T, tc *marotte.ToolCall) {
 	switch rapid.IntRange(0, 9).Draw(rt, "step") {
 	case 0:
 		// The commonest frame by far: a status transition and nothing else.
-		tc.Status = rapid.SampledFrom([]vibekit.ToolStatus{
-			vibekit.ToolPending, vibekit.ToolInProgress,
-			vibekit.ToolCompleted, vibekit.ToolFailed,
+		tc.Status = rapid.SampledFrom([]marotte.ToolStatus{
+			marotte.ToolPending, marotte.ToolInProgress,
+			marotte.ToolCompleted, marotte.ToolFailed,
 		}).Draw(rt, "status")
 	case 1:
 		tc.Output += rapid.StringN(1, 40, 40).Draw(rt, "chunk")
@@ -121,17 +121,17 @@ func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
 		// the one fold a pure-append wire cannot express.
 		tc.Output = rapid.StringN(0, 40, 40).Draw(rt, "terminalOutput")
 	case 3:
-		tc.Diffs = append(tc.Diffs, vibekit.ToolDiff{
+		tc.Diffs = append(tc.Diffs, marotte.ToolDiff{
 			Path:    rapid.StringMatching(`[a-z]{1,8}\.go`).Draw(rt, "diffPath"),
 			NewText: rapid.StringN(0, 20, 20).Draw(rt, "newText"),
 		})
 	case 4:
-		tc.Locations = []vibekit.ToolLocation{{
+		tc.Locations = []marotte.ToolLocation{{
 			Path: rapid.StringMatching(`[a-z]{1,8}\.go`).Draw(rt, "locPath"),
 			Line: rapid.IntRange(1, 500).Draw(rt, "locLine"),
 		}}
 	case 5:
-		tc.OutputSpans = []vibekit.TextSpan{{
+		tc.OutputSpans = []marotte.TextSpan{{
 			Start: 0,
 			End:   rapid.IntRange(1, 20).Draw(rt, "spanEnd"),
 			Attrs: uint16(rapid.IntRange(1, 8).Draw(rt, "spanAttrs")),
@@ -160,7 +160,7 @@ func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
 		}
 	case 7:
 		if tc.Checkpoint == nil {
-			tc.Checkpoint = &vibekit.ToolCheckpoint{
+			tc.Checkpoint = &marotte.ToolCheckpoint{
 				Original: rapid.StringMatching(`[a-z]{1,8}`).Draw(rt, "cpOriginal"),
 			}
 		}
@@ -177,7 +177,7 @@ func foldStep(rt *rapid.T, tc *vibekit.ToolCall) {
 
 // Comparing by JSON is what the contract is about, and it treats nil and an empty
 // slice as equal, as the wire does.
-func sameToolCall(a, b *vibekit.ToolCall) bool {
+func sameToolCall(a, b *marotte.ToolCall) bool {
 	ja, errA := json.Marshal(a)
 	jb, errB := json.Marshal(b)
 	return errA == nil && errB == nil && string(ja) == string(jb)
@@ -187,9 +187,9 @@ func sameToolCall(a, b *vibekit.ToolCall) bool {
 // frame the server sends, and the value a client must end up holding.
 type deltaFixture struct {
 	Name   string                        `json:"name"`
-	Before vibekit.ToolCall              `json:"before"`
-	Delta  vibekit.ToolCallUpdatePayload `json:"delta"`
-	After  vibekit.ToolCall              `json:"after"`
+	Before marotte.ToolCall              `json:"before"`
+	Delta  marotte.ToolCallUpdatePayload `json:"delta"`
+	After  marotte.ToolCall              `json:"after"`
 }
 
 // The BUILDER is pinned against the same cases static-src/tool-call-delta.node.

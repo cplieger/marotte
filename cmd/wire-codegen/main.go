@@ -6,7 +6,7 @@
 // The contract itself — the registered types, enums, name overrides and SSE
 // event table — lives in internal/wirespec. This command is the driver.
 //
-// Run: go run ./cmd/wire-codegen   (from the vibekit repo root)
+// Run: go run ./cmd/wire-codegen   (from the marotte repo root)
 package main
 
 import (
@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/cplieger/vibekit/internal/wirespec"
+	"github.com/cplieger/marotte/internal/wirespec"
 )
 
 func main() {

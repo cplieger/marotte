@@ -5,7 +5,7 @@ import { freshState, fileStates, setActiveFilePath, activeDirty } from "./editor
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 // There are no isPendingPath / parsePendingPath tests: the `pending:` virtual
-// path family is gone with vibekit's staging store. A path is a real file path
+// path family is gone with marotte's staging store. A path is a real file path
 // or it is not routable.
 describe("routeForPath", () => {
   it("routes plain file paths", () => {

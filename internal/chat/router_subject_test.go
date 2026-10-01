@@ -10,17 +10,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func decodeStamp(t *testing.T, raw any) vibekit.SubjectStamp {
+func decodeStamp(t *testing.T, raw any) marotte.SubjectStamp {
 	t.Helper()
 	b, err := json.Marshal(raw)
 	if err != nil {
 		t.Fatalf("re-encode subject: %v", err)
 	}
-	var stamp vibekit.SubjectStamp
+	var stamp marotte.SubjectStamp
 	if err := json.Unmarshal(b, &stamp); err != nil {
 		t.Fatalf("decode subject %s: %v", b, err)
 	}
@@ -49,7 +49,7 @@ func TestGetChat_SubjectIsTheStoresChatVersionWithTheEpoch(t *testing.T) {
 
 	got := decodeStamp(t, getChat(t, s, "c1")["subject"])
 	current, _ := v.Current(subject.KindChat, "c1")
-	want := vibekit.SubjectStamp{Kind: "chat", Ref: "c1", Version: current, Epoch: "epoch-7"}
+	want := marotte.SubjectStamp{Kind: "chat", Ref: "c1", Version: current, Epoch: "epoch-7"}
 	if got != want {
 		t.Errorf("GET /api/chats/c1 subject = %+v, want %+v", got, want)
 	}
@@ -73,7 +73,7 @@ func TestGetChat_NeverMutatedThisProcessStampsUnminted(t *testing.T) {
 	}
 
 	got := decodeStamp(t, getChat(t, restarted, "c1")["subject"])
-	want := vibekit.SubjectStamp{Kind: "chat", Ref: "c1", Version: subject.Unminted, Epoch: "e2"}
+	want := marotte.SubjectStamp{Kind: "chat", Ref: "c1", Version: subject.Unminted, Epoch: "e2"}
 	if got != want {
 		t.Errorf("subject = %+v, want %+v", got, want)
 	}
@@ -88,7 +88,7 @@ func TestGetChats_SubjectIsTheChatsVersionWithTheEpoch(t *testing.T) {
 	envelope := getChats(t, s)
 	got := decodeStamp(t, envelope["subject"])
 	current, _ := v.Current(subject.KindChats, "")
-	want := vibekit.SubjectStamp{Kind: "chats", Ref: "", Version: current, Epoch: "epoch-7"}
+	want := marotte.SubjectStamp{Kind: "chats", Ref: "", Version: current, Epoch: "epoch-7"}
 	if got != want {
 		t.Errorf("GET /api/chats subject = %+v, want %+v", got, want)
 	}

@@ -1,26 +1,26 @@
-# vibekit
+# marotte
 
-[![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibekit/badges/size.json)](https://github.com/cplieger/vibekit/pkgs/container/vibekit) ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue) ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/vibekit/badges/mutation.json)](https://github.com/cplieger/vibekit/issues?q=label%3Agremlins-tracker) [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/vibekit/releases)
+[![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/marotte/badges/size.json)](https://github.com/cplieger/marotte/pkgs/container/marotte) ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue) ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/marotte/badges/mutation.json)](https://github.com/cplieger/marotte/issues?q=label%3Agremlins-tracker) [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/marotte/releases)
 
 <!-- hub-overview BEGIN -->
 A browser-based front-end for the **Kiro CLI**: chat with an AI coding agent from any device, with a live terminal, a file editor, and git/forge workflows in the same tab.
 
-Vibekit runs `kiro-cli` as an Agent Client Protocol (ACP) subprocess and wraps it in a full workspace UI. The **server is the single source of truth**: every action is persisted and echoed to every connected client over Server-Sent Events, so a conversation open on your phone and your desktop stays in sync.
+Marotte runs `kiro-cli` as an Agent Client Protocol (ACP) subprocess and wraps it in a full workspace UI. The **server is the single source of truth**: every action is persisted and echoed to every connected client over Server-Sent Events, so a conversation open on your phone and your desktop stays in sync.
 
-Published as a multi-arch (amd64 + arm64) container image on **GHCR** (`ghcr.io/cplieger/vibekit`) and **Docker Hub** (`cplieger/vibekit`).
+Published as a multi-arch (amd64 + arm64) container image on **GHCR** (`ghcr.io/cplieger/marotte`) and **Docker Hub** (`cplieger/marotte`).
 
 ## ⚠️ Alpha software
 
-Vibekit is in alpha and under active development. **Any update can introduce a breaking change with no migration path** to the API, the stored chat format, configuration, or behavior. Pin a specific image tag instead of `latest`, and check the release notes before upgrading.
+Marotte is in alpha and under active development. **Any update can introduce a breaking change with no migration path** to the API, the stored chat format, configuration, or behavior. Pin a specific image tag instead of `latest`, and check the release notes before upgrading.
 
 ## ⚠️ It drives an AI agent with shell and file access
 
-Vibekit controls an agent that can run shell commands and read and write your files under `/workspace`, and it exposes kiro-cli's stored credentials. It has **no built-in authentication**: anyone who can reach the port can use it. Before exposing it beyond your own machine, do one (ideally both) of:
+Marotte controls an agent that can run shell commands and read and write your files under `/workspace`, and it exposes kiro-cli's stored credentials. It has **no built-in authentication**: anyone who can reach the port can use it. Before exposing it beyond your own machine, do one (ideally both) of:
 
 - put it behind an authenticating reverse proxy (Caddy forward-auth, oauth2-proxy, Authentik, …), and/or
 - keep the published port on loopback or a private network.
 
-Signing in from the UI authenticates **kiro-cli to AWS** (the agent's identity); it is not a gate on vibekit itself.
+Signing in from the UI authenticates **kiro-cli to AWS** (the agent's identity); it is not a gate on marotte itself.
 <!-- hub-overview END -->
 
 ## Run
@@ -28,9 +28,9 @@ Signing in from the UI authenticates **kiro-cli to AWS** (the agent's identity);
 ```yaml
 # compose.yaml
 services:
-  vibekit:
-    image: ghcr.io/cplieger/vibekit:latest
-    container_name: vibekit
+  marotte:
+    image: ghcr.io/cplieger/marotte:latest
+    container_name: marotte
     user: "${PUID:-1000}:${PGID:-1000}"  # from .env; must own the bind mounts
     ports:
       - "9847:9847"
@@ -55,7 +55,7 @@ Open <http://localhost:9847>. The UI comes up right away, and `kiro-cli` is down
 
 ## Capabilities
 
-Vibekit is a full workspace in the browser, and everything below is reachable from any device viewing the same server.
+Marotte is a full workspace in the browser, and everything below is reachable from any device viewing the same server.
 
 **Chat:** conversations kept in sync across devices over SSE, streaming markdown responses, and collapsible reasoning ("thinking") blocks. Send mid-turn and your message joins the running turn. Prefix a message with `!` to run a shell command. `/compact` compacts the context now, `/drop` ends a wedged turn, and `/goal` sets an objective the agent works toward across turns until it meets the goal or its iteration budget runs out. Attach files by drag-drop, paste, or the composer's `+` menu; PDF, CSV and Office documents reach the agent as documents, images as images, and anything else as a path it opens with its file tools. Also find-in-chat, per-chat export, a cross-chat search, a History view over past conversations and workflow runs, and configurable chat retention.
 
@@ -72,9 +72,9 @@ Vibekit is a full workspace in the browser, and everything below is reachable fr
 - Permissions: a Cedar policy editor (allow/deny/ask per capability, with path scoping) and a "test a decision" explainer. One policy governs every tool call, shell commands included.
 - Scope: rewind and supervised review cover the agent's file-write channel. Changes made through shell commands or terminals go through the policy but are not snapshotted, so use git for those. A held write does land on disk while you review it, so a watcher or dev server sees it before you decide.
 
-**MCP:** add, edit and remove servers (local, or remote over HTTP/SSE), with per-server auto-approve, live reconnect, and prompt and resource browsing. For a server that needs OAuth, vibekit registers itself automatically or takes a client id and secret you already have, then shows a sign-in link.
+**MCP:** add, edit and remove servers (local, or remote over HTTP/SSE), with per-server auto-approve, live reconnect, and prompt and resource browsing. For a server that needs OAuth, marotte registers itself automatically or takes a client id and secret you already have, then shows a sign-in link.
 
-**Workspace tools:** install runtimes, language servers and CLIs from a catalog of ~700 (compiled from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog)), in the background, pinned to a version or with an install command of your own. When you enable a language server, vibekit also activates kiro-cli [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace: LSP-backed navigation, rename and diagnostics, live chats included, no restart. It freezes the detected-language set into `/workspace/.kiro/settings/lsp.json` at first activation, so after you add a language to the workspace, delete that file; vibekit re-initializes it on the next boot.
+**Workspace tools:** install runtimes, language servers and CLIs from a catalog of ~700 (compiled from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog)), in the background, pinned to a version or with an install command of your own. When you enable a language server, marotte also activates kiro-cli [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace: LSP-backed navigation, rename and diagnostics, live chats included, no restart. It freezes the detected-language set into `/workspace/.kiro/settings/lsp.json` at first activation, so after you add a language to the workspace, delete that file; marotte re-initializes it on the next boot.
 
 **Workspace configuration** on the `/docs` page: the whole `.kiro` inventory with its front-matter (steering docs, skills, agents, specs, hooks), knowledge bases you index, hooks you enable, and workflow runs you launch, pause, resume, cancel or schedule. Settings holds global custom instructions, per-device layout with light and dark themes, account usage, a context and credit meter, and a copyable diagnostics report.
 
@@ -122,7 +122,7 @@ The file browser lists `/uploads` beside the other granted roots, so you can ren
 
 ### Behind a reverse proxy (`TRUSTED_PROXIES`)
 
-The access log and the login/logout audit logs record a `client_ip`. Leave `TRUSTED_PROXIES` unset when vibekit is directly exposed: `client_ip` is then the connecting socket's address, which a client cannot forge, and any `X-Forwarded-For` header it sends is ignored. Behind a reverse proxy, set it to the address range of every hop, comma-separated CIDRs (a bare IP counts as a single host), so `client_ip` shows the real client:
+The access log and the login/logout audit logs record a `client_ip`. Leave `TRUSTED_PROXIES` unset when marotte is directly exposed: `client_ip` is then the connecting socket's address, which a client cannot forge, and any `X-Forwarded-For` header it sends is ignored. Behind a reverse proxy, set it to the address range of every hop, comma-separated CIDRs (a bare IP counts as a single host), so `client_ip` shows the real client:
 
 ```yaml
 environment:
@@ -133,13 +133,13 @@ environment:
 
 ### Host allowlist (`ALLOWED_HOSTS`)
 
-Set `ALLOWED_HOSTS` to the exact hostnames and IPs you browse vibekit at (comma-separated, for example `ALLOWED_HOSTS: "localhost,192.168.1.5,vibekit.example.com"`); a request with any other `Host` header is rejected with 403.
+Set `ALLOWED_HOSTS` to the exact hostnames and IPs you browse marotte at (comma-separated, for example `ALLOWED_HOSTS: "localhost,192.168.1.5,marotte.example.com"`); a request with any other `Host` header is rejected with 403.
 
-Set it for any long-running deployment, because it is what blocks **DNS rebinding**: an attacker's page makes its own hostname resolve to your vibekit address, `Origin` and `Host` then agree, and the same-origin check passes. That attack rides your own browser, so it reaches even a loopback- or LAN-bound deployment. Requests from the container itself are always admitted, so the image's healthcheck keeps working. Unset accepts every `Host` and warns at startup.
+Set it for any long-running deployment, because it is what blocks **DNS rebinding**: an attacker's page makes its own hostname resolve to your marotte address, `Origin` and `Host` then agree, and the same-origin check passes. That attack rides your own browser, so it reaches even a loopback- or LAN-bound deployment. Requests from the container itself are always admitted, so the image's healthcheck keeps working. Unset accepts every `Host` and warns at startup.
 
 ### Trusted install uids (`TRUSTED_INSTALL_UIDS`)
 
-Before it installs kiro-cli, vibekit checks who can write each directory on the way to its install tree under `/config/tools`, and refuses the install when another identity can, because this container later executes what lands there. Leave this **unset** (the default) for almost every deployment, and set it only when the check refuses a volume you know is safe, typically a shared or network mount whose permissions grant an account you control:
+Before it installs kiro-cli, marotte checks who can write each directory on the way to its install tree under `/config/tools`, and refuses the install when another identity can, because this container later executes what lands there. Leave this **unset** (the default) for almost every deployment, and set it only when the check refuses a volume you know is safe, typically a shared or network mount whose permissions grant an account you control:
 
 ```yaml
 environment:
@@ -148,22 +148,22 @@ environment:
 
 Each uid you list is an assertion that the account is **already at least as privileged as this server**, so its write access gains it nothing. That is true of an administrator who already holds root on the host; it is false of an unprivileged account, and listing one of those hands it a way in instead of closing one. A malformed entry is skipped with a warning.
 
-### Extra browse roots (`VIBEKIT_BROWSE_ROOTS`)
+### Extra browse roots (`MAROTTE_BROWSE_ROOTS`)
 
 The file browser sees the granted roots (`/workspace`, `/config` and `/uploads` by default) and nothing else in the container. To browse another mount, grant it with a colon-separated list of absolute paths:
 
 ```yaml
 environment:
-  VIBEKIT_BROWSE_ROOTS: "/tmp:/data"
+  MAROTTE_BROWSE_ROOTS: "/tmp:/data"
 ```
 
 Mount each grant with `volumes:` first. Credential and internal state files under `/config` (SSH keys, cloud tokens, chat store, MCP config) stay blocked whatever you grant.
 
-### Extra kiro-cli launch flags (`VIBEKIT_KIRO_ACP_ARGS`)
+### Extra kiro-cli launch flags (`MAROTTE_KIRO_ACP_ARGS`)
 
-An escape hatch for a `kiro-cli acp` flag vibekit does not pass yet, whitespace-separated and appended to every chat's launch command. Five flags are refused with a logged reason, `--model` and `--effort` among them (pick those per chat in the composer). Flags are logged by count only, never by value. See [Launch flags](docs/launch-flags.md).
+An escape hatch for a `kiro-cli acp` flag marotte does not pass yet, whitespace-separated and appended to every chat's launch command. Five flags are refused with a logged reason, `--model` and `--effort` among them (pick those per chat in the composer). Flags are logged by count only, never by value. See [Launch flags](docs/launch-flags.md).
 
-### Agent-launched workflow runs (`VIBEKIT_AGENT_WORKFLOWS`)
+### Agent-launched workflow runs (`MAROTTE_AGENT_WORKFLOWS`)
 
 The chat agent can start a workflow run itself: it holds the workflow tools, so a request like "run the publish workflow" starts the run instead of describing it. Runs you launch yourself from **Workflows** on `/docs` are unaffected.
 
@@ -173,33 +173,33 @@ To switch the capability off, set the variable to `false` (also `0`, `no`, or `o
 
 ```yaml
 environment:
-  VIBEKIT_AGENT_WORKFLOWS: "false"
+  MAROTTE_AGENT_WORKFLOWS: "false"
 ```
 
 The agent then loses the workflow tools and answers about workflows in prose; everything you launch yourself keeps working. The change takes effect on the next chat, so restart the container to apply it everywhere.
 
-### Agent environment variables (`VIBEKIT_ALLOW_AGENT_ENV`)
+### Agent environment variables (`MAROTTE_ALLOW_AGENT_ENV`)
 
-When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary (`CGO_ENABLED`, `GOFLAGS`, `TERM`), but a few carry no data and instead change what a program _executes_: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. vibekit refuses those, because approving a command must approve **that** command, and the agent's variables take precedence over vibekit's own. A harmless value is still accepted (`GIT_PAGER=cat` keeps working), and the refusal names the variable so the agent can retry without it.
+When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary (`CGO_ENABLED`, `GOFLAGS`, `TERM`), but a few carry no data and instead change what a program _executes_: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. marotte refuses those, because approving a command must approve **that** command, and the agent's variables take precedence over marotte's own. A harmless value is still accepted (`GIT_PAGER=cat` keeps working), and the refusal names the variable so the agent can retry without it.
 
 If you genuinely need one (a profiler that preloads a library, a vendored `NODE_PATH`), name it:
 
 ```yaml
 environment:
-  VIBEKIT_ALLOW_AGENT_ENV: "LD_PRELOAD,NODE_PATH"
+  MAROTTE_ALLOW_AGENT_ENV: "LD_PRELOAD,NODE_PATH"
 ```
 
 Comma-separated, granting only the names you list. It applies to what the **agent** asks for, not to variables you set on the container yourself.
 
-### Credentials in the container environment (`VIBEKIT_ALLOW_BRIDGE_ENV`)
+### Credentials in the container environment (`MAROTTE_ALLOW_BRIDGE_ENV`)
 
 The other direction: kiro-cli and everything it runs inherit whatever you put in the container's `environment:`, so a `GITHUB_TOKEN` you added for some unrelated reason is a credential every agent turn can read and use.
 
-vibekit drops credential-shaped names on the way down and logs which ones, by name only: a name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Ordinary variables are untouched, `AWS_REGION` and `AWS_PROFILE` included. Keep credentials out of the container environment anyway: forge tokens belong in `gh` / `glab` / `tea`'s own stores, which is where the git panel puts them. If a variable's name merely reads like a credential, name it:
+marotte drops credential-shaped names on the way down and logs which ones, by name only: a name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Ordinary variables are untouched, `AWS_REGION` and `AWS_PROFILE` included. Keep credentials out of the container environment anyway: forge tokens belong in `gh` / `glab` / `tea`'s own stores, which is where the git panel puts them. If a variable's name merely reads like a credential, name it:
 
 ```yaml
 environment:
-  VIBEKIT_ALLOW_BRIDGE_ENV: "BUILDKITE_AGENT_TOKEN"
+  MAROTTE_ALLOW_BRIDGE_ENV: "BUILDKITE_AGENT_TOKEN"
 ```
 
 ### OS packages
@@ -213,32 +213,32 @@ Every knob, the ones detailed above included. A malformed duration warns and fal
 | Variable | Description | Default |
 | --- | --- | --- |
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs whose `X-Forwarded-For` resolves `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy-trusted_proxies). | _(unset)_ |
-| `ALLOWED_HOSTS` | Exact hostnames/IPs vibekit answers for; anything else is rejected (anti-DNS-rebinding). See [Host allowlist](#host-allowlist-allowed_hosts). | _(unset)_ |
+| `ALLOWED_HOSTS` | Exact hostnames/IPs marotte answers for; anything else is rejected (anti-DNS-rebinding). See [Host allowlist](#host-allowlist-allowed_hosts). | _(unset)_ |
 | `TRUSTED_INSTALL_UIDS` | Numeric uids whose write access to the kiro-cli install tree does not refuse the install. See [Trusted install uids](#trusted-install-uids-trusted_install_uids). | _(unset)_ |
-| `VIBEKIT_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). | _(unset)_ |
-| `VIBEKIT_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-vibekit_kiro_acp_args). | _(unset)_ |
-| `VIBEKIT_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. See [Agent-launched workflow runs](#agent-launched-workflow-runs-vibekit_agent_workflows). | `true` |
-| `VIBEKIT_ALLOW_AGENT_ENV` | Execution-redirecting variable names the agent can set for its own commands, comma-separated. See [Agent environment variables](#agent-environment-variables-vibekit_allow_agent_env). | _(unset)_ |
-| `VIBEKIT_ALLOW_BRIDGE_ENV` | Credential-shaped names to inherit into kiro-cli anyway, comma-separated. See [Credentials in the container environment](#credentials-in-the-container-environment-vibekit_allow_bridge_env). | _(unset)_ |
+| `MAROTTE_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-marotte_browse_roots). | _(unset)_ |
+| `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-marotte_kiro_acp_args). | _(unset)_ |
+| `MAROTTE_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. See [Agent-launched workflow runs](#agent-launched-workflow-runs-marotte_agent_workflows). | `true` |
+| `MAROTTE_ALLOW_AGENT_ENV` | Execution-redirecting variable names the agent can set for its own commands, comma-separated. See [Agent environment variables](#agent-environment-variables-marotte_allow_agent_env). | _(unset)_ |
+| `MAROTTE_ALLOW_BRIDGE_ENV` | Credential-shaped names to inherit into kiro-cli anyway, comma-separated. See [Credentials in the container environment](#credentials-in-the-container-environment-marotte_allow_bridge_env). | _(unset)_ |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
-| `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
-| `VIBEKIT_TOOLS_DIR` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
-| `VIBEKIT_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a fetched catalog replaces it. | `/opt/vibekit/tool-catalog.json` |
-| `VIBEKIT_TOOL_CATALOG_URL` | Where catalog refreshes fetch from; point it at a fork or mirror to leave the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
-| `VIBEKIT_TOOL_CATALOG_REFRESH` | Catalog refresh cadence (Go duration, clamped to 1h-30d); `off` or `0` disables the schedule and keeps the manual refresh. | `24h` |
-| `VIBEKIT_BUNDLED_TOOLS` | Image-internal file naming the tools vibekit bundles and recommends, merged over every loaded catalog. A path that does not resolve warns and is skipped, which leaves the seeded language servers unresolvable. | `/opt/vibekit/bundled-tools.json` |
-| `VAPID_SUBJECT` | Contact URI embedded in the Web Push (VAPID) keys used for chat notifications. | `mailto:vibekit@noreply.invalid` |
-| `VIBEKIT_AUTH_LOGIN_URL_TIMEOUT` | How long to wait for `kiro-cli login` to print the sign-in URL. | `10s` |
-| `VIBEKIT_AUTH_LOGIN_TIMEOUT` | Wall-clock timeout for a whole login attempt, device-flow confirmation included. | `16m` |
-| `VIBEKIT_AUTH_LOGOUT_TIMEOUT` | Timeout for `kiro-cli logout`. | `10s` |
-| `VIBEKIT_AUTH_WHOAMI_TIMEOUT` | Timeout for the `kiro-cli whoami` sign-in status probe. | `5s` |
+| `KIRO_HOME` | Where marotte resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
+| `MAROTTE_TOOLS_DIR` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
+| `MAROTTE_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a fetched catalog replaces it. | `/opt/marotte/tool-catalog.json` |
+| `MAROTTE_TOOL_CATALOG_URL` | Where catalog refreshes fetch from; point it at a fork or mirror to leave the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
+| `MAROTTE_TOOL_CATALOG_REFRESH` | Catalog refresh cadence (Go duration, clamped to 1h-30d); `off` or `0` disables the schedule and keeps the manual refresh. | `24h` |
+| `MAROTTE_BUNDLED_TOOLS` | Image-internal file naming the tools marotte bundles and recommends, merged over every loaded catalog. A path that does not resolve warns and is skipped, which leaves the seeded language servers unresolvable. | `/opt/marotte/bundled-tools.json` |
+| `VAPID_SUBJECT` | Contact URI embedded in the Web Push (VAPID) keys used for chat notifications. | `mailto:marotte@noreply.invalid` |
+| `MAROTTE_AUTH_LOGIN_URL_TIMEOUT` | How long to wait for `kiro-cli login` to print the sign-in URL. | `10s` |
+| `MAROTTE_AUTH_LOGIN_TIMEOUT` | Wall-clock timeout for a whole login attempt, device-flow confirmation included. | `16m` |
+| `MAROTTE_AUTH_LOGOUT_TIMEOUT` | Timeout for `kiro-cli logout`. | `10s` |
+| `MAROTTE_AUTH_WHOAMI_TIMEOUT` | Timeout for the `kiro-cli whoami` sign-in status probe. | `5s` |
 
 ## Security
 
 - **No built-in authentication**: see the warning above.
 - **Installing a tool is a root install, triggered from a page.** The container runs as root by design and the warning above already gives anyone who reaches the port a root shell, so the Add-tool button adds no privilege and no new principal. The two sources differ in what backs them. An `apt:` entry can only ever be a literal Debian package name ([OS packages](docs/os-packages.md)), and its integrity is Debian's signed archive metadata. A `release:` entry is the weaker one: most of the catalog's release-sourced repositories publish no checksum, so those installs are an unverified download of an asset picked by heuristic. Three things bound it: the owner and repository come from the pinned upstream registry rather than from anything typed into the box, nothing is reported installed until the probe runs the binary, and the row says `no checksum`.
-- **No outbound telemetry.** Every outbound request vibekit makes is one you asked for: the AI provider `kiro-cli` is signed in to, any MCP server you configure, the forge APIs (`gh` / `glab` / `tea`) when you use the git panel, and the public MCP registry when you search it. `kiro-cli`'s own telemetry is seeded **off** and is a toggle in Settings → General.
+- **No outbound telemetry.** Every outbound request marotte makes is one you asked for: the AI provider `kiro-cli` is signed in to, any MCP server you configure, the forge APIs (`gh` / `glab` / `tea`) when you use the git panel, and the public MCP registry when you search it. `kiro-cli`'s own telemetry is seeded **off** and is a toggle in Settings → General.
 - Web push uses an SSRF-hardened transport.
 - Debian base: a shell and the `kiro-cli` subprocess are required, so this is intentionally not distroless.
 - Images are published with cosign signatures and SBOM attestations.
@@ -252,7 +252,7 @@ The server owns that install. It verifies the pinned archive's SHA-256 against t
 ## Related projects
 
 - [web-terminal-kiro](https://github.com/cplieger/web-terminal-kiro): the sister app, a raw browser terminal that drives kiro-cli's own TUI instead of this chat-first UI.
-- [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind vibekit's shell.
+- [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind marotte's shell.
 
 ## Contributing
 

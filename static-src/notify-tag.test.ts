@@ -57,18 +57,18 @@ beforeEach(() => {
 
 describe("notifyIfHidden tags a notification by its subject", () => {
   it("gives two chats two different tags", () => {
-    expect(notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"))).toBe(true);
-    expect(notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c2"))).toBe(true);
+    expect(notify.notifyIfHidden("Marotte", "Agent finished", chatTarget("c1"))).toBe(true);
+    expect(notify.notifyIfHidden("Marotte", "Agent finished", chatTarget("c2"))).toBe(true);
     expect(opts).toHaveLength(2);
-    expect(opts[0]?.tag).toBe("vibekit:c1");
-    expect(opts[1]?.tag).toBe("vibekit:c2");
+    expect(opts[0]?.tag).toBe("marotte:c1");
+    expect(opts[1]?.tag).toBe("marotte:c2");
     expect(opts[0]?.tag).not.toBe(opts[1]?.tag);
   });
 
   it("gives the workspace-global subject the constant tag", () => {
     // `chatTarget("")` is how production reaches the workspace: an ask with no
     // envelope chat id resolves there through askTarget.
-    expect(notify.notifyIfHidden("Vibekit", "Permission needed", chatTarget(""))).toBe(true);
-    expect(opts[0]?.tag).toBe("vibekit");
+    expect(notify.notifyIfHidden("Marotte", "Permission needed", chatTarget(""))).toBe(true);
+    expect(opts[0]?.tag).toBe("marotte");
   });
 });

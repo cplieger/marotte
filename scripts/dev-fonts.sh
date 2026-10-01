@@ -81,7 +81,7 @@ EOF
 }
 
 key=$(printf '%s' "$font_rows" | while IFS=$'\t' read -r _ _ sha_arg _; do arg_value "$sha_arg"; done | sha256sum | cut -c1-16)
-cache="${XDG_CACHE_HOME:-$HOME/.cache}/vibekit-fonts/$key"
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/marotte-fonts/$key"
 
 # The digest list, in `sha256sum -c` form, against the cache. It is both the
 # admission test for a cached tree and the verification of a fresh fetch, so a

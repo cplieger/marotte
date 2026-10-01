@@ -41,9 +41,9 @@ import (
 // issue reads (`author`, `labels`).
 func TestGitHubNestedWireKeys(t *testing.T) {
 	t.Run("ListRepos", func(t *testing.T) {
-		const body = `[{"name":"vibekit","owner":{"id":"MDQ6","login":"cplieger"},` +
-			`"nameWithOwner":"cplieger/vibekit","defaultBranchRef":{"name":"main"},` +
-			`"description":"d","url":"https://github.com/cplieger/vibekit",` +
+		const body = `[{"name":"marotte","owner":{"id":"MDQ6","login":"cplieger"},` +
+			`"nameWithOwner":"cplieger/marotte","defaultBranchRef":{"name":"main"},` +
+			`"description":"d","url":"https://github.com/cplieger/marotte",` +
 			`"updatedAt":"2026-08-20T10:00:00Z","isPrivate":true,"isArchived":false,"isFork":false}]`
 		p, _ := newGitHubWithStub(t, `printf '%s' '`+body+`'`)
 		repos, err := p.ListRepos(t.Context())

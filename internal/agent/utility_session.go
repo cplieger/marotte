@@ -1,4 +1,4 @@
-// Utility session: the shared kiro-cli subprocess + ACP session behind vibekit's
+// Utility session: the shared kiro-cli subprocess + ACP session behind marotte's
 // ambient AI features. Split by role — this file holds the session (lifecycle,
 // forward goroutine, host-request answering), utility_rpc.go the stateless RPC
 // wrappers, utility_agent.go the text-generation agent.
@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/secretstore"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/secretstore"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // utilityRuntime bundles the two halves of the utility subsystem the runtime
@@ -33,7 +33,7 @@ type utilityRuntime struct {
 }
 
 // newUtilityRuntime wires a session and its agent.
-func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
+func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []marotte.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
 	session := newUtilitySession(shutdownCtx, factory, models, hooks, secrets, enableHooks)
 	return &utilityRuntime{session: session, textgen: newUtilityAgent(session)}
 }
@@ -50,12 +50,12 @@ type utilitySessionHooks struct {
 	// onPolicyNotification routes _kiro/policy/{changed,error} into the translator the
 	// chat dispatch uses: this session's own PolicySession watches the file and its
 	// notifications bypass that dispatcher, so a write with no chat open is lost.
-	onPolicyNotification func(*vibekit.RPCResponse)
+	onPolicyNotification func(*marotte.RPCResponse)
 	// onForeignUpdate offers a `session/update` frame belonging to ANOTHER session to
 	// whoever is reading it, reporting whether it was consumed: a workflow step's
 	// transcript is read here, and `session/load` replays it carrying that session's
 	// id, which forwardChunk otherwise drops as foreign. Consulted BEFORE the Warn.
-	onForeignUpdate func(sessionID string, kind vibekit.ACPUpdateKind, update json.RawMessage) bool
+	onForeignUpdate func(sessionID string, kind marotte.ACPUpdateKind, update json.RawMessage) bool
 	// onFrameDrained reports the read-loop position this session has FOLDED, plus the
 	// attachment it belongs to; `force` marks the call after the drain loop ended,
 	// where no frame can advance it again. It is what closes a step replay: see
@@ -78,7 +78,7 @@ type utilitySession struct {
 	// request, while the subprocess this field bounds must outlive it.
 	shutdownCtx   context.Context
 	bridgeFactory ACPBridgeFactory
-	models        func() []vibekit.SessionModel
+	models        func() []marotte.SessionModel
 	// secrets is the runtime's credential store, shared not copied, so a registration
 	// obtained on any bridge is visible from every other. Nil when there is no configDir.
 	secrets *secretstore.Store
@@ -102,7 +102,7 @@ type utilitySession struct {
 // newUtilitySession constructs a stopped session with the initialization invariants
 // explicit: started=false, gen=0, lastActiveAt=zero. shutdownCtx is positional
 // because every default for a lifetime is a lifetime nothing can cancel.
-func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
+func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, models func() []marotte.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,
 		bridgeFactory: factory,
@@ -167,7 +167,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	// The subprocess context is us.shutdownCtx, not a per-request ctx: this call runs
 	// under us.mu, so a session/new that never answers would hold the mutex for the
 	// process lifetime. Safe as the HANDSHAKE ctx too, since Start bounds that itself.
-	if err := bridge.Start(us.shutdownCtx, &vibekit.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx)}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx)}); err != nil {
 		return err
 	}
 	us.bridge = bridge
@@ -264,7 +264,7 @@ func (us *utilitySession) shuttingDown() bool {
 // injected. Separate from command.SessionParams because the utility session's bridge
 // does not carry the prompt slot command.Bridge requires.
 func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]any {
-	m := map[string]any{vibekit.KeySessionID: bridge.SessionID()}
+	m := map[string]any{marotte.KeySessionID: bridge.SessionID()}
 	maps.Copy(m, extra)
 	return m
 }
@@ -272,13 +272,13 @@ func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]an
 // foreignUpdateHook is utilitySessionHooks.onForeignUpdate as forwardChunk takes it:
 // a parameter rather than a field read, because forwardChunk is a package function
 // and a nil hook is a legitimate wiring.
-type foreignUpdateHook func(sessionID string, kind vibekit.ACPUpdateKind, update json.RawMessage) bool
+type foreignUpdateHook func(sessionID string, kind marotte.ACPUpdateKind, update json.RawMessage) bool
 
 // updateKind reads the sessionUpdate discriminator off a frame's `update` object,
 // reporting false when the object cannot be decoded at all. The two answers are kept
 // apart because an unrecognised kind is an ordinary frame to ignore, while an
 // UNDECODABLE update is the wire having changed shape.
-func updateKind(update json.RawMessage) (vibekit.ACPUpdateKind, bool) {
+func updateKind(update json.RawMessage) (marotte.ACPUpdateKind, bool) {
 	var base utilityUpdateBase
 	if json.Unmarshal(update, &base) != nil {
 		return "", false
@@ -291,7 +291,7 @@ func updateKind(update json.RawMessage) (vibekit.ACPUpdateKind, bool) {
 // are `{sessionId, update:{sessionUpdate, …}}`, so reading the kind off params
 // yields "" for every frame.
 type utilityUpdateBase struct {
-	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
+	Kind marotte.ACPUpdateKind `json:"sessionUpdate"`
 }
 
 // utilityChunkPayload is the minimal shape the utility runtime needs
@@ -307,7 +307,7 @@ type utilityChunkPayload struct {
 // the shell type or session/new stalls. Everything else but hooks/policy is discarded,
 // which keeps NotifCh from blocking readLoop. bridge is passed explicitly so a recycle
 // cannot make this goroutine answer on the wrong pipe.
-func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifCh <-chan vibekit.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+func (us *utilitySession) forward(bridge acpSessionResponder, gen uint64, notifCh <-chan marotte.Notification, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
 	for n := range notifCh {
@@ -363,8 +363,8 @@ func (us *utilitySession) sessionPresets(ctx context.Context) []string {
 // other notification. TWO decodes, because there are two levels: the outer envelope
 // names the session and wraps the frame, the frame carries the kind and the content.
 // See utilityUpdateBase for what reading the inner fields off the outer object cost.
-func forwardChunk(msg *vibekit.RPCResponse, ownSession string, responseCh chan<- utilityChunkPayload, onForeign foreignUpdateHook) {
-	if msg.Method != vibekit.MethodSessionUpdate || msg.Params == nil {
+func forwardChunk(msg *marotte.RPCResponse, ownSession string, responseCh chan<- utilityChunkPayload, onForeign foreignUpdateHook) {
+	if msg.Method != marotte.MethodSessionUpdate || msg.Params == nil {
 		return
 	}
 	var env translate.ACPSessionUpdateEnvelope
@@ -387,7 +387,7 @@ func forwardChunk(msg *vibekit.RPCResponse, ownSession string, responseCh chan<-
 			"frame_session", env.SessionID, "utility_session", ownSession)
 		return
 	}
-	if !kindOK || kind != vibekit.ACPUpdateAgentChunk {
+	if !kindOK || kind != marotte.ACPUpdateAgentChunk {
 		return
 	}
 	var chunk utilityChunkPayload
@@ -408,7 +408,7 @@ func forwardChunk(msg *vibekit.RPCResponse, ownSession string, responseCh chan<-
 // `_kiro/hooks/executeHook` is deliberately NOT answered — it would run a shell
 // command a hook file names — and falls to -32601. A tool request is refused rather
 // than left pending, which would wedge the turn.
-func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RPCResponse) {
+func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *marotte.RPCResponse) {
 	ctx := context.Background()
 	switch {
 	case msg.Method == methodKiroShellType:
@@ -423,7 +423,7 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RP
 	case msg.Method == methodKiroSecretDelete:
 		result, err := secretDeleteResult(ctx, us.secrets, msg.Params)
 		_ = bridge.Respond(ctx, *msg.ID, result, err)
-	case msg.Method == vibekit.MethodRequestPermission:
+	case msg.Method == marotte.MethodRequestPermission:
 		// `cancelled` rather than a selected reject, because nobody is here to
 		// select: this session is text-only with no human attached, so "the ask
 		// reached nobody" is the truthful outcome. KAS discards the distinction
@@ -433,22 +433,22 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RP
 		// cancelled onto their own reject, so no consumer downstream of the ACP
 		// boundary can tell the two apart. Measured on KAS 0.58.7.
 		slog.Warn("utility bridge: denying tool permission request (text-only session)")
-		_ = bridge.Respond(ctx, *msg.ID, vibekit.PermissionOutcomeCancelled(), nil)
-	case msg.Method == vibekit.MethodFSRead || msg.Method == vibekit.MethodFSWrite ||
+		_ = bridge.Respond(ctx, *msg.ID, marotte.PermissionOutcomeCancelled(), nil)
+	case msg.Method == marotte.MethodFSRead || msg.Method == marotte.MethodFSWrite ||
 		strings.HasPrefix(msg.Method, methodTermPrefix):
 		slog.Warn("utility bridge: refusing tool request (text-only session)", "method", msg.Method)
-		// -32601 rather than a bare error: a capability vibekit deliberately does not
+		// -32601 rather than a bare error: a capability marotte deliberately does not
 		// offer on this session, not a fault it hit while trying.
-		_ = bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{
-			Code:    vibekit.RPCCodeMethodNotFound,
+		_ = bridge.Respond(ctx, *msg.ID, nil, &marotte.RPCError{
+			Code:    marotte.RPCCodeMethodNotFound,
 			Message: "utility session is text-generation only; tools are unavailable",
 		})
 	default:
 		// Answered rather than left pending, which can wedge the turn.
 		slog.Warn("utility bridge: unexpected peer request, refusing", "method", msg.Method, "id", *msg.ID)
 		// -32601: a deliberate refusal, where -32603 would blame the wrong side.
-		_ = bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{
-			Code:    vibekit.RPCCodeMethodNotFound,
+		_ = bridge.Respond(ctx, *msg.ID, nil, &marotte.RPCError{
+			Code:    marotte.RPCCodeMethodNotFound,
 			Message: "unsupported on the utility session: " + msg.Method,
 		})
 	}

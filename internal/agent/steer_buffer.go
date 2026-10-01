@@ -5,11 +5,11 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// steerBuffer is vibekit's projection of KAS's own steering buffer: the mid-turn
+// steerBuffer is marotte's projection of KAS's own steering buffer: the mid-turn
 // steers the model has NOT read, replayed on every new SSE connection so a
 // reconnecting browser gets its dock back. It exists because nothing can read that
 // buffer back — steer and steer/clear are the whole verb set, with no list.
@@ -18,7 +18,7 @@ import (
 // injection both announce themselves), so an expiry would invent a deadline nothing
 // upstream has. Growth is bounded by those removals, ClearForChat and the cap below.
 type steerBuffer struct {
-	waiting map[steerKey]vibekit.SteerQueuedPayload
+	waiting map[steerKey]marotte.SteerQueuedPayload
 	// versions holds the shared `pending` counter every queue and removal bumps
 	// under mu; see mintPending.
 	versions *subject.Versions
@@ -31,7 +31,7 @@ type steerBuffer struct {
 // session per chat, so two live chats holding one id is ordinary. A struct rather
 // than a joined string, because the id's shape is KAS's and may hold any separator.
 type steerKey struct {
-	chat vibekit.ChatID
+	chat marotte.ChatID
 	id   string
 }
 
@@ -42,13 +42,13 @@ type steerKey struct {
 const maxWaitingPerChat = 64
 
 func newSteerBuffer() *steerBuffer {
-	return &steerBuffer{waiting: make(map[steerKey]vibekit.SteerQueuedPayload), maxN: maxWaitingPerChat}
+	return &steerBuffer{waiting: make(map[steerKey]marotte.SteerQueuedPayload), maxN: maxWaitingPerChat}
 }
 
 // SteerWaiting records a steer KAS has buffered and the model has not read.
 // Idempotent by key, which is required rather than defensive: a reconnect replays the
 // queued frame, and this is what stops one row being counted twice against the cap.
-func (b *steerBuffer) SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload) {
+func (b *steerBuffer) SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
 	if p.SteerID == "" {
 		return
 	}
@@ -64,7 +64,7 @@ func (b *steerBuffer) SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedP
 
 // SteerRead drops the one steer an injected frame names: the model has read it, so
 // replaying it would offer a delivered message back to the dock.
-func (b *steerBuffer) SteerRead(chatID vibekit.ChatID, steerID string) {
+func (b *steerBuffer) SteerRead(chatID marotte.ChatID, steerID string) {
 	b.SteerForgotten(chatID, []string{steerID})
 }
 
@@ -78,13 +78,13 @@ func (b *steerBuffer) SteerRead(chatID vibekit.ChatID, steerID string) {
 // It comes back with its PAYLOAD because the cleared frame carries ids and no text,
 // so this set is the only place the words survive. Atomic with the removal on
 // purpose: read-then-forget is two acquisitions of one lock over one decision.
-func (b *steerBuffer) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
+func (b *steerBuffer) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	if len(steerIDs) == 0 {
 		return nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	var held []vibekit.SteerQueuedPayload
+	var held []marotte.SteerQueuedPayload
 	for _, id := range steerIDs {
 		k := steerKey{chat: chatID, id: id}
 		if p, ok := b.waiting[k]; ok {
@@ -101,7 +101,7 @@ func (b *steerBuffer) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) [
 // ClearForChat drops every waiting steer owned by chatID, at its teardown. A
 // steer's lifetime is one turn, so a chat that is gone can only ever hold ids no
 // frame will arrive for.
-func (b *steerBuffer) ClearForChat(chatID vibekit.ChatID) {
+func (b *steerBuffer) ClearForChat(chatID marotte.ChatID) {
 	if chatID == "" {
 		return
 	}
@@ -124,7 +124,7 @@ func (b *steerBuffer) ClearForChat(chatID vibekit.ChatID) {
 //
 // ORDER IS PART OF THE CONTRACT, ascending by chat then id, so two tabs reconnecting
 // stack the same dock. Not SEND order — the wire carries no sequence for a steer.
-func (b *steerBuffer) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
+func (b *steerBuffer) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	keys := make([]steerKey, 0, len(b.waiting))
@@ -137,9 +137,9 @@ func (b *steerBuffer) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
 	slices.SortFunc(keys, func(a, c steerKey) int {
 		return cmp.Or(cmp.Compare(a.chat, c.chat), cmp.Compare(a.id, c.id))
 	})
-	out := make([]vibekit.ServerEvent, 0, len(keys))
+	out := make([]marotte.ServerEvent, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, vibekit.NewEvent(vibekit.EventSteerQueued, k.chat, b.waiting[k]))
+		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, k.chat, b.waiting[k]))
 	}
 	return out
 }
@@ -147,7 +147,7 @@ func (b *steerBuffer) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
 // evictOldestLocked makes room for one new entry in chatID's set. Caller holds
 // b.mu. Bounded PER CHAT rather than globally, so a busy chat cannot evict a
 // quiet one's rows.
-func (b *steerBuffer) evictOldestLocked(chatID vibekit.ChatID) {
+func (b *steerBuffer) evictOldestLocked(chatID marotte.ChatID) {
 	held := make([]string, 0, b.maxN)
 	for k := range b.waiting {
 		if k.chat == chatID {
@@ -167,19 +167,19 @@ func (b *steerBuffer) evictOldestLocked(chatID vibekit.ChatID) {
 // the steering cascade feeds the buffer as it broadcasts, so a replay and a live
 // frame carry the same payload.
 
-func (b *bus) SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedPayload) {
+func (b *bus) SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
 	b.steers.SteerWaiting(chatID, p)
 }
 
-func (b *bus) SteerRead(chatID vibekit.ChatID, steerID string) {
+func (b *bus) SteerRead(chatID marotte.ChatID, steerID string) {
 	b.steers.SteerRead(chatID, steerID)
 }
 
-func (b *bus) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) []vibekit.SteerQueuedPayload {
+func (b *bus) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	return b.steers.SteerForgotten(chatID, steerIDs)
 }
 
 // ClearWaitingSteersForChat drops every waiting steer owned by chatID.
-func (b *bus) ClearWaitingSteersForChat(chatID vibekit.ChatID) {
+func (b *bus) ClearWaitingSteersForChat(chatID marotte.ChatID) {
 	b.steers.ClearForChat(chatID)
 }

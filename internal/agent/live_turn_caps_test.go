@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The measured maxima, one per dimension, taken over the live chat volume. They are the
@@ -85,7 +85,7 @@ func maximalTurn(tb testing.TB) *buffer.Buffer {
 			out = rest[i-1]
 		}
 		buf.AppendToolUseBlock(id, "")
-		buf.AppendToolCall(&vibekit.ToolCall{
+		buf.AppendToolCall(&marotte.ToolCall{
 			ID:     id,
 			Title:  "Run Command",
 			Output: fill('o', out),

@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/marotte/internal/ids"
 )
 
 // ServerID is a validated identifier for an MCP server record. Values
 // are generated at Create time via newID() and are base32-encoded random
 // values. The type prevents accidental Name-as-ID confusion at compile
-// time, mirroring vibekit.ChatID and vibekit.SessionID.
+// time, mirroring marotte.ChatID and marotte.SessionID.
 type ServerID string
 
 // IDMaxLen is the byte bound on a server id. Generated ids are 10 chars; the

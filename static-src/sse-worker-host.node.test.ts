@@ -1,4 +1,4 @@
-// The worker host's two vibekit-owned decisions (the attach reconnect, the profile's
+// The worker host's two marotte-owned decisions (the attach reconnect, the profile's
 // one digest) driven through the REAL library host over Node MessageChannel ports and
 // a scripted stream. Node: a SharedWorker's scope has no DOM, and the host's behaviour
 // must hold with none.

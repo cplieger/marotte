@@ -5,7 +5,7 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -13,20 +13,20 @@ import (
 // lifecycle operations. Runtime composes it and owns dispatch.
 type bridgeManager struct {
 	spawnSF singleflight.Group
-	bridges map[vibekit.ChatID]*sharedBridge
+	bridges map[marotte.ChatID]*sharedBridge
 	factory ACPBridgeFactory
 	mu      sync.Mutex
 }
 
 func newBridgeManager(factory ACPBridgeFactory) *bridgeManager {
 	return &bridgeManager{
-		bridges: make(map[vibekit.ChatID]*sharedBridge),
+		bridges: make(map[marotte.ChatID]*sharedBridge),
 		factory: factory,
 	}
 }
 
 // get returns the bridge for chatID, or nil if none exists.
-func (bm *bridgeManager) get(chatID vibekit.ChatID) *sharedBridge {
+func (bm *bridgeManager) get(chatID marotte.ChatID) *sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	return bm.bridges[chatID]
@@ -35,7 +35,7 @@ func (bm *bridgeManager) get(chatID vibekit.ChatID) *sharedBridge {
 // orInsert returns the existing bridge for chatID, or creates one via the factory,
 // inserts it, and returns (newBridge, false). OpenBridge's singleflight is what lets
 // the new bridge be returned unlocked.
-func (bm *bridgeManager) orInsert(chatID vibekit.ChatID) (sb *sharedBridge, existed bool) {
+func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	if existing, ok := bm.bridges[chatID]; ok {
 		bm.mu.Unlock()
@@ -53,7 +53,7 @@ func (bm *bridgeManager) orInsert(chatID vibekit.ChatID) (sb *sharedBridge, exis
 // orphan a live process, so insert refuses and answers the RESIDENT one, letting a
 // loser reach the winner's bridge rather than holding one no map holds. See rehost.
 func (bm *bridgeManager) insert(
-	chatID vibekit.ChatID, sb *sharedBridge,
+	chatID marotte.ChatID, sb *sharedBridge,
 ) (resident *sharedBridge, inserted bool) {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
@@ -67,7 +67,7 @@ func (bm *bridgeManager) insert(
 
 // remove deletes chatID from the map and returns the removed bridge, or nil. Does NOT
 // call Stop.
-func (bm *bridgeManager) remove(chatID vibekit.ChatID) *sharedBridge {
+func (bm *bridgeManager) remove(chatID marotte.ChatID) *sharedBridge {
 	bm.mu.Lock()
 	sb := bm.bridges[chatID]
 	if sb != nil {
@@ -78,7 +78,7 @@ func (bm *bridgeManager) remove(chatID vibekit.ChatID) *sharedBridge {
 }
 
 // removeIfSame removes chatID only if the current entry matches sb.
-func (bm *bridgeManager) removeIfSame(chatID vibekit.ChatID, sb *sharedBridge) bool {
+func (bm *bridgeManager) removeIfSame(chatID marotte.ChatID, sb *sharedBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	if cur, ok := bm.bridges[chatID]; ok && cur == sb {
@@ -91,7 +91,7 @@ func (bm *bridgeManager) removeIfSame(chatID vibekit.ChatID, sb *sharedBridge) b
 // removeIfBridge removes chatID only if the current entry's bridge is the SAME
 // INSTANCE as bridge. The parameter is an identity, not a capability: it stays the
 // full ACPBridge so a caller cannot pass something the map could never have held.
-func (bm *bridgeManager) removeIfBridge(chatID vibekit.ChatID, bridge ACPBridge) bool {
+func (bm *bridgeManager) removeIfBridge(chatID marotte.ChatID, bridge ACPBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	if sb, ok := bm.bridges[chatID]; ok && sb.bridge == bridge {
@@ -102,7 +102,7 @@ func (bm *bridgeManager) removeIfBridge(chatID vibekit.ChatID, bridge ACPBridge)
 }
 
 // close removes the bridge for chatID and stops it. Idempotent.
-func (bm *bridgeManager) close(chatID vibekit.ChatID) {
+func (bm *bridgeManager) close(chatID marotte.ChatID) {
 	sb := bm.remove(chatID)
 	if sb != nil {
 		sb.bridge.Stop()
@@ -117,10 +117,10 @@ func (bm *bridgeManager) count() int {
 }
 
 // all returns a snapshot of every bridge, for callers that must inspect them all.
-func (bm *bridgeManager) all() map[vibekit.ChatID]*sharedBridge {
+func (bm *bridgeManager) all() map[marotte.ChatID]*sharedBridge {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
-	cp := make(map[vibekit.ChatID]*sharedBridge, len(bm.bridges))
+	cp := make(map[marotte.ChatID]*sharedBridge, len(bm.bridges))
 	maps.Copy(cp, bm.bridges)
 	return cp
 }
@@ -167,7 +167,7 @@ func (bm *bridgeManager) retireChatBridges() (closed, marked int) {
 
 // closeIfRetired removes and stops sb only after its active turn has released
 // the prompt slot.
-func (bm *bridgeManager) closeIfRetired(chatID vibekit.ChatID, sb *sharedBridge) bool {
+func (bm *bridgeManager) closeIfRetired(chatID marotte.ChatID, sb *sharedBridge) bool {
 	bm.mu.Lock()
 	if bm.bridges[chatID] != sb {
 		bm.mu.Unlock()

@@ -12,20 +12,20 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // appendSteerRow appends the durable row translate.persistSteer writes for a steer
 // the model read mid-turn.
-func appendSteerRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
+func appendSteerRow(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID, text string) {
 	t.Helper()
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
-		c.Messages = append(c.Messages, vibekit.Message{
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
+		c.Messages = append(c.Messages, marotte.Message{
 			ID:          newMessageID(),
-			Role:        vibekit.RoleUser,
-			UserKind:    vibekit.UserKindSteer,
-			SteerState:  vibekit.SteerStateRead,
-			SteerOrigin: vibekit.SteerOriginUser,
+			Role:        marotte.RoleUser,
+			UserKind:    marotte.UserKindSteer,
+			SteerState:  marotte.SteerStateRead,
+			SteerOrigin: marotte.SteerOriginUser,
 			Content:     text,
 		})
 		return true
@@ -36,7 +36,7 @@ func appendSteerRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text
 
 // rowKinds returns each message as one of "prompt", "steer" or "assistant", in file
 // order, so a case states the order it wants rather than a pair of indices.
-func rowKinds(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) []string {
+func rowKinds(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) []string {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
@@ -45,11 +45,11 @@ func rowKinds(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) []string {
 	out := make([]string, 0, len(c.Messages))
 	for i := range c.Messages {
 		switch {
-		case c.Messages[i].UserKind == vibekit.UserKindSteer:
+		case c.Messages[i].UserKind == marotte.UserKindSteer:
 			out = append(out, "steer")
-		case c.Messages[i].Role == vibekit.RoleUser:
+		case c.Messages[i].Role == marotte.RoleUser:
 			out = append(out, "prompt")
-		case c.Messages[i].Role == vibekit.RoleAssistant:
+		case c.Messages[i].Role == marotte.RoleAssistant:
 			out = append(out, "assistant")
 		}
 	}
@@ -64,8 +64,8 @@ func TestPersistDisplacedTurn_KeepsAReadSteerAboveTheReply(t *testing.T) {
 	startedTurnOn(t, h, cs, "c1", "the displaced turn's reply")
 	appendSteerRow(t, cs, "c1", "use tabs")
 
-	h.coord.persistDisplacedTurn(t.Context(), "c1", &vibekit.Message{
-		ID: newMessageID(), Role: vibekit.RoleAssistant, Content: "the displaced turn's reply",
+	h.coord.persistDisplacedTurn(t.Context(), "c1", &marotte.Message{
+		ID: newMessageID(), Role: marotte.RoleAssistant, Content: "the displaced turn's reply",
 	})
 
 	want := []string{"steer", "assistant"}
@@ -82,8 +82,8 @@ func TestPersistDisplacedTurn_StillStepsOverATrailingPrompt(t *testing.T) {
 	startedTurnOn(t, h, cs, "c1", "the displaced turn's reply")
 	appendUserRow(t, cs, "c1", "a prompt sent while the engine turn was still going")
 
-	h.coord.persistDisplacedTurn(t.Context(), "c1", &vibekit.Message{
-		ID: newMessageID(), Role: vibekit.RoleAssistant, Content: "the displaced turn's reply",
+	h.coord.persistDisplacedTurn(t.Context(), "c1", &marotte.Message{
+		ID: newMessageID(), Role: marotte.RoleAssistant, Content: "the displaced turn's reply",
 	})
 
 	want := []string{"assistant", "prompt"}
@@ -102,8 +102,8 @@ func TestPersistDisplacedTurn_StopsAtTheSteerEvenWithAPromptBelowIt(t *testing.T
 	appendSteerRow(t, cs, "c1", "use tabs")
 	appendUserRow(t, cs, "c1", "a prompt sent while the engine turn was still going")
 
-	h.coord.persistDisplacedTurn(t.Context(), "c1", &vibekit.Message{
-		ID: newMessageID(), Role: vibekit.RoleAssistant, Content: "the displaced turn's reply",
+	h.coord.persistDisplacedTurn(t.Context(), "c1", &marotte.Message{
+		ID: newMessageID(), Role: marotte.RoleAssistant, Content: "the displaced turn's reply",
 	})
 
 	want := []string{"steer", "assistant", "prompt"}

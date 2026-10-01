@@ -7,16 +7,16 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // tombstonedChats is a chat store that refuses every write the way the real one
 // refuses a write to an id deleted inside the tombstone window.
 type tombstonedChats struct{ ChatStore }
 
-func (tombstonedChats) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+func (tombstonedChats) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
 	return "", chat.ErrTombstoned
 }
 
@@ -25,25 +25,25 @@ func (tombstonedChats) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Cha
 type promptSpy struct {
 	hostDouble
 	opened int
-	events []vibekit.ServerEvent
+	events []marotte.ServerEvent
 }
 
-func (s *promptSpy) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (s *promptSpy) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	s.opened++
 	return nil, errors.New("the bridge must not be opened")
 }
 
-func (s *promptSpy) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (s *promptSpy) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	s.events = append(s.events, evt)
 }
 
-func promptReq(t *testing.T, chatID vibekit.ChatID, text string) *vibekit.ClientCommand {
+func promptReq(t *testing.T, chatID marotte.ChatID, text string) *marotte.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(vibekit.PromptCommand{Text: text, MessageID: "m-1"})
+	payload, err := json.Marshal(marotte.PromptCommand{Text: text, MessageID: "m-1"})
 	if err != nil {
 		t.Fatalf("marshal prompt payload: %v", err)
 	}
-	return &vibekit.ClientCommand{Type: vibekit.CmdPrompt, ChatID: chatID, Payload: payload}
+	return &marotte.ClientCommand{Type: marotte.CmdPrompt, ChatID: chatID, Payload: payload}
 }
 
 // A prompt on a tombstoned chat is refused with 409, BEFORE the bridge is
@@ -83,14 +83,14 @@ func TestCmdPrompt_RefusesATombstonedChatBeforeSpawningABridge(t *testing.T) {
 type promptBridgeSpy struct {
 	hostDouble
 	bridge Bridge
-	events []vibekit.ServerEvent
+	events []marotte.ServerEvent
 }
 
-func (s *promptBridgeSpy) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (s *promptBridgeSpy) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return s.bridge, nil
 }
 
-func (s *promptBridgeSpy) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+func (s *promptBridgeSpy) Broadcast(_ context.Context, evt marotte.ServerEvent) {
 	s.events = append(s.events, evt)
 }
 
@@ -105,11 +105,11 @@ func (s *promptBridgeSpy) Broadcast(_ context.Context, evt vibekit.ServerEvent) 
 func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 	cases := map[string]struct {
 		callErr  error
-		wantCode vibekit.ErrorCode
+		wantCode marotte.ErrorCode
 	}{
 		"the token was rejected": {
-			callErr:  rpcErr(t, vibekit.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
-			wantCode: vibekit.ErrCodeAuthTokenUnavailable,
+			callErr:  rpcErr(t, marotte.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
+			wantCode: marotte.ErrCodeAuthTokenUnavailable,
 		},
 		// The control. Every other failure keeps the generic code, or the banner
 		// stops meaning "sign in" and starts meaning "something went wrong". A
@@ -117,17 +117,17 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 		// retry loop's two 2s waits to assert a code the first attempt already
 		// decided.
 		"a refused payload": {
-			callErr: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			callErr: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "PromptTooLong",
 			}),
-			wantCode: vibekit.ErrCodePromptFailed,
+			wantCode: marotte.ErrCodePromptFailed,
 		},
 		"an entitlement refusal is not a sign-in problem": {
-			callErr: rpcErr(t, vibekit.RPCCodeBridgeExited, "this account does not have access to them.", mappedErrorData{
+			callErr: rpcErr(t, marotte.RPCCodeBridgeExited, "this account does not have access to them.", mappedErrorData{
 				ErrorType:      "ModelRegistryAccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
-			wantCode: vibekit.ErrCodePromptFailed,
+			wantCode: marotte.ErrCodePromptFailed,
 		},
 	}
 	for name, tc := range cases {
@@ -150,14 +150,14 @@ func TestCmdPrompt_AnAuthFailureTravelsAsTheSignInCode(t *testing.T) {
 			}
 			join.join()
 
-			var codes []vibekit.ErrorCode
+			var codes []marotte.ErrorCode
 			for _, evt := range spy.events {
-				if evt.Type != vibekit.EventError {
+				if evt.Type != marotte.EventError {
 					continue
 				}
-				p, ok := evt.Payload.(vibekit.ErrorPayload)
+				p, ok := evt.Payload.(marotte.ErrorPayload)
 				if !ok {
-					t.Fatalf("error event payload is %T, want vibekit.ErrorPayload", evt.Payload)
+					t.Fatalf("error event payload is %T, want marotte.ErrorPayload", evt.Payload)
 				}
 				codes = append(codes, p.Code)
 			}
@@ -177,11 +177,11 @@ func TestReportPromptFailure_AuthClassLatchesForReadiness(t *testing.T) {
 		want    bool
 	}{
 		"backend_rejects_credential": {
-			callErr: rpcErr(t, vibekit.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
+			callErr: rpcErr(t, marotte.RPCCodeInternal, "Authentication failed. Please sign in again.", nil),
 			want:    true,
 		},
 		"non_auth_failure": {
-			callErr: rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{
+			callErr: rpcErr(t, marotte.RPCCodeInternal, "Internal error", map[string]string{
 				"details": "PromptTooLong",
 			}),
 			want: false,

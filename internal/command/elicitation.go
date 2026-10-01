@@ -12,14 +12,14 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // validElicitationAction reports whether a is an accepted MCP
 // ElicitResult action.
 func validElicitationAction(a string) bool {
 	switch a {
-	case vibekit.ElicitationActionAccept, vibekit.ElicitationActionDecline, vibekit.ElicitationActionCancel:
+	case marotte.ElicitationActionAccept, marotte.ElicitationActionDecline, marotte.ElicitationActionCancel:
 		return true
 	}
 	return false
@@ -27,12 +27,12 @@ func validElicitationAction(a string) bool {
 
 // CmdElicitationResponse forwards the user's elicitation form answer to
 // kiro-cli as the elicitation/create response.
-func CmdElicitationResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdElicitationResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *marotte.ClientCommand) (any, error) {
 	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
 		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}
-	var p vibekit.ElicitationResponseCommand
+	var p marotte.ElicitationResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
@@ -42,12 +42,12 @@ func CmdElicitationResponse(ctx context.Context, bridges BridgeAccess, perms Pen
 	// Take before responding, for the same reason CmdPermission does: an
 	// elicitation form open in two tabs can be submitted twice, and the
 	// second ElicitResult is silently dropped.
-	if !perms.TakePendingPerm(cmd.ChatID, p.RequestID, vibekit.SettledByUser) {
+	if !perms.TakePendingPerm(cmd.ChatID, p.RequestID, marotte.SettledByUser) {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
-	result := vibekit.ElicitationResult{Action: p.Action}
+	result := marotte.ElicitationResult{Action: p.Action}
 	// Content only travels on accept; decline/cancel carry no values.
-	if p.Action == vibekit.ElicitationActionAccept {
+	if p.Action == marotte.ElicitationActionAccept {
 		result.Content = p.Content
 	}
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {

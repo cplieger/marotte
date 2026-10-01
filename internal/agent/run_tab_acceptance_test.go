@@ -11,14 +11,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // persistedTabs is the collection as it sits on disk, the set every device projects.
 type persistedTabs struct {
-	Tabs    []vibekit.TabSubject `json:"tabs"`
+	Tabs    []marotte.TabSubject `json:"tabs"`
 	Version uint64               `json:"version"`
 }
 
@@ -36,13 +36,13 @@ func readTabsFile(t *testing.T, dir string) persistedTabs {
 }
 
 // subjectFor finds the persisted tab for one (kind, ref), which is what names a subject.
-func subjectFor(doc persistedTabs, kind vibekit.TabKind, ref string) (vibekit.TabSubject, bool) {
+func subjectFor(doc persistedTabs, kind marotte.TabKind, ref string) (marotte.TabSubject, bool) {
 	for _, tab := range doc.Tabs {
 		if tab.Kind == kind && tab.Ref == ref {
 			return tab, true
 		}
 	}
-	return vibekit.TabSubject{}, false
+	return marotte.TabSubject{}, false
 }
 
 // newTabbedRuntime returns the temp config dir too, so a test can read the document.
@@ -65,11 +65,11 @@ func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 
 // openChatTab creates a chat through the coordinator, as a New chat gesture does. The
 // returned subject's Ref is the chat id and its ID is what a run tab nests under.
-func openChatTab(t *testing.T, h *Runtime, opID string) vibekit.TabSubject {
+func openChatTab(t *testing.T, h *Runtime, opID string) marotte.TabSubject {
 	t.Helper()
 	opened, err := h.Membership().CreateChatAndOpen(t.Context(), command.ChatCreate{
 		OpID: opID,
-		Init: func(c *vibekit.Chat) { c.Name = vibekit.DefaultChatName },
+		Init: func(c *marotte.Chat) { c.Name = marotte.DefaultChatName },
 	})
 	if err != nil {
 		t.Fatalf("CreateChatAndOpen: %v", err)
@@ -85,19 +85,19 @@ func TestAcceptance_ADeepLinkOpensTheRunAsAChildOfItsChat(t *testing.T) {
 	h, dir := newTabbedRuntime(t)
 	chatTab := openChatTab(t, h, "op-chat")
 	// The lease names the launching chat, the fact the deep link cannot carry.
-	h.translateACPEvent(vibekit.ChatID(chatTab.Ref), runNotif(methodWFRunStart, map[string]any{
+	h.translateACPEvent(marotte.ChatID(chatTab.Ref), runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_deeplink", "workflowName": "publish-pr",
 	}))
 
-	rec := postCmd(t, h, vibekit.ClientCommand{
-		Type:    vibekit.CmdOpenTab,
+	rec := postCmd(t, h, marotte.ClientCommand{
+		Type:    marotte.CmdOpenTab,
 		Payload: json.RawMessage(`{"kind":"run","ref":"wf_deeplink","op_id":"opdeeplink"}`),
 	})
 	if rec.Code != 200 {
 		t.Fatalf("open_tab = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 
-	reopened, ok := subjectFor(readTabsFile(t, dir), vibekit.TabKindRun, "wf_deeplink")
+	reopened, ok := subjectFor(readTabsFile(t, dir), marotte.TabKindRun, "wf_deeplink")
 	if !ok {
 		t.Fatal("the deep link opened no run tab")
 	}

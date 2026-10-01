@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // FuzzDispatcherServeHTTP exercises the Dispatcher's top-level HTTP handler
@@ -21,7 +21,7 @@ func FuzzDispatcherServeHTTP(f *testing.F) {
 	f.Add([]byte(`not json at all`))
 
 	d := New()
-	d.Register("test_cmd", func(context.Context, *vibekit.ClientCommand) (any, error) {
+	d.Register("test_cmd", func(context.Context, *marotte.ClientCommand) (any, error) {
 		return responseOK, nil
 	})
 

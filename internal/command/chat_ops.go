@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // CancelGrace is how long a cooperative session/cancel gets to be reflected
-// in a turn end before vibekit unblocks the turn itself. Adopted from
+// in a turn end before marotte unblocks the turn itself. Adopted from
 // KiroCrew's `_CANCEL_GRACE_SECS`.
 //
 // A var only so a test can shrink it; production never writes it.
@@ -39,8 +39,8 @@ var ErrCancelGraceExpired = errors.New("cancel grace expired")
 // client-minted id is still accepted since validChatID already gates it.
 // The response carries both the chat and its tab, so the caller can address
 // what it just created without having invented the id itself.
-func CmdCreateChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.CreateChatCommand
+func CmdCreateChat(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.CreateChatCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 			return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
@@ -48,9 +48,9 @@ func CmdCreateChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientComm
 	}
 	name := p.Name
 	if name == "" {
-		name = vibekit.DefaultChatName
+		name = marotte.DefaultChatName
 	}
-	if len(name) > vibekit.MaxChatNameBytes {
+	if len(name) > marotte.MaxChatNameBytes {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	if !ValidIdent(p.Model) || !ValidIdent(p.OpID) {
@@ -59,7 +59,7 @@ func CmdCreateChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientComm
 	opened, err := mem.CreateChatAndOpen(ctx, ChatCreate{
 		OpID:   p.OpID,
 		ChatID: cmd.ChatID,
-		Init: func(c *vibekit.Chat) {
+		Init: func(c *marotte.Chat) {
 			c.Name = name
 			c.Model = p.Model
 		},
@@ -88,8 +88,8 @@ func openedResponse(opened *ChatOpened, extra map[string]any) any {
 // CmdDeleteChat removes a chat: tear down its side effects, remove the
 // record, then close its tabs. The order is the coordinator's — the record
 // leads, so an open_tab that slips in after finds no chat and is refused.
-func CmdDeleteChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientCommand) (any, error) {
-	var p vibekit.CloseTabCommand
+func CmdDeleteChat(ctx context.Context, mem *Membership, cmd *marotte.ClientCommand) (any, error) {
+	var p marotte.CloseTabCommand
 	if len(cmd.Payload) > 0 {
 		// Optional and carries only an op_id; ignored rather than refused if
 		// unreadable, since the subject is the envelope's chat id.
@@ -105,7 +105,7 @@ func CmdDeleteChat(ctx context.Context, mem *Membership, cmd *vibekit.ClientComm
 }
 
 // CmdCancel cancels the active turn, if any.
-func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, terms TerminalAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, terms TerminalAccess, cmd *marotte.ClientCommand) (any, error) {
 	// Only pending permissions are cleared; KAS owns the write gate and
 	// cancelling a turn already reverts its own approval.
 	perms.ClearPendingPermsForChat(cmd.ChatID)
@@ -118,7 +118,7 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 	if sb == nil {
 		return responseOK, nil
 	}
-	if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
+	if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	// session/cancel is a notification, so nothing acks it directly: the turn
@@ -144,10 +144,10 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 // the chat's runs (durable state; killing the process would only pause them),
 // then the process teardown, which flushes the in-flight buffer and kills the
 // chat's agent terminals.
-func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID vibekit.ChatID) {
+func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID marotte.ChatID) {
 	perms.ClearPendingPermsForChat(chatID)
 	if sb := bridges.Bridge(chatID); sb != nil {
-		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
+		if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
 		}
 	}
@@ -159,10 +159,10 @@ func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingP
 // first, then the delete-grade teardown driven from the session chain
 // captured before the record went (a record-reading teardown would no-op on
 // a deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
-func deleteChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID vibekit.ChatID, sessionChain []string) {
+func deleteChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID marotte.ChatID, sessionChain []string) {
 	perms.ClearPendingPermsForChat(chatID)
 	if sb := bridges.Bridge(chatID); sb != nil {
-		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
+		if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
 		}
 	}
@@ -170,19 +170,19 @@ func deleteChatTeardown(ctx context.Context, bridges BridgeAccess, perms Pending
 }
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
-func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *marotte.ClientCommand) (any, error) {
 	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
 		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}
-	var p vibekit.PermissionResponseCommand
+	var p marotte.PermissionResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 	// Claim the request before answering it: two tabs on one chat can both
 	// see the card, and kiro-cli silently discards the second answer for a
 	// request id already resolved.
-	pending, offered := perms.TakePendingPermissionOption(cmd.ChatID, p.RequestID, p.OptionID, vibekit.SettledByUser)
+	pending, offered := perms.TakePendingPermissionOption(cmd.ChatID, p.RequestID, p.OptionID, marotte.SettledByUser)
 	if !pending {
 		return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 	}
@@ -192,7 +192,7 @@ func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermA
 	// A turn approval answers on the same reply, with per-file decisions in
 	// _meta; built through one helper so the omitted-id-means-reject rule
 	// lives in one place.
-	outcome := vibekit.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
+	outcome := marotte.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
 	if err := sb.Respond(ctx, p.RequestID, outcome, nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}

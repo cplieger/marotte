@@ -127,7 +127,7 @@ func TestToHookInfo(t *testing.T) {
 	}
 	// A Manual hook carrying a matcher IS the ineffective pairing, and the read
 	// surface DOES report it even though create_hook refuses that shape: a hook
-	// file can be hand-written or copied in from outside vibekit, and this row is
+	// file can be hand-written or copied in from outside marotte, and this row is
 	// the only place such a mistake becomes visible.
 	if cmd.MatcherWarning != "ineffective" {
 		t.Errorf("a Manual hook with a matcher should be badged ineffective; got %q", cmd.MatcherWarning)

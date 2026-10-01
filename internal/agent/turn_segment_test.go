@@ -7,18 +7,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func assistantMessages(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) []vibekit.Message {
+func assistantMessages(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) []marotte.Message {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
 		t.Fatalf("chat %q vanished", chatID)
 	}
-	var out []vibekit.Message
+	var out []marotte.Message
 	for i := range c.Messages {
-		if c.Messages[i].Role == vibekit.RoleAssistant {
+		if c.Messages[i].Role == marotte.RoleAssistant {
 			out = append(out, c.Messages[i])
 		}
 	}
@@ -29,15 +29,15 @@ func assistantMessages(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) [
 func eventMessageOf(
 	t *testing.T,
 	cs *fakeChatStore,
-	chatID vibekit.ChatID,
-	kind vibekit.EventKind,
-) *vibekit.Message {
+	chatID marotte.ChatID,
+	kind marotte.EventKind,
+) *marotte.Message {
 	t.Helper()
 	c, ok := cs.Get(t.Context(), chatID)
 	if !ok {
 		t.Fatalf("chat %q vanished", chatID)
 	}
-	var found *vibekit.Message
+	var found *marotte.Message
 	for i := range c.Messages {
 		if c.Messages[i].EventKind == kind {
 			found = &c.Messages[i]
@@ -46,9 +46,9 @@ func eventMessageOf(
 	return found
 }
 
-func outcomeMarker(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) *vibekit.Message {
+func outcomeMarker(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) *marotte.Message {
 	t.Helper()
-	return eventMessageOf(t, cs, chatID, vibekit.EventTurnOutcome)
+	return eventMessageOf(t, cs, chatID, marotte.EventTurnOutcome)
 }
 
 // A seal represents a boundary INSIDE a turn as the sibling message every consumer
@@ -89,7 +89,7 @@ func TestSealTurnSegment_RefusesWithAToolInFlight(t *testing.T) {
 	h, cs, _ := newTestHub()
 	logs := captureLogs(t) // not parallel: swaps the slog default
 	startedTurnOn(t, h, cs, "c1", "before the boundary")
-	h.liveTurnBuffer("c1").AppendToolCall(&vibekit.ToolCall{ID: "t-1", Status: vibekit.ToolInProgress})
+	h.liveTurnBuffer("c1").AppendToolCall(&marotte.ToolCall{ID: "t-1", Status: marotte.ToolInProgress})
 
 	if h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Error("SealTurnSegment split a turn holding an in-flight tool call")
@@ -110,7 +110,7 @@ func TestSealTurnSegment_RefusesWithAToolInFlight(t *testing.T) {
 // turn is a phantom assistant message on a chat that was idle.
 func TestSealTurnSegment_RefusesWithNoTurnOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -131,13 +131,13 @@ func TestSealTurnSegment_RefusesWithNoTurnOpen(t *testing.T) {
 // and hands the rest of the reply a second id the client is not streaming under.
 func TestSealTurnSegment_RefusesBetweenTheIDMintAndTheFirstDelta(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	buf := h.stageTurnBuffer(t, "c1")
 	if opened, _ := buf.StartTurn(newMessageID()); !opened {
 		t.Fatal("the fixture could not mint the turn's message id")
@@ -164,13 +164,13 @@ func TestSealTurnSegment_RefusesBetweenTheIDMintAndTheFirstDelta(t *testing.T) {
 // for a segment nothing persisted.
 func TestSealTurnSegment_RefusesATurnThatEmittedNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	h.stageTurnBuffer(t, "c1")
 
 	if h.coord.SealTurnSegment(t.Context(), "c1") {
@@ -191,20 +191,20 @@ func TestSealTurnSegment_RefusesATurnThatEmittedNothing(t *testing.T) {
 func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything this turn said")
-	diffs := []vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
+	diffs := []marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
 	h.liveTurnBuffer("c1").TrackFileChanges(diffs, false)
 	if !h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Fatal("the fixture could not seal a segment")
 	}
 	// Spend after the baseline was latched, so the turn has a credit delta.
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Usage.Credits = 0.5
 		return true
 	}); err != nil {
 		t.Fatalf("record spend: %v", err)
 	}
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonEndTurn, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonEndTurn, "")
 
 	if msgs := assistantMessages(t, cs, "c1"); len(msgs) != 1 {
 		t.Errorf("persisted %d assistant messages, want just the sealed segment", len(msgs))
@@ -219,7 +219,7 @@ func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T)
 	if marker.ChangedFiles["a.go"] == nil {
 		t.Errorf("marker ChangedFiles = %v, want the turn's cumulative map", marker.ChangedFiles)
 	}
-	if marker.TurnOutcome != vibekit.TurnOutcomeCompleted {
+	if marker.TurnOutcome != marotte.TurnOutcomeCompleted {
 		t.Errorf("marker TurnOutcome = %q, want completed", marker.TurnOutcome)
 	}
 }
@@ -231,26 +231,26 @@ func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T)
 func TestCloseOnWireEnd_ASplitEngineTurnKeepsItsFooterToo(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedEngineTurnOn(t, h, cs, "c1", "everything before the compaction")
-	diffs := []vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
+	diffs := []marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
 	h.liveTurnBuffer("c1").TrackFileChanges(diffs, false)
 	if !h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Fatal("the fixture could not seal a segment")
 	}
 	// Spend after the baseline was latched, so the turn has a credit delta.
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Usage.Credits = 0.5
 		return true
 	}); err != nil {
 		t.Fatalf("record spend: %v", err)
 	}
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonError, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "")
 
 	marker := outcomeMarker(t, cs, "c1")
 	if marker == nil {
 		t.Fatal("a split engine turn persisted no marker, so its failure and its footer reach no carrier")
 	}
-	if marker.TurnOutcome != vibekit.TurnOutcomeFailed {
+	if marker.TurnOutcome != marotte.TurnOutcomeFailed {
 		t.Errorf("marker TurnOutcome = %q, want failed", marker.TurnOutcome)
 	}
 	if marker.TurnCredits != 0.5 {
@@ -267,21 +267,21 @@ func TestCloseOnWireEnd_ASplitEngineTurnKeepsItsFooterToo(t *testing.T) {
 func TestCloseOnWireEnd_ACancelledSplitTurnKeepsItsFooter(t *testing.T) {
 	h, cs, _ := newTestHub()
 	startedTurnOn(t, h, cs, "c1", "everything before the cancel")
-	diffs := []vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
+	diffs := []marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
 	h.liveTurnBuffer("c1").TrackFileChanges(diffs, false)
 	if !h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Fatal("the fixture could not seal a segment")
 	}
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Usage.Credits = 0.5
 		return true
 	}); err != nil {
 		t.Fatalf("record spend: %v", err)
 	}
 
-	h.coord.WireTurnEnd(t.Context(), "c1", vibekit.StopReasonCancelled, "")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonCancelled, "")
 
-	evt := eventMessageOf(t, cs, "c1", vibekit.EventCancelled)
+	evt := eventMessageOf(t, cs, "c1", marotte.EventCancelled)
 	if evt == nil {
 		t.Fatal("a cancelled turn persisted no cancel event, so nothing carries its outcome")
 	}

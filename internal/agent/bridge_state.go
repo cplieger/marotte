@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // bridgeState represents the lifecycle state of a sharedBridge.
@@ -112,11 +112,11 @@ func (sb *sharedBridge) stopCancelTimerLocked() {
 // drive. Embedding would hand every holder of a command.Bridge the ability to
 // Stop the bridge behind that state machine's back.
 
-func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
+func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
 	return sb.bridge.Call(ctx, method, params)
 }
 
-func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (*vibekit.RPCResponse, uint64, error) {
+func (sb *sharedBridge) CallAt(ctx context.Context, method string, params any) (*marotte.RPCResponse, uint64, error) {
 	return sb.bridge.CallAt(ctx, method, params)
 }
 
@@ -128,7 +128,7 @@ func (sb *sharedBridge) Respond(ctx context.Context, requestID int64, result any
 	return sb.bridge.Respond(ctx, requestID, result, err)
 }
 
-func (sb *sharedBridge) SessionID() vibekit.SessionID {
+func (sb *sharedBridge) SessionID() marotte.SessionID {
 	return sb.bridge.SessionID()
 }
 

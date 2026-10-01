@@ -51,7 +51,7 @@ import { $ } from "./dom.js";
  *  (tabs.ts `cueCandidates`), so it cannot reach the fold by either route.
  *
  *  `done` MEANS A TURN ENDED, not that it succeeded, so a turn the user cancelled
- *  and one whose stop reason vibekit could not read raise this cue exactly like a
+ *  and one whose stop reason marotte could not read raise this cue exactly like a
  *  turn that finished with an answer (user ratification, 2026-09-04). It follows
  *  from what these surfaces are FOR — the header above states it: a latched dot is
  *  not reliably on screen, so the cue is that dot carried off-page, and a cue that
@@ -72,7 +72,7 @@ export type CueStatus = "input" | "waiting" | "failed" | "done";
  *  defensible rule, unlike picking a chat.
  *
  *  THIS ORDER DIVERGES FROM THE REFERENCE, deliberately. web-terminal-ui ranks
- *  `failed` above `input`; vibekit ranks the pending ask first, because an ask
+ *  `failed` above `input`; marotte ranks the pending ask first, because an ask
  *  BLOCKS the turn while a failure is a result the agent parked and will not
  *  revisit. That is the same reasoning `tabStatusFor` (store.ts) already used to
  *  put `input` ahead of everything, and the icon disagreeing with the tab dot
@@ -283,12 +283,12 @@ export function iconVariantHref(href: string, variant: string): string | null {
 /** localStorage key for the cues this reader has already SEEN: chat id -> the
  *  dot state that was acknowledged.
  *
- *  Its own key rather than a field in the `vibekit.ui-state` blob: that blob is
+ *  Its own key rather than a field in the `marotte.ui-state` blob: that blob is
  *  the window's ARRANGEMENT (tab order, pins, panel sizes) written on structural
  *  change, and this is written whenever a cue is observed. Different cadence,
  *  different subject.
  *
- *  It HAS to be remembered, and the reason reaches vibekit by a different route
+ *  It HAS to be remembered, and the reason reaches marotte by a different route
  *  than the reference. `turn_done`, `turn_failed` and `agent_status` are client
  *  latches rebuilt from server state: `handlers/system.ts` refetches the active
  *  chat on `transport:gap`, the connect handshake names every busy chat and
@@ -305,7 +305,7 @@ export function iconVariantHref(href: string, variant: string): string | null {
  *  latched status at once (each has its own independent bridge, and
  *  `handlers/turn.ts` latches per chat id), so a single-slot acknowledgement
  *  would let every other one re-raise the count on the next load. */
-export const CUE_SEEN_KEY = "vibekit.cue-seen";
+export const CUE_SEEN_KEY = "marotte.cue-seen";
 
 /** Bound on the acknowledgement map. Every key is a chat with an open tab, so a
  *  real map is nowhere near this, and a corrupted or hostile stored value cannot

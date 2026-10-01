@@ -21,7 +21,7 @@
 // with the chosen model, and primes it with the transcript. kiro-cli
 // cannot swap models mid-session. Agent changes are deliberately NOT
 // part of this command — the running agent itself is responsible for
-// switching modes via a `switch_mode` permission request; vibekit never
+// switching modes via a `switch_mode` permission request; marotte never
 // forces an agent change on a live chat.
 //
 // Compaction and mode changes are intentionally NOT exposed as typed

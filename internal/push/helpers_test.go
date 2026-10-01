@@ -16,7 +16,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 const testSubject = "mailto:test@example.com"
@@ -125,7 +125,7 @@ func (h *recordingHandler) snapshot() []recordedPush {
 // pushSubscriptionWithValidKeys builds a subscription whose P256dh +
 // Auth survive push()'s decode/import steps so the HTTP request
 // actually fires against the test server.
-func pushSubscriptionWithValidKeys(t *testing.T, endpoint string) vibekit.PushSubscription {
+func pushSubscriptionWithValidKeys(t *testing.T, endpoint string) marotte.PushSubscription {
 	t.Helper()
 	clientPriv, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
@@ -135,7 +135,7 @@ func pushSubscriptionWithValidKeys(t *testing.T, endpoint string) vibekit.PushSu
 	if _, err := rand.Read(authSecret); err != nil {
 		t.Fatalf("auth secret: %v", err)
 	}
-	sub := vibekit.PushSubscription{Endpoint: endpoint}
+	sub := marotte.PushSubscription{Endpoint: endpoint}
 	sub.Keys.P256dh = base64.RawURLEncoding.EncodeToString(clientPriv.PublicKey().Bytes())
 	sub.Keys.Auth = base64.RawURLEncoding.EncodeToString(authSecret)
 	return sub

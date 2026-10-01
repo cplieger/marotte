@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // recoveryOutcome is a TurnOutcomeAccess whose captured result and later-turn
@@ -21,40 +21,40 @@ import (
 type recoveryOutcome struct {
 	laterTurn   bool
 	reserved    bool
-	openedTurns []vibekit.TurnOpenSource
+	openedTurns []marotte.TurnOpenSource
 	mu          sync.Mutex
 }
 
-func (o *recoveryOutcome) StartTurn(_ context.Context, _ vibekit.ChatID, source vibekit.TurnOpenSource) vibekit.TurnEpoch {
+func (o *recoveryOutcome) StartTurn(_ context.Context, _ marotte.ChatID, source marotte.TurnOpenSource) marotte.TurnEpoch {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.openedTurns = append(o.openedTurns, source)
-	return vibekit.TurnEpoch(len(o.openedTurns))
+	return marotte.TurnEpoch(len(o.openedTurns))
 }
 
-func (o *recoveryOutcome) AwaitTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) (vibekit.TurnResult, error) {
-	return vibekit.TurnResult{}, vibekit.ErrNoSuchTurn
+func (o *recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) (marotte.TurnResult, error) {
+	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
 }
 
-func (o *recoveryOutcome) ReleaseTurn(vibekit.ChatID, vibekit.TurnEpoch) {}
+func (o *recoveryOutcome) ReleaseTurn(marotte.ChatID, marotte.TurnEpoch) {}
 
-func (o *recoveryOutcome) SettleTurnOnResponse(context.Context, vibekit.ChatID, vibekit.TurnEpoch, uint64, *vibekit.RPCResponse) {
+func (o *recoveryOutcome) SettleTurnOnResponse(context.Context, marotte.ChatID, marotte.TurnEpoch, uint64, *marotte.RPCResponse) {
 }
 
-func (o *recoveryOutcome) TurnOpenedAfter(vibekit.ChatID, vibekit.TurnEpoch) bool { return o.laterTurn }
+func (o *recoveryOutcome) TurnOpenedAfter(marotte.ChatID, marotte.TurnEpoch) bool { return o.laterTurn }
 
-func (o *recoveryOutcome) AdmissionHolderSource(vibekit.ChatID) (vibekit.TurnOpenSource, bool) {
+func (o *recoveryOutcome) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return 0, false
 }
 
-func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, vibekit.ChatID, time.Duration) AdmissionOutcome {
-	if o.TryReserveTurn("", vibekit.TurnSourcePrompt) {
+func (o *recoveryOutcome) ReserveTurnForPrompt(context.Context, marotte.ChatID, time.Duration) AdmissionOutcome {
+	if o.TryReserveTurn("", marotte.TurnSourcePrompt) {
 		return AdmissionAcquired
 	}
 	return AdmissionStarting
 }
 
-func (o *recoveryOutcome) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource) bool {
+func (o *recoveryOutcome) TryReserveTurn(marotte.ChatID, marotte.TurnOpenSource) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.reserved {
@@ -64,16 +64,16 @@ func (o *recoveryOutcome) TryReserveTurn(vibekit.ChatID, vibekit.TurnOpenSource)
 	return true
 }
 
-func (o *recoveryOutcome) ReleaseTurnReservation(vibekit.ChatID) {
+func (o *recoveryOutcome) ReleaseTurnReservation(marotte.ChatID) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.reserved = false
 }
 
-func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch) {
+func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) {
 }
 
-func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, vibekit.ChatID, vibekit.TurnEpoch, vibekit.StopReason, string) {
+func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, marotte.TurnEpoch, marotte.StopReason, string) {
 }
 
 // recoveryBridges records whether the recovery tore the session down, which is the
@@ -84,9 +84,9 @@ type recoveryBridges struct {
 	closed int
 }
 
-func (b *recoveryBridges) CloseBridge(vibekit.ChatID) { b.closed++ }
+func (b *recoveryBridges) CloseBridge(marotte.ChatID) { b.closed++ }
 
-func (b *recoveryBridges) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return &recoveryBridge{}, nil
 }
 
@@ -95,17 +95,17 @@ func (b *recoveryBridges) OpenBridge(context.Context, vibekit.ChatID, string) (B
 // slot.
 type recoveryBridge struct{}
 
-func (*recoveryBridge) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
-	return &vibekit.RPCResponse{}, nil
+func (*recoveryBridge) Call(context.Context, string, any) (*marotte.RPCResponse, error) {
+	return &marotte.RPCResponse{}, nil
 }
 
-func (*recoveryBridge) CallAt(context.Context, string, any) (*vibekit.RPCResponse, uint64, error) {
-	return &vibekit.RPCResponse{}, 0, nil
+func (*recoveryBridge) CallAt(context.Context, string, any) (*marotte.RPCResponse, uint64, error) {
+	return &marotte.RPCResponse{}, 0, nil
 }
 
 func (*recoveryBridge) Notify(context.Context, string, any) error        { return nil }
 func (*recoveryBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (*recoveryBridge) SessionID() vibekit.SessionID                     { return "s1" }
+func (*recoveryBridge) SessionID() marotte.SessionID                     { return "s1" }
 func (*recoveryBridge) TryAcquireForPrompt() bool                        { return true }
 func (*recoveryBridge) ReleaseAfterPrompt()                              {}
 func (*recoveryBridge) BeginPromptCall(context.CancelCauseFunc) uint64   { return 1 }
@@ -116,14 +116,14 @@ func (*recoveryBridge) PromptGeneration() uint64                         { retur
 // The three clauses, each one moved on its own from a firing baseline. Every row
 // but the first must NOT re-prompt.
 func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
-	firing := vibekit.TurnResult{
-		Stop:           vibekit.StopReasonEndTurn,
+	firing := marotte.TurnResult{
+		Stop:           marotte.StopReasonEndTurn,
 		EmittedNothing: true,
 		WireEnded:      true,
 	}
 	cases := []struct {
 		name      string
-		result    vibekit.TurnResult
+		result    marotte.TurnResult
 		laterTurn bool
 		wantFire  bool
 	}{
@@ -135,19 +135,19 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 		{
 			// A locally-closed turn's outcome is the prompt response's, which can be
 			// nothing richer than end_turn or cancelled and carries nothing on a fault.
-			// `end_turn` there says only that vibekit had nothing better to call it.
+			// `end_turn` there says only that marotte had nothing better to call it.
 			name:     "the turn was closed LOCALLY, so its end_turn is an inference",
-			result:   vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn, EmittedNothing: true},
+			result:   marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true},
 			wantFire: false,
 		},
 		{
 			name:     "the turn emitted content, so there is nothing to recover",
-			result:   vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn, WireEnded: true},
+			result:   marotte.TurnResult{Stop: marotte.StopReasonEndTurn, WireEnded: true},
 			wantFire: false,
 		},
 		{
 			name:     "the wire named a different outcome",
-			result:   vibekit.TurnResult{Stop: vibekit.StopReasonRefusal, EmittedNothing: true, WireEnded: true},
+			result:   marotte.TurnResult{Stop: marotte.StopReasonRefusal, EmittedNothing: true, WireEnded: true},
 			wantFire: false,
 		},
 		{
@@ -166,7 +166,7 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			outcome := &recoveryOutcome{laterTurn: tc.laterTurn}
 			bridges := &recoveryBridges{benchDeps: newBenchDeps()}
-			p := &vibekit.PromptCommand{Text: "an ordinary question", MessageID: "m1"}
+			p := &marotte.PromptCommand{Text: "an ordinary question", MessageID: "m1"}
 
 			recoverEmptyTurn(t.Context(), bridges, bridges, bridges, outcome, "c1", 1, tc.result, p, map[string]any{})
 
@@ -179,7 +179,7 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 			if retried != tc.wantFire {
 				t.Errorf("a retry turn was opened = %v, want %v", retried, tc.wantFire)
 			}
-			if tc.wantFire && !hasSource(outcome.openedTurns, vibekit.TurnSourceEmptyRetry) {
+			if tc.wantFire && !hasSource(outcome.openedTurns, marotte.TurnSourceEmptyRetry) {
 				t.Errorf("the retry opened %v, want an emptyRetry turn: its reply must not extend "+
 					"the message of the turn it replaced", outcome.openedTurns)
 			}
@@ -187,6 +187,6 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 	}
 }
 
-func hasSource(got []vibekit.TurnOpenSource, want vibekit.TurnOpenSource) bool {
+func hasSource(got []marotte.TurnOpenSource, want marotte.TurnOpenSource) bool {
 	return slices.Contains(got, want)
 }

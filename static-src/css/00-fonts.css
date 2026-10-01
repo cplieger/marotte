@@ -1,4 +1,4 @@
-/* The terminal's two web faces. vibekit serves the embedded panel, so the
+/* The terminal's two web faces. marotte serves the embedded panel, so the
    library's own page kit (@cplieger/web-terminal-ui css/page.css) never reaches
    this document — its MANIFEST.touch bundle is component-only and its header
    says the host page owns its reset and its fonts. This file is that half.

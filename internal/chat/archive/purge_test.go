@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestPurge_RetentionCutoff is the core retention contract: files whose
@@ -137,9 +137,9 @@ func TestPurge_NilOnPurgeCallback(t *testing.T) {
 func TestPurge_BroadcastsChatDeletedStampedFromRemove(t *testing.T) {
 	var (
 		mu     sync.Mutex
-		frames []vibekit.ServerEvent
+		frames []marotte.ServerEvent
 	)
-	svc, store, dir := newPurgeTestService(t, WithBroadcaster(func(_ context.Context, evt vibekit.ServerEvent) {
+	svc, store, dir := newPurgeTestService(t, WithBroadcaster(func(_ context.Context, evt marotte.ServerEvent) {
 		mu.Lock()
 		defer mu.Unlock()
 		frames = append(frames, evt)
@@ -155,11 +155,11 @@ func TestPurge_BroadcastsChatDeletedStampedFromRemove(t *testing.T) {
 		t.Fatalf("Purge broadcast %d frames, want exactly 1 chat_deleted", len(frames))
 	}
 	got := frames[0]
-	if got.Type != vibekit.EventChatDeleted || got.ChatID != "gone" {
+	if got.Type != marotte.EventChatDeleted || got.ChatID != "gone" {
 		t.Errorf("frame = %s for %q, want chat_deleted for \"gone\"", got.Type, got.ChatID)
 	}
 	store.mu.Lock()
-	want := vibekit.SubjectStamp{Kind: "chats", Version: strconv.Itoa(store.removals)}
+	want := marotte.SubjectStamp{Kind: "chats", Version: strconv.Itoa(store.removals)}
 	store.mu.Unlock()
 	if got.Subject == nil || *got.Subject != want {
 		t.Errorf("chat_deleted Subject = %+v, want %+v", got.Subject, want)
@@ -169,9 +169,9 @@ func TestPurge_BroadcastsChatDeletedStampedFromRemove(t *testing.T) {
 // TestPurgeScheduler_InitialEvaluationPurges verifies Start runs an
 // initial purge evaluation that removes an over-retention chat.
 func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
-	purged := make(chan vibekit.ChatID, 8)
+	purged := make(chan marotte.ChatID, 8)
 	svc, _, dir := newPurgeTestService(t,
-		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }))
+		WithOnPurge(func(id marotte.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "sched1", 48*time.Hour)
 
 	sched := NewPurgeScheduler(svc,
@@ -187,9 +187,9 @@ func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
 // TestPurgeScheduler_ReArmsAndProcessesSecondTrigger verifies the loop
 // keeps processing triggers after the first pass (it is not one-shot).
 func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
-	purged := make(chan vibekit.ChatID, 8)
+	purged := make(chan marotte.ChatID, 8)
 	svc, _, dir := newPurgeTestService(t,
-		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }))
+		WithOnPurge(func(id marotte.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "first", 48*time.Hour)
 
 	sched := NewPurgeScheduler(svc,
@@ -213,9 +213,9 @@ func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
 // ("keep forever") disables purging entirely. A bug here would delete
 // every chat, at any age.
 func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
-	purged := make(chan vibekit.ChatID, 8)
+	purged := make(chan marotte.ChatID, 8)
 	svc, _, dir := newPurgeTestService(t,
-		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }))
+		WithOnPurge(func(id marotte.ChatID, _ []string) { purged <- id }))
 	chatPath := writeAgedChat(t, dir, "keepforever", 9000*time.Hour)
 
 	sched := NewPurgeScheduler(svc,
@@ -293,7 +293,7 @@ func TestPurgeScheduler_StopWithoutStart(t *testing.T) {
 }
 
 // recvWithin receives one chat ID from ch or fails after d.
-func recvWithin(t *testing.T, ch <-chan vibekit.ChatID, d time.Duration) vibekit.ChatID {
+func recvWithin(t *testing.T, ch <-chan marotte.ChatID, d time.Duration) marotte.ChatID {
 	t.Helper()
 	select {
 	case id := <-ch:
@@ -365,7 +365,7 @@ func TestPurgeScheduler_RescheduleWithZeroRetentionDoesNotPurge(t *testing.T) {
 // chat file each time.
 func TestPurgeScheduler_APassWithNothingToPurgeBacksOff(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t,
-		WithOpenTabs(func(vibekit.ChatID) bool { return true }))
+		WithOpenTabs(func(marotte.ChatID) bool { return true }))
 	// Far past the window and exempt: the shape that used to pin the floor.
 	writeAgedChat(t, dir, "pinned", 500*time.Hour)
 	sched := NewPurgeScheduler(svc, func() time.Duration { return time.Hour })
@@ -464,7 +464,7 @@ func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 	chatPath := writeAgedChat(t, dir, "chained", 48*time.Hour)
 	// purgeReferenceTime reads the chat through the STORE's retention projection,
 	// so the chain has to come from the fake's header. The composition of the two
-	// id fields into a chain is vibekit's own and is pinned where it lives.
+	// id fields into a chain is marotte's own and is pinned where it lives.
 	store.header = &RetentionHeader{SessionChain: []string{"sess_old", "sess_new"}}
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(chatPath, old, old); err != nil {
@@ -489,10 +489,10 @@ func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 // window. The exemption is the only thing separating abandoned work from live work.
 func TestPurge_NeverPurgesALiveChat(t *testing.T) {
 	var rec purgeRecorder
-	live := map[vibekit.ChatID]bool{"open": true}
+	live := map[marotte.ChatID]bool{"open": true}
 	svc, _, dir := newPurgeTestService(t,
 		WithOnPurge(rec.recordPurge),
-		WithLiveChats(func(id vibekit.ChatID) bool { return live[id] }),
+		WithLiveChats(func(id marotte.ChatID) bool { return live[id] }),
 	)
 
 	// Both are far past the window; only one is in use.
@@ -769,7 +769,7 @@ func TestPurge_NeverPurgesAChatWithAnOpenTab(t *testing.T) {
 			var rec purgeRecorder
 			svc, _, dir := newPurgeTestService(t,
 				WithOnPurge(rec.recordPurge),
-				WithOpenTabs(func(id vibekit.ChatID) bool { return tc.open[string(id)] }))
+				WithOpenTabs(func(id marotte.ChatID) bool { return tc.open[string(id)] }))
 			p := writeAgedChat(t, dir, "aged", 72*time.Hour)
 
 			svc.Purge(t.Context(), 24*time.Hour)
@@ -791,7 +791,7 @@ func TestPurge_TheOpenTabAndDraftExemptionsAreIndependent(t *testing.T) {
 	var rec purgeRecorder
 	svc, store, dir := newPurgeTestService(t,
 		WithOnPurge(rec.recordPurge),
-		WithOpenTabs(func(id vibekit.ChatID) bool { return id == "open-no-draft" }))
+		WithOpenTabs(func(id marotte.ChatID) bool { return id == "open-no-draft" }))
 	openNoDraft := writeAgedChat(t, dir, "open-no-draft", 72*time.Hour)
 	draftNoTab := writeAgedChat(t, dir, "draft-no-tab", 72*time.Hour)
 	// One header serves both entries; only the drafting one needs it, so the
@@ -824,10 +824,10 @@ func TestPurgeScheduler_ATriggerEndsTheIdleBackOff(t *testing.T) {
 	// One buffered slot per predicate call the test waits on, so a send can never
 	// block the pass it is observing.
 	passes := make(chan struct{}, 64)
-	purged := make(chan vibekit.ChatID, 8)
+	purged := make(chan marotte.ChatID, 8)
 	svc, _, dir := newPurgeTestService(t,
-		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }),
-		WithOpenTabs(func(vibekit.ChatID) bool {
+		WithOnPurge(func(id marotte.ChatID, _ []string) { purged <- id }),
+		WithOpenTabs(func(marotte.ChatID) bool {
 			// Read BEFORE the handshake: the test flips the flag the moment it
 			// receives one, so a scheduler descheduled between send and load would
 			// purge on the FIRST pass and green a run where no Trigger did anything.

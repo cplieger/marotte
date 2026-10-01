@@ -44,7 +44,7 @@ func retireHandler(ctx context.Context, h *terminal.Handler, why string) {
 // the terminal package owns PTY lifecycle, VT parsing, wire encoding, client
 // fan-out and reconnect replay.
 //
-// The handler is REPLACEABLE: terminal.Handler is single-use, so vibekit
+// The handler is REPLACEABLE: terminal.Handler is single-use, so marotte
 // swaps it on `exit` (spent, latched by the process-exit callback) or on
 // restart() for a WEDGED shell (a stuck foreground process never fires
 // process-exit, so the lazy path cannot reach it).
@@ -70,7 +70,7 @@ func NewShellManager(_ context.Context, workDir string) *ShellManager {
 // --login costs the container's PATH unless something puts it back: Debian's
 // /etc/profile ASSIGNS PATH for uid 0 rather than appending, so a login shell
 // drops the /config entries this process inherited and an engine-installed CLI
-// stops resolving by name. entrypoint.sh's /etc/profile.d/10-vibekit-path.sh
+// stops resolving by name. entrypoint.sh's /etc/profile.d/10-marotte-path.sh
 // drop-in is what restores it, for this PTY and for every other login
 // shell in the container alike.
 // Deliberately no terminal.WithEnv: the handler inherits the correct PATH, and

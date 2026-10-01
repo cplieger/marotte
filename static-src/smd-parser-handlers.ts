@@ -183,7 +183,7 @@ function decode_entities(s: string): string {
  *  a count the CELL WALKER would never produce loses the whole table or opens
  *  one whose header and body disagree. `handleCommon`'s `\` arm consumes `\|`
  *  into the cell text, and CODE_INLINE is dispatched with `actionAlwaysContinue`
- *  so the `|` arm never runs inside a code span — which is why vibekit keeps
+ *  so the `|` arm never runs inside a code span — which is why marotte keeps
  *  `` `a | b` `` as ONE cell where the GFM reference splits it into two, and why
  *  the delimiter row has to agree with one cell rather than two. */
 function table_row_cells(row: string): string[] {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/secretstore"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/secretstore"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // probeKey is the key shape KAS actually derives, hash and all
@@ -121,9 +121,9 @@ func TestSecretStoreRejectsBadParams(t *testing.T) {
 			// The CODE is the part KAS branches on, and JSON-RPC reserves the
 			// negative range: a bad request must arrive as invalid-params
 			// (-32602), not as some positive number outside the spec.
-			rpcErr, isRPC := errors.AsType[*vibekit.RPCError](err)
+			rpcErr, isRPC := errors.AsType[*marotte.RPCError](err)
 			if !isRPC {
-				t.Errorf("secretStoreResult(%s) error = %T, want *vibekit.RPCError", tc.name, err)
+				t.Errorf("secretStoreResult(%s) error = %T, want *marotte.RPCError", tc.name, err)
 			} else if rpcErr.Code != tc.wantCode {
 				t.Errorf("secretStoreResult(%s) error code = %d, want %d", tc.name, rpcErr.Code, tc.wantCode)
 			}
@@ -156,9 +156,9 @@ func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
 	}
 	// Internal-error (-32603), not invalid-params: the request was well formed,
 	// the agent simply has nowhere to put it.
-	rpcErr, isRPC := errors.AsType[*vibekit.RPCError](err)
+	rpcErr, isRPC := errors.AsType[*marotte.RPCError](err)
 	if !isRPC {
-		t.Errorf("secretStoreResult(nil store) error = %T, want *vibekit.RPCError", err)
+		t.Errorf("secretStoreResult(nil store) error = %T, want *marotte.RPCError", err)
 	} else if rpcErr.Code != -32603 {
 		t.Errorf("secretStoreResult(nil store) error code = %d, want -32603", rpcErr.Code)
 	}
@@ -190,9 +190,9 @@ func TestSecretDeleteRejectsMissingKey(t *testing.T) {
 			if result != nil {
 				t.Errorf("secretDeleteResult(%s) result = %v, want nil alongside an error", tc.name, result)
 			}
-			rpcErr, isRPC := errors.AsType[*vibekit.RPCError](err)
+			rpcErr, isRPC := errors.AsType[*marotte.RPCError](err)
 			if !isRPC {
-				t.Errorf("secretDeleteResult(%s) error = %T, want *vibekit.RPCError", tc.name, err)
+				t.Errorf("secretDeleteResult(%s) error = %T, want *marotte.RPCError", tc.name, err)
 			} else if rpcErr.Code != tc.wantCode {
 				t.Errorf("secretDeleteResult(%s) error code = %d, want %d", tc.name, rpcErr.Code, tc.wantCode)
 			}
@@ -215,13 +215,13 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 		{methodKiroSecretStore, true},
 		{methodKiroSecretDelete, true},
 		{"_kiro/auth/get" + "AccessToken", false},
-		{vibekit.MethodFSRead, false},
+		{marotte.MethodFSRead, false},
 		{"_kiro/secret/unknown", false},
 		{"", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method, func(t *testing.T) {
-			msg := &vibekit.RPCResponse{Method: tc.method, ID: &id}
+			msg := &marotte.RPCResponse{Method: tc.method, ID: &id}
 			// No bridge is registered, so respondBridge logs and drops the
 			// write; the return value is the whole contract under test.
 			if got := h.inbound.handleKiroSecretRequest(t.Context(), "c1", msg); got != tc.want {
@@ -285,7 +285,7 @@ func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {

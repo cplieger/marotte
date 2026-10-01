@@ -1,6 +1,6 @@
-# Contributing to vibekit
+# Contributing to marotte
 
-vibekit is a browser front-end for the Kiro CLI. Each active chat runs one
+marotte is a browser front-end for the Kiro CLI. Each active chat runs one
 `kiro-cli acp` subprocess (the "bridge"); the Go server owns all state and the
 TypeScript client is a pure projection of it. Most of the codebase is
 discoverable by reading it, but a handful of patterns are load-bearing and easy
@@ -32,7 +32,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 - `main.go` / `embed.go`: the composition root. Load config, construct the
   store, agent runtime, bridge, and push service, register HTTP routes, embed the
   compiled static assets. Wiring only.
-- `internal/vibekit/`: the wire and domain TYPE vocabulary (chat, message, tool call,
+- `internal/marotte/`: the wire and domain TYPE vocabulary (chat, message, tool call,
   plan, usage) plus the constructors and mappers over it. No interfaces, no
   behaviour: the contracts are declared at their consumers, and the helpers that
   used to live here moved to packages named for what they do: `internal/httpreply`
@@ -49,7 +49,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   handshake, and the filesystem read/write handlers. The binary it runs is
   resolved once per bridge, from the install manager, so a version switch reaches
   the next chat instead of being frozen at boot.
-- `internal/composition/kirocli.go`: vibekit's deployment of
+- `internal/composition/kirocli.go`: marotte's deployment of
   [pinstall](https://github.com/cplieger/pinstall), the digest-pinned install
   library, with its ready-made `pinstall/kirocli` release profile. The library
   downloads the pinned archive, verifies its per-arch SHA-256, installs into
@@ -58,7 +58,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   directory), re-asserts the settings the pin depends on, and keeps exactly one
   predecessor. What this file owns is the deployment: the pins, the tools tree, the
   required/optional artifact split, the eight experimental settings, the
-  trusted-writer declaration, and the purge data for the layout vibekit's own
+  trusted-writer declaration, and the purge data for the layout marotte's own
   shell installer used to promote into `$TOOLS/bin`. The trusted-writer
   declaration is the one that can withhold readiness: the library refuses to
   install into a tree another identity can write, and reads access-control lists
@@ -68,14 +68,14 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   `internal/composition/config.go`), because only the deployment knows which
   account on its volume already holds at least this process's privilege. The
   image ships it unset, which leaves the check fully enforcing. `Untrusted`
-  stays deliberately unset here: vibekit has no hardening pass that can make
+  stays deliberately unset here: marotte has no hardening pass that can make
   that observation.
 
   Nothing in this file exits the process: every failure degrades readiness
   instead, so the UI and the `docker exec` repair path survive a broken install.
   `entrypoint.sh` supplies only the three Renovate-pinned literals.
 - `internal/translate/`: ACP notification handlers that turn raw `kiro-cli`
-  events into vibekit domain events.
+  events into marotte domain events.
 - `internal/command/`: handlers for each `POST /api/command` type.
 - `internal/forges/`, `internal/git/`,
   `internal/mcp/`, `internal/push/`, `internal/auth/`,
@@ -86,7 +86,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   [`cplieger/toolbelt`](https://github.com/cplieger/toolbelt) library, wired in
   `internal/composition` (manifest + catalog + reconciler; job events reach the
   SSE hub through its `Config` callbacks). `/api/tools` is the library's
-  `httpapi` projection mounted under vibekit's middleware; only
+  `httpapi` projection mounted under marotte's middleware; only
   `/api/tools/status` (feature-gating PATH probes) is app code.
 - `internal/buffer/`, `internal/settings/`, `internal/steering/`,
   `internal/workspace/`, `internal/kiroauth/`, `internal/version/`, and the
@@ -110,7 +110,7 @@ types → feature packages. No reverse imports.
 - `messages.ts` and its `messages-*.ts` siblings, `tool-card.ts`,
   `reconcile.ts`, `smd-parser.ts` / `smd-renderer.ts`: the message-rendering
   pipeline.
-- `actions/`: vibekit's action definitions plus `boot.ts` wiring; the framework
+- `actions/`: marotte's action definitions plus `boot.ts` wiring; the framework
   itself is the published `@cplieger/actions` package.
 
 For deeper client structure (tabs, editor/diff/conflict modes, shell, forges,
@@ -156,7 +156,7 @@ These rules exist because breaking them caused real bugs. Preserve them.
 
 Any button click, form submit, or keystroke that triggers an HTTP request or a
 `transport.send` must go through the action framework in `static-src/actions/`.
-The framework is the published `@cplieger/actions` package; vibekit's action
+The framework is the published `@cplieger/actions` package; marotte's action
 _definitions_ live in `static-src/actions/*.ts`, and `actions/index.ts`
 re-exports the package surface.
 
@@ -216,25 +216,25 @@ state while the archive downloads, then flips to healthy on its own.
 
 #### Exercising the managed install without a 528 MB download
 
-No env var points vibekit at a binary you picked; the install manager is the only
+No env var points marotte at a binary you picked; the install manager is the only
 thing that resolves kiro-cli's path. What the manager does do is adopt a version
 directory that is already complete on disk, downloading nothing, and that's the
 seam to use locally and in tests. Populate it yourself:
 
 ```text
-$VIBEKIT_TOOLS_DIR/kiro-cli-versions/<version>/
+$MAROTTE_TOOLS_DIR/kiro-cli-versions/<version>/
 ├── kiro-cli      # executable; must answer `--version` with <version>
 └── .complete     # the sentinel; written LAST, contains <version>
 ```
 
 ```sh
-export VIBEKIT_TOOLS_DIR=/tmp/vibekit-tools KIRO_CLI_VERSION=2.14.2
+export MAROTTE_TOOLS_DIR=/tmp/marotte-tools KIRO_CLI_VERSION=2.14.2
 # Both digests are validated when the manager is CONSTRUCTED, before it knows
 # whether it has anything to download, so they must be 64 lowercase hex
 # characters each, but nothing is fetched here, so the values are arbitrary.
 export KIRO_CLI_SHA256=0000000000000000000000000000000000000000000000000000000000000000
 export KIRO_CLI_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000
-V="$VIBEKIT_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
+V="$MAROTTE_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
 mkdir -p "$V"
 cp /path/to/kiro-cli /path/to/kiro-cli-chat "$V/"
 printf '%s\n' "$KIRO_CLI_VERSION" >"$V/.complete"
@@ -274,7 +274,7 @@ request carrying proxy or browser headers is refused. A browser tab therefore
 gets a 403, so read a profile with `curl` from inside the container:
 
 ```sh
-docker exec vibekit curl -s 'http://127.0.0.1:9847/debug/pprof/goroutine?debug=2'
+docker exec marotte curl -s 'http://127.0.0.1:9847/debug/pprof/goroutine?debug=2'
 ```
 
 The goroutine dump is the useful one: every stack, what it is waiting on, and
@@ -313,7 +313,7 @@ go run ./cmd/bundle
 fetches the terminal's two web fonts and verifies each against a digest pinned in
 the `Dockerfile`. A clone has neither font, so run `bash scripts/dev-fonts.sh`
 first — it reads those same pins, caches the files under
-`${XDG_CACHE_HOME:-~/.cache}/vibekit-fonts/` and copies them into
+`${XDG_CACHE_HOME:-~/.cache}/marotte-fonts/` and copies them into
 `static/vendor/fonts/`. Skip it and the shell renders on the platform monospace;
 the server says so once at boot and names the script.
 
@@ -337,7 +337,7 @@ The one-shot, full-battery option mirrors CI exactly (it runs the same reusable
 workflow logic the GitHub `ci.yaml` does, including Go and frontend jobs):
 
 ```sh
-bash ci-local.sh vibekit   # from a checkout of the cplieger/ci repo
+bash ci-local.sh marotte   # from a checkout of the cplieger/ci repo
 ```
 
 The direct commands are the primary day-to-day path.
@@ -415,7 +415,7 @@ checks above pass before opening a PR.
 
 ## Commits and pull requests
 
-vibekit uses [Conventional Commits](https://www.conventionalcommits.org/);
+marotte uses [Conventional Commits](https://www.conventionalcommits.org/);
 git-cliff parses them to generate release notes and drive the version bump (see
 `cliff.toml`). Write the subject as a public changelog line.
 

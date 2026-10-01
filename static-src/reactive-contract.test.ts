@@ -1,4 +1,4 @@
-// Two properties of `@cplieger/reactive` that vibekit code reasons from, neither
+// Two properties of `@cplieger/reactive` that marotte code reasons from, neither
 // stated in the library's own docs. A DEPENDENCY contract: its subject is the
 // library, and its value is a version bump going red rather than a leak found later.
 

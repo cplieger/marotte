@@ -155,7 +155,7 @@ def field_seams(methods, own):
 
     This is the measure that actually found every worthwhile split in this
     package, and it is not connected components. A field read by a SMALL,
-    coherent subset of a type's methods is a candidate seam: vibekit's run
+    coherent subset of a type's methods is a candidate seam: marotte's run
     surface had four such fields with zero readers anywhere else, which is why
     extracting it worked and why the guesses that ignored field ownership did
     not.
@@ -218,7 +218,7 @@ def main():
     print(
         "\nA narrowly-read field is a QUESTION, not a verdict: ask whether its\n"
         "readers are a coherent job, then whether they can leave without calling\n"
-        "back. vibekit's run clock had four such fields and still could not go,\n"
+        "back. marotte's run clock had four such fields and still could not go,\n"
         "because the expiry path issues the cancel — Google's coupling test says\n"
         "combine what you must import together."
     )

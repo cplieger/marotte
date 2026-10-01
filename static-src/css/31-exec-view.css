@@ -31,7 +31,7 @@
   gap: var(--sp-3);
 
   /* A CONTAINER spaces its children and a child never spaces itself
-     (vibekit-ui.md): the gap above is the only vertical rhythm on this page, so no
+     (marotte-ui.md): the gap above is the only vertical rhythm on this page, so no
      region below carries a margin of its own. That rule exists because
      `.msg-wrap` shipped without it and every block boundary in a turn measured
      0.0px. */
@@ -180,7 +180,7 @@
 /* Inherits the grid's family and size, so the key and its value differ in INK
    and nothing else. It used to declare `--font-mono` at `--fs-xs` against a sans
    `--fs-sm` value, which is two families and two sizes in one row — reported as
-   `workdir` and `/workspace/vibekit` not lining up. The sibling that does the
+   `workdir` and `/workspace/marotte` not lining up. The sibling that does the
    same job in the detail pane (`.ev-d-k`) never had the mono, and a value that
    IS machine text opts in there through `.ev-mono`; a run input can be a path or
    a sentence, so this column does not. */
@@ -1090,7 +1090,7 @@
 }
 
 /* The shared wash, not a hand-rolled ink mix. The ink move to `--c-text-primary` is
-   the button idiom (vibekit-ui.md): accent ink on hover would read as a link, which
+   the button idiom (marotte-ui.md): accent ink on hover would read as a link, which
    the two `-more` controls above are and this door is not. */
 @media (any-hover: hover) {
   .ev-d-link:hover {

@@ -486,7 +486,7 @@ describe("Store steer projection", () => {
   // --- The client's half: intent, drawn on submit and un-drawn on a refusal ---
 
   // The row the user is owed for pressing Send, under the id KAS will return
-  // (`internal/vibekit/commands.go:329-330`), which is what makes the reconcile a
+  // (`internal/marotte/commands.go:329-330`), which is what makes the reconcile a
   // plain by-id merge rather than a guess.
   it("records a submitted steer as pending, keyed by the derived id", () => {
     resetStore("chat-1");
@@ -1156,7 +1156,7 @@ describe("Store steer anchor resolution", () => {
   // carrying `user_kind: "steer"`, the transcript draws that row through the same
   // primitive the mark draws through, so a window holding both draws the note
   // twice. Both ids are KAS's own `steer-` id, so the suppression is an equality
-  // test between two values vibekit received — never a prefix parse — and the
+  // test between two values marotte received — never a prefix parse — and the
   // DURABLE row wins, because it survives a reload and the mark does not.
   it("omits a mark whose own id names a resident message", () => {
     chatWithTurn("chat-1", 2);
@@ -1832,7 +1832,7 @@ describe("Store turnLive", () => {
     // one: `thinking: false` hard-coded, no `turn_open`, `provisional: true`. Both
     // inputs default to the terminal direction, so `false` here is a guess, and the
     // guess derives `unknown` for the newest turn — which paints "The turn ended for
-    // a reason vibekit could not read." over a turn the server is still streaming.
+    // a reason marotte could not read." over a turn the server is still streaming.
     //
     // `resetStore`'s own row is NOT provisional, which is what keeps the case above
     // green and pins this term on the mark rather than on `turn_open === undefined`.

@@ -3,7 +3,7 @@ package push
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The run_outcome switch has to reach the SEND gate, not just the settings file: a
@@ -22,9 +22,9 @@ func TestPreflightSend_HonoursTheRunOutcomePreference(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := New(t.Context(), t.TempDir(), testSubject)
 			t.Cleanup(s.Close)
-			s.SetPreferences(map[vibekit.PushKind]bool{vibekit.PushKindRunOutcome: tc.enabled})
+			s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindRunOutcome: tc.enabled})
 
-			subs := s.preflightSend(vibekit.PushKindRunOutcome, vibekit.RunSubject("wf_x"))
+			subs := s.preflightSend(marotte.PushKindRunOutcome, marotte.RunSubject("wf_x"))
 
 			if got := subs != nil; got != tc.wantSend {
 				t.Errorf("preflightSend(run_outcome) sends = %v with the preference %v, want %v",
@@ -42,7 +42,7 @@ func TestNew_SeedsTheRunOutcomePreference(t *testing.T) {
 	t.Cleanup(s.Close)
 
 	s.mu.Lock()
-	on, known := s.prefs[vibekit.PushKindRunOutcome]
+	on, known := s.prefs[marotte.PushKindRunOutcome]
 	s.mu.Unlock()
 
 	if !known {

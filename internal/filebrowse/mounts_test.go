@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestParseBrowseRoots(t *testing.T) {
@@ -50,7 +50,7 @@ func TestNew_SkipsUnusableRoots_FailsOnZero(t *testing.T) {
 	good := t.TempDir()
 	// A missing dir and a "/" grant are both skipped with a warning;
 	// the good mount survives.
-	h, err := New("/does-not-exist-vibekit-test", "/", good)
+	h, err := New("/does-not-exist-marotte-test", "/", good)
 	if err != nil {
 		t.Fatalf("New with one good root: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestNew_SkipsUnusableRoots_FailsOnZero(t *testing.T) {
 		t.Fatalf("mounts = %+v, want exactly the good root", h.mounts)
 	}
 	// Zero usable roots is a hard error.
-	if _, err := New("/does-not-exist-vibekit-test"); err == nil {
+	if _, err := New("/does-not-exist-marotte-test"); err == nil {
 		t.Fatal("New with zero usable roots = nil error, want failure")
 	}
 }
@@ -192,7 +192,7 @@ func TestResolvePath_SymlinkAcrossGrantedMounts(t *testing.T) {
 	}
 }
 
-// The upload default dir (vibekit.DefaultUploadDir) only works when the uploads
+// The upload default dir (marotte.DefaultUploadDir) only works when the uploads
 // directory is granted as a mount; on a handler without it the upload is
 // refused, never silently redirected to whatever mount does exist. This is why
 // composition grants it as a third standard mount rather than relying on the
@@ -205,6 +205,6 @@ func TestHandleUpload_DefaultDirRequiresUploadsGrant(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Errorf("status = %d, want 403 (no %s grant)", rec.Code, vibekit.DefaultUploadDir)
+		t.Errorf("status = %d, want 403 (no %s grant)", rec.Code, marotte.DefaultUploadDir)
 	}
 }

@@ -339,7 +339,7 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
   it("anchors layer 1 on kitty's published palette, unaltered", () => {
     // The DEFERRAL itself, stated independently of the generator so that editing
     // its KITTY table is a test failure rather than a silent redefinition of what
-    // vibekit defers to. Source: kitty/options/definition.py color0-color15, the
+    // marotte defers to. Source: kitty/options/definition.py color0-color15, the
     // same table web-terminal-engine's vt/wire.go basic16RGB resolves indices
     // 0-15 to. This is the one place a literal palette copy is right — it is a
     // claim about an external reference, not a second declaration of what ships.

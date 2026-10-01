@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // searchFixture is the envelope of testdata/search_hits.json: one real
@@ -56,39 +56,39 @@ var searchFixtureComment = []string{
 // TestSearch_SegmentKindsAreExhaustive both fail on a kind with no hit, so a
 // kind added to segmentKinds without a fixture occurrence is red on the Go side
 // and unrepresented in the fixture the TS side decodes.
-func searchContractMessages() []vibekit.Message {
-	return []vibekit.Message{
+func searchContractMessages() []marotte.Message {
+	return []marotte.Message{
 		{
-			ID: "u1", Role: vibekit.RoleUser,
+			ID: "u1", Role: marotte.RoleUser,
 			Content: "Where does the retry backoff live? The naïve loop calls retry twice.",
 			// The attachment is on the USER message deliberately: it is the one
 			// message here with no block array, so it exercises legacySegments'
 			// own message-level tail rather than messageSegments'. Its PATH also
 			// carries the needle and contributes no hit, which is premise 3
 			// holding in the golden rather than only in a unit test.
-			Attachments: []vibekit.Attachment{{Path: "docs/retry/backoff.md", Name: "retry-notes.md"}},
+			Attachments: []marotte.Attachment{{Path: "docs/retry/backoff.md", Name: "retry-notes.md"}},
 		},
 		{
-			ID: "a1", Role: vibekit.RoleAssistant,
-			Blocks: []vibekit.Block{
-				{Type: vibekit.BlockThinking, Thinking: "The retry semantics differ per client."},
-				{Type: vibekit.BlockText, Text: "The **retry** helper lives in fetch.go; wrap the call in retry(ctx)."},
-				{Type: vibekit.BlockToolUse, ToolCallID: "t1"},
-				{Type: vibekit.BlockText, Text: "The delegate traced the retry path end to end.", AgentSubtaskID: "sub-1"},
-				{Type: vibekit.BlockToolUse, ToolCallID: "t3"},
-				{Type: vibekit.BlockToolUse, ToolCallID: "t4"},
-				{Type: vibekit.BlockToolUse, ToolCallID: "t5"},
+			ID: "a1", Role: marotte.RoleAssistant,
+			Blocks: []marotte.Block{
+				{Type: marotte.BlockThinking, Thinking: "The retry semantics differ per client."},
+				{Type: marotte.BlockText, Text: "The **retry** helper lives in fetch.go; wrap the call in retry(ctx)."},
+				{Type: marotte.BlockToolUse, ToolCallID: "t1"},
+				{Type: marotte.BlockText, Text: "The delegate traced the retry path end to end.", AgentSubtaskID: "sub-1"},
+				{Type: marotte.BlockToolUse, ToolCallID: "t3"},
+				{Type: marotte.BlockToolUse, ToolCallID: "t4"},
+				{Type: marotte.BlockToolUse, ToolCallID: "t5"},
 			},
 			// The two MESSAGE-level tail kinds of the block-bearing shape. Both
 			// render OUTSIDE this message's row — the plan card is in the row, the
 			// notice is card-level — which is what the client's turn-level arm is
 			// for; neither carries a block index.
-			Plan:              []vibekit.PlanEntry{{Content: "Trace the retry path", Status: vibekit.PlanCompleted}},
+			Plan:              []marotte.PlanEntry{{Content: "Trace the retry path", Status: marotte.PlanCompleted}},
 			TurnFailureReason: "the retry budget ran out",
-			ToolCalls: []vibekit.ToolCall{
+			ToolCalls: []marotte.ToolCall{
 				{
-					ID: "t1", Title: "Read retry.go", Kind: vibekit.ToolKind("read"),
-					Status: vibekit.ToolStatus("completed"), Output: "func retry(ctx context.Context) error",
+					ID: "t1", Title: "Read retry.go", Kind: marotte.ToolKind("read"),
+					Status: marotte.ToolStatus("completed"), Output: "func retry(ctx context.Context) error",
 				},
 				{
 					// The diff-bearing call, and the one carrying the fixture's ONE
@@ -103,10 +103,10 @@ func searchContractMessages() []vibekit.Message {
 					// old_text carries `retry` too, and deliberately: the golden then
 					// shows the new_text-only decision holding rather than merely
 					// asserting it elsewhere.
-					ID: "t3", Title: "Replace in File", Kind: vibekit.ToolKind("edit"),
-					Status: vibekit.ToolStatus("completed"),
+					ID: "t3", Title: "Replace in File", Kind: marotte.ToolKind("edit"),
+					Status: marotte.ToolStatus("completed"),
 					Input:  json.RawMessage(`{"path":"fetch.go","newStr":"return retry(ctx, fetchOnce)"}`),
-					Diffs: []vibekit.ToolDiff{{
+					Diffs: []marotte.ToolDiff{{
 						Path:    "fetch.go",
 						OldText: "func fetch(ctx context.Context) error { return retryOnce(ctx) }",
 						NewText: "func fetch(ctx context.Context) error {\n\treturn retry(ctx, fetchOnce)\n}",
@@ -117,9 +117,9 @@ func searchContractMessages() []vibekit.Message {
 					// so the display name is the only text a reader can see here. URI
 					// carries the needle too and contributes nothing, which is the
 					// DisplayName-only decision holding in the golden.
-					ID: "t4", Title: "Disclose Context", Kind: vibekit.ToolKind("other"),
-					Status: vibekit.ToolStatus("completed"),
-					Disclosed: &vibekit.ToolDisclosed{
+					ID: "t4", Title: "Disclose Context", Kind: marotte.ToolKind("other"),
+					Status: marotte.ToolStatus("completed"),
+					Disclosed: &marotte.ToolDisclosed{
 						Type:        "skill",
 						DisplayName: "retry-budget",
 						URI:         "file:///workspace/.kiro/skills/retry/SKILL.md",
@@ -128,27 +128,27 @@ func searchContractMessages() []vibekit.Message {
 				{
 					// The denial's RESOURCE is the one reader-facing string; Capability
 					// and the rule's patterns carry the needle and contribute nothing.
-					ID: "t5", Title: "Run Command", Kind: vibekit.ToolKind("execute"),
-					Status: vibekit.ToolStatus("failed"),
-					Denial: &vibekit.ToolDenial{
+					ID: "t5", Title: "Run Command", Kind: marotte.ToolKind("execute"),
+					Status: marotte.ToolStatus("failed"),
+					Denial: &marotte.ToolDenial{
 						Capability: "shell_retry",
 						Resource:   "rm -rf /config/retry",
 						Scope:      "user",
 						Source:     "permissions.yaml",
-						Rule: &vibekit.ToolDenialRule{
+						Rule: &marotte.ToolDenialRule{
 							Capability: "shell", Effect: "deny", Match: []string{"rm -rf /config/retry*"},
 						},
 					},
 				},
 			},
 		},
-		{ID: "u2", Role: vibekit.RoleUser, Content: "Anything left?"},
+		{ID: "u2", Role: marotte.RoleUser, Content: "Anything left?"},
 		{
-			ID: "a2", Role: vibekit.RoleAssistant,
-			Blocks: []vibekit.Block{{Type: vibekit.BlockToolUse, ToolCallID: "t2"}},
-			ToolCalls: []vibekit.ToolCall{{
-				ID: "t2", Title: "List files", Kind: vibekit.ToolKind("read"),
-				Status: vibekit.ToolStatus("completed"), Output: "a.go b.go",
+			ID: "a2", Role: marotte.RoleAssistant,
+			Blocks: []marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t2"}},
+			ToolCalls: []marotte.ToolCall{{
+				ID: "t2", Title: "List files", Kind: marotte.ToolKind("read"),
+				Status: marotte.ToolStatus("completed"), Output: "a.go b.go",
 			}},
 		},
 	}
@@ -222,24 +222,24 @@ func TestSearchAllWireContract(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	chats := []*vibekit.Chat{
+	chats := []*marotte.Chat{
 		{
 			ID: "chat-001", Name: "Redis migration", UpdatedAt: 1000,
-			Messages: []vibekit.Message{
-				{ID: "m1", Role: vibekit.RoleUser, Content: "we moved the cache to redis today"},
-				{ID: "m2", Role: vibekit.RoleAssistant, Content: "Redis is up; the naïve redis client was replaced."},
+			Messages: []marotte.Message{
+				{ID: "m1", Role: marotte.RoleUser, Content: "we moved the cache to redis today"},
+				{ID: "m2", Role: marotte.RoleAssistant, Content: "Redis is up; the naïve redis client was replaced."},
 			},
 		},
 		{
 			ID: "chat-002", Name: "Grocery list", UpdatedAt: 2000,
-			Messages: []vibekit.Message{
-				{ID: "m1", Role: vibekit.RoleUser, Content: "nothing relevant here at all"},
+			Messages: []marotte.Message{
+				{ID: "m1", Role: marotte.RoleUser, Content: "nothing relevant here at all"},
 			},
 		},
 		{
 			ID: "chat-003", Name: "Why redis over memcached", UpdatedAt: 3000,
-			Messages: []vibekit.Message{
-				{ID: "m1", Role: vibekit.RoleUser, Content: "compare the two caches for us"},
+			Messages: []marotte.Message{
+				{ID: "m1", Role: marotte.RoleUser, Content: "compare the two caches for us"},
 			},
 		},
 	}

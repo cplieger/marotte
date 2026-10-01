@@ -15,13 +15,13 @@ import (
 	"time"
 
 	"github.com/cplieger/ssrf/v4"
-	"github.com/cplieger/vibekit/internal/settings"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/marotte"
 	"golang.org/x/sync/singleflight"
 )
 
 // DefaultTitle is the notification title used for all Web Push messages.
-const DefaultTitle = "Vibekit"
+const DefaultTitle = "Marotte"
 
 // pushDebounce is the per-subject quiet window; pushResponseCap bounds
 // body drain for keep-alive-friendly reads; pushBodyCap caps the
@@ -47,7 +47,7 @@ const (
 )
 
 // pushSubjectGlobal is the debounce subject for a notification with nothing single
-// behind it (an empty vibekit.PushSubject — see its doc comment).
+// behind it (an empty marotte.PushSubject — see its doc comment).
 //
 // Named rather than left as the empty string so the workspace-global window is a
 // stated member of the key space instead of an accident of a zero value. It is
@@ -64,12 +64,12 @@ const pushSubjectGlobal = "<workspace global>"
 // retried. Coalescing repeats of ONE subject is the behaviour worth having;
 // coalescing two different subjects is data loss.
 type pushDebounceKey struct {
-	kind    vibekit.PushKind
+	kind    marotte.PushKind
 	subject string
 }
 
 // debounceKey builds the window key for one send.
-func debounceKey(kind vibekit.PushKind, subject vibekit.PushSubject) pushDebounceKey {
+func debounceKey(kind marotte.PushKind, subject marotte.PushSubject) pushDebounceKey {
 	switch {
 	case subject.ChatID != "":
 		return pushDebounceKey{kind: kind, subject: string(subject.ChatID)}
@@ -111,8 +111,8 @@ type Service struct {
 	cancel        context.CancelFunc
 	client        *http.Client
 	lastPush      map[pushDebounceKey]time.Time
-	subs          map[string]vibekit.PushSubscription
-	prefs         map[vibekit.PushKind]bool
+	subs          map[string]marotte.PushSubscription
+	prefs         map[marotte.PushKind]bool
 	keys          vapidKeys
 	vapidPriv     *ecdsa.PrivateKey
 	// presence is the send filter's input: a subscription whose profile reads
@@ -122,7 +122,7 @@ type Service struct {
 	// suppressed counts the subscriptions the filter skipped, per kind, for the
 	// test-only probe: a count that stays at zero while presence shows attended
 	// profiles means the tags are not matching.
-	suppressed map[vibekit.PushKind]*atomic.Uint64
+	suppressed map[marotte.PushKind]*atomic.Uint64
 	subject    string
 	dir        string
 	// deferred is the held set of the deferred-send variant (deferred.go); empty
@@ -142,7 +142,7 @@ type Service struct {
 // so the caller can wait for the write to complete.
 type saveRequest struct {
 	done chan struct{}
-	subs []vibekit.PushSubscription
+	subs []marotte.PushSubscription
 }
 
 // Option configures a Service at construction.
@@ -162,14 +162,14 @@ func WithPresence(p *Presence) Option {
 // site, rather than defaulted into a service nothing can stop.
 func New(ctx context.Context, configDir, subject string, opts ...Option) *Service {
 	ctx, cancel := context.WithCancel(ctx)
-	prefs := make(map[vibekit.PushKind]bool, len(kindRegistry))
-	suppressed := make(map[vibekit.PushKind]*atomic.Uint64, len(kindRegistry))
+	prefs := make(map[marotte.PushKind]bool, len(kindRegistry))
+	suppressed := make(map[marotte.PushKind]*atomic.Uint64, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		prefs[kr.Kind] = kr.DefaultOn
 		suppressed[kr.Kind] = new(atomic.Uint64)
 	}
 	s := &Service{
-		subs:          make(map[string]vibekit.PushSubscription),
+		subs:          make(map[string]marotte.PushSubscription),
 		lastPush:      make(map[pushDebounceKey]time.Time),
 		suppressed:    suppressed,
 		subject:       subject,
@@ -235,14 +235,14 @@ func (s *Service) Close() {
 func (s *Service) PublicKey() string { return s.keys.PublicKey }
 
 // SetPreferences updates the per-kind notification enabled flags.
-func (s *Service) SetPreferences(prefs map[vibekit.PushKind]bool) {
+func (s *Service) SetPreferences(prefs map[marotte.PushKind]bool) {
 	s.mu.Lock()
 	maps.Copy(s.prefs, prefs)
 	s.mu.Unlock()
 }
 
 // Subscribe registers a push subscription endpoint. Duplicate endpoints are silently overwritten.
-func (s *Service) Subscribe(sub vibekit.PushSubscription) {
+func (s *Service) Subscribe(sub marotte.PushSubscription) {
 	s.mu.Lock()
 	s.subs[sub.Endpoint] = sub
 	s.mu.Unlock()
@@ -273,7 +273,7 @@ func (s *Service) HasSubscribers() bool {
 }
 
 // kindRegistry is the single source of truth for push notification kinds.
-// init() below validates every entry against vibekit.PushKind.Valid() so the
+// init() below validates every entry against marotte.PushKind.Valid() so the
 // two cannot drift.
 //
 // An EMPTY SettingsKey means the kind has no writable preference: it is a
@@ -282,17 +282,17 @@ func (s *Service) HasSubscribers() bool {
 // entry takes its default from settings.Default*, so this table is a registry
 // rather than a second declaration of those values.
 var kindRegistry = []KindPref{
-	{vibekit.PushKindAgentFinished, settings.KeyNotifyAgentFinished, settings.DefaultNotifyAgentFinished},
-	{vibekit.PushKindPRStatus, settings.KeyNotifyPRStatus, settings.DefaultNotifyPRStatus},
-	{vibekit.PushKindRunOutcome, settings.KeyNotifyRunOutcome, settings.DefaultNotifyRunOutcome},
-	{vibekit.PushKindPermission, "", true},
+	{marotte.PushKindAgentFinished, settings.KeyNotifyAgentFinished, settings.DefaultNotifyAgentFinished},
+	{marotte.PushKindPRStatus, settings.KeyNotifyPRStatus, settings.DefaultNotifyPRStatus},
+	{marotte.PushKindRunOutcome, settings.KeyNotifyRunOutcome, settings.DefaultNotifyRunOutcome},
+	{marotte.PushKindPermission, "", true},
 }
 
 // KindPref is one registered kind. Exported so the settings write path can
 // derive its preference map from this registry instead of keeping a third
-// hand-maintained copy beside vibekit.pushKinds.
+// hand-maintained copy beside marotte.pushKinds.
 type KindPref struct {
-	Kind        vibekit.PushKind
+	Kind        marotte.PushKind
 	SettingsKey string
 	DefaultOn   bool
 }
@@ -309,7 +309,7 @@ func init() {
 }
 
 // validateKindRegistry enforces the two rules the registry's types cannot: the
-// registry must agree with vibekit.PushKind.Valid(), and an empty SettingsKey
+// registry must agree with marotte.PushKind.Valid(), and an empty SettingsKey
 // (an unconfigurable floor) is legal only for the permission kind, and only
 // when DefaultOn — otherwise a forgotten key would silently ship a
 // permanently-on, unwritable toggle.
@@ -321,7 +321,7 @@ func validateKindRegistry(entries []KindPref) error {
 		if kr.SettingsKey != "" {
 			continue
 		}
-		if kr.Kind != vibekit.PushKindPermission {
+		if kr.Kind != marotte.PushKindPermission {
 			return errors.New("kindRegistry entry " + string(kr.Kind) +
 				" declares no settings key; only the permission floor may omit one")
 		}
@@ -383,7 +383,7 @@ func (s *Service) writeLoop() {
 // in New via kindRegistry.
 func (s *Service) loadPreferences(ctx context.Context) {
 	// Build local prefs map without holding mu — settings.Field does disk I/O.
-	local := make(map[vibekit.PushKind]bool, len(kindRegistry))
+	local := make(map[marotte.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		// A keyless kind is a floor: no disk read can turn it off.
 		if kr.SettingsKey == "" {

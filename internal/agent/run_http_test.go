@@ -17,9 +17,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // TestHandleRun_RejectsNonGET: this surface is read-only at the method level too, so a
@@ -55,7 +55,7 @@ func runReq(id string) *http.Request {
 // assertion about the spliced key cannot pass against a reply that lost KAS's own tree.
 type runReply struct {
 	State    json.RawMessage      `json:"state"`
-	OpenAsks []vibekit.RunOpenAsk `json:"open_asks"`
+	OpenAsks []marotte.RunOpenAsk `json:"open_asks"`
 }
 
 // getRun serves one read and hands back both the decoded reply and the BYTES, because
@@ -74,7 +74,7 @@ func getRun(t *testing.T, h *Runtime, id string) (runReply, string) {
 	return out, rec.Body.String()
 }
 
-// TestHandleRun_CarriesTheRunsOpenAsks pins the one thing vibekit adds to an otherwise
+// TestHandleRun_CarriesTheRunsOpenAsks pins the one thing marotte adds to an otherwise
 // verbatim passthrough. It exists so an agent handed a deferral can find the question and
 // the ask id to answer with; before it, both were reachable only off the live SSE frame.
 func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
@@ -83,7 +83,7 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 		h.runs.asks.Add(&runAsk{
 			chatID: runChatID("wf_1"),
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "ask_a", NodeID: "review",
 				Question: "Which branch should I target?", AgentName: "reviewer",
 			},
@@ -121,13 +121,13 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 		br.setCallResult(methodKiroWorkflowInspect, inspectReply(t, "wf_1", "running", ""))
 		h.runs.asks.Add(&runAsk{
 			chatID: runChatID("wf_1"),
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "ask_mine", Question: "mine",
 			},
 		})
 		h.runs.asks.Add(&runAsk{
 			chatID: runChatID("wf_2"),
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_2", AskID: "ask_theirs", Question: "theirs",
 			},
 		})
@@ -162,7 +162,7 @@ func TestHandleRun_CarriesTheRunsOpenAsks(t *testing.T) {
 		// so the text is gone while the run stays parked.
 		h.runs.asks.Add(&runAsk{
 			chatID: runChatID("wf_1"),
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "reconciled:wf_1/review", NodeID: "review",
 			},
 		})
@@ -200,7 +200,7 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 			// often it is asked.
 			name: "the engine answered ABOUT the run",
 			arm: func(br *fakeBridge) {
-				br.setCallRPCErr(methodKiroWorkflowInspect, &vibekit.RPCError{
+				br.setCallRPCErr(methodKiroWorkflowInspect, &marotte.RPCError{
 					Code: -32603, Message: "Internal error",
 					Data: json.RawMessage(`{"details":"workflow not found"}`),
 				})
@@ -246,14 +246,14 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 // testEpoch stands in for the hub epoch on a runRoutes built without a runtime.
 func testEpoch() string { return "test-epoch" }
 
-func getLiveRuns(t *testing.T, rr *runRoutes) vibekit.LiveRunsResponse {
+func getLiveRuns(t *testing.T, rr *runRoutes) marotte.LiveRunsResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	rr.handleLiveRuns(rec, httptest.NewRequest(http.MethodGet, "/api/runs/live", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /api/runs/live = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	var out vibekit.LiveRunsResponse
+	var out marotte.LiveRunsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode live-runs reply: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestHandleLiveRuns_RejectsNonGET(t *testing.T) {
 
 // TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat is the projection's contract: a
 // chat-parented run carries the chat its `run_start` arrived on, a parentless run carries
-// none, and it is served off vibekit-local state with no KAS round trip.
+// none, and it is served off marotte-local state with no KAS round trip.
 func TestHandleLiveRuns_ProjectsEveryLiveLeaseWithItsChat(t *testing.T) {
 	h, _, br := newTestHub()
 	h.runs.observeStart(t.Context(), "c-live", runNotif(methodWFRunStart, map[string]any{
@@ -340,7 +340,7 @@ func TestHandleLiveRuns_AndHistoryBothCarryAChatParentedRun(t *testing.T) {
 	}
 
 	rows := h.runs.toWire(
-		map[string]vibekit.ChatID{"sess-1": "c-live"},
+		map[string]marotte.ChatID{"sess-1": "c-live"},
 		[]kasWorkflowRun{
 			{WorkflowID: "wf_agent", Name: "publish", Status: "running", ParentSessionID: "sess-1"},
 			{WorkflowID: "wf_manual", Name: "nightly", Status: "completed"},
@@ -414,7 +414,7 @@ func TestHandleLiveRuns_ExecutingFollowsTheLeasesOwnClock(t *testing.T) {
 	}
 
 	// The run-level pause frame, which is what parks the deadline.
-	h.runs.observePaused(func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {})(
+	h.runs.observePaused(func(context.Context, marotte.ChatID, *marotte.RPCResponse) {})(
 		t.Context(), "c-live", runNotif(methodWFPaused, map[string]any{"workflowId": "wf_agent"}),
 	)
 
@@ -493,7 +493,7 @@ func TestHandleControls(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET controls = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 		}
-		var got vibekit.RunControlsResponse
+		var got marotte.RunControlsResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("decoding the controls reply: %s", err)
 		}
@@ -515,7 +515,7 @@ func TestHandleControls(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET controls = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 		}
-		var got vibekit.RunControlsResponse
+		var got marotte.RunControlsResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("decoding the controls reply: %s", err)
 		}
@@ -544,7 +544,7 @@ func TestHandleControls(t *testing.T) {
 
 func answerReq(t *testing.T, id, askID, text string) *http.Request {
 	t.Helper()
-	body, err := json.Marshal(vibekit.RunAnswerRequest{AskID: askID, Text: text})
+	body, err := json.Marshal(marotte.RunAnswerRequest{AskID: askID, Text: text})
 	if err != nil {
 		t.Fatalf("Setup: marshalling the answer body: %s", err)
 	}
@@ -606,7 +606,7 @@ func TestHandleAnswer(t *testing.T) {
 		}
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", NodeID: "review", StepSessionID: "sess_step",
 			},
 		})
@@ -631,7 +631,7 @@ func TestHandleAnswer(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
 			},
 		})
@@ -655,7 +655,7 @@ func TestHandleAnswer(t *testing.T) {
 		br.startErr = errors.New("fork/exec: no such file or directory")
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
 			},
 		})
@@ -682,7 +682,7 @@ func TestHandleAnswer(t *testing.T) {
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step",
 			},
 		})
@@ -718,7 +718,7 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 	// The shape KAS actually refuses in: -32603 with the reason in `error.data`, which
 	// is why the client is handed rpcerr.Text rather than error.Message.
-	br.callRPCErrs = map[string]*vibekit.RPCError{
+	br.callRPCErrs = map[string]*marotte.RPCError{
 		methodKiroWorkflowPause: {
 			Code:    -32603,
 			Message: "Internal error",
@@ -817,11 +817,11 @@ func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage 
 	raw, err := json.Marshal(map[string]any{
 		"workflowId": workflowID,
 		"state": map[string]any{
-			"status": string(vibekit.RunStatusPaused),
+			"status": string(marotte.RunStatusPaused),
 			"root": map[string]any{
-				"nodeId": "root", "type": "sequence", "status": string(vibekit.RunStatusPaused),
+				"nodeId": "root", "type": "sequence", "status": string(marotte.RunStatusPaused),
 				"children": []any{map[string]any{
-					"nodeId": nodeID, "type": stepNodeType, "status": string(vibekit.RunStatusPaused),
+					"nodeId": nodeID, "type": stepNodeType, "status": string(marotte.RunStatusPaused),
 				}},
 			},
 		},
@@ -850,7 +850,7 @@ func TestSetStepStatus(t *testing.T) {
 		h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
-			payload: vibekit.RunInputNeededPayload{
+			payload: marotte.RunInputNeededPayload{
 				WorkflowID: "wf_1", AskID: "a1", NodeID: "review",
 			},
 		})
@@ -869,8 +869,8 @@ func TestSetStepStatus(t *testing.T) {
 		}
 		// SettledByUser HERE, unlike the node-completion door: only a reader clicking
 		// Continue-without-answering reaches this verb, so it IS their decision.
-		if got := settled[0]["settled_by"]; got != string(vibekit.SettledByUser) {
-			t.Errorf("settled_by = %q, want %q", got, vibekit.SettledByUser)
+		if got := settled[0]["settled_by"]; got != string(marotte.SettledByUser) {
+			t.Errorf("settled_by = %q, want %q", got, marotte.SettledByUser)
 		}
 	})
 
@@ -886,7 +886,7 @@ func TestSetStepStatus(t *testing.T) {
 		h, cs, br := newTestHub()
 		// An AGENT-launched run has no bridge of its own — KAS parents it on the calling
 		// chat's session — so resolving that chat's bridge avoids a needless re-host.
-		cs.Chats["c1"] = &vibekit.Chat{ID: "c1", ACPSessionID: "sess_parent"}
+		cs.Chats["c1"] = &marotte.Chat{ID: "c1", ACPSessionID: "sess_parent"}
 		h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowList: json.RawMessage(
@@ -914,15 +914,15 @@ func TestSetStepStatus_WithholdsAMistargetedWrite(t *testing.T) {
 		raw, err := json.Marshal(map[string]any{
 			"workflowId": "wf_1",
 			"state": map[string]any{
-				"status": string(vibekit.RunStatusPaused),
+				"status": string(marotte.RunStatusPaused),
 				"root": map[string]any{
-					"nodeId": "fan", "type": "parallel", "status": string(vibekit.RunStatusPaused),
+					"nodeId": "fan", "type": "parallel", "status": string(marotte.RunStatusPaused),
 					"children": []any{
 						map[string]any{
-							"nodeId": "verify", "type": stepNodeType, "status": string(vibekit.RunStatusPaused),
+							"nodeId": "verify", "type": stepNodeType, "status": string(marotte.RunStatusPaused),
 						},
 						map[string]any{
-							"nodeId": "plan", "type": stepNodeType, "status": string(vibekit.RunStatusPaused),
+							"nodeId": "plan", "type": stepNodeType, "status": string(marotte.RunStatusPaused),
 							"completionSignal": needInputSignal,
 						},
 					},

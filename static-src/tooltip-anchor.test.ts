@@ -150,7 +150,7 @@ describe("the turn footer's ledger row", () => {
 describe("the turn footer's changed-file rows", () => {
   it("points each row's tooltip at the path it opens", () => {
     const footer = mountFooter({
-      "vibekit/internal/translate/streaming_tools.go": { lines_added: 6, lines_removed: 2 },
+      "marotte/internal/translate/streaming_tools.go": { lines_added: 6, lines_removed: 2 },
     });
     const row = footer.querySelector<HTMLElement>(".turn-file-row");
     expect(row).not.toBeNull();

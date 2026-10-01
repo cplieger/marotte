@@ -24,7 +24,7 @@ package bridge
 //     stays survivable. A count would kill the bridge on exactly that replay.
 //     Only a single blob that never terminates can exhaust it.
 //  3. Crew's own bounded reader can afford a bare discard because every one of
-//     its callers runs a deadline. vibekit's Bridge.Call deliberately does not,
+//     its callers runs a deadline. marotte's Bridge.Call deliberately does not,
 //     so the Go port MUST answer the pending requests a discard would otherwise
 //     orphan forever. That half is readLoop's (see reportDroppedFrame); this file
 //     only reports the loss upward.

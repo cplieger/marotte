@@ -4,7 +4,7 @@
 // A tab is two things with two different owners, and this file is the second of
 // them.
 //
-// The SHARED half is `TabSubject` (internal/vibekit/domain_tabs.go): what is
+// The SHARED half is `TabSubject` (internal/marotte/domain_tabs.go): what is
 // open, where it sits, whether closing it tears the thing down. It is persisted
 // in tabs.json, it is the only tab shape that crosses the wire, and every
 // connected device holds the same copy of it.
@@ -23,7 +23,7 @@
 
 import type { Route } from "./route-path.js";
 // The nine tab kinds have ONE definition and it is the Go const block in
-// internal/vibekit/domain_tabs.go, emitted here by wire-codegen as a registered
+// internal/marotte/domain_tabs.go, emitted here by wire-codegen as a registered
 // enum. Both tables below are typed as exhaustive records over it, so a new
 // kind added server-side fails the client type gate here rather than reaching a
 // switch with no case for it on every connected device at once.

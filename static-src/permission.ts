@@ -12,7 +12,7 @@
 //   - A TURN APPROVAL ("this turn wrote these files, which do you keep"):
 //     KAS's `autopilot: off` gate. Arrives as an ordinary permission request
 //     carrying `files[]`, and answers on the ordinary permission reply with a
-//     per-ACTION decision map. See vibekit-acp.md "Supervised mode on v3".
+//     per-ACTION decision map. See marotte-acp.md "Supervised mode on v3".
 //
 // The turn-approval half has two constraints that are easy to get wrong and
 // expensive when you do:
@@ -390,7 +390,7 @@ function formatInputPreview(input: unknown): string {
  *  the union rather than a switch, so adding a server-side code without deciding
  *  what to tell the reader is a type error here.
  *
- *  This is vibekit's wording, not KAS's: the server drops the upstream reason
+ *  This is marotte's wording, not KAS's: the server drops the upstream reason
  *  string at the translate seam and forwards a code (see AlwaysAllowBlock). */
 const ALWAYS_ALLOW_UNAVAILABLE: Record<AlwaysAllowBlock, string> = {
   unparseable:
@@ -453,7 +453,7 @@ function derivePresets(effective: readonly string[]): string[] {
  *  never there to withdraw), and the note above when `blocked` says a saved
  *  rule could never match. That verdict is KAS's, arriving on the request
  *  itself: it generates the same three candidate patterns and probes each
- *  through the live policy engine, which is a question vibekit cannot answer
+ *  through the live policy engine, which is a question marotte cannot answer
  *  and must not guess at.
  *
  *  `derivePresets` gates something else and the two must not be conflated:

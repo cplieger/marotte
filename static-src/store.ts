@@ -865,7 +865,7 @@ export function setWorkingLabel(id: string, label: string): void {
 // The client writes INTENT (`recordSteerSent`, un-written by `forgetSteer`) and every
 // other mutator here adopts a server FACT.
 
-/** The steer id KAS will return for a message id. `internal/vibekit/commands.go` documents
+/** The steer id KAS will return for a message id. `internal/marotte/commands.go` documents
  *  the convention (`"steer-" + messageID`) and `internal/command/steer_test.go` pins it.
  *  Deriving it is what lets the optimistic row be reconciled by a plain id match: the
  *  POST's reply carries the authoritative id, but `transportAction` discards the body. */
@@ -885,7 +885,7 @@ export function steerCount(id: string): number {
  *  Both filters stop the resend DUPLICATING a message: a `pending` row's POST is
  *  unresolved and `submit.ts` already converts a refusal into a prompt, and KAS
  *  re-wakes an undelivered workflow notification itself. An agent row still earns
- *  its `dropped` mark. Measurements: `vibekit-client.md`. */
+ *  its `dropped` mark. Measurements: `marotte-client.md`. */
 export function pendingSteerCarry(
   id: string,
   steerIDs?: readonly string[],

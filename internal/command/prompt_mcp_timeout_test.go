@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/testsupport"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/testsupport"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // promptJoin is a LifecycleAccess whose in-flight count a test can join on:
@@ -44,7 +44,7 @@ func (d *stalledMCPDeps) PendingSummary(context.Context) MCPPendingSummary {
 	return d.summary
 }
 
-func (d *stalledMCPDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (d *stalledMCPDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return d.bridge, nil
 }
 
@@ -140,6 +140,6 @@ func (d *readyMCPDeps) PendingSummary(context.Context) MCPPendingSummary {
 	return MCPPendingSummary{}
 }
 
-func (d *readyMCPDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (d *readyMCPDeps) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return d.bridge, nil
 }

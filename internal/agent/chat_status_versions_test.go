@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func statusVersion(t *testing.T, v *subject.Versions) string {
@@ -22,18 +22,18 @@ func newVersionedStatusCache() (*chatStatusCache, *subject.Versions) {
 
 func TestMergeStamped_BumpsAndReturnsTheMintedStamp(t *testing.T) {
 	c, v := newVersionedStatusCache()
-	payload, stamp := c.MergeStamped("c1", vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading"})
+	payload, stamp := c.MergeStamped("c1", marotte.ChatStatusPayload{Status: "in_progress", Description: "reading"})
 	if payload.Status != "in_progress" {
 		t.Fatalf("MergeStamped payload = %+v, want the merged declaration", payload)
 	}
-	want := vibekit.SubjectStamp{Kind: "status", Version: statusVersion(t, v)}
+	want := marotte.SubjectStamp{Kind: "status", Version: statusVersion(t, v)}
 	if stamp == nil || *stamp != want {
 		t.Fatalf("MergeStamped stamp = %+v, want %+v", stamp, want)
 	}
 	if want.Version == subject.Unminted {
 		t.Fatal("MergeStamped did not move the status counter")
 	}
-	_, second := c.MergeStamped("c1", vibekit.ChatStatusPayload{Description: "writing"})
+	_, second := c.MergeStamped("c1", marotte.ChatStatusPayload{Description: "writing"})
 	if second.Version == stamp.Version {
 		t.Errorf("second MergeStamped returned %q, same as the first; every merge mints", second.Version)
 	}
@@ -41,9 +41,9 @@ func TestMergeStamped_BumpsAndReturnsTheMintedStamp(t *testing.T) {
 
 func TestMergeStamped_ChatlessDeclarationMintsNothing(t *testing.T) {
 	c, v := newVersionedStatusCache()
-	c.MergeStamped("c1", vibekit.ChatStatusPayload{Status: "in_progress"})
+	c.MergeStamped("c1", marotte.ChatStatusPayload{Status: "in_progress"})
 	before := statusVersion(t, v)
-	_, stamp := c.MergeStamped("", vibekit.ChatStatusPayload{Status: "idle"})
+	_, stamp := c.MergeStamped("", marotte.ChatStatusPayload{Status: "idle"})
 	if after := statusVersion(t, v); after != before {
 		t.Errorf("a chat-less merge moved the status counter %q -> %q", before, after)
 	}
@@ -54,9 +54,9 @@ func TestMergeStamped_ChatlessDeclarationMintsNothing(t *testing.T) {
 
 func TestStatusCache_OnlyWaitingRemovalsMint(t *testing.T) {
 	c, v := newVersionedStatusCache()
-	c.Merge("waiting", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser})
-	c.Merge("busy", vibekit.ChatStatusPayload{Status: "in_progress"})
-	c.Merge("busy2", vibekit.ChatStatusPayload{Status: "in_progress"})
+	c.Merge("waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	c.Merge("busy", marotte.ChatStatusPayload{Status: "in_progress"})
+	c.Merge("busy2", marotte.ChatStatusPayload{Status: "in_progress"})
 
 	before := statusVersion(t, v)
 	c.ClearAtTurnEnd("waiting")
@@ -87,7 +87,7 @@ func TestStatusCache_OnlyWaitingRemovalsMint(t *testing.T) {
 		t.Errorf("ClearWaiting on a waiting row left the counter at %q; the certified set shrank", before)
 	}
 
-	c.Merge("waiting", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser})
+	c.Merge("waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 	beforeClear := statusVersion(t, v)
 	c.Clear("waiting")
 	if after := statusVersion(t, v); after == beforeClear {
@@ -97,20 +97,20 @@ func TestStatusCache_OnlyWaitingRemovalsMint(t *testing.T) {
 
 func TestStatusSnapshotStamped_CarriesTheWaitingSetMinusBusyChats(t *testing.T) {
 	c, v := newVersionedStatusCache()
-	c.Merge("w1", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser, Description: "one"})
-	c.Merge("w2", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser, Description: "two"})
-	c.Merge("busy", vibekit.ChatStatusPayload{Status: "in_progress"})
-	c.Merge("w3", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser})
-	open := map[vibekit.ChatID]openTurnFacts{"w3": {}}
+	c.Merge("w1", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "one"})
+	c.Merge("w2", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "two"})
+	c.Merge("busy", marotte.ChatStatusPayload{Status: "in_progress"})
+	c.Merge("w3", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	open := map[marotte.ChatID]openTurnFacts{"w3": {}}
 
 	payload, stamp := c.SnapshotStamped(open)
 	if len(payload.Rows) != 2 || payload.Rows[0].ChatID != "w1" || payload.Rows[1].ChatID != "w2" {
 		t.Fatalf("SnapshotStamped rows = %+v, want w1 and w2 in chat order", payload.Rows)
 	}
-	if payload.Rows[0].Description != "one" || payload.Rows[0].Status != vibekit.ChatStatusWaitingOnUser {
+	if payload.Rows[0].Description != "one" || payload.Rows[0].Status != marotte.ChatStatusWaitingOnUser {
 		t.Errorf("row w1 = %+v, want the retained status and description", payload.Rows[0])
 	}
-	want := vibekit.SubjectStamp{Kind: "status", Version: statusVersion(t, v)}
+	want := marotte.SubjectStamp{Kind: "status", Version: statusVersion(t, v)}
 	if stamp == nil || *stamp != want {
 		t.Errorf("SnapshotStamped stamp = %+v, want %+v", stamp, want)
 	}

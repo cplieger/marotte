@@ -10,23 +10,23 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/policyfile"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 type fakePolicy struct {
-	rules       []vibekit.PolicyRule
+	rules       []marotte.PolicyRule
 	listErr     error
-	explain     *vibekit.PolicyExplainResult
+	explain     *marotte.PolicyExplainResult
 	explainErr  error
-	explainReqs []vibekit.PolicyExplainRequest
+	explainReqs []marotte.PolicyExplainRequest
 }
 
-func (f *fakePolicy) PolicyList(_ context.Context, _ string) ([]vibekit.PolicyRule, error) {
+func (f *fakePolicy) PolicyList(_ context.Context, _ string) ([]marotte.PolicyRule, error) {
 	return f.rules, f.listErr
 }
 
-func (f *fakePolicy) PolicyExplain(_ context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
+func (f *fakePolicy) PolicyExplain(_ context.Context, req marotte.PolicyExplainRequest) (*marotte.PolicyExplainResult, error) {
 	f.explainReqs = append(f.explainReqs, req)
 	return f.explain, f.explainErr
 }
@@ -41,7 +41,7 @@ func postRules(t *testing.T, s *Server, body policyRuleBody) *httptest.ResponseR
 }
 
 func TestPolicyViewLive(t *testing.T) {
-	f := &fakePolicy{rules: []vibekit.PolicyRule{
+	f := &fakePolicy{rules: []marotte.PolicyRule{
 		{Capability: "fs_write", Effect: "allow", Scope: "user", Source: "/x/permissions.yaml"},
 	}}
 	s := &Server{policy: f, workDir: t.TempDir()}
@@ -51,7 +51,7 @@ func TestPolicyViewLive(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var got vibekit.PolicyView
+	var got marotte.PolicyView
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/permissions", http.NoBody)
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
-	var got vibekit.PolicyView
+	var got marotte.PolicyView
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestPolicyRuleInvalidScopeRejected(t *testing.T) {
 // non-fatal, reporting it on _kiro/policy/changed's errors array (translated to
 // the permissions_changed SSE and rendered from payload.errors), NOT on
 // _kiro/policy/error, which KAS emits only for fatal errors. The 400 meant
-// vibekit refused to write the rule a newly-added capability exists for.
+// marotte refused to write the rule a newly-added capability exists for.
 func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	home := t.TempDir()
 	work := t.TempDir()
@@ -193,14 +193,14 @@ func TestPolicyRuleMalformedCapabilityRejected(t *testing.T) {
 // hand-copied snapshot of a list KAS does not expose, so the rules KAS reports
 // are the only channel through which the picker can learn a new capability. A
 // capability in use anywhere — including the read-only kiro/administration/agent
-// baselines — becomes selectable with no vibekit release.
+// baselines — becomes selectable with no marotte release.
 func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
 	base := policyfile.Capabilities()
 	if slices.Contains(base, "hooks") {
 		t.Fatal("test assumes 'hooks' is absent from the suggested set")
 	}
 
-	got := pickerCapabilities([]vibekit.PolicyRule{
+	got := pickerCapabilities([]marotte.PolicyRule{
 		{Capability: "hooks", Effect: "deny", Scope: "kiro"},
 		// Already suggested: must not be duplicated.
 		{Capability: "shell", Effect: "ask", Scope: "user"},
@@ -292,16 +292,16 @@ func TestPolicyRuleUnknownOp(t *testing.T) {
 }
 
 func TestPolicyExplainProxies(t *testing.T) {
-	f := &fakePolicy{explain: &vibekit.PolicyExplainResult{Capability: "fs_write", Effect: "ask"}}
+	f := &fakePolicy{explain: &marotte.PolicyExplainResult{Capability: "fs_write", Effect: "ask"}}
 	s := &Server{policy: f}
-	b, _ := json.Marshal(vibekit.PolicyExplainRequest{Capability: "fs_write", Resource: "/etc/hosts"})
+	b, _ := json.Marshal(marotte.PolicyExplainRequest{Capability: "fs_write", Resource: "/etc/hosts"})
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/explain", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	s.handlePolicyExplain(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	var got vibekit.PolicyExplainResult
+	var got marotte.PolicyExplainResult
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestPolicyExplainProxies(t *testing.T) {
 
 func TestPolicyExplainRequiresTarget(t *testing.T) {
 	s := &Server{policy: &fakePolicy{}}
-	b, _ := json.Marshal(vibekit.PolicyExplainRequest{})
+	b, _ := json.Marshal(marotte.PolicyExplainRequest{})
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/explain", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	s.handlePolicyExplain(rec, req)
@@ -431,9 +431,9 @@ func TestPolicyExplainShellRequiresResource(t *testing.T) {
 	// the simulation up front with a clear reason instead of forwarding a
 	// request that can only fail (and used to surface as a misleading
 	// "unavailable" error).
-	f := &fakePolicy{explain: &vibekit.PolicyExplainResult{Capability: "shell", Effect: "ask"}}
+	f := &fakePolicy{explain: &marotte.PolicyExplainResult{Capability: "shell", Effect: "ask"}}
 	s := &Server{policy: f}
-	b, _ := json.Marshal(vibekit.PolicyExplainRequest{Capability: "shell", Resource: "   "})
+	b, _ := json.Marshal(marotte.PolicyExplainRequest{Capability: "shell", Resource: "   "})
 	req := httptest.NewRequest(http.MethodPost, "/api/permissions/explain", bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	s.handlePolicyExplain(rec, req)
@@ -481,7 +481,7 @@ func TestPolicyRuleAdd_GuardChecksAllowRulesOnly(t *testing.T) {
 		home := t.TempDir()
 		work := t.TempDir()
 		t.Setenv("HOME", home)
-		f := &fakePolicy{explain: &vibekit.PolicyExplainResult{IsExplicitAsk: true}}
+		f := &fakePolicy{explain: &marotte.PolicyExplainResult{IsExplicitAsk: true}}
 		wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 		return &Server{workDir: work, policy: f}, f, wp
 	}
@@ -580,20 +580,20 @@ func TestPolicyRulesFromFiles_ScopeSelectsItsOwnFile(t *testing.T) {
 // carrying its own remove button.
 func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 	// The rule as it actually arrived, ten times.
-	dup := vibekit.PolicyRule{
+	dup := marotte.PolicyRule{
 		Capability: "all",
 		Effect:     "allow",
 		Scope:      policyfile.ScopeWorkspace,
 		Source:     "/config/home/.kiro/workspace-roots/c52ddf65534b7b46/permissions.yaml",
 		Match:      []string{"*"},
 	}
-	rules := []vibekit.PolicyRule{
+	rules := []marotte.PolicyRule{
 		{Capability: "fs_write", Effect: "deny", Scope: "kiro", Source: "kiro-scope", Match: []string{".kiro/settings/"}},
 	}
 	for range 10 {
 		rules = append(rules, dup)
 	}
-	rules = append(rules, vibekit.PolicyRule{
+	rules = append(rules, marotte.PolicyRule{
 		Capability: "fs_read", Effect: "allow", Scope: "agent", Source: "agent-profile", Match: []string{"./**"},
 	})
 
@@ -602,7 +602,7 @@ func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handlePolicyView(rec, req)
 
-	var got vibekit.PolicyView
+	var got marotte.PolicyView
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func TestPolicyView_DropsIdenticalDuplicatesFromKAS(t *testing.T) {
 // the other. This is why the key spans scope and source rather than being a
 // signature over capability + effect + globs.
 func TestDedupePolicyRules_KeepsTheSameRuleInTwoScopes(t *testing.T) {
-	rules := []vibekit.PolicyRule{
+	rules := []marotte.PolicyRule{
 		{Capability: "shell", Effect: "ask", Scope: policyfile.ScopeUser, Source: "/home/u/.kiro/settings/permissions.yaml", Match: []string{"rm *"}},
 		{Capability: "shell", Effect: "ask", Scope: policyfile.ScopeWorkspace, Source: "/w/.kiro/settings/permissions.yaml", Match: []string{"rm *"}},
 	}
@@ -647,7 +647,7 @@ func TestDedupePolicyRules_EmptyStaysNonNil(t *testing.T) {
 // collision. Two rules differing only in where a separator falls inside their
 // globs must stay two rules, because a glob is arbitrary user text.
 func TestPolicyRuleKey_GlobContentCannotForgeACollision(t *testing.T) {
-	cases := map[string][2]vibekit.PolicyRule{
+	cases := map[string][2]marotte.PolicyRule{
 		"split differs": {
 			{Capability: "shell", Effect: "allow", Match: []string{"a", "b"}},
 			{Capability: "shell", Effect: "allow", Match: []string{"a:b"}},
@@ -674,7 +674,7 @@ func TestPolicyRuleKey_GlobContentCannotForgeACollision(t *testing.T) {
 			if a, b := policyRuleKey(&pair[0]), policyRuleKey(&pair[1]); a == b {
 				t.Errorf("policyRuleKey collided on distinct rules: %q", a)
 			}
-			if got := dedupePolicyRules([]vibekit.PolicyRule{pair[0], pair[1]}); len(got) != 2 {
+			if got := dedupePolicyRules([]marotte.PolicyRule{pair[0], pair[1]}); len(got) != 2 {
 				t.Errorf("dedupePolicyRules merged distinct rules: %+v", got)
 			}
 		})
@@ -682,12 +682,12 @@ func TestPolicyRuleKey_GlobContentCannotForgeACollision(t *testing.T) {
 }
 
 func TestPolicyRuleKey_IdenticalRulesAgree(t *testing.T) {
-	r := vibekit.PolicyRule{
+	r := marotte.PolicyRule{
 		Capability: "all", Effect: "allow", Scope: "workspace", Source: "/w/p.yaml",
 		Match: []string{"*"}, Exclude: []string{"secret/**"},
 	}
 	// A separate value with equal fields, not the same variable.
-	same := vibekit.PolicyRule{
+	same := marotte.PolicyRule{
 		Capability: "all", Effect: "allow", Scope: "workspace", Source: "/w/p.yaml",
 		Match: []string{"*"}, Exclude: []string{"secret/**"},
 	}

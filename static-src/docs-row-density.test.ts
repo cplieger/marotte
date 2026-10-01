@@ -28,7 +28,7 @@ function row(blocks: number): HTMLElement {
   top.className = "docs-row-top";
   const name = document.createElement("span");
   name.className = "list-row-name";
-  name.textContent = "vibekit-performance";
+  name.textContent = "marotte-performance";
   top.append(name);
   surface.append(top);
   if (blocks > 1) {
@@ -90,7 +90,7 @@ describe("a one-block docs row", () => {
     plain.className = "list-row";
     const n = document.createElement("span");
     n.className = "list-row-name";
-    n.textContent = "vibekit-performance";
+    n.textContent = "marotte-performance";
     plain.append(n);
     document.body.append(plain);
     hosts.push(plain);

@@ -18,9 +18,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/runlease"
-	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/translate"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // runIdleWindow is how long a run may execute without producing observable progress
@@ -91,12 +91,12 @@ const (
 const logMsgRunYieldedToSlot = "manual run reached its recipe's next scheduled slot; " +
 	"cancelling so the schedule can run"
 
-// logMsgCancelUnretried is what a run vibekit could not stop AT ALL logs under: the
+// logMsgCancelUnretried is what a run marotte could not stop AT ALL logs under: the
 // bound came due and every attempt failed. It claims nothing about the RUN, because
 // retryTermination fires for every non-nil cancel error, an unknown workflow id
 // included. A CONSTANT for greppability, not because a rule keys on it.
 const logMsgCancelUnretried = "a run's cancel failed on every attempt; " +
-	"vibekit has stopped trying to stop it"
+	"marotte has stopped trying to stop it"
 
 // maxRunEndReasons bounds the recorded-termination map. The record has to OUTLIVE the
 // run — the History row reads it after the run finished — so it cannot be cleared on
@@ -150,7 +150,7 @@ type runBoundsState struct {
 // that reads BOUNDED with no callback anywhere. Lock order is mu then the lease
 // store's, and leaseStore() takes mu itself, so it resolves BEFORE the hold. `decide`
 // runs under the hold, so it must not take mu. A run with no lease is refused for both
-// callers: the only ones without are the TUI's, which vibekit does not host.
+// callers: the only ones without are the TUI's, which marotte does not host.
 func (rs *Runs) stampDeadline(
 	ctx context.Context, workflowID string,
 	decide func(l runlease.Lease, now time.Time) (time.Time, bool),
@@ -297,7 +297,7 @@ func (rs *Runs) stopTimer(workflowID string) {
 	delete(rs.bounds.timers, workflowID)
 }
 
-// disarmDeadline parks a run vibekit is no longer bounding: the lease's deadline is
+// disarmDeadline parks a run marotte is no longer bounding: the lease's deadline is
 // cleared and its timer stopped. Reports whether the run held a deadline at all.
 // Clearing the LEASE is the load-bearing half — a stale deadline would make the step
 // cap believe the run is executing and hand the next re-arm a run to skip.
@@ -349,7 +349,7 @@ func (rs *Runs) clearExecuted(workflowID string) {
 	delete(rs.bounds.executed, workflowID)
 }
 
-// bounded reports whether vibekit currently believes the run to be EXECUTING under a
+// bounded reports whether marotte currently believes the run to be EXECUTING under a
 // deadline it set. TWO readers, neither of which may CLEAR it the way the timer's
 // callback path does: the step cap's gate and retryTermination's own test.
 func (rs *Runs) bounded(workflowID string) bool {
@@ -413,7 +413,7 @@ func (rs *Runs) releaseTermination(workflowID string) {
 // it, and that absence is what makes a bound's cancel distinguishable from a person's.
 //
 // NOTHING IS TOUCHED UNTIL THE CANCEL LANDS: a refused cancel means the run did NOT
-// stop, so it is still one vibekit is bounding and its row has no outcome to report. A
+// stop, so it is still one marotte is bounding and its row has no outcome to report. A
 // landed cancel ends in releaseIfOver, and this is the ONE site that needs it — every
 // deliberate stop reaches here except the orphan sweep, which releases its own lease.
 func (rs *Runs) finishTermination(
@@ -490,7 +490,7 @@ func (rs *Runs) retryTermination(workflowID, reason string) {
 	// earned rather than deciding one, and the guards below re-read.
 	time.AfterFunc(delay, func() {
 		// A pause parked the deadline or a terminal frame released the lease, so
-		// vibekit has stopped bounding this run and it is not one to cancel.
+		// marotte has stopped bounding this run and it is not one to cancel.
 		if !rs.bounded(workflowID) {
 			return
 		}
@@ -692,11 +692,11 @@ func (rs *Runs) backstopSpent(workflowID string) bool {
 
 // StepTurnCapExceeded stops the run a runaway step belongs to. Satisfies
 // translate.RunBoundsAccess. Cancelling the whole RUN is the only enforcement
-// available: every C→A workflow verb vibekit can issue is run-scoped, so there is no
+// available: every C→A workflow verb marotte can issue is run-scoped, so there is no
 // way to stop one step and let its run continue.
 func (rs *Runs) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
 	if !rs.bounded(workflowID) {
-		// A run vibekit is not bounding is not one it may cancel.
+		// A run marotte is not bounding is not one it may cancel.
 		return
 	}
 	if !rs.claimTermination(workflowID) {
@@ -728,7 +728,7 @@ func (rs *Runs) cancelBounded(workflowID, reason string) {
 // orphan sweep's cancel arm because the resume sweep owns it. Anything else is
 // PARENTLESS and MUST be sweepable. Inferring the origin from lease ABSENCE is wrong
 // for a retry, whose first lifecycle frame can beat its own lease grant.
-func runStartLaunch(chatID vibekit.ChatID) launchOrigin {
+func runStartLaunch(chatID marotte.ChatID) launchOrigin {
 	if chatID == "" || isRunChat(chatID) {
 		return launchOrigin{origin: runlease.OriginManual}
 	}
@@ -737,11 +737,11 @@ func runStartLaunch(chatID vibekit.ChatID) launchOrigin {
 
 // observeStart arms the run's deadline, then hands the frame to the translator.
 //
-// `run_start` is the arming point covering the launch path vibekit does not own: KAS
+// `run_start` is the arming point covering the launch path marotte does not own: KAS
 // creates and invokes an agent-launched run internally, so this frame is the FIRST
-// thing vibekit sees of it and the lease for that population is minted HERE. It also
+// thing marotte sees of it and the lease for that population is minted HERE. It also
 // re-arms a RESUMED run, since a pause parks the deadline.
-func (rs *Runs) observeStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rs *Runs) observeStart(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
 		if _, held := rs.lease(f.WorkflowID); !held {
 			rs.grantLease(ctx, f.WorkflowID, f.WorkflowName, runStartLaunch(chatID))
@@ -759,7 +759,7 @@ func (rs *Runs) observeStart(ctx context.Context, chatID vibekit.ChatID, msg *vi
 // The registry and the step-driven TURN ride the same gate — a chat-parented run's step
 // frames open a turn on the launching chat that the bracket path cannot close, because
 // the attribution gate drops a step's own turn_end.
-func (rs *Runs) observeComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rs *Runs) observeComplete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && f.Status.Terminal() {
 		// FIRST, ahead of HandleRunComplete: the close persists the step's assistant
 		// message, and the client repaints the run on the `run_finished` invalidation the
@@ -787,8 +787,8 @@ func (rs *Runs) notifyRunOutcome(ctx context.Context, f lifecycleFrame) {
 	}
 	rs.coord.NotifyPushSubject(ctx,
 		runOutcomeBody(f.Status, rs.runOutcomeLabel(f)),
-		vibekit.PushKindRunOutcome,
-		vibekit.RunSubject(f.WorkflowID))
+		marotte.PushKindRunOutcome,
+		marotte.RunSubject(f.WorkflowID))
 }
 
 // runOutcomeLabel names the run in that notification.
@@ -796,7 +796,7 @@ func (rs *Runs) notifyRunOutcome(ctx context.Context, f lifecycleFrame) {
 // THE FRAME'S TOP-LEVEL NAME IS EMPTY ON run_complete: that frame carries it at
 // finalState.workflowName (internal/translate/workflow.go HandleRunComplete reads
 // p.FinalState.WorkflowName) while lifecycleFrame decodes the top level, and its own
-// doc says the name is on run_start. The lease holds the recipe for every run vibekit
+// doc says the name is on run_start. The lease holds the recipe for every run marotte
 // put on the wire, so it is the answer rather than a nested decode widening a struct
 // that is deliberately the three fields the bounds read.
 func (rs *Runs) runOutcomeLabel(f lifecycleFrame) string {
@@ -814,17 +814,17 @@ func (rs *Runs) runOutcomeLabel(f lifecycleFrame) string {
 // Total over the four terminal statuses; the two live ones return the generic, which
 // is unreachable behind observeComplete's Terminal() gate and shaped like Terminal()'s
 // own switch so a status added upstream still says something true.
-func runOutcomeBody(status vibekit.RunStatus, label string) string {
+func runOutcomeBody(status marotte.RunStatus, label string) string {
 	switch status {
-	case vibekit.RunStatusCompleted:
+	case marotte.RunStatusCompleted:
 		return label + " finished"
-	case vibekit.RunStatusFailed:
+	case marotte.RunStatusFailed:
 		return label + " failed"
-	case vibekit.RunStatusAborted:
+	case marotte.RunStatusAborted:
 		return label + " was aborted"
-	case vibekit.RunStatusCancelled:
+	case marotte.RunStatusCancelled:
 		return label + " was cancelled"
-	case vibekit.RunStatusRunning, vibekit.RunStatusPaused:
+	case marotte.RunStatusRunning, marotte.RunStatusPaused:
 		return label + " finished"
 	}
 	return label + " finished"
@@ -837,7 +837,7 @@ func runOutcomeBody(status vibekit.RunStatus, label string) string {
 //
 // It runs on the bridge's Forward goroutine SYNCHRONOUSLY: that is where WireTurnEnd
 // already finalizes turns from, and a goroutine would break the caller's ordering.
-func (rs *Runs) closeStepTurn(ctx context.Context, chatID vibekit.ChatID) {
+func (rs *Runs) closeStepTurn(ctx context.Context, chatID marotte.ChatID) {
 	if rs.coord == nil || chatID == "" || isRunChat(chatID) {
 		return
 	}
@@ -847,8 +847,8 @@ func (rs *Runs) closeStepTurn(ctx context.Context, chatID vibekit.ChatID) {
 // observePaused parks the deadline of a run that stopped executing, then
 // translates. The run-level `paused` kind only: a node-level pause is a step
 // waiting inside a run that is still going.
-func (rs *Runs) observePaused(next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
-	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rs *Runs) observePaused(next func(context.Context, marotte.ChatID, *marotte.RPCResponse)) func(context.Context, marotte.ChatID, *marotte.RPCResponse) {
+	return func(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 		rs.disarmDeadline(ctx, workflowIDOfFrame(msg))
 		next(ctx, chatID, msg)
 	}
@@ -861,10 +861,10 @@ func (rs *Runs) observePaused(next func(context.Context, vibekit.ChatID, *vibeki
 type lifecycleFrame struct {
 	WorkflowID   string            `json:"workflowId"`
 	WorkflowName string            `json:"workflowName"`
-	Status       vibekit.RunStatus `json:"status"`
+	Status       marotte.RunStatus `json:"status"`
 }
 
-func decodeLifecycleFrame(msg *vibekit.RPCResponse) lifecycleFrame {
+func decodeLifecycleFrame(msg *marotte.RPCResponse) lifecycleFrame {
 	var f lifecycleFrame
 	if msg == nil || len(msg.Params) == 0 {
 		return f
@@ -875,6 +875,6 @@ func decodeLifecycleFrame(msg *vibekit.RPCResponse) lifecycleFrame {
 	return f
 }
 
-func workflowIDOfFrame(msg *vibekit.RPCResponse) string {
+func workflowIDOfFrame(msg *marotte.RPCResponse) string {
 	return decodeLifecycleFrame(msg).WorkflowID
 }

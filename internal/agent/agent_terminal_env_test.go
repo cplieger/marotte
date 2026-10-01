@@ -67,7 +67,7 @@ func TestScreenAgentEnv_RefusesExecutionRedirection(t *testing.T) {
 // The inert-value carve-out is the load-bearing part. `GIT_PAGER=cat` and `PAGER=`
 // are how anything non-interactive stops git paging, so an agent running git hits
 // those constantly — a name-only denylist would refuse them and teach the operator
-// to set VIBEKIT_ALLOW_AGENT_ENV to everything.
+// to set MAROTTE_ALLOW_AGENT_ENV to everything.
 func TestScreenAgentEnv_AllowsOrdinaryAndInertValues(t *testing.T) {
 	ok := []termEnvVar{
 		// Ordinary build/config variables: not on the list at all.
@@ -148,7 +148,7 @@ func TestParseAllowedEnv(t *testing.T) {
 // `dangerous_env_vars`, which is where it came from.
 //
 // The point is DIVERGENCE, not the contents: the same agent should behave the same
-// through the TUI and through vibekit, so a name upstream adds (2.18.1 added two
+// through the TUI and through marotte, so a name upstream adds (2.18.1 added two
 // tar FLAGS to the sibling list, so this one moves too) should show up here as a
 // deliberate edit rather than drift nobody noticed. Hardcoded rather than read off
 // the binary because the binary is not present in CI.

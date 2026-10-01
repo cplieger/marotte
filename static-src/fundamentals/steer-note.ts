@@ -1,7 +1,7 @@
 // Fundamental: SteerNote — a message delivered into a turn already running,
 // rendered inside that turn at the block boundary where the agent read it.
 //
-// A CARD on the tool-card box vocabulary, not a left rail: `#vibekit-ui` reserves
+// A CARD on the tool-card box vocabulary, not a left rail: `#marotte-ui` reserves
 // a leading rail for work this agent did not do itself. The LABEL and the GLYPH
 // are what separate the two origins — see LABELS below for why there are two.
 //
@@ -9,7 +9,7 @@
 // dropped state's "Put it back in the message box".
 //
 // THE DROPPED LABEL SAYS WHAT HAPPENED NEXT, and the origins diverge because only
-// a USER row is carried into a new turn (`vibekit-client.md`).
+// a USER row is carried into a new turn (`marotte-client.md`).
 
 import { el } from "@cplieger/reactive";
 import { attachClamp } from "../clamp-text.js";

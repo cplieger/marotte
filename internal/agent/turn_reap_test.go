@@ -6,10 +6,10 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func newCompactionReapFixture(t *testing.T) (*Runtime, vibekit.TurnEpoch, context.Context) {
+func newCompactionReapFixture(t *testing.T) (*Runtime, marotte.TurnEpoch, context.Context) {
 	t.Helper()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
@@ -73,7 +73,7 @@ func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) 
 		// Inside the bubble, and before the arm: synctest's clock starts at
 		// 2000-01-01, so a start recorded outside it lands in the real present
 		// and would read as newer than the arm rather than older.
-		buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tool", Status: vibekit.ToolInProgress})
+		buf.ToolCalls = append(buf.ToolCalls, marotte.ToolCall{ID: "tool", Status: marotte.ToolInProgress})
 		buf.RecordToolStart("tool")
 		time.Sleep(time.Millisecond)
 
@@ -93,7 +93,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", "compaction failed")
 		time.Sleep(time.Millisecond)
-		buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tool", Status: vibekit.ToolInProgress})
+		buf.ToolCalls = append(buf.ToolCalls, marotte.ToolCall{ID: "tool", Status: marotte.ToolInProgress})
 		buf.RecordToolStart("tool")
 
 		time.Sleep(compactionFailedTurnBudget - time.Millisecond)
@@ -111,7 +111,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 		if !ok {
 			t.Fatal("normal closer could not claim the tool-running turn")
 		}
-		h.coord.turns.finish(turn, vibekit.TurnResult{})
+		h.coord.turns.finish(turn, marotte.TurnResult{})
 	})
 }
 
@@ -136,5 +136,5 @@ func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
 	if turn.reapTimer != nil {
 		t.Error("claimed turn kept its compaction reap timer")
 	}
-	h.coord.turns.finish(turn, vibekit.TurnResult{})
+	h.coord.turns.finish(turn, marotte.TurnResult{})
 }

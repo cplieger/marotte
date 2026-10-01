@@ -19,7 +19,7 @@ import type { EffectiveSettings } from "./wire/types.gen.js";
 // ---------------------------------------------------------------------------
 
 /** Application name used in browser Notification titles. */
-export const NOTIFY_TITLE = "Vibekit";
+export const NOTIFY_TITLE = "Marotte";
 
 // There is no document-title writer here any more. `setBadge` was named for a
 // badge it never set — it wrote document.title only, was called with the literal
@@ -34,7 +34,7 @@ type PushState =
   | { kind: "failed"; error: string };
 
 /** The push kinds the user can switch off, keyed by their WIRE value (matching
- *  `vibekit.PushKind`) and paired with the settings key that carries each one.
+ *  `marotte.PushKind`) and paired with the settings key that carries each one.
  *
  *  Derived from the server's registry rather than restated: a kind with a settings
  *  key is configurable, and `permission` deliberately has none — an ask blocks the

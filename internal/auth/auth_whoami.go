@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -23,7 +23,7 @@ const (
 	// WhoamiSignedOut is a working kiro-cli reporting nobody signed in, and
 	// carries nothing else.
 	WhoamiSignedOut WhoamiState = "signed_out"
-	// WhoamiUnavailable is vibekit not knowing, and carries Reason.
+	// WhoamiUnavailable is marotte not knowing, and carries Reason.
 	WhoamiUnavailable WhoamiState = "unavailable"
 )
 

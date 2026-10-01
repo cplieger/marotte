@@ -3,7 +3,7 @@
  * A connect-time turn_state carries only the TAIL of a big in-flight turn, and
  * this one static line is what stops a reader taking that tail for the whole
  * reply. A NOTE and not a control: the withheld bytes are not on the wire, so a
- * show-more could only fail, and `#vibekit-ui` forbids a control that does
+ * show-more could only fail, and `#marotte-ui` forbids a control that does
  * nothing.
  *
  * Its own slice rather than a rule in 13-messages.css, and the reason is

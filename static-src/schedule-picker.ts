@@ -157,7 +157,7 @@ export function formatStamp(iso: string | undefined): string {
 }
 
 /** The result the server records when a launch took. Every other value is a
- *  failure sentence, and the ones vibekit writes carry this prefix. */
+ *  failure sentence, and the ones marotte writes carry this prefix. */
 const RESULT_STARTED = "started";
 const RESULT_FAILED = "failed: ";
 

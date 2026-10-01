@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // KiroCrew uses the same silence budget for upstream issue #3583.
@@ -12,7 +12,7 @@ const compactionFailedTurnBudget = 60 * time.Second
 
 // CompactionFailed bounds a turn that may never receive its response after a
 // failed compaction. Backend activity and live tools restart the silence budget.
-func (bc *BridgeCoordinator) CompactionFailed(chatID vibekit.ChatID, detail string) {
+func (bc *BridgeCoordinator) CompactionFailed(chatID marotte.ChatID, detail string) {
 	lc := bc.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
@@ -51,7 +51,7 @@ func (bc *BridgeCoordinator) armCompactionReapLocked(lc *chatLifecycle, turn *Tu
 	})
 }
 
-func (bc *BridgeCoordinator) expireCompactionReap(chatID vibekit.ChatID, epoch vibekit.TurnEpoch, armID, seq, gen uint64, detail string) {
+func (bc *BridgeCoordinator) expireCompactionReap(chatID marotte.ChatID, epoch marotte.TurnEpoch, armID, seq, gen uint64, detail string) {
 	lc := bc.turns.lifecycleFor(chatID)
 	lc.mu.Lock()
 	if lc.state != turnOpen || lc.cur == nil || lc.cur.Epoch != epoch {

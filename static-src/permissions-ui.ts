@@ -3,7 +3,7 @@
 //
 // Two controllers live here:
 //
-//   - PermissionsUIController — vibekit's own complementary controls,
+//   - PermissionsUIController — marotte's own complementary controls,
 //     each wired to its config.json field and re-rendered on change:
 //       * supervised_default  boolean
 //       * agent_ignore_files  string[]
@@ -233,7 +233,7 @@ function profileLabel(id: string): string {
  *
  *  Every named rung also says whether a WORKFLOW STEP is covered, because that is
  *  the one place the two halves of a profile differ. A profile's presets ride the
- *  session door and reach only the sessions vibekit opens; Kiro creates a workflow
+ *  session door and reach only the sessions marotte opens; Kiro creates a workflow
  *  step's session itself, so a preset never arrives there. Only the loosest rung
  *  also writes a durable rule to the user-scope permissions file, which is the half
  *  a step session does read — and that rule outlives a restart and applies to every
@@ -260,7 +260,7 @@ function profileLabel(id: string): string {
  *  whatever the parent was seeded with. Only STEP sessions were ever uncovered.
  *
  *  The step-coverage sentence duplicates a SERVER fact the wire does not carry —
- *  which rungs hold policyfile.Profile.FileRules, where vibekit.SecurityProfile
+ *  which rungs hold policyfile.Profile.FileRules, where marotte.SecurityProfile
  *  ships id and presets only. The Go side owns the guard:
  *  TestProfiles_OnlyTheLoosestRungWritesFileRules tables all five rungs against a
  *  wantRules boolean, so a rung gaining file rules turns it red, and that field's

@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/chat"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // openTestTurn opens a turn on reg and returns it, failing when the open was
 // refused. A helper that can fail, so it marks t.Helper() and t.Fatals itself.
-func openTestTurn(t *testing.T, reg *turnRegistry, chatID vibekit.ChatID) *Turn {
+func openTestTurn(t *testing.T, reg *turnRegistry, chatID marotte.ChatID) *Turn {
 	t.Helper()
-	turn := reg.open(t.Context(), chatID, vibekit.TurnSourcePrompt, "", 0)
+	turn := reg.open(t.Context(), chatID, marotte.TurnSourcePrompt, "", 0)
 	if turn == nil {
 		t.Fatalf("open(%q) was refused", chatID)
 	}
@@ -44,7 +44,7 @@ func TestTurnRegistry_InterruptIsFirstWinsPerEpoch(t *testing.T) {
 
 	// The turn ends and another opens. The old epoch names a turn that is over,
 	// so a cause armed for it must not reach the new one.
-	reg.finish(turn, vibekit.TurnResult{})
+	reg.finish(turn, marotte.TurnResult{})
 	next := openTestTurn(t, reg, "c1")
 	if reg.interrupt("c1", turn.Epoch, "stale cause") {
 		t.Error("a cause for a finished epoch was accepted")
@@ -74,7 +74,7 @@ func TestTurnRegistry_StagedSummaryAccumulatesWithinOneTurn(t *testing.T) {
 		t.Error("the second frame reported itself first; the turn would be counted twice")
 	}
 
-	reg.finish(turn, vibekit.TurnResult{})
+	reg.finish(turn, marotte.TurnResult{})
 	openTestTurn(t, reg, "c1")
 	total, first = reg.stageTurnSummary("c1", 700)
 	if total != 700 || !first {
@@ -84,7 +84,7 @@ func TestTurnRegistry_StagedSummaryAccumulatesWithinOneTurn(t *testing.T) {
 }
 
 // TestTurnRegistry_StagedSummaryWithNoTurnOpen keeps the interim honest: a frame
-// arriving for a turn vibekit never opened has nothing to stage onto, so it
+// arriving for a turn marotte never opened has nothing to stage onto, so it
 // stands alone and is counted.
 func TestTurnRegistry_StagedSummaryWithNoTurnOpen(t *testing.T) {
 	reg := newTurnRegistry()
@@ -119,7 +119,7 @@ func TestTurnRegistry_ClaimIsFirstWins(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	reg.finish(turn, vibekit.TurnResult{})
+	reg.finish(turn, marotte.TurnResult{})
 	select {
 	case ok := <-second:
 		if ok {
@@ -142,7 +142,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 
 	opened := make(chan *Turn, 1)
 	go func() {
-		opened <- reg.open(context.WithoutCancel(t.Context()), "c1", vibekit.TurnSourcePrompt, "", 0)
+		opened <- reg.open(context.WithoutCancel(t.Context()), "c1", marotte.TurnSourcePrompt, "", 0)
 	}()
 
 	// The parked open must not proceed while the chat is finalizing: that is what
@@ -154,7 +154,7 @@ func TestTurnRegistry_FinalizeWakesAParkedOpen(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	reg.finish(first, vibekit.TurnResult{})
+	reg.finish(first, marotte.TurnResult{})
 	select {
 	case turn := <-opened:
 		if turn == nil {
@@ -180,7 +180,7 @@ func TestTurnRegistry_OpenIsCancellable(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if turn := reg.open(ctx, "c1", vibekit.TurnSourcePrompt, "", 0); turn != nil {
+	if turn := reg.open(ctx, "c1", marotte.TurnSourcePrompt, "", 0); turn != nil {
 		t.Error("open on a cancelled context returned a turn")
 	}
 }
@@ -211,19 +211,19 @@ func TestTurnRegistry_ForgetDropsTheChat(t *testing.T) {
 // store.
 type stubMeteringStore struct{ mutateErr error }
 
-func (s stubMeteringStore) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) {
+func (s stubMeteringStore) Get(context.Context, marotte.ChatID) (*marotte.Chat, bool) {
 	return nil, false
 }
-func (s stubMeteringStore) BuildHistory(context.Context, vibekit.ChatID) string { return "" }
-func (s stubMeteringStore) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {
+func (s stubMeteringStore) BuildHistory(context.Context, marotte.ChatID) string { return "" }
+func (s stubMeteringStore) AppendMessage(context.Context, marotte.ChatID, *marotte.Message) error {
 	return nil
 }
 
-func (s stubMeteringStore) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+func (s stubMeteringStore) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat, bool) bool) (string, error) {
 	return "", s.mutateErr
 }
 
-func (s stubMeteringStore) UpdateMessage(context.Context, vibekit.ChatID, string, func(*vibekit.Message)) error {
+func (s stubMeteringStore) UpdateMessage(context.Context, marotte.ChatID, string, func(*marotte.Message)) error {
 	return nil
 }
 
@@ -265,10 +265,10 @@ func TestMutateUsage_OtherErrorsStillLog(t *testing.T) {
 func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) {
 	r := newTurnRegistry()
 	ctx := t.Context()
-	const chatID vibekit.ChatID = "c1"
+	const chatID marotte.ChatID = "c1"
 
 	lc := r.lifecycleFor(chatID)
-	if r.open(ctx, chatID, vibekit.TurnSourcePrompt, "", 0) == nil {
+	if r.open(ctx, chatID, marotte.TurnSourcePrompt, "", 0) == nil {
 		t.Fatal("open returned no turn")
 	}
 	claimed, won := r.claimOpen(ctx, chatID)
@@ -291,7 +291,7 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 		woken <- ok
 	}()
 
-	r.finish(claimed, vibekit.TurnResult{Stop: vibekit.StopReasonEndTurn})
+	r.finish(claimed, marotte.TurnResult{Stop: marotte.StopReasonEndTurn})
 
 	if !<-woken {
 		t.Fatal("the waiter on the forgotten lifecycle was never woken, so Forward is parked " +
@@ -310,9 +310,9 @@ func TestForget_DoesNotStrandAnInFlightFinalizeOnAnotherLifecycle(t *testing.T) 
 // excludes a workflow STEP turn, because a step's own frames latch nothing on any client,
 // so the launching chat must be in the RETRACTED set. turn_open_test.go pins the pair.
 func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
-	busySet := func(t *testing.T, r *turnRegistry) map[vibekit.ChatID]bool {
+	busySet := func(t *testing.T, r *turnRegistry) map[marotte.ChatID]bool {
 		t.Helper()
-		out := map[vibekit.ChatID]bool{}
+		out := map[marotte.ChatID]bool{}
 		for _, id := range r.busyChatIDs() {
 			out[id] = true
 		}
@@ -321,7 +321,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 
 	t.Run("a prompt turn is busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+		epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 		if !busySet(t, h.coord.turns)["c1"] {
 			t.Error("a chat running its own prompt turn is absent from busy_chats, so a " +
@@ -331,7 +331,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 
 	t.Run("a workflow STEP turn is NOT busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceWorkflowStep)
+		epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
 		t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
 		if busySet(t, h.coord.turns)["c1"] {
 			t.Error("a workflow step names its launching chat busy, so the retraction is " +
@@ -341,7 +341,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 
 	t.Run("a prompt-class reservation with no Turn minted is busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		if !h.coord.TryReserveTurn("c1", vibekit.TurnSourcePrompt) {
+		if !h.coord.TryReserveTurn("c1", marotte.TurnSourcePrompt) {
 			t.Fatal("a fresh chat refused a prompt reservation")
 		}
 		t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })
@@ -356,12 +356,12 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 	// so the turn has to be finalized for the chat to be idle.
 	t.Run("a settled chat is not busy", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+		h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 		turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
 		if !won {
 			t.Fatal("claimOpen lost the claim on a freshly opened turn")
 		}
-		h.coord.turns.finish(turn, vibekit.TurnResult{})
+		h.coord.turns.finish(turn, marotte.TurnResult{})
 		if busySet(t, h.coord.turns)["c1"] {
 			t.Error("a settled chat is still named busy, so the client never retracts")
 		}
@@ -371,7 +371,7 @@ func TestBusyChatIDs_NamesOnlyTheChatsOwnTurns(t *testing.T) {
 // A shell reservation reaches this door too, from the one predicate both doors read.
 func TestBusyChatIDs_NamesAnAdmittedShellCommand(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !h.coord.TryReserveTurn("c1", vibekit.TurnSourceLocalShell) {
+	if !h.coord.TryReserveTurn("c1", marotte.TurnSourceLocalShell) {
 		t.Fatal("a fresh chat refused a shell reservation")
 	}
 	t.Cleanup(func() { h.coord.ReleaseTurnReservation("c1") })

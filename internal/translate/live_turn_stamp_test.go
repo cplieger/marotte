@@ -4,25 +4,25 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/subject"
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/subject"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // wantLiveTurnStamp asserts evt carries {live_turn, chatID, version}.
-func wantLiveTurnStamp(t *testing.T, evt vibekit.ServerEvent, chatID vibekit.ChatID, version string) {
+func wantLiveTurnStamp(t *testing.T, evt marotte.ServerEvent, chatID marotte.ChatID, version string) {
 	t.Helper()
 	if evt.Subject == nil {
 		t.Fatalf("%s: Subject = nil, want {live_turn %s %s}", evt.Type, chatID, version)
 	}
 	got := *evt.Subject
-	want := vibekit.SubjectStamp{Kind: string(subject.KindLiveTurn), Ref: string(chatID), Version: version}
+	want := marotte.SubjectStamp{Kind: string(subject.KindLiveTurn), Ref: string(chatID), Version: version}
 	if got != want {
 		t.Errorf("%s: Subject = %+v, want %+v", evt.Type, got, want)
 	}
 }
 
 // lastOfType returns the last captured event of type et.
-func lastOfType(t *testing.T, events []vibekit.ServerEvent, et vibekit.EventType) vibekit.ServerEvent {
+func lastOfType(t *testing.T, events []marotte.ServerEvent, et marotte.EventType) marotte.ServerEvent {
 	t.Helper()
 	for _, evt := range slices.Backward(events) {
 		if evt.Type == et {
@@ -30,7 +30,7 @@ func lastOfType(t *testing.T, events []vibekit.ServerEvent, et vibekit.EventType
 		}
 	}
 	t.Fatalf("no %s among %v", et, eventTypes(events))
-	return vibekit.ServerEvent{}
+	return marotte.ServerEvent{}
 }
 
 func TestHandleAssistantChunk_StampsLiveTurnFromTheAppend(t *testing.T) {
@@ -44,13 +44,13 @@ func TestHandleAssistantChunk_StampsLiveTurnFromTheAppend(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, events := newEventCaptureDeps()
 			tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-			chatID := vibekit.ChatID("c1")
+			chatID := marotte.ChatID("c1")
 			tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 				"content": map[string]any{"type": "text", "text": "Hello"},
 			}), tc.reasoning)
-			chunk := lastOfType(t, *events, vibekit.EventMessageChunk)
+			chunk := lastOfType(t, *events, marotte.EventMessageChunk)
 			wantLiveTurnStamp(t, chunk, chatID, deps.bufStore.GetOrInit(chatID).Version())
-			if created := lastOfType(t, *events, vibekit.EventMessageCreated); created.Subject != nil {
+			if created := lastOfType(t, *events, marotte.EventMessageCreated); created.Subject != nil {
 				t.Errorf("message_created carries %+v, want no stamp: it completes no projection", *created.Subject)
 			}
 		})
@@ -62,13 +62,13 @@ func TestHandleAssistantChunk_StampsLiveTurnFromTheAppend(t *testing.T) {
 func TestHandleAssistantChunk_RefusalWriteIsNotTheLast(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "I cannot help with that."},
 		"_meta":   map[string]any{"kiro": map[string]any{"refusal": map[string]any{"category": "harmful"}}},
 	}), false)
-	chunk := lastOfType(t, *events, vibekit.EventMessageChunk)
-	payload, ok := chunk.Payload.(vibekit.MessageChunkPayload)
+	chunk := lastOfType(t, *events, marotte.EventMessageChunk)
+	payload, ok := chunk.Payload.(marotte.MessageChunkPayload)
 	if !ok || payload.Refusal == nil {
 		t.Fatalf("message_chunk payload = %#v, want a refusal-carrying chunk", chunk.Payload)
 	}
@@ -78,10 +78,10 @@ func TestHandleAssistantChunk_RefusalWriteIsNotTheLast(t *testing.T) {
 func TestAnnounceTruncation_StampsLiveTurn(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	buf := deps.bufStore.GetOrInit(chatID)
 	tr.announceTruncation(t.Context(), chatID, buf, "", maxBufferBytes)
-	chunk := lastOfType(t, *events, vibekit.EventMessageChunk)
+	chunk := lastOfType(t, *events, marotte.EventMessageChunk)
 	wantLiveTurnStamp(t, chunk, chatID, buf.Version())
 }
 
@@ -89,27 +89,27 @@ func TestHandleToolCall_StampsLiveTurnFromTheLastWrite(t *testing.T) {
 	t.Run("NoDiffs", func(t *testing.T) {
 		deps, _, events := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1", "title": "readFile", "kind": "read", "status": "pending",
 		}), FrameAttribution{})
-		call := lastOfType(t, *events, vibekit.EventToolCall)
+		call := lastOfType(t, *events, marotte.EventToolCall)
 		wantLiveTurnStamp(t, call, chatID, deps.bufStore.GetOrInit(chatID).Version())
-		if label := lastOfType(t, *events, vibekit.EventWorkingLabel); label.Subject != nil {
+		if label := lastOfType(t, *events, marotte.EventWorkingLabel); label.Subject != nil {
 			t.Errorf("working_label carries %+v, want no stamp", *label.Subject)
 		}
 	})
 	t.Run("WithDiffsTheFileTrackingIsLast", func(t *testing.T) {
 		deps, _, events := newLineCaptureDeps()
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-		chatID := vibekit.ChatID("c1")
+		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff", "title": "writeFile", "kind": "edit", "status": "pending",
 			"content": []map[string]any{
 				{"type": "diff", "path": "x.go", "oldText": "a", "newText": "b"},
 			},
 		}), FrameAttribution{})
-		call := lastOfType(t, *events, vibekit.EventToolCall)
+		call := lastOfType(t, *events, marotte.EventToolCall)
 		// Equal to the buffer's version AFTER TrackFileChanges: a stamp taken from
 		// RecordToolStart (one write earlier) would read one rev behind.
 		wantLiveTurnStamp(t, call, chatID, deps.bufStore.GetOrInit(chatID).Version())
@@ -122,7 +122,7 @@ func TestHandleToolCallUpdate_StampsLiveTurnFromSetToolCall(t *testing.T) {
 		"toolCallId": "tc-1",
 		"status":     "completed",
 	}), FrameAttribution{})
-	upd := lastOfType(t, *events, vibekit.EventToolCallUpdate)
+	upd := lastOfType(t, *events, marotte.EventToolCallUpdate)
 	wantLiveTurnStamp(t, upd, chatID, deps.bufStore.GetOrInit(chatID).Version())
 }
 
@@ -133,23 +133,23 @@ func TestHandleHookUpdate_StampsLiveTurnFromTheLastWrite(t *testing.T) {
 	base, events := newEventCaptureDeps()
 	deps := &hookStatusDeps{baseDeps: base, enabled: true}
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	tr.HandleSessionInfoUpdate(t.Context(), chatID,
 		mustJSON(t, hookUpdateFrame(t, "probe-save", hookStatusCompleted)), FrameAttribution{})
-	call := lastOfType(t, *events, vibekit.EventToolCall)
+	call := lastOfType(t, *events, marotte.EventToolCall)
 	wantLiveTurnStamp(t, call, chatID, base.bufStore.GetOrInit(chatID).Version())
 }
 
 func TestHandleCodeReferences_StampsLiveTurn(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	chatID := vibekit.ChatID("c1")
+	chatID := marotte.ChatID("c1")
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "Hello"},
 	}), false)
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
 		{"licenseName": "MIT", "repository": "r", "url": "https://x"},
 	}))
-	refs := lastOfType(t, *events, vibekit.EventCodeReferences)
+	refs := lastOfType(t, *events, marotte.EventCodeReferences)
 	wantLiveTurnStamp(t, refs, chatID, deps.bufStore.GetOrInit(chatID).Version())
 }

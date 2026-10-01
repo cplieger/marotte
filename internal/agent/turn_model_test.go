@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Which model served a turn.
@@ -24,7 +24,7 @@ func turnEndedModel(t *testing.T, h *Runtime) (model string, present bool) {
 	t.Helper()
 	for _, e := range bufferedSince(h, 0) {
 		var msg struct {
-			Type    vibekit.EventType `json:"type"`
+			Type    marotte.EventType `json:"type"`
 			Payload struct {
 				Model *string `json:"model"`
 			} `json:"payload"`
@@ -32,7 +32,7 @@ func turnEndedModel(t *testing.T, h *Runtime) (model string, present bool) {
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		if msg.Type != vibekit.EventTurnEnded {
+		if msg.Type != marotte.EventTurnEnded {
 			continue
 		}
 		if msg.Payload.Model == nil {
@@ -44,15 +44,15 @@ func turnEndedModel(t *testing.T, h *Runtime) (model string, present bool) {
 	return "", false
 }
 
-func endTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID, epoch vibekit.TurnEpoch) {
+func endTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, epoch marotte.TurnEpoch) {
 	t.Helper()
 	h.SettleTurnOnResponse(t.Context(), chatID, epoch, 0,
-		&vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
+		&marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
 }
 
 func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -60,7 +60,7 @@ func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("hello"))
 	endTurn(t, h, "c1", epoch)
 
@@ -82,14 +82,14 @@ func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
 
 func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A" // no Model: the session took the backend default
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("hello"))
 	endTurn(t, h, "c1", epoch)
 
@@ -110,7 +110,7 @@ func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 // relabelling the persisted field exists to prevent — one level down.
 func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -118,10 +118,10 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("half an answer"))
 	// A switch lands mid-turn (the fast in-session path does exactly this).
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Model = "opus-4"
 		return true
 	}); err != nil {
@@ -158,7 +158,7 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 	// back onto the chat — so the fixture has to agree with itself or the chat's
 	// model at dispatch is the fake's placeholder rather than the seeded one.
 	br.modelID = "sonnet-4"
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -168,21 +168,21 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 	// Hold the prompt inside the bridge Call so the switch and the first frame
 	// land in the window a real turn spends waiting on the model.
 	unblock := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: unblock}
+	br.blockOn = map[string]chan struct{}{marotte.MethodPrompt: unblock}
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		postCmd(t, h, vibekit.ClientCommand{
-			Type: vibekit.CmdPrompt, ChatID: "c1",
+		postCmd(t, h, marotte.ClientCommand{
+			Type: marotte.CmdPrompt, ChatID: "c1",
 			Payload: json.RawMessage(`{"text":"hi","message_id":"m-1"}`),
 		})
 	}()
-	waitForCall(t, br, vibekit.MethodPrompt)
+	waitForCall(t, br, marotte.MethodPrompt)
 
 	// The fast in-session switch: no turn needed, no prompt slot taken.
-	if rec := postCmd(t, h, vibekit.ClientCommand{
-		Type: vibekit.CmdSwitchModel, ChatID: "c1",
+	if rec := postCmd(t, h, marotte.ClientCommand{
+		Type: marotte.CmdSwitchModel, ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"opus-4"}`),
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("switch_model = %d, body %s", rec.Code, rec.Body.String())
@@ -203,7 +203,7 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 		c, _ := cs.Get(t.Context(), "c1")
 		var found bool
 		for i := range c.Messages {
-			if c.Messages[i].Role != vibekit.RoleAssistant {
+			if c.Messages[i].Role != marotte.RoleAssistant {
 				continue
 			}
 			found = true
@@ -247,7 +247,7 @@ func waitForCall(t *testing.T, br *fakeBridge, method string) {
 // needs a case on both paths or the extraction stops earning its keep.
 func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -255,14 +255,14 @@ func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
+	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("the model got this far"))
-	h.AbandonInFlightTurn(t.Context(), "c1", epoch, vibekit.StopReasonInterrupted, "the pipe died")
+	h.AbandonInFlightTurn(t.Context(), "c1", epoch, marotte.StopReasonInterrupted, "the pipe died")
 
 	c, _ := cs.Get(t.Context(), "c1")
 	var found bool
 	for i := range c.Messages {
-		if c.Messages[i].Role == vibekit.RoleAssistant {
+		if c.Messages[i].Role == marotte.RoleAssistant {
 			found = true
 			if got := c.Messages[i].TurnModel; got != "sonnet-4" {
 				t.Errorf("abandoned turn TurnModel = %q, want %q", got, "sonnet-4")

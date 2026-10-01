@@ -483,7 +483,7 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
     //
     // The two badges have DIFFERENT sources and that is not incidental: the
     // trigger comes from the docs scan (the file's own front matter), while the
-    // matcher can only come from the joined endpoint row — vibekit's own hook
+    // matcher can only come from the joined endpoint row — marotte's own hook
     // parser is matcher-blind, so the scan has no matcher to report. The fixture
     // sets both sides for that reason.
     _setHooksForTest([wsHook({ trigger: "PreToolUse", matcher: "fsWrite" })]);
@@ -513,7 +513,7 @@ describe("the Hooks tab: joining state onto a scanned row", () => {
   });
 
   it("renders no warning badge for a value it does not recognise", () => {
-    // The field is a server-side enum, so a vibekit build older than the server
+    // The field is a server-side enum, so a marotte build older than the server
     // that added a third value has to stay quiet rather than paint a blank chip.
     _setHooksForTest([wsHook({ matcher_warning: "someFutureDefect" })]);
     const row = _renderRowForTest(wsHookDoc());
@@ -614,7 +614,7 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
 
   it("STILL offers the toggle, which is the point of the three gates agreeing", () => {
     // The toggle goes through POST /api/hooks/{id}/enabled and KAS writes the
-    // file, so it never touches vibekit's file surface. An unreachable row is
+    // file, so it never touches marotte's file surface. An unreachable row is
     // exactly the row that proves the distinction.
     _setHooksForTest([globalHook({ enabled: true })]);
     const row = _renderRowForTest(globalDoc());
