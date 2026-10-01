@@ -99,6 +99,8 @@ interface Spies {
   runRefresh: Mock<TabOpeners["run"]["refresh"]>;
   subagentShow: Mock<TabOpeners["subagent"]["show"]>;
   subagentRefresh: Mock<TabOpeners["subagent"]["refresh"]>;
+  specShow: Mock<TabOpeners["spec"]["show"]>;
+  specRefresh: Mock<TabOpeners["spec"]["refresh"]>;
 }
 
 let spies: Spies;
@@ -116,6 +118,8 @@ function register(dot: TabDotStatus | "" = ""): void {
     runRefresh: vi.fn<TabOpeners["run"]["refresh"]>(),
     subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
     subagentRefresh: vi.fn<TabOpeners["subagent"]["refresh"]>(),
+    specShow: vi.fn<TabOpeners["spec"]["show"]>(),
+    specRefresh: vi.fn<TabOpeners["spec"]["refresh"]>(),
   };
   const openers: TabOpeners = {
     chat: {
@@ -127,6 +131,7 @@ function register(dot: TabDotStatus | "" = ""): void {
     editor: { show: spies.editorShow, refresh: spies.editorRefresh, close: spies.editorClose },
     run: { show: spies.runShow, refresh: spies.runRefresh },
     subagent: { show: spies.subagentShow, refresh: spies.subagentRefresh },
+    spec: { show: spies.specShow, refresh: spies.specRefresh },
   };
   registerTabOpeners(openers);
 }
@@ -165,11 +170,26 @@ const CASES: readonly { kind: TabKind; ref: string; view: string; route: Route }
     view: "#files-view",
     route: { kind: "files", path: "/workspace/x" },
   },
-  { kind: "history", ref: "", view: "#history-view", route: { kind: "history" } },
+  {
+    kind: "history",
+    ref: "",
+    view: "#history-view",
+    route: { kind: "history", tab: "chats" },
+  },
   { kind: "docs", ref: "", view: "#docs-view", route: { kind: "docs", tab: "steering" } },
+  {
+    kind: "spec",
+    ref: "repo/.kiro/specs/feature-x",
+    view: "#spec-view",
+    route: { kind: "spec", dir: "repo/.kiro/specs/feature-x" },
+  },
 ];
 
-describe("materializeTab is total over the eight kinds", () => {
+/** The kinds hardcoded `owns: false`: subpage VIEWS of work owned elsewhere, so
+ *  their × closes a view and stops nothing. */
+const VIEW_KINDS: readonly TabKind[] = ["run", "subagent", "spec"];
+
+describe("materializeTab is total over the ten kinds", () => {
   // The view selector is asserted against a LITERAL rather than against
   // TAB_VIEWS[kind], which would be tautological: reading the table to check the
   // table cannot see a kind pointing at another kind's view.
@@ -185,11 +205,10 @@ describe("materializeTab is total over the eight kinds", () => {
   // which is what stops a future case hardcoding `owns: true` because "a chat always
   // owns its bridge".
   //
-  // RUN and SUBAGENT are the two exceptions and they are hardcoded FALSE on purpose:
-  // both are subpage VIEWS of work owned elsewhere (user decision, 2026-08), so their
-  // × closes a view and stops nothing. Asserting the exception here is what stops it
-  // being re-derived as a subject field — see the run case below.
-  it.each(CASES.filter((c) => c.kind !== "run" && c.kind !== "subagent"))(
+  // VIEW_KINDS above are the exceptions and they are hardcoded FALSE on purpose.
+  // Asserting the exception here is what stops it being re-derived as a subject
+  // field — see the run case below.
+  it.each(CASES.filter((c) => !VIEW_KINDS.includes(c.kind)))(
     "$kind takes owns from the subject, not from the kind",
     ({ kind, ref }) => {
       register();
@@ -198,7 +217,7 @@ describe("materializeTab is total over the eight kinds", () => {
     },
   );
 
-  it.each(CASES.filter((c) => c.kind === "run" || c.kind === "subagent"))(
+  it.each(CASES.filter((c) => VIEW_KINDS.includes(c.kind)))(
     "$kind is a VIEW whatever the subject claims",
     ({ kind, ref }) => {
       register();
@@ -352,6 +371,15 @@ describe("the injected behaviours receive the subject's ref", () => {
     expect(spies.editorShow).not.toHaveBeenCalled();
   });
 
+  it("spec show and refresh hand the page the spec directory", () => {
+    register();
+    const spec = materializeTab(subject({ kind: "spec", ref: ".kiro/specs/x" }));
+    spec.onShow?.();
+    spec.refresh();
+    expect(spies.specShow).toHaveBeenCalledWith(".kiro/specs/x");
+    expect(spies.specRefresh).toHaveBeenCalledWith(".kiro/specs/x");
+  });
+
   it("run refresh", () => {
     register();
     materializeTab(subject({ kind: "run", ref: "wf-7" })).refresh();
@@ -399,21 +427,39 @@ describe("the chat dot", () => {
 describe("the subagent dot", () => {
   /** A chat row holding one delegate invocation, stamped with the subtask the refs
    *  below name. `findSubagentInvocation` matches on that id AND on the title, so both
-   *  have to be real or the factory correctly finds nothing. */
+   *  have to be real or the factory correctly finds nothing.
+   *
+   *  The invocation is a `tool_call` ENTRY in the issuer's own lane, which is where the
+   *  slice looks for it: it walks `turn_order` newest-first and reads each turn's
+   *  entries, so a row is the two store fields `TurnSource` names and nothing else. */
   function withDelegate(status: string): void {
     vi.mocked(get).mockReturnValue({
-      messages: [
-        {
-          tool_calls: [
-            {
-              id: "invoke_subagent_x",
-              title: "Sub-agent: wf-workflow-creator",
-              status,
-              agent_subtask_id: "sub-1",
-            },
-          ],
-        },
-      ],
+      turn_order: ["t-1"],
+      turns: new Map([
+        [
+          "t-1",
+          {
+            entries: [
+              {
+                id: "invoke_subagent_x",
+                turn: "t-1",
+                kind: "tool_call",
+                seq: 1,
+                ts: 2,
+                payload: {
+                  id: "invoke_subagent_x",
+                  title: "Sub-agent: wf-workflow-creator",
+                  kind: "other",
+                  status,
+                  ts: 0,
+                  agent_subtask_id: "sub-1",
+                },
+              },
+            ],
+            openEntries: new Map(),
+          },
+        ],
+      ]),
     } as never);
   }
 
@@ -501,6 +547,14 @@ describe("names", () => {
 
   // Files is NOT in that table any more: it is one tab per folder, so its label is
   // the folder's last segment rather than a constant.
+  it("names a spec tab after the spec directory's last segment", () => {
+    register();
+    expect(materializeTab(subject({ kind: "spec", ref: "repo/.kiro/specs/feature-x" })).name).toBe(
+      "feature-x",
+    );
+    expect(materializeTab(subject({ kind: "spec", ref: ".kiro/specs/y/" })).name).toBe("y");
+  });
+
   it("names a files tab after the folder it was opened at", () => {
     register();
     expect(materializeTab(subject({ kind: "files", ref: "/workspace/x" })).name).toBe("x");
@@ -534,6 +588,7 @@ describe("subjectForRoute inverts the factory's route", () => {
     [{ kind: "settings", tab: "tools" } as Route, "settings"],
     [{ kind: "git", tab: "prs" } as Route, "git"],
     [{ kind: "docs", tab: "hooks" } as Route, "docs"],
+    [{ kind: "history", tab: "runs" } as Route, "history"],
   ])("drops a singleton's sub-position: %o", (route, kind) => {
     expect(subjectForRoute(route)).toEqual({ kind, ref: "" });
   });

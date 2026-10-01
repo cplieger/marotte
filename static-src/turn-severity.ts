@@ -38,8 +38,8 @@ export type { TurnSeverity };
 
 /** Grade a turn outcome.
  *
- *  Total over the seven outcomes and MECE, and total in BOTH directions: the
- *  `default` arm assigns `outcome` to a `never`, so an eighth member added to the
+ *  Total over the eight outcomes and MECE, and total in BOTH directions: the
+ *  `default` arm assigns `outcome` to a `never`, so a ninth member added to the
  *  generated union is a COMPILE error here rather than a value silently graded
  *  `stopped`. The runtime fallback stays behind that check, because the compiler
  *  cannot see a value the decoder let through.
@@ -49,7 +49,7 @@ export type { TurnSeverity };
  *  value unreachable in practice (`TurnOutcome` is a generated union, so a subject
  *  carrying something else fails at the boundary), and the arm is what makes the
  *  failure direction safe if it ever is reached. `undefined` gets its own case so
- *  it does not consume the exhaustiveness check the eighth-member guard needs.
+ *  it does not consume the exhaustiveness check the ninth-member guard needs.
  *
  *  Two rulings, both of which the surfaces above had got wrong between them:
  *
@@ -69,6 +69,7 @@ export function severityOf(outcome: TurnOutcome | undefined): TurnSeverity {
       return "clean";
     case "cancelled":
     case "unknown":
+    case "empty":
       return "stopped";
     case "interrupted":
     case "failed":
@@ -111,6 +112,7 @@ export const OUTCOME_LABEL: Record<TurnOutcome, string> = {
   refused: "Refused",
   unknown: "Unknown",
   failed: "Failed",
+  empty: "Empty",
 };
 
 /** Every member of `TurnOutcome` as a runtime array, for a decoder that has to
@@ -129,7 +131,7 @@ export const TURN_OUTCOME_VALUES = Object.keys(OUTCOME_LABEL) as readonly TurnOu
  *
  *  Distinct from `defaultFailureReason` on purpose: that answers "why did this turn
  *  not finish" for a turn whose own account is missing, is byte-identical to Go's,
- *  and is empty for the two outcomes that are not failures. This answers "what does
+ *  and is empty for the three outcomes that are not failures. This answers "what does
  *  this mark mean" and is total. */
 export const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
   running: "This turn is still running",
@@ -139,6 +141,7 @@ export const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
   refused: "The model declined to continue",
   unknown: "This turn's end could not be read",
   failed: "This turn failed",
+  empty: "The agent ended this turn without answering",
 };
 
 /** What a turn says when nothing upstream said anything.
@@ -152,10 +155,11 @@ export const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
  *
  *  Keyed per OUTCOME rather than per severity because a reader wants the
  *  distinction the severity throws away: a refusal and a dropped connection are
- *  both broken and want different words. Empty for `completed` and `running`, so a
- *  caller can read "" as "there is nothing to say" without asking the severity
- *  again — and those two are spelled out as cases rather than left to the default,
- *  so an eighth outcome is a compile error here too and cannot silently inherit "".
+ *  both broken and want different words. Empty for `completed`, `running` and
+ *  `empty`, so a caller can read "" as "there is nothing to say" without asking the
+ *  severity again — and those are spelled out as cases rather than left to the
+ *  default, so a ninth outcome is a compile error here too and cannot silently
+ *  inherit "".
  *
  *  The strings are BYTE-IDENTICAL to `marotte.DefaultFailureReason`'s and pinned
  *  that way by the shared fixture. Two hand-written copies of one sentence is
@@ -178,6 +182,7 @@ export function defaultFailureReason(outcome: TurnOutcome | undefined): string {
     case "cancelled":
     case "completed":
     case "running":
+    case "empty":
     case undefined:
       return "";
     default: {

@@ -3,6 +3,19 @@ import { describe, it, expect, vi } from "vitest";
 import fc from "fast-check";
 
 // Mock DOM-dependent modules that mcp-panels.ts imports at module level.
+// `tools.ts` reaches the editor openers, which drag the whole editor graph in
+// behind them. Cut it at that edge rather than widening every partial mock the
+// subgraph would need; no case here opens a file.
+vi.mock("./editor-openers.js", () => ({
+  openFile: vi.fn(),
+  openFileDiff: vi.fn(),
+  openFileInBackground: vi.fn(),
+  openFileGitDiff: vi.fn(),
+  fetchGitDiffSources: vi.fn(),
+  activateFile: vi.fn(),
+  refreshFile: vi.fn(),
+  closeEditorFile: vi.fn(),
+}));
 vi.mock("./dom.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
@@ -30,18 +43,33 @@ vi.mock("./modals.js", () => ({
     /* noop */
   },
 }));
+// Replaced WHOLE, matching the sibling suites that mock this module: the
+// suspended auto-approve list's profile pointer imports `openSetting`, whose real
+// body reads `location.search` at module load and pulls in the tab projection, so
+// the panels' graph now reaches it. No case here navigates.
+vi.mock("./settings-highlight.js", () => ({
+  openSetting: (): void => {
+    /* noop */
+  },
+}));
 vi.mock("./mcp-state.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   discoverySignalFor: undefined,
+  autoApproveHonoured: undefined,
   mcpState: {
     refetchServers: async () => {
       /* noop */
     },
   },
   configured: [],
+  // The registry row asks what is already in mcp.json so it can say "already
+  // configured" instead of demanding credentials the reader has supplied. Nothing
+  // here configures a server, so the honest inert answer is the empty list —
+  // present as a FUNCTION rather than undefined, because a row CALLS it.
+  configuredServers: () => [],
   SECRET_MASK: "***",
 }));
 vi.mock("./mcp-pairs.js", () => ({
@@ -104,11 +132,12 @@ describe("simplifyName", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractNpxPackage", () => {
-  const stub = (args: string[]): Server => ({
+  const stub = (args: string[], command = "npx"): Server => ({
     id: "x",
     name: "x",
     transport: "stdio",
     enabled: true,
+    command,
     args,
     created_at: 0,
     updated_at: 0,
@@ -121,6 +150,11 @@ describe("extractNpxPackage", () => {
     { label: "empty args", args: [], expected: "" },
     { label: "only flags", args: ["-y", "--yes"], expected: "" },
     { label: "whitespace-only arg then package", args: ["  ", "-y", "pkg"], expected: "pkg" },
+    // The three refusals prewarm's own extractor makes, so the two halves of
+    // the app answer "what does this run" the same way.
+    { label: "an unknown flag past the package", args: ["-y", "--force", "pkg"], expected: "" },
+    { label: "a path where a package spec belongs", args: ["-y", "./local/dir"], expected: "" },
+    { label: "an uppercase package name", args: ["-y", "MyPkg"], expected: "" },
   ];
 
   for (const { label, args, expected } of cases) {
@@ -128,6 +162,16 @@ describe("extractNpxPackage", () => {
       expect(extractNpxPackage(stub(args))).toBe(expected);
     });
   }
+
+  for (const command of ["uvx", "docker", "/usr/local/bin/my-mcp", ""]) {
+    it(`refuses a ${command === "" ? "commandless" : command} server`, () => {
+      expect(extractNpxPackage(stub(["-y", "pkg"], command))).toBe("");
+    });
+  }
+
+  it("refuses a remote server", () => {
+    expect(extractNpxPackage({ ...stub(["-y", "pkg"]), transport: "http" })).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------

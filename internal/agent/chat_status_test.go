@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/sse"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/sse"
 )
 
 // Merge is MergeStamped without the stamp, for a test that seeds the cache and
@@ -336,28 +336,30 @@ func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
 // during THIS turn, so feeding it the merge would put a previous turn's words in this
 // turn's push body.
 func TestEmitChatStatus_DoesNotStageAMergedDescription(t *testing.T) {
-	rt, _, _ := newTestHub()
+	rt, cs, _ := newTestHub()
+	seedChat(t, cs, "c1")
 	rt.bus.chatStatus.Merge("c1", marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "d1",
 	})
-	// A source UserAnswered() excludes, so the retention survives the open.
-	if epoch := rt.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep); epoch == 0 {
-		t.Fatal("the fixture could not open a step turn")
+	// A wire turn is KAS's own open, not the user answering, so the retention
+	// survives it.
+	if rt.stageWireTurn(t, "c1") == nil {
+		t.Fatal("the fixture could not open a wire turn")
 	}
 
 	rt.bus.Broadcast(t.Context(), marotte.NewEvent(marotte.EventChatStatus, "c1",
 		marotte.ChatStatusPayload{Status: "in_progress"}))
 
-	// Read the field the way statusDescription does. Not through claimOpen/claimEpoch:
-	// both end in claimLocked, which moves the chat into turnFinalizing and changes the
-	// state under assertion.
+	// Read the field the way statusDescription does. Not through claimOwn, which
+	// ends in claimLocked and moves the turn into finalizing, changing the state
+	// under assertion.
 	lc, ok := rt.coord.turns.lookup("c1")
 	if !ok {
 		t.Fatal("no chat lifecycle for c1")
 	}
 	lc.mu.Lock()
-	staged := lc.cur.statusDesc
+	staged := lc.own.statusDesc
 	lc.mu.Unlock()
 
 	if staged != "" {
@@ -384,43 +386,47 @@ func chatStatusFrames(t *testing.T, events []sse.ReplayEvent) []marotte.ChatStat
 	return out
 }
 
-// TestStartTurn_DischargesTheWaitingRetention covers the counterpart to
+// TestOpenTurn_DischargesTheWaitingRetention covers the counterpart to
 // ClearAtTurnEnd's retention: waiting_on_user outlives its turn on purpose, so
 // something has to end that window or the amber dot describes a question the user
-// answered hours ago. A prompt IS that answer; a run's step turn is not.
-func TestStartTurn_DischargesTheWaitingRetention(t *testing.T) {
+// answered hours ago. A prompt's turn_open IS that answer; a `!cmd` reaches no agent.
+func TestOpenTurn_DischargesTheWaitingRetention(t *testing.T) {
 	waiting := marotte.ChatStatusPayload{
 		Status:      marotte.ChatStatusWaitingOnUser,
 		Description: "waiting on the user to disposition both proposals",
 	}
+	prompt := &marotte.EntryPrompt{ID: "m-c1", Text: "prompt"}
+	name := func(c *marotte.Chat) { c.Name = "test chat" }
 
 	t.Run("a prompt clears it", func(t *testing.T) {
-		rt, _, _ := newTestHub()
+		rt, cs, _ := newTestHub()
+		seedChat(t, cs, "c1")
 		rt.bus.chatStatus.Merge("c1", waiting)
 		head := rt.bus.fanout.Position().Head
 
-		if epoch := rt.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt); epoch == 0 {
-			t.Fatal("the fixture could not open a prompt turn")
+		if _, err := rt.OpenTurn(t.Context(), "c1", marotte.TurnSourcePrompt, prompt, name); err != nil {
+			t.Fatalf("the fixture could not open a prompt turn: %v", err)
 		}
 		if got := rt.bus.chatStatus.Get("c1"); got.Status != "" {
 			t.Errorf("status %q survived the prompt that answered it, so a reconnect repaints the dot", got.Status)
 		}
-		// A second device converges on the frame rather than on its next message_chunk.
+		// A second device converges on the frame rather than on its next entry frame.
 		if got := chatStatusFrames(t, bufferedSince(rt, head)); len(got) != 1 {
 			t.Errorf("the prompt published %d chat_status frames, want 1: %+v", len(got), got)
 		}
 	})
 
-	t.Run("a workflow step does not", func(t *testing.T) {
-		rt, _, _ := newTestHub()
+	t.Run("a local shell does not", func(t *testing.T) {
+		rt, cs, _ := newTestHub()
+		seedChat(t, cs, "c1")
 		rt.bus.chatStatus.Merge("c1", waiting)
 
-		if epoch := rt.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep); epoch == 0 {
-			t.Fatal("the fixture could not open a step turn")
+		if _, err := rt.OpenTurn(t.Context(), "c1", marotte.TurnSourceLocalShell, prompt, name); err != nil {
+			t.Fatalf("the fixture could not open a shell turn: %v", err)
 		}
 		got := rt.bus.chatStatus.Get("c1")
 		if got.Status != marotte.ChatStatusWaitingOnUser {
-			t.Errorf("status is %q, want %q: a run's step is not the user answering", got.Status, marotte.ChatStatusWaitingOnUser)
+			t.Errorf("status is %q, want %q: a `!cmd` reaches no agent, so it answers nothing", got.Status, marotte.ChatStatusWaitingOnUser)
 		}
 		if got.Description != waiting.Description {
 			t.Errorf("description is %q, want %q", got.Description, waiting.Description)

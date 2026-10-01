@@ -83,9 +83,9 @@ func TestLineDelta(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			added, removed := lineDelta(tt.old, tt.new)
+			added, removed := LineDelta(tt.old, tt.new)
 			if added != tt.added || removed != tt.removed {
-				t.Errorf("lineDelta(old, new) = +%d/-%d, want +%d/-%d", added, removed, tt.added, tt.removed)
+				t.Errorf("LineDelta(old, new) = +%d/-%d, want +%d/-%d", added, removed, tt.added, tt.removed)
 			}
 		})
 	}
@@ -100,7 +100,7 @@ func TestLineDelta_BudgetFallback(t *testing.T) {
 		a.WriteString("a" + itoa(i) + "\n")
 		b.WriteString("b" + itoa(i) + "\n")
 	}
-	added, removed := lineDelta(a.String(), b.String())
+	added, removed := LineDelta(a.String(), b.String())
 	if added != n || removed != n {
 		t.Errorf("lineDelta over the budget = +%d/-%d, want +%d/-%d", added, removed, n, n)
 	}
@@ -130,9 +130,9 @@ func TestLineDelta_Fixture(t *testing.T) {
 	}
 	for _, c := range fixture.Cases {
 		t.Run(c.Name, func(t *testing.T) {
-			added, removed := lineDelta(c.Old, c.New)
+			added, removed := LineDelta(c.Old, c.New)
 			if added != c.Added || removed != c.Removed {
-				t.Errorf("lineDelta(%q, %q) = +%d/-%d, want +%d/-%d", c.Old, c.New, added, removed, c.Added, c.Removed)
+				t.Errorf("LineDelta(%q, %q) = +%d/-%d, want +%d/-%d", c.Old, c.New, added, removed, c.Added, c.Removed)
 			}
 		})
 	}

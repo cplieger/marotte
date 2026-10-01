@@ -3,10 +3,12 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/buffer"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
 // baseDeps is a composable Deps implementation for tests and benchmarks.
@@ -14,7 +16,7 @@ import (
 // specific behaviors (e.g. onBroadcast to capture events).
 type baseDeps struct {
 	store       ChatRecords
-	bufStore    *turnBuffers
+	turns       *turnLogs
 	lineTracker *buffer.LineTracker
 	onBroadcast func(context.Context, marotte.ServerEvent)
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
@@ -23,18 +25,25 @@ type baseDeps struct {
 	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
 	// test can stage a scheduled run without a runtime or a scheduler.
 	scheduledRuns map[string]bool
-	// stepCapBreaches records every StepTurnCapExceeded call, so a test can
-	// assert the per-step turn cap fired once and named the right step without a
-	// agent behind it.
-	stepCapBreaches []stepCapBreach
+	// runNotices is the per-chat queue RunNotice consumes, oldest first, so a test
+	// can stage a finished run behind a notify-wf- notice without a run registry.
+	runNotices map[marotte.ChatID][]stagedRunNotice
 	// runProgress records the workflow id of every RunMadeProgress call, in
 	// order, so a test can assert a step's frame refilled its run's idle window
 	// without a lease store behind it.
 	runProgress []string
-	// foldSources records the turn source every fold site stated, in order, so a
-	// test can assert a workflow step's frame would open the RUN's turn rather
+	// folds records where every fold site filed a frame's content, in order, so
+	// a test can assert a workflow step's frame reached the RUN's turn rather
 	// than the chat's.
-	foldSources []marotte.TurnOpenSource
+	folds []foldRecord
+	// runCalls records every RunAppender call, in order.
+	runCalls []runCall
+	// between holds the entries filed after a chat's newest turn_close, and
+	// runBetween the entries filed after a run path's, keyed by runPathKey.
+	between    map[marotte.ChatID][]marotte.Entry
+	runBetween map[string][]marotte.Entry
+	// prompts stages the chat's prompt-class turn PromptTurn answers.
+	prompts map[marotte.ChatID]*turnlog.Turn
 	// compactionFailures records failed-compaction facts sent to the host.
 	compactionFailures []compactionFailure
 	// turnInterrupts records every InterruptTurn call, so a test can assert the
@@ -66,9 +75,8 @@ type baseDeps struct {
 	// in for the host's ledger of what marotte itself sent. Absent means the
 	// agent's, which is the real ledger's answer too.
 	userSteers map[string]bool
-	// sealRefusals are the chats whose SealTurnSegment declines, standing in for
-	// the host refusing to split a turn holding an unsettled tool call.
-	sealRefusals map[marotte.ChatID]bool
+	// steerResends are the resends the double reports per steer id.
+	steerResends map[string][]string
 	// waiting is the steers this double has been told are in KAS's buffer, per
 	// chat, standing in for the runtime's tracker. A map rather than a call log
 	// because what a test asserts is the SET a reconnect would replay, and the
@@ -85,10 +93,13 @@ type termRendered struct {
 func newBaseDeps() *baseDeps {
 	return &baseDeps{
 		store:       nopChatRecords{},
-		bufStore:    newTurnBuffers(),
+		turns:       newTurnLogs(),
 		lineTracker: buffer.NewLineTracker(),
 		terminals:   map[string]termRendered{},
 		waiting:     map[marotte.ChatID][]marotte.SteerQueuedPayload{},
+		between:     map[marotte.ChatID][]marotte.Entry{},
+		runBetween:  map[string][]marotte.Entry{},
+		prompts:     map[marotte.ChatID]*turnlog.Turn{},
 	}
 }
 
@@ -143,6 +154,11 @@ func (d *baseDeps) SteerOrigin(_ marotte.ChatID, steerID string) marotte.SteerOr
 	return marotte.SteerOriginAgent
 }
 
+// SteerResends stands in for the ledger's resends record, keyed by steer id.
+func (d *baseDeps) SteerResends(_ marotte.ChatID, steerID string) []string {
+	return d.steerResends[steerID]
+}
+
 func (d *baseDeps) Broadcast(ctx context.Context, evt marotte.ServerEvent) {
 	if d.onBroadcast != nil {
 		d.onBroadcast(ctx, evt)
@@ -161,35 +177,204 @@ func (d *baseDeps) Mutate(ctx context.Context, id marotte.ChatID, fn func(*marot
 	return d.store.Mutate(ctx, id, fn)
 }
 
-func (d *baseDeps) AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	return d.store.AppendMessage(ctx, chatID, msg)
+func (d *baseDeps) PromptTexts(ctx context.Context, id marotte.ChatID) ([]string, error) {
+	return d.store.PromptTexts(ctx, id)
 }
 
-func (d *baseDeps) UpsertTurnPlan(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	return d.store.UpsertTurnPlan(ctx, chatID, msg)
+func (d *baseDeps) EmptyCompactions(ctx context.Context, id marotte.ChatID) (int, error) {
+	return d.store.EmptyCompactions(ctx, id)
 }
 
-// TurnFoldTarget records the SOURCE each fold site stated, so a test can assert
-// which kind of turn a frame would have opened. The buffer itself is per chat
-// here, which is what keeps the fold sites' own behaviour observable without a
-// turn registry.
-func (d *baseDeps) OpenTurnBuffer(chatID marotte.ChatID) (*buffer.Buffer, bool) {
-	buf := d.bufStore.Get(chatID)
-	return buf, buf != nil
+// The TurnAccess half: one open turn per chat over the recording sink, so a test
+// reads what a frame SEALED rather than a buffer's state. Every fold is recorded
+// with its target, which is how a test tells a chat fold from a run fold.
+func (d *baseDeps) OwnTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
+	t := d.turns.chats[chatID]
+	return t, t != nil && !t.Closed()
 }
 
-func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) *buffer.Buffer {
-	d.foldSources = append(d.foldSources, source)
-	return d.bufStore.GetOrInit(chatID)
+func (d *baseDeps) TurnFoldTarget(_ context.Context, chatID marotte.ChatID) *turnlog.Turn {
+	d.folds = append(d.folds, foldRecord{chat: chatID})
+	return d.turns.chatTurn(chatID)
 }
 
-// lastFoldSource is the source the most recent fold site stated, and whether any
-// fold happened at all.
-func (d *baseDeps) lastFoldSource() (marotte.TurnOpenSource, bool) {
-	if len(d.foldSources) == 0 {
-		return 0, false
+func (d *baseDeps) PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
+	t := d.prompts[chatID]
+	return t, t != nil
+}
+
+func (d *baseDeps) AppendBetweenTurns(_ context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error) {
+	if d.turns.appendErr != nil {
+		return nil, d.turns.appendErr
 	}
-	return d.foldSources[len(d.foldSources)-1], true
+	d.between[chatID] = append(d.between[chatID], *e)
+	return nil, nil
+}
+
+// chatEntries is every entry the chat's current turn sealed, in seal order; the
+// content still coalescing is on the turn's OpenEntries.
+func (d *baseDeps) chatEntries(chatID marotte.ChatID) []marotte.Entry {
+	return d.turns.entriesOf(d.turns.chats[chatID])
+}
+
+// runEntries is every entry the run path's turn sealed, in seal order.
+func (d *baseDeps) runEntries(runID, nodePath string) []marotte.Entry {
+	return d.turns.entriesOf(d.turns.runs[runPathKey(runID, nodePath)])
+}
+
+// toolCallsOf decodes every tool_call entry in entries, in seal order.
+func toolCallsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolCall {
+	t.Helper()
+	var out []marotte.EntryToolCall
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindToolCall {
+			continue
+		}
+		var c marotte.EntryToolCall
+		if err := json.Unmarshal(entries[i].Payload, &c); err != nil {
+			t.Fatalf("decode tool_call %q: %v", entries[i].ID, err)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// toolResultsOf decodes every tool_result entry in entries, in seal order.
+func toolResultsOf(t *testing.T, entries []marotte.Entry) []marotte.EntryToolResult {
+	t.Helper()
+	var out []marotte.EntryToolResult
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindToolResult {
+			continue
+		}
+		var r marotte.EntryToolResult
+		if err := json.Unmarshal(entries[i].Payload, &r); err != nil {
+			t.Fatalf("decode tool_result %q: %v", entries[i].ID, err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// plansOf decodes every plan entry in entries, in seal order.
+func plansOf(t *testing.T, entries []marotte.Entry) []marotte.EntryPlan {
+	t.Helper()
+	var out []marotte.EntryPlan
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindPlan {
+			continue
+		}
+		var p marotte.EntryPlan
+		if err := json.Unmarshal(entries[i].Payload, &p); err != nil {
+			t.Fatalf("decode plan %q: %v", entries[i].ID, err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// turnCloseOf decodes the one turn_close entry in entries; the test fails when the
+// turn is still open.
+func turnCloseOf(t *testing.T, entries []marotte.Entry) marotte.EntryTurnClose {
+	t.Helper()
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindTurnClose {
+			continue
+		}
+		var c marotte.EntryTurnClose
+		if err := json.Unmarshal(entries[i].Payload, &c); err != nil {
+			t.Fatalf("decode turn_close %q: %v", entries[i].ID, err)
+		}
+		return c
+	}
+	t.Fatal("no turn_close entry: the turn is still open")
+	return marotte.EntryTurnClose{}
+}
+
+// hasEntryAppended reports whether events carries an entry_appended frame whose entry
+// is of kind: the frame every entry born sealed travels as.
+func hasEntryAppended(events *[]marotte.ServerEvent, kind marotte.EntryKind) bool {
+	for _, e := range *events {
+		if e.Type != marotte.EventEntryAppended {
+			continue
+		}
+		if p, ok := e.Payload.(marotte.EntryAppendedPayload); ok && p.Entry.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// lastFold is the target the most recent fold site stated, and whether any fold
+// happened at all.
+func (d *baseDeps) lastFold() (foldRecord, bool) {
+	if len(d.folds) == 0 {
+		return foldRecord{}, false
+	}
+	return d.folds[len(d.folds)-1], true
+}
+
+// The RunAppender half: one open turn per run path, recorded call by call.
+func (d *baseDeps) RunNodeStart(_ context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID) {
+	d.runCalls = append(d.runCalls, runCall{kind: "node_start", runID: runID, nodePath: nodePath, sessionID: sessionID, chat: chatID})
+	d.turns.runTurn(runID, nodePath)
+}
+
+func (d *baseDeps) RunNodeComplete(ctx context.Context, runID, nodePath, status, reason string) {
+	d.runCalls = append(d.runCalls, runCall{kind: "node_complete", runID: runID, nodePath: nodePath, status: status, reason: reason})
+	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && !t.Closed() {
+		_, _ = t.Close(ctx, marotte.TurnConclusion{Outcome: marotte.TurnOutcomeCompleted, Reason: reason})
+	}
+}
+
+func (d *baseDeps) RunFoldTarget(_ context.Context, runID, nodePath, sessionID string, chatID marotte.ChatID) (*turnlog.Turn, bool) {
+	d.folds = append(d.folds, foldRecord{chat: chatID, runID: runID, nodePath: nodePath})
+	if t, ok := d.turns.runs[runPathKey(runID, nodePath)]; ok && t.Closed() {
+		return nil, false
+	}
+	d.runCalls = append(d.runCalls, runCall{kind: "fold", runID: runID, nodePath: nodePath, sessionID: sessionID, chat: chatID})
+	return d.turns.runTurn(runID, nodePath), true
+}
+
+func (d *baseDeps) RunAppendAfterClosed(_ context.Context, runID, nodePath string, e *marotte.Entry) error {
+	d.runCalls = append(d.runCalls, runCall{kind: "after_closed", runID: runID, nodePath: nodePath})
+	k := runPathKey(runID, nodePath)
+	d.runBetween[k] = append(d.runBetween[k], *e)
+	return nil
+}
+
+func (d *baseDeps) RunMeter(runID, nodePath string, credits, elapsedMs float64) bool {
+	d.runCalls = append(d.runCalls, runCall{kind: "meter", runID: runID, nodePath: nodePath, credits: credits, elapsedMs: elapsedMs})
+	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
+	return ok && !t.Closed()
+}
+
+func (d *baseDeps) RunStopReason(runID, nodePath string, raw marotte.StopReason) bool {
+	d.runCalls = append(d.runCalls, runCall{kind: "stop_reason", runID: runID, nodePath: nodePath, stop: raw})
+	t, ok := d.turns.runs[runPathKey(runID, nodePath)]
+	return ok && !t.Closed()
+}
+
+// foldRecord is one fold site's target: a chat's own turn when runID is empty,
+// else the run path's.
+type foldRecord struct {
+	chat     marotte.ChatID
+	runID    string
+	nodePath string
+}
+
+// runCall is one recorded RunAppender call.
+type runCall struct {
+	kind      string
+	runID     string
+	nodePath  string
+	sessionID string
+	status    string
+	reason    string
+	chat      marotte.ChatID
+	stop      marotte.StopReason
+	credits   float64
+	elapsedMs float64
 }
 
 // The three turn-bracket operations, recorded rather than performed: the host
@@ -212,37 +397,6 @@ func (d *baseDeps) ReviseTurnBinding(_ context.Context, chatID marotte.ChatID) {
 	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "revise"})
 }
 
-// SealTurnSegment stands in for the host's mid-turn seal: it persists the chat's
-// buffered content as an assistant message and clears the buffer, which is the
-// PROPERTY this package's caller depends on — the segment reaches the store before
-// the event that follows it. The host's own decline conditions are its to test;
-// here the double declines exactly when the buffer has nothing to seal, and
-// `sealRefusals` stages the in-flight-tool decline as an input.
-func (d *baseDeps) SealTurnSegment(ctx context.Context, chatID marotte.ChatID) bool {
-	d.brackets = append(d.brackets, turnBracket{chat: chatID, kind: "seal"})
-	if d.sealRefusals[chatID] {
-		return false
-	}
-	buf := d.bufStore.Get(chatID)
-	if buf == nil {
-		return false
-	}
-	snap, _ := buf.SplitSegment()
-	if !snap.Started {
-		return false
-	}
-	msg := marotte.Message{
-		ID:        snap.MessageID,
-		Role:      marotte.RoleAssistant,
-		Content:   snap.Content,
-		Reasoning: snap.Reasoning,
-		ToolCalls: snap.ToolCalls,
-		Blocks:    snap.Blocks,
-	}
-	_ = d.AppendMessage(ctx, chatID, &msg)
-	return true
-}
-
 // turnBracket is one recorded turn-lifecycle call.
 type turnBracket struct {
 	chat marotte.ChatID
@@ -255,32 +409,81 @@ type turnBracket struct {
 	details string
 }
 
-// turnBuffers stands in for the host's per-turn buffers: one buffer per chat,
-// created on first fold. It is NOT what production does — there a fold with no
-// open turn opens a wireTurnStart turn, and the buffer belongs to that turn's
-// record — but the property this package is responsible for is the same either
-// way: a fold gets somewhere to land, and the same somewhere for the rest of the
-// turn.
-type turnBuffers struct {
-	bufs map[marotte.ChatID]*buffer.Buffer
+// turnLogs stands in for the host's two registries: one open turn per chat and
+// one per run path, each accumulating over a sink that keeps the sealed entries
+// by turn id. It is NOT what production does — there a fold with no open turn
+// opens a wire_turn_start turn through the store — but the property this package
+// is responsible for is the same either way: a fold gets somewhere to land, and
+// the same somewhere for the rest of the turn.
+type turnLogs struct {
+	chats  map[marotte.ChatID]*turnlog.Turn
+	runs   map[string]*turnlog.Turn
+	sealed map[string][]marotte.Entry
+	// appendErr, when set, is what every sink append and every between-turns
+	// append answers, recording nothing: the store refusing a write.
+	appendErr error
+	minted    int
 }
 
-func newTurnBuffers() *turnBuffers {
-	return &turnBuffers{bufs: map[marotte.ChatID]*buffer.Buffer{}}
-}
-
-func (tb *turnBuffers) GetOrInit(chatID marotte.ChatID) *buffer.Buffer {
-	if b, ok := tb.bufs[chatID]; ok {
-		return b
+func newTurnLogs() *turnLogs {
+	return &turnLogs{
+		chats:  map[marotte.ChatID]*turnlog.Turn{},
+		runs:   map[string]*turnlog.Turn{},
+		sealed: map[string][]marotte.Entry{},
 	}
-	b := buffer.New()
-	tb.bufs[chatID] = b
-	return b
 }
 
-func (tb *turnBuffers) Get(chatID marotte.ChatID) *buffer.Buffer { return tb.bufs[chatID] }
+// chatTurn is the chat's open turn, opened on first use and reopened once a
+// close has landed, so a second turn on one chat gets its own id.
+func (tl *turnLogs) chatTurn(chatID marotte.ChatID) *turnlog.Turn {
+	if t, ok := tl.chats[chatID]; ok && !t.Closed() {
+		return t
+	}
+	t := tl.open()
+	tl.chats[chatID] = t
+	return t
+}
 
-func (tb *turnBuffers) Delete(chatID marotte.ChatID) { delete(tb.bufs, chatID) }
+func (tl *turnLogs) runTurn(runID, nodePath string) *turnlog.Turn {
+	k := runPathKey(runID, nodePath)
+	if t, ok := tl.runs[k]; ok {
+		return t
+	}
+	t := tl.open()
+	tl.runs[k] = t
+	return t
+}
+
+func (tl *turnLogs) open() *turnlog.Turn {
+	tl.minted++
+	id := fmt.Sprintf("t%d", tl.minted)
+	return turnlog.Open(id, &recordingSink{logs: tl, turn: id})
+}
+
+// entriesOf is every entry the turn sealed so far, in seal order.
+func (tl *turnLogs) entriesOf(t *turnlog.Turn) []marotte.Entry {
+	if t == nil {
+		return nil
+	}
+	return tl.sealed[t.ID()]
+}
+
+// recordingSink is the store the accumulator seals into: the entries land in
+// the log keyed by turn, in seal order, which is what a test reads back.
+type recordingSink struct {
+	logs *turnLogs
+	turn string
+}
+
+func (s *recordingSink) Append(_ context.Context, e *marotte.Entry) error {
+	if s.logs.appendErr != nil {
+		return s.logs.appendErr
+	}
+	s.logs.sealed[s.turn] = append(s.logs.sealed[s.turn], *e)
+	return nil
+}
+
+func runPathKey(runID, nodePath string) string { return runID + "\x00" + nodePath }
 
 func (d *baseDeps) RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string) {
 	d.lineTracker.RecordFromDiffs(chatID, diffs, turn, kind)
@@ -290,15 +493,19 @@ func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
 
-// stepCapBreach is one recorded StepTurnCapExceeded call.
-type stepCapBreach struct {
+// stagedRunNotice is one finished run a test hands RunNotice.
+type stagedRunNotice struct {
 	workflowID string
-	nodeID     string
-	turns      int
+	producedTs int64
 }
 
-func (d *baseDeps) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
-	d.stepCapBreaches = append(d.stepCapBreaches, stepCapBreach{workflowID, nodeID, turns})
+func (d *baseDeps) RunNotice(chatID marotte.ChatID) (string, int64, bool) {
+	q := d.runNotices[chatID]
+	if len(q) == 0 {
+		return "", 0, false
+	}
+	d.runNotices[chatID] = q[1:]
+	return q[0].workflowID, q[0].producedTs, true
 }
 
 func (d *baseDeps) RunMadeProgress(workflowID string) {
@@ -340,7 +547,6 @@ func (d *baseDeps) AccumulateSpend(ctx context.Context, chatID marotte.ChatID, c
 
 func (d *baseDeps) StageConversationTurnSummary(ctx context.Context, chatID marotte.ChatID, elapsedMs float64) {
 	d.mutateUsage(ctx, chatID, func(u *marotte.Usage) {
-		u.TurnCount++
 		if elapsedMs > 0 {
 			u.LastTurnMs = elapsedMs
 		}
@@ -401,7 +607,7 @@ func (d *baseDeps) SetModels(models []marotte.SessionModel) bool {
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
-	tr := New(rolesOf(newBaseDeps()), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(newBaseDeps()))
 	ctx := b.Context()
 	chatID := marotte.ChatID("bench-chat")
 
@@ -414,7 +620,7 @@ func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 // overhead on the steady-state path (buffer already started).
 func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps))
 	ctx := b.Context()
 	chatID := marotte.ChatID("bench-chunk")
 
@@ -422,11 +628,11 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 
 	// Prime the buffer with a first chunk so subsequent iterations hit the
 	// steady-state path (no message creation overhead).
-	tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
+	tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false, FrameAttribution{})
 
 	b.ReportAllocs()
 	for b.Loop() {
-		tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
+		tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false, FrameAttribution{})
 	}
 }
 
@@ -435,7 +641,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 // Measures end-to-end throughput including buffer management.
 func BenchmarkTranslator_FullTurn(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps))
 	ctx := b.Context()
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
@@ -446,23 +652,23 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 		chatID := marotte.ChatID("bench-turn")
 		// Phase 1: initial streaming chunks
 		for range 50 {
-			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
+			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false, FrameAttribution{})
 		}
 		// Phase 2: tool call
 		tr.HandleToolCall(ctx, chatID, toolCallPL, FrameAttribution{})
 		tr.HandleToolCallUpdate(ctx, chatID, toolUpdatePL, FrameAttribution{})
 		// Phase 3: more streaming
 		for range 50 {
-			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
+			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false, FrameAttribution{})
 		}
-		// Cleanup: reset buffer for next iteration
-		deps.bufStore.Delete(chatID)
+		// Cleanup: a fresh turn for the next iteration
+		delete(deps.turns.chats, chatID)
 	}
 }
 
 func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps))
 	ctx := b.Context()
 	chatID := marotte.ChatID("bench-usage")
 	raw := json.RawMessage(`{"size":100000,"used":42500}`)

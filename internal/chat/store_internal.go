@@ -2,17 +2,14 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // --- Unexported Store methods ---
@@ -35,29 +32,37 @@ func (s *Store) Lock(chatID marotte.ChatID) *sync.Mutex { return s.lock(chatID) 
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 
-// Remove deletes a chat and records its tombstone, so a racing Mutate cannot
-// resurrect the id. Only a chat that actually existed is tombstoned. The caller
-// must hold Lock for chatID across this call.
-//
-// The returned version is the `chats` version the removal minted, bumped under
-// the caller's lock after the tombstone so the chat_deleted frame that follows
-// can carry it; "" when nothing was removed.
+// Remove deletes a chat's directory and records its tombstone, so a racing Mutate
+// cannot resurrect the id; the log is closed and tombstoned FIRST, so a turn still
+// folding cannot re-create entries.jsonl under a directory the unlink is about to
+// take. Only a chat that existed is tombstoned. The caller must hold Lock for
+// chatID. Answers the `chats` version the removal minted, for the chat_deleted
+// frame that follows, or "" when nothing was removed.
 func (s *Store) Remove(chatID marotte.ChatID) (string, error) {
-	path, err := s.pathFor(chatID)
+	dir, err := s.pathFor(chatID)
 	if err != nil {
 		return "", err
 	}
-	err = os.Remove(path)
-	// The index entry goes whatever Remove reported: a file that was already gone has
-	// no business staying findable.
+	if v, ok := s.logs.LoadAndDelete(chatID); ok {
+		if l, isLog := v.(*EntryLog); isLog {
+			_ = l.Remove()
+		}
+	}
+	// The index entry goes whatever the remove reports: a chat that was already gone
+	// has no business staying findable.
 	s.index.drop(chatID)
-	if errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(dir, headerFileName)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// A directory with no header is not a chat; sweep whatever is there.
+			_ = os.RemoveAll(dir)
+			return "", os.ErrNotExist
+		}
+		return "", err
+	}
+	if err := os.RemoveAll(dir); err != nil {
 		return "", err
 	}
 	s.markDeleted(chatID)
-	if err != nil {
-		return "", err
-	}
 	return s.versions.BumpCounter(subject.KindChats, ""), nil
 }
 
@@ -91,112 +96,72 @@ func (s *Store) isTombstoned(chatID marotte.ChatID) bool {
 	return true
 }
 
-// Exists reports whether chatID is a chat this store serves: its file is present
+// Exists reports whether chatID is a chat this store serves: its header is present
 // and it was not deleted within tombstoneTTL. It takes NO per-chat mutex — a
 // stat and the tombstone set's own lock — so the digest resolver can ask it
-// without parking behind a Mutate's file rewrite.
+// without parking behind a Mutate's header rewrite.
 func (s *Store) Exists(chatID marotte.ChatID) bool {
-	path, err := s.pathFor(chatID)
-	if err != nil || s.isTombstoned(chatID) {
+	if _, err := s.pathFor(chatID); err != nil || s.isTombstoned(chatID) {
 		return false
 	}
-	_, err = os.Stat(path)
+	return s.headerExists(chatID)
+}
+
+// headerExists reports whether chat.json is on disk for chatID. No lock.
+func (s *Store) headerExists(chatID marotte.ChatID) bool {
+	dir, err := s.pathFor(chatID)
+	if err != nil {
+		return false
+	}
+	//nolint:gosec,nolintlint // G703: the path is <root>/<id>/... over an id a door already admitted (ids.ValidChatID for a chat, runLog.dir for a run)
+	_, err = os.Stat(filepath.Join(dir, headerFileName))
 	return err == nil
 }
 
+// pathFor is the chat's DIRECTORY.
 func (s *Store) pathFor(chatID marotte.ChatID) (string, error) {
 	if !chatIDPattern(chatID) {
 		return "", errInvalidChatID(chatID)
 	}
-	return filepath.Join(s.dir, string(chatID)+chatFileSuffix), nil
+	return filepath.Join(s.dir, string(chatID)), nil
 }
 
-// load reads a chat file into memory. Returns nil, os.ErrNotExist if the
-// file does not exist.
-func (s *Store) load(chatID marotte.ChatID) (*marotte.Chat, error) {
-	path, err := s.pathFor(chatID)
-	if err != nil {
+// header is the chat's header file. The id is validated by every caller's pathFor;
+// this is the one place the two file names meet.
+func (s *Store) header(chatID marotte.ChatID) EntryHeader {
+	return NewEntryHeader(filepath.Join(s.dir, string(chatID)))
+}
+
+// load reads a chat's header into memory. Returns os.ErrNotExist if the chat has
+// no header.
+func (s *Store) load(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, error) {
+	if _, err := s.pathFor(chatID); err != nil {
 		return nil, err
 	}
-	return readChatFile(path, "chat "+string(chatID), s.fileCap)
+	return s.header(chatID).Read(ctx)
 }
 
-// save stamps the chat's last-activity time and writes it to chatID's
-// file. Every mutation except a draft autosave goes through here, since
-// every other mutation IS activity.
-func (s *Store) save(chatID marotte.ChatID, chat *marotte.Chat) error {
+// save stamps the chat's last-activity time and writes its header. Every
+// mutation except a composer autosave goes through here, since every other
+// mutation IS activity.
+func (s *Store) save(ctx context.Context, chatID marotte.ChatID, chat *marotte.Chat) error {
 	chat.UpdatedAt = time.Now().UnixMilli()
-	return s.writeChat(chatID, chat)
+	return s.writeHeader(ctx, chatID, chat)
 }
 
-// writeChat atomically writes chat to chatID's file, leaving UpdatedAt exactly
-// as the caller left it — which is what SetDraft needs. The caller holds the
-// per-chat mutex, so atomicfile's own locking is unnecessary; the parent dir is
-// created 0o700 because chat files may carry secrets.
+// writeHeader atomically replaces the chat's header, leaving UpdatedAt exactly as
+// the caller left it — which is what SetDraft needs. The caller holds the per-chat
+// mutex.
 //
-// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified against
-// it: a chat whose stored id is not its filename would otherwise overwrite the
-// file that id names, under the requested id's lock.
-func (s *Store) writeChat(chatID marotte.ChatID, chat *marotte.Chat) error {
-	path, err := s.pathFor(chatID)
-	if err != nil {
+// THE DESTINATION IS THE ARGUMENT, and the object's own id is verified against it:
+// a chat whose stored id is not its directory would otherwise overwrite the header
+// that id names, under the requested id's lock.
+func (s *Store) writeHeader(ctx context.Context, chatID marotte.ChatID, chat *marotte.Chat) error {
+	if _, err := s.pathFor(chatID); err != nil {
 		return err
 	}
 	if chat.ID != string(chatID) {
-		slog.Error("chat write: refused to write a chat over another chat's file",
-			"chat_id", chatID, "stored_id", chat.ID, "path", path)
 		return errChatIDMismatch(chatID, chat.ID)
 	}
-	// Bounded copy-on-write, never in place: AppendMessage's caller keeps the
-	// message it handed over and broadcasts it, and a Message copy shares its
-	// ToolCalls backing array, so cutting the stored value in place would edit
-	// the live one.
-	data, err := json.MarshalIndent(storeChat(chat), "", "  ")
-	if err != nil {
-		return err
-	}
-	// The search index describes the bytes on disk, and this replaces them: the
-	// entry goes under the lock this write already holds, and the next query
-	// rebuilds it from whatever landed.
-	s.index.drop(chatID)
-	// WithMaxBytes mirrors readCappedFile's bound: never persist a chat file the
-	// store's own read path would refuse to load. int64(0) is atomicfile's
-	// documented "no cap", which is the same encoding chatFileCap uses.
-	_, err = atomicfile.WriteFile(context.Background(), path, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
-		atomicfile.WithMaxBytes(int64(s.fileCap)))
-	s.logWriteOutcome(chatID, int64(len(data)), err)
-	return err
-}
-
-// writeHeadroomFraction is how close to the cap a SUCCESSFUL write may land
-// before it is reported. A tenth gives an operator the last 10% of a chat's
-// budget to act in, and the alarm rides the write it describes rather than a
-// poll nothing schedules.
-const writeHeadroomFraction = 10
-
-// logWriteOutcome reports what the cap did to this write: a refusal is an
-// ERROR naming the size and the cap, because atomicfile pre-checks before
-// staging its temp, so the old file survives and the TURN IS DISCARDED — the
-// data-loss shape this whole bound exists to stop. A write that landed inside
-// the last tenth of the cap warns while there is still room to act.
-//
-// Both are no-ops under an unlimited cap, where neither can happen.
-func (s *Store) logWriteOutcome(chatID marotte.ChatID, size int64, err error) {
-	if s.fileCap.unlimited() {
-		return
-	}
-	capBytes := int64(s.fileCap)
-	if err != nil {
-		if errors.Is(err, atomicfile.ErrFileTooLarge) {
-			slog.Error("chat write: refused over the chat file cap; this turn was NOT persisted",
-				"chat_id", chatID, "size_bytes", size, "cap_bytes", capBytes)
-		}
-		return
-	}
-	if headroom := capBytes - size; headroom < capBytes/writeHeadroomFraction {
-		slog.Warn("chat write: this chat is near the chat file cap",
-			"chat_id", chatID, "size_bytes", size, "cap_bytes", capBytes,
-			"headroom_bytes", headroom)
-	}
+	return s.header(chatID).Write(ctx, chat)
 }

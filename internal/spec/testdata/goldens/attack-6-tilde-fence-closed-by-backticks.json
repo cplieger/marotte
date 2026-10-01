@@ -1,0 +1,43 @@
+{
+  "input_file": "attack-6-tilde-fence-closed-by-backticks.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Before",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "c1a1eea14184897ef10e510b36f741cb35d3edb797bb14877288ad72f916d232",
+      "detail": "~~~\nexample\n```",
+      "children": []
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "2",
+      "text": "2. After the mismatched close",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "4b43e8d9ec94d10eacae05f30f80d538479c75844cf1f741a622baad0d2c662e",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 2
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

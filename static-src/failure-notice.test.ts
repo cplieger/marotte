@@ -53,6 +53,7 @@ vi.mock("./tabs.js", async () => ({
 }));
 
 import { reportFailure, clearFailure, _resetForTest } from "./failure-notice.js";
+import { BUS_COMMAND_FAILED, emitBus } from "./bus.js";
 import { setSessions, setActive } from "./store.js";
 import type { Session } from "./types.js";
 function makeSession(id: string, name: string): Session {
@@ -67,12 +68,12 @@ function makeSession(id: string, name: string): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: 0,
-    messages: [],
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -489,5 +490,40 @@ describe("a turn-scoped failure on the chat in front of you", () => {
     mockActiveTabId.mockReturnValue("c2");
     reportFailure("c1", "at capacity", undefined, true);
     expect(toastCount()).toBe(1);
+  });
+});
+
+// The transport reaches this module over the bus rather than by import, because
+// `raise` reads the tab store and the tab store dispatches through the transport —
+// a direct call closes that ring (see bus.ts's BUS_COMMAND_FAILED).
+//
+// Driven through the REAL bus: the subscription is registered at this module's own
+// import, and nothing else would notice if it stopped being. Its two loaders are
+// `app.ts`'s side-effect import and `handlers/turn.ts`'s import of `reportFailure`,
+// so losing both silences every transport failure with no other symptom.
+describe("failure-notice subscribes to the transport's failure event", () => {
+  it("raises the notice for a failure emitted on the bus", () => {
+    emitBus(BUS_COMMAND_FAILED, { chatID: "c1", message: "at capacity" });
+    expect(toastCount()).toBe(1);
+    expect(lastToast()).toBe("at capacity");
+  });
+
+  it("names and links a chat that is not the one on screen", () => {
+    // The same routing an imported call gets: the payload's chat id is the real
+    // argument, not a pass-through of the active chat.
+    emitBus(BUS_COMMAND_FAILED, { chatID: "c2", message: "at capacity" });
+    expect(lastToast()).toBe("Write the docs: at capacity");
+    expect(lastAction()?.label).toBe("Open");
+  });
+
+  it("carries no remedy and no turn scope, so it is never inline-suppressed", () => {
+    // A transport failure has no inline home — the server states `turn_scoped` per
+    // frame and a dead POST emits no frame at all — so this must toast even while
+    // the reader is looking at the affected chat. `reportFailure`'s own default is
+    // what supplies that, and the subscription must not start passing `true`.
+    mockActiveTabId.mockReturnValue("c1");
+    emitBus(BUS_COMMAND_FAILED, { chatID: "c1", message: "Request timed out" });
+    expect(toastCount()).toBe(1);
+    expect(lastStickyAction()).toBeUndefined();
   });
 });

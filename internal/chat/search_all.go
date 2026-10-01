@@ -23,13 +23,12 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/parallel"
 	"github.com/cplieger/marotte/internal/textsearch"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The result cap and title boost are KiroCrew's `search_sessions(limit=50)` and
@@ -82,7 +81,7 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 	want := queryTrigrams(parseSearchQuery(query, false).text)
 	found := make([]chatScan, len(entries))
 	ran := parallel.Bounded(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
-		found[idx] = s.searchOneChat(ce, query, want)
+		found[idx] = s.searchOneChat(ctx, ce, query, want)
 	})
 
 	matches := make([]Match, 0, 16)
@@ -130,36 +129,31 @@ type chatScan struct {
 }
 
 // searchOneChat scans one chat, or lets its filter answer for it: a chat whose
-// filter lacks a trigram of the query cannot hold the query, so it is not opened
+// filter lacks a trigram of the query cannot hold the query, so its log is not read
 // and its zero verdict counts it as scanned. A chat with no filter yet is read
 // through indexedRead, which records one from that read.
 //
-// The scan runs outside every lock, and so does the read of an admitted chat:
-// searchWorkers of them run at once, so an unlimited cap bounds the fan-out by
-// nothing but the chats on disk.
-func (s *Store) searchOneChat(ce chatEntry, query string, want []uint64) chatScan {
+// The scan runs outside every lock; the read of an admitted chat takes the chat's
+// own lock for the length of the log read, because the offset index it reads
+// through is the store's. searchWorkers of them run at once, so an unlimited cap
+// bounds the fan-out by nothing but the chats on disk.
+func (s *Store) searchOneChat(ctx context.Context, ce chatEntry, query string, want []uint64) chatScan {
 	id := marotte.ChatID(ce.id)
-	var c *marotte.Chat
-	var err error
-	if f, ok := s.index.lookup(id); ok {
-		if !f.holdsAll(want) {
-			return chatScan{}
-		}
-		c, err = readChatFile(ce.path, "chat "+ce.id, s.fileCap)
-	} else {
-		c, err = s.indexedRead(ce)
+	if f, ok := s.index.lookup(id); ok && !f.holdsAll(want) {
+		return chatScan{}
 	}
+	c, entries, drawn, err := s.indexedRead(ctx, ce)
 	if err != nil {
 		// A chat deleted since the listing is a skip the answer covers; anything
 		// else left an existing chat unread, and the answer must say so.
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrChatNotFound) {
 			return chatScan{}
 		}
-		slog.Warn("chat search: skipping unreadable file", "chat_id", ce.id, "error", err)
+		slog.Warn("chat search: skipping unreadable chat", "chat_id", ce.id, "error", err)
 		return chatScan{unread: true}
 	}
 	// Case-INSENSITIVE always: the question is asked from memory, which drops case.
-	res, chars := searchChat(c.Messages, query, false)
+	res, chars := searchEntries(entries, drawn, query, false)
 	// A TITLE naming the subject is a result even when the body never repeats the word.
 	titles := titleHits(c.Name, query)
 	if res.Matched == 0 && titles == 0 {
@@ -173,7 +167,7 @@ func (s *Store) searchOneChat(ce chatEntry, query string, want []uint64) chatSca
 		UpdatedAt: c.UpdatedAt,
 	}
 	// A title-only match has no line to show; the row falls back to the name. The
-	// hit list is capped, but it is in message order, so the earliest turn's hit is
+	// hit list is capped, but it is in log order, so the earliest turn's hit is
 	// always inside it.
 	if len(res.Matches) > 0 {
 		best := bestHit(res.Matches)
@@ -182,29 +176,41 @@ func (s *Store) searchOneChat(ce chatEntry, query string, want []uint64) chatSca
 	return chatScan{match: m}
 }
 
-// indexedRead reads one chat under its own lock and records its filter from that
-// read. The lock is the one writeChat and Remove hold when they drop an entry, so
-// a filter built here describes exactly the bytes that were on disk and a later
-// write drops it rather than racing it. Two queries missing on one chat at once
-// both build; the second put replaces an equal filter, which costs the hashing
-// and nothing else.
-func (s *Store) indexedRead(ce chatEntry) (*marotte.Chat, error) {
+// indexedRead reads one chat's header, log and rail under its own lock and records
+// its filter from that read when it has none. The lock is the one every writer
+// holds when it appends, so a filter built here describes exactly the bytes that
+// were on disk and a later append extends it under that lock rather than racing
+// it. Two queries missing on one chat at once both build; the second put replaces
+// an equal filter, which costs the hashing and nothing else.
+func (s *Store) indexedRead(ctx context.Context, ce chatEntry) (c *marotte.Chat, entries []marotte.Entry, drawn map[string]struct{}, err error) {
 	id := marotte.ChatID(ce.id)
 	m := s.lock(id)
 	m.Lock()
 	defer m.Unlock()
-	c, err := readChatFile(ce.path, "chat "+ce.id, s.fileCap)
+	c, err = s.load(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	s.index.put(id, buildChatFilter(c))
-	return c, nil
+	l, err := s.logFor(ctx, id)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	entries, err = l.All()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	drawn = drawnSet(l.RailRows())
+	if _, indexed := s.index.lookup(id); !indexed {
+		s.index.put(id, buildChatFilter(c.Name, entries))
+	}
+	return c, entries, drawn, nil
 }
 
-// chatEntries lists every chat file in the store's directory. A directory that
-// cannot be listed, or a context dying mid-walk, cuts the list SHORT, and
-// `truncated` is the field that says so; without it SearchAll publishes an
-// authoritative "in none of your chats" for a scan that opened none of them.
+// chatEntries lists every chat directory in the store's directory: a valid id
+// holding a chat.json. A directory that cannot be listed, or a context dying
+// mid-walk, cuts the list SHORT, and `truncated` is the field that says so; without
+// it SearchAll publishes an authoritative "in none of your chats" for a scan that
+// opened none of them.
 func (s *Store) chatEntries(ctx context.Context) (entries []chatEntry, truncated bool) {
 	des, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -212,19 +218,11 @@ func (s *Store) chatEntries(ctx context.Context) (entries []chatEntry, truncated
 		return nil, true
 	}
 	entries = make([]chatEntry, 0, len(des))
-	for _, e := range des {
+	for _, ce := range chatDirs(des, s.dir) {
 		if ctx.Err() != nil {
 			return entries, true
 		}
-		name := e.Name()
-		if !strings.HasSuffix(name, chatFileSuffix) {
-			continue
-		}
-		id := strings.TrimSuffix(name, chatFileSuffix)
-		if !chatIDPattern(marotte.ChatID(id)) {
-			continue
-		}
-		entries = append(entries, chatEntry{id: id, path: filepath.Join(s.dir, name)})
+		entries = append(entries, ce)
 	}
 	return entries, false
 }

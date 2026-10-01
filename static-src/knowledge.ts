@@ -1,23 +1,13 @@
 // ---------------------------------------------------------------------------
-// Knowledge bases: manage the workspace semantic-search index (kiro-cli's
-// _kiro/knowledge store) from Settings → Instructions, alongside the steering
-// docs / skills / agents list — knowledge bases are the same "workspace
-// context" family.
-//
-// The list is server-canonical (it lives in kiro-cli's global disk store, not
-// marotte's chat store), so this module fetches GET /api/knowledge and renders
-// it; mutations go through the knowledge.add / knowledge.remove actions and
-// refetch. Indexing runs in the BACKGROUND: `add` returns immediately and the
-// new base shows up as an "indexing" row with a live progress bar. A
-// user-initiated add pushes NO notification at all, so progress is driven by
-// POLLING GET /api/knowledge while any entry is still indexing. There is no SSE
-// to supplement it: the two indexing notifications fired only for a non-builtin
-// mode's declared bases, which land in a PER-AGENT store disjoint from the
-// `default` store this endpoint reads — so the refetch they triggered could never
-// show the base they announced. Deleted rather than kept as a no-op.
+// The knowledge list is SERVER-canonical — kiro-cli's own store, not marotte's —
+// so this module fetches and refetches it and never holds an authoritative copy.
+// Indexing runs in the background and progress is POLLED, never pushed: the two
+// indexing notifications that existed named a per-agent store this endpoint
+// cannot read, so they were deleted rather than kept as a no-op.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { sigChanged } from "./paint-sig.js";
 import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";
@@ -26,8 +16,8 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { apiGetTyped, CancellableSlot, type Decoder } from "./api-client.js";
 import { decodeEffectiveSettings } from "./wire/decoders.gen.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { addKnowledge, removeKnowledge } from "./actions/knowledge.js";
-import { ICON_PLUS_UI, ICON_TRASH_UI } from "./icons.js";
+import { addKnowledge, reindexKnowledge, removeKnowledge } from "./actions/knowledge.js";
+import { ICON_PLUS_UI, ICON_REFRESH, ICON_TRASH_UI } from "./icons.js";
 import { asObject, decodeArray, optBool, optStr, reqNum, reqStr } from "./validators.js";
 
 // --- Wire type + decoder (matches internal/hub/knowledge.go knowledgeContext) ---
@@ -82,13 +72,10 @@ const POLL_MS = 1500;
 /**
  * Consecutive polls with NO OBSERVABLE PROGRESS before giving up.
  *
- * This used to be a flat cap of 200 ticks, which at 1500ms is a ~5-minute
- * ceiling: past it the UI silently stopped updating while KAS carried on
- * indexing, so a large base simply appeared to hang forever. The budget is
- * stall-based now, because "this is taking a long time" and "this is wedged" are
- * different conditions and only the second is worth abandoning. A big index that
- * keeps advancing polls as long as it needs; a genuinely stuck one stops after
- * ~45 seconds of no change.
+ * Stall-based rather than a flat tick cap: "taking a long time" and "wedged"
+ * are different conditions and only the second is worth abandoning, so a big
+ * index polls as long as it keeps advancing. The flat 200-tick cap this
+ * replaced silently froze the UI at ~5 minutes while KAS carried on indexing.
  */
 const MAX_STALLED_POLLS = 30;
 
@@ -127,14 +114,18 @@ function mergeByName(contexts: KnowledgeContext[]): KnowledgeContext[] {
 
 /** A signature of how far indexing has got, so a stall is distinguishable from
  *  slowness. Counts items per indexing base — the only progress this endpoint
- *  exposes, since the per-file counter lives inside `show` and is pushed
- *  nowhere. */
+ *  exposes.
+ *
+ *  `keyenc.join` per component because a base NAME is free text: a template
+ *  literal lets a separator in one name collapse two progress states onto one
+ *  signature, which abandons a healthy index early. */
 function progressSignature(contexts: KnowledgeContext[]): string {
-  return contexts
-    .filter((c) => c.indexing === true)
-    .map((c) => `${c.name}:${String(c.item_count)}:${c.items_display ?? ""}`)
-    .sort((a, b) => a.localeCompare(b))
-    .join("|");
+  return join(
+    ...contexts
+      .filter((c) => c.indexing === true)
+      .map((c) => join(c.name, String(c.item_count), c.items_display ?? ""))
+      .sort((a, b) => a.localeCompare(b)),
+  );
 }
 
 /** Fetch + render the knowledge list. `fromPoll` distinguishes a poll tick from a
@@ -169,14 +160,17 @@ export function loadKnowledge(fromPoll = false): void {
       lastProgress = signature;
     }
     if (stalledPolls >= MAX_STALLED_POLLS) {
+      // Say so: the row's last paint reads `Indexing… n%` and nothing will move
+      // it, so leaving it claims the client is still watching an index it has
+      // given up on. Re-activating the tab re-fires `loadKnowledge`, hence the copy.
+      renderList(merged, true);
       return;
     }
     pollTimer = setTimeout(() => {
       loadKnowledge(true);
     }, POLL_MS);
   });
-  // The setting behind the hint cannot change under a poll tick, so read it only
-  // on a user-triggered load.
+  // Read only on a user-triggered load: the setting cannot change under a poll tick.
   if (!fromPoll) {
     void refreshHint(signal);
   }
@@ -206,7 +200,7 @@ function renderError(): void {
   );
 }
 
-function renderList(items: KnowledgeContext[]): void {
+function renderList(items: KnowledgeContext[], stalled = false): void {
   const container = byId<HTMLDivElement>("knowledge-list");
   // Drop any prior non-keyed placeholder (empty / error) before reconcile.
   for (const child of [...container.children]) {
@@ -217,9 +211,8 @@ function renderList(items: KnowledgeContext[]): void {
   if (items.length === 0) {
     container.replaceChildren();
     // Two CONCRETE examples, one of them a named repository (user ruling): the
-    // shapes-only wording that stood here left readers unsure what an entry is.
-    // The section hint above already defines what a base IS, so this states only
-    // the examples; the README carries the longer list of documentation trees.
+    // shapes-only wording readers could not tell an entry from. The section hint
+    // above already defines what a base IS; the README carries the longer list.
     container.appendChild(
       el(
         "div",
@@ -235,46 +228,47 @@ function renderList(items: KnowledgeContext[]): void {
   }
   reconcile(container, items, {
     key: (c: KnowledgeContext) => `kb:${c.name}`,
-    mount: (c: KnowledgeContext) => mountRow(c),
+    mount: (c: KnowledgeContext) => mountRow(c, stalled),
     update: (row: HTMLElement, c: KnowledgeContext) => {
-      fillRow(row, c);
+      fillRow(row, c, stalled);
     },
   });
 }
 
-function mountRow(c: KnowledgeContext): HTMLElement {
+function mountRow(c: KnowledgeContext, stalled: boolean): HTMLElement {
   const row = el("div", { className: "list-row knowledge-row" });
-  fillRow(row, c);
+  fillRow(row, c, stalled);
   return row;
 }
 
 /** Rebuild a row's children only when its rendered state changed, so a stable row
  *  keeps its DOM identity (and any focus) across polls. Guard owned by
  *  `paint-sig.ts`. */
-function fillRow(row: HTMLElement, c: KnowledgeContext): void {
+function fillRow(row: HTMLElement, c: KnowledgeContext, stalled: boolean): void {
   if (
     !sigChanged(row, [
       c.indexing === true ? "1" : "0",
       String(c.item_count),
       c.items_display ?? "",
       c.path ?? "",
+      stalled ? "1" : "0",
     ])
   ) {
     return;
   }
   row.classList.toggle("knowledge-indexing", c.indexing === true);
-  row.replaceChildren(...rowChildren(c));
+  row.replaceChildren(...rowChildren(c, stalled));
 }
 
-function rowChildren(c: KnowledgeContext): HTMLElement[] {
+function rowChildren(c: KnowledgeContext, stalled: boolean): HTMLElement[] {
   const name = el("span", { className: "list-row-name" }, c.name);
   if (c.indexing === true) {
-    return [name, progressEl(c.items_display)];
+    return [name, progressEl(c.items_display, stalled)];
   }
   const count = `${String(c.item_count)} item${c.item_count === 1 ? "" : "s"}`;
   const metaText = c.path !== undefined && c.path !== "" ? `${count} · ${c.path}` : count;
   const meta = el("span", { className: "list-row-meta knowledge-meta" }, metaText);
-  return [name, meta, removeBtn(c.name)];
+  return [name, meta, reindexBtn(c.name), removeBtn(c.name)];
 }
 
 /** Parse the leading integer percentage from an items_display string
@@ -287,24 +281,26 @@ function parsePct(display: string | undefined): number | null {
 
 /** The in-flight indexing readout: a native <progress> plus its text.
  *
- *  <progress> rather than <meter>, and the distinction is the element's own: a
- *  meter is a static measurement within a range (a quota, a score), while this
- *  row exists only while `indexing` is true and moves toward completion. The
- *  server contract agrees — `internal/agent/knowledge.go` distinguishes an
- *  indexed context from an in-flight operation, and a stall-bounded poll drives
- *  the value.
- *
- *  `aria-label` rather than `aria-labelledby` at the sibling text: the list
- *  renders one of these per indexing base, and an id-based name would need a
- *  unique id minted per row. Native <progress> reports the value itself, so the
- *  name is the only ARIA authored here — the bare `role="progressbar"` this
- *  replaced carried no value and no name at all.
- *
- *  The `pct !== null` guard is preserved deliberately: `items_display` can read
- *  "Cancelled" or "Failed", where a valueless <progress> would render an
- *  animated indeterminate bar claiming work beside text saying there is none. */
-function progressEl(display: string | undefined): HTMLElement {
+ *  <progress> rather than <meter>: this row exists only while `indexing` is true
+ *  and moves toward completion, where a meter measures within a static range.
+ *  `aria-label` rather than `aria-labelledby`: one row per indexing base, so an
+ *  id-based name needs a unique id minted per row. The `pct !== null` guard is
+ *  load-bearing — `items_display` can read "Cancelled" or "Failed", where a
+ *  valueless <progress> animates a claim of work that is not happening. */
+function progressEl(display: string | undefined, stalled: boolean): HTMLElement {
   const wrap = el("span", { className: "knowledge-progress" });
+  if (stalled) {
+    // No <progress> at all: the bar reports a value nothing is going to advance,
+    // and an indeterminate one would claim work the client has stopped watching.
+    wrap.appendChild(
+      el(
+        "span",
+        { className: "knowledge-progress-text" },
+        "Indexing stalled — reopen this tab to check again",
+      ),
+    );
+    return wrap;
+  }
   const pct = parsePct(display);
   if (pct !== null) {
     // `value`/`max` assigned on the typed element rather than passed to `el`,
@@ -320,6 +316,38 @@ function progressEl(display: string | undefined): HTMLElement {
   const text = display !== undefined && display !== "" ? `Indexing… ${display}` : "Indexing…";
   wrap.appendChild(el("span", { className: "knowledge-progress-text" }, text));
   return wrap;
+}
+
+function reindexBtn(name: string): HTMLElement {
+  const btn = el("button", {
+    type: "button",
+    className: "list-row-btn knowledge-reindex",
+    "data-tooltip": "Re-index",
+    "aria-label": `Re-index knowledge base ${name}`,
+  }) as HTMLButtonElement;
+  btn.innerHTML = ICON_REFRESH;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onReindex(name);
+  });
+  return btn;
+}
+
+/** Rebuild a base's index from its directory as it stands now. No confirm
+ *  dialog: the base itself survives and only its index is rebuilt, so there is
+ *  nothing to undo. The refetch is what picks up the new indexing row and
+ *  restarts the progress poll — kiro-cli's `update` starts the build and returns,
+ *  so the operation is already in `show`'s active list by the time we re-read. */
+function onReindex(name: string): void {
+  void reindexKnowledge.dispatch(
+    { name },
+    {
+      onSuccess: () => {
+        showToast(`Re-indexing "${name}" in the background…`, "success");
+        loadKnowledge();
+      },
+    },
+  );
 }
 
 function removeBtn(name: string): HTMLElement {
@@ -382,6 +410,13 @@ function buildAddForm(): HTMLFormElement {
   cancel.addEventListener("click", () => {
     hideAddForm();
   });
+  // `<output>` because this IS a result of the reader's submit: it carries an
+  // implicit `status` live region, so a message written into it is announced
+  // without an aria-live attribute of its own.
+  const error = el("output", {
+    className: "knowledge-add-error",
+    id: "knowledge-add-error",
+  }) as HTMLOutputElement;
   const form = el(
     "form",
     { className: "knowledge-add-form", id: "knowledge-add-form" },
@@ -389,27 +424,37 @@ function buildAddForm(): HTMLFormElement {
     nameInput,
     submit,
     cancel,
+    error,
   ) as HTMLFormElement;
   form.hidden = true;
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    void onAdd(pathInput, nameInput);
+    void onAdd(pathInput, nameInput, error);
   });
   registerCleanup(bindLoadingState("knowledge.add", submit, { preserveDisabled: true }));
   return form;
 }
 
-async function onAdd(pathInput: HTMLInputElement, nameInput: HTMLInputElement): Promise<void> {
+async function onAdd(
+  pathInput: HTMLInputElement,
+  nameInput: HTMLInputElement,
+  error: HTMLOutputElement,
+): Promise<void> {
+  error.textContent = "";
   const path = pathInput.value.trim();
   if (path === "") {
     pathInput.focus();
     return;
   }
   const name = nameInput.value.trim();
-  const res = await addKnowledge.dispatch({ path, name });
-  if (res === null) {
-    // The action's default error toast already surfaced the server message
-    // (bad path / usage error); keep the form open so the user can fix it.
+  // `.outcome` rather than the dispatch's own resolution: `error: false` keeps
+  // this off the toast stack, so the field beside the input is the only surface
+  // the server's message can reach, and only the typed outcome carries it.
+  const out = await addKnowledge.dispatch({ path, name }).outcome;
+  if (out.status !== "success") {
+    error.textContent =
+      out.status === "error" ? out.error.message : "The add was cancelled before it ran.";
+    pathInput.focus();
     return;
   }
   showToast(`Indexing "${name !== "" ? name : path}" in the background…`, "success");

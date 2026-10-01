@@ -85,7 +85,17 @@ type kasOAuth struct {
 // `disabled: true`. Filtering them out would make a disabled server
 // indistinguishable from a deleted one to KAS, and its status would go missing
 // rather than reading "disabled".
-func renderKASServers(servers []*Server) map[string]kasServer {
+//
+// honourAutoApprove is a RESOLVED DECISION, not a policy id: when false, no entry
+// carries `autoApprove` at all, whatever the store holds. The security-profile
+// rung is what decides it (`policyfile.HonoursAutoApprove`), and taking the answer
+// rather than the vocabulary is deliberate — this package renders a file and has
+// no business holding the ladder's names.
+//
+// `DisabledTools` is UNAFFECTED in both directions. It NARROWS what a server may
+// do, so a rung that suspends a widening has no reason to drop a restriction, and
+// dropping one would re-enable every tool the user had turned off.
+func renderKASServers(servers []*Server, honourAutoApprove bool) map[string]kasServer {
 	out := make(map[string]kasServer, len(servers))
 	for _, s := range servers {
 		if s == nil || s.Name == "" {
@@ -93,8 +103,10 @@ func renderKASServers(servers []*Server) map[string]kasServer {
 		}
 		entry := kasServer{
 			DisabledTools: s.DisabledTools,
-			AutoApprove:   s.AutoApprove,
 			Disabled:      !s.Enabled,
+		}
+		if honourAutoApprove {
+			entry.AutoApprove = s.AutoApprove
 		}
 		switch s.Transport {
 		case TransportStdio:
@@ -140,12 +152,17 @@ func pairsRecord(in []KeyPair) map[string]string {
 // replaced rather than treated as fatal — the alternative leaves the
 // agent connected to a stale server set with no way for the user to fix
 // it from the UI.
+//
+// The auto-approve posture is resolved PER WRITE rather than captured at
+// construction, which is what makes a profile change reach the file: the
+// selection handler calls [Store.RenderKASConfig] and this read then answers with
+// the rung the user just picked.
 func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	doc := s.readKASConfig()
-	rendered, err := json.Marshal(renderKASServers(servers))
+	rendered, err := json.Marshal(renderKASServers(servers, s.honoursAutoApprove(ctx)))
 	if err != nil {
 		return fmt.Errorf("%w kas mcp.json: %w", ErrPersistMarshal, err)
 	}
@@ -161,6 +178,46 @@ func (s *Store) writeKASConfig(ctx context.Context, servers []*Server) error {
 		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700)); err != nil {
 		return fmt.Errorf("%w: %w", ErrPersistWrite, err)
 	}
+	return nil
+}
+
+// RenderKASConfig re-renders KAS's config file from the servers already in the
+// store, with no mutation of marotte's own record.
+//
+// It exists for the SECURITY-PROFILE selection, which changes what may be rendered
+// without changing what is configured. The suspension has to land HERE rather than
+// at the next bridge start: KAS watches this file and re-merges on change, so a
+// write applies to the chats already running — and a suspension that waited for the
+// next session would leave a grant standing on every live chat for as long as the
+// user kept talking.
+//
+// The CALLER owns the ordering, and it is load-bearing: the posture is resolved by
+// reading the persisted setting, so this must run AFTER the new profile has been
+// written to disk or it re-renders the outgoing rung.
+//
+// It takes the READ lock across the write, matching persist, which already holds
+// the write lock across its own writeKASConfig call. Serialising concurrent renders
+// is wanted rather than tolerated: two of them race to produce one file.
+//
+// The lock is released BEFORE notifyChange rather than deferred, because that
+// method takes the read lock itself and a recursive RLock deadlocks whenever a
+// writer is waiting between the two (sync.RWMutex documents exactly that).
+//
+// It fires the change callback on success, which WIDENS that callback's meaning
+// from "the persisted set mutated" to "what GET /api/mcp answers changed" — and
+// the second is what its one client-side consumer does with it: the panel
+// refetches. Without it a profile selection reaches KAS's file and not the panel
+// rendering the chips that file just suspended, and the panel has no other
+// trigger (a settings-tab loader fires on FIRST activation only). The cost is one
+// extra MCP prewarm pass per profile selection, which is idempotent and cached.
+func (s *Store) RenderKASConfig(ctx context.Context) error {
+	s.mu.RLock()
+	err := s.writeKASConfig(ctx, s.servers)
+	s.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	s.notifyChange()
 	return nil
 }
 

@@ -4,57 +4,70 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-// turnEndedStops returns the stop reason of every turn_ended event broadcast so
-// far, in order. Counting them is the point: a turn announced twice is two cards
-// in the transcript for one turn.
-func turnEndedStops(t *testing.T, h *Runtime) []string {
+// closesOf decodes every turn_close in entries, in file order. Counting them is
+// the point: a turn closed twice is two footers in the transcript for one turn.
+func closesOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnClose {
 	t.Helper()
-	var out []string
-	for _, e := range bufferedSince(h, 0) {
-		var msg struct {
-			Type    marotte.EventType `json:"type"`
-			Payload struct {
-				StopReason string `json:"stop_reason"`
-			} `json:"payload"`
+	var out []marotte.EntryTurnClose
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindTurnClose {
+			continue
 		}
-		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
-			t.Fatalf("unmarshal event: %v", err)
+		var c marotte.EntryTurnClose
+		if err := json.Unmarshal(entries[i].Payload, &c); err != nil {
+			t.Fatalf("decode turn_close %q: %v", entries[i].ID, err)
 		}
-		if msg.Type == marotte.EventTurnEnded {
-			out = append(out, msg.Payload.StopReason)
-		}
+		out = append(out, c)
 	}
 	return out
 }
 
-// hubOnDisk builds a runtime over the REAL chat store, seeded with chatID.
-//
-// The recording fake ignores its context entirely, so a durability assertion
-// against it holds whether or not the write is detached. chat.Store.Mutate's
-// entry guard is the mechanism the durable-context tests are about, and only the
-// real store has it.
-func hubOnDisk(t *testing.T, chatID marotte.ChatID) (*Runtime, *chat.Store) {
+// textsOf returns the text of every sealed text entry in entries, in file order.
+func textsOf(t *testing.T, entries []marotte.Entry) []string {
 	t.Helper()
-	cs, err := chat.NewStore(t.TempDir())
+	var out []string
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindText {
+			continue
+		}
+		var text marotte.EntryText
+		if err := json.Unmarshal(entries[i].Payload, &text); err != nil {
+			t.Fatalf("decode text %q: %v", entries[i].ID, err)
+		}
+		out = append(out, text.Text)
+	}
+	return out
+}
+
+// logOf reads the chat's whole log.
+func logOf(t *testing.T, cs *testChatStore, chatID marotte.ChatID) []marotte.Entry {
+	t.Helper()
+	entries, err := cs.All(t.Context(), chatID)
 	if err != nil {
-		t.Fatalf("chat.NewStore: %v", err)
+		t.Fatalf("All(%q): %v", chatID, err)
 	}
-	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs)
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		return true
-	}); err != nil {
-		t.Fatalf("seed chat: %v", err)
+	return entries
+}
+
+// closedBroadcasts decodes the turn_close entry of every turn_closed frame
+// broadcast so far, in order.
+func closedBroadcasts(t *testing.T, h *Runtime) []marotte.EntryTurnClose {
+	t.Helper()
+	var entries []marotte.Entry
+	for _, p := range payloadsOfType[marotte.TurnClosedPayload](t, bufferedSince(h, 0), marotte.EventTurnClosed) {
+		entries = append(entries, p.Entry)
 	}
-	return h, cs
+	return closesOf(t, entries)
 }
 
 // deadContext is a context already cancelled, which is what BOTH doors into
@@ -68,672 +81,449 @@ func deadContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// startedTurnOn stages a chat with a streaming turn open, the way a live prompt
-// leaves it: a record on the registry and a buffer with content in it.
-func startedTurnOn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID marotte.ChatID, text string) {
+// streamingPromptTurn stages a prompt turn with text already sealed into its
+// accumulator, the way a live prompt leaves it mid-reply.
+func streamingPromptTurn(t *testing.T, h *Runtime, chatID marotte.ChatID, text string) (string, *turnlog.Turn) {
 	t.Helper()
-	if _, err := cs.Mutate(t.Context(), chatID, func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		return true
-	}); err != nil {
-		t.Fatalf("seed chat: %v", err)
+	id, log := h.stagePromptTurn(t, chatID)
+	if _, err := log.TextDelta(t.Context(), "", "say-1", text); err != nil {
+		t.Fatalf("TextDelta: %v", err)
 	}
-	h.coord.StartTurn(t.Context(), chatID, marotte.TurnSourcePrompt)
-	buf := h.stageTurnBuffer(t, chatID)
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString(text)
+	return id, log
 }
 
-// startedEngineTurnOn is startedTurnOn's engine-opened twin: nothing prompts, so the
-// wire's own first frame opens the turn and no trigger row stands for it.
-func startedEngineTurnOn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID marotte.ChatID, text string) {
+// shellTurn opens a `!cmd` turn and starts it, answering its id.
+func shellTurn(t *testing.T, h *Runtime, chatID marotte.ChatID) string {
 	t.Helper()
-	seedChat(t, cs, chatID)
-	buf := h.stageTurnBuffer(t, chatID)
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString(text)
+	id, err := h.coord.OpenTurn(t.Context(), chatID, marotte.TurnSourceLocalShell,
+		&marotte.EntryPrompt{ID: "m-shell", Text: "!ls"},
+		func(c *marotte.Chat) { c.Name = "test chat" })
+	if err != nil {
+		t.Fatalf("OpenTurn(local_shell): %v", err)
+	}
+	if !h.coord.StartTurn(t.Context(), chatID, id) {
+		t.Fatalf("StartTurn(%q) refused", id)
+	}
+	return id
 }
 
 // TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn is the third actor. A prompt whose
 // bridge dies has a settle that may never arrive, so nothing else is going to
-// close the turn: the partial would stay in the buffer, the next turn's
-// ensureTurnStarted would extend it under its message id, and the client would be
-// left with `thinking` set on a chat whose process is gone.
+// close the turn: the streamed text would stay unsealed, the next turn's frames
+// would fold into it, and the client would be left with `thinking` set on a chat
+// whose process is gone.
 func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	const partial = "the model got this far before the pipe died"
-	startedTurnOn(t, h, cs, "c1", partial)
+	streamingPromptTurn(t, h, "c1", partial)
 
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
-	c, ok := cs.Get(t.Context(), "c1")
-	if !ok {
-		t.Fatal("chat record vanished")
+	entries := logOf(t, cs, "c1")
+	if got := textsOf(t, entries); !slices.Equal(got, []string{partial}) {
+		t.Errorf("sealed texts = %q, want the partial alone; a reload would lose what the client showed", got)
 	}
-	var sawPartial bool
-	for i := range c.Messages {
-		if m := &c.Messages[i]; m.Role == marotte.RoleAssistant && m.Content == partial {
-			sawPartial = true
-		}
+	closes := closesOf(t, entries)
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
 	}
-	if !sawPartial {
-		t.Errorf("the partial was not persisted; the client showed it and a reload would lose it. messages=%d", len(c.Messages))
+	if closes[0].Outcome != marotte.TurnOutcomeInterrupted || closes[0].StopReasonRaw != string(marotte.StopReasonInterrupted) {
+		t.Errorf("turn_close = outcome %q stop %q, want interrupted/interrupted", closes[0].Outcome, closes[0].StopReasonRaw)
 	}
-	divider := dividerIn(c)
-	if divider == nil {
-		t.Fatal("no interrupted event; the transcript stops mid-reply with nothing saying why")
+	if closes[0].FailureReason != deathInterruptCause {
+		t.Errorf("failure_reason = %q, want %q", closes[0].FailureReason, deathInterruptCause)
 	}
-	if divider.Content != deathInterruptCause {
-		t.Errorf("divider content = %q, want %q", divider.Content, deathInterruptCause)
+	if got := closedBroadcasts(t, h); len(got) != 1 || got[0].Outcome != marotte.TurnOutcomeInterrupted {
+		t.Errorf("turn_closed broadcasts = %+v, want exactly one interrupted", got)
 	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonInterrupted)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
+	if h.coord.turns.live("c1") {
+		t.Error("the chat still reads live after its only turn closed")
 	}
 }
 
 // TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn: a bridge culled while
-// idle, or one whose turn a closer already finished, must announce nothing.
-// Opening a turn in order to close it would report an interruption nothing was
+// idle, or one whose turn a closer already finished, must record nothing. Opening
+// a turn in order to close it would report an interruption nothing was
 // interrupted from, on every bridge exit the app performs.
 func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
+	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
 
-	if got := turnEndedStops(t, h); len(got) != 0 {
-		t.Errorf("turn_ended stops = %v, want none", got)
+	if got := logOf(t, cs, "c1"); len(got) != 0 {
+		t.Errorf("entries = %+v, want none", got)
 	}
-	if c, _ := cs.Get(t.Context(), "c1"); len(c.Messages) != 0 {
-		t.Errorf("messages = %+v, want none", c.Messages)
+	if got := closedBroadcasts(t, h); len(got) != 0 {
+		t.Errorf("turn_closed broadcasts = %+v, want none", got)
 	}
 }
 
-// TestCloseTurnOnBridgeDeath_AnEmptyEngineTurnPersistsNoRowButStillAnnounces is the split at
-// the SECOND empty-turn site. No divider: with no trigger row that row IS the whole turn, so
-// it renders as a headerless card marked BROKEN. Still announced: the turn is the chat's own
-// and the client's thinking and turn_open latches have no other retraction, so withholding
-// the frame leaves a dead chat reading `running` with Cancel showing.
-func TestCloseTurnOnBridgeDeath_AnEmptyEngineTurnPersistsNoRowButStillAnnounces(t *testing.T) {
+// TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled is the deliberate
+// stop's grade: a chat deleted or closed mid-turn asked for the stop, so the
+// footer must not read BROKEN for a stop the reader caused.
+func TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-	h.stageTurnBuffer(t, "c1")
+	streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeCancelled)
 
-	if c, _ := cs.Get(t.Context(), "c1"); len(c.Messages) != 0 {
-		t.Errorf("messages = %+v, want none: a divider with no trigger row is a headerless card", c.Messages)
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
 	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonInterrupted)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
+	if closes[0].Outcome != marotte.TurnOutcomeCancelled || closes[0].StopReasonRaw != string(marotte.StopReasonCancelled) {
+		t.Errorf("turn_close = outcome %q stop %q, want cancelled/cancelled", closes[0].Outcome, closes[0].StopReasonRaw)
 	}
 }
 
-// TestCloseTurnOnBridgeDeath_ASplitEngineTurnKeepsItsDivider is the sibling above's
-// exception, and why the suppression reads the SNAPSHOT as well as the source: a turn split
-// at a compaction point has a sealed row already, so the divider opens no headerless card —
-// it is the only thing that can say the turn broke rather than ended, and the only carrier
-// of its cumulative changed files.
-func TestCloseTurnOnBridgeDeath_ASplitEngineTurnKeepsItsDivider(t *testing.T) {
+// TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow is the death
+// closer's third step, and the only thing that records a loss nothing else can see:
+// a bridge that dies while KAS holds steers it queued and never delivered leaves
+// the log short of words KAS persisted. One steer entry per queued id, with EMPTY
+// text, is that record — an empty text says "KAS holds words this process never
+// received", which is what the resume-time reconcile predicate reads to decide the
+// projection must not be discarded silently. The text is dropped on purpose even
+// when the buffered row carried one, so the arming rows here carry text.
+func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testing.T) {
 	h, cs, _ := newTestHub()
-	startedEngineTurnOn(t, h, cs, "c1", "everything before the compaction")
-	diffs := []marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}
-	h.liveTurnBuffer("c1").TrackFileChanges(diffs, false)
-	if !h.coord.SealTurnSegment(t.Context(), "c1") {
-		t.Fatal("the fixture could not seal a segment")
+	streamingPromptTurn(t, h, "c1", "the model was mid-reply when the pipe died")
+	h.bus.steers.SteerWaiting("c1", marotte.SteerQueuedPayload{
+		SteerID: "s-1", Text: "use tabs", Origin: marotte.SteerOriginUser,
+	})
+	h.bus.steers.SteerWaiting("c1", marotte.SteerQueuedPayload{
+		SteerID: "s-2", Text: "and rename it", Origin: marotte.SteerOriginUser,
+	})
+
+	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
+
+	// The waiting set is a map, so the order the ids come back in is arbitrary and is
+	// not part of the contract; what is pinned is ONE entry per id.
+	recorded := map[string]marotte.EntrySteer{}
+	for _, e := range logOf(t, cs, "c1") {
+		if e.Kind != marotte.EntryKindSteer {
+			continue
+		}
+		var s marotte.EntrySteer
+		if err := json.Unmarshal(e.Payload, &s); err != nil {
+			t.Fatalf("decode the steer %q: %v", e.ID, err)
+		}
+		if _, held := recorded[e.ID]; held {
+			t.Errorf("steer %q was recorded twice, want one entry per queued id", e.ID)
+		}
+		recorded[e.ID] = s
 	}
-
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
-
-	divider := eventMessageOf(t, cs, "c1", marotte.EventInterrupted)
-	if divider == nil {
-		t.Fatal("a split engine turn persisted no divider, so its card derives `completed` for a turn its bridge killed")
+	if got := slices.Sorted(maps.Keys(recorded)); !slices.Equal(got, []string{"s-1", "s-2"}) {
+		t.Fatalf("steer entry ids = %q, want one per queued id: s-1, s-2", got)
 	}
-	if divider.TurnOutcome != marotte.TurnOutcomeInterrupted {
-		t.Errorf("divider TurnOutcome = %q, want interrupted", divider.TurnOutcome)
-	}
-	if divider.ChangedFiles["a.go"] == nil {
-		t.Errorf("divider ChangedFiles = %v, want the turn's cumulative map", divider.ChangedFiles)
-	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonInterrupted)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
-	}
-}
-
-// TestCloseTurnOnBridgeDeath_APromptTurnAppendsAfterItsOwnUserRow is the population
-// the ordering choice must NOT reach, and the case that catches it being inverted.
-//
-// A prompt's own user row IS the tail, so walking back over trailing user rows would
-// insert the reply BEFORE the prompt it answers and split the turn. The divider and
-// the announcement stay too: this turn is the chat's own.
-func TestCloseTurnOnBridgeDeath_APromptTurnAppendsAfterItsOwnUserRow(t *testing.T) {
-	h, cs, _ := newTestHub()
-	const partial = "the model got this far before the pipe died"
-	startedTurnOn(t, h, cs, "c1", partial)
-	appendUserRow(t, cs, "c1", "the prompt this reply answers")
-
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
-
-	assistantAt, userAt := rowOrder(t, cs, "c1")
-	if assistantAt < 0 || userAt < 0 {
-		t.Fatalf("expected one assistant row and one user row, got assistant=%d user=%d", assistantAt, userAt)
-	}
-	if assistantAt < userAt {
-		t.Errorf("the reply persisted at %d, BEFORE its own trigger row at %d — the turn is split and "+
-			"projectTurns reads the reply as a headerless turn", assistantAt, userAt)
-	}
-	c, _ := cs.Get(t.Context(), "c1")
-	if dividerIn(c) == nil {
-		t.Error("no interrupted event; the transcript stops mid-reply with nothing saying why")
-	}
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonInterrupted)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
-	}
-}
-
-// TestForwardExit_DeliberateCloseIsNotADeath is the discriminator the third actor
-// rests on: every teardown marotte performs removes the bridge from the map first
-// and has its own closer, so reading a deliberate stop as a death closes a turn
-// those paths are still driving — the empty-turn retry closes the bridge mid-turn
-// on purpose and then answers the same turn.
-func TestForwardExit_DeliberateCloseIsNotADeath(t *testing.T) {
-	h, cs, br := newTestHub()
-	startedTurnOn(t, h, cs, "c1", "half an answer")
-	sb, _ := h.bridge.mgr.orInsert("c1")
-	sb.bridge = br
-
-	forwardDone := make(chan struct{})
-	go func() {
-		h.coord.Forward("c1", br)
-		close(forwardDone)
-	}()
-
-	// CloseBridge removes then stops, which is what makes the exit deliberate.
-	h.coord.CloseBridge("c1")
-	select {
-	case <-forwardDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Forward did not exit after the bridge was stopped")
-	}
-
-	if got := turnEndedStops(t, h); len(got) != 0 {
-		t.Errorf("turn_ended stops = %v, want none: the turn is still the closing caller's", got)
-	}
-	if _, open := h.coord.turns.openEpoch("c1"); !open {
-		t.Error("the turn was closed by a deliberate teardown")
-	}
-}
-
-// TestForwardExit_UnexpectedDeathClosesTheTurn is the same seam from the other
-// side: a bridge that dies while still registered is a death, because nobody
-// removed it.
-func TestForwardExit_UnexpectedDeathClosesTheTurn(t *testing.T) {
-	h, cs, br := newTestHub()
-	startedTurnOn(t, h, cs, "c1", "half an answer")
-	sb, _ := h.bridge.mgr.orInsert("c1")
-	sb.bridge = br
-
-	forwardDone := make(chan struct{})
-	go func() {
-		h.coord.Forward("c1", br)
-		close(forwardDone)
-	}()
-
-	// Stop WITHOUT removing: the process died on its own.
-	br.Stop()
-	select {
-	case <-forwardDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Forward did not exit after the bridge died")
-	}
-
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonInterrupted)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one interrupted", got)
-	}
-}
-
-// TestFinalizeTurn_OneEpochAnnouncesOnce pins the exclusion at the coordinator:
-// two closers reaching one turn produce one turn_ended, so the transcript does
-// not grow a second boundary for one turn.
-func TestFinalizeTurn_OneEpochAnnouncesOnce(t *testing.T) {
-	h, cs, _ := newTestHub()
-	startedTurnOn(t, h, cs, "c1", "half an answer")
-
-	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
-	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
-
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonCancelled)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one cancelled", got)
-	}
-}
-
-// TestFlushInFlightTurnOnSwitch_DiscardsThePartial is the direction half, and it
-// is why the switch closer is not the failure closer. A model switch discards the
-// partial — the user asked for a different answer, so the abandoned one is moot —
-// where a failed prompt keeps it.
-func TestFlushInFlightTurnOnSwitch_DiscardsThePartial(t *testing.T) {
-	h, cs, _ := newTestHub()
-	startedTurnOn(t, h, cs, "c1", "half an answer")
-
-	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
-
-	c, _ := cs.Get(t.Context(), "c1")
-	for i := range c.Messages {
-		if c.Messages[i].Role == marotte.RoleAssistant {
-			t.Errorf("a model switch persisted the abandoned partial %q", c.Messages[i].Content)
+	for _, id := range slices.Sorted(maps.Keys(recorded)) {
+		s := recorded[id]
+		if s.Text != "" {
+			t.Errorf("steer %q text = %q, want empty: the empty text is the whole record of what KAS kept and this process lost", id, s.Text)
+		}
+		if s.Origin != marotte.SteerOriginUser || s.State != marotte.SteerStateDropped {
+			t.Errorf("steer %q = origin %q state %q, want user/dropped", id, s.Origin, s.State)
 		}
 	}
-	if h.liveTurnBuffer("c1") != nil {
-		t.Error("the buffer survived the switch; the next turn would extend this turn's blocks")
-	}
 }
 
-// TestFlushInFlightTurnOnSwitch_ConcludesCancelledOnBothChannels is item 1, and it
-// asserts BOTH channels because their disagreement was the defect.
-//
-// The switch closer used to conclude `interrupted`, which the severity table grades
-// BROKEN — so live the tab dot went red for a switch the reader asked for. And it
-// persisted nothing, so on reload the derivation found no carrier and answered
-// `completed`, which hides the footer glyph. Two channels, two wrong answers, and
-// neither was `stopped`, which is what a user-initiated discard is.
-func TestFlushInFlightTurnOnSwitch_ConcludesCancelledOnBothChannels(t *testing.T) {
+// TestFinalizeTurn_ALostClaimAmendsNothing pins the exclusion at the coordinator:
+// two closers reaching one turn produce one turn_close, and the loser's account
+// never reaches the footer the winner wrote. A lost claim is a Debug line now,
+// not an amendment.
+func TestFinalizeTurn_ALostClaimAmendsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
-	startedTurnOn(t, h, cs, "c1", "half an answer")
+	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonInterrupted, "the first closer's account")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, marotte.StopReasonCancelled, "the loser's account")
 
-	// The RELOAD channel: a carrier on disk, so the derivation reads a verdict
-	// instead of falling back to its default.
-	c, _ := cs.Get(t.Context(), "c1")
-	var marker *marotte.Message
-	for i := range c.Messages {
-		if c.Messages[i].TurnOutcome != "" {
-			marker = &c.Messages[i]
-		}
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
 	}
-	if marker == nil {
-		t.Fatalf("a discarded turn persisted no carrier, so a reload reads it as completed "+
-			"and suppresses its footer. messages=%+v", c.Messages)
+	if closes[0].Outcome != marotte.TurnOutcomeInterrupted || closes[0].FailureReason != "the first closer's account" {
+		t.Errorf("turn_close = outcome %q reason %q, want the winner's interrupted/first account", closes[0].Outcome, closes[0].FailureReason)
 	}
-	if marker.Role != marotte.RoleEvent || marker.TurnOutcome != marotte.TurnOutcomeCancelled {
-		t.Errorf("carrier = role %q outcome %q, want a RoleEvent carrying cancelled",
-			marker.Role, marker.TurnOutcome)
-	}
-	if marker.EventKind != marotte.EventCancelled {
-		t.Errorf("carrier event kind = %q, want %q — any other kind renders a visible row "+
-			"for a switch that produced nothing to show", marker.EventKind, marotte.EventCancelled)
-	}
-	// A cancelled turn records NO reason, deliberately: the reader caused the stop and
-	// the footer's own outcome word already reads "Cancelled", so a sentence here would
-	// render one fact twice. A losing closer holding a real transport error can still
-	// amend this carrier — TestLostClaim_ADiscardedTurnsMarkerCanStillBeAmended.
-	if marker.TurnFailureReason != "" {
-		t.Errorf("the carrier records reason %q; a cancel has no account to give",
-			marker.TurnFailureReason)
-	}
-	for i := range c.Messages {
-		if c.Messages[i].Role == marotte.RoleAssistant {
-			t.Errorf("the discarded partial was persisted: %+v", c.Messages[i])
-		}
-	}
-
-	// The LIVE channel: the same verdict, so the dot the reader watches and the dot
-	// they get back after a refresh agree.
-	if got := turnEndedOutcomes(t, h); !slices.Equal(got, []marotte.TurnOutcome{marotte.TurnOutcomeCancelled}) {
-		t.Errorf("broadcast outcomes = %v, want exactly [cancelled]", got)
-	}
-	// And the payload's OTHER verdict field, which is a second vocabulary rather
-	// than a restatement: announceConclusion serves both the interrupt and the
-	// discard closers, so it reads the stop off the conclusion instead of naming
-	// one. Hardcoding `interrupted` there — what it did before this closer existed
-	// — leaves the outcome above correct and puts the wrong stop on the wire.
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonCancelled)}) {
-		t.Errorf("broadcast stop reasons = %v, want exactly [cancelled]", got)
+	if got := closedBroadcasts(t, h); len(got) != 1 {
+		t.Errorf("turn_closed broadcasts = %d, want exactly one", len(got))
 	}
 }
 
-// abortedToolIDs returns the tool call ids named by every broadcast
-// tool_call_update carrying the aborted status, in order. The frame is what a
-// client already holding the card applies; the persisted status only reaches a
-// LATER reload, so the two channels have to be asserted separately.
-func abortedToolIDs(t *testing.T, h *Runtime) []string {
-	t.Helper()
-	var out []string
-	for _, e := range bufferedSince(h, 0) {
-		var msg struct {
-			Type    marotte.EventType `json:"type"`
-			Payload struct {
-				ToolCallID string             `json:"tool_call_id"`
-				Status     marotte.ToolStatus `json:"status"`
-			} `json:"payload"`
-		}
-		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
-			t.Fatalf("unmarshal event: %v", err)
-		}
-		if msg.Type == marotte.EventToolCallUpdate && msg.Payload.Status == marotte.ToolAborted {
-			out = append(out, msg.Payload.ToolCallID)
-		}
-	}
-	return out
-}
-
-// TestEmitTurnEnded_EndTurnAbortsInFlightTools pins that a close settles what it makes
-// unsettleable, whatever the stop reason: the buffer is taken at the close and
-// HandleToolCallUpdate drops every later frame, so a call left non-terminal here is a
-// permanent spinner on each later reload of that chat.
-func TestEmitTurnEnded_EndTurnAbortsInFlightTools(t *testing.T) {
+// TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd is the shell
+// turn's whole shape: turn_open, one text entry carrying the output, turn_close
+// concluding completed, and one turn_closed frame.
+func TestFinalizeLocalShellTurn_WritesThreeEntriesAndAnnouncesTheEnd(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	id := shellTurn(t, h, "c1")
 
-	epoch := h.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
-	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
-	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0,
-		&marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
+	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", id, "```\nfile.go\n```")
 
-	c, _ := cs.Get(t.Context(), "c1")
-	var assistant *marotte.Message
-	for i := range c.Messages {
-		if c.Messages[i].Role == marotte.RoleAssistant {
-			assistant = &c.Messages[i]
-		}
+	entries := logOf(t, cs, "c1")
+	var kinds []marotte.EntryKind
+	for i := range entries {
+		kinds = append(kinds, entries[i].Kind)
 	}
-	if assistant == nil {
-		t.Fatalf("no assistant message persisted: %+v", c.Messages)
+	want := []marotte.EntryKind{marotte.EntryKindTurnOpen, marotte.EntryKindText, marotte.EntryKindTurnClose}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("entry kinds = %v, want %v", kinds, want)
 	}
-	if len(assistant.ToolCalls) != 1 {
-		t.Fatalf("persisted %d tool calls, want 1", len(assistant.ToolCalls))
+	if got := textsOf(t, entries); !slices.Equal(got, []string{"```\nfile.go\n```"}) {
+		t.Errorf("texts = %q, want the rendered output", got)
 	}
-	if got := assistant.ToolCalls[0].Status; got != marotte.ToolAborted {
-		t.Errorf("persisted tool status = %q, want aborted — nothing can settle it after the "+
-			"close, so a reload renders it as a permanent spinner", got)
+	closes := closesOf(t, entries)
+	if closes[0].Outcome != marotte.TurnOutcomeCompleted || closes[0].StopReasonRaw != string(marotte.StopReasonEndTurn) {
+		t.Errorf("turn_close = outcome %q stop %q, want completed/end_turn", closes[0].Outcome, closes[0].StopReasonRaw)
 	}
-	// The LIVE channel, which is what a client watching this turn applies.
-	if got := abortedToolIDs(t, h); !slices.Equal(got, []string{"tc1"}) {
-		t.Errorf("aborted tool_call_update ids = %v, want exactly [tc1]", got)
+	if got := closedBroadcasts(t, h); len(got) != 1 || got[0].StopReasonRaw != string(marotte.StopReasonEndTurn) {
+		t.Errorf("turn_closed broadcasts = %+v, want exactly one end_turn", got)
 	}
 }
 
-// TestFlushInFlightTurnOnSwitch_AbortsInFlightTools is the discard closer's own half
-// of the same rule, and only the BROADCAST matters here: the content is thrown away,
-// so nothing is persisted to reload — but every connected client keeps the streamed
-// message in its store, so its cards spin until one.
-func TestFlushInFlightTurnOnSwitch_AbortsInFlightTools(t *testing.T) {
+// TestWireTurnEnd_StampsTheOutcomeAndTheRawStop is the wire's own closer: the
+// turn_close carries the graded outcome, the stop exactly as sent, and the
+// engine's details as the failure reason.
+func TestWireTurnEnd_StampsTheOutcomeAndTheRawStop(t *testing.T) {
 	h, cs, _ := newTestHub()
-	startedTurnOn(t, h, cs, "c1", "half an answer")
-	buf := h.liveTurnBuffer("c1")
-	if buf == nil {
-		t.Fatal("the fixture opened no turn buffer")
+	streamingPromptTurn(t, h, "c1", "half an answer")
+
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, "the model refused the request")
+
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
 	}
-	buf.AppendToolCall(&marotte.ToolCall{ID: "tc-1", Title: "Run command", Status: marotte.ToolInProgress})
-
-	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
-
-	if got := abortedToolIDs(t, h); !slices.Equal(got, []string{"tc-1"}) {
-		t.Errorf("aborted tool_call_update ids = %v, want exactly [tc-1]", got)
+	if closes[0].Outcome != marotte.TurnOutcomeFailed || closes[0].StopReasonRaw != string(marotte.StopReasonError) {
+		t.Errorf("turn_close = outcome %q stop %q, want failed/error", closes[0].Outcome, closes[0].StopReasonRaw)
+	}
+	if closes[0].FailureReason != "the model refused the request" {
+		t.Errorf("failure_reason = %q, want the wire's details", closes[0].FailureReason)
 	}
 }
 
-// TestFlushInFlightTurnOnSwitch_AnIdleChatRecordsNothing is the other half of the
-// discard rule: a switch with nothing in flight is invisible, so it must not leave
-// a marker or announce an end for a turn the reader never saw start.
-func TestFlushInFlightTurnOnSwitch_AnIdleChatRecordsNothing(t *testing.T) {
+// TestWireTurnEnd_TheFailureReasonIsSanitizedAndBounded: the details are upstream
+// text, and a transcript footer is no place for a wall of it or for a control
+// sequence.
+func TestWireTurnEnd_TheFailureReasonIsSanitizedAndBounded(t *testing.T) {
 	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
-	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
+	streamingPromptTurn(t, h, "c1", "half an answer")
+	// The cap is spelled as a number here on purpose: a test that derives both its
+	// input and its bound from maxReasonBytes cannot see the constant move.
+	details := strings.Repeat("x", 3000) + "\n\x1b[31mred"
 
-	h.coord.FlushInFlightTurnOnSwitch(t.Context(), "c1")
+	h.coord.WireTurnEnd(t.Context(), "c1", marotte.StopReasonError, details)
 
-	if c, _ := cs.Get(t.Context(), "c1"); len(c.Messages) != 0 {
-		t.Errorf("an unstarted turn's discard persisted %+v, want nothing", c.Messages)
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
 	}
-	if got := turnEndedStops(t, h); len(got) != 0 {
-		t.Errorf("turn_ended stops = %v, want none", got)
+	reason := closes[0].FailureReason
+	if len(reason) > 2048+len("...") {
+		t.Errorf("failure_reason is %d bytes, want at most 2048 plus the marker", len(reason))
+	}
+	if strings.ContainsAny(reason, "\n\x1b") {
+		t.Errorf("failure_reason carries a newline or an escape: %q", reason)
+	}
+	if !strings.HasSuffix(reason, "...") {
+		t.Errorf("failure_reason = %q, want the cap marker on a capped reason", reason)
 	}
 }
 
-// TestFinalizeLocalShellTurn_AnnouncesTheEnd: a `!cmd` turn is a turn, so its end
-// goes through the finalizer rather than being a broadcast the shell handler
-// writes itself. That is what stops a second closer producing another one.
-func TestFinalizeLocalShellTurn_AnnouncesTheEnd(t *testing.T) {
-	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceLocalShell)
+// TestWireTurnEnd_TruncationCompletesRatherThanFails pins the one mapping a reader
+// would get wrong by instinct: a turn stopped at a bound finished the work it was
+// allowed to do, so it completed with its answer cut off. Grading it failed would
+// report a bounded turn as broken.
+func TestWireTurnEnd_TruncationCompletesRatherThanFails(t *testing.T) {
+	for _, stop := range []marotte.StopReason{marotte.StopReasonMaxTokens, marotte.StopReasonMaxTurnRequests} {
+		t.Run(string(stop), func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", epoch)
+			h.coord.WireTurnEnd(t.Context(), "c1", stop, "")
 
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonEndTurn)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one end_turn", got)
+			closes := closesOf(t, logOf(t, cs, "c1"))
+			if len(closes) != 1 {
+				t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+			}
+			if closes[0].Outcome != marotte.TurnOutcomeCompleted || !closes[0].Truncated {
+				t.Errorf("turn_close = outcome %q truncated %v, want completed + truncated", closes[0].Outcome, closes[0].Truncated)
+			}
+			if closes[0].StopReasonRaw != string(stop) {
+				t.Errorf("stop_reason_raw = %q, want %q", closes[0].StopReasonRaw, stop)
+			}
+		})
 	}
 }
 
-// TestStartTurn_LocalShellRecordsNoModel is the stated source rule: no model
-// answered a shell command, so a footer claiming one would be a lie about who
-// produced the output.
-func TestStartTurn_LocalShellRecordsNoModel(t *testing.T) {
-	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Model = "sonnet-4"
-		return true
-	}); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
+// TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing is the empty-turn
+// check's input: the result names a turn that produced no content, so the prompt
+// path can conclude `empty` and recover, and a turn that did produce content is
+// never recreated.
+func TestFinalizeTurn_ATurnWithNoContentReportsEmittedNothing(t *testing.T) {
+	h, _, _ := newTestHub()
+	id, _ := h.stagePromptTurn(t, "c1")
 
-	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceLocalShell)
-
-	turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
-	if !won {
-		t.Fatal("no turn was opened")
-	}
-	if turn.Model != "" {
-		t.Errorf("a local shell turn recorded model %q", turn.Model)
-	}
-}
-
-// TestStartTurn_CapturesTheCreditBaseline is what gives a turn its own spend. The
-// baseline used to be a local in the prompt handler, so a turn marotte did not
-// prompt had none at all and its credits were attributed to whatever turn came
-// next.
-func TestStartTurn_CapturesTheCreditBaseline(t *testing.T) {
-	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Usage.Credits = 4.5
-		return true
-	}); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-
-	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
-
-	turn, won := h.coord.turns.claimOpen(t.Context(), "c1")
-	if !won {
-		t.Fatal("no turn was opened")
-	}
-	if turn.Credits != 4.5 {
-		t.Errorf("credit baseline = %v, want 4.5", turn.Credits)
-	}
-	// The spend is the difference against it, so a turn that costs 0.5 reports 0.5
-	// rather than the chat's running total.
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Usage.Credits = 5.0
-		return true
-	}); err != nil {
-		t.Fatalf("spend: %v", err)
-	}
-	if got := h.coord.turnStatsFor(t.Context(), turn).CreditsDelta; got != 0.5 {
-		t.Errorf("CreditsDelta = %v, want 0.5", got)
-	}
-}
-
-// TestFinalizeTurn_MeasuresEmptinessAfterFlushingTheCarry is the flush-before-
-// measure order, and the defect it closes is a user-visible one: the steering
-// filter withholds any trailing text that could still grow into an
-// acknowledgement marker, so a reply ending in `[` sits entirely in the carry
-// when the turn settles. Measured before the flush, that turn reports having
-// produced nothing, the empty-turn recovery recreates the session and re-prompts
-// a question the agent had already answered.
-func TestFinalizeTurn_MeasuresEmptinessAfterFlushingTheCarry(t *testing.T) {
-	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
-	// The turn's whole reply is still withheld: prose that merely looks like the
-	// start of a marker, so the flush releases it rather than dropping it.
-	const reply = "see the note in ["
-	buf := h.stageTurnBuffer(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.SetSteerCarry(reply, "")
-
-	h.coord.SettleTurnOnResponse(t.Context(), "c1", epoch, 0,
+	h.coord.SettleTurnOnResponse(t.Context(), "c1", id, 0,
 		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
-	result, err := h.coord.AwaitTurn(t.Context(), "c1", epoch)
+	result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
+	if err != nil {
+		t.Fatalf("AwaitTurn: %v", err)
+	}
+	if !result.EmittedNothing {
+		t.Error("a turn with no content reported EmittedNothing false, so the empty-turn recovery never runs")
+	}
+	if result.Stop != marotte.StopReasonEndTurn {
+		t.Errorf("Stop = %q, want end_turn", result.Stop)
+	}
+}
+
+// TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry is the flush-before-
+// measure order, and the defect it closes is a user-visible one: the steering
+// filter withholds any trailing text that could still grow into an acknowledgement
+// marker, so a reply ending in `[` sits entirely in the carry when the turn
+// settles. Measured before the release, that turn reports having produced nothing,
+// the empty-turn recovery recreates the session and re-prompts a question the agent
+// had already answered.
+func TestFinalizeTurn_MeasuresEmittedAfterReleasingTheCarry(t *testing.T) {
+	h, cs, _ := newTestHub()
+	id, log := h.stagePromptTurn(t, "c1")
+	const reply = "see the note in ["
+	log.SetSteerCarry("", "say-1", reply)
+
+	h.coord.SettleTurnOnResponse(t.Context(), "c1", id, 0,
+		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
+
+	result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
 	if err != nil {
 		t.Fatalf("AwaitTurn: %v", err)
 	}
 	if result.EmittedNothing {
-		t.Error("a turn whose only text was an unflushed carry reported EmittedNothing; the session would be recreated and the prompt re-sent")
+		t.Error("a turn whose only text was an unreleased carry reported EmittedNothing; the session would be recreated and the prompt re-sent")
 	}
-	c, _ := cs.Get(t.Context(), "c1")
-	var persisted string
-	for i := range c.Messages {
-		if c.Messages[i].Role == marotte.RoleAssistant {
-			persisted = c.Messages[i].Content
-		}
-	}
-	if persisted != reply {
-		t.Errorf("persisted assistant content = %q, want %q", persisted, reply)
+	if got := textsOf(t, logOf(t, cs, "c1")); !slices.Equal(got, []string{reply}) {
+		t.Errorf("sealed texts = %q, want the released carry %q", got, reply)
 	}
 }
 
-// TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease is the retention
-// bound. The record is gone from the chat's lifecycle the moment the turn
-// finalizes, so without a handle a caller awaiting its OWN epoch would be told
-// the turn never existed; and with retention keyed on anything but the handle it
-// could be evicted before that caller read it.
+// TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease is the retention bound.
+// The record leaves the chat's lifecycle the moment the turn finalizes, so without
+// a handle a caller awaiting its OWN turn would be told the turn never existed; and
+// with retention keyed on anything but the handle it could be evicted before that
+// caller read it.
 func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
-	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceLocalShell)
+	h, _, _ := newTestHub()
+	id := shellTurn(t, h, "c1")
 
-	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", epoch)
+	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", id, "out")
 
-	result, err := h.coord.AwaitTurn(t.Context(), "c1", epoch)
+	result, err := h.coord.AwaitTurn(t.Context(), "c1", id)
 	if err != nil {
 		t.Fatalf("AwaitTurn on a held handle: %v", err)
 	}
 	if result.Stop != marotte.StopReasonEndTurn {
 		t.Errorf("Stop = %q, want %q", result.Stop, marotte.StopReasonEndTurn)
 	}
-	if result.Epoch != epoch {
-		t.Errorf("result Epoch = %d, want %d", result.Epoch, epoch)
+	if result.Turn != id {
+		t.Errorf("result Turn = %q, want %q", result.Turn, id)
 	}
 
-	h.coord.ReleaseTurn("c1", epoch)
-	if _, err := h.coord.AwaitTurn(t.Context(), "c1", epoch); !errors.Is(err, marotte.ErrNoSuchTurn) {
+	h.coord.ReleaseTurn("c1", id)
+	if _, err := h.coord.AwaitTurn(t.Context(), "c1", id); !errors.Is(err, marotte.ErrNoSuchTurn) {
 		t.Errorf("after the last handle was released, AwaitTurn error = %v, want ErrNoSuchTurn", err)
 	}
 }
 
-// TestAwaitTurn_UnknownEpochReportsNoSuchTurn: an epoch the chat never minted is
-// the one case that answers ErrNoSuchTurn, which is what makes the sentinel
-// meaningful for the caller that does hold a handle.
-func TestAwaitTurn_UnknownEpochReportsNoSuchTurn(t *testing.T) {
+// TestAwaitTurn_UnknownTurnReportsNoSuchTurn: an id the chat never held is the one
+// case that answers ErrNoSuchTurn, which is what makes the sentinel meaningful for
+// the caller that does hold a handle.
+func TestAwaitTurn_UnknownTurnReportsNoSuchTurn(t *testing.T) {
 	h, _, _ := newTestHub()
-	if _, err := h.coord.AwaitTurn(t.Context(), "c1", 99); !errors.Is(err, marotte.ErrNoSuchTurn) {
-		t.Errorf("AwaitTurn on an unknown epoch = %v, want ErrNoSuchTurn", err)
+	if _, err := h.coord.AwaitTurn(t.Context(), "c1", "t-never-opened"); !errors.Is(err, marotte.ErrNoSuchTurn) {
+		t.Errorf("AwaitTurn on an unknown turn = %v, want ErrNoSuchTurn", err)
 	}
 }
 
 // TestAwaitTurn_DeadContextReturnsRatherThanParking: a waiter selects on its own
 // context as well as on the handle, so a caller whose turn context died does not
-// park until something finalizes. The finalize afterwards is there to show the
-// abandoned wait left the chat's lifecycle usable.
+// park until something finalizes. The finalize afterwards shows the abandoned wait
+// left the chat's lifecycle usable.
 func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceLocalShell)
-	defer h.coord.ReleaseTurn("c1", epoch)
+	id := shellTurn(t, h, "c1")
+	defer h.coord.ReleaseTurn("c1", id)
 
-	dead, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := h.coord.AwaitTurn(dead, "c1", epoch); !errors.Is(err, context.Canceled) {
+	if _, err := h.coord.AwaitTurn(deadContext(t), "c1", id); !errors.Is(err, context.Canceled) {
 		t.Errorf("AwaitTurn with a dead context = %v, want context.Canceled", err)
 	}
 
-	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", epoch)
-	if got := turnEndedStops(t, h); !slices.Equal(got, []string{string(marotte.StopReasonEndTurn)}) {
-		t.Errorf("turn_ended stops = %v, want exactly one end_turn", got)
+	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", id, "out")
+	if got := closesOf(t, logOf(t, cs, "c1")); len(got) != 1 || got[0].StopReasonRaw != string(marotte.StopReasonEndTurn) {
+		t.Errorf("turn_close entries = %+v, want exactly one end_turn", got)
 	}
 }
 
-// An epoch-scoped closer handed a ZERO epoch closes nothing.
+// An id-scoped closer handed an EMPTY id closes nothing.
 //
-// Zero is also what StartTurn returns when it refuses, which is reachable, so
-// overloading it as "take whatever is open" let a failed prompt claim an
-// agent-initiated turn and persist its partial under an interrupt outcome
-// carrying ANOTHER turn's failure reason. That meaning has its own spelling now.
-func TestAbandonInFlightTurn_WithNoEpochClosesNothing(t *testing.T) {
+// Empty is also what OpenTurn answers when it refuses, which is reachable, so
+// reading it as "take whatever is open" let a failed prompt claim an
+// agent-initiated turn and close it under an interrupt carrying ANOTHER turn's
+// failure reason. That meaning has its own spelling (Own) now.
+func TestAbandonInFlightTurn_WithNoTurnIDClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-
+	cs.seed(t, "c1", func(c *marotte.Chat) { c.Name = "A" })
 	// A turn the ENGINE started, streaming. It holds no prompt slot, so admission
-	// control never refused the prompt whose open then failed.
-	h.translateACPEvent(chatID, newTurnStartMsg())
-	h.translateACPEvent(chatID, newChunkMsg("the agent's own reply"))
-	agentTurn, _ := h.coord.turns.openEpoch(chatID)
-
-	h.AbandonInFlightTurn(ctx, chatID, 0, marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.")
-
-	if open, isOpen := h.coord.turns.openEpoch(chatID); !isOpen || open != agentTurn {
-		t.Errorf("open epoch = (%d, %v), want the agent's turn %d still open: a prompt failure "+
-			"that never opened a turn closed one it does not own", open, isOpen, agentTurn)
+	// never refused the prompt whose open then failed.
+	engine := h.stageWireTurn(t, "c1")
+	if engine == nil {
+		t.Fatal("no engine turn was opened")
 	}
-	if got := turnEndedStops(t, h); len(got) != 0 {
-		t.Errorf("turn_ended stops = %v, want none", got)
+	if _, err := engine.TextDelta(t.Context(), "", "say-1", "the agent's own reply"); err != nil {
+		t.Fatalf("TextDelta: %v", err)
 	}
-	c, _ := cs.Get(ctx, chatID)
-	if len(c.Messages) != 0 {
-		t.Errorf("messages = %+v, want none: the agent's partial was persisted under the "+
-			"prompt's interrupt reason", c.Messages)
+
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", "", marotte.StopReasonInterrupted, "The turn was cancelled before the agent answered.")
+
+	if own, ok := h.coord.OwnTurn("c1"); !ok || own != engine {
+		t.Errorf("own turn = (%p, %v), want the engine's turn %p still open: a prompt failure "+
+			"that never opened a turn closed one it does not own", own, ok, engine)
+	}
+	if got := closesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
+		t.Errorf("turn_close entries = %+v, want none: the agent's turn was closed under the prompt's reason", got)
+	}
+	if got := closedBroadcasts(t, h); len(got) != 0 {
+		t.Errorf("turn_closed broadcasts = %+v, want none", got)
 	}
 }
 
-// The closers read the buffer through ONE guarded snapshot, so a fold still in
-// flight when the claim landed cannot race them: turnFinalizing excludes the NEXT
-// fold, so the settle wakes as frame N finishes while the folder is free to begin
-// N+1. Reading eight exported fields one at a time races a strings.Builder and
-// three slices, and can persist a torn Content as the turn's final text. Run with
-// -race; that is the point of it.
-func TestCloseTurn_ConcurrentFoldDoesNotRaceTheContentSnapshot(t *testing.T) {
+// TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted: an unset stop must
+// never grade a prompt failure `unknown`, which would report a broken turn as one
+// that merely stopped for a reason marotte could not read.
+func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	const chatID marotte.ChatID = "c1"
-	_, _ = cs.Mutate(ctx, chatID, func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	id, _ := h.stagePromptTurn(t, "c1")
 
-	epoch, buf := h.stagePromptTurn(t, chatID)
-	buf.StartTurn(newMessageID())
-	// One delta before the folder starts, so the persisted content is not a
-	// scheduling outcome: the racing goroutine below is there for the detector.
-	buf.AppendTextDelta("the first delta", "")
+	h.coord.AbandonInFlightTurn(t.Context(), "c1", id, "", "a reason")
+
+	closes := closesOf(t, logOf(t, cs, "c1"))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one", len(closes))
+	}
+	if closes[0].Outcome != marotte.TurnOutcomeInterrupted || closes[0].StopReasonRaw != string(marotte.StopReasonInterrupted) {
+		t.Errorf("turn_close = outcome %q stop %q, want interrupted/interrupted", closes[0].Outcome, closes[0].StopReasonRaw)
+	}
+	if closes[0].FailureReason != "a reason" {
+		t.Errorf("failure_reason = %q, want the caller's", closes[0].FailureReason)
+	}
+}
+
+// The closer seals the accumulator under its own mutex, so a fold still in flight
+// when the claim landed cannot tear the text: the delta that landed before the
+// close is in the sealed entry whole, and the folder is refused after it. Run with
+// -race; that is the point of it.
+func TestCloseTurn_ConcurrentFoldDoesNotRaceTheSeal(t *testing.T) {
+	h, cs, _ := newTestHub()
+	id, log := streamingPromptTurn(t, h, "c1", "the first delta")
 
 	stop := make(chan struct{})
 	folding := make(chan struct{})
@@ -747,9 +537,8 @@ func TestCloseTurn_ConcurrentFoldDoesNotRaceTheContentSnapshot(t *testing.T) {
 				return
 			default:
 			}
-			buf.AppendTextDelta("x", "")
-			buf.AppendToolCall(&marotte.ToolCall{ID: "tc-1"})
-			buf.TrackFileChanges([]marotte.ToolDiff{{Path: "a.go", NewText: "line\n"}}, false)
+			_, _ = log.TextDelta(t.Context(), "", "say-1", "x")
+			log.ChangedFile("a.go", 1, 0, false)
 			if first {
 				close(running)
 				first = false
@@ -761,81 +550,45 @@ func TestCloseTurn_ConcurrentFoldDoesNotRaceTheContentSnapshot(t *testing.T) {
 	// that cannot fail.
 	<-running
 
-	h.SettleTurnOnResponse(ctx, chatID, epoch, 0,
+	h.coord.SettleTurnOnResponse(t.Context(), "c1", id, 0,
 		&marotte.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})})
 
 	close(stop)
 	<-folding
 
-	c, _ := cs.Get(ctx, chatID)
-	if !hasAssistantContent(c, "the first delta") {
-		t.Errorf("the closer persisted no content for a turn that streamed; messages = %+v", c.Messages)
+	entries := logOf(t, cs, "c1")
+	texts := textsOf(t, entries)
+	if len(texts) == 0 || !strings.HasPrefix(texts[0], "the first delta") {
+		t.Errorf("the closer sealed no text for a turn that streamed; texts = %q", texts)
+	}
+	if got := closesOf(t, entries); len(got) != 1 {
+		t.Errorf("turn_close entries = %d, want exactly one", len(got))
 	}
 }
 
 // TestFinalizeTurn_PersistsOnACancelledContext is the incident: a chat streamed
 // for 46 minutes, the container restarted, and the transcript came back holding
-// only the user message.
-//
-// The assistant message was already assembled in memory when the closer ran;
-// chat.Store.Mutate refused it on its entry guard seeing the shutdown-cancelled
-// context, and 81051 characters went with the refusal. The `interrupted` divider
-// went the same way on EVERY shutdown, which reads to the client as completed.
+// only the user message. The store refused the close on its entry guard seeing the
+// shutdown-cancelled context, and everything unsealed went with the refusal.
 func TestFinalizeTurn_PersistsOnACancelledContext(t *testing.T) {
-	const chatID marotte.ChatID = "c1"
+	h, cs, _ := newTestHub()
 	const partial = "the model got this far before the container restarted"
-	h, cs := hubOnDisk(t, chatID)
-	epoch, buf := h.stagePromptTurn(t, chatID)
-	buf.StartTurn(newMessageID())
-	buf.AppendTextDelta(partial, "")
+	id, _ := streamingPromptTurn(t, h, "c1", partial)
 
-	h.coord.finalizeTurn(deadContext(t), chatID, turnClose{Closer: closerBridgeDeath, Epoch: epoch})
+	h.coord.finalizeTurn(deadContext(t), "c1", &turnClose{
+		Closer: closerBridgeDeath, Stop: marotte.StopReasonInterrupted, Reason: deathInterruptCause, Turn: id,
+	})
 
-	c, ok := cs.Get(t.Context(), chatID)
-	if !ok {
-		t.Fatalf("chat %q vanished", chatID)
+	entries := logOf(t, cs, "c1")
+	if got := textsOf(t, entries); !slices.Equal(got, []string{partial}) {
+		t.Errorf("sealed texts = %q, want the partial; the close was refused on a dead context", got)
 	}
-	if !hasAssistantContent(c, partial) {
-		t.Errorf("the assembled partial was refused and is gone; messages = %+v", c.Messages)
+	closes := closesOf(t, entries)
+	if len(closes) != 1 {
+		t.Fatalf("turn_close entries = %d, want exactly one: without it the client reads this turn as completed", len(closes))
 	}
-	if divider := dividerIn(c); divider == nil {
-		t.Error("no interrupted divider, so the client reads this turn as completed")
-	} else if divider.Content != deathInterruptCause {
-		t.Errorf("divider content = %q, want %q", divider.Content, deathInterruptCause)
-	}
-}
-
-// TestFinalizeTurn_TheNoPartialArmPersistsOnACancelledContext covers the other
-// interrupted arm, which a SPLIT turn always takes because SplitSegment clears
-// Started. There the divider is the turn's only carrier, so a refusal loses the
-// outcome, the changed files and the model in one write.
-func TestFinalizeTurn_TheNoPartialArmPersistsOnACancelledContext(t *testing.T) {
-	const chatID marotte.ChatID = "c1"
-	h, cs := hubOnDisk(t, chatID)
-	epoch, buf := h.stagePromptTurn(t, chatID)
-	buf.StartTurn(newMessageID())
-	buf.AppendTextDelta("everything before the compaction point", "")
-	buf.SetModel("m-latched")
-	buf.TrackFileChanges([]marotte.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
-	if !h.coord.SealTurnSegment(t.Context(), chatID) {
-		t.Fatal("the fixture could not seal a segment, so the no-partial arm is unreachable")
-	}
-
-	h.coord.finalizeTurn(deadContext(t), chatID, turnClose{Closer: closerBridgeDeath, Epoch: epoch})
-
-	c, ok := cs.Get(t.Context(), chatID)
-	if !ok {
-		t.Fatalf("chat %q vanished", chatID)
-	}
-	divider := dividerIn(c)
-	if divider == nil {
-		t.Fatal("a split turn's divider was refused, so nothing carries its outcome")
-	}
-	if divider.TurnModel != "m-latched" {
-		t.Errorf("divider TurnModel = %q, want the buffer's latched %q", divider.TurnModel, "m-latched")
-	}
-	if divider.ChangedFiles["a.go"] == nil {
-		t.Errorf("divider ChangedFiles = %v, want the turn's cumulative map", divider.ChangedFiles)
+	if closes[0].Outcome != marotte.TurnOutcomeInterrupted || closes[0].FailureReason != deathInterruptCause {
+		t.Errorf("turn_close = outcome %q reason %q, want interrupted with the death cause", closes[0].Outcome, closes[0].FailureReason)
 	}
 }
 
@@ -843,15 +596,12 @@ func TestFinalizeTurn_TheNoPartialArmPersistsOnACancelledContext(t *testing.T) {
 // detach sits BELOW the position wait rather than at the top of finalizeTurn.
 //
 // awaitPosition exits on the folder reaching the position, the folder going away,
-// or ctx.Done() — and a wedged kiro-cli that never closes its pipe leaves the
-// third as the only one that fires. A detach above it trades a lost turn for a
-// hung shutdown, so this asserts on ELAPSED TIME: moved up, it hangs, not fails.
+// or ctx.Done(), and a wedged kiro-cli that never closes its pipe leaves the third
+// as the only one that fires. A detach above it trades a lost turn for a hung
+// shutdown, so this asserts on ELAPSED TIME: moved up, it hangs, not fails.
 func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
-	const chatID marotte.ChatID = "c1"
-	h, cs := hubOnDisk(t, chatID)
-	epoch, buf := h.stagePromptTurn(t, chatID)
-	buf.StartTurn(newMessageID())
-	buf.AppendTextDelta("half an answer", "")
+	h, cs, _ := newTestHub()
+	id, log := streamingPromptTurn(t, h, "c1", "half an answer")
 
 	// A position the folder will never reach: nothing is attached to advance it.
 	const unreachable = 99
@@ -859,9 +609,9 @@ func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
 	start := time.Now()
 	go func() {
 		defer close(settled)
-		h.coord.finalizeTurn(deadContext(t), chatID, turnClose{
+		h.coord.finalizeTurn(deadContext(t), "c1", &turnClose{
 			Closer: closerPromptResponse,
-			Epoch:  epoch,
+			Turn:   id,
 			Seq:    unreachable,
 			Resp:   &marotte.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)},
 		})
@@ -877,194 +627,10 @@ func TestFinalizeTurn_DoesNotDetachThePositionWait(t *testing.T) {
 
 	// And it claimed nothing: the position could not be reached, so the
 	// bridge-death closer owns whatever is still open.
-	if open, isOpen := h.coord.turns.openEpoch(chatID); !isOpen || open != epoch {
-		t.Errorf("open epoch = (%d, %t), want turn %d still open", open, isOpen, epoch)
+	if own, ok := h.coord.OwnTurn("c1"); !ok || own != log {
+		t.Errorf("own turn = (%p, %t), want turn %q still open", own, ok, id)
 	}
-	if c, _ := cs.Get(t.Context(), chatID); len(c.Messages) != 0 {
-		t.Errorf("an abandoned settle persisted %+v, want nothing", c.Messages)
-	}
-}
-
-// turnEndedScopes returns the population every turn_ended frame names, in order. The two
-// booleans are what let a client tell this chat's own turn ending from a turn a
-// replacement displaced and from a workflow STEP's turn that was never this chat's — and
-// the client runs a DIFFERENT effect set per population, so a wrong stamp tears down the
-// wrong turn's state.
-func turnEndedScopes(t *testing.T, h *Runtime) []marotte.TurnEndedPayload {
-	t.Helper()
-	var out []marotte.TurnEndedPayload
-	for _, e := range bufferedSince(h, 0) {
-		var msg struct {
-			Type    marotte.EventType        `json:"type"`
-			Payload marotte.TurnEndedPayload `json:"payload"`
-		}
-		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
-			t.Fatalf("unmarshal event: %v", err)
-		}
-		if msg.Type == marotte.EventTurnEnded {
-			out = append(out, msg.Payload)
-		}
-	}
-	return out
-}
-
-// The ordinary case, and the one every OTHER closer must also produce: absent-both is
-// `chat` scope, which is what an older server's frame keeps meaning.
-func TestTurnEnded_AnOrdinaryPromptTurnClaimsNeitherPopulation(t *testing.T) {
-	h, cs, _ := newTestHub()
-	startedTurnOn(t, h, cs, "c1", "a reply")
-
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
-
-	frames := turnEndedScopes(t, h)
-	if len(frames) != 1 {
-		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
-	}
-	if frames[0].Superseded || frames[0].WorkflowStep {
-		t.Errorf("a prompt turn's end claims superseded=%v workflow_step=%v, want both false: "+
-			"a client reads either as a reason NOT to settle, so the chat stays `working` forever",
-			frames[0].Superseded, frames[0].WorkflowStep)
-	}
-}
-
-// closerWireDisplaced is the ONE producer of `superseded`. A replacement turn is live, so
-// the displaced turn's end says nothing about whether the chat is idle.
-func TestTurnEnded_ADisplacedTurnIsSupersededAndNotAStep(t *testing.T) {
-	h, cs, _ := newTestHub()
-	startedEngineTurnOn(t, h, cs, "c1", "the engine was mid-reply")
-
-	// A prompt meeting a live engine turn displaces it: closed immediately BEFORE the
-	// replacement opens, which is why the fact is closer-derived and not a registry read.
-	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt)
-	t.Cleanup(func() { h.coord.ReleaseTurn("c1", epoch) })
-
-	frames := turnEndedScopes(t, h)
-	if len(frames) != 1 {
-		t.Fatalf("got %d turn_ended frames, want 1 for the displaced turn", len(frames))
-	}
-	if !frames[0].Superseded {
-		t.Error("a displaced turn's end is not marked superseded, so the client settles the " +
-			"chat and tears down the REPLACEMENT turn's state")
-	}
-	if frames[0].WorkflowStep {
-		t.Error("a displaced prompt turn claims to be a workflow step")
-	}
-}
-
-// A step turn closed at its RUN's terminal transition is the reported defect's population:
-// it was never this chat's own turn, and every chat-scoped teardown would tear down
-// whatever turn is genuinely still streaming here.
-func TestTurnEnded_AStepTurnClosedByItsRunIsAWorkflowStep(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
-	buf := h.stageTurnBuffer(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("what the step produced")
-
-	h.coord.CloseStepTurn(t.Context(), "c1")
-
-	frames := turnEndedScopes(t, h)
-	if len(frames) != 1 {
-		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
-	}
-	if !frames[0].WorkflowStep {
-		t.Error("a workflow step's turn ends claiming to be this chat's own, so the client " +
-			"drops this chat's decisions, steers and turn summary for a turn it never ran")
-	}
-	if frames[0].Superseded {
-		t.Error("a run-completed step turn claims to be superseded")
-	}
-}
-
-// announceConclusion is the other broadcast site, and closeAsInterrupted IS reachable for
-// a step turn: a bridge death over a live step turn must not arrive as this chat's own
-// turn ending. This is the case a `workflow_step: false` literal there would lose.
-func TestTurnEnded_AnInterruptedStepTurnIsStillAWorkflowStep(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
-	buf := h.stageTurnBuffer(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("the step got this far before the pipe died")
-
-	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1")
-
-	frames := turnEndedScopes(t, h)
-	if len(frames) != 1 {
-		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
-	}
-	if !frames[0].WorkflowStep {
-		t.Error("a bridge death over a live STEP turn announces this chat's own turn ending, " +
-			"so every chat-scoped teardown runs on a chat whose own turn may be live")
-	}
-	if frames[0].Superseded {
-		t.Error("an interrupted turn claims to be superseded; no interrupt closer displaces")
-	}
-}
-
-// closeOnLocalShell is the third broadcast site. A `!cmd` turn is TurnSourceLocalShell, so
-// its false is honest rather than defaulted.
-func TestTurnEnded_ALocalShellTurnClaimsNeitherPopulation(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	epoch := h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceLocalShell)
-
-	h.coord.FinalizeLocalShellTurn(t.Context(), "c1", epoch)
-
-	frames := turnEndedScopes(t, h)
-	if len(frames) != 1 {
-		t.Fatalf("got %d turn_ended frames, want 1", len(frames))
-	}
-	if frames[0].Superseded || frames[0].WorkflowStep {
-		t.Errorf("a `!cmd` turn's end claims superseded=%v workflow_step=%v, want both false",
-			frames[0].Superseded, frames[0].WorkflowStep)
-	}
-}
-
-// THE WITHHOLDING GATE, asserted so a later reader holding the new WorkflowStep bool does
-// not "fix" announcesEmptyEnd. An empty step turn persists no carrier AND announces
-// nothing, which is correct rather than a gap: it emitted no chunk, so markTurnLive never
-// fired and no client latched `thinking` for it — there is nothing to heal. Widening the
-// gate would hand an OLDER bundle a frame it reads as `chat` scope, which is precisely the
-// regression the gate was introduced to prevent.
-func TestTurnEnded_AnEmptyWorkflowStepTurnBroadcastsNothing(t *testing.T) {
-	h, cs, _ := newTestHub()
-	seedChat(t, cs, "c1")
-	h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourceWorkflowStep)
-	// No buffer content: the step carried nothing at all.
-
-	h.coord.CloseStepTurn(t.Context(), "c1")
-
-	if frames := turnEndedScopes(t, h); len(frames) != 0 {
-		t.Errorf("an EMPTY workflow-step turn broadcast %d turn_ended frames, want 0: "+
-			"announcesEmptyEnd withholds it deliberately, and a pre-upgrade bundle reads "+
-			"one as this chat's own turn ending", len(frames))
-	}
-}
-
-// TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted guards the zero value, which
-// is the one out-of-range stop a caller can reach by omission: ConcludeStopReason maps ""
-// onto TurnOutcomeUnknown, which SeverityOf grades `stopped` — so an unset stop would
-// silently report a failed prompt as a turn that merely stopped, with no red mark and no
-// account. Only `interrupted` and `cancelled` are legal here, and anything else is
-// normalized rather than trusted.
-func TestAbandonInFlightTurn_AnUnsetStopNormalizesToInterrupted(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := t.Context()
-	seedChat(t, cs, "c1")
-
-	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
-	h.AbandonInFlightTurn(ctx, "c1", epoch, "", "a reason")
-
-	carrier := carrierOf(t, cs, "c1")
-	if carrier.TurnOutcome != marotte.TurnOutcomeInterrupted {
-		t.Errorf("carrier outcome = %q, want %q: an unset stop must never grade a prompt "+
-			"failure `unknown`", carrier.TurnOutcome, marotte.TurnOutcomeInterrupted)
-	}
-	if carrier.EventKind != marotte.EventInterrupted {
-		t.Errorf("carrier event_kind = %q, want %q", carrier.EventKind, marotte.EventInterrupted)
+	if got := closesOf(t, logOf(t, cs, "c1")); len(got) != 0 {
+		t.Errorf("an abandoned settle closed the turn: %+v", got)
 	}
 }

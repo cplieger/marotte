@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func setModeReq(t *testing.T, chatID marotte.ChatID, modeID string) *marotte.ClientCommand {
@@ -30,7 +30,7 @@ func setModeReq(t *testing.T, chatID marotte.ChatID, modeID string) *marotte.Cli
 func TestCmdSetMode_TombstonedChatIs404(t *testing.T) {
 	host := newTestHost(t, tombstonedChats{testsupport.NewInMemoryChatStore()})
 
-	_, err := CmdSetMode(t.Context(), host, host, host, setModeReq(t, "c1", "spec"))
+	_, err := CmdSetMode(t.Context(), host, host, host, host, setModeReq(t, "c1", "spec"))
 
 	if err == nil {
 		t.Fatal("CmdSetMode on a tombstoned chat returned no error; the pill flips for a chat that does not exist")
@@ -52,11 +52,11 @@ func TestCmdSetMode_NoOpAndAutoCreate(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
 		spy := &promptSpy{hostDouble: newTestHost(t, store)}
 
-		if _, err := CmdSetMode(t.Context(), spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+		if _, err := CmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
 			t.Fatalf("first pick: %v", err)
 		}
 		before := len(spy.events)
-		if _, err := CmdSetMode(t.Context(), spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
+		if _, err := CmdSetMode(t.Context(), spy, spy, spy, spy, setModeReq(t, "c1", "spec")); err != nil {
 			t.Fatalf("repeat pick: %v", err)
 		}
 		for _, evt := range spy.events[before:] {
@@ -70,7 +70,7 @@ func TestCmdSetMode_NoOpAndAutoCreate(t *testing.T) {
 		store := testsupport.NewInMemoryChatStore()
 		host := newTestHost(t, store)
 
-		if _, err := CmdSetMode(t.Context(), host, host, host, setModeReq(t, "c1", "spec")); err != nil {
+		if _, err := CmdSetMode(t.Context(), host, host, host, host, setModeReq(t, "c1", "spec")); err != nil {
 			t.Fatalf("CmdSetMode on a fresh chat: %v", err)
 		}
 
@@ -115,7 +115,7 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 				store := testsupport.NewInMemoryChatStore()
 				host := newBridgeHost(store, &recordingBridge{callErr: test.callErr})
 
-				_, err := CmdSetMode(t.Context(), host, host, host, setModeReq(t, "c1", "spec"))
+				_, err := CmdSetMode(t.Context(), host, host, host, host, setModeReq(t, "c1", "spec"))
 
 				assertConfigOutcome(t, err, test.wantStatus)
 				c, ok := store.Get(t.Context(), "c1")
@@ -133,7 +133,7 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 				}
 				cmd := &marotte.ClientCommand{Type: marotte.CmdSetEffort, ChatID: "c1", Payload: payload}
 
-				_, err = CmdSetEffort(t.Context(), host, host, host, Workspace{}, cmd)
+				_, err = CmdSetEffort(t.Context(), host, host, host, Workspace{}, host, cmd)
 
 				assertConfigOutcome(t, err, test.wantStatus)
 				c, ok := store.Get(t.Context(), "c1")

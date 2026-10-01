@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // storeDeps is benchDeps with a real chat store, so a handler that mutates the
@@ -18,7 +18,7 @@ type storeDeps struct {
 	store ChatStore
 }
 
-// The six store methods are promoted from the embedded store, not handed back
+// The store methods are promoted from the embedded store, not handed back
 // through a ChatStore() getter: Roles holds the interface directly now, so a
 // double that only overrode the getter left benchDeps' no-op methods winning and
 // silently stored nothing.
@@ -30,8 +30,20 @@ func (d *storeDeps) Mutate(ctx context.Context, id marotte.ChatID, fn func(*maro
 	return d.store.Mutate(ctx, id, fn)
 }
 
-func (d *storeDeps) AppendMessage(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) error {
-	return d.store.AppendMessage(ctx, chatID, msg)
+func (d *storeDeps) Revert(ctx context.Context, id marotte.ChatID, turn, kasMessageID string) (*marotte.Entry, *marotte.Entry, error) {
+	return d.store.Revert(ctx, id, turn, kasMessageID)
+}
+
+func (d *storeDeps) RewindTarget(ctx context.Context, id marotte.ChatID, promptID string) (marotte.RewindTarget, bool, error) {
+	return d.store.RewindTarget(ctx, id, promptID)
+}
+
+func (d *storeDeps) PromptAttachmentPaths(ctx context.Context, id marotte.ChatID, watermark string) ([]string, error) {
+	return d.store.PromptAttachmentPaths(ctx, id, watermark)
+}
+
+func (d *storeDeps) TurnCount(ctx context.Context, id marotte.ChatID) (uint64, bool) {
+	return d.store.TurnCount(ctx, id)
 }
 
 func (d *storeDeps) SetDraft(ctx context.Context, id marotte.ChatID, text string) (*marotte.ComposerState, error) {
@@ -95,9 +107,8 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	if len(chain) != 1 || chain[0] != "sess_abc-123" {
 		t.Errorf("session chain = %v, want [sess_abc-123]", chain)
 	}
-	if len(c.Messages) != 0 {
-		t.Errorf("chat carries %d messages, want 0: the replay supplies the transcript",
-			len(c.Messages))
+	if c.TurnCount != 0 {
+		t.Errorf("chat carries %d turns, want 0: the replay supplies the transcript", c.TurnCount)
 	}
 }
 

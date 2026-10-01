@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { signal } from "@cplieger/reactive";
 import type { PageFind } from "./find-registry.js";
 import type * as ModHistory from "./history.js";
 import { ICON_TAB_RUN, outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { absoluteTime } from "./relative-time.js";
 
 /** Cache-buster for the re-imports below.
  *
@@ -40,6 +42,8 @@ const deleteChatDispatch = vi.fn(async () => ({ ok: true }));
 const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
 const confirmMock = vi.fn(async () => true);
 const closeTab = vi.fn();
+const setHistoryTab = vi.fn();
+const pushRoute = vi.fn();
 
 vi.mock("./actions/chat.js", () => ({
   loadSessions: { dispatch, cancel: cancelSessions },
@@ -52,7 +56,7 @@ vi.mock("./actions/runs.js", () => ({
   deleteRun: { dispatch: deleteRunDispatch },
 }));
 vi.mock("./confirm.js", () => ({ confirm: confirmMock }));
-// The facts line joins each row against the chat record this client already
+// The subtitle line joins each row against the chat record this client already
 // holds, so the store is a real input to the row builder here.
 const storeGet = vi.fn((_id: string): unknown => undefined);
 vi.mock("./store.js", () => ({ get: storeGet }));
@@ -79,10 +83,24 @@ vi.mock("./actions/chat-search.js", () => ({
 // real module reaches the store's whole surface where this suite stubs one read.
 vi.mock("./find-in-chat.js", () => ({ openChatFindAt }));
 vi.mock("./run-view.js", () => ({ openRunView }));
+// The dock's queue, as the run row reads it: the run ids with an unanswered ask.
+// A SIGNAL rather than a plain set, because the real `runPendingAsks` is a tracked
+// read and the page's repaint-on-ask rides that subscription — a mock answering
+// off a plain value would leave the live case with nothing to fire.
+const asking = signal<ReadonlySet<string>>(new Set());
+vi.mock("./decision-dock.js", () => ({
+  runPendingAsks: (id: string) => ({
+    count: asking.value.has(id) ? 1 : 0,
+    nodes: new Set<string>(),
+    label: "",
+  }),
+}));
 // `hasTab` is keyed by `(kind, ref)`: ids are opaque and server-minted, so a
 // chat id is no longer a tab id and the predicate takes the subject instead.
 const hasTab = vi.fn((_kind: string, _ref?: string) => false);
-vi.mock("./tabs.js", () => ({ hasTab }));
+vi.mock("./tabs.js", () => ({ hasTab, setHistoryTab }));
+// The pane switch pushes its URL; a forced switch (the router's) must not.
+vi.mock("./router.js", () => ({ pushRoute }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   // A spy rather than a bare arrow: whether the ARM fires at all is the observable
   // the settled-empty case pins, and the painter's own refusal is skeleton.test.ts's.
@@ -96,7 +114,15 @@ const noop = (): void => {
   /* noop */
 };
 vi.mock("./editor-openers.js", () => ({ openFileDiff: noop }));
-vi.mock("./navigate.js", () => ({ openChange: noop, openAtLine: noop, openCallDiff: noop }));
+// `openSpec` is here for the LINK, not for a case: a module in this graph imports
+// it, and Browser Mode links for real rather than reading properties off a
+// namespace object, so one missing export fails the whole file.
+vi.mock("./navigate.js", () => ({
+  openChange: noop,
+  openAtLine: noop,
+  openCallDiff: noop,
+  openSpec: noop,
+}));
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: noop,
   preserveReadingPosition: (fn: () => void) => {
@@ -133,66 +159,162 @@ const runRow = {
 /** A parentless run at the given status. */
 const runAt = (status: string) => ({ ...runRow, status });
 
+/** The page's static markup, as `static/index.html` lays it out: the bar and the
+ *  two panes, each holding its own list container. */
+const VIEW_HTML = `
+  <div id="history-view">
+    <nav id="history-tab-bar" aria-label="History categories">
+      <button type="button" class="seg" data-history-tab="chats"><span class="seg-label">Chats</span></button>
+      <button type="button" class="seg" data-history-tab="runs"><span class="seg-label">Runs</span></button>
+    </nav>
+    <div data-history-panel="chats"><div id="history-table" class="list-container" role="list"></div></div>
+    <div data-history-panel="runs" class="hidden"><div id="history-runs" class="list-container" role="list"></div></div>
+  </div>`;
+
+function mountView(): HTMLElement {
+  document.body.innerHTML = VIEW_HTML;
+  return document.getElementById("history-view")!;
+}
+
+const chatsPane = (): HTMLElement => document.getElementById("history-table")!;
+const runsPane = (): HTMLElement => document.getElementById("history-runs")!;
+const rowOf = (key: string): HTMLElement =>
+  document.querySelector<HTMLElement>(`[data-key="${key}"]`)!;
+const keysIn = (pane: HTMLElement): (string | null)[] =>
+  [...pane.querySelectorAll("[data-key]")].map((r) => r.getAttribute("data-key"));
+
 /** A row's accessible name, which lives on its open BUTTON. The row itself is a
- *  plain container: a role on it would flatten the delete button beside it out of
- *  the accessibility tree. */
+ *  list item: a role on it would flatten the delete button beside it out of the
+ *  accessibility tree. */
 const openName = (row: Element): string | null =>
-  row.querySelector("button.history-row-main")?.getAttribute("aria-label") ?? null;
+  row.querySelector("button.entry-open")?.getAttribute("aria-label") ?? null;
+
+const openBtn = (row: Element): HTMLElement => row.querySelector<HTMLElement>("button.entry-open")!;
+
+/** The instance the current test is driving, so the next test can close it: the
+ *  controller is a module singleton whose effect outlives the view, and a leaked
+ *  one repaints whatever `#history-runs` the next test mounts. */
+let current: typeof ModHistory | null = null;
+
+async function freshModule(): Promise<typeof ModHistory> {
+  current = (await import(/* @vite-ignore */ `./history.ts?boot=${bootSeq}`)) as typeof ModHistory;
+  return current;
+}
 
 async function render(payload: unknown): Promise<HTMLElement> {
-  document.body.innerHTML = `<div id="history-table"></div>`;
+  const view = mountView();
   dispatch.mockResolvedValue(payload);
   // The pair `activateTabQuietly` runs. Not `tabs.ts`'s `toggleHistoryView`: that one
   // toggles the TAB, which is a round trip that paints nothing here.
-  const { loadHistoryView, refreshHistoryView } = (await import(
-    /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-  )) as typeof ModHistory;
+  const { loadHistoryView, refreshHistoryView } = await freshModule();
   loadHistoryView();
   refreshHistoryView();
   await vi.waitFor(() => {
-    if (document.querySelectorAll("#history-table [data-key]").length === 0) {
+    if (view.querySelectorAll("[data-key]").length === 0) {
       throw new Error("not rendered");
     }
   });
-  return document.getElementById("history-table")!;
+  return view;
 }
 
-describe("history: previous chats and runs", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
+function resetAll(): void {
+  current?.teardownHistoryView();
+  current = null;
+  vi.clearAllMocks();
+  vi.resetModules();
+  bootSeq++;
+  hasTab.mockReturnValue(false);
+  asking.value = new Set();
+}
+
+describe("history: two panes behind one bar", () => {
+  beforeEach(resetAll);
+
+  it("puts chats on the Chats pane and runs on the Runs pane, each newest first", async () => {
+    await render({
+      sessions: [failedRow, chatRow],
+      runs: [runRow, { ...runRow, workflow_id: "wf_2", updated_at: 9000 }],
+    });
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat", "s:sess_failed"]);
+    expect(keysIn(runsPane())).toEqual(["r:wf_2", "r:wf_1"]);
   });
 
-  it("merges chats and runs into ONE list, newest first", async () => {
-    const c = await render({ sessions: [chatRow, failedRow], runs: [runRow] });
-    const keys = [...c.querySelectorAll("[data-key]")].map((r) => r.getAttribute("data-key"));
-    // Interleaved by recency rather than segregated by kind: 3000, 2500, 1000.
-    expect(keys).toEqual(["s:sess_chat", "r:wf_1", "s:sess_failed"]);
+  it("opens on the Chats pane, with the bar and the panels wired as a tablist", async () => {
+    const view = await render({ sessions: [chatRow], runs: [runRow] });
+    const bar = view.querySelector("#history-tab-bar")!;
+    expect(bar.getAttribute("role")).toBe("tablist");
+    const chats = bar.querySelector('[data-history-tab="chats"]')!;
+    const runs = bar.querySelector('[data-history-tab="runs"]')!;
+    expect(chats.classList.contains("active")).toBe(true);
+    expect(chats.getAttribute("aria-selected")).toBe("true");
+    expect(chats.getAttribute("aria-controls")).toBe("history-panel-chats");
+    expect(runs.getAttribute("aria-selected")).toBe("false");
+    // The panel half of that pairing.
+    const chatsPanel = view.querySelector('[data-history-panel="chats"]')!;
+    const runsPanel = view.querySelector('[data-history-panel="runs"]')!;
+    expect(chatsPanel.id).toBe("history-panel-chats");
+    expect(chatsPanel.getAttribute("role")).toBe("tabpanel");
+    expect(chatsPanel.getAttribute("aria-labelledby")).toBe("history-tab-chats");
+    expect(chatsPanel.classList.contains("hidden")).toBe(false);
+    expect(runsPanel.classList.contains("hidden")).toBe(true);
   });
 
-  it("labels which rows are runs", async () => {
-    const c = await render({ sessions: [chatRow], runs: [runRow] });
-    const run = c.querySelector('[data-key="r:wf_1"]')!;
-    const chat = c.querySelector('[data-key="s:sess_chat"]')!;
-    expect(run.querySelector(".history-kind")?.textContent).toBe("Run");
-    expect(chat.querySelector(".history-kind")?.textContent).toBe("Chat");
-  });
-
-  it("hides an idle status but shows a real one", async () => {
-    // KAS reports `idle` for every settled session, so showing it would put a
-    // meaningless badge on nearly every row. `failed` is worth surfacing.
-    const c = await render({ sessions: [chatRow, failedRow], runs: [] });
-    expect(c.querySelector('[data-key="s:sess_chat"] .history-status')).toBeNull();
-    expect(c.querySelector('[data-key="s:sess_failed"] .history-status')?.textContent).toBe(
-      "failed",
+  it("switches panes from the bar, and the switch is what pushes the URL", async () => {
+    const view = await render({ sessions: [chatRow], runs: [runRow] });
+    view.querySelector<HTMLElement>('[data-history-tab="runs"]')!.click();
+    expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
+      false,
     );
+    expect(view.querySelector('[data-history-panel="chats"]')!.classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(view.querySelector('[data-history-tab="runs"]')!.getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(setHistoryTab).toHaveBeenCalledWith("runs");
+    expect(pushRoute).toHaveBeenCalledWith({ kind: "history", tab: "runs" });
   });
+
+  it("re-selecting the active pane pushes nothing", async () => {
+    const view = await render({ sessions: [chatRow], runs: [runRow] });
+    view.querySelector<HTMLElement>('[data-history-tab="chats"]')!.click();
+    expect(pushRoute).not.toHaveBeenCalled();
+  });
+
+  it("forceHistoryTab swaps the pane WITHOUT a push, for the router", async () => {
+    const view = mountView();
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [runRow] });
+    const { forceHistoryTab, loadHistoryView } = await freshModule();
+    // Before the page is wired, as a deep link arrives: the choice has to survive
+    // into the first paint.
+    forceHistoryTab("runs");
+    loadHistoryView();
+    expect(view.querySelector('[data-history-panel="runs"]')!.classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(setHistoryTab).toHaveBeenCalledWith("runs");
+    expect(pushRoute).not.toHaveBeenCalled();
+  });
+
+  it("keeps the kind chips and the status word off the row", async () => {
+    // With one kind per pane the chip said nothing the pane did not, and a run's
+    // state is the mark in its leading slot.
+    await render({ sessions: [chatRow, failedRow], runs: [runRow] });
+    const rows = [...document.querySelectorAll("[data-key]")].map((r) => r.textContent).join(" ");
+    expect(rows).not.toContain("Run");
+    expect(rows).not.toContain("Chat");
+    expect(rows).not.toContain("failed");
+    expect(rows).not.toContain("completed");
+    expect(rows).not.toContain("idle");
+  });
+});
+
+describe("history: opening a row", () => {
+  beforeEach(resetAll);
 
   it("opens an already-owned session as its existing chat", async () => {
-    const c = await render({ sessions: [ownedRow], runs: [] });
-    (c.querySelector('[data-key="s:sess_owned"]') as HTMLElement).click();
+    await render({ sessions: [ownedRow], runs: [] });
+    openBtn(rowOf("s:sess_owned")).click();
     expect(openPreviousSession).toHaveBeenCalledWith(
       expect.objectContaining({ chat_id: "c-existing" }),
     );
@@ -205,9 +327,9 @@ describe("history: previous chats and runs", () => {
     // reader), and the page re-fetches — the server-derived list is what drops
     // the dead row, so nothing here has to reach into the rendered set.
     openPreviousSession.mockResolvedValueOnce("gone");
-    const c = await render({ sessions: [ownedRow], runs: [] });
+    await render({ sessions: [ownedRow], runs: [] });
     const before = dispatch.mock.calls.length;
-    (c.querySelector('[data-key="s:sess_owned"]') as HTMLElement).click();
+    openBtn(rowOf("s:sess_owned")).click();
     await vi.waitFor(() => {
       expect(dispatch.mock.calls.length).toBeGreaterThan(before);
     });
@@ -217,9 +339,9 @@ describe("history: previous chats and runs", () => {
     // A network failure is NOT the ephemeral face: the row may still be
     // perfectly live, so no refresh churns the list under the reader.
     openPreviousSession.mockResolvedValueOnce("failed");
-    const c = await render({ sessions: [ownedRow], runs: [] });
+    await render({ sessions: [ownedRow], runs: [] });
     const before = dispatch.mock.calls.length;
-    (c.querySelector('[data-key="s:sess_owned"]') as HTMLElement).click();
+    openBtn(rowOf("s:sess_owned")).click();
     await new Promise((r) => setTimeout(r, 0));
     expect(dispatch.mock.calls.length).toBe(before);
   });
@@ -231,140 +353,111 @@ describe("history: previous chats and runs", () => {
     // composition root resolves it from the run store, because a chat-parented run
     // reviewed while its chat's tab is closed has an empty subject Parent without
     // being parentless.
-    const c = await render({ sessions: [chatRow], runs: [runRow] });
-    (c.querySelector('[data-key="r:wf_1"]') as HTMLElement).click();
+    await render({ sessions: [chatRow], runs: [runRow] });
+    openBtn(rowOf("r:wf_1")).click();
     expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", "");
     expect(openPreviousSession).not.toHaveBeenCalled();
   });
 
   it("hands over the launching chat so an agent-launched run nests under it", async () => {
     const parented = { ...runRow, parent_chat_id: "c-launcher" };
-    const c = await render({ sessions: [], runs: [parented] });
-    (c.querySelector('[data-key="r:wf_1"]') as HTMLElement).click();
+    await render({ sessions: [], runs: [parented] });
+    openBtn(rowOf("r:wf_1")).click();
     // The chat id is what makes the run's tab a sub-tab of the conversation that
     // started it; `openRunView` resolves it to a TAB id, because a chat id is no
     // longer one.
     expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", "c-launcher");
   });
 
-  it("offers a Retry on load failure instead of an empty state", async () => {
-    document.body.innerHTML = `<div id="history-table"></div>`;
+  it("offers a Retry on load failure instead of an empty state, on both panes", async () => {
+    const view = mountView();
     dispatch.mockResolvedValue(null);
-    const { loadHistoryView, refreshHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
+    const { loadHistoryView, refreshHistoryView } = await freshModule();
     loadHistoryView();
     refreshHistoryView();
     await vi.waitFor(() => {
-      if (document.querySelector(".history-error") === null) {
+      if (view.querySelectorAll(".history-error").length < 2) {
         throw new Error("no error state");
       }
     });
-    const c = document.getElementById("history-table")!;
-    expect(c.querySelector(".list-empty")?.textContent).not.toContain("No previous sessions");
+    expect(chatsPane().querySelector(".list-empty")?.textContent).not.toContain("No previous");
+    expect(runsPane().querySelector(".list-empty")?.textContent).not.toContain("No previous");
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
-    (c.querySelector("button") as HTMLElement).click();
+    chatsPane().querySelector<HTMLElement>("button")!.click();
     await vi.waitFor(() => {
-      if (c.querySelector("[data-key]") === null) {
+      if (chatsPane().querySelector("[data-key]") === null) {
         throw new Error("retry did not re-fetch");
       }
     });
   });
-
-  it("says so when the workspace has nothing", async () => {
-    document.body.innerHTML = `<div id="history-table"></div>`;
-    dispatch.mockResolvedValue({ sessions: [], runs: [] });
-    const { loadHistoryView, refreshHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
-    loadHistoryView();
-    refreshHistoryView();
-    await vi.waitFor(() => {
-      const t = document.getElementById("history-table")?.textContent ?? "";
-      if (!t.includes("No previous sessions")) {
-        throw new Error("no empty state");
-      }
-    });
-    const c = document.getElementById("history-table")!;
-    expect(c.querySelectorAll("[data-key]")).toHaveLength(0);
-    expect(c.textContent).toContain("No previous sessions in this workspace.");
-  });
 });
 
-// ---------------------------------------------------------------------------
 // The two per-list read verdicts. The server answers 200 with an empty list
-// whether it read nothing or failed to read at all — the picker is an
-// affordance, not a correctness surface — so `sessions_state` / `runs_state` are
-// the only thing separating the two, and without reading them this page told the
-// user their workspace had no history every time KAS was unreachable.
-//
-// The lists degrade INDEPENDENTLY (separate verbs on the same bridge), which is
-// why a half-failure says which half is missing.
-// ---------------------------------------------------------------------------
+// whether it read nothing or failed to read at all, so `sessions_state` /
+// `runs_state` are the only thing separating the two. The lists degrade
+// INDEPENDENTLY (separate verbs on the same bridge), and each pane states its own
+// verdict.
 
-describe("history: which empty state it is", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
-  });
+describe("history: which empty state each pane shows", () => {
+  beforeEach(resetAll);
 
-  async function emptyText(payload: unknown): Promise<string> {
-    document.body.innerHTML = `<div id="history-table"></div>`;
+  async function emptyTexts(payload: unknown): Promise<{ chats: string; runs: string }> {
+    mountView();
     dispatch.mockResolvedValue(payload);
-    const { loadHistoryView, refreshHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
+    const { loadHistoryView, refreshHistoryView } = await freshModule();
     loadHistoryView();
     refreshHistoryView();
     await vi.waitFor(() => {
-      if (document.querySelector("#history-table .list-empty") === null) {
+      if (
+        chatsPane().querySelector(".list-empty") === null ||
+        runsPane().querySelector(".list-empty") === null
+      ) {
         throw new Error("no empty state");
       }
     });
-    return document.getElementById("history-table")?.textContent ?? "";
+    return { chats: chatsPane().textContent ?? "", runs: runsPane().textContent ?? "" };
   }
 
   it("claims nothing to resume only when BOTH reads succeeded", async () => {
-    const t = await emptyText({
+    const t = await emptyTexts({
       sessions: [],
       runs: [],
       sessions_state: "ready",
       runs_state: "ready",
     });
-    expect(t).toContain("No previous sessions in this workspace.");
+    expect(t.chats).toBe("No previous conversations in this workspace.");
+    expect(t.runs).toBe("No previous workflow runs in this workspace.");
   });
 
   it("says the read failed rather than claiming the workspace is empty", async () => {
-    const t = await emptyText({
+    const t = await emptyTexts({
       sessions: [],
       runs: [],
       sessions_state: "unavailable",
       runs_state: "unavailable",
     });
-    expect(t).toContain("Couldn't read");
-    expect(t).not.toContain("No previous sessions in this workspace.");
+    expect(t.chats).toBe("Couldn't read previous conversations.");
+    expect(t.runs).toBe("Couldn't read workflow runs.");
   });
 
-  it("names WHICH list failed when only one did", async () => {
-    const chats = await emptyText({
+  it("names WHICH list failed when only one did, on its own pane", async () => {
+    const chats = await emptyTexts({
       sessions: [],
       runs: [],
       sessions_state: "unavailable",
       runs_state: "ready",
     });
-    expect(chats).toContain("Couldn't read previous conversations.");
-    expect(chats).toContain("No workflow runs to show.");
+    expect(chats.chats).toBe("Couldn't read previous conversations.");
+    expect(chats.runs).toBe("No previous workflow runs in this workspace.");
 
-    const runs = await emptyText({
+    const runs = await emptyTexts({
       sessions: [],
       runs: [],
       sessions_state: "ready",
       runs_state: "unavailable",
     });
-    expect(runs).toContain("Couldn't read workflow runs.");
-    expect(runs).toContain("No previous conversations to show.");
+    expect(runs.chats).toBe("No previous conversations in this workspace.");
+    expect(runs.runs).toBe("Couldn't read workflow runs.");
   });
 
   // The verdict is ALL the wire carries: the server knows why a read failed and
@@ -374,26 +467,27 @@ describe("history: which empty state it is", () => {
   // other surface that has to stand in for a list it could not read.
   it("names no cause in any of the four states", async () => {
     const all = [
-      await emptyText({ sessions: [], runs: [], sessions_state: "ready", runs_state: "ready" }),
-      await emptyText({
+      await emptyTexts({ sessions: [], runs: [], sessions_state: "ready", runs_state: "ready" }),
+      await emptyTexts({
         sessions: [],
         runs: [],
         sessions_state: "unavailable",
         runs_state: "unavailable",
       }),
-      await emptyText({
+      await emptyTexts({
         sessions: [],
         runs: [],
         sessions_state: "unavailable",
         runs_state: "ready",
       }),
-      await emptyText({
+      await emptyTexts({
         sessions: [],
         runs: [],
         sessions_state: "ready",
         runs_state: "unavailable",
       }),
     ]
+      .map((t) => `${t.chats} ${t.runs}`)
       .join(" ")
       .toLowerCase();
 
@@ -414,56 +508,47 @@ describe("history: which empty state it is", () => {
 // ---------------------------------------------------------------------------
 
 describe("history: chats already open in a tab here", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
-  });
+  beforeEach(resetAll);
 
   it("drops a tagged session whose chat is open here", async () => {
     hasTab.mockImplementation((_kind: string, ref?: string) => ref === "c-existing");
-    const c = await render({ sessions: [chatRow, ownedRow], runs: [] });
-    expect(c.querySelector('[data-key="s:sess_owned"]')).toBeNull();
+    await render({ sessions: [chatRow, ownedRow], runs: [] });
+    expect(document.querySelector('[data-key="s:sess_owned"]')).toBeNull();
     // Only that row goes. The rest of the list is untouched.
-    expect(c.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
-    expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
     expect(hasTab).toHaveBeenCalledWith("chat", "c-existing");
   });
 
   it("keeps a tagged session whose chat is NOT open here", async () => {
     // Owned but closed is exactly the case this page exists for: reopening it.
-    const c = await render({ sessions: [ownedRow], runs: [] });
-    expect(c.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
+    await render({ sessions: [ownedRow], runs: [] });
+    expect(document.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
   });
 
   it("never asks the tab store about an unowned session", async () => {
     // No `chat_id` means no marotte chat owns it, so there is no tab it could be.
-    const c = await render({ sessions: [chatRow], runs: [] });
-    expect(c.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
+    await render({ sessions: [chatRow], runs: [] });
+    expect(document.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
     expect(hasTab).not.toHaveBeenCalled();
   });
 
   it("leaves runs alone — a run is not a chat and owns no tab", async () => {
     hasTab.mockReturnValue(true);
-    const c = await render({ sessions: [], runs: [runRow] });
-    expect(c.querySelector('[data-key="r:wf_1"]')).not.toBeNull();
+    await render({ sessions: [], runs: [runRow] });
+    expect(document.querySelector('[data-key="r:wf_1"]')).not.toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// A run's outcome is a GLYPH, painted through tool-card.ts's applyOutcome (the
-// one writer of that vocabulary). Exhaustive over `run-store.ts RunState.status`,
-// plus the two junk values a `status?: string` wire field carries.
+// A run's state is its LEADING SLOT: the workflow mark while it moves, the
+// outcome glyph once it has settled (painted through tool-card.ts's applyOutcome,
+// the one writer of that vocabulary), nothing for a status this client has no
+// verdict for. Exhaustive over `run-store.ts RunState.status`, plus the two junk
+// values a `status?: string` wire field carries.
 // ---------------------------------------------------------------------------
 
-describe("history: a run's outcome is a glyph, not a word", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
-  });
+describe("history: a run's state is its leading slot", () => {
+  beforeEach(resetAll);
 
   /** The markup a mark renders as, named off the shared set rather than inlined. */
   const markup = (svg: string): string => (iconEl(svg) as HTMLElement).outerHTML;
@@ -478,10 +563,10 @@ describe("history: a run's outcome is a glyph, not a word", () => {
   ] as const;
 
   for (const s of settled) {
-    it(`paints ${s.status} as one tinted mark, never the word`, async () => {
-      const c = await render({ sessions: [], runs: [runAt(s.status)] });
-      const row = c.querySelector('[data-key="r:wf_1"]')!;
-      const icon = row.querySelector(".tool-icon")!;
+    it(`paints ${s.status} as one tinted mark in the lead, never the word`, async () => {
+      await render({ sessions: [], runs: [runAt(s.status)] });
+      const row = rowOf("r:wf_1");
+      const icon = row.querySelector(".entry-lead .tool-icon")!;
       expect(icon.classList.contains(s.cls)).toBe(true);
       // ONE mark, whichever state: never a glyph plus a badge beside it.
       expect(icon.querySelectorAll("svg")).toHaveLength(1);
@@ -494,35 +579,89 @@ describe("history: a run's outcome is a glyph, not a word", () => {
       expect(openName(row)).toBe(`Open feature-pipeline, ${s.word}`);
       expect(row.textContent).not.toContain(s.word);
       expect(row.textContent).not.toContain(s.status);
-      // The glyph REPLACES the status slot rather than joining it.
-      expect(row.querySelector(".history-status")).toBeNull();
+      // A settled run carries no workflow mark.
+      expect(row.querySelector(".entry-mark")).toBeNull();
     });
   }
 
-  for (const status of ["running", "paused"] as const) {
-    it(`leaves a ${status} run its status slot and gives it no glyph`, async () => {
-      const c = await render({ sessions: [], runs: [runAt(status)] });
-      const row = c.querySelector('[data-key="r:wf_1"]')!;
+  for (const [status, mark] of [
+    ["running", "working"],
+    ["paused", "waiting"],
+  ] as const) {
+    it(`gives a ${status} run the workflow mark at ${mark}, and no verdict`, async () => {
+      await render({ sessions: [], runs: [runAt(status)] });
+      const row = rowOf("r:wf_1");
+      // The same `data-status` vocabulary run-bar.ts writes, so 12-tabs.css paints
+      // one look for one run wherever it is reported.
+      const dot = row.querySelector<HTMLElement>(".entry-lead > .entry-mark");
+      expect(dot?.dataset["status"]).toBe(mark);
       expect(row.querySelector(".tool-icon")).toBeNull();
-      expect(row.querySelector(".history-status")?.textContent).toBe(status);
       expect(openName(row)).toBe("Open feature-pipeline");
+      expect(row.textContent).not.toContain(status);
     });
   }
+
+  it("paints `input` on a run whose ask is queued, ahead of its status, and withholds Delete", async () => {
+    // KAS leaves an asking run `running`, so the status alone read `working` over a
+    // run parked on a person. The dock's queue is the channel, read the way the run
+    // bar and the two tab dots read it, and it outranks the status there too.
+    asking.value = new Set(["wf_1"]);
+    await render({ sessions: [], runs: [runAt("running")] });
+    const row = rowOf("r:wf_1");
+    expect(row.querySelector<HTMLElement>(".entry-lead > .entry-mark")?.dataset["status"]).toBe(
+      "input",
+    );
+    expect(row.querySelector(".tool-icon")).toBeNull();
+    // A moving run keeps its trash withheld, and an asking run is moving.
+    expect(row.querySelector("[data-history-delete]")).toBeNull();
+  });
+
+  it("repaints the mark when an ask arrives or is answered, with no fetch", async () => {
+    // An ask emits no `runs:changed`, so the pane has to follow the dock's queue
+    // itself: a running row goes to `input` when the ask lands and back when it is
+    // answered, on the same element, without `/api/sessions` being asked again.
+    await render({ sessions: [], runs: [runAt("running")] });
+    const row = rowOf("r:wf_1");
+    const mark = (): string | undefined =>
+      row.querySelector<HTMLElement>(".entry-lead > .entry-mark")?.dataset["status"];
+    expect(mark()).toBe("working");
+    const fetches = dispatch.mock.calls.length;
+    asking.value = new Set(["wf_1"]);
+    expect(mark()).toBe("input");
+    expect(rowOf("r:wf_1")).toBe(row);
+    asking.value = new Set();
+    expect(mark()).toBe("working");
+    expect(dispatch.mock.calls.length).toBe(fetches);
+  });
+
+  it("stops following the dock once the page is torn down", async () => {
+    // The controller is a module singleton and its effect outlives the view, so a
+    // closed page must not keep re-deriving rows from its last answer on every
+    // dock change; reopening re-sets the answer through `load()`.
+    await render({ sessions: [], runs: [runAt("running")] });
+    const row = rowOf("r:wf_1");
+    const mark = (): string | undefined =>
+      row.querySelector<HTMLElement>(".entry-lead > .entry-mark")?.dataset["status"];
+    expect(mark()).toBe("working");
+    const { teardownHistoryView } = await freshModule();
+    teardownHistoryView();
+    asking.value = new Set(["wf_1"]);
+    expect(mark()).toBe("working");
+  });
 
   it("guesses no verdict from a status it does not know", async () => {
     // `status` is a plain string on the wire, so an unrecognised value is
-    // reachable. It must fall through to the status word, not to a green check.
-    const c = await render({ sessions: [], runs: [runAt("quiesced")] });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
-    expect(row.querySelector(".tool-icon")).toBeNull();
-    expect(row.querySelector(".history-status")?.textContent).toBe("quiesced");
+    // reachable. It must fall through to NO claim, not to a green check.
+    await render({ sessions: [], runs: [runAt("quiesced")] });
+    const row = rowOf("r:wf_1");
+    // The slot stays, empty, so the title keeps its neighbours' offset.
+    expect(row.querySelector(".entry-lead")?.childElementCount).toBe(0);
+    expect(row.textContent).not.toContain("quiesced");
   });
 
-  it("shows neither glyph nor status when the run reports no status at all", async () => {
-    const c = await render({ sessions: [], runs: [runAt("")] });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
-    expect(row.querySelector(".tool-icon")).toBeNull();
-    expect(row.querySelector(".history-status")).toBeNull();
+  it("shows an empty lead when the run reports no status at all", async () => {
+    await render({ sessions: [], runs: [runAt("")] });
+    expect(rowOf("r:wf_1").querySelector(".entry-lead")?.childElementCount).toBe(0);
   });
 
   // OVERTURNED. This used to assert the glyph was scoped to a PARENTLESS run, on
@@ -532,22 +671,40 @@ describe("history: a run's outcome is a glyph, not a word", () => {
   // the only door left — so a blank outcome would leave the reader no reason to
   // open the one door there is.
   it("states the verdict on an agent-parented run too", async () => {
-    const c = await render({
+    await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", parent_chat_id: "c-owner" }],
     });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    const row = rowOf("r:wf_1");
     expect(row.querySelector(".tool-icon")).not.toBeNull();
-    // A verdict takes the status slot's place, as it does for a parentless row.
-    expect(row.querySelector(".history-status")).toBeNull();
     expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
-  it("gives a chat row no outcome glyph", async () => {
-    const c = await render({ sessions: [failedRow], runs: [] });
-    const row = c.querySelector('[data-key="s:sess_failed"]')!;
+  it("gives a chat row no lead at all", async () => {
+    await render({ sessions: [failedRow], runs: [] });
+    const row = rowOf("s:sess_failed");
+    expect(row.querySelector(".entry-lead")).toBeNull();
     expect(row.querySelector(".tool-icon")).toBeNull();
-    expect(row.querySelector(".history-status")?.textContent).toBe("failed");
+  });
+
+  it("repaints a run IN PLACE when a reload finds it settled", async () => {
+    // The row is kept by key across a reload, so a run that finished since the
+    // last read has to have its mark replaced by its verdict on the same element.
+    await render({ sessions: [], runs: [runAt("running")] });
+    const row = rowOf("r:wf_1");
+    expect(row.querySelector(".entry-mark")).not.toBeNull();
+    dispatch.mockResolvedValue({ sessions: [], runs: [runAt("failed")] });
+    const { refreshHistoryView } = await freshModule();
+    refreshHistoryView();
+    await vi.waitFor(() => {
+      if (row.querySelector(".tool-icon") === null) {
+        throw new Error("not repainted");
+      }
+    });
+    expect(rowOf("r:wf_1")).toBe(row);
+    expect(row.querySelector(".entry-mark")).toBeNull();
+    expect(openName(row)).toBe("Open feature-pipeline, failed");
+    expect(row.querySelector("[data-history-delete]")).not.toBeNull();
   });
 });
 
@@ -559,41 +716,36 @@ describe("history: a run's outcome is a glyph, not a word", () => {
 // ---------------------------------------------------------------------------
 
 describe("history: an overrun reads differently from a cancel", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
-  });
+  beforeEach(resetAll);
+
+  const sub = (row: Element): string => row.querySelector(".entry-sub")?.textContent ?? "";
 
   it("says a wall-clock overrun stopped the run", async () => {
-    const c = await render({
+    await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", end_reason: "overran" }],
     });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
-    expect(row.textContent).toContain("ran past its time limit");
+    expect(sub(rowOf("r:wf_1"))).toContain("ran past its time limit");
   });
 
   it("says a step's turn cap stopped the run", async () => {
-    const c = await render({
+    await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", end_reason: "step_cap" }],
     });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
-    expect(row.textContent).toContain("a step ran past its turn limit");
+    expect(sub(rowOf("r:wf_1"))).toContain("a step ran past its turn limit");
   });
 
   it("says a restart interrupted the run", async () => {
     // The fourth fact, and the reason it needs its own value: a run cut off by a
     // restart stopped mid-step through the same cancel a person uses, so without
     // the sentence the reader is left inferring it from a run that simply stops.
-    const c = await render({
+    await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", end_reason: "orphaned" }],
     });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
-    expect(row.textContent).toContain("the server restarted while it was running");
+    const row = rowOf("r:wf_1");
+    expect(sub(row)).toContain("the server restarted while it was running");
     expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
@@ -601,23 +753,23 @@ describe("history: an overrun reads differently from a cancel", () => {
     // The distinguisher is the ABSENCE of a reason. If this row grew a sentence,
     // the field would be describing every abort rather than the two marotte
     // caused.
-    const c = await render({ sessions: [], runs: [runAt("aborted")] });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    await render({ sessions: [], runs: [runAt("aborted")] });
+    const row = rowOf("r:wf_1");
     expect(row.textContent).not.toContain("ran past");
-    expect(row.querySelector(".list-row-summary")).toBeNull();
+    expect(row.querySelector(".entry-sub")?.textContent).toBe("");
   });
 
   it("settles a run the terminal frame has not caught up with yet", async () => {
     // A bound cancels at a node boundary, so KAS can still report `running` for a
     // run marotte already stopped. The reason outranks the status, or the row
-    // reads "running" forever.
-    const c = await render({
+    // reads as moving forever.
+    await render({
       sessions: [],
       runs: [{ ...runRow, status: "running", end_reason: "overran" }],
     });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    const row = rowOf("r:wf_1");
     expect(row.querySelector(".tool-icon")).not.toBeNull();
-    expect(row.querySelector(".history-status")).toBeNull();
+    expect(row.querySelector(".entry-mark")).toBeNull();
     expect(openName(row)).toBe("Open feature-pipeline, aborted");
   });
 
@@ -625,24 +777,24 @@ describe("history: an overrun reads differently from a cancel", () => {
     // This sentence reports what MAROTTE did to the run, so it was always stated
     // whatever launched it. The glyph now is too (see "states the verdict on an
     // agent-parented run too"), so the row carries both.
-    const c = await render({
+    await render({
       sessions: [],
       runs: [{ ...runRow, status: "aborted", parent_chat_id: "c-owner", end_reason: "overran" }],
     });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    const row = rowOf("r:wf_1");
     expect(row.querySelector(".tool-icon")).not.toBeNull();
-    expect(row.textContent).toContain("ran past its time limit");
+    expect(sub(row)).toContain("ran past its time limit");
   });
 
   it("ignores an end reason it does not recognise", async () => {
     // `end_reason` is a plain string on the wire. An unknown value must not print
     // a raw enum at the reader, and must not repaint a COMPLETED run as aborted
     // with nothing on the row to explain why: one vocabulary decides both.
-    const c = await render({
+    await render({
       sessions: [],
       runs: [{ ...runRow, status: "completed", end_reason: "quiesced" }],
     });
-    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    const row = rowOf("r:wf_1");
     expect(row.textContent).not.toContain("quiesced");
     expect(openName(row)).toBe("Open feature-pipeline, succeeded");
   });
@@ -654,39 +806,20 @@ describe("history: an overrun reads differently from a cancel", () => {
 // ---------------------------------------------------------------------------
 
 describe("history: the tab-restore loader", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
-  });
+  beforeEach(resetAll);
 
   async function restore(): Promise<HTMLElement> {
-    document.body.innerHTML = `<div id="history-table"></div>`;
-    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
-    const { loadHistoryView, refreshHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
-    loadHistoryView();
-    refreshHistoryView();
-    await vi.waitFor(() => {
-      if (document.querySelectorAll("#history-table [data-key]").length === 0) {
-        throw new Error("not rendered");
-      }
-    });
-    return document.getElementById("history-table")!;
+    return render({ sessions: [chatRow], runs: [] });
   }
 
   it("fills the page from the activation pair alone", async () => {
-    const c = await restore();
-    expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
+    const view = await restore();
+    expect(view.querySelectorAll("[data-key]")).toHaveLength(1);
   });
 
   it("is a reload when fired again, and paints one row rather than two", async () => {
-    const c = await restore();
-    const { loadHistoryView, refreshHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
+    const view = await restore();
+    const { loadHistoryView, refreshHistoryView } = await freshModule();
     loadHistoryView();
     refreshHistoryView();
     await vi.waitFor(() => {
@@ -694,7 +827,7 @@ describe("history: the tab-restore loader", () => {
         throw new Error("not reloaded");
       }
     });
-    expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
+    expect(view.querySelectorAll("[data-key]")).toHaveLength(1);
   });
 
   it("registers the find and fetches NOTHING", async () => {
@@ -702,11 +835,9 @@ describe("history: the tab-restore loader", () => {
     // up, so there was no split to decline: the activation registers, the dispatcher's
     // refresh fetches, and the first activation issues ONE `/api/sessions` instead of
     // two with the second aborting the first.
-    document.body.innerHTML = `<div id="history-table"></div>`;
+    mountView();
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
-    const { loadHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
+    const { loadHistoryView } = await freshModule();
 
     loadHistoryView();
 
@@ -715,41 +846,28 @@ describe("history: the tab-restore loader", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("refreshHistoryView issues exactly one read", async () => {
-    document.body.innerHTML = `<div id="history-table"></div>`;
-    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
-    const { loadHistoryView, refreshHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
-    loadHistoryView();
-
-    refreshHistoryView();
-    await vi.waitFor(() => {
-      if (document.querySelectorAll("#history-table [data-key]").length === 0) {
-        throw new Error("not rendered");
-      }
-    });
-
+  it("refreshHistoryView issues exactly one read for both panes", async () => {
+    await render({ sessions: [chatRow], runs: [runRow] });
     expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(keysIn(chatsPane())).toEqual(["s:sess_chat"]);
+    expect(keysIn(runsPane())).toEqual(["r:wf_1"]);
   });
 
   it("arms no placeholder for an EMPTY list once /api/sessions has answered", async () => {
     // No chats and no runs is an ANSWER, and the empty-state row it paints carries no
     // `data-key`, so nothing but the flag separates it from a list nobody has read.
-    document.body.innerHTML = `<div id="history-table"></div>`;
+    mountView();
     dispatch.mockResolvedValue({ sessions: [], runs: [] });
-    const { loadHistoryView, refreshHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
+    const { loadHistoryView, refreshHistoryView } = await freshModule();
     loadHistoryView();
 
     refreshHistoryView();
     await vi.waitFor(() => {
-      if (document.querySelector("#history-table .list-empty") === null) {
+      if (chatsPane().querySelector(".list-empty") === null) {
         throw new Error("empty state not painted");
       }
     });
-    // The FIRST read had nothing to go on, so it arms.
+    // The FIRST read had nothing to go on, so it arms — once, for both panes.
     expect(skeletonTimingMock).toHaveBeenCalledTimes(1);
 
     refreshHistoryView();
@@ -764,9 +882,7 @@ describe("history: the tab-restore loader", () => {
 
   it("tears the page's in-flight work down on close", async () => {
     await restore();
-    const { teardownHistoryView } = (await import(
-      /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-    )) as typeof ModHistory;
+    const { teardownHistoryView } = await freshModule();
     cancelSessions.mockClear();
     teardownHistoryView();
     expect(cancelSessions).toHaveBeenCalled();
@@ -774,7 +890,7 @@ describe("history: the tab-restore loader", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cross-chat search: a second MODE over the same container, not a filter of the
+// Cross-chat search: a second MODE over the Chats pane, not a filter of the
 // loaded list.
 // ---------------------------------------------------------------------------
 
@@ -815,19 +931,13 @@ async function search(
   result: unknown,
   query = "redis",
 ): Promise<{ table: HTMLElement; note: HTMLElement; find: PageFind }> {
-  // No host markup at all now: the box is the shared page popup
-  // (search-popup.ts over search-shell.ts), mounted into the view itself and
-  // positioned against the viewport, which is what stops this box, the
-  // transcript's and the file browser's from drifting apart again.
-  document.body.innerHTML = `<div id="history-view"><div id="history-table"></div></div>`;
+  mountView();
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
   // `loadHistoryView` rather than `tabs.ts`'s `toggleHistoryView`: the latter toggles
   // the TAB, which is a round trip that paints nothing here, while the page's own
   // loader is what every door reaches through the tab factory's lazy import.
-  const { loadHistoryView } = (await import(
-    /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
-  )) as typeof ModHistory;
+  const { loadHistoryView } = await freshModule();
   loadHistoryView();
   const find = await openFind();
 
@@ -845,32 +955,35 @@ async function search(
     }
   });
   return {
-    table: document.getElementById("history-table")!,
+    table: chatsPane(),
     note: document.getElementById("hist-search-note")!,
     find,
   };
 }
 
 describe("history: cross-chat search", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
-  });
+  beforeEach(resetAll);
 
-  it("renders matching CHATS with their best line", async () => {
+  it("renders matching CHATS in the row shape, with the hit count in the time slot", async () => {
     const { table } = await search({
       matches: [match()],
       scanned: 12,
       matched: 1,
       truncated: false,
     });
-    const row = table.querySelector("[data-search-chat]");
-    expect(row?.getAttribute("data-search-chat")).toBe("c-redis");
-    expect(row?.textContent).toContain("Redis migration");
-    expect(row?.textContent).toContain("we moved the cache to redis");
-    expect(row?.textContent).toContain("3 matches");
+    const row = table.querySelector("[data-search-chat]")!;
+    expect(row.getAttribute("data-search-chat")).toBe("c-redis");
+    expect(row.classList.contains("entry")).toBe(true);
+    expect(row.querySelector(".entry-title")?.textContent).toBe("Redis migration");
+    expect(row.querySelector(".entry-sub")?.textContent).toBe("we moved the cache to redis");
+    // A count is not a timestamp: it borrows the slot as text and carries no
+    // tooltip, because a hit count has no absolute form.
+    const count = row.querySelector(".entry-time")!;
+    expect(count.textContent).toBe("3 matches");
+    expect(count.tagName).toBe("SPAN");
+    expect(count.hasAttribute("data-tooltip")).toBe(false);
+    // Under the CHATS pane, not a third container.
+    expect(table.id).toBe("history-table");
   });
 
   // A title-only match carries no best hit at all, and must not render an empty
@@ -883,7 +996,8 @@ describe("history: cross-chat search", () => {
       matched: 1,
       truncated: false,
     });
-    expect(table.textContent).toContain("matches the conversation name");
+    expect(table.querySelector(".entry-sub")?.textContent).toBe("matches the conversation name");
+    expect(table.querySelector(".entry-time")).toBeNull();
   });
 
   it("opens the matched chat on click and hands its find the query and the best hit", async () => {
@@ -895,7 +1009,7 @@ describe("history: cross-chat search", () => {
       matched: 1,
       truncated: false,
     });
-    table.querySelector<HTMLElement>("[data-search-chat]")!.click();
+    openBtn(table.querySelector("[data-search-chat]")!).click();
     expect(openChatTab).toHaveBeenCalledWith("c-redis", "Redis migration");
     // Search results are chats that already exist; adopting a session is the
     // OTHER door and must not fire here.
@@ -916,7 +1030,7 @@ describe("history: cross-chat search", () => {
       matched: 1,
       truncated: false,
     });
-    table.querySelector<HTMLElement>("[data-search-chat]")!.click();
+    openBtn(table.querySelector("[data-search-chat]")!).click();
     await vi.waitFor(() => {
       expect(openChatTab).toHaveBeenCalledWith("c-redis", "Redis migration");
     });
@@ -934,7 +1048,7 @@ describe("history: cross-chat search", () => {
       matched: 1,
       truncated: false,
     });
-    table.querySelector<HTMLElement>("[data-search-chat]")!.click();
+    openBtn(table.querySelector("[data-search-chat]")!).click();
     await vi.waitFor(() => {
       expect(openChatTab).toHaveBeenCalledTimes(1);
     });
@@ -1022,7 +1136,7 @@ describe("history: cross-chat search", () => {
   it("carries the MAGNIFIER, because it reaches past what is on screen", async () => {
     // The server reads every chat file on disk, so this box finds conversations
     // the loaded list does not contain. A funnel would promise it only narrows
-    // what is here, which is what the docs and git boxes DO promise — same
+    // what is here, which is what the Runs pane's box DOES promise — same
     // component, the other glyph.
     await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     expect(document.querySelector("#hist-search .page-find-icon circle")).not.toBeNull();
@@ -1051,7 +1165,7 @@ describe("history: cross-chat search", () => {
     });
     expect(input.value).toBe("");
     await vi.waitFor(() => {
-      if (table.querySelectorAll("[data-key]").length === 0) {
+      if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
     });
@@ -1080,7 +1194,7 @@ describe("history: cross-chat search", () => {
     input.value = "   ";
     input.dispatchEvent(new Event("input"));
     await vi.waitFor(() => {
-      if (table.querySelectorAll("[data-key]").length === 0) {
+      if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
     });
@@ -1101,32 +1215,155 @@ describe("history: cross-chat search", () => {
     input.value = "";
     input.dispatchEvent(new Event("input"));
     await vi.waitFor(() => {
-      if (table.querySelectorAll("[data-key]").length === 0) {
+      if (table.querySelectorAll('[data-key^="s:"]').length === 0) {
         throw new Error("list not restored");
       }
     });
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
+
+  it("leaves the Runs pane its list while a search is open", async () => {
+    // A search is the Chats pane's mode; the runs a load brings back still land on
+    // their own pane, and a run finishing mid-search still repaints there.
+    await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [runRow] });
+    const { refreshHistoryView } = await freshModule();
+    refreshHistoryView();
+    // The refresh re-runs the SEARCH on the chats pane...
+    await vi.waitFor(() => {
+      expect(searchDispatch.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(chatsPane().querySelector("[data-search-chat]")).not.toBeNull();
+    expect(chatsPane().querySelector('[data-key="s:sess_chat"]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Runs pane's box is a FILTER over the loaded list: there is no server-side
+// run search, so it can only hide rows that are here, and it says so with the
+// funnel.
+// ---------------------------------------------------------------------------
+
+describe("history: the runs filter", () => {
+  beforeEach(resetAll);
+
+  const nightly = {
+    workflow_id: "wf_n",
+    name: "nightly-sweep",
+    status: "completed",
+    updated_at: 5,
+  };
+  const lint = {
+    workflow_id: "wf_l",
+    name: "lint-all",
+    workflow_name: "app-review",
+    status: "failed",
+    updated_at: 4,
+  };
+
+  async function filter(query: string): Promise<{ runs: HTMLElement; find: PageFind }> {
+    const view = mountView();
+    dispatch.mockResolvedValue({ sessions: [], runs: [nightly, lint] });
+    const { forceHistoryTab, loadHistoryView, refreshHistoryView } = await freshModule();
+    forceHistoryTab("runs");
+    loadHistoryView();
+    refreshHistoryView();
+    await vi.waitFor(() => {
+      if (view.querySelectorAll('[data-key^="r:"]').length < 2) {
+        throw new Error("not rendered");
+      }
+    });
+    const find = await openFind();
+    const input = document.getElementById("hist-filter-input") as HTMLInputElement;
+    input.value = query;
+    input.dispatchEvent(new Event("input"));
+    await vi.waitFor(() => {
+      if (runsPane().querySelectorAll('[data-key^="r:"]').length === 2 && query !== "") {
+        throw new Error("not filtered");
+      }
+    });
+    return { runs: runsPane(), find };
+  }
+
+  it("is the toolbar's destination on the Runs pane, and it is a filter", async () => {
+    const { find } = await filter("");
+    expect(find.kind()).toBe("filter");
+    const region = document.getElementById("hist-filter");
+    expect(region?.getAttribute("role")).toBe("search");
+    expect(region?.getAttribute("aria-label")).toBe("Filter workflow runs");
+    // The funnel, not the magnifier: it narrows what is on screen and nothing more.
+    expect(document.querySelector("#hist-filter .page-find-icon polygon")).not.toBeNull();
+    expect(document.querySelector("#hist-filter .page-find-icon circle")).toBeNull();
+    // No request: the rows are already here.
+    expect(searchDispatch).not.toHaveBeenCalled();
+  });
+
+  it("narrows the loaded runs by name and states how many survived", async () => {
+    const { runs } = await filter("night");
+    expect(keysIn(runs)).toEqual(["r:wf_n"]);
+    // The shared grammar over this pane's noun, the same shape the docs filter
+    // states: what matched, then what was read.
+    expect(document.getElementById("hist-filter-note")?.textContent).toBe("1 run; 2 runs scanned");
+  });
+
+  it("reads the recipe as well as the label", async () => {
+    // The subtitle carries the recipe when it differs from the label, and the
+    // filter reads what the row shows.
+    const { runs } = await filter("app-review");
+    expect(keysIn(runs)).toEqual(["r:wf_l"]);
+  });
+
+  it("says so when nothing survives, rather than painting an empty card", async () => {
+    const { runs } = await filter("zzz");
+    expect(keysIn(runs)).toEqual([]);
+    expect(runs.textContent).toBe("No workflow runs match the filter.");
+    expect(document.getElementById("hist-filter-note")?.textContent).toBe("No matches");
+  });
+
+  it("restores the whole list when the box is cleared, without a fetch", async () => {
+    const { runs } = await filter("night");
+    const before = dispatch.mock.calls.length;
+    const input = document.getElementById("hist-filter-input") as HTMLInputElement;
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    await vi.waitFor(() => {
+      if (runs.querySelectorAll('[data-key^="r:"]').length < 2) {
+        throw new Error("list not restored");
+      }
+    });
+    expect(dispatch.mock.calls.length).toBe(before);
+    expect(document.getElementById("hist-filter-note")?.textContent).toBe("");
+  });
+
+  it("routes the page's find by pane: a search on Chats, a filter on Runs", async () => {
+    mountView();
+    dispatch.mockResolvedValue({ sessions: [], runs: [] });
+    const { forceHistoryTab, loadHistoryView } = await freshModule();
+    loadHistoryView();
+    const { pageFind } = await import("./find-registry.js");
+    const find = pageFind("history")!;
+    expect(find.kind()).toBe("search");
+    forceHistoryTab("runs");
+    expect(find.kind()).toBe("filter");
+  });
 });
 
 describe("history: the per-row delete", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
+    resetAll();
     confirmMock.mockResolvedValue(true);
     deleteChatDispatch.mockResolvedValue({ ok: true });
     deleteRunDispatch.mockResolvedValue({ ok: true });
   });
 
-  it("gives every settled row a delete button, chats and runs alike", async () => {
-    const c = await render({ sessions: [ownedRow], runs: [runRow] });
+  it("gives every settled row a delete button in the actions slot, chats and runs alike", async () => {
+    await render({ sessions: [ownedRow], runs: [runRow] });
     for (const key of ["s:sess_owned", "r:wf_1"]) {
-      const btn = c.querySelector(`[data-key="${key}"] [data-history-delete]`);
+      const btn = rowOf(key).querySelector(".entry-actions > [data-history-delete]");
       expect(btn, `${key} has no delete button`).not.toBeNull();
       // Named for the row, so a screen reader announces which thing it removes.
       expect(btn?.getAttribute("aria-label")).toMatch(/^Delete /);
+      expect(btn?.classList.contains("entry-delete")).toBe(true);
     }
   });
 
@@ -1134,12 +1371,8 @@ describe("history: the per-row delete", () => {
   // still going before it removes the directory. So on a live row the trash is a
   // stop control, and the confirm says "removed for good" and cannot say "and
   // cancelled". A moving run gets no button; stopping one is the run page's job.
-  //
-  // Live rows reach this page at all only since the parentless-only filter came off
-  // the server, which is what made the reach worth closing: before that, no
-  // agent-launched run appeared here to be killed.
   it("withholds the delete button from a run that is still moving", async () => {
-    const c = await render({
+    await render({
       sessions: [],
       runs: [
         { ...runAt("running"), workflow_id: "wf_live" },
@@ -1149,12 +1382,13 @@ describe("history: the per-row delete", () => {
     });
 
     for (const key of ["r:wf_live", "r:wf_held", "r:wf_agent"]) {
-      const row = c.querySelector(`[data-key="${key}"]`);
+      const row = document.querySelector(`[data-key="${key}"]`);
       expect(row, `${key} is not listed`).not.toBeNull();
       expect(
         row?.querySelector("[data-history-delete]"),
         `${key} carries a delete button for a run that is still moving`,
       ).toBeNull();
+      expect(row?.querySelector(".entry-actions")).toBeNull();
     }
   });
 
@@ -1162,28 +1396,23 @@ describe("history: the per-row delete", () => {
   // that has not landed rather than live work — the same precedence `runVerdict`
   // gives the end reason. Withholding the button here would strand the row.
   it("keeps the delete button on a run one of marotte's bounds already stopped", async () => {
-    const c = await render({
+    await render({
       sessions: [],
       runs: [{ ...runAt("running"), end_reason: "overran" }],
     });
-
-    expect(c.querySelector('[data-key="r:wf_1"] [data-history-delete]')).not.toBeNull();
+    expect(rowOf("r:wf_1").querySelector("[data-history-delete]")).not.toBeNull();
   });
 
-  it("keeps the delete button out of a control, so it is not nested in one", async () => {
-    // A role="button" on the row is Children-Presentational: it flattens this
-    // button out of the accessibility tree, which axe reports as
-    // nested-interactive on every row. The open control is a real button holding
-    // the row's own content instead, with the delete button as its SIBLING — so
-    // the target is the box and neither control sits inside the other. The
-    // platform also gives the open button Enter and Space, which the row's role
-    // never had, because nothing ever added the key handler it needs.
-    const c = await render({ sessions: [ownedRow], runs: [runRow] });
+  it("keeps the delete button out of the open control, so it is not nested in one", async () => {
+    // The open control is a real button holding the row's own content, with the
+    // delete button as its SIBLING in the actions slot — so the target is the body
+    // and neither control sits inside the other. The row itself is a list item.
+    await render({ sessions: [ownedRow], runs: [runRow] });
     for (const key of ["s:sess_owned", "r:wf_1"]) {
-      const row = c.querySelector<HTMLElement>(`[data-key="${key}"]`)!;
-      expect(row.getAttribute("role"), `${key} row is a control`).toBeNull();
+      const row = rowOf(key);
+      expect(row.getAttribute("role"), `${key} row is a control`).toBe("listitem");
       expect(row.getAttribute("tabindex"), `${key} row is focusable`).toBeNull();
-      const open = row.querySelector<HTMLElement>("button.history-row-main");
+      const open = row.querySelector<HTMLElement>("button.entry-open");
       expect(open, `${key} has no open button`).not.toBeNull();
       expect(open?.getAttribute("aria-label")).toMatch(/^Open /);
       // Nothing else in the row may be interactive: two controls, no nesting.
@@ -1192,10 +1421,10 @@ describe("history: the per-row delete", () => {
       const del = row.querySelector<HTMLElement>("[data-history-delete]")!;
       expect(open?.contains(del), `${key}'s delete button is inside the open control`).toBe(false);
       // The control holds the row's own content, which is what makes its box the
-      // row's box. `history-row-target.test.ts` measures the geometry that follows;
+      // row's body. `history-row-target.test.ts` measures the geometry that follows;
       // this is the structure it measures, asserted against the real builder so the
       // two cannot drift.
-      for (const part of [".list-row-title", ".list-row-meta", ".history-kind"]) {
+      for (const part of [".entry-title", ".entry-time"]) {
         expect(
           open?.querySelector(part),
           `${key}: ${part} is outside the open control`,
@@ -1205,8 +1434,8 @@ describe("history: the per-row delete", () => {
   });
 
   it("deletes a conversation through the chat-delete command and closes no tab itself", async () => {
-    const c = await render({ sessions: [ownedRow], runs: [] });
-    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    await render({ sessions: [ownedRow], runs: [] });
+    document.querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
       expect(deleteChatDispatch).toHaveBeenCalledWith("c-existing");
     });
@@ -1220,8 +1449,8 @@ describe("history: the per-row delete", () => {
   });
 
   it("deletes a run through the run-delete endpoint", async () => {
-    const c = await render({ sessions: [], runs: [runRow] });
-    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    await render({ sessions: [], runs: [runRow] });
+    document.querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
       expect(deleteRunDispatch).toHaveBeenCalledWith("wf_1");
     });
@@ -1231,11 +1460,9 @@ describe("history: the per-row delete", () => {
   });
 
   it("does not ALSO open the row it is deleting", async () => {
-    // The button sits inside the row, so its click reaches the container's own
-    // delegated handler too. Without the guard the confirm dialog would open
-    // over a chat that had just been activated behind it.
-    const c = await render({ sessions: [ownedRow], runs: [] });
-    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    // The two controls are siblings, so a click on one never reaches the other.
+    await render({ sessions: [ownedRow], runs: [] });
+    document.querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
       expect(deleteChatDispatch).toHaveBeenCalled();
     });
@@ -1243,11 +1470,20 @@ describe("history: the per-row delete", () => {
     expect(openRunView).not.toHaveBeenCalled();
   });
 
+  it("refreshes the list once the delete has landed", async () => {
+    await render({ sessions: [ownedRow], runs: [] });
+    const before = dispatch.mock.calls.length;
+    document.querySelector<HTMLElement>("[data-history-delete]")!.click();
+    await vi.waitFor(() => {
+      expect(dispatch.mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
   it("deletes nothing when the confirm is declined", async () => {
     confirmMock.mockResolvedValue(false);
-    const c = await render({ sessions: [ownedRow], runs: [runRow] });
-    (c.querySelector('[data-key="s:sess_owned"] [data-history-delete]') as HTMLElement).click();
-    (c.querySelector('[data-key="r:wf_1"] [data-history-delete]') as HTMLElement).click();
+    await render({ sessions: [ownedRow], runs: [runRow] });
+    rowOf("s:sess_owned").querySelector<HTMLElement>("[data-history-delete]")!.click();
+    rowOf("r:wf_1").querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
       expect(confirmMock).toHaveBeenCalledTimes(2);
     });
@@ -1263,67 +1499,74 @@ describe("history: the per-row delete", () => {
     // not this module's concern any more — the server closes tabs for a chat it
     // actually deleted.
     deleteChatDispatch.mockResolvedValue(null as never);
-    const c = await render({ sessions: [ownedRow], runs: [] });
+    await render({ sessions: [ownedRow], runs: [] });
     const before = dispatch.mock.calls.length;
-    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    document.querySelector<HTMLElement>("[data-history-delete]")!.click();
     await vi.waitFor(() => {
       expect(deleteChatDispatch).toHaveBeenCalled();
     });
-    expect(c.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
+    expect(document.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
     expect(dispatch.mock.calls).toHaveLength(before);
     expect(closeTab).not.toHaveBeenCalled();
   });
 });
 
-describe("history: the row's facts line", () => {
+describe("history: the row's subtitle and time", () => {
   function header(over: Record<string, unknown> = {}): unknown {
     return {
       id: "c-existing",
+      name: "Rebuild the rail",
       model: "claude-opus-5",
       current_mode_id: "vibe",
-      message_count: 34,
-      usage: { turn_count: 17, credits: 12.5, context_pct: 0, context_size: 0 },
+      turn_count: 34,
+      usage: { credits: 12.5, context_pct: 0, context_size: 0 },
       ...over,
     };
   }
 
+  const sub = (key: string): string | undefined =>
+    rowOf(key).querySelector(".entry-sub")?.textContent ?? undefined;
+
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    bootSeq++;
-    hasTab.mockReturnValue(false);
+    resetAll();
     storeGet.mockReturnValue(undefined);
   });
 
-  it("states model, mode, turns, messages and credits from the chat record", async () => {
+  it("states model, mode, turns and credits from the chat record", async () => {
     // Every field comes from /api/chats, which the store already holds, so the
     // richer row costs no request and no new field on /api/sessions — KAS's
-    // session row carries none of this.
+    // session row carries none of this. The count is the HEADER's, the only one
+    // written anywhere.
     storeGet.mockReturnValue(header());
-    const c = await render({ sessions: [ownedRow], runs: [] });
-    const facts = c.querySelector('[data-key="s:sess_owned"] .history-facts')?.textContent;
-    expect(facts).toBe("claude-opus-5 · Default · 17 turns · 34 msg · 12.50 cr");
+    await render({ sessions: [ownedRow], runs: [] });
+    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 34 turns · 12.50 cr");
   });
 
   it("omits a zero credit total rather than printing 0.00", async () => {
     // An unmetered chat would otherwise carry a cost column that says nothing on
     // every row.
-    storeGet.mockReturnValue(header({ usage: { turn_count: 1, credits: 0 } }));
-    const c = await render({ sessions: [ownedRow], runs: [] });
-    const facts = c.querySelector('[data-key="s:sess_owned"] .history-facts')?.textContent;
-    expect(facts).toBe("claude-opus-5 · Default · 1 turn · 34 msg");
+    storeGet.mockReturnValue(header({ turn_count: 1, usage: { credits: 0 } }));
+    await render({ sessions: [ownedRow], runs: [] });
+    expect(sub("s:sess_owned")).toBe("claude-opus-5 · Default · 1 turn");
   });
 
-  it("renders NO facts line for a chat the store does not know", async () => {
+  it("prefers the agent's own description to the facts", async () => {
+    storeGet.mockReturnValue(header());
+    await render({ sessions: [{ ...ownedRow, description: "reading files" }], runs: [] });
+    expect(sub("s:sess_owned")).toBe("reading files");
+  });
+
+  it("renders an EMPTY subtitle for a chat with no description the store does not know", async () => {
     // The alternative is placeholders, and "unknown model · 0 turns" reads as
-    // fact. A row with nothing to say keeps its old height instead.
+    // fact. The line stays so the title keeps its neighbours' offset; the tier
+    // owns the row's height either way.
     storeGet.mockReturnValue(undefined);
-    const c = await render({ sessions: [ownedRow], runs: [] });
-    expect(c.querySelector('[data-key="s:sess_owned"] .history-facts')).toBeNull();
+    await render({ sessions: [ownedRow], runs: [] });
+    expect(sub("s:sess_owned")).toBe("");
   });
 
   it("states a run's duration, and nothing when it never started", async () => {
-    const c = await render({
+    await render({
       sessions: [],
       runs: [
         {
@@ -1336,7 +1579,62 @@ describe("history: the row's facts line", () => {
         { workflow_id: "wf_untimed", name: "never-ran", status: "failed", updated_at: 2000 },
       ],
     });
-    expect(c.querySelector('[data-key="r:wf_timed"] .history-facts')?.textContent).toBe("15m");
-    expect(c.querySelector('[data-key="r:wf_untimed"] .history-facts')).toBeNull();
+    expect(sub("r:wf_timed")).toBe("15m");
+    expect(sub("r:wf_untimed")).toBe("");
+  });
+
+  it("names the recipe only when the label is not already the recipe", async () => {
+    await render({
+      sessions: [],
+      runs: [
+        { ...runRow, workflow_id: "wf_labelled", name: "review-auth", workflow_name: "app-review" },
+        { ...runRow, workflow_id: "wf_bare", name: "app-review", workflow_name: "app-review" },
+      ],
+    });
+    expect(sub("r:wf_labelled")).toBe("app-review");
+    expect(sub("r:wf_bare")).toBe("");
+  });
+
+  it("names the launching conversation when the store holds it", async () => {
+    storeGet.mockImplementation((id: string) =>
+      id === "c-launcher" ? header({ id, name: "Rebuild the rail" }) : undefined,
+    );
+    await render({
+      sessions: [],
+      runs: [
+        { ...runRow, parent_chat_id: "c-launcher", started_at: 1000, updated_at: 61000 },
+        { ...runRow, workflow_id: "wf_orphan", parent_chat_id: "c-gone" },
+      ],
+    });
+    expect(sub("r:wf_1")).toBe("1m · from Rebuild the rail");
+    expect(sub("r:wf_orphan")).toBe("");
+  });
+
+  it("shows the time relative at a glance and absolute on demand", async () => {
+    // D2: one vocabulary, relative under a day and a date beyond it, with the
+    // full timestamp as the tooltip.
+    const recent = Date.now() - 5 * 60_000;
+    const old = Date.UTC(2024, 8, 12, 10, 0, 0);
+    await render({
+      sessions: [
+        { ...chatRow, session_id: "sess_recent", updated_at: recent },
+        { ...chatRow, session_id: "sess_old", updated_at: old },
+      ],
+      runs: [],
+    });
+    const recentTime = rowOf("s:sess_recent").querySelector<HTMLElement>("time.entry-time")!;
+    expect(recentTime.textContent).toBe("5 minutes ago");
+    expect(recentTime.getAttribute("data-tooltip")).toBe(absoluteTime(recent));
+    expect(recentTime.getAttribute("datetime")).toBe(new Date(recent).toISOString());
+    const oldTime = rowOf("s:sess_old").querySelector<HTMLElement>("time.entry-time")!;
+    expect(oldTime.textContent).toBe(
+      new Date(old).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+    );
+    // Inside the open control, at the trailing end of the title line.
+    expect(openBtn(rowOf("s:sess_recent")).contains(recentTime)).toBe(true);
   });
 });

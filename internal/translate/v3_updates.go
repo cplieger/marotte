@@ -14,9 +14,9 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // v3Summarization is session_info_update's _meta.kiro.summarization block.
@@ -158,12 +158,20 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	}
 	// By session, never by this payload: `_meta.kiro.workflow` never reaches a
 	// session_info_update.
-	step := attr.Step
-	if attr.SubSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
+	if attr.SubSessionID != "" {
+		return
+	}
+	// A step's frame stops here: its turn_end and turn_completion are its run
+	// turn's metering, its credits also the chat's bill, and nothing else of it
+	// (its brackets, its hook cards, its focus) reaches the chat's log.
+	if attr.Step {
+		if credits, ok := t.stepMetering(ctx, attr, &u.Meta.Kiro); ok {
+			t.metering.AccumulateSpend(ctx, chatID, credits)
+		}
 		return
 	}
 	if h := u.Meta.Kiro.Hook; h != nil {
-		t.handleHookUpdate(ctx, chatID, h, attr)
+		t.handleHookUpdate(ctx, chatID, h)
 		return
 	}
 	// After the attribution gate for the same reason the bracket is: a workflow
@@ -176,7 +184,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	// After the attribution gate deliberately: pre-gate, every workflow step's
 	// turn_start would close the launching chat's live turn.
 	if u.Meta.Kiro.TurnStart != nil {
-		t.turns.WireTurnStart(ctx, chatID)
+		t.bracket.WireTurnStart(ctx, chatID)
 		return
 	}
 	if t.handleWireTurnEnd(ctx, chatID, u.Meta.Kiro.TurnEnd) {
@@ -194,10 +202,61 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID marotte
 	// The ONLY v3 channel that reliably carries the turn's credit spend and
 	// duration; usage_update.cost never arrived on the live 2.12.1 wire.
 	if len(u.Meta.Kiro.PromptTurnSummaries) > 0 {
-		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime, step)
+		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime)
 		return
 	}
 	t.handleContextUsage(ctx, chatID, &u.Meta.Kiro)
+}
+
+// HandleStepInfoUpdate is the parentless run bridge's reading of a step's
+// session_info_update: the run turn's metering and nothing else. It never reaches
+// a chat header, because a `run:<id>` key names no chat.
+func (t *Translator) HandleStepInfoUpdate(ctx context.Context, attr FrameAttribution, raw json.RawMessage) {
+	var u sessionInfoUpdate
+	if json.Unmarshal(raw, &u) != nil {
+		return
+	}
+	t.stepMetering(ctx, attr, &u.Meta.Kiro)
+}
+
+// stepMetering folds a step's turn_end and turn_completion into its run turn's
+// aggregate: the stop reason, the credits and the elapsed time. The step's own
+// turn_start is a no-op, because a run turn's bracket is node_start and
+// node_complete. Reports the credits of a turn_completion the run turn took, so
+// a chat-parented caller can bill them to the chat as well.
+func (t *Translator) stepMetering(_ context.Context, attr FrameAttribution, k *sessionInfoKiroBlock) (credits float64, ok bool) {
+	switch {
+	case k.TurnEnd != nil:
+		if !t.runs.RunStopReason(attr.RunID, attr.NodePath, marotte.StopReason(k.TurnEnd.StopReason)) {
+			slog.Debug("run log: turn_end for a step path with no open turn, dropped",
+				"workflow_id", attr.RunID, "node_path", attr.NodePath)
+		}
+		return 0, false
+	case len(k.PromptTurnSummaries) > 0:
+		credits = creditsOf(k.PromptTurnSummaries)
+		if !t.runs.RunMeter(attr.RunID, attr.NodePath, credits, k.ElapsedTime) {
+			slog.Debug("run log: turn_completion for a step path with no open turn, dropped",
+				"workflow_id", attr.RunID, "node_path", attr.NodePath)
+			return 0, false
+		}
+		return credits, true
+	}
+	return 0, false
+}
+
+// creditsOf sums a turn_completion's credit dimension, reporting any other unit to
+// the census: a dimension KAS added or a rename of this one is invisible to a
+// field-name probe, and without the report the spend line stops counting silently.
+func creditsOf(summaries []promptTurnSummary) float64 {
+	var credits float64
+	for i := range summaries {
+		if summaries[i].Unit == "" || summaries[i].Unit == meteringUnitCredit {
+			credits += summaries[i].Usage
+			continue
+		}
+		censusMeteringUnit(summaries[i].Unit)
+	}
+	return credits
 }
 
 // handleContextUsage is the cascade's last arm: the context-usage channel that
@@ -225,9 +284,21 @@ func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID marotte.ChatI
 		slog.Debug("turn_end carried stopDetails in an unread shape",
 			"chat_id", chatID, "stop_reason", e.StopReason, "bytes", len(e.StopDetails))
 	}
-	t.turns.WireTurnEnd(ctx, chatID, marotte.StopReason(e.StopReason), details)
+	t.bracket.WireTurnEnd(ctx, chatID, marotte.StopReason(e.StopReason), details)
 	return true
 }
+
+// The five `_meta.kiro.kind` values a REPLAY projection switches on. Both projections
+// read them and the table below names two, so the strings live here once: the live
+// cascade dispatches on which sub-BLOCK is present rather than on the kind, which is
+// why this is the only place in the package that spells them.
+const (
+	infoKindTurnStart      = "turn_start"
+	infoKindTurnCompletion = "turn_completion"
+	infoKindTurnEnd        = "turn_end"
+	infoKindSeparator      = "summarization_separator"
+	infoKindSummary        = "summary_message"
+)
 
 // knownSessionInfoKinds is every `_meta.kiro.kind` KAS is known to multiplex
 // through session_info_update, enumerated from all 30 buildSessionInfoUpdate call
@@ -238,8 +309,8 @@ func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID marotte.ChatI
 var knownSessionInfoKinds = map[string]struct{}{
 	// turn_start, turn_end, user_message_id_assigned and hook_update are ABSENT because
 	// all four are consumed, so one reaching this table means its sub-block did not decode.
-	"turn_completion": {},
-	"context_usage":   {}, "summarization_separator": {}, "summary_message": {},
+	infoKindTurnCompletion: {},
+	"context_usage":        {}, infoKindSeparator: {}, infoKindSummary: {},
 	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
 	"focus_update": {}, "display_error": {},
 	"pending_interaction": {}, "interaction_resolved": {}, "recap": {},
@@ -287,29 +358,17 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID marotte.C
 	}
 }
 
-// persistTurnSummary routes one turn-end metering frame to the two operations it
-// carries.
-//
-// `step` says the metering came from a workflow step: credits are real account
-// spend the launching chat is owed a readout of, so they accumulate either way,
-// while the turn count and duration describe the CONVERSATION and a step must not
-// touch them. The absolute usage_update.cost channel keeps overwrite precedence
-// if KAS ever ships both.
-func (t *Translator) persistTurnSummary(ctx context.Context, chatID marotte.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
-	var credits float64
-	for i := range summaries {
-		if summaries[i].Unit == "" || summaries[i].Unit == meteringUnitCredit {
-			credits += summaries[i].Usage
-			continue
-		}
-		// A dimension KAS added or a rename of the one above, invisible to a
-		// field-name probe. Reported, or the spend line stops counting silently.
-		censusMeteringUnit(summaries[i].Unit)
+// persistTurnSummary routes a chat turn's metering frame to its three readers:
+// the open turn's aggregate (the turn_close footer), the chat's credit bill, and
+// the conversation's turn count and duration. The absolute usage_update.cost
+// channel keeps overwrite precedence if KAS ever ships both.
+func (t *Translator) persistTurnSummary(ctx context.Context, chatID marotte.ChatID, summaries []promptTurnSummary, elapsedMs float64) {
+	credits := creditsOf(summaries)
+	if turn, ok := t.turns.OwnTurn(chatID); ok {
+		turn.Meter(credits, elapsedMs)
 	}
 	t.metering.AccumulateSpend(ctx, chatID, credits)
-	if !step {
-		t.metering.StageConversationTurnSummary(ctx, chatID, elapsedMs)
-	}
+	t.metering.StageConversationTurnSummary(ctx, chatID, elapsedMs)
 }
 
 // usageUpdate is the v3 usage_update payload: size is the context window in
@@ -436,10 +495,13 @@ type configChoice struct {
 	Options     []configChoice  `json:"options"`
 }
 
-// HandleConfigOptionUpdate refreshes the chat's model catalog. Modes are
-// intentionally NOT refreshed: this catalog omits the bundled/workspace source tag
-// the picker groups by, so the authoritative mode list is session/new's.
-func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage) {
+// HandleConfigOptionUpdate refreshes the model catalog from ANY session's frame and
+// the chat's current model and effort from the chat's OWN session only: a workflow
+// step's frame arrives under the launching chat's id carrying the STEP's current
+// values, and the catalog is a workspace fact where those are session state. Modes
+// are intentionally NOT refreshed: this catalog omits the bundled/workspace source
+// tag the picker groups by, so the authoritative mode list is session/new's.
+func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr FrameAttribution) {
 	var p configOptionUpdate
 	if json.Unmarshal(raw, &p) != nil {
 		return
@@ -453,7 +515,11 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID marott
 		if !exists {
 			return false
 		}
-		return cat.applyTo(c)
+		changed := marotte.ApplyServedModels(c, cat.models)
+		if attr.ChatOwned() && cat.applyCurrent(c) {
+			changed = true
+		}
+		return changed
 	})
 	if errors.Is(err, chat.ErrTombstoned) {
 		return
@@ -495,11 +561,11 @@ func readConfigCatalog(opts []configOption) configCatalog {
 	return cat
 }
 
-// applyTo writes the catalog onto the chat, reporting whether anything changed:
-// the store persists and broadcasts only on a change, so a repeated frame answers
-// false.
-func (cat *configCatalog) applyTo(c *marotte.Chat) bool {
-	changed := marotte.ApplyServedModels(c, cat.models)
+// applyCurrent writes the session's current model and effort onto the chat,
+// reporting whether anything changed: the store persists and broadcasts only on a
+// change, so a repeated frame answers false.
+func (cat *configCatalog) applyCurrent(c *marotte.Chat) bool {
+	changed := false
 	if cat.currentModel != "" && c.Model != cat.currentModel {
 		c.Model = cat.currentModel
 		changed = true
@@ -537,7 +603,7 @@ func flattenEffortChoices(choices []configChoice) []marotte.SessionEffortLevel {
 }
 
 // sameEffortLevels reports whether two tier lists carry the same ids in the same
-// order — the change-detector applyTo's answer depends on.
+// order — the change-detector applyCurrent's answer depends on.
 func sameEffortLevels(a, b []marotte.SessionEffortLevel) bool {
 	if len(a) != len(b) {
 		return false

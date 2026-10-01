@@ -10,9 +10,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 func TestEpoch_IsTheHubsCurrentEpoch(t *testing.T) {

@@ -46,8 +46,7 @@ const OPEN_TAIL = 1;
  *  every other device, and that failed the arrangement's own test: a fold is a
  *  disclosure state, so sharing it meant one screen rearranged a transcript
  *  someone else was reading. Bounded by chat count with oldest-first eviction,
- *  because nothing purges it any more — the `forgetChatFolds` call on chat_deleted
- *  existed only because the state was global. */
+ *  because nothing purges it any more. */
 type Overrides = Record<string, boolean>;
 const overrides = new Map<string, Overrides>();
 

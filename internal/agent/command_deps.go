@@ -32,14 +32,13 @@ func (b bridgeRole) OpenBridge(ctx context.Context, chatID marotte.ChatID, model
 	return sb, nil
 }
 
-// AwaitReplayAdopted waits for a session/load replay this chat may have in flight to
-// be adopted into the record. A non-nil error means do not rewrite the transcript.
-func (b bridgeRole) AwaitReplayAdopted(ctx context.Context, chatID marotte.ChatID) error {
-	return b.coord.AwaitReplayAdopted(ctx, chatID)
+// CloseBridge closes every turn the bridge hosted with outcome, then stops it.
+func (b bridgeRole) CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
+	b.coord.CloseBridge(ctx, chatID, outcome)
 }
 
-// CloseBridge tears down the bridge for a chat.
-func (b bridgeRole) CloseBridge(chatID marotte.ChatID) { b.coord.CloseBridge(chatID) }
+// BridgeLive reports a bridge for the chat that is past its spawn.
+func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.bridgeLive(chatID) }
 
 // DeleteChatState tears down all in-memory state for a chat being permanently deleted,
 // cancelling its runs and reaping its durable KAS session.
@@ -75,13 +74,21 @@ func (rt *Runtime) DischargeWaiting(ctx context.Context, chatID marotte.ChatID) 
 	rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventChatStatus, chatID, marotte.ChatStatusPayload{}))
 }
 
-// StartTurn opens the chat's turn at bridge-ready, immediately before the call that
-// drives it, returning the epoch the caller holds a completion handle on.
-func (rt *Runtime) StartTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) marotte.TurnEpoch {
-	if source.UserAnswered() {
+// OpenTurn appends the turn_open at admission and creates the turn's registry
+// record in one operation; a source that answers the agent discharges the chat's
+// retained waiting_on_user claim, because the turn_open is the answer.
+func (rt *Runtime) OpenTurn(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource, prompt *marotte.EntryPrompt, init func(*marotte.Chat)) (string, error) {
+	id, err := rt.coord.OpenTurn(ctx, chatID, source, prompt, init)
+	if err == nil && source.UserAnswered() {
 		rt.DischargeWaiting(ctx, chatID)
 	}
-	return rt.coord.StartTurn(ctx, chatID, source)
+	return id, err
+}
+
+// StartTurn stamps the model and the credit baseline onto the turn the id names,
+// with the bridge live, immediately before the call that drives it.
+func (rt *Runtime) StartTurn(ctx context.Context, chatID marotte.ChatID, turnID string) bool {
+	return rt.coord.StartTurn(ctx, chatID, turnID)
 }
 
 // ReserveTurnForPrompt takes the chat's admission slot for a prompt, waiting up to
@@ -101,24 +108,24 @@ func (rt *Runtime) ReleaseTurnReservation(chatID marotte.ChatID) {
 }
 
 // AwaitTurn blocks until the named turn has finalized and reports what it did.
-func (rt *Runtime) AwaitTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) (marotte.TurnResult, error) {
-	return rt.coord.AwaitTurn(ctx, chatID, epoch)
+func (rt *Runtime) AwaitTurn(ctx context.Context, chatID marotte.ChatID, turnID string) (marotte.TurnResult, error) {
+	return rt.coord.AwaitTurn(ctx, chatID, turnID)
 }
 
-// ReleaseTurn gives up the completion handle StartTurn issued.
-func (rt *Runtime) ReleaseTurn(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
-	rt.coord.ReleaseTurn(chatID, epoch)
+// ReleaseTurn gives up the completion handle OpenTurn issued.
+func (rt *Runtime) ReleaseTurn(chatID marotte.ChatID, turnID string) {
+	rt.coord.ReleaseTurn(chatID, turnID)
 }
 
 // SettleTurnOnResponse closes the turn on the response that settled it, once everything
 // queued behind that response is consumed and only if the wire's turn_end did not.
-func (rt *Runtime) SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, seq uint64, resp *marotte.RPCResponse) {
-	rt.coord.SettleTurnOnResponse(ctx, chatID, epoch, seq, resp)
+func (rt *Runtime) SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64, resp *marotte.RPCResponse) {
+	rt.coord.SettleTurnOnResponse(ctx, chatID, turnID, seq, resp)
 }
 
-// TurnOpenedAfter reports whether any turn on the chat opened after epoch.
-func (rt *Runtime) TurnOpenedAfter(chatID marotte.ChatID, epoch marotte.TurnEpoch) bool {
-	return rt.coord.TurnOpenedAfter(chatID, epoch)
+// TurnOpenedAfter reports whether any own turn on the chat opened after turnID.
+func (rt *Runtime) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
+	return rt.coord.TurnOpenedAfter(chatID, turnID)
 }
 
 // AdmissionHolderSource reports who holds the chat's admission slot: the open turn
@@ -127,12 +134,19 @@ func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpe
 	return rt.coord.AdmissionHolderSource(chatID)
 }
 
-// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself.
-func (rt *Runtime) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) {
-	rt.coord.FinalizeLocalShellTurn(ctx, chatID, epoch)
+// RecordDroppedSteer writes the dropped-steer entry for a parked steer KAS refused
+// or never received.
+func (rt *Runtime) RecordDroppedSteer(ctx context.Context, chatID marotte.ChatID, steer command.ParkedSteer) {
+	rt.coord.recordDroppedSteer(ctx, chatID, steer)
+}
+
+// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself, appending its
+// one text entry first.
+func (rt *Runtime) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string) {
+	rt.coord.FinalizeLocalShellTurn(ctx, chatID, turnID, output)
 }
 
 // AbandonInFlightTurn finalizes a turn that failed before it could end.
-func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, stop marotte.StopReason, reason string) {
-	rt.coord.AbandonInFlightTurn(ctx, chatID, epoch, stop, reason)
+func (rt *Runtime) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string) {
+	rt.coord.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason)
 }

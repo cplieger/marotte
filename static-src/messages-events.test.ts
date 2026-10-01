@@ -1,176 +1,171 @@
+// ---------------------------------------------------------------------------
+// The boundary rows five ENTRY kinds draw inside a turn's body.
+//
+// `buildEvent` is total over `EventEntry` by TYPE, so exhaustiveness is the type
+// check's job and not a case here (a sixth event kind leaves the function's end
+// reachable and fails `typecheck`). What is left for a test is what each arm PUTS
+// ON SCREEN: which class carries the row's meaning, which payload field becomes its
+// words, and which of the five discloses a body rather than stating a line.
+//
+// No mocks: this module reaches `chevron.ts`, `markdown.ts` and the mode catalog
+// (`roles.ts`), so the five the old suite stood in front of a `Message`-shaped graph
+// are retired with it.
+// ---------------------------------------------------------------------------
+
 import { describe, it, expect, vi } from "vitest";
+import { buildEvent, type EventEntry } from "./messages-events.js";
+import type { EntryKind, KindedEntry } from "./types.js";
 
-// Set up minimal DOM that transitive imports need.
-document.body.innerHTML = '<div id="messages"></div>';
+/** One event entry of `kind`, sealed at `seq` 1 of its turn. */
+function event<K extends EntryKind & EventEntry["kind"]>(
+  kind: K,
+  payload: KindedEntry<K>["payload"],
+): EventEntry {
+  return {
+    id: `t1-e1-${kind}`,
+    turn: "t1",
+    kind,
+    seq: 1,
+    ts: 2,
+    payload,
+  } as EventEntry;
+}
 
-// Mock heavy DOM-dependent modules imported transitively by messages-events.ts.
-vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
-vi.mock("./tool-group.js", () => ({
-  breakToolGroup: vi.fn(),
-}));
-vi.mock("./tool-card.js", () => ({
-  buildToolCard: vi.fn(() => document.createElement("div")),
-}));
-vi.mock("./transport.js", () => ({
-  send: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  newOpID: vi.fn(() => "op-test"),
-}));
-vi.mock("./store.js", async () => ({
-  ...(await import("./__test-helpers__/store-mock.js")).storeMock,
-}));
+function textOf(node: HTMLElement): string {
+  return node.textContent ?? "";
+}
 
-import { EVENT_RENDER_MAP, buildEvent } from "./messages-events.js";
-import type { Message } from "./types.js";
+/** The row's WORDS, read apart from its glyph: every wording case below asserts the
+ *  whole label, and folding the icon into the expectation would redden all of them
+ *  for a glyph change that says nothing about what the row says. */
+function labelOf(node: HTMLElement): string {
+  return node.querySelector(".boundary-label")?.textContent ?? "";
+}
 
-describe("EVENT_RENDER_MAP exhaustiveness", () => {
-  it("every boundary entry has non-empty icon and defaultLabel", () => {
-    for (const [kind, strategy] of Object.entries(EVENT_RENDER_MAP)) {
-      if (strategy.kind === "boundary") {
-        expect(strategy.icon, `${kind}.icon`).toBeTruthy();
-        expect(strategy.defaultLabel, `${kind}.defaultLabel`).toBeTruthy();
-      }
+describe("the row a kind draws", () => {
+  // A face is what the stylesheet keys a row's meaning on. The two SWITCH kinds share
+  // one deliberately — a mode switch and a model switch are one shape of event and a
+  // reader learns one row — and every other kind carries its own.
+  it("gives each kind its boundary face, the two switches sharing one", () => {
+    const faces: readonly (readonly [EventEntry, string])[] = [
+      [event("model_switched", { from: "a", to: "b" }), "boundary-switched"],
+      [event("mode_switched", { from: "spec", to: "vibe", source: "user" }), "boundary-switched"],
+      [event("compaction", { summary: "" }), "boundary-compacted"],
+      [event("compaction_failed", { reason: "" }), "boundary-failed"],
+      [event("safety_blocked", { properties: [] }), "boundary-blocked"],
+    ];
+    for (const [entry, face] of faces) {
+      expect(buildEvent(entry).className, entry.kind).toContain(face);
     }
   });
+});
 
-  it("no entry has undefined/null values for required fields", () => {
-    for (const [kind, strategy] of Object.entries(EVENT_RENDER_MAP)) {
-      expect(strategy.kind, `${kind}.kind`).toBeDefined();
-      if (strategy.kind === "boundary") {
-        expect(strategy.boundary, `${kind}.boundary`).toBeDefined();
-        expect(typeof strategy.icon, `${kind}.icon type`).toBe("string");
-        expect(typeof strategy.defaultLabel, `${kind}.defaultLabel type`).toBe("string");
-      }
-    }
+describe("model_switched", () => {
+  it("names the model the turn continued on and the tier it continued at", () => {
+    const node = buildEvent(
+      event("model_switched", { from: "sonnet-5", to: "opus-5", effort: "high" }),
+    );
+    expect(labelOf(node)).toBe("Switched to opus-5 (high)");
   });
 
-  it("boundary metadata snapshot", () => {
-    const boundaries = Object.entries(EVENT_RENDER_MAP)
-      .filter(([, s]) => s.kind === "boundary")
-      .map(([kind, s]) => {
-        if (s.kind !== "boundary") {
-          throw new Error("unreachable");
-        }
-        return { kind, icon: s.icon, defaultLabel: s.defaultLabel };
-      });
+  // `from === to` is the whole discriminator for the effort-only trigger, and
+  // "Switched to opus-5" beside a model that did not move would read as a switch.
+  it("names the tier rather than the model when only the effort changed", () => {
+    const node = buildEvent(
+      event("model_switched", { from: "opus-5", to: "opus-5", effort: "high" }),
+    );
+    expect(labelOf(node)).toBe("Reasoning effort: high");
+  });
 
-    expect(boundaries.length).toBeGreaterThan(0);
-    expect(boundaries.map((b) => b.kind).sort()).toMatchSnapshot();
+  // `effort` is optional on the wire so every chat file written before it existed
+  // still decodes, and such an entry renders the row it always rendered.
+  it("names the model alone when the entry carries no tier", () => {
+    const node = buildEvent(event("model_switched", { from: "sonnet-5", to: "opus-5" }));
+    expect(labelOf(node)).toBe("Switched to opus-5");
+  });
+
+  // Neither trigger produces this, so the row falls back to the fact it has rather
+  // than naming a tier it was not given.
+  it("names the model when neither the model nor a tier moved", () => {
+    const node = buildEvent(event("model_switched", { from: "opus-5", to: "opus-5" }));
+    expect(labelOf(node)).toBe("Switched to opus-5");
+  });
+
+  // Through `effortLabel`, so the row records the spelling the picker shows rather
+  // than the wire id.
+  it("spells the tier the way the effort vocabulary does", () => {
+    const node = buildEvent(
+      event("model_switched", { from: "sonnet-5", to: "opus-5", effort: "xhigh" }),
+    );
+    expect(labelOf(node)).toBe("Switched to opus-5 (x-high)");
+  });
+
+  // An empty `to` is not a switch that lost its target: KAS reports a context reset
+  // through the same entry, and a row reading "Switched to " would be a sentence with
+  // its subject missing. The tier a reopened session runs at is not what it is about.
+  it("reads an empty target as a context reset rather than a switch, with no tier", () => {
+    const node = buildEvent(event("model_switched", { from: "sonnet-5", to: "", effort: "high" }));
+    expect(labelOf(node)).toBe("Context reset");
   });
 });
 
-describe("infra_safety_blocked event (Kiro Infrastructure-Safety enforce block)", () => {
-  it("renders a red blocked boundary carrying the violated properties", () => {
-    const node = buildEvent({
-      id: "m1",
-      role: "event",
-      event_kind: "infra_safety_blocked",
-      content: "no public S3 buckets; encrypt at rest",
-      ts: 0,
-    } as Message);
-    expect(node).not.toBeNull();
-    expect(node?.className).toContain("boundary-blocked");
-    const text = node?.textContent ?? "";
-    expect(text).toContain("Infrastructure Safety blocked");
-    expect(text).toContain("no public S3 buckets; encrypt at rest");
+describe("mode_switched", () => {
+  const switched = (from: string, to: string, source: "user" | "agent"): HTMLElement =>
+    buildEvent(event("mode_switched", { from, to, source }));
+
+  // BOTH endpoints, because a mode id names a workflow rather than a version: "Mode:
+  // Spec" would not say what changed. Through the catalog, so the row names what the
+  // composer's mode pill names — `vibe` is "Default" in both places.
+  it("names the mode the turn left and the one it continued in", () => {
+    expect(labelOf(switched("spec", "vibe", "user"))).toBe("Mode: Spec \u2192 Default");
   });
 
-  it("falls back to a default label when the block carries no reason", () => {
-    const node = buildEvent({
-      id: "m2",
-      role: "event",
-      event_kind: "infra_safety_blocked",
-      ts: 0,
-    } as Message);
-    expect(node?.textContent ?? "").toContain("Infrastructure Safety blocked a change");
-  });
-});
-
-describe("interrupted event (turn cut short)", () => {
-  // THE OWNERSHIP RULE, from the divider's side. Both of these cases used to
-  // assert the inverse — that the divider rendered the server's own reason — and
-  // that is exactly what put the sentence on screen TWICE about 50px apart:
-  // `turnFailureText`'s first source reads THIS row's content into the card-level
-  // `.turn-notice`, and the notice is the surface present in both fold states, so
-  // it is the one that keeps the prose. The divider marks the boundary and names
-  // its kind.
-  //
-  // Nothing is lost, and `turns.node.test.ts` is where that half is pinned: the
-  // notice still returns this row's content verbatim.
-  it("marks the boundary and does NOT repeat the notice's sentence", () => {
-    const node = buildEvent({
-      id: "i1",
-      role: "event",
-      event_kind: "interrupted",
-      content: "Session refreshed, retrying",
-      ts: 0,
-    } as Message);
-    expect(node).not.toBeNull();
-    expect(node?.className).toContain("boundary");
-    expect(node?.textContent ?? "").toContain("Turn interrupted");
-    expect(node?.textContent ?? "").not.toContain("Session refreshed, retrying");
+  // KAS flips the mode itself at a turn's end (Plan to Execute), and a reader who did
+  // not touch the pill is owed that.
+  it("says so when the agent made the switch rather than the reader", () => {
+    expect(labelOf(switched("plan", "vibe", "agent"))).toBe(
+      "Mode: Plan \u2192 Default, switched by the agent",
+    );
   });
 
-  // The 2026-08 case — a throttled or capacity-refused turn — asserted the same
-  // way round. The reason is long, which is the second argument for one home: two
-  // copies of a 180-character upstream sentence in one card is a wall of it.
-  it("does not repeat a long model-backend failure reason either", () => {
-    const node = buildEvent({
-      id: "i0",
-      role: "event",
-      event_kind: "interrupted",
-      content:
-        "Too many requests, please wait before trying again. kiro-cli already " +
-        "retried; waiting a moment before resending is the only thing that helps. (request req-9)",
-      ts: 0,
-    } as Message);
-    expect(node?.textContent ?? "").not.toContain("Too many requests");
-    expect(node?.textContent ?? "").not.toContain("(request req-9)");
-    expect(node?.textContent ?? "").toContain("Turn interrupted");
+  // An empty `from` is a chat whose mode was never recorded, not a switch that lost its
+  // origin, and a row opening with an arrow would read as a sentence missing its subject.
+  it("names the destination alone when the previous mode was never recorded", () => {
+    expect(labelOf(switched("", "spec", "user"))).toBe("Mode: Spec");
   });
 
-  it("falls back to a generic label when the event carries no content", () => {
-    const node = buildEvent({
-      id: "i2",
-      role: "event",
-      event_kind: "interrupted",
-      ts: 0,
-    } as Message);
-    expect(node).not.toBeNull();
-    expect(node?.textContent ?? "").toContain("Turn interrupted");
-  });
-
-  // Nothing in the tree detects a restart: the `.partial` sidecar that claim
-  // came from is deleted. Pinned so the string cannot come back.
-  it("never blames a server restart", () => {
-    const node = buildEvent({
-      id: "i3",
-      role: "event",
-      event_kind: "interrupted",
-      ts: 0,
-    } as Message);
-    expect(node?.textContent ?? "").not.toContain("restart");
+  // A mode the catalog does not offer keeps its id rather than rendering as nothing:
+  // `labelForMode` ends its chain at the id, shaped by `displayModeName`.
+  it("falls back to the id for a mode the catalog does not know", () => {
+    expect(labelOf(switched("spec", "semantic_reviewer", "user"))).toBe(
+      "Mode: Spec \u2192 Semantic Reviewer",
+    );
   });
 });
 
-describe("cancelled event", () => {
-  it("stays invisible (expected user action, no badge)", () => {
-    const node = buildEvent({ id: "c1", role: "event", event_kind: "cancelled", ts: 0 } as Message);
-    expect(node).toBeNull();
+// Decision 3: a revert is VISIBLE. The row is the compaction divider's sibling — the
+// simple form, because a revert has no summary to disclose — and its words come from the
+// cause rather than from the arm, so a second cause cannot render the first one's wording.
+describe("turn_revert", () => {
+  it("draws the rewind boundary and words it from the cause", () => {
+    const node = buildEvent(
+      event("turn_revert", {
+        from: "t-2",
+        from_n: 2,
+        through: "t-2",
+        kas_message_id: "kas-2",
+        cause: "rewind",
+      }),
+    );
+
+    expect(node.className).toContain("boundary-rewound");
+    expect(labelOf(node)).toBe("Rewound to here");
+    expect(node.querySelector("details")).toBeNull();
   });
 });
 
-describe("compacted event summary", () => {
-  const compacted = (content: string): HTMLDetailsElement =>
-    buildEvent({
-      id: "cp1",
-      role: "event",
-      event_kind: "compacted",
-      content,
-      ts: 0,
-    } as Message) as HTMLDetailsElement;
+describe("compaction", () => {
+  const compacted = (summary: string): HTMLElement => buildEvent(event("compaction", { summary }));
 
   it("makes the marker itself the summary's trigger", () => {
     const node = compacted("The user asked to refactor auth; we split it into three files.");
@@ -183,21 +178,25 @@ describe("compacted event summary", () => {
     expect(head?.textContent ?? "").not.toContain("summary");
   });
 
-  // The row sets `list-style: none`, so this glyph is the only thing on screen
-  // saying it opens.
-  it("carries the app's disclosure chevron", () => {
+  // The row sets `list-style: none`, so this glyph is the only thing on screen saying
+  // it opens — and it LEADS, because it discloses (chevron.ts).
+  it("carries the app's disclosure chevron, leading its head", () => {
     const node = compacted("A summary.");
     expect(node.querySelectorAll(".disclosure-chevron")).toHaveLength(1);
-    expect(node.querySelector("summary.compaction-head > .disclosure-chevron")).not.toBeNull();
+    const head = node.querySelector("summary.compaction-head");
+    expect(head?.firstElementChild?.classList.contains("disclosure-chevron")).toBe(true);
   });
 
+  // A summary runs to 16 KB of markdown and `::details-content` skips layout and paint
+  // but not CONSTRUCTION, so a body built at mount is paid for by every reader who
+  // never opens it.
   it("renders the summary as markdown on first open, and not before", async () => {
     const node = compacted("## Goal\n\nSplit `auth` into three files.\n");
     const body = node.querySelector(".compaction-body");
     expect(body).not.toBeNull();
     expect(body?.textContent).toBe("");
 
-    node.open = true;
+    (node as HTMLDetailsElement).open = true;
     // `toggle` is queued, not dispatched synchronously.
     await vi.waitFor(() => {
       expect(body?.querySelector("h2")?.textContent).toBe("Goal");
@@ -207,48 +206,47 @@ describe("compacted event summary", () => {
     expect(body?.textContent ?? "").not.toContain("`");
   });
 
-  it("renders just the marker (no disclosure) when there is no summary", () => {
-    const node = buildEvent({
-      id: "cp2",
-      role: "event",
-      event_kind: "compacted",
-      ts: 0,
-    } as Message);
-    expect(node).not.toBeNull();
-    expect(node?.className).toContain("boundary-compacted");
-    expect(node?.querySelector("details")).toBeNull();
-    expect(node?.textContent ?? "").toContain("Conversation compacted");
+  it("renders just the marker, with no disclosure, when there is no summary", () => {
+    const node = compacted("");
+    expect(node.tagName).not.toBe("DETAILS");
+    expect(node.className).toContain("boundary-compacted");
+    expect(node.querySelector("details")).toBeNull();
+    expect(textOf(node)).toContain("Conversation compacted");
   });
 });
 
-// A workflow step's `send_message` notification. The dock holds the question in
-// MEMORY, so this row is the only durable copy of it — which is why the content is
-// the label rather than being dropped for a fixed sentence, the way a workflow
-// progress row is.
-describe("step_notice event (a workflow step spoke to the reader)", () => {
-  it("renders the step's own words rather than a fixed sentence", () => {
-    const node = buildEvent({
-      id: "n1",
-      role: "event",
-      event_kind: "step_notice",
-      content: "Ship it?",
-      ts: 0,
-    } as Message);
-    expect(node).not.toBeNull();
-    // A boundary rather than a bubble: the author is neither side of the
-    // conversation, so it takes the neutral face the other markers use.
-    expect(node?.className).toContain("boundary-switched");
-    expect(node?.querySelector(".boundary-label")?.textContent).toBe("Step: Ship it?");
+describe("compaction_failed", () => {
+  // The reason is the COMPACTION's, not the turn's: `turnFailureText` owns the prose
+  // account of a turn that ended badly, and this row is the only durable record of a
+  // compaction that did not happen, so it states its own reason rather than dropping it.
+  it("states the compaction's own reason", () => {
+    const node = buildEvent(event("compaction_failed", { reason: "the summary was refused" }));
+    expect(textOf(node)).toContain("Compaction failed: the summary was refused");
   });
 
-  it("falls back to a label when the frame carried no text", () => {
-    const node = buildEvent({
-      id: "n2",
-      role: "event",
-      event_kind: "step_notice",
-      ts: 0,
-    } as Message);
-    expect(node).not.toBeNull();
-    expect(node?.textContent ?? "").toContain("A workflow step sent a message");
+  it("falls back to naming the failure when no reason arrived", () => {
+    const node = buildEvent(event("compaction_failed", { reason: "" }));
+    expect(textOf(node)).toContain("Compaction failed");
+    expect(textOf(node)).not.toContain(":");
+  });
+});
+
+describe("safety_blocked", () => {
+  // KAS blocked the write upstream in enforce mode, so nothing ran and nothing was
+  // written; the payload's properties are the only account of WHY, and the transient
+  // banner that also reports it does not survive a reload.
+  it("carries the violated properties", () => {
+    const node = buildEvent(
+      event("safety_blocked", {
+        properties: ["no public S3 buckets", "encrypt at rest"],
+      }),
+    );
+    expect(textOf(node)).toContain("Infrastructure Safety blocked");
+    expect(textOf(node)).toContain("no public S3 buckets, encrypt at rest");
+  });
+
+  it("falls back to a default label when the block names no property", () => {
+    const node = buildEvent(event("safety_blocked", { properties: [] }));
+    expect(textOf(node)).toContain("Infrastructure Safety blocked a change");
   });
 });

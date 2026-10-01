@@ -3,7 +3,7 @@
 // the active chat id plus that chat's messages version and reconciles into the active
 // view by message id. Assistant BODIES are composed entirely by messages-blocks.ts.
 
-import type { Message, Session } from "./types.js";
+import type { EntryPrompt, Session } from "./types.js";
 import {
   get,
   getActive,
@@ -11,18 +11,18 @@ import {
   watchActiveId,
   messagesVersionOf,
   renderCauseOf,
-  steerMarks,
   bumpMessages,
   registerEvictionExemption,
-  turnBaseOf,
-  turnLive,
+  codeReferencesFor,
+  liveRefusalFor,
 } from "./store.js";
-import { clearBlockSigsFor } from "./store-signals.js";
+import { clearTurnSigs } from "./store-signals.js";
+import { buildEvent } from "./messages-events.js";
 import { releaseClampsIn } from "./clamp-text.js";
 import { effect, el, touch } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { CHAT_SKELETON_ID } from "./skeleton.js";
-import { $, forceReflow } from "./dom.js";
+import { $ } from "./dom.js";
 import {
   getScrollEl,
   scrollToBottom,
@@ -55,7 +55,11 @@ import {
   type TurnSummaryData,
 } from "./fundamentals/turn-footer.js";
 import {
+  closeOfBody,
+  payloadOf,
+  projectTurn,
   projectTurns,
+  turnCloseOf,
   turnLedger,
   turnAnchorID,
   turnFaceProse,
@@ -68,19 +72,20 @@ import { ICON_REWIND } from "./icons.js";
 import { buildAssistantBubble } from "./fundamentals/text-bubble.js";
 import { isTurnOpen, isTurnRevealed, setTurnOpen } from "./fold-state.js";
 import {
+  entryRenders,
+  firstPlanSeq,
   planResidency,
+  rendersNothing,
   runCardOwners,
   sliceTurn,
-  supersededMessages,
-  turnCost,
   turnOrdinalOf,
-  OVERSCAN_BLOCKS,
-  RESIDENT_BLOCKS,
-  type BlockRange,
+  turnSpan,
+  OVERSCAN_ENTRIES,
+  RESIDENT_ENTRIES,
+  type EntryRange,
   type ResidencyAnchor,
-  type TurnRange,
 } from "./block-window.js";
-import { forgetHeights, recordRowHeight, spacerHeight } from "./block-heights.js";
+import { forgetHeights, spacerHeight } from "./block-heights.js";
 import { wireRowToggle } from "./disclosure-row.js";
 import { initSearchRevealBuilder, searchHitCount } from "./chat-search.js";
 import {
@@ -105,12 +110,13 @@ import {
   initBlockRenderer,
   getLiveAnchor,
   mountedWindow,
+  blockElement,
+  mountedToolCalls,
   mountHeadRange,
   dropHead,
   dropTail,
   geometrySkipped,
   setRunCardOwners,
-  setSupersededMessages,
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
@@ -125,8 +131,6 @@ import {
   initToolCallbacks,
   initToolViewCallbacks,
 } from "./messages-tools.js";
-import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
-import { buildSteerNote } from "./fundamentals/steer-note.js";
 import {
   mountTurnFooterActions,
   resetTurnSourceView,
@@ -153,16 +157,16 @@ const messagesEl = $.messages;
 // --- The transcript multiplexer ---
 //
 // Exactly one resident view carries `.is-active` and the scroller's observers. A parked
-// view keeps its DOM, renders and `messageStates` rows with every writer that could
-// reach that DOM paused: the store keeps ingesting, only rendering is frozen.
+// view keeps its DOM and its renders with every writer that could reach that DOM
+// paused: the store keeps ingesting, only rendering is frozen.
 
 /** How many PARKED views stay resident (the active view is not counted).
  *  Past this, the least-recently-used parked view runs the real dispose. */
 export const PARKED_VIEWS = 3;
 
 /** One resident chat view. The saved-at-park fields are meaningful only while
- *  `parked` is true. There is no view→message index: that is a store read
- *  (`viewMessages`). */
+ *  `parked` is true. There is no view→turn table: the card walk answers that
+ *  (`mountedBodies`). */
 interface ChatView {
   chatID: string;
   el: HTMLElement;
@@ -170,11 +174,11 @@ interface ChatView {
   scrollTop: number;
   readingState: ReadingState;
   followBaseline: number;
-  reachableBlocks: number;
-  lastNewestId: string | undefined;
+  reachableEntries: number;
+  lastNewestTurnID: string | undefined;
   resumeLabel: string;
-  /** Message ids live-streaming when the view parked. Resume rebuilds these
-   *  bodies fresh even if they have settled: their binding effects were
+  /** Turn ids still being written into when the view parked. Resume rebuilds these
+   *  bodies fresh even if they have since closed: their binding effects were
    *  disposed, so they missed every update that landed while parked. */
   pausedStreaming: Set<string>;
 }
@@ -224,10 +228,19 @@ function paintRoot(): HTMLElement {
   return activeView?.el ?? messagesEl;
 }
 
-/** The messages this view has mounted: the session's messages ∩ `messageStates`.
- *  A store read, so no second index is maintained. */
-function viewMessages(session: Session): Message[] {
-  return session.messages.filter((m) => messageStates.has(m.id));
+/** The turn bodies this view has mounted, as `(turn id, body element)`. The CARD WALK
+ *  is the index: a card carries its turn id as its reconcile key and its body is one
+ *  child query, so there is no view→turn table to keep in step with the DOM. */
+function mountedBodies(view: ChatView): [string, HTMLElement][] {
+  const out: [string, HTMLElement][] = [];
+  for (const card of view.el.querySelectorAll<HTMLElement>(".turn")) {
+    const turnID = card.getAttribute(KEY_ATTR);
+    const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+    if (turnID !== null && body !== null) {
+      out.push([turnID, body]);
+    }
+  }
+  return out;
 }
 
 /** Park the active view: pause every writer, save the handle, hide. */
@@ -242,18 +255,20 @@ function parkView(view: ChatView): void {
   view.scrollTop = scroll.scrollTop;
   view.readingState = scroll.readingState;
   view.followBaseline = followBaseline;
-  view.reachableBlocks = reachableBlocks;
-  view.lastNewestId = lastNewestId;
+  view.reachableEntries = reachableEntries;
+  view.lastNewestTurnID = lastNewestTurnID;
   view.resumeLabel = $.scrollBottom.querySelector("span")?.textContent ?? "";
   view.pausedStreaming = new Set();
   const session = get(view.chatID);
-  if (session !== undefined) {
-    for (const m of viewMessages(session)) {
-      if (messageStates.get(m.id)?.streaming === true) {
-        view.pausedStreaming.add(m.id);
-      }
-      pauseMessage(view, m);
+  for (const [turnID] of mountedBodies(view)) {
+    // The STORE decides, off the turn's own `turn_close` absence — the same fact
+    // `turnIsLive` states, read here without a projection: an open turn is one whose
+    // body will be written into again, and it is exactly the one a resume rebuilds.
+    const held = session?.turns.get(turnID);
+    if (held !== undefined && turnCloseOf(held) === undefined) {
+      view.pausedStreaming.add(turnID);
     }
+    pauseTurnBody(view, turnID);
   }
   view.el.classList.remove("is-active");
   view.el.inert = true;
@@ -278,8 +293,8 @@ function activateView(chatID: string): boolean {
       scrollTop: 0,
       readingState: "following",
       followBaseline: 0,
-      reachableBlocks: 0,
-      lastNewestId: undefined,
+      reachableEntries: 0,
+      lastNewestTurnID: undefined,
       resumeLabel: "",
       pausedStreaming: new Set(),
     };
@@ -295,22 +310,21 @@ function activateView(chatID: string): boolean {
   activeView = view;
   attachScroll({ el: view.el, scrollTop: view.scrollTop, readingState: view.readingState });
   if (created) {
-    // AFTER the attach, and that ordering is the whole point: `resetScrollState`
-    // ends in `setLoadMore(null, false)`, and every indicator lookup inside the
-    // controller is scoped to the ATTACHED `viewEl`. Run before the attach it
-    // stripped the OUTGOING view's own pagination button — a wrong-view mutation
-    // that a parked view then carried back with a control missing.
+    // AFTER the attach: `resetScrollState` ends in `setLoadMore(null, false)` and every
+    // indicator lookup is scoped to the ATTACHED `viewEl`, so run before it, it stripped
+    // the OUTGOING view's pagination button — a wrong-view mutation a parked view then
+    // carried back with a control missing.
     //
     // Only for a view this call CREATED: an existing view's furniture is its own,
-    // restored by the attach above, and resetting it would take away the pagination
-    // the previous activation wired up.
+    // restored by the attach above, and resetting it takes away the pagination the
+    // previous activation wired up.
     resetScrollState();
   }
   // After attach: entering Reading recomputes the baseline from the ACTIVE
   // session, and these are the parked chat's own numbers.
   followBaseline = view.followBaseline;
-  reachableBlocks = view.reachableBlocks;
-  lastNewestId = view.lastNewestId;
+  reachableEntries = view.reachableEntries;
+  lastNewestTurnID = view.lastNewestTurnID;
   if (unparking) {
     setResumeLabel(view.resumeLabel);
   }
@@ -338,27 +352,31 @@ function pruneDeadViews(): void {
   }
 }
 
-/** The REAL per-view dispose: every message row's disposal, the chat's tool effects
- *  through their composite keys, and the container's removal. LRU eviction, chat
- *  close/delete and `teardownAll` all run this — never a bare empty reconcile, which
- *  would strip render state while leaving parked DOM behind. */
+/** The REAL per-view dispose: `disposeTurnBody` per card the view holds, the chat's
+ *  tool effects through their composite keys, and the container's removal. LRU eviction,
+ *  chat close/delete and `teardownAll` all run this — never a bare empty reconcile,
+ *  which would strip render state while leaving parked DOM behind. */
 export function disposeChatView(chatID: string): void {
   const view = views.get(chatID);
   if (view === undefined) {
     return;
   }
-  for (const body of view.el.querySelectorAll<HTMLElement>(".turn-body")) {
-    disposeBodyRows(body);
+  for (const card of view.el.querySelectorAll<HTMLElement>(".turn")) {
+    const turnID = card.getAttribute(KEY_ATTR);
+    if (turnID !== null) {
+      disposeTurnBody(turnID);
+    }
   }
   // Every clamp in the view, in one sweep: the single per-view dispose close, delete,
   // eviction and `teardownAll` all run, so it covers a whole chat's headers without
   // counting them. `parkView` deliberately does NOT release — a parked view keeps its
   // clamps and re-measures on unpark.
   releaseClampsIn(view.el);
-  // AFTER the row disposal, which records one last height per row. The measurement
-  // cache is the one per-message store an unmount deliberately KEEPS, so a view
-  // going away is where its numbers stop standing for anything on screen.
-  forgetHeights(get(chatID)?.messages.map((m) => m.id) ?? []);
+  // AFTER the row disposal, which records one last height per entry. Heights are
+  // keyed `(turnID, seq)`, so the chat's TURN ids are the whole key space; the
+  // measurement cache is the one per-turn store an unmount deliberately KEEPS, so a
+  // view going away is where its numbers stop standing for anything on screen.
+  forgetHeights(get(chatID)?.turn_order ?? []);
   disposeToolEffectsForChat(chatID, view.el);
   view.el.remove();
   views.delete(chatID);
@@ -368,114 +386,74 @@ export function disposeChatView(chatID: string): void {
   }
 }
 
-/** Pause one message: dispose its live-binding effects, finish its reveals, and
- *  suspend its run cards and tool-card effects through the owning view's composite
- *  keys. `renders` maps, DOM and message-lifetime bookkeeping stay. */
-function pauseMessage(view: ChatView, m: Message): void {
-  disposeStreamingEffect(m.id);
-  pauseAssistantBody(m.id);
+/** Pause one turn's body: dispose its live-binding effects, finish its reveals, and
+ *  suspend the tool-card effects of the calls its render mounted, through the owning
+ *  view's composite keys. The render, the DOM and the card stay. */
+function pauseTurnBody(view: ChatView, turnID: string): void {
+  disposeStreamingEffect(turnID);
+  pauseAssistantBody(turnID);
   suspendToolEffectsFor(
     view.chatID,
-    (m.tool_calls ?? []).map((tc) => tc.id),
+    mountedToolCalls(turnID).map((tc) => tc.id),
     view.el,
   );
 }
 
-/** Resume one message after the catch-up paint. A settled message needs only what
- *  pause suspended re-armed, `syncMountedText` having already trued grown text. One
- *  STREAMING at park rebuilds its body fresh instead: its binding effects were
+/** Resume one turn's body after the catch-up paint. A CLOSED turn needs only what
+ *  pause suspended re-armed, the paint's own update having already trued grown text.
+ *  One that was still open at park rebuilds instead: its binding effects were
  *  disposed, so an update that landed while parked is only guaranteed to appear
  *  through a fresh render of the current store. */
-function resumeMessage(view: ChatView, session: Session, m: Message): void {
-  const state = messageStates.get(m.id);
-  if (state === undefined) {
+function resumeTurnBody(
+  view: ChatView,
+  session: Session,
+  turnID: string,
+  body: HTMLElement,
+  t: Turn | undefined,
+): void {
+  if (t !== undefined && view.pausedStreaming.has(turnID)) {
+    rebuildTurnBody(session, t, body);
     return;
   }
-  if (view.pausedStreaming.has(m.id)) {
-    rebuildMessageBody(session, m, state.el);
-    return;
-  }
-  if (m.role !== "assistant") {
-    return;
-  }
-  resumeAssistantBody(m.id);
-  resumeToolEffectsFor(session.id, m.tool_calls ?? [], view.el);
+  resumeAssistantBody(turnID);
+  resumeToolEffectsFor(session.id, mountedToolCalls(turnID), view.el);
 }
 
-/** Rebuild a message's body in place, keeping the row node (its reconcile key
- *  and DOM position). The old render state goes through the same disposal an
- *  unmount runs, minus the row itself. */
-function rebuildMessageBody(session: Session, m: Message, row: HTMLElement): void {
-  const arr = bindUnbinds.get(m.id);
-  if (arr !== undefined) {
-    for (const fn of arr) {
-      fn();
-    }
-    bindUnbinds.delete(m.id);
-  }
-  disposeStreamingEffect(m.id);
-  finalizeAssistantBody(m.id);
-  disposeAssistantBody(m.id);
-  clearBlockSigsFor(m.id);
-  // Drop the message's suspended tool entries so the fresh mount below cannot
+/** Rebuild a turn's body in place, keeping the card (its reconcile key and DOM
+ *  position) and the window it holds. The old render state goes through the same
+ *  disposal an unmount runs, minus the card itself. */
+function rebuildTurnBody(session: Session, t: Turn, body: HTMLElement): void {
+  const want = mountedWindow(t.id) ?? bodyRange(t, wantedWindow.get(t.id) ?? EMPTY_RANGE);
+  disposeStreamingEffect(t.id);
+  finalizeAssistantBody(t.id);
+  disposeAssistantBody(t.id);
+  clearTurnSigs(t.id);
+  // Drop the turn's suspended tool entries so the fresh mount below cannot
   // clobber-leak them; the rebuild re-creates cards, effects and signals.
-  disposeToolEffectsForChat(session.id, row);
-  releaseClampsIn(row);
-  row.replaceChildren();
-  const live = isLikelyLiveStreaming(m);
-  messageStates.set(m.id, { el: row, streaming: live });
-  if (live) {
-    streamingIds.add(m.id);
-  } else {
-    streamingIds.delete(m.id);
-  }
-  if (m.role === "assistant") {
-    buildAssistantBody(row, m, session.id, live, steerMarks(session.id), rowRange(m, row));
-    syncCodeReferences(row, m);
-    syncRefusal(row, m);
-  }
+  disposeToolEffectsForChat(session.id, body);
+  releaseClampsIn(body);
+  body.replaceChildren();
+  buildAssistantBody(body, t, session.id, turnIsLive(t), want);
 }
 
-/** The block range the plan currently wants for `m`'s row, read off the card the
- *  row sits in. Undefined for a row the plan has no entry for, which rebuilds the
- *  whole message — what an unranged rebuild already did. */
-function rowRange(m: Message, row: HTMLElement): BlockRange | undefined {
-  const turnID = row.closest<HTMLElement>(".turn")?.getAttribute(KEY_ATTR) ?? undefined;
-  if (turnID === undefined) {
-    return undefined;
-  }
-  const t = turnByID.get(turnID);
-  const want = wantedWindow.get(turnID);
-  return t === undefined || want === undefined ? undefined : sliceTurn(t, want).get(m.id);
-}
-
-/** Resume every paused message of the freshly unparked view, then drain the
- *  terminal output that buffered while it was parked — once. */
+/** Resume every paused body of the freshly unparked view, then drain the
+ *  terminal output that buffered while it was parked — once.
+ *
+ *  ONE projection for the pass: a rebuild needs the `Turn` and this is the only place
+ *  that knows the whole set, so projecting per body would re-walk the session's turns
+ *  once per card. */
 function resumeView(view: ChatView, session: Session): void {
-  for (const m of viewMessages(session)) {
-    resumeMessage(view, session, m);
+  const byID = new Map(projectTurns(session).map((t) => [t.id, t]));
+  for (const [turnID, body] of mountedBodies(view)) {
+    resumeTurnBody(view, session, turnID, body, byID.get(turnID));
   }
   view.pausedStreaming.clear();
   drainParkedTerminals(session.id, view.el);
 }
 
-/** Per-message-id metadata kept for the duration the message is mounted. */
-interface MessageState {
-  el: HTMLElement;
-  /** True while this is the live streaming bubble; transitions to false
-   *  on turn end via finalizeStreamingIfNeeded(). */
-  streaming: boolean;
-}
-const messageStates = new Map<string, MessageState>();
-
-/** Ids whose MessageState is still `streaming: true` — the finalize loop's
- *  population, so a full pass touches only what is live instead of walking
- *  every mounted message. Maintained beside the flag: set at mount, cleared at
- *  finalize and dispose. */
-const streamingIds = new Set<string>();
-
-/** bindLoadingState unsubs accumulated within a chat. Cleared on
- *  message removal (via reconcile.onRemove) and on chat switch. */
+/** bindLoadingState unsubs, keyed by the TOOL id the binding belongs to (that is what
+ *  `messages-tools.ts` passes). Released wholesale at page teardown; a turn's own
+ *  disposal does not reach them, so a card's loading-state binding outlives its card. */
 const bindUnbinds = new Map<string, (() => void)[]>();
 function pushBind(key: string, unbind: () => void): void {
   let arr = bindUnbinds.get(key);
@@ -486,77 +464,83 @@ function pushBind(key: string, unbind: () => void): void {
   arr.push(unbind);
 }
 
-/** Per-message streaming effect cleanups, disposed on turn end as well as on unmount.
+/** Per-TURN streaming effect cleanups, disposed on turn end as well as on unmount.
  *  Separate from `bindUnbinds` so a tool card's loading-state binding survives a turn
  *  end, which is not the end of that card. */
 const streamingEffects = new Map<string, (() => void)[]>();
-function pushStreamingEffect(id: string, fn: () => void): void {
-  const arr = streamingEffects.get(id);
+function pushStreamingEffect(turnID: string, fn: () => void): void {
+  const arr = streamingEffects.get(turnID);
   if (arr === undefined) {
-    streamingEffects.set(id, [fn]);
+    streamingEffects.set(turnID, [fn]);
   } else {
     arr.push(fn);
   }
 }
-function disposeStreamingEffect(id: string): void {
-  const arr = streamingEffects.get(id);
+function disposeStreamingEffect(turnID: string): void {
+  const arr = streamingEffects.get(turnID);
   if (arr !== undefined) {
     for (const fn of arr) {
       fn();
     }
-    streamingEffects.delete(id);
+    streamingEffects.delete(turnID);
   }
-  const per = blockEffects.get(id);
+  const per = entryEffects.get(turnID);
   if (per !== undefined) {
-    disposeBlockEffects(id, [...per.keys()]);
+    disposeEntryEffects(turnID, [...per.keys()]);
   }
 }
 
-/** Per-BLOCK cleanups: message id → block index → cleanups. Beside
- *  `streamingEffects` because the lifetime differs by the axis the window needs — a
- *  block that leaves takes its own subscriptions and its siblings keep theirs. Turn
- *  end and row removal still release everything, through the sibling below. */
-const blockEffects = new Map<string, Map<number, (() => void)[]>>();
+/** Per-ENTRY cleanups: turn id → entry `seq` → cleanups. Beside `streamingEffects`
+ *  because the lifetime differs by the axis the window needs — an entry that leaves takes
+ *  its own subscriptions and its siblings keep theirs. Turn end and card removal still
+ *  release everything, through the sibling below. */
+const entryEffects = new Map<string, Map<number, (() => void)[]>>();
 
-function pushBlockEffect(id: string, blockIndex: number, fn: () => void): void {
-  let per = blockEffects.get(id);
+function pushEntryEffect(turnID: string, seq: number, fn: () => void): void {
+  let per = entryEffects.get(turnID);
   if (per === undefined) {
     per = new Map();
-    blockEffects.set(id, per);
+    entryEffects.set(turnID, per);
   }
-  const arr = per.get(blockIndex);
+  const arr = per.get(seq);
   if (arr === undefined) {
-    per.set(blockIndex, [fn]);
+    per.set(seq, [fn]);
   } else {
     arr.push(fn);
   }
 }
 
-/** Run and clear the cleanups for `indices`: the window drop's half of the
- *  contract. */
-function disposeBlockEffects(id: string, indices: Iterable<number>): void {
-  const per = blockEffects.get(id);
+/** Run and clear the cleanups for `seqs`: the window drop's half of the contract. */
+function disposeEntryEffects(turnID: string, seqs: Iterable<number>): void {
+  const per = entryEffects.get(turnID);
   if (per === undefined) {
     return;
   }
-  for (const i of indices) {
-    const arr = per.get(i);
-    per.delete(i);
+  for (const seq of seqs) {
+    const arr = per.get(seq);
+    per.delete(seq);
     for (const fn of arr ?? []) {
       fn();
     }
   }
   if (per.size === 0) {
-    blockEffects.delete(id);
+    entryEffects.delete(turnID);
   }
 }
 
-/** IDs of messages newly appended at the end since the last paint. Two mounts read it
- *  for the same reason — the entry animation and a sent turn's live-edge pin — and both
- *  must stay silent for a replay or a prepend, which the reader did not cause. */
+/** Turn ids newly appended at the end since the last paint. Two mounts read it for the
+ *  same reason — the entry animation and a sent turn's live-edge pin — and both must stay
+ *  silent for a replay or a prepend, which the reader did not cause. */
 const appendNewIds = new Set<string>();
-let lastNewestId: string | undefined;
+let lastNewestTurnID: string | undefined;
 let lastActiveId: string | undefined;
+
+/** The newest RESIDENT turn id: the tail the next paint's arrival walk starts from.
+ *  `turn_order` is file order, so its last member is the newest whatever order the
+ *  entries of two interleaved turns arrived in. */
+function newestTurnID(s: Session): string | undefined {
+  return s.turn_order[s.turn_order.length - 1];
+}
 
 function svgTemplate(markup: string): () => Node {
   const tpl = document.createElement("template");
@@ -584,14 +568,15 @@ initTurnActionCallbacks({ svgTemplate });
 initTurnHeaderCallbacks({ copy: copyWithFeedback });
 initBlockRenderer({
   pushStreamingEffect,
-  pushBlockEffect,
-  disposeBlockEffects,
+  pushEntryEffect,
+  disposeEntryEffects,
   makeRow,
+  makeEvent: buildEvent,
 });
-// The refusal callout's Rewind CTA reuses the standard rewind flow (confirm →
-// branch → open the new tab). Injected — refusal.ts can't import messages.ts.
-setRefusalRewindHandler((m) => {
-  void handleRewindClick(m).catch((e: unknown) => {
+// The refusal callout's Rewind CTA reuses this module's rewind flow (confirm → revert
+// → refetch). Injected because refusal.ts cannot import messages.ts.
+setRefusalRewindHandler((target) => {
+  void handleRewindClick(target).catch((e: unknown) => {
     console.warn("refusal rewind failed", e);
   });
 });
@@ -614,16 +599,12 @@ export function mountChatView(): void {
   // modules are imported BY this one, so a static import back would cycle.
   initTurnRailCallbacks({ mountTurnBody, activeView: activeTranscriptView });
   // The hit's ordinal is resolved HERE, in the projection the plan is grown over:
-  // a second projection could price the same block at a different ordinal, and the
+  // a second projection could price the same entry at a different ordinal, and the
   // grant is clamped against this one.
   initSearchRevealBuilder(
-    (chatID, turnID, messageID, blockIndex) => {
+    (chatID, turnID, entryID) => {
       const t = turnByID.get(turnID);
-      return mountTurnBody(
-        chatID,
-        turnID,
-        t === undefined ? undefined : turnOrdinalOf(t, messageID, blockIndex),
-      );
+      return mountTurnBody(chatID, turnID, t === undefined ? undefined : turnOrdinalOf(t, entryID));
     },
     mountTurnBodyForWalk,
     endWalkReveal,
@@ -665,33 +646,22 @@ export function mountChatView(): void {
   });
 }
 
-/** Fade the whole transcript in once, for the swap out of a loading skeleton.
- *
- *  Reuses `data-chat-entry` rather than a second motion vocabulary, and the
- *  attribute stays this module's to write. Remove, reflow, re-add is what RESTARTS
- *  the animation — a second call mid-flight otherwise does nothing — and it is left
- *  in place afterwards because the `both` fill holds the element's ordinary state.
- *  Targets the ACTIVE view, so a parked sibling cannot replay it on unpark. */
-export function fadeInTranscript(): void {
-  const root = paintRoot();
-  root.removeAttribute("data-chat-entry");
-  forceReflow(root);
-  root.setAttribute("data-chat-entry", "");
-}
-
 // ---------------------------------------------------------------------------
 // The follow model's two client-side obligations (§3.4).
 // ---------------------------------------------------------------------------
 
-/** Blocks the reader can REACH, which is what the resume chip counts. A DELEGATED
- *  block is a member of the parent message's `blocks` array and is DROPPED by
- *  `placeBlock`, so it adds no document height in any fold state and counting one
- *  would promise a distance that does not exist. The test is the STAMP, not a fold. */
-function blockCount(msgs: readonly Message[]): number {
+/** Entries the reader can REACH, which is what the resume chip counts. `entryRenders`
+ *  is the whole test, so it is the renderer's own answer rather than a second reading
+ *  of it: an entry in another LANE is dropped by `placeEntry`, and the four fold kinds
+ *  render at no position of their own, so neither adds document height in any fold
+ *  state and counting one would promise a distance that does not exist. `firstPlanSeq`
+ *  is hoisted per turn for the reason `planResidency` hoists it. */
+function entryCount(turns: readonly Turn[]): number {
   let n = 0;
-  for (const m of msgs) {
-    for (const b of m.blocks ?? []) {
-      if ((b.agent_subtask_id ?? "") === "") {
+  for (const t of turns) {
+    const firstPlan = firstPlanSeq(t, "");
+    for (const e of t.body) {
+      if (entryRenders(e, "", firstPlan)) {
         n++;
       }
     }
@@ -699,13 +669,13 @@ function blockCount(msgs: readonly Message[]): number {
   return n;
 }
 
-/** Blocks present when the reader last entered Reading. */
+/** Reachable entries present when the reader last entered Reading. */
 let followBaseline = 0;
 
-/** The last FULL pass's reachable-block count. Chunk- and tool-cause paints cannot add
- *  a REACHABLE block (a block this transcript draws arrives as `shape`), so the walk
+/** The last FULL pass's reachable-entry count. Chunk- and tool-cause paints cannot add
+ *  a REACHABLE entry (an entry this transcript draws arrives as `shape`), so the walk
  *  runs once per full pass rather than once per streamed delta. */
-let reachableBlocks = 0;
+let reachableEntries = 0;
 
 function initFollowModel(): void {
   // Following pins to the ACTIVE TEXT BLOCK, not the document bottom: otherwise a
@@ -717,9 +687,11 @@ function initFollowModel(): void {
   onReadingStateChange((next) => {
     if (next === "reading") {
       // A fresh count at the park, so the baseline and the cached count agree
-      // on what is reachable right now.
-      reachableBlocks = blockCount(getActive()?.messages ?? []);
-      followBaseline = reachableBlocks;
+      // on what is reachable right now. Over the last full pass's projection
+      // rather than a fresh one: that is what is on screen, and a park is a
+      // reading-state change rather than a store change.
+      reachableEntries = entryCount(lastTurns);
+      followBaseline = reachableEntries;
     }
     refreshResumeLabel();
   });
@@ -732,7 +704,7 @@ function refreshResumeLabel(): void {
     return;
   }
   const session = getActive();
-  const behind = reachableBlocks - followBaseline;
+  const behind = reachableEntries - followBaseline;
   if (behind > 0) {
     setResumeLabel(`${String(behind)} new block${behind === 1 ? "" : "s"}`);
     return;
@@ -761,18 +733,18 @@ const foldPlan = new Map<string, FoldPlan>();
 /** turn id → the ordinals that turn's body may hold NOW: the union of the plan's WINDOW
  *  and the reader's own DEMAND. TWO WRITERS, the second writing only what the first
  *  re-derives. `has()` IS `mounted`, hence the per-pass CLEAR beside `foldPlan`. */
-const wantedWindow = new Map<string, TurnRange>();
+const wantedWindow = new Map<string, EntryRange>();
 
-/** A range covering nothing, at a turn's first ordinal: what a turn holding NO
- *  ordinal gets, so `.is-bodyless` has a body to mark. Never a turn that HAS
- *  ordinals — see the range decision in `computeFoldPlan`. */
-const EMPTY_RANGE: TurnRange = { from: 0, to: 0 };
+/** A range covering nothing, at a turn's first ordinal: what a turn that renders
+ *  nothing gets, so `.is-bodyless` has a body to mark. Never a turn with rows to
+ *  draw — see the range decision in `computeFoldPlan`. */
+const EMPTY_RANGE: EntryRange = { from: 0, to: 0 };
 
 /** Every ordinal a turn could have, for a caller with no range to name. */
-const WHOLE_TURN: TurnRange = { from: 0, to: Number.MAX_SAFE_INTEGER };
+const WHOLE_TURN: EntryRange = { from: 0, to: Number.MAX_SAFE_INTEGER };
 
 /** Whether `outer` holds every ordinal of `inner`. */
-function covers(outer: TurnRange, inner: TurnRange): boolean {
+function covers(outer: EntryRange, inner: EntryRange): boolean {
   return outer.from <= inner.from && outer.to >= inner.to;
 }
 
@@ -785,11 +757,11 @@ function computeFoldPlan(
   foldPlan.clear();
   turnByID.clear();
   wantedWindow.clear();
-  // The block dispatcher's turn-scope inputs, installed with the rest of this pass's
-  // projection: a `MsgRender` is per message and cannot see its own neighbours.
-  setSupersededMessages(supersededMessages(turns));
+  // The dispatcher's one turn-scope input, installed with the rest of this pass's
+  // projection: a render holds one turn and cannot see the run its neighbours own.
   setRunCardOwners(runCardOwners(turns));
-  const window = planResidency(openable, anchor);
+  // The transcript's root lane, stated because `planResidency` takes no default.
+  const window = planResidency(openable, anchor, "");
   for (const [i, t] of turns.entries()) {
     turnByID.set(t.id, t);
     const hides = turnFoldHides(t);
@@ -800,16 +772,16 @@ function computeFoldPlan(
     // 700-block turn hull into all of it.
     const asked = demandRange(chatID, t);
     const grown = window.get(t.id);
-    // A REPLACE retracts nothing here: `applyFoldPass`'s drop plus `bodyRowSpec`'s
-    // spacer update own that on the FOLLOWING pass, so until then the body is
+    // A REPLACE retracts nothing here: `applyFoldPass`'s drop plus `syncSpacers`'s
+    // update own that on the FOLLOWING pass, so until then the body is
     // OVER-height — never under, which is what keeps `scrollHeight` past the viewport.
     const merged =
       grown === undefined ? asked : asked === undefined || covers(grown, asked) ? grown : asked;
-    // A turn holding NO ordinal is bodied whatever the budget says: `.is-bodyless` needs
-    // a body element to mark. One WITH ordinals is a STUB instead, because an empty range
-    // emits the whole-turn tail spacer and no row — 23,988px of nothing, measured on a
-    // 400-block turn.
-    const range = merged ?? (turnCost(t).blocks === 0 ? EMPTY_RANGE : undefined);
+    // A turn that RENDERS NOTHING here is bodied whatever the budget says: `.is-bodyless`
+    // needs a body element to mark. One with rows to draw is a STUB instead, because an
+    // empty range emits the whole-turn tail spacer and no row — 23,988px of nothing,
+    // measured on a 400-block turn.
+    const range = merged ?? (rendersNothing(t) ? EMPTY_RANGE : undefined);
     const mounted = range !== undefined;
     if (range !== undefined) {
       wantedWindow.set(t.id, range);
@@ -849,8 +821,10 @@ let demandWalk: { chatID: string; turnIDs: Set<string> } | undefined;
  *  `Date.now() <= until`, else the walk while its set holds `t.id`. One overscan each side of the
  *  position asked for — the floor the window guarantees around its own anchor, so arrival is a
  *  handover. The PIN outranks the WALK, which asked for no ordinal. */
-function demandRange(chatID: string, t: Turn): TurnRange | undefined {
-  const span = turnCost(t).blocks;
+function demandRange(chatID: string, t: Turn): EntryRange | undefined {
+  // `turnSpan`, never a rendered-entry COUNT: a grant is `seq` space, and a count falls
+  // short of the last ordinal by every entry that renders elsewhere.
+  const span = turnSpan(t);
   const pin = demandPin;
   // A REVEALED turn is a standing request the budget may not take back: letting the
   // clock expire under one dropped the body the reader had just opened. The deadline
@@ -865,12 +839,12 @@ function demandRange(chatID: string, t: Turn): TurnRange | undefined {
     // outlives the block it named, and an `at` past the span grants `from > to`.
     const at = Math.min(Math.max(pin.at, 0), Math.max(0, span - 1));
     return {
-      from: Math.max(0, at - OVERSCAN_BLOCKS),
-      to: Math.min(span, at + OVERSCAN_BLOCKS),
+      from: Math.max(0, at - OVERSCAN_ENTRIES),
+      to: Math.min(span, at + OVERSCAN_ENTRIES),
     };
   }
   if (demandWalk?.chatID === chatID && demandWalk.turnIDs.has(t.id)) {
-    return { from: 0, to: Math.min(span, 2 * OVERSCAN_BLOCKS) };
+    return { from: 0, to: Math.min(span, 2 * OVERSCAN_ENTRIES) };
   }
   return undefined;
 }
@@ -885,11 +859,12 @@ const turnByID = new Map<string, Turn>();
  *  that vanished is caught by the builder's own "card gone" guards. */
 let lastTurns: readonly Turn[] = [];
 
-// The anchor ladder. COORDINATES: every level compares `el.offsetTop` against
-// `scrollTop`, valid only because `#messages-wrap` is `position: absolute` and nothing
-// below it is positioned — adding `position: relative` to a card type breaks this
-// silently. PICK: the last entry at or above the viewport top, or the first, descending
-// only while the entry's own box still holds that top.
+// The anchor ladder. COORDINATES: `el.offsetTop` is comparable with `scrollTop` only
+// because the rows this reads ARE the `.msg-row`s (`entryEls` files `view.row`) and a
+// `.msg-row` carries `content-visibility: auto`, so it is a containing block for the
+// bubbles inside it while its OWN offset parent is the absolutely positioned
+// `#messages-wrap` — measuring a bubble, or adding `position: relative` to a card type,
+// breaks this silently. PICK: the last entry at or above the viewport top, or the first.
 
 /** Where the reader is, or `undefined` for the live edge. Membership is the STORE predicate,
  *  never the card's `data-folded`: that is the last APPLIED plan, so through a deferral a turn
@@ -916,13 +891,9 @@ function residencyAnchor(openable: readonly Turn[]): ResidencyAnchor | undefined
     if (card === undefined || id === null || id === undefined || !grown.has(id)) {
       continue;
     }
-    const t = openable.find((x) => x.id === id);
-    if (t === undefined) {
-      continue;
-    }
     // A card the walk STEPPED FORWARD to starts at the reader, so its first
     // ordinal is the seed; only the card they are actually in gets descended.
-    return i === at ? { turnID: id, at: cardOrdinal(t, card, top) } : { turnID: id, at: 0 };
+    return i === at ? { turnID: id, at: cardOrdinal(id, card, top) } : { turnID: id, at: 0 };
   }
   return undefined;
 }
@@ -938,98 +909,31 @@ function pickIndex(entries: readonly HTMLElement[], top: number): number {
   return at;
 }
 
-/** The ordinal of `t` the viewport top sits at, inside its own card. A card rendered
- *  FOLDED answers its first ordinal, and that test is a DOM read on purpose: a
- *  folded body's rows are not laid out whatever the plan says. */
-function cardOrdinal(t: Turn, card: HTMLElement, top: number): number {
-  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
-  if (body === null || card.hasAttribute("data-folded")) {
+/** The ordinal of `turnID` the viewport top sits at, inside its own card. A card
+ *  rendered FOLDED answers its first ordinal, and that test is a DOM read on purpose:
+ *  a folded body's rows are not laid out whatever the plan says.
+ *
+ *  ONE LEVEL, because an entry IS the ordinal: the renderer files one element per
+ *  mounted `seq`, so a position inside a tool group or a delegate card has no ordinal
+ *  to answer with. The range is the RENDER's own (`mountedWindow`) rather than this
+ *  pass's plan, since the entries measured are the ones the last pass mounted. */
+function cardOrdinal(turnID: string, card: HTMLElement, top: number): number {
+  const range = mountedWindow(turnID);
+  if (range === undefined || card.hasAttribute("data-folded")) {
     return 0;
   }
-  const rows = [...body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)];
-  const row = rows[pickIndex(rows, top)];
-  const key = row?.getAttribute(KEY_ATTR);
-  if (row === undefined || key === null || key === undefined) {
-    return 0;
+  // A prose RUN files every one of its seqs against the one row it mounted, so the
+  // element's FIRST seq is the ordinal and the repeats are skipped.
+  const seqs: number[] = [];
+  const rows: HTMLElement[] = [];
+  for (let seq = range.from; seq < range.to; seq++) {
+    const row = blockElement(turnID, seq);
+    if (row !== undefined && row !== rows[rows.length - 1]) {
+      seqs.push(seq);
+      rows.push(row);
+    }
   }
-  if (isSpacerKey(key)) {
-    // The ordinal the spacer's side starts at: 0 for the head, the range's end for
-    // the tail.
-    return key === SPACER_HEAD_KEY ? 0 : (wantedWindow.get(t.id)?.to ?? 0);
-  }
-  const m = t.body.find((x) => x.id === key);
-  const base = m === undefined ? undefined : turnOrdinalOf(t, m.id);
-  if (m === undefined || base === undefined) {
-    return 0;
-  }
-  const blocksEl = row.querySelector<HTMLElement>(":scope > .assistant-blocks");
-  if (blocksEl === null) {
-    return base;
-  }
-  // `blockOrdinal` answers a MESSAGE-LOCAL index and this owes a TURN ordinal; the two
-  // coincide only for a turn's first message. Joined by the decoder that defines the
-  // space, never by adding `base` here.
-  const local = blockOrdinal(m, [...blocksEl.children] as HTMLElement[], top);
-  return local === undefined ? base : (turnOrdinalOf(t, m.id, local) ?? base);
-}
-
-/** The block index the viewport top sits at, walking down `entries`. */
-function blockOrdinal(
-  m: Message,
-  entries: readonly HTMLElement[],
-  top: number,
-): number | undefined {
-  const entry = entries[pickIndex(entries, top)];
-  if (entry === undefined) {
-    return undefined;
-  }
-  const own = elementIndex(m, entry);
-  const bottom = entry.offsetTop + entry.offsetHeight;
-  if (bottom <= top || !ownsIndexed(m, entry)) {
-    return own;
-  }
-  // `content-visibility: auto` skips an element's CONTENTS and never its own box,
-  // so the entry the walk descends into has laid-out children — which is why the
-  // ladder is built per level and never from one `querySelectorAll`, whose nested
-  // members read `offsetTop === 0` inside a skipped card.
-  const kids = ladderChildren(entry).filter(
-    (k) => k.offsetTop >= entry.offsetTop && k.offsetTop < bottom,
-  );
-  return kids.length === 0 ? own : (blockOrdinal(m, kids, top) ?? own);
-}
-
-/** The layout-bearing children at this level: the entry's own, or — for a container
- *  whose members live in a body region — that region's, since no container type puts
- *  its blocks in its OWN direct children. */
-function ladderChildren(entry: HTMLElement): HTMLElement[] {
-  const region = entry.classList.contains("tool-group")
-    ? ":scope > .tool-group-body > *"
-    : entry.classList.contains("subagent-block")
-      ? ":scope > .subagent-body > *"
-      : entry.classList.contains("run-card")
-        ? ":scope > .run-body > .run-steps > .run-step"
-        : ":scope > *";
-  return [...entry.querySelectorAll<HTMLElement>(region)];
-}
-
-/** `el`'s own block index, or the first one inside it that `m` OWNS — a `.run-card`
- *  in this row can hold ANOTHER message's step blocks at the same indices. The id is
- *  a wire value, so it goes through `CSS.escape` like every other in this tree. */
-function elementIndex(m: Message, el: HTMLElement): number | undefined {
-  const own = el.dataset["blockIndex"];
-  if (own !== undefined) {
-    return Number(own);
-  }
-  const inner = ownedIndexed(m, el)?.dataset["blockIndex"];
-  return inner === undefined ? undefined : Number(inner);
-}
-
-function ownsIndexed(m: Message, el: HTMLElement): boolean {
-  return ownedIndexed(m, el) !== null;
-}
-
-function ownedIndexed(m: Message, el: HTMLElement): HTMLElement | null {
-  return el.querySelector<HTMLElement>(`[data-block-msg="${CSS.escape(m.id)}"][data-block-index]`);
+  return seqs[pickIndex(rows, top)] ?? range.from;
 }
 
 /** Drop the pin once the reader has ARRIVED: the ladder's own answer within one
@@ -1041,7 +945,7 @@ function clearArrivedPin(chatID: string, anchor: ResidencyAnchor | undefined): v
     return;
   }
   if (pin.chatID === chatID && pin.turnID === anchor.turnID) {
-    if (Math.abs(anchor.at - pin.at) < OVERSCAN_BLOCKS) {
+    if (Math.abs(anchor.at - pin.at) < OVERSCAN_ENTRIES) {
       demandPin = undefined;
     }
   }
@@ -1087,23 +991,23 @@ function paint(): void {
   // transcript this pass must now show whole.
   const flushed = isChatSwitch ? undefined : renderCauseOf(session.id);
   if (flushed?.cause === "chunk") {
-    // Pure text growth of MOUNTED blocks: their signal effects painted the
+    // Pure text growth of MOUNTED entries: their signal effects painted the
     // text, so nothing mounts and nothing folds. Tail bookkeeping only.
     refreshResumeLabel();
-    lastNewestId = session.messages[session.messages.length - 1]?.id;
+    lastNewestTurnID = newestTurnID(session);
     return;
   }
-  if (flushed?.cause === "tool" && refreshToolMessage(session, flushed.msgID)) {
+  if (flushed?.cause === "tool" && refreshToolTurn(session, flushed.turnID)) {
     // An existing call's update, and its card was mounted: the keyed update
-    // refreshed that one message. An absent render falls through to the full
+    // refreshed that one turn. An absent render falls through to the full
     // pass instead — only the full pass mounts.
     refreshResumeLabel();
-    lastNewestId = session.messages[session.messages.length - 1]?.id;
+    lastNewestTurnID = newestTurnID(session);
     return;
   }
-  // Mark genuinely-new appended messages (streaming arrival) so only
-  // those get the entry animation. Chat-switches, paginated prepends and
-  // refetched windows are silent (no animation).
+  // Mark genuinely-new appended TURNS (streaming arrival) so only those get the
+  // entry animation. Chat-switches, paginated prepends and refetched windows are
+  // silent (no animation).
   appendNewIds.clear();
   // A FETCHED window is a replay whatever its rows look like, and only the paint's CAUSE
   // can say so: a cold open paints on `setActive` before `loadMessages` resolves, so its
@@ -1112,35 +1016,32 @@ function paint(): void {
   const replayed = isChatSwitch || flushed?.cause === "load";
   if (!replayed) {
     // Where the arrivals start. An UNSET tail means the previous paint of this
-    // same chat had no messages at all, so every message here arrived since. With
-    // a fetched window excluded above, that is the reader's first prompt in a
-    // fresh chat — the one appended-tail paint with no tail behind it. A tail the
-    // array no longer carries (a rewind truncated past it) names no arrivals.
+    // same chat held no turns at all, so every turn here arrived since. With a
+    // fetched window excluded above, that is the reader's first prompt in a fresh
+    // chat — the one appended-tail paint with no tail behind it. A tail the order
+    // no longer carries (a rewind truncated past it) names no arrivals.
     let from = 0;
-    if (lastNewestId !== undefined) {
-      // Reverse scan: lastNewestId is always near the tail (set at end of
+    if (lastNewestTurnID !== undefined) {
+      // Reverse scan: the tail is always near the end (set at the end of the
       // previous paint), so scanning backward is O(1) amortized.
       from = -1;
-      for (let i = session.messages.length - 1; i >= 0; i--) {
-        if (session.messages[i]?.id === lastNewestId) {
+      for (let i = session.turn_order.length - 1; i >= 0; i--) {
+        if (session.turn_order[i] === lastNewestTurnID) {
           from = i + 1;
           break;
         }
       }
     }
     if (from >= 0) {
-      for (let i = from; i < session.messages.length; i++) {
-        const id = session.messages[i]?.id;
+      for (let i = from; i < session.turn_order.length; i++) {
+        const id = session.turn_order[i];
         if (id !== undefined) {
           appendNewIds.add(id);
         }
       }
     }
   }
-  // With the window's own base, so the ordinals are SESSION-ABSOLUTE: this is a
-  // page, so a base-less scan would number turn 1 of the window as turn 1 of the
-  // session and every card's number would move as older pages arrived.
-  const turns = projectTurns(session.messages, turnLive(session), turnBaseOf(session));
+  const turns = projectTurns(session);
   // The turns the window is grown OVER: a folded body is `block-size: 0` +
   // `content-visibility: hidden`, so its ordinals hold zero height and would spend
   // the budget on content nobody can see. A STORE predicate, never a card's
@@ -1153,7 +1054,7 @@ function paint(): void {
   clearArrivedPin(session.id, anchor);
   computeFoldPlan(session.id, turns, openable, anchor);
   paintMountedCards = false;
-  paintSyncBlocks = PAINT_SYNC_BLOCKS;
+  paintSyncEntries = PAINT_SYNC_ENTRIES;
   const root = paintRoot();
   // The placeholder never coexists with content, dropped HERE because this is the
   // line where content lands (`marotte-ui.md` "A SKELETON MAY ONLY PAINT OVER AN
@@ -1178,10 +1079,10 @@ function paint(): void {
   // After the fold pass: a card that unmounted here is not owed a build, and a
   // card the pass folded is one the remaining slices land under invisibly.
   drainColdBuilds();
-  finalizeStreamingIfNeeded(session.messages);
-  reachableBlocks = blockCount(session.messages);
+  finalizeStreamingIfNeeded(turns);
+  reachableEntries = entryCount(turns);
   refreshResumeLabel();
-  lastNewestId = session.messages[session.messages.length - 1]?.id;
+  lastNewestTurnID = newestTurnID(session);
   lastActiveId = session.id;
   if (unparked && activeView !== null) {
     // The catch-up pass above brought the DOM to the store's current state;
@@ -1281,30 +1182,22 @@ function planSignature(): string {
   return parts.join(",");
 }
 
-/** The `tool`-cause fast path: refresh the owning message's card state through
- *  the renderer's existing keyed update, touching no sibling. False when the
- *  message is gone or nothing is mounted for it — the caller runs the full pass
- *  then. */
-function refreshToolMessage(session: Session, msgID: string | undefined): boolean {
-  if (msgID === undefined) {
+/** The `tool`-cause fast path: refresh the owning TURN's mounted body through the
+ *  renderer's existing update, touching no sibling. False when the turn is gone or
+ *  nothing is mounted for it — the caller runs the full pass then.
+ *
+ *  The projection is what the update needs (`Turn`, not `TurnState`), and it is one
+ *  turn's worth: `projectTurn` slices the session's own turn rather than walking every
+ *  turn of the window, which is what a tool update per frame must not do. */
+function refreshToolTurn(session: Session, turnID: string | undefined): boolean {
+  if (turnID === undefined) {
     return false;
   }
-  // Reverse scan: tool updates target recent turns.
-  let msg: Message | undefined;
-  for (let i = session.messages.length - 1; i >= 0; i--) {
-    if (session.messages[i]?.id === msgID) {
-      msg = session.messages[i];
-      break;
-    }
-  }
-  if (msg === undefined) {
+  const t = projectTurn(session, turnID);
+  if (t === undefined) {
     return false;
   }
-  // `live` exactly as the full path's keyed update passes it: the mount-time
-  // judgment, re-promoted upward when the store now says the turn is live
-  // (see liveStateOf).
-  const live = liveStateOf(msg);
-  return refreshMessageCard(msgID, msg, session.id, live, steerMarks(session.id));
+  return refreshMessageCard(t, session.id, turnIsLive(t));
 }
 
 /**
@@ -1315,26 +1208,33 @@ function refreshToolMessage(session: Session, msgID: string | undefined): boolea
  * files roll back to KAS's snapshots, and there is no undo. It surfaces what is
  * being rewound FROM so that cost is legible first; field reads stay defensive.
  */
-function rewindConfirmText(m: Message, following: readonly Message[]): string {
-  const promptRaw = (m.content ?? "").trim().replace(/\s+/g, " ");
+function rewindConfirmText(target: EntryPrompt, discarded: readonly Turn[]): string {
+  const promptRaw = target.text.trim().replace(/\s+/g, " ");
   const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "\u2026" : promptRaw;
   const lines = ["Rewind to this turn?", ""];
   if (prompt.length > 0) {
     lines.push(`Prompt: "${prompt}"`);
   }
 
-  // Count across EVERY turn being dropped, not just the next one. The old text
+  // Count across EVERY turn being dropped, not just the addressed one. The old text
   // described one turn's work because a fork left the rest alive somewhere else;
   // a revert discards all of it, so summarising only the first would understate
   // the cost by however many turns follow.
-  const calls = following.flatMap((f) => f.tool_calls ?? []);
+  const calls = discarded.flatMap((t) =>
+    t.body.flatMap((e) => {
+      const call = payloadOf(e, "tool_call");
+      return call === undefined ? [] : [call];
+    }),
+  );
   const files = [
     ...new Set(
       calls.flatMap((c) => (c.locations ?? []).map((l) => l.path.split("/").pop() ?? l.path)),
     ),
   ];
-  const turnWord = following.length === 1 ? "turn" : "turns";
-  lines.push(`Discards this prompt and ${String(following.length)} later ${turnWord}.`);
+  // `discarded` LEADS with the addressed turn, so the later ones are what remains.
+  const later = Math.max(discarded.length - 1, 0);
+  const turnWord = later === 1 ? "turn" : "turns";
+  lines.push(`Discards this prompt and ${String(later)} later ${turnWord}.`);
   if (calls.length > 0) {
     const toolPart = `${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}`;
     const filePart =
@@ -1360,7 +1260,7 @@ function rewindConfirmText(m: Message, following: readonly Message[]): string {
  * abortController, so a button offered during a turn could only produce an error
  * the user cannot act on. `mountRewind` disables it; this is the second gate.
  */
-async function handleRewindClick(m: Message): Promise<void> {
+async function handleRewindClick(target: EntryPrompt): Promise<void> {
   const session = getActive();
   if (session === undefined) {
     return;
@@ -1368,19 +1268,22 @@ async function handleRewindClick(m: Message): Promise<void> {
   if (session.thinking) {
     return;
   }
-  const idx = session.messages.findIndex((msg) => msg.id === m.id);
-  if (idx < 0) {
+  // Through the projection rather than the store's own order: an UNDRAWN turn is not
+  // one the reader can be told they are discarding.
+  const turns = projectTurns(session);
+  const at = turns.findIndex((t) => t.trigger?.id === target.id);
+  if (at < 0) {
     return;
   }
   const proceed = await confirmDialog(
-    rewindConfirmText(m, session.messages.slice(idx + 1)),
+    rewindConfirmText(target, turns.slice(at)),
     "Rewind",
     "destructive",
   );
   if (!proceed) {
     return;
   }
-  await rewindChat.dispatch({ chatID: session.id, messageID: m.id });
+  await rewindChat.dispatch({ chatID: session.id, messageID: target.id });
 }
 
 /** The multiplexer-wide teardown: the REAL per-view dispose applied to every resident
@@ -1405,313 +1308,142 @@ export function teardownAll(): void {
   }
   disposeAllToolEffects();
   resetBlockRenders();
-  messageStates.clear();
-  streamingIds.clear();
   resetScrollState();
   resetTurnRail();
   lastActiveId = undefined;
-  lastNewestId = undefined;
+  lastNewestTurnID = undefined;
 }
 
 // --- Reconcile specs ---
 //
-// Two levels, both keyed: TURNS by the turn's opening message id, then each card's
-// `.turn-body` over that turn's messages. The nesting is safe because reconcile only
-// considers children carrying its key attribute, so a card's unkeyed header and
-// footer are invisible to the inner pass.
+// Two levels, both keyed: TURNS by the turn id every one of their entries names, then
+// each card's `.turn-body` over that turn's entries. The nesting is safe because
+// reconcile only considers children carrying its key attribute, so a card's unkeyed
+// header and footer are invisible to the inner pass.
 
 const turnSpec: ReconcileSpec<Turn> = {
   key: (t) => t.id,
   mount: (t) => {
     const card = buildTurn(t);
     // Only animate a genuinely-new turn; chat-switch replay and pagination
-    // prepends mount silently. A new turn's id is its trigger's message id,
-    // which is what paint() records in appendNewIds.
+    // prepends mount silently. The turn ids that arrived at the tail since the
+    // last paint are what paint() records in appendNewIds.
     if (appendNewIds.has(t.id)) {
       card.setAttribute("data-chat-entry", "");
     }
     return card;
   },
   update: updateTurn,
-  onRemove: (card) => {
+  onRemove: (card, key) => {
     // No face teardown: the face holds only prose, so it has no effect to stop,
     // its element leaves with the card, and the WeakMap entry dies with it.
     //
-    // Dispose the body's messages: the inner reconcile never runs again for a
-    // removed card, so its onRemove would not fire on its own.
-    const body = card.querySelector<HTMLElement>(":scope > .turn-body");
-    if (body !== null) {
-      disposeBodyRows(body);
-    }
-    // The header's request-text clamp goes with the card: a rewind truncation
-    // drops a card while its view lives, so `disposeChatView` never runs for it.
+    // Dispose the body: the renderer is never asked for this turn again, so nothing
+    // else releases its state.
+    disposeTurnBody(key);
+    // The header's request-text clamp goes with the card, and so do the clamps inside
+    // the entries: a rewind truncation drops a card while its view lives, so
+    // `disposeChatView` never runs for it.
     releaseClampsIn(card);
   },
 };
 
-/** One child of a `.turn-body`: a message row over the block range the window
- *  gives it, or a keyed SPACER standing in for the ordinals it does not. */
-type BodyRow =
-  | { readonly kind: "msg"; readonly m: Message; readonly range: BlockRange }
-  | { readonly kind: "space"; readonly side: "head" | "tail"; readonly px: number };
-
-/** Keyed rather than padding on `.turn-body`, which transitions `padding-block`
- *  and would animate every window move past `preserveReadingPosition`'s
- *  measurement — and rather than an unkeyed sibling, which `reconcile` seats
- *  ABOVE every keyed row. */
-const SPACER_HEAD_KEY = "__space_head__";
-const SPACER_TAIL_KEY = "__space_tail__";
-
-/** The rows a body may hold over `range`: the ONE function turning a range into a row
- *  list, and where the spacers are born. A spacer standing in for at least one ordinal is
- *  floored at 1px, so ordinals behind it are never priced out of the document (reachable
- *  on an all-`padBlocks` turn). One standing in for NO ordinal is not emitted. */
-function bodyRows(t: Turn, range: TurnRange): BodyRow[] {
-  const rows: BodyRow[] = [];
-  const span = turnCost(t).blocks;
-  if (range.from > 0) {
-    rows.push({ kind: "space", side: "head", px: spacerPx(t, range, "head") });
-  }
-  const slices = sliceTurn(t, range);
-  for (const m of t.body) {
-    const slice = slices.get(m.id);
-    if (slice !== undefined) {
-      rows.push({ kind: "msg", m, range: slice });
-    }
-  }
-  if (range.to < span) {
-    rows.push({ kind: "space", side: "tail", px: spacerPx(t, range, "tail") });
-  }
-  return rows;
+/** The caret's input, and the one owner of the spelling: a turn with no `turn_close` is
+ *  still being written into, which is what `outcome: "running"` means (turns.ts owns why
+ *  it is the one member no `turn_close` carries). */
+function turnIsLive(t: Turn): boolean {
+  return t.outcome === "running";
 }
 
-/** What one spacer is worth, floored at 1px. Read when a change is COLLECTED, deliberately:
- *  pricing the same batch's own drops from the measurements that batch takes moved the reader
- *  19x further on the 700-block fixture (−47px of drift became −909px), because the
- *  compensation's error over the tail extension no longer cancels. The estimate reads HIGH, the
- *  safe direction, and the next window move re-prices it. */
-function spacerPx(t: Turn, range: TurnRange, side: "head" | "tail"): number {
-  return Math.max(1, spacerHeight(t, range, side));
+/** The residency plan's range SNAPPED to whole prose runs (a run is one
+ *  bubble with one markdown stream, so an edge inside one would mount it as two rows with
+ *  two parsers and a visible seam).
+ *
+ *  Every mount, price and completion test reads the wanted window through here, so the
+ *  body, its spacers and the yielded builder cannot disagree about where it ends. */
+function bodyRange(t: Turn, range: EntryRange): EntryRange {
+  return sliceTurn(t, range);
 }
 
-const bodyRowSpec: ReconcileSpec<BodyRow> = {
-  key: (row) =>
-    row.kind === "msg" ? row.m.id : row.side === "head" ? SPACER_HEAD_KEY : SPACER_TAIL_KEY,
-  mount: (row) => {
-    if (row.kind === "space") {
-      const space = el("div", { className: "turn-space" });
-      space.style.blockSize = `${String(row.px)}px`;
-      return space;
-    }
-    const m = row.m;
-    const node = buildMessage(m, row.range);
-    // Licensed-code attribution footnote + model-refusal callout. One call
-    // site here + in update() covers mount + update, keyed off
-    // m.code_references / m.refusal.
-    if (m.role === "assistant") {
-      syncCodeReferences(node, m);
-      syncRefusal(node, m);
-    }
-    // Only animate genuinely-new appended messages; chat-switch replay
-    // and pagination prepends mount silently. See paint() for how
-    // appendNewIds is populated.
-    if (appendNewIds.has(m.id)) {
-      node.setAttribute("data-chat-entry", "");
-    }
-    // isLikelyLiveStreaming already returns false for non-assistant roles.
-    const liveStreaming = isLikelyLiveStreaming(m);
-    messageStates.set(m.id, { el: node, streaming: liveStreaming });
-    if (liveStreaming) {
-      streamingIds.add(m.id);
-    }
-    return node;
-  },
-  update: (node, row) => {
-    if (row.kind === "space") {
-      node.style.blockSize = `${String(row.px)}px`;
-      return;
-    }
-    updateMessage(node, row.m, row.range);
-    if (row.m.role === "assistant") {
-      syncCodeReferences(node, row.m);
-      syncRefusal(node, row.m);
-    }
-  },
-  onRemove: (el, key) => {
-    if (!isSpacerKey(key)) {
-      disposeMessage(key);
-    }
-    // A steer note's clamp lives inside the row, so it leaves with it.
-    releaseClampsIn(el);
-  },
-};
+/** Which end of a body's window a spacer stands at. */
+type SpacerSide = "head" | "tail";
 
-function isSpacerKey(key: string): boolean {
-  return key === SPACER_HEAD_KEY || key === SPACER_TAIL_KEY;
+/** Price both of a body's spacers against the range it now holds, and create or remove
+ *  each as the window reaches that end of the turn.
+ *
+ *  An ELEMENT rather than `padding-block` on `.turn-body`, which transitions and would
+ *  animate every window move past `preserveReadingPosition`'s measurement — and a SIBLING
+ *  of the body rather than a child, because the renderer owns that element's children and
+ *  seats a streamed entry with `appendChild`, so a spacer inside would take every later
+ *  entry below it. */
+function syncSpacers(body: HTMLElement, t: Turn, range: EntryRange): void {
+  // `seq` space, like `range.to` and like `spacerHeight`'s own bound: a rendered-entry
+  // count reads short of it and withdraws a tail spacer the window still owes.
+  const span = turnSpan(t);
+  placeSpacer(body, "head", range.from > 0 ? spacerPx(t, range, "head") : 0);
+  placeSpacer(body, "tail", range.to < span ? spacerPx(t, range, "tail") : 0);
 }
 
-/** What each mounted row measured, keyed by reconcile key. Filled by
- *  `withMeasuredRows` and empty outside it: a height is only true for the pass that
- *  read it. */
-let measuredRowHeights: ReadonlyMap<string, number> = new Map();
-
-/** Measure the rows `keys` names in ONE read-only pass, then run the mutation that drops
- *  them. `reconcile` runs `onRemove` between `el.remove()` calls, so `disposeMessage`'s
- *  layout read costs one forced reflow PER row there and one for the whole pass here.
- *  Callers pass DEPARTING keys only: a survivor's height is never read back. */
-function withMeasuredRows(body: ParentNode, keys: ReadonlySet<string>, mutate: () => void): void {
-  const outer = measuredRowHeights;
-  measuredRowHeights = measureRows(body, keys);
-  try {
-    mutate();
-  } finally {
-    measuredRowHeights = outer;
-  }
-}
-
-function measureRows(body: ParentNode, keys: ReadonlySet<string>): Map<string, number> {
-  const measured = new Map<string, number>();
-  for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
-    const key = row.getAttribute(KEY_ATTR);
-    if (key === null || !keys.has(key) || geometrySkipped(row)) {
-      continue;
-    }
-    measured.set(key, row.offsetHeight);
-  }
-  return measured;
-}
-
-/** The MESSAGE keys `body` holds, in mount order. The keys half of a reconcile's
- *  before-picture, read with no layout property touched. */
-function mountedRowKeys(body: ParentNode): string[] {
-  const held: string[] = [];
-  for (const row of body.querySelectorAll<HTMLElement>(`:scope > [${KEY_ATTR}]`)) {
-    const key = row.getAttribute(KEY_ATTR);
-    if (key !== null && !isSpacerKey(key)) {
-      held.push(key);
-    }
-  }
-  return held;
-}
-
-/** The ONE way a body's rows are reconciled: departing rows measured first, mutated
- *  second. A reconcile that drops NOTHING reads no layout at all — the streaming path,
- *  where a measurement pass would force a reflow per frame for a cache nobody reads. */
-function reconcileBody(body: HTMLElement, rows: readonly BodyRow[]): void {
-  const departing = departingKeys(body, rows);
-  if (departing.size === 0) {
-    reconcile(body, rows, bodyRowSpec);
+/** Seat, re-price or remove one spacer. Anchored on the BODY rather than on the header,
+ *  so the pair cannot end up on the same side of it whatever else the card holds. */
+function placeSpacer(body: HTMLElement, side: SpacerSide, px: number): void {
+  const card = body.parentElement;
+  if (card === null) {
     return;
   }
-  withMeasuredRows(body, departing, () => {
-    reconcile(body, rows, bodyRowSpec);
-  });
-}
-
-/** The message keys this reconcile will REMOVE: what `body` holds minus what `rows`
- *  wants. Answered from keys alone, so asking costs no layout. */
-function departingKeys(body: ParentNode, rows: readonly BodyRow[]): Set<string> {
-  const wanted = new Set(rows.map((row) => bodyRowSpec.key(row)));
-  const departing = new Set<string>();
-  for (const key of mountedRowKeys(body)) {
-    if (!wanted.has(key)) {
-      departing.add(key);
+  const held = card.querySelector<HTMLElement>(`:scope > .turn-space[data-space="${side}"]`);
+  if (px <= 0) {
+    held?.remove();
+    return;
+  }
+  const space = held ?? el("div", { className: "turn-space" });
+  if (held === null) {
+    space.dataset["space"] = side;
+    if (side === "head") {
+      body.before(space);
+    } else {
+      body.after(space);
     }
   }
-  return departing;
+  space.style.blockSize = `${String(px)}px`;
 }
 
-/** Dispose every MESSAGE row of `body`. A spacer key names no message and owns
- *  nothing, so the three walkers that hand keys to `disposeMessage` route through
- *  here rather than each carrying the test. */
-function disposeBodyRows(body: ParentNode): void {
-  // Every row here departs, so the departing set IS the mounted set.
-  const keys = mountedRowKeys(body);
-  withMeasuredRows(body, new Set(keys), () => {
-    for (const key of keys) {
-      disposeMessage(key);
-    }
-  });
+/** What one spacer is worth, 0 when it stands for no box and floored at 1px when it stands for
+ *  one. `placeSpacer` removes at 0, so the price is the seat gate: a remainder whose entries all
+ *  render elsewhere reserves no height and leaves `.is-bodyless` reachable. Read when a change is
+ *  COLLECTED, deliberately: pricing the same batch's own drops from the measurements that batch
+ *  takes moved the reader 19x further on the 700-block fixture (−47px of drift became −909px),
+ *  because the compensation's error over the tail extension no longer cancels. The estimate reads
+ *  HIGH, the safe direction, and the next window move re-prices it. */
+function spacerPx(t: Turn, range: EntryRange, side: SpacerSide): number {
+  // The transcript's root lane, stated rather than defaulted: `spacerHeight` carries no
+  // default because the price and the residency budget have to answer `entryRenders`
+  // identically, and a silent `""` in one of them is that divergence.
+  const px = spacerHeight(t, range, side, "");
+  return px > 0 ? Math.max(1, px) : 0;
 }
 
-/** Drop every per-message resource for `key`. Called from the body reconcile's
- *  onRemove, and from the turn reconcile's onRemove for each of a discarded
- *  card's rows — a removed card's inner list never reconciles again, so its
- *  own onRemove would never fire. */
-function disposeMessage(key: string): void {
-  // The spacer holds the height `withMeasuredRows` measured, never a DOM read: this runs
-  // mid-mutation. No entry and a detached row both leave the recorded height alone.
-  const held = mountedWindow(key);
-  const px = measuredRowHeights.get(key);
-  if (held !== undefined && px !== undefined && px > 0) {
-    recordRowHeight(key, held, px);
-  }
-  const arr = bindUnbinds.get(key);
-  if (arr !== undefined) {
-    for (const fn of arr) {
-      fn();
-    }
-    bindUnbinds.delete(key);
-  }
-  disposeStreamingEffect(key);
-  // Flush any live markdown stream, then drop the block render state
-  // (cleanup only — the message row is being removed).
-  finalizeAssistantBody(key);
-  disposeAssistantBody(key);
-  // The row's per-block streaming signals go with it: nothing else clears a
-  // mounted row's signals before page teardown, so signals left here would
-  // outlive the message for the rest of the page.
-  clearBlockSigsFor(key);
-  messageStates.delete(key);
-  streamingIds.delete(key);
+/** Drop everything `turnID`'s mounted body owns: the render's own state, its
+ *  turn-lifetime effects and its per-turn signals. Called from the turn reconcile's
+ *  onRemove — a removed card's body is never rendered again, so nothing else would
+ *  release it — and from the 2→3/1→3 eviction.
+ *
+ *  Per-ENTRY release is the renderer's own, at the window drop that removes the entry
+ *  (`dropHead`/`dropTail`), which is also where a departing row's measured height is
+ *  recorded. So this reads no layout and needs no measured-heights pass. */
+function disposeTurnBody(turnID: string): void {
+  // Flush any live markdown stream, then drop the render state.
+  finalizeAssistantBody(turnID);
+  disposeAssistantBody(turnID);
+  // The turn's per-entry streaming signals go with it: nothing else clears a mounted
+  // turn's signals before page teardown, so signals left here would outlive the card
+  // for the rest of the page.
+  clearTurnSigs(turnID);
 }
 
 // ---------------------------------------------------------------------------
 // Per-role builders + updaters
 // ---------------------------------------------------------------------------
-
-/** Build one message of a turn's BODY over `range`. The one user row that reaches here is
- *  a STEER, which joins the turn already running rather than opening one; a PROMPT is
- *  promoted to its turn's header. An unexpected role renders as a plain system row. */
-function buildMessage(m: Message, range: BlockRange): HTMLElement {
-  switch (m.role) {
-    case "assistant":
-      return buildAssistant(m, range);
-    case "event":
-      return buildEvent(m) ?? buildSystemFallback(m);
-    case "user":
-      return m.user_kind === "steer" ? buildPersistedSteerNote(m) : buildSystemFallback(m);
-  }
-}
-
-/** The note for a steer's DURABLE row — what a page reload rebuilds it from.
- *
- *  Every fact comes off the row; nothing is inferred (invariant 1). `steer_state`
- *  ABSENT means not known — the whole legacy population, plus every row the
- *  session/load replay writes, since KAS's log records a steer without saying
- *  whether the model consumed it — and it reads as the NEUTRAL note. Reading it as
- *  not-delivered would label a correction the agent may have acted on as missed.
- *  `ack` is omitted, the one fidelity loss against the live mark this supersedes. */
-function buildPersistedSteerNote(m: Message): HTMLElement {
-  const dropped = m.steer_state === "dropped";
-  const text = m.content ?? "";
-  return buildSteerNote({
-    text,
-    // Absent means the user's, which is what this note assumed before the row
-    // carried the field at all.
-    origin: m.steer_origin ?? "user",
-    dropped,
-  });
-}
-
-function updateMessage(el: HTMLElement, m: Message, range: BlockRange): void {
-  if (m.role === "assistant") {
-    updateAssistant(el, m, range);
-  } else if (m.role === "event") {
-    updateEvent(el, m);
-  }
-  // user messages are immutable once mounted.
-}
 
 /** One collected transition and which EDGE of the reader it lands at. The side is
  *  measured in the COLLECT loop: at application time "later" is whenever
@@ -1887,117 +1619,88 @@ function collectWindowMove(
     // the yielded builder exists to refuse. It converges on the moved range itself.
     return false;
   }
-  const range = wantedWindow.get(t.id);
-  if (range === undefined) {
+  const plan = wantedWindow.get(t.id);
+  if (plan === undefined) {
     return true; // no plan entry, so nothing of this turn is in the signature either
   }
-  const rows = bodyRows(t, range);
+  const want = bodyRange(t, plan);
+  const have = mountedWindow(t.id);
+  if (have === undefined) {
+    return true; // nothing mounted for this turn, so the cold build owns its whole range
+  }
   // A deferred transition is a REQUEST, re-checked when it runs: a newer plan's own
-  // pass has already applied itself, and this batch's rows are that plan's rows.
+  // pass has already applied itself, and this batch's range is that plan's range.
   const stale = (): boolean => {
     const now = wantedWindow.get(t.id);
-    return now?.from !== range.from || now.to !== range.to;
+    return now?.from !== plan.from || now.to !== plan.to;
   };
-  // The PASS's own chat, threaded down from its caller, never `getActiveId()`: these
-  // marks are consumed inside closures that run at a later frame boundary, so an
-  // ambient read hands a chat switch inside the deferral the wrong chat's marks.
-  const marks = steerMarks(chatID);
-  for (const [msgID, want] of sliceTurn(t, range)) {
-    const m = t.body.find((x) => x.id === msgID);
-    const have = mountedWindow(msgID);
-    const row = m === undefined ? null : messageStates.get(msgID)?.el;
-    if (m === undefined || have === undefined || row === null || row === undefined) {
-      continue; // absent, or about to be mounted whole by the rows reconcile
-    }
-    // A folded body is `block-size: 0`, so a row inside one reports offsetTop 0 and
-    // `sideOf` answers "head" whatever the card's real position. The card's own side
-    // is measured on a `.turn` in the view this pass paints, which is the active one.
-    const rowSide = (): "head" | "tail" => (geometrySkipped(row) ? side : sideOf(row));
-    if (want.from < have.from) {
-      changes.push({
-        side: rowSide(),
-        fn: () => {
-          if (!stale()) {
-            mountHeadRange(m, want, liveStateOf(m), marks);
-          }
-        },
-      });
-    } else if (want.from > have.from) {
-      changes.push({
-        side: rowSide(),
-        fn: () => {
-          if (!stale()) {
-            dropHead(m, want, marks);
-          }
-        },
-      });
-    }
-    // Two calls, never one: a relocation retracts both edges, and one compensated
-    // call would correct by a delta that includes the below-the-reader removal.
-    if (want.to < have.to) {
-      changes.push({
-        side: "tail",
-        fn: () => {
-          if (!stale()) {
-            dropTail(m, want, marks);
-          }
-        },
-      });
-    }
+  const live = turnIsLive(t);
+  // A folded body is `block-size: 0`, so anything inside one reports offsetTop 0 and
+  // `sideOf` answers "head" whatever the card's real position. The card's own side is
+  // measured on a `.turn` in the view this pass paints, which is the active one.
+  const bodySide = (): "head" | "tail" => (geometrySkipped(body) ? side : sideOf(body));
+  if (want.from < have.from) {
+    changes.push({
+      side: bodySide(),
+      fn: () => {
+        if (!stale()) {
+          mountHeadRange(t, want, live);
+          syncSpacers(body, t, want);
+        }
+      },
+    });
+  } else if (want.from > have.from) {
+    changes.push({
+      side: bodySide(),
+      fn: () => {
+        if (!stale()) {
+          dropHead(t, want);
+          syncSpacers(body, t, want);
+        }
+      },
+    });
   }
-  if (bodyHolds(body, rows)) {
-    return true; // the card-level no-op exit: nothing to reconcile and nothing to price
-  }
-  changes.push({
-    side,
-    fn: () => {
-      if (card.isConnected && !hasPendingBuild(t.id) && !stale()) {
-        reconcileBody(body, rows);
-        syncSourceView(body);
-      }
-    },
-  });
-  return true;
-}
-
-/** Whether `body` already holds exactly `rows`, each over the range it wants: the
- *  card-level equivalent of the window pass's plan-equality exit, and what keeps an
- *  ordinary streaming paint from queueing a reconcile per new block. */
-function bodyHolds(body: HTMLElement, rows: readonly BodyRow[]): boolean {
-  const held: string[] = [];
-  for (const child of body.children) {
-    const key = child.getAttribute(KEY_ATTR);
-    if (key !== null) {
-      held.push(key);
-    }
-  }
-  if (held.length !== rows.length) {
-    return false;
-  }
-  for (const [i, row] of rows.entries()) {
-    if (bodyRowSpec.key(row) !== held[i]) {
-      return false;
-    }
-    if (row.kind !== "msg") {
-      continue;
-    }
-    // An `event` row registers no window (only `buildBody` does) and holds no block
-    // to window, so the keyed node the check above just found IS its whole answer.
-    const have = mountedWindow(row.m.id);
-    if (have !== undefined && (have.from !== row.range.from || have.to !== row.range.to)) {
-      return false;
-    }
+  // Two calls, never one: a relocation retracts both edges, and one compensated
+  // call would correct by a delta that includes the below-the-reader removal.
+  if (want.to < have.to) {
+    changes.push({
+      side: "tail",
+      fn: () => {
+        if (!stale()) {
+          dropTail(t, want);
+          syncSpacers(body, t, want);
+        }
+      },
+    });
+  } else if (want.to > have.to) {
+    // The tail EXTENSION, which is the streaming path: it lands below the reader, so it
+    // runs bare like the drop beside it. The PASS's own chat, threaded down from its
+    // caller and never `getActiveId()`, because this closure runs at a later frame
+    // boundary and an ambient read hands a chat switch inside the deferral the wrong one.
+    changes.push({
+      side: "tail",
+      fn: () => {
+        if (card.isConnected && !hasPendingBuild(t.id) && !stale()) {
+          updateAssistantBody(body, t, chatID, live, want);
+          syncSpacers(body, t, want);
+          syncSourceView(body);
+        }
+      },
+    });
   }
   return true;
 }
 
 /** Whether `card`'s body holds every ordinal `t`'s body has, MOUNTED: what makes
- *  "copy as text" a complete answer rather than a hole. Asked of the DOM, never of
+ *  "copy as text" a complete answer rather than a hole. Asked of the RENDER, never of
  *  `wantedWindow`, which leads the body by a build that has not landed AND by a window
  *  move `deferWhileReading` holds until the reader returns. */
 function bodyHoldsWholeTurn(card: HTMLElement, t: Turn): boolean {
-  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
-  return body !== null && bodyHolds(body, bodyRows(t, WHOLE_TURN));
+  if (card.querySelector(":scope > .turn-body") === null) {
+    return false;
+  }
+  const have = mountedWindow(t.id);
+  return have !== undefined && covers(have, bodyRange(t, WHOLE_TURN));
 }
 initTurnActionsBodyProbe(bodyHoldsWholeTurn);
 
@@ -2143,19 +1846,13 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
     turnFaces.set(card, key);
     return;
   }
-  // A card-level child in the body's slot, NOT inside the footer: the footer
-  // keeps its open-state grid (ledger, Rewind, file rows) untouched, and a
-  // turn with no footer at all still gets its face.
+  // A card-level child in the body's slot rather than inside the footer, so the
+  // footer's own grid is untouched and a turn with no footer still gets its face.
   //
-  // ANCHORED ON THE NOTICE WHEN THERE IS ONE, and the footer only otherwise. Both
-  // regions live in the slot between the body and the ledger, so "before the
-  // footer" is not an order — it is whichever of the two mounted last, and the
-  // face has FIVE call sites against the notice's two: the fold toggle and the
-  // fold pass mount a face without touching the notice, so a reader folding a
-  // broken card put its reason ABOVE the answer, and left the notice adjacent to
-  // the collapsed body, where 29-turns.css's divider-is-the-frame rules suppress
-  // the one line the folded header drops its own border for. The anchor is what
-  // makes the order a property of the face rather than of the call order.
+  // ANCHORED ON THE NOTICE WHEN THERE IS ONE: both regions sit between the body and
+  // the ledger, and this has FIVE call sites against the notice's two, so an
+  // insertion order would put a folded card's reason above its answer. The anchor
+  // makes the order this function's property rather than the call order's.
   const anchor =
     card.querySelector<HTMLElement>(":scope > .turn-notice") ??
     card.querySelector<HTMLElement>(":scope > .turn-footer");
@@ -2167,22 +1864,14 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
   turnFaces.set(card, key);
 }
 
-/** Mount or refresh the turn's failure notice: one card-level row saying why a turn
- *  that did not end cleanly ended that way.
- *
- *  A card-level child before the footer, NOT a row in `.turn-body`: the body is a
- *  keyed reconcile over MESSAGES, a tier-3 stub has no body element, and the notice
- *  must survive residency. One mount point serves both fold states, because
- *  `syncTurnFace` early-returns for an unfolded card. Tinted by SEVERITY, so a
- *  cancel reads as `stopped` rather than as a failure. Idempotent.
- *
- *  THE LAST REGION BEFORE THE LEDGER in both fold states, which is `syncTurnFace`'s
- *  anchor rather than this function's insertion point: two things ride on the
- *  order, and neither is about where the notice goes. Why the turn stopped reads
- *  after what it produced. And it keeps `.turn-body + .turn-notice` an OPEN-card
- *  adjacency: the hidden body is still in the DOM at `block-size: 0`, so a notice
- *  sitting next to it matches 29-turns.css's divider-is-the-frame rules and loses
- *  the one line the folded header drops its own border for. */
+/** Mount or refresh the turn's failure notice: one card-level row saying why a turn that
+ *  did not end cleanly ended that way. Idempotent, tinted by SEVERITY so a cancel reads
+ *  as `stopped` rather than a failure.
+ *  A card-level child before the footer, NOT an entry in `.turn-body`: a tier-3 stub has
+ *  no body element at all and the notice must survive residency. ONE mount point for both
+ *  fold states, `syncTurnFace` early-returning for an unfolded card — and THE LAST REGION
+ *  BEFORE THE LEDGER, which that function's anchor rather than this insertion point
+ *  enforces: why the turn stopped reads after what it produced. */
 function syncTurnNotice(card: HTMLElement, t: Turn): void {
   const text = turnFailureText(t);
   const existing = card.querySelector<HTMLElement>(":scope > .turn-notice");
@@ -2218,6 +1907,36 @@ function syncTurnNotice(card: HTMLElement, t: Turn): void {
   }
 }
 
+/** Mount / refresh the licensed-code footnote and the model-refusal callout.
+ *  THE PRECEDENCE IS RESOLVED HERE, the one place holding both halves of
+ *  each fact: `turn_close` is durable and the store's live value answers until that
+ *  entry exists. Neither renderer reads the store, so they cannot disagree.
+ *  Card-level for `syncTurnNotice`'s reason: a stub has no body to mount into. The
+ *  Rewind target is this turn's OWN prompt, which `refusal.ts` states at its
+ *  handler type. */
+function syncTurnCloseNotes(card: HTMLElement, t: Turn, chatID: string): void {
+  const close = closeOfBody(t.body);
+  syncRefusal(card, close?.refusal ?? liveRefusalFor(chatID, t.id), t.trigger);
+  syncCodeReferences(card, close?.code_references ?? codeReferencesFor(chatID, t.id));
+  placeAboveFooter(card, ".refusal-callout");
+  placeAboveFooter(card, ".code-refs");
+}
+
+/** Keep an appended card-level region above the ledger. Moves ONLY a region below the
+ *  footer: re-seating an attached node restarts its animations and drops focus and
+ *  `:hover` inside it (`web.md`), and `.code-refs` is a disclosure the reader opens. */
+function placeAboveFooter(card: HTMLElement, selector: string): void {
+  const region = card.querySelector<HTMLElement>(`:scope > ${selector}`);
+  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
+  if (region === null || footer === null) {
+    return;
+  }
+  const kids = [...card.children];
+  if (kids.indexOf(region) > kids.indexOf(footer)) {
+    footer.before(region);
+  }
+}
+
 // --- The turn card ---
 
 /** Build one turn: tinted header (the trigger), plain body (the work), tinted
@@ -2250,7 +1969,7 @@ function buildTurn(t: Turn): HTMLElement {
   if (range !== undefined) {
     const body = el("div", { className: "turn-body" });
     card.appendChild(body);
-    startFirstSlice(body, bodyRows(t, range), t.id);
+    startFirstSlice(body, t, bodyRange(t, range));
   } else {
     setCardFolded(card, true);
   }
@@ -2261,6 +1980,7 @@ function buildTurn(t: Turn): HTMLElement {
   // two calls are order-INDEPENDENT: `syncTurnFace` anchors on the notice.
   mountRewind(card, t);
   syncTurnNotice(card, t);
+  syncTurnCloseNotes(card, t, getActiveId());
   syncTurnFace(card, t);
   syncTurnBodyless(card);
   paintMountedCards = true;
@@ -2282,50 +2002,27 @@ function updateTurn(card: HTMLElement, t: Turn): void {
     updateTurnHeader(header, headerData(t));
   }
   card.toggleAttribute("data-running", t.outcome === "running");
-  // Three bodies this pass keeps its hands off: a stub has none; one with a
-  // build still owed is the builder's, because a reconcile over a partial body
-  // mounts every remaining row on the frame the yielded builder exists to
-  // protect; and a DROPPED range is the fold pass's, about to remove it.
+  // Three bodies this pass keeps its hands off: a stub has none; one with a build
+  // still owed is the builder's, because an update over a partial body would mount
+  // every remaining entry on the frame the yielded builder exists to protect; and a
+  // DROPPED range is the fold pass's, about to remove it.
   const body = card.querySelector<HTMLElement>(":scope > .turn-body");
-  const range = wantedWindow.get(t.id);
-  if (body !== null && range !== undefined && !hasPendingBuild(t.id)) {
-    // ONE projection per card per paint: every row is priced by `spacerHeight` over
-    // the ordinals it stands in for, so the gate and the reconcile share the list.
-    const rows = bodyRows(t, range);
-    if (headUnchanged(body, rows)) {
-      reconcileBody(body, rows);
-      syncSourceView(body);
-    }
+  const plan = wantedWindow.get(t.id);
+  if (body !== null && plan !== undefined && !hasPendingBuild(t.id)) {
+    // The TAIL extension is all this path can reach: the renderer renders past its own
+    // `st.window.to` and nothing else, so a HEAD extension is `mountHeadRange`'s and
+    // stays the fold pass's, which owns the compensation.
+    const range = bodyRange(t, plan);
+    updateAssistantBody(body, t, getActiveId(), turnIsLive(t), range);
+    syncSpacers(body, t, range);
+    syncSourceView(body);
   }
   mountTurnFooter(card, t);
   mountRewind(card, t);
   syncTurnNotice(card, t);
+  syncTurnCloseNotes(card, t, getActiveId());
   syncTurnBodyless(card);
   syncTurnFace(card, t);
-}
-
-/** Whether the wanted rows differ from what `body` holds only at the TAIL. A tail
- *  delta is the STREAMING path — a running workflow appends a row per turn-segment
- *  — and runs free here because it lands below the reader; a HEAD delta is the fold
- *  pass's, which owns the compensation and the deferral. */
-function headUnchanged(body: HTMLElement, rows: readonly BodyRow[]): boolean {
-  const held: string[] = [];
-  for (const child of body.children) {
-    const key = child.getAttribute(KEY_ATTR);
-    if (key !== null) {
-      held.push(key);
-    }
-  }
-  for (let i = 0; i < Math.min(held.length, rows.length); i++) {
-    const row = rows[i];
-    if (row === undefined || bodyRowSpec.key(row) !== held[i]) {
-      return false;
-    }
-    if (row.kind === "msg" && mountedWindow(row.m.id)?.from !== row.range.from) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /** Start a stub's body in place, from the turn's current projection: the
@@ -2334,7 +2031,7 @@ function headUnchanged(body: HTMLElement, rows: readonly BodyRow[]): boolean {
  *
  *  `startFirstSlice` owns how much lands on the frame — the same policy `buildTurn`
  *  uses, this being the same cold build reached from the fold pass. */
-function startTurnBody(card: HTMLElement, t: Turn, range: TurnRange): void {
+function startTurnBody(card: HTMLElement, t: Turn, range: EntryRange): void {
   if (card.querySelector(":scope > .turn-body") !== null) {
     return;
   }
@@ -2342,12 +2039,12 @@ function startTurnBody(card: HTMLElement, t: Turn, range: TurnRange): void {
   if (body === null) {
     return;
   }
-  startFirstSlice(body, bodyRows(t, range), t.id);
+  startFirstSlice(body, t, bodyRange(t, range));
   syncTurnBodyless(card);
 }
 
-/** The 2→3/1→3 transition: drop a card's body DOM and every per-message resource
- *  behind it — the same disposal the card's own removal runs.
+/** The 2→3/1→3 transition: drop a card's body DOM and every per-turn resource behind
+ *  it — the same disposal the card's own removal runs.
  *
  *  The turn's OWED SLICES go with it: `applyFoldPass` calls `drainColdBuilds` on the
  *  next line, so an entry left standing would send the builder straight back to
@@ -2362,7 +2059,17 @@ function unmountTurnBody(card: HTMLElement): void {
   if (owed !== null) {
     coldBuilds.delete(owed);
   }
-  disposeBodyRows(body);
+  const turnID = card.getAttribute(KEY_ATTR);
+  if (turnID !== null) {
+    disposeTurnBody(turnID);
+  }
+  // The clamps inside the entries go with the body; the header's stays with the card.
+  releaseClampsIn(body);
+  // The spacers are the body's siblings, so they leave with it rather than inside it:
+  // a stub prices nothing.
+  for (const space of card.querySelectorAll<HTMLElement>(":scope > .turn-space")) {
+    space.remove();
+  }
   body.remove();
   syncTurnBodyless(card);
 }
@@ -2376,25 +2083,25 @@ function unmountTurnBody(card: HTMLElement): void {
 // freeze the main thread on one click; each batch re-reads the store and the DOM, so
 // a pass that reconciled the body mid-build ends the loop instead of double-mounting.
 
-/** Blocks per synchronous slice of a cold build. The reconcile unit is the
- *  message, so a slice takes whole messages until their block sum reaches
- *  this; one over-budget message is still one slice, because a message row
- *  mounts atomically. */
-const BUILD_BATCH_BLOCKS = 32;
+/** Entries per synchronous slice of a cold build. The renderer mounts a whole prose RUN
+ *  as one bubble, so a slice can overshoot by the entries of the run its edge lands in;
+ *  `bodyRange`'s snap is what makes that overshoot bounded and the same one the residency
+ *  budget already tolerates. */
+const BUILD_BATCH_ENTRIES = 32;
 
-/** Blocks one full pass may mount SYNCHRONOUSLY across every body it starts,
- *  refilled by `paint`. A WORK CAP; nothing here measures a frame. No path makes
- *  it bind for the WINDOW's own bodies, whose first slices cannot sum past one
- *  window; a DEMAND grant is outside the budget and can, and that body is then
- *  born EMPTY for `drainColdBuilds` — the behaviour this is kept for. */
-const PAINT_SYNC_BLOCKS = RESIDENT_BLOCKS;
-let paintSyncBlocks = PAINT_SYNC_BLOCKS;
+/** Entries one full pass may mount SYNCHRONOUSLY across every body it starts, refilled by
+ *  `paint`. A WORK CAP; nothing here measures a frame. No path makes it bind for the
+ *  WINDOW's own bodies, whose first slices cannot sum past one window; a DEMAND grant is
+ *  outside the budget and can, and that body is then born EMPTY for `drainColdBuilds` —
+ *  the behaviour this is kept for. */
+const PAINT_SYNC_ENTRIES = RESIDENT_ENTRIES;
+let paintSyncEntries = PAINT_SYNC_ENTRIES;
 
 /** In-flight builds by turn id with the range each is building, so a second caller
  *  joins one that COVERS its request instead of double-appending rows. */
 const turnBodyBuilds = new Map<
   string,
-  { readonly range: TurnRange; readonly done: Promise<void> }
+  { readonly range: EntryRange; readonly done: Promise<void> }
 >();
 
 /** Turns whose cold build got its first slice and owes the rest: added by the
@@ -2412,138 +2119,34 @@ function hasPendingBuild(turnID: string): boolean {
 
 /** Take a cold build's FIRST slice, and queue whatever is left.
  *
- *  The one place either cold builder decides what a paint pays on the frame. A pass
- *  that has spent the allowance takes NO slice: the body is born empty and
- *  `drainColdBuilds` builds all of it off the frame. */
-function startFirstSlice(body: HTMLElement, rows: readonly BodyRow[], turnID: string): void {
-  if (paintSyncBlocks > 0) {
-    paintSyncBlocks -= appendBodyBatch(body, rows, { row: 0, block: 0 }).blocks;
-  }
-  if (nextBuildPos(body, rows) !== "done") {
-    coldBuilds.add(turnID);
+ *  The one place either cold builder decides what a paint pays on the frame. A pass that
+ *  has spent the allowance builds the body over an EMPTY range: the render exists, so
+ *  `mountedWindow` answers and `drainColdBuilds` mounts all of it off the frame. */
+function startFirstSlice(body: HTMLElement, t: Turn, range: EntryRange): void {
+  const take = Math.min(BUILD_BATCH_ENTRIES, Math.max(0, paintSyncEntries));
+  const to = Math.min(range.to, range.from + take);
+  buildAssistantBody(body, t, getActiveId(), turnIsLive(t), { from: range.from, to });
+  paintSyncEntries -= to - range.from;
+  syncSpacers(body, t, { from: range.from, to });
+  if (to < range.to) {
+    coldBuilds.add(t.id);
   }
 }
 
-/** Where the next slice starts. `row` indexes the row list; `block` is how much of
- *  that row's wanted range is already mounted, so a slice can stop INSIDE a row —
- *  which it has to, because one window can sit entirely inside one message. */
-interface SlicePos {
-  readonly row: number;
-  readonly block: number;
-}
-
-/** Where the next slice starts, and what this one cost in blocks. */
-interface Slice {
-  readonly next: SlicePos;
-  readonly blocks: number;
-}
-
-/** The body's mounted keyed children, by key — the same set `reconcile` collects
- *  before it seats anything. */
-function mountedRows(body: HTMLElement): Map<string, HTMLElement> {
-  const out = new Map<string, HTMLElement>();
-  for (const child of body.children) {
-    const key = child.getAttribute(KEY_ATTR);
-    if (key !== null) {
-      out.set(key, child as HTMLElement);
-    }
+/** Where the next slice ENDS, or `done`. Derived from the MOUNTED window rather than
+ *  carried in the build entry, because a full pass can render the whole range while this
+ *  build yields — and then the build must see it as done instead of mounting it twice.
+ *
+ *  The TAIL shortfall only: the renderer's update path renders past its own window's `to`
+ *  and nothing else, so a head reported here would spend a slice mounting nothing.
+ *  `mountHeadRange` owns that edge. */
+function nextBuildTo(turnID: string, want: EntryRange): number | "done" {
+  const have = mountedWindow(turnID);
+  const from = have === undefined ? want.from : have.to;
+  if (have !== undefined && have.to >= want.to) {
+    return "done";
   }
-  return out;
-}
-
-/** Mount `row` at its place in `rows`, or extend it where the body holds it.
- *  `reconcile`'s discipline, not `appendChild`: a window extends at the HEAD, so a
- *  row can enter ABOVE rows already mounted, and the target is the first later key
- *  the body holds. */
-function placeRow(
-  body: HTMLElement,
-  held: Map<string, HTMLElement>,
-  rows: readonly BodyRow[],
-  i: number,
-  row: BodyRow,
-): void {
-  const key = bodyRowSpec.key(row);
-  const existing = held.get(key);
-  if (existing !== undefined) {
-    bodyRowSpec.update?.(existing, row);
-    return;
-  }
-  const node = bodyRowSpec.mount(row);
-  node.setAttribute(KEY_ATTR, key);
-  let target: HTMLElement | null = null;
-  for (let j = i + 1; j < rows.length && target === null; j++) {
-    const next = rows[j];
-    target = next === undefined ? null : (held.get(bodyRowSpec.key(next)) ?? null);
-  }
-  body.insertBefore(node, target);
-  held.set(key, node);
-  // The source view hides the regions it FINDS, so a row the builder mounts under it
-  // has to be hidden here or the raw text gets a rendered neighbour.
-  syncSourceView(body);
-}
-
-/** Mount one slice of `rows` into `body`, starting at `from`. The reconcile's own
- *  mount arm at BLOCK granularity: a 320-ordinal window inside one 580-block
- *  message is one ROW, so a slice that could only break between rows would mount
- *  the whole window on the frame the yielded builder exists to protect. */
-function appendBodyBatch(body: HTMLElement, rows: readonly BodyRow[], from: SlicePos): Slice {
-  const held = mountedRows(body);
-  let blocks = 0;
-  let pos = from;
-  while (pos.row < rows.length) {
-    const row = rows[pos.row];
-    if (row === undefined) {
-      break;
-    }
-    if (row.kind === "space") {
-      placeRow(body, held, rows, pos.row, row);
-      pos = { row: pos.row + 1, block: 0 };
-      continue;
-    }
-    // At least one block per pass, so a slice always makes progress: a blockless
-    // message is one row priced at one, exactly as the ordinal space prices it.
-    const take = Math.max(
-      1,
-      Math.min(row.range.to - row.range.from - pos.block, BUILD_BATCH_BLOCKS - blocks),
-    );
-    const to = Math.min(row.range.to, row.range.from + pos.block + take);
-    placeRow(body, held, rows, pos.row, { ...row, range: { from: row.range.from, to } });
-    blocks += take;
-    pos =
-      to >= row.range.to
-        ? { row: pos.row + 1, block: 0 }
-        : { row: pos.row, block: to - row.range.from };
-    if (blocks >= BUILD_BATCH_BLOCKS) {
-      break;
-    }
-  }
-  return { next: pos, blocks };
-}
-
-/** The first (row, block) the wanted rows do not yet hold, or `done`. Derived from
- *  mounted state rather than carried in the build entry, because a full pass can
- *  reconcile the body whole while this build yields — and then the build must see
- *  the rows as done instead of appending them a second time. */
-function nextBuildPos(body: HTMLElement, rows: readonly BodyRow[]): SlicePos | "done" {
-  const held = mountedRows(body);
-  for (const [i, row] of rows.entries()) {
-    if (!held.has(bodyRowSpec.key(row))) {
-      return { row: i, block: 0 };
-    }
-    if (row.kind === "msg") {
-      const have = mountedWindow(row.m.id);
-      if (have === undefined) {
-        return { row: i, block: 0 };
-      }
-      // The TAIL shortfall only: `appendBodyBatch` reaches a held row through
-      // `updateBody`, which renders past `st.window.to` and nothing else, so a head
-      // reported here spends a slice mounting nothing. `mountHeadRange` owns it.
-      if (have.to < row.range.to) {
-        return { row: i, block: Math.max(0, have.to - row.range.from) };
-      }
-    }
-  }
-  return "done";
+  return Math.min(want.to, from + BUILD_BATCH_ENTRIES);
 }
 
 /** `card`'s body element, created empty after the header when it has none. Null
@@ -2640,7 +2243,7 @@ function startDemandBuild(chatID: string, turnID: string): Promise<void> {
   // asker's range replaces it on the next pass.
   const want = (t === undefined ? undefined : demandRange(chatID, t)) ?? {
     from: 0,
-    to: 2 * OVERSCAN_BLOCKS,
+    to: 2 * OVERSCAN_ENTRIES,
   };
   // Written EARLY, not owned: the builder slices against `wantedWindow` per slice,
   // so a build starting inside this call would resolve with the requested row
@@ -2652,7 +2255,7 @@ function startDemandBuild(chatID: string, turnID: string): Promise<void> {
 /** `mountTurnBody` without the pin, joining on COVERAGE rather than identity, or a
  *  second caller resolves with its own row absent. Chaining rather than cancelling,
  *  because that build's range may be the one another caller is waiting on. */
-function buildOrJoin(chatID: string, turnID: string, want: TurnRange): Promise<void> {
+function buildOrJoin(chatID: string, turnID: string, want: EntryRange): Promise<void> {
   const inflight = turnBodyBuilds.get(turnID);
   if (inflight !== undefined) {
     return covers(inflight.range, want)
@@ -2688,11 +2291,8 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
     }
     // Re-projected per batch rather than captured: a page load can reshape the
     // window while a build yields, and the projection is the only truth about
-    // what this turn's body holds now. With the base for the same reason the paint
-    // pass uses it: two projections of one window must not disagree about `n`.
-    const t = projectTurns(session.messages, turnLive(session), turnBaseOf(session)).find(
-      (x) => x.id === turnID,
-    );
+    // what this turn's body holds now.
+    const t = projectTurn(session, turnID);
     if (t === undefined) {
       return;
     }
@@ -2709,30 +2309,35 @@ async function buildTurnBodyBatches(chatID: string, turnID: string): Promise<voi
     }
     // Recomputed per slice, like the projection above it: the window can move while
     // this yields, and the build must converge on where it went.
-    const rows = bodyRows(t, want);
-    const at = nextBuildPos(body, rows);
-    if (at === "done") {
+    const range = bodyRange(t, want);
+    const to = nextBuildTo(turnID, range);
+    if (to === "done") {
+      syncSpacers(body, t, range);
       syncTurnBodyless(card);
       return;
     }
+    const slice = { from: range.from, to };
+    const grow = (): void => {
+      updateAssistantBody(body, t, chatID, turnIsLive(t), slice);
+      syncSpacers(body, t, slice);
+    };
     // COMPENSATED only where the slice lands ABOVE the reader, read once per slice:
     // under a window a slice BELOW them is the common case, and compensating that
-    // drags their view.
-    if (body.offsetTop < getScrollEl().scrollTop) {
-      preserveReadingPosition(() => {
-        appendBodyBatch(body, rows, at);
-      }, "content-growth");
+    // drags their view. A body the page is not rendering moves no line they can see, and
+    // measuring one makes the browser lay out the subtree it skipped, once per slice.
+    if (!geometrySkipped(body) && body.offsetTop < getScrollEl().scrollTop) {
+      preserveReadingPosition(grow, "content-growth");
     } else {
-      appendBodyBatch(body, rows, at);
+      grow();
     }
-    const after = nextBuildPos(body, rows);
+    const after = nextBuildTo(turnID, range);
     if (after === "done") {
       syncTurnBodyless(card);
       return;
     }
-    // A slice that left the resume position where it found it mounted nothing, and
-    // another over the same rows would too. Spinning holds `hasPendingBuild` true.
-    if (after.row === at.row && after.block === at.block) {
+    // A slice that left the mounted edge where it found it mounted nothing, and another
+    // over the same range would too. Spinning holds `hasPendingBuild` true.
+    if (after === to) {
       return;
     }
     await yieldToBrowser();
@@ -2752,7 +2357,7 @@ function syncTurnBodyless(card: HTMLElement): void {
 }
 
 function headerData(t: Turn): TurnHeaderData {
-  const request = t.trigger?.content;
+  const request = t.trigger?.text;
   return {
     n: t.n,
     outcome: t.outcome,
@@ -2760,9 +2365,9 @@ function headerData(t: Turn): TurnHeaderData {
     // An empty prompt is not a request; fall through to the system-trigger
     // rendering rather than showing a blank header band.
     request: request !== undefined && request.trim() !== "" ? request : undefined,
-    // Read off the trigger message, where the server stamped them. Not derived
+    // Read off the trigger ENTRY, where the appender stamped them. Not derived
     // from the request text: an image or a document attachment never appears in
-    // Content at all, so there is nothing there to parse back out.
+    // the prompt's own text at all, so there is nothing there to parse back out.
     attachments: t.trigger?.attachments ?? [],
   };
 }
@@ -2871,127 +2476,44 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
 
 // --- Assistant ---
 
-/** Build an assistant turn. The whole body is composed by the single block dispatcher
- *  (messages-blocks.ts) from the message's canonical `blocks` array. */
-function buildAssistant(m: Message, range: BlockRange): HTMLElement {
-  const wrap = el("div", { className: "msg-wrap msg-wrap-assistant" });
-  // The transcript only ever renders the active chat (`paint` reads
-  // `getActive()`), and the render carries that id because the per-tool signal is
-  // keyed on it: the mount and `upsertToolCall` have to name the same chat.
-  const chatID = getActiveId();
-  buildAssistantBody(wrap, m, chatID, isLikelyLiveStreaming(m), steerMarks(chatID), range);
-  return wrap;
-}
-
-/** Incremental update: mount newly-arrived blocks + refresh plan/footer.
- *  Per-block and per-tool signals feed streaming deltas straight into the
- *  already-mounted primitives, so this only handles structural growth. */
-function updateAssistant(wrap: HTMLElement, m: Message, range: BlockRange): void {
-  if (!messageStates.has(m.id)) {
-    return;
-  }
-  const chatID = getActiveId();
-  updateAssistantBody(wrap, m, chatID, liveStateOf(m), steerMarks(chatID), range);
-}
-
-/** The message's live flag for an update pass, re-promoted when the store now says
- *  the message is streaming: the mount-time judgment freezes, and any mid-turn event
- *  clearing `thinking` froze it settled for the REST of the turn, so later thinking
- *  blocks mounted collapsed while streaming. UPWARD ONLY — the downward transition is
- *  `finalizeStreamingIfNeeded`'s, which owns the side effects. */
-function liveStateOf(m: Message): boolean {
-  const state = messageStates.get(m.id);
-  if (state === undefined) {
-    return false;
-  }
-  if (!state.streaming && isLikelyLiveStreaming(m)) {
-    state.streaming = true;
-    streamingIds.add(m.id);
-  }
-  return state.streaming;
-}
-
 /** Finalize a streamed assistant turn: flush every markdown stream + SETTLE every
  *  reasoning trace (via the block dispatcher) — the label and the pulse, folding
  *  nothing. A fold is POSITIONAL: a successor being posted is what seals a trace, so
  *  the trace nothing followed stays expanded past turn end. The copy/export actions
  *  live in the turn footer and mount on the paint that follows turn end. */
-function finalizeTurn(id: string, _root: HTMLElement): void {
-  finalizeAssistantBody(id);
+function finalizeTurn(turnID: string): void {
+  finalizeAssistantBody(turnID);
 }
 
-/** Finalize every mounted message that is no longer live: the still-streaming turn
- *  keeps its caret only while it is the LAST assistant message of a thinking
- *  session; everything else flushes its markdown and SETTLES its reasoning traces,
- *  which flips the label and drops the pulse without collapsing anything — only a
- *  successor arriving after a trace folds it.
- *
- *  The population is the UNION of two live sets rather than a walk over every
- *  mounted message: `streamingIds` (a live message may carry no bubble at all, so
- *  this door cannot be inferred from the DOM) and `liveRenderIDs` (a caret the
- *  reveal's residue keeps past an earlier `end()`). Re-finalizing is idempotent. */
-function finalizeStreamingIfNeeded(messages: readonly Message[]): void {
-  const candidates = new Set<string>(streamingIds);
-  for (const id of liveRenderIDs()) {
-    candidates.add(id);
-  }
-  if (candidates.size === 0) {
+/** Finalize every mounted body that is no longer being written into: a turn with no
+ *  `turn_close` keeps its caret, everything else flushes its markdown and SETTLES its
+ *  reasoning traces, which flips the label and drops the pulse without collapsing
+ *  anything — only a successor arriving after a trace folds it.
+ *  The population is `liveRenderIDs` — the renders still carrying live text, an unsealed
+ *  bubble or a caret the reveal's residue keeps past an earlier `end()`. No second live
+ *  set unions in: the turn's own `turn_close` decides, so neither the last message nor
+ *  the chat's `thinking` latch is read. Idempotent. */
+function finalizeStreamingIfNeeded(turns: readonly Turn[]): void {
+  const live = liveRenderIDs();
+  if (live.length === 0) {
     return;
   }
-  const session = getActive();
-  const isThinking = session?.thinking ?? false;
-  const lastID = messages[lastAssistantIndex(messages)]?.id;
-  // THIS session's rows only: a parked chat's still-streaming tail sits in
-  // `streamingIds` too, and finalizing it from another chat's paint would
-  // write into the parked view (the freeze) and seal a turn that is not over
-  // — its own unpark decides, off the store's state then.
-  const own = new Set<string>();
-  for (const m of messages) {
-    own.add(m.id);
+  // THIS session's turns only: a parked chat's still-open tail carries a live render
+  // too, and finalizing it from another chat's paint would write into the parked view
+  // (the freeze) and seal a turn that is not over — its own unpark decides, off the
+  // store's state then. A detached render's id is not in this map either.
+  const own = new Map<string, Turn>();
+  for (const t of turns) {
+    own.set(t.id, t);
   }
-  for (const id of candidates) {
-    if (!own.has(id)) {
+  for (const id of live) {
+    const t = own.get(id);
+    if (t === undefined || turnIsLive(t)) {
       continue;
     }
-    const st = messageStates.get(id);
-    if (st === undefined) {
-      continue; // a detached render's id — not this transcript's to finalize
-    }
-    if (id === lastID && isThinking) {
-      continue; // the live tail keeps streaming
-    }
-    st.streaming = false;
-    streamingIds.delete(id);
-    finalizeTurn(id, st.el);
+    finalizeTurn(id);
     disposeStreamingEffect(id);
   }
-}
-
-function lastAssistantIndex(messages: readonly Message[]): number {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === "assistant") {
-      return i;
-    }
-  }
-  return -1;
-}
-
-/** Heuristic: an assistant message is "live streaming" when its parent
- *  session is currently thinking AND this is the last assistant in the
- *  array. Replay path skips this. */
-function isLikelyLiveStreaming(m: Message): boolean {
-  if (m.role !== "assistant") {
-    return false;
-  }
-  const session = getActive();
-  if (session === undefined) {
-    return false;
-  }
-  if (!session.thinking) {
-    return false;
-  }
-  const idx = lastAssistantIndex(session.messages);
-  return idx >= 0 && session.messages[idx]?.id === m.id;
 }
 
 // --- Helpers ---

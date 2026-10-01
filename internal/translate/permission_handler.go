@@ -139,7 +139,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID marotte
 		// the approved action is unchanged, so the card lies about what
 		// pressing Allow does. See displayText for the measured before/after.
 		Title:              displayText(req.ToolCall.Title),
-		Kind:               req.ToolCall.Kind,
+		Kind:               toolKindFromWire(req.ToolCall.Kind),
 		SubSessionID:       subSessionID,
 		RunID:              step.WorkflowID,
 		NodeID:             step.NodeID,

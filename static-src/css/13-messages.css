@@ -291,22 +291,9 @@
   display: none;
 }
 
-/* Entry animation lives on `.turn` now (29-turns.css): a turn arrives as one
- * unit, so its header, body and footer enter together. `.msg-wrap` survives as
- * the per-message grouping INSIDE a card's body. */
-
-/* THE BLOCK CONTAINER, and it owns the spacing between blocks. Without a flex
- * container here `.assistant-blocks`' `display: contents` dissolves into a plain
- * block box and each kind has to space itself, which only prose did — tool group
- * to delegate card measured 0.0px. `flex-shrink: 0` on `.msg-row`, `.tool-call`,
- * `.subagent-block` and `.plan-message` is the evidence: four declarations inert
- * in a block box, all naming this missing parent. The gap matches `.turn-body`'s. */
-.msg-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  min-width: 0;
-}
+/* THE BLOCK CONTAINER is `.turn-body` (29-turns.css): a turn's entries are its
+ * direct children and its flex gap is the only spacing between them, so nothing
+ * between the card and an entry groups or spaces anything. */
 
 /* `vk-slide-up-pronounced` is deleted with its only consumer, the turn card's
  * entry animation — `marotte-ui.md` "Entry motion is a GPU budget". */
@@ -322,7 +309,7 @@
    * plan card, a refusal callout and a reasoning bar all start on `.turn-body`'s
    * own content edge. `&.system` sets its own padding and is unaffected. */
 
-  /* NO BLOCK PADDING EITHER — `.msg-wrap`'s gap owns it. Inside the border box it
+  /* NO BLOCK PADDING EITHER — `.turn-body`'s gap owns it. Inside the border box it
    * made prose the only kind that spaced itself, so a reply sat 24px from the
    * card's edge while every neighbour sat at 12px. */
   padding-inline: 0;
@@ -361,12 +348,18 @@
      * attribute yet. Gated on .streaming, so a stale attribute costs nothing. */
     &.streaming:empty::after,
     &.streaming [data-vk-caret]::after {
-      content: "▌";
+      /* A drawn box, not a glyph: `▌` is a HALF block whose advance came from
+       * whatever face `system-ui` resolves to, so its width differed per platform.
+       * 0.62em is web-terminal-glyphs' own cell advance (cell.json companion
+       * 1240/2000 em), so this is one terminal cell without loading that font. */
+      content: "";
       display: inline-block;
+      inline-size: 0.62em;
+      block-size: 1em;
       margin-inline-start: 0.125rem;
-      color: var(--c-accent);
+      background: var(--c-accent);
       animation: vk-stream-caret 1.1s steps(2, jump-none) infinite;
-      vertical-align: baseline;
+      vertical-align: text-bottom;
     }
 
     /* Per-chunk fade-in: the renderer wraps each text emission in
@@ -714,7 +707,7 @@
 .reasoning-block {
   max-width: var(--content-max-w);
 
-  /* No block margin: `.msg-wrap` is a flex column with a gap, so one here would
+  /* No block margin: `.turn-body` is a flex column with a gap, so one here would
    * stack on top of it and space a trace 20px from its neighbours at 12px. */
   margin: 0;
   font-size: var(--fs-sm);
@@ -828,7 +821,7 @@
 .code-refs {
   max-width: var(--content-max-w);
 
-  /* No margin: `.msg-wrap` is a flex column with a gap, so a block margin stacks
+  /* No margin: `.turn-body` is a flex column with a gap, so a block margin stacks
    * on it, and `margin-inline: auto` on a flex item beats the container's
    * `stretch` and would shrink-to-fit this box. */
   margin: 0;
@@ -1001,6 +994,17 @@
 
 .boundary-agent .boundary-icon {
   color: var(--c-accent);
+}
+
+/* A rewind's cut. Neutral rather than a status hue: the reader asked for it, so
+   nothing went wrong, but it is a stronger ink than the default label because
+   the turns below the rule are gone from the transcript. */
+.boundary-rewound .boundary-icon {
+  color: var(--c-text-secondary);
+}
+
+.boundary-rewound .boundary-label {
+  color: var(--c-text-secondary);
 }
 
 /* The compaction break. A FRAME rather than `.boundary`'s one centred rule,
@@ -1559,10 +1563,12 @@
   }
 }
 
-/* Model-refusal callout (kiro-cli 2.13 refusal contract). The explanation
- * renders as ordinary assistant text; this is the distinct affordance — glyph,
- * title, category chip and the recovery actions. Quiet: informational, not an
- * app error. */
+/* Model-refusal callout (kiro-cli 2.13 refusal contract). The whole refusal
+ * lives here — glyph, title, category chip, the service's own explanation and the
+ * recovery actions. The explanation used to render as ordinary assistant text,
+ * which put a service-supplied sentence in the bubble a reader reads as the
+ * model's own voice; it is a region of this box now (refusal.ts states the wire
+ * half). Quiet: informational, not an app error. */
 .refusal-callout {
   max-width: var(--content-max-w);
   margin: 0;
@@ -1609,6 +1615,19 @@
    * callout's the hue reads 3.228:1 light. The FILL carries the status. */
   color: var(--c-text-primary);
   background: color-mix(in srgb, var(--c-red) 14%, transparent);
+}
+
+/* The service's explanation. SECONDARY ink, like every other supporting sentence
+ * in a transcript box: the header above it carries the hue and the title, so this
+ * region is the detail rather than the claim. No hue of its own — a red paragraph
+ * would be the box's third red channel and reads as an app error. Measured on the
+ * callout's own 6% red wash over `--c-turn-body`: 11.812:1 dark, 9.748:1 light,
+ * both well past AA, so this ink needs no step up the way the title did. Absent
+ * when the refusal block carried no explanation, so there is no empty-region case
+ * to style. */
+.refusal-explanation {
+  margin: var(--sp-2) 0 0;
+  color: var(--c-text-secondary);
 }
 
 .refusal-actions {

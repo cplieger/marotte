@@ -55,7 +55,7 @@ export function appendKeyPair(host: HTMLDivElement, kv: EditablePair, kind: Pair
   const nameIn = el("input", {
     type: "text",
     className: "tool-form-input mcp-pair-name",
-    placeholder: kind === "env" ? "VAR_NAME" : "Header-Name",
+    placeholder: kind === "env" ? "VAR_NAME" : "Authorization",
     value: kv.name,
   });
 

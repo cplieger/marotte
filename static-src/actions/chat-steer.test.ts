@@ -158,4 +158,28 @@ describe("steerChat — the command on the wire", () => {
     expect(key).not.toBe("");
     expect(opts).toMatchObject({ reportSendState: false });
   });
+
+  // A steer converted from a resend by a busy chat has to name the same ids the prompt
+  // would have, or the record states a resend on the idle path only. `SteerCommand.Resends`
+  // has been on the wire (commands.go:281-283) with the ledger reading it at steer.go:99
+  // and :150 and nothing sending it.
+  it("names the re-sent steers in the body's `resends`", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+
+    await steerChat.dispatch({ ...args, resends: ["steer-4"] });
+
+    const [cmd] = mockSend.mock.calls[0] ?? [];
+    expect((cmd as { payload?: { resends?: readonly string[] } }).payload?.resends).toEqual([
+      "steer-4",
+    ]);
+  });
+
+  it("omits the field for an empty list, so `[]` never travels", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+
+    await steerChat.dispatch({ ...args, messageID: "m2", resends: [] });
+
+    const [cmd] = mockSend.mock.calls[0] ?? [];
+    expect((cmd as { payload?: { resends?: readonly string[] } }).payload?.resends).toBeUndefined();
+  });
 });

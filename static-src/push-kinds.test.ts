@@ -87,6 +87,22 @@ describe("keyed push kinds", () => {
     }
   });
 
+  // Two tables key on the same kind set and neither is the server's, so a kind
+  // added there with no entry in one of them degrades silently: a missing DEFAULT
+  // makes `enableEverything` fall through to `?? true`, ignoring whatever polarity
+  // the server declared, and a missing INPUT ID makes `kindRows` skip the row
+  // altogether, so the kind ships with no switch and no failing test.
+  it("declares a default for every keyed kind, and no other", async () => {
+    const { KEYED_PUSH_KINDS, KEYED_PUSH_DEFAULTS } = await import("./notify.js");
+    expect(Object.keys(KEYED_PUSH_DEFAULTS).sort()).toEqual(Object.keys(KEYED_PUSH_KINDS).sort());
+  });
+
+  it("names an input for every keyed kind, and no other", async () => {
+    const { KEYED_PUSH_KINDS } = await import("./notify.js");
+    const { KIND_INPUT_IDS } = await import("./settings-notifications.js");
+    expect(Object.keys(KIND_INPUT_IDS).sort()).toEqual(Object.keys(KEYED_PUSH_KINDS).sort());
+  });
+
   it("does not give the permission floor an off switch", async () => {
     const { KEYED_PUSH_KINDS, setKindEnabled, isKindEnabled } = await import("./notify.js");
     expect(Object.keys(KEYED_PUSH_KINDS)).not.toContain("permission");

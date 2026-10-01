@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // newTabsServer is a server wired to a real tab store over a temp dir. A real

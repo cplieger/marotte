@@ -27,27 +27,23 @@ import {
   getToolsJobs,
   getCatalogInfo,
   refreshCatalog,
+  applyManifest,
   ensureTool,
   cancelToolJob,
 } from "./actions/tools.js";
-import type { CreateToolRequest } from "./actions/tools.js";
+import type { CreateToolRequest, ToolSearchResponse } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
+import { openFile } from "./editor-openers.js";
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { reconcile, KEY_ATTR } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
+import { relativeTime } from "./relative-time.js";
 import { classify, emptyNote, type Nouns } from "./textsearch/copy.js";
-import type {
-  AptPackage,
-  CatalogInfo,
-  Inventory,
-  Job,
-  SearchHit,
-  SearchResponse,
-  ToolInfo,
-} from "./types.js";
+import { error as toastError } from "./toast.js";
+import type { AptPackage, CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
 
 /** A hit is a tool; what the engine reads is the catalog and the host's package
  *  index, so the scanned unit is a source. */
@@ -56,12 +52,44 @@ const NOUNS: Nouns = {
   scanned: { one: "source", many: "sources" },
 };
 
-/** The readout over a non-empty list. The reply carries no count of what
- *  matched, only that a block was cut to its cap, so the cut is stated without
- *  a denominator until the engine reports one. */
-function resultCount(shown: number, cut: boolean): string {
-  const count = `${String(shown)} shown`;
-  return cut ? `${count}; more matched than shown, narrow the query to see the rest` : count;
+/** The readout over a non-empty list. An engine that reports how many rows
+ *  matched gives the cut a denominator; one that does not can only state that
+ *  there was a cut. */
+function resultCount(shown: number, cut: boolean, matched?: number): string {
+  const narrow = "narrow the query to see the rest";
+  if (matched === undefined) {
+    return cut
+      ? `${String(shown)} shown; more matched than shown, ${narrow}`
+      : `${String(shown)} shown`;
+  }
+  return matched > shown
+    ? `${String(shown)} of ${String(matched)} shown, ${narrow}`
+    : `${String(shown)} shown`;
+}
+
+/** Why the reply carries no Debian package, in the engine's own three states.
+ *  `indexing` is PENDING rather than absent: the host has apt and the index is
+ *  still being read, so the same search answers differently a moment later. An
+ *  engine that states nothing leaves `apt_available` as the whole answer, and
+ *  that merges the two, so the sentence names no cause. */
+function aptNote(d: ToolSearchResponse): string {
+  if (d.apt_state === undefined) {
+    return d.apt_available ? "" : "Debian packages are not searchable right now.";
+  }
+  switch (d.apt_state) {
+    case "available":
+      return "";
+    case "indexing":
+      return "Debian packages are not searchable yet: the package index is still loading. Search again in a moment.";
+    case "unavailable":
+      return "Debian packages are not searchable here: this host has no usable apt.";
+  }
+}
+
+/** The 409 cascade envelope both destructive mutations answer with. */
+interface CascadeReply {
+  code?: string;
+  dependents?: string[];
 }
 
 /** Trailing-edge debounce for the catalog search input. `cancel` exists because
@@ -92,12 +120,20 @@ type ListEntry =
   | { kind: "system"; name: string; installed: boolean }
   | { kind: "apt"; pkg: AptPackage };
 
-// The two toolbelt job kinds a reader launches from a named pill. The other
-// four — install, uninstall, disable, reconcile — are launched from a tool row
-// or by the server itself, so they are the residual case in `pillOwns` and are
-// never named here.
+// The three toolbelt job kinds a reader launches from a named pill. The other
+// three — install, uninstall, disable — are launched from a tool row, so they
+// are the residual case in `pillOwns` and are never named here.
 const JOB_UPDATE = "update";
 const JOB_CATALOG_REFRESH = "catalog-refresh";
+const JOB_RECONCILE = "reconcile";
+
+/** The two files the Advanced-configuration door opens. Both assume the default
+ *  `KIRO_CONFIG_DIR`: `/config` is the persistent volume's mount point in the
+ *  image, and the file browser lists it under that name. An operator who moves
+ *  that dir leaves these two links opening a tab that reports the editor's
+ *  generic load failure, which names neither the path nor the cause. */
+const MANIFEST_PATH = "/config/tools.json";
+const SETTINGS_PATH = "/config/config.json";
 
 /** Whether a job is still queued or running. One predicate, because every
  *  control's face and the output panel's headline read the same answer. */
@@ -105,18 +141,16 @@ function jobIsLive(job: Job): boolean {
   return job.state === "queued" || job.state === "running";
 }
 
-/** Whether the pill that launched a job carries its cancel. Two kinds have a
- *  named pill of their own; every other kind is launched from a tool row
- *  (install, uninstall, disable) or by the server (the boot reconcile), so its
- *  only cancel control is the shared Cancel pill. Exhaustive over toolbelt's six
- *  kinds: two named, four residual.
- *
- *  A per-tool Update rides the Update-all pill deliberately. It is the same kind
- *  of work, and splitting on `names.length` would leave that pill sitting idle
- *  through an update while a nameless Cancel appeared beside it — the shape this
- *  whole control replaced. */
+/** Whether a pill carries the cancel for a job KIND, whoever launched it: the boot reconcile
+ *  `internal/composition` enqueues has no pill behind it, so Apply reads as Cancel over work
+ *  the reader did not start. Three kinds have a named pill; the other three are launched from
+ *  a tool row (install, uninstall, disable), so their only cancel is the shared Cancel pill —
+ *  exhaustive over toolbelt's six kinds. A per-tool Update rides the Update-all pill because
+ *  it is the same kind of work, and splitting on `names.length` would leave that pill idle
+ *  through an update. Apply enqueues a reconcile AND an update job, so Cancel here stops the
+ *  install pass; the update pass is Update all's to stop. */
 function pillOwns(kind: string): boolean {
-  return kind === JOB_UPDATE || kind === JOB_CATALOG_REFRESH;
+  return kind === JOB_UPDATE || kind === JOB_CATALOG_REFRESH || kind === JOB_RECONCILE;
 }
 
 interface JobPillSpec {
@@ -221,6 +255,15 @@ const f = {
   get catalogRefresh(): HTMLButtonElement {
     return byId("tool-catalog-refresh-btn");
   },
+  get apply(): HTMLButtonElement {
+    return byId("tool-apply-btn");
+  },
+  get openManifest(): HTMLButtonElement {
+    return byId("tool-open-manifest");
+  },
+  get openConfig(): HTMLButtonElement {
+    return byId("tool-open-config");
+  },
   get catalogMeta(): HTMLParagraphElement {
     return byId("tool-catalog-meta");
   },
@@ -272,11 +315,12 @@ class ToolsManager {
   private live: Job | null = null;
   private updatePill: JobPill | null = null;
   private refreshPill: JobPill | null = null;
+  private applyPill: JobPill | null = null;
   private unsubscribes: (() => void)[] = [];
   /** The last search response, kept so the order picker and the name-match
    *  filter re-paint without a round trip. Null means the request failed,
    *  which is a different thing from an empty result set. */
-  private lastSearch: SearchResponse | null = null;
+  private lastSearch: ToolSearchResponse | null = null;
   /** The trimmed query that produced `lastSearch`: an empty one makes a
    *  no-rows reply a browse of the featured set rather than a search answer.
    *  Read rather than the live input value, which the reader may already have
@@ -324,6 +368,25 @@ class ToolsManager {
       busyAria: "Cancel the running catalog refresh",
     });
     bindLoadingState("tools.refresh_catalog", f.catalogRefresh);
+    this.applyPill = new JobPill(f.apply, {
+      start: () => {
+        void applyManifest.dispatch(undefined);
+      },
+      cancel: () => {
+        this.cancelLiveJob();
+      },
+      busyAria: "Cancel the install pass",
+    });
+    bindLoadingState("tools.apply_manifest", f.apply);
+    // The Advanced-configuration door. The editor is the surface, so this module
+    // owns no form: it hands over a path and the file browser's own gate decides
+    // whether the path is readable at all.
+    f.openManifest.addEventListener("click", () => {
+      openFile(MANIFEST_PATH);
+    });
+    f.openConfig.addEventListener("click", () => {
+      openFile(SETTINGS_PATH);
+    });
     // The residual Cancel pill, for a job kind no pill above owns.
     f.cancel.addEventListener("click", () => {
       this.cancelLiveJob();
@@ -425,6 +488,7 @@ class ToolsManager {
     const kind = job?.kind ?? "";
     this.updatePill?.setBusy(kind === JOB_UPDATE);
     this.refreshPill?.setBusy(kind === JOB_CATALOG_REFRESH);
+    this.applyPill?.setBusy(kind === JOB_RECONCILE);
     f.cancel.classList.toggle("hidden", job === null || pillOwns(kind));
   }
 
@@ -676,22 +740,21 @@ class ToolsManager {
   private renderToolRow(t: ToolInfo): HTMLDivElement {
     const name = el("span", { className: "list-row-name", title: t.description ?? "" }, t.name);
     const chips = rowChips(t);
+    const error = installError(t);
+    // Everything that belongs to the name's column shares its flex slot, so a
+    // flex-grown name cannot push it to the trailing edge.
+    const named: HTMLElement[] = [name];
+    if (chips.length > 0) {
+      named.push(el("span", { className: "tool-hit-chips" }, ...chips));
+    }
+    if (error !== undefined) {
+      named.push(el("span", { className: "list-row-meta tool-row-error" }, error));
+    }
     const row = el(
       "div",
       { className: "list-row" },
       stateDot(t),
-      // Chips ride their own line under the name (the Add modal's
-      // .tool-hit-chips idiom): inline after the name they started wherever
-      // the name ended, so a column of rows scattered them across as many x
-      // offsets as there were name lengths.
-      chips.length > 0
-        ? el(
-            "span",
-            { className: "tool-name-wrap" },
-            name,
-            el("span", { className: "tool-hit-chips" }, ...chips),
-          )
-        : name,
+      named.length > 1 ? el("span", { className: "tool-name-wrap" }, ...named) : name,
       el("span", { className: "list-row-meta" }, metaText(t)),
     ) as HTMLDivElement;
     if (t.disabled === true) {
@@ -798,9 +861,9 @@ class ToolsManager {
     });
 
     // No bin on a pre-bundled row: the engine refuses the removal
-    // (ErrEssential), so offering the control would only produce a 409 the
-    // reader cannot act on. The switch above is the escape hatch — it
-    // uninstalls the footprint and keeps the entry.
+    // (ErrEssential), so the control could only produce a refusal. The switch
+    // above is the escape hatch — it uninstalls the footprint and keeps the
+    // entry.
     const trailing: HTMLElement[] = [];
     if (t.essential !== true) {
       const delBtn = el(
@@ -865,85 +928,107 @@ class ToolsManager {
     this.loadToolsList();
   }
 
-  /** Flip the enabled/disabled state. `dependents` names the enabled entries
-   *  that require this one, so when disabling is going to cascade the question
-   *  is asked BEFORE the request and the answer rides on it. The engine
-   *  re-derives the set under the manifest lock and still answers 409, which
-   *  is what makes the field safe to trust: a stale inventory is refused, not
-   *  obeyed, and the 409 branch below is that fallback.
-   *
-   *  Returns whether anything reached the server, so a declined confirm can
-   *  put the switch back. */
-  private async toggleDisabled(t: ToolInfo, disabled: boolean): Promise<boolean> {
-    const known = t.dependents ?? [];
-    if (disabled && known.length > 0) {
-      const force = await confirmDialog(
-        `${t.name} is required by: ${known.join(", ")}. Disable it anyway?`,
-        "Disable",
-        "destructive",
-      );
-      if (!force) {
+  /** The cascade half of a destructive mutation, shared by the switch and the
+   *  bin: ask once about the set, then force one request. A row that already
+   *  names dependents asks BEFORE the request; the engine re-derives the set
+   *  under the manifest lock and still answers 409, which is what makes the
+   *  field safe to trust — a stale row is refused rather than obeyed, and that
+   *  refusal asks the same question with the engine's own set. Answers whether
+   *  anything reached the server, so a declined confirm can put a control
+   *  back. */
+  private async cascade(
+    dependents: readonly string[],
+    ask: (deps: readonly string[]) => Promise<boolean>,
+    send: (force: boolean) => Promise<CascadeReply | null>,
+  ): Promise<boolean> {
+    if (dependents.length > 0) {
+      if (!(await ask(dependents))) {
         return false;
       }
-      await patchTool.dispatch({ name: t.name, disabled, force: true });
-      this.loadToolsList();
+      await send(true);
       return true;
     }
-
-    const d = await patchTool.dispatch({ name: t.name, disabled });
-    if (disabled && d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
-      const list = d.dependents.join(", ");
-      const force = await confirmDialog(
-        `${t.name} is required by: ${list}. Disable it anyway?`,
-        "Disable",
-        "destructive",
-      );
-      if (!force) {
-        return false;
-      }
-      await patchTool.dispatch({ name: t.name, disabled, force: true });
+    const d = await send(false);
+    const derived = d?.code === "has_dependents" ? d.dependents : undefined;
+    if (derived === undefined) {
+      return true;
     }
-    this.loadToolsList();
+    if (!(await ask(derived))) {
+      return false;
+    }
+    await send(true);
     return true;
   }
 
-  /** Remove, asking once. A tool with known dependents puts them in the first
-   *  dialog and forces in one request; the 409 branch stays as the fallback
-   *  for an inventory that went stale between the render and the click. */
+  /** Flip the enabled/disabled state. Returns whether anything reached the
+   *  server, so a declined confirm can put the switch back. */
+  private async toggleDisabled(t: ToolInfo, disabled: boolean): Promise<boolean> {
+    // Enabling never cascades: the engine derives the dependent set for a
+    // DISABLE only, so there is nothing to ask about and nothing to force.
+    if (!disabled) {
+      await patchTool.dispatch({ name: t.name, disabled });
+      this.loadToolsList();
+      return true;
+    }
+    const sent = await this.cascade(
+      t.dependents ?? [],
+      (deps) =>
+        confirmDialog(
+          `${t.name} is required by: ${deps.join(", ")}. Disable it anyway?`,
+          "Disable",
+          "destructive",
+        ),
+      (force) =>
+        patchTool.dispatch({
+          name: t.name,
+          disabled: true,
+          ...(force ? { force: true } : {}),
+        }),
+    );
+    if (sent) {
+      this.loadToolsList();
+    }
+    return sent;
+  }
+
+  /** Remove, asking once. A row with no known dependents is confirmed plainly
+   *  first; anything else is the shared cascade. */
   private async runDelete(t: ToolInfo): Promise<void> {
     const known = t.dependents ?? [];
-    if (known.length > 0) {
-      const ok = await confirmDialog(
-        `Remove ${t.name}? It is required by: ${known.join(", ")}. Removing it removes them too.`,
-        "Remove all",
-        "destructive",
-      );
+    if (known.length === 0) {
+      const ok = await confirmDialog(`Remove ${t.name}?`, "Remove", "destructive");
       if (!ok) {
         return;
       }
-      await deleteTool.dispatch({ name: t.name, force: true });
+    }
+    const sent = await this.cascade(
+      known,
+      (deps) =>
+        confirmDialog(
+          `Remove ${t.name}? It is required by: ${deps.join(", ")}. Removing it removes them too.`,
+          "Remove all",
+          "destructive",
+        ),
+      async (force) => {
+        const d = await deleteTool.dispatch({
+          name: t.name,
+          ...(force ? { force: true } : {}),
+        });
+        if (d?.code === "essential") {
+          // The bin is withheld on a row the inventory reports essential, so
+          // reaching this means the row was rendered before the flag arrived —
+          // and the refetch below replaces that row, which is why the refusal
+          // is reported off the row rather than on it.
+          toastError(
+            `${t.name} is essential to marotte and cannot be removed. Switch it off to uninstall it and keep the entry.`,
+          );
+        }
+        return d;
+      },
+    );
+    if (sent) {
       this.loadToolsList();
-      return;
     }
-
-    const ok = await confirmDialog(`Remove ${t.name}?`, "Remove", "destructive");
-    if (!ok) {
-      return;
-    }
-    const d = await deleteTool.dispatch({ name: t.name });
-    if (d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
-      const list = d.dependents.join(", ");
-      const force = await confirmDialog(
-        `${t.name} is required by: ${list}. Remove all of them?`,
-        "Remove all",
-        "destructive",
-      );
-      if (!force) {
-        return;
-      }
-      await deleteTool.dispatch({ name: t.name, force: true });
-    }
-    this.loadToolsList();
   }
 
   // --- add modal (search-first) ---
@@ -999,9 +1084,10 @@ class ToolsManager {
       return;
     }
     const hits = this.orderHits(d.results);
-    f.resultCount.textContent = hits.length === 0 ? "" : resultCount(hits.length, d.truncated);
+    f.resultCount.textContent =
+      hits.length === 0 ? "" : resultCount(hits.length, d.truncated, d.matched);
 
-    this.paintShellNote(d.apt_available);
+    this.paintShellNote(d);
 
     if (hits.length === 0) {
       box.replaceChildren();
@@ -1037,7 +1123,7 @@ class ToolsManager {
    *  search answer is classified once. `apt_available` false means the engine
    *  could not consult the host's package index, which is a corpus it was asked
    *  to read and did not. */
-  private emptyAnswer(d: SearchResponse): string {
+  private emptyAnswer(d: ToolSearchResponse): string {
     if (this.lastQuery === "") {
       return "Everything featured is already installed. Search by name.";
     }
@@ -1056,12 +1142,17 @@ class ToolsManager {
     return [...hits].sort((a, b) => dir * a.name.localeCompare(b.name));
   }
 
-  /** The footer's one variable half; the shell sentence is permanent markup. With
-   *  apt unavailable the engine returns no Debian hits at all, so silence leaves a
-   *  reader unable to tell "no such package" from "this container cannot install
-   *  one" — a fact about the RESULT SET, which is why it toggles both ways. */
-  private paintShellNote(aptAvailable: boolean): void {
-    f.shellNoteApt.classList.toggle("hidden", aptAvailable);
+  /** The footer's one variable half; the shell sentence is permanent markup.
+   *  With the index unread the engine returns no Debian hits at all, so silence
+   *  leaves a reader unable to tell "no such package" from "that corpus was not
+   *  searched" — a fact about the RESULT SET, which is why it toggles both ways.
+   *  The sentence is written here rather than authored in the markup because it
+   *  depends on WHY the corpus went unread, which only the reply can say; the
+   *  leading space separates it from the sentence it follows in one paragraph. */
+  private paintShellNote(d: ToolSearchResponse): void {
+    const note = aptNote(d);
+    f.shellNoteApt.textContent = note === "" ? "" : ` ${note}`;
+    f.shellNoteApt.classList.toggle("hidden", note === "");
   }
 
   private renderSearchHit(hit: SearchHit): HTMLElement {
@@ -1178,22 +1269,6 @@ function catalogMetaParts(info: CatalogInfo): (string | HTMLElement)[] {
   return parts;
 }
 
-/** Coarse relative-time formatter for the catalog meta line. */
-function relativeTime(unixMs: number): string {
-  const mins = Math.max(0, Math.round((Date.now() - unixMs) / 60000));
-  if (mins < 1) {
-    return "just now";
-  }
-  if (mins < 60) {
-    return `${String(mins)} min ago`;
-  }
-  const hours = Math.round(mins / 60);
-  if (hours < 48) {
-    return `${String(hours)} h ago`;
-  }
-  return `${String(Math.round(hours / 24))} d ago`;
-}
-
 function stateDot(t: ToolInfo): HTMLElement {
   let cls = "tool-state-missing";
   let label = "not installed";
@@ -1251,10 +1326,15 @@ function metaText(t: ToolInfo): string {
   if (t.latest !== undefined && t.latest !== "") {
     return `${version} → ${t.latest}`;
   }
-  if (!t.installed && t.last_error !== undefined && t.last_error !== "") {
-    return t.last_error;
-  }
   return version;
+}
+
+/** The engine's failure text for an enabled tool whose install did not land. */
+function installError(t: ToolInfo): string | undefined {
+  if (t.disabled === true || t.installed) {
+    return undefined;
+  }
+  return t.last_error !== undefined && t.last_error !== "" ? t.last_error : undefined;
 }
 
 /** Short source chip text: "aqua:cli/cli" -> "github", "npm:x" -> "npm". */

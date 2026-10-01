@@ -139,8 +139,8 @@ func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStor
 		return c, false
 	}
 	want := c.ACPSessionID
-	if len(c.Messages) == 0 {
-		id := marotte.ChatID(c.ID)
+	id := marotte.ChatID(c.ID)
+	if turns, _ := chats.TurnCount(ctx, id); turns == 0 {
 		resumeForkedSession(ctx, bridges, id, want)
 		if refreshed, exists := chats.Get(ctx, id); exists {
 			c = refreshed
@@ -149,13 +149,15 @@ func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStor
 	return c, c.ACPSessionID == want
 }
 
-// resumeForkedSession opens the TANGENT's own bridge and waits for its replay to
-// land. Its own bridge rather than the parent's, which is already resumed: the
-// projection is keyed by chat, so a load issued on the parent's bridge would ingest
-// the fork's history into the PARENT's transcript.
+// resumeForkedSession opens the TANGENT's own bridge, whose session/load replays
+// the fork's history. Its own bridge rather than the parent's, which is already
+// resumed: the projection is keyed by chat, so a load issued on the parent's bridge
+// would ingest the fork's history into the PARENT's transcript. It does not wait
+// for the swap: the tangent opens at once and fills when the merge announces the
+// replacement.
 func resumeForkedSession(ctx context.Context, bridges BridgeAccess, chatID marotte.ChatID, want string) {
-	// durable for the OPEN, the request's own for the WAIT: a cancelled spawn takes
-	// tryLoadSession's failure branch, which DETACHES the forked session.
+	// durable: a cancelled spawn takes tryLoadSession's failure branch, which
+	// DETACHES the forked session.
 	bridge, err := bridges.OpenBridge(durable.Context(ctx), chatID, "")
 	if err != nil || bridge == nil {
 		slog.Warn("tangent: the forked session could not be resumed, so the tangent opens empty",
@@ -165,11 +167,6 @@ func resumeForkedSession(ctx context.Context, bridges BridgeAccess, chatID marot
 	if string(bridge.SessionID()) != want {
 		slog.Warn("tangent: the resume fell through to a fresh session, so the tangent lost its inherited context",
 			"chat", chatID, "want", want, "got", bridge.SessionID())
-		return
-	}
-	if err := bridges.AwaitReplayAdopted(ctx, chatID); err != nil {
-		slog.Warn("tangent: the replay was not adopted in time, so the tangent opens empty until the swap announces the replacement",
-			"chat", chatID, keyError, err)
 	}
 }
 

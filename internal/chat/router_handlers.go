@@ -2,12 +2,13 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -19,7 +20,7 @@ import (
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
-// (one chat with paginated messages).
+// (one chat with a paged window of turns).
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	rt := NewRouter(s)
 	rt.Register(mux)
@@ -32,10 +33,10 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	headers, stamp := rt.store.ListStamped(r.Context())
-	webhttp.WriteJSON(w, map[string]any{"chats": headers, "subject": stamp})
+	webhttp.WriteJSON(w, map[string]any{"chats": headers, keySubject: stamp})
 }
 
-// handleOne serves GET /api/chats/{id}?before_id=<id>&limit=<n> and routes
+// handleOne serves GET /api/chats/{id}?limit=<turns>&before=<turn_id> and routes
 // /api/chats/{id}/<sub-resource> requests to their handlers.
 func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/chats/")
@@ -47,14 +48,19 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 		rt.routeChatSubResource(w, r, marotte.ChatID(id), sub)
 		return
 	}
-	rt.serveChatMessages(w, r, rest)
+	rt.serveChatPage(w, r, marotte.ChatID(rest))
 }
 
 // routeChatSubResource dispatches /api/chats/{id}/<sub> to its handler.
 func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid marotte.ChatID, sub string) {
-	// The one sub-resource that is itself addressed: /tools/{toolCallID}.
+	// The two sub-resources that are themselves addressed: /tools/{toolCallID} and
+	// /turns/{turn}.
 	if rest, ok := strings.CutPrefix(sub, "tools/"); ok {
 		rt.handleToolCall(w, r, cid, rest)
+		return
+	}
+	if rest, ok := strings.CutPrefix(sub, "turns/"); ok {
+		rt.handleTurnRange(w, r, cid, rest)
 		return
 	}
 	switch sub {
@@ -69,306 +75,128 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 	}
 }
 
-// serveChatMessages serves the paginated single-chat GET for /api/chats/{id}.
-func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id string) {
+// serveChatPage serves the paged single-chat GET for /api/chats/{id}: a window of
+// whole turns off the log, the open tails inside it, the registry's liveness
+// verdict and the stamps certifying exactly those bytes. `?limit=` counts TURNS and
+// `?before=<turn_id>` pages older (no tails, the `chat` stamp alone). Tool payloads
+// are bounded to the PREVIEW budget with has_full marking what the bulk fetch
+// holds; nothing bounds the page by bytes, because a turn is never split.
+func (rt *Router) serveChatPage(w http.ResponseWriter, r *http.Request, id marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	if !chatIDPattern(marotte.ChatID(id)) {
+	if !chatIDPattern(id) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	c, stamp, ok := rt.store.GetStamped(r.Context(), marotte.ChatID(id))
+	before := r.URL.Query().Get("before")
+	if before != "" && !ids.ValidMessageID(before) {
+		httpreply.BadRequest(w, "invalid before turn id")
+		return
+	}
+	page, ok, err := rt.store.Page(r.Context(), id, parseLimitParam(r), before)
+	if err != nil {
+		if before != "" {
+			// The one caller-caused failure: a cursor naming a turn this log does not
+			// hold, which a rewind can produce under a reader mid-scroll.
+			httpreply.BadRequest(w, "unknown before turn id")
+			return
+		}
+		httpreply.ServerError(w, "chat read failed", fmt.Errorf("chat page %s: %w", logsafe.Field(string(id)), err))
+		return
+	}
 	if !ok {
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
 	}
-
-	msgs := c.Messages
-	end := len(msgs)
-	beforeID := r.URL.Query().Get("before_id")
-	if beforeID != "" {
-		end = indexOfMessage(msgs, beforeID)
-	}
-	// TWO INDEPENDENT BOUNDS ON ONE RESPONSE, and that is the contract rather than a
-	// simplification. `?max_bytes=` bounds the WINDOW; the live turn is bounded by its own
-	// caps (internal/agent's liveTurnGETCaps, whose own ceiling is stated there). The live
-	// turn is NOT charged against the caller's budget, because the newest turn is served
-	// whole unconditionally and charging it would let the in-flight turn's size decide how
-	// much history a reader gets — a page that silently shortened as the reply grew.
-	// Rendered BEFORE the window only so the field is in hand when the page is assembled.
-	//
-	// SO THIS RESPONSE IS NOT BOUNDED BY THE PARAMETER THE CALLER PASSED, and this is the
-	// one place that composes both halves, so the total is stated here. Arithmetic ceiling,
-	// summing the two bounds: ~10.1 MiB of live-turn text (liveTurnGETCaps' text dimensions
-	// sum to 10,616,832) plus its envelope of ~2.4 MiB (8192 blocks and 4096 tool calls at their
-	// own per-element cost), plus maxWholeTurnBytes (16 MiB) for the window — about 28.5 MiB
-	// — PLUS the newest single MESSAGE's own size, which the runaway stop deliberately does
-	// not bound (see the `len(window) > 0` gate in messageWindow) and which is bounded only
-	// by the per-chat-file cap. At the client's own query (limit=50&max_bytes=1048576) the
-	// measured worst case is ~10.2 MiB; at the largest legal caller query it is ~17.2 MiB.
-	// Peak memory is about twice the body, because the window is held as []json.RawMessage
-	// and webhttp.WriteJSON copies those bytes into its own buffer. A caller sizing a read
-	// buffer, or an operator setting a proxy body limit, wants those numbers and can derive
-	// them from neither bound alone.
-	liveTurn := rt.liveTurnField(marotte.ChatID(id), beforeID == "")
-	window, start := messageWindow(msgs[:end], parseWindowBudget(r))
-	// `start` indexes `msgs` directly: `msgs[:end]` is a PREFIX, so an index into it
-	// is the same index into the whole array and no re-basing is needed.
-	turnOffset, segmentClosed := turnWindowBase(msgs, start)
-
-	// `turn_open` ships with the transcript because the in-flight reply has no
-	// carrier in `messages` until turn end, and `live_turn` beside it is that carrier:
-	// without it a client deriving an outcome from the silence answers `unknown` mid-turn
-	// and renders the prompt over an empty body. `has_more`, `turn_offset` and
-	// `turn_segment_closed` all describe the window's LEFT EDGE, which the client's
-	// projection cannot know: its own scan starts at the window.
-	turn := rt.store.TurnOpen(marotte.ChatID(id))
-	page := map[string]any{
-		"chat":                c.Header(),
-		"subject":             stamp,
-		"messages":            window,
-		"has_more":            start > 0,
-		"draft":               c.Draft,
-		"turn_open":           turn.Open,
-		"turn_offset":         turnOffset,
-		"turn_segment_closed": segmentClosed,
-	}
-	// WHOSE turn that is, ABSENT for this chat's own, matching `turn_ended` and
-	// `turn_state`. It RIDES `turn_open` rather than narrowing it, because that field is
-	// what tells a reader its per-turn markers are still live — folding them would let a
-	// run's step retract the marker stopping the next fetch deleting the step's content.
-	if turn.WorkflowStep {
-		page["turn_workflow_step"] = true
-	}
-	// ABSENT rather than null when there is no turn to describe: an older client ignores
-	// an unknown field, and a present-but-empty one would name a message id the client
-	// would adopt as its unpersisted live turn.
-	if liveTurn != nil {
-		page["live_turn"] = liveTurn
-	}
-	webhttp.WriteJSON(w, page)
+	webhttp.WriteJSON(w, map[string]any{
+		"chat":         page.Chat,
+		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
+		"open_entries": page.OpenEntries,
+		"has_more":     page.HasMore,
+		"live":         page.Live,
+		keySubject:     page.Subject,
+		"draft":        page.Draft,
+	})
 }
 
-// liveTurnField renders the chat's in-flight turn for the NEWEST page, or nil.
-//
-// Newest page only, which is the rule `turn_open` and `draft` already follow: a
-// before_id fetch is a scroll-up and asserts nothing about the live edge, so re-delivering
-// the in-flight turn on every page a reader scrolls back through would be pure cost.
-//
-// Returns the marshalled bytes rather than the value so the field is embedded verbatim
-// with no second marshal. It is NOT charged against the caller's page budget — see
-// serveChatMessages for why the two bounds are independent.
-func (rt *Router) liveTurnField(chatID marotte.ChatID, newestPage bool) json.RawMessage {
-	if !newestPage {
-		return nil
+// nonNilEntries is entries, never nil: a nil slice marshals as `null` and the
+// generated decoder rejects `null` for an array.
+func nonNilEntries(entries []marotte.Entry) []marotte.Entry {
+	if entries == nil {
+		return []marotte.Entry{}
 	}
-	live, ok := rt.store.LiveTurn(chatID)
+	return entries
+}
+
+// handleTurnRange serves GET /api/chats/{id}/turns/{turn}?after=<seq>: one turn's
+// entries past `after` plus its open tails, the repair read a client runs on a seq
+// hole or a frame naming a turn it has never seen. `after` omitted is the whole turn.
+func (rt *Router) handleTurnRange(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID, turn string) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if !chatIDPattern(chatID) {
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
+		return
+	}
+	if !ids.ValidMessageID(turn) {
+		httpreply.BadRequest(w, "invalid turn id")
+		return
+	}
+	from, ok := parseAfterParam(r)
 	if !ok {
-		return nil
+		httpreply.BadRequest(w, "invalid after seq")
+		return
 	}
-	raw, err := json.Marshal(live)
+	page, err := rt.store.TurnPage(r.Context(), chatID, turn, from)
 	if err != nil {
-		// Unreachable — a LiveTurn holds no type encoding/json can refuse — but serve the
-		// window rather than failing the whole page over the field beside it.
-		slog.Warn("chat window: live turn marshal failed",
-			"chat_id", logsafe.Field(string(chatID)), "error", err)
-		return nil
-	}
-	return raw
-}
-
-// windowBudget is what one transcript page may carry. A struct rather than four
-// int parameters, which are interchangeable at a call site.
-type windowBudget struct {
-	// Messages caps the page's LENGTH, a bound on shape rather than size.
-	Messages int
-	// Bytes is the hostile-input bound: what the WINDOW may carry. Not what the
-	// RESPONSE may carry — the live turn rides beside the window under its own caps.
-	Bytes int
-	// Blocks and ToolCalls are the client's residency budgets; planResidency stops
-	// on whichever runs out first.
-	Blocks    int
-	ToolCalls int
-	// Turns is the FLOOR: a ceiling bounds the window's SIZE, this bounds its SHAPE,
-	// so a ceiling may only cut once the window opens on a turn holding this many.
-	//
-	// The precedence, precisely. The floor outranks every SIZE ceiling — `?max_bytes=`,
-	// `?blocks=`, `?tool_calls=` — including the caller's own value of the first, and is
-	// itself bounded only by maxWholeTurnBytes. It does NOT outrank Messages, which is the
-	// caller's statement about page LENGTH rather than about size; see the break in
-	// messageWindow for the production caller that depends on that.
-	Turns int
-}
-
-// breachedBy reports whether admitting one more message of msgBytes and cost
-// would take the window past any of its three ceilings.
-func (b windowBudget) breachedBy(spentBytes, msgBytes int, spent, cost messageCost) bool {
-	return spentBytes+msgBytes > b.Bytes ||
-		spent.Blocks+cost.Blocks > b.Blocks ||
-		spent.ToolCalls+cost.ToolCalls > b.ToolCalls
-}
-
-// messageWindow returns the newest messages of msgs that meet the turn floor and
-// fit every ceiling, plus the index the window starts at, so has_more is honest.
-//
-// Bytes bound what the WIRE carries, the residency pair what the CLIENT can hold.
-// Messages are marshalled HERE and returned as raw JSON, because the cut has to be
-// decided on the bytes that go on the wire. It always falls at a message boundary
-// and the newest message always goes through whole, or an over-budget chat's
-// newest message would be unreachable; previewMessage bounds the message ITSELF.
-func messageWindow(msgs []marotte.Message, budget windowBudget) (window []json.RawMessage, start int) {
-	// Non-nil: a nil slice marshals as `null` and the generated decoder rejects
-	// `null` for an array.
-	window = make([]json.RawMessage, 0, min(budget.Messages, len(msgs)))
-	openers := findTurnOpeners(msgs)
-	// The floor is a floor on what is ACHIEVABLE: a transcript offering fewer turns
-	// than asked for must still be able to satisfy it, or no ceiling ever fires.
-	floor := min(budget.Turns, openers.total)
-	spentBytes := 0
-	turns := 0
-	var spent messageCost
-	start = len(msgs)
-	for i := range slices.Backward(msgs) {
-		// UNCONDITIONAL, and the one caller ceiling the turn floor does not outrank.
-		// `?limit=` is the caller's statement about page LENGTH rather than about size, and
-		// a production caller depends on it being a hard cut: store-load.ts's
-		// confirmChatExists sends `?limit=1` as the cheapest page the endpoint will serve,
-		// decoding only `chat`. Subordinating this to the floor would hand that probe a
-		// whole turn. The real transcript path sends limit=50, so it gets the floor for any
-		// newest turn of at most 50 persisted messages — which is every turn this app
-		// produces (a prompt, one flushed assistant message, a plan row and a few event
-		// rows), but it is a bound on the TURN and not a property of the cut: a longer turn
-		// is cut here like any other page.
-		if len(window) == budget.Messages {
-			break
+		if errors.Is(err, ErrChatNotFound) {
+			httpreply.NotFound(w, errMsgChatNotFound)
+			return
 		}
-		raw, err := json.Marshal(previewMessage(&msgs[i]))
-		if err != nil {
-			// Unreachable — a Message holds no type encoding/json can refuse — but
-			// stop rather than serve a window with a hole in it.
-			slog.Warn("chat window: message marshal failed",
-				"message_id", msgs[i].ID, "error", err)
-			break
+		// Only an id the log holds no turn for is the caller's answer. A log that cannot be
+		// READ is this server's fault, and answering 404 for it told a client to stop asking
+		// about a turn that exists.
+		if errors.Is(err, ErrTurnNotInLog) {
+			httpreply.NotFound(w, "unknown turn")
+			return
 		}
-		cost := costOfMessage(&msgs[i])
-		// The RUNAWAY stop: the one bound the turn floor may not override. Deliberately
-		// NOT maxMaxBytes, which is the CALLER's ceiling and which the floor now outranks;
-		// budget.Bytes is already clamped to it by parseMaxBytesParam, so breachedBy covers
-		// that case inside the floorMet gate and a second term here would be redundant.
-		if len(window) > 0 && spentBytes+len(raw) > maxWholeTurnBytes {
-			break
-		}
-		// A cut is admissible only where the window already holds whole turns, so a
-		// ceiling can never end it mid-turn.
-		floorMet := len(window) > 0 && turns >= floor && openers.admitCutAt(msgs, start)
-		if floorMet && budget.breachedBy(spentBytes, len(raw), spent, cost) {
-			break
-		}
-		spentBytes += len(raw)
-		spent.Blocks += cost.Blocks
-		spent.ToolCalls += cost.ToolCalls
-		if openers.opens[i] {
-			turns++
-		}
-		window = append(window, raw)
-		start = i
+		httpreply.ServerError(w, "chat read failed",
+			fmt.Errorf("chat turn range %s/%s: %w", logsafe.Field(string(chatID)), logsafe.Field(turn), err))
+		return
 	}
-	slices.Reverse(window)
-	return window, start
+	webhttp.WriteJSON(w, map[string]any{
+		keyEntries:     previewEntries(nonNilEntries(page.Entries)),
+		"open_entries": page.OpenEntries,
+		keySubject:     page.Subject,
+	})
 }
 
-// turnOpeners is which indices of a message slice OPEN a turn, plus the first
-// such index and how many there are.
-type turnOpeners struct {
-	opens []bool
-	// first is len(msgs) for a slice that opens no turn at all.
-	first int
-	total int
+// parseAfterParam reads ?after= as the seq the caller already holds and translates it
+// to the log's INCLUSIVE lower bound: from = after + 1 when present, 0 when absent,
+// which asks for the whole turn, turn_open included — no seq value can ask for that,
+// since the turn_open IS seq 0. The wire spelling stays exclusive. Anything
+// non-numeric, negative, or at the type's ceiling (where the translation would wrap
+// back onto the whole turn) is refused.
+func parseAfterParam(r *http.Request) (from uint64, ok bool) {
+	v := r.URL.Query().Get("after")
+	if v == "" {
+		return 0, true
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || n == math.MaxUint64 {
+		return 0, false
+	}
+	return n + 1, true
 }
 
-// findTurnOpeners derives the opener set for msgs with opensTurn, the predicate
-// turnWindowBase resolves the turn_offset from, so a window's left edge and the
-// ordinal published beside it are a boundary in the same unit.
-//
-// One forward pass, because opensTurn is stateful: it reads the scan's position
-// and the segmentation state as of the message before it.
-func findTurnOpeners(msgs []marotte.Message) turnOpeners {
-	o := turnOpeners{opens: make([]bool, len(msgs)), first: len(msgs)}
-	closed := false
-	for i := range msgs {
-		m := &msgs[i]
-		if carriesNothing(m) {
-			continue
-		}
-		if opensTurn(m, o.total == 0, closed) {
-			o.opens[i] = true
-			o.first = min(o.first, i)
-			o.total++
-			closed = closesTurn(m.TurnOutcome)
-			continue
-		}
-		closed = closed || closesTurn(m.TurnOutcome)
-	}
-	return o
-}
-
-// admitCutAt reports whether a window opening at start opens on a turn boundary.
-// The question is asked of the first message that RENDERS, because turnWindowBase
-// skips the others when it resolves the base.
-//
-// A start with no opener at or before it is admissible too: no further walking
-// could ever produce a boundary.
-func (o turnOpeners) admitCutAt(msgs []marotte.Message, start int) bool {
-	if start < o.first {
-		return true
-	}
-	for start < len(msgs) && carriesNothing(&msgs[start]) {
-		start++
-	}
-	return start < len(msgs) && o.opens[start]
-}
-
-// messageCost is what one message costs the client's two residency budgets.
-type messageCost struct {
-	Blocks    int
-	ToolCalls int
-}
-
-// costOfMessage prices one message the way `block-window.ts turnCost` must:
-// measuring differently would cut a page the client still stubs.
-func costOfMessage(m *marotte.Message) messageCost {
-	return messageCost{Blocks: messageBlockCost(m), ToolCalls: len(m.ToolCalls)}
-}
-
-// messageBlockCost is the BLOCK half of costOfMessage. A message with no blocks
-// costs ONE, because the reconcile unit is the message row.
-//
-// The synthesis mirrors `store.ts normalizeMessage` INCLUDING its role gate: only
-// an ASSISTANT message persisted before the blocks field synthesizes per tool
-// call. Missing either half misprices a legacy many-tool-call turn.
-func messageBlockCost(m *marotte.Message) int {
-	if n := len(m.Blocks); n > 0 {
-		return n
-	}
-	if m.Role != marotte.RoleAssistant {
-		return 1
-	}
-	n := len(m.ToolCalls)
-	if m.Reasoning != "" {
-		n++
-	}
-	if m.Content != "" {
-		n++
-	}
-	return max(1, n)
-}
-
-// handleTurns serves GET /api/chats/{id}/turns: the session-wide turn index with
-// no message bodies. Server-side because the client's transcript store holds a
-// paginated window, so a rail built from resident turns would grow markers as the
-// reader scrolled up.
+// handleTurns serves GET /api/chats/{id}/turns: the rail index, one row per DRAWN
+// turn and no bodies, read off the log's offset index. Server-side because the
+// client's transcript store holds a paginated window, so a rail built from resident
+// turns would grow markers as the reader scrolled up.
 func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -378,27 +206,26 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID mar
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	c, ok := rt.store.Get(r.Context(), chatID)
-	if !ok {
-		httpreply.NotFound(w, errMsgChatNotFound)
+	rows, err := rt.store.RailRows(r.Context(), chatID)
+	if err != nil {
+		if errors.Is(err, ErrChatNotFound) {
+			httpreply.NotFound(w, errMsgChatNotFound)
+			return
+		}
+		httpreply.ServerError(w, "chat read failed", fmt.Errorf("chat turns %s: %w", logsafe.Field(string(chatID)), err))
 		return
 	}
-	// Liveness is injected: the persisted record cannot see a bridge mid-turn. The
-	// CHAT'S OWN turn, so a run's step turn does not mark the chat's last finished turn
-	// as running — the rail projects the persisted messages, and a step's content is not
-	// among them until the run settles.
-	webhttp.WriteJSON(w, map[string]any{
-		"turns": projectTurnSummaries(c.Messages, rt.store.TurnOpen(chatID).OwnTurn()),
-	})
+	if rows == nil {
+		rows = []marotte.TurnSummary{}
+	}
+	webhttp.WriteJSON(w, map[string]any{"turns": rows})
 }
 
-// handleSearch serves GET /api/chats/{id}/search?q=: a session-wide lexical scan.
-// Server-side because the client's store is a paginated window.
-//
-// It reads the PERSISTED record, so the in-flight turn is not searched: the
-// assistant message being streamed lives in the agent's buffer until turn end.
-// The DOM holds that text, so the client's own pass covers it, which is why the
-// two counts are reported side by side rather than subtracted.
+// handleSearch serves GET /api/chats/{id}/search?q=: a session-wide lexical scan
+// over the log's SEALED entries. Server-side because the client's store is a
+// paginated window. An open entry's text is not searched: the DOM holds it, so the
+// client's own pass covers it, which is why the two counts are reported side by
+// side rather than subtracted.
 func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -408,96 +235,35 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ma
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	c, ok := rt.store.Get(r.Context(), chatID)
-	if !ok {
-		httpreply.NotFound(w, errMsgChatNotFound)
+	entries, drawn, err := rt.store.searchable(r.Context(), chatID)
+	if err != nil {
+		if errors.Is(err, ErrChatNotFound) {
+			httpreply.NotFound(w, errMsgChatNotFound)
+			return
+		}
+		httpreply.ServerError(w, "chat read failed", fmt.Errorf("chat search %s: %w", logsafe.Field(string(chatID)), err))
 		return
 	}
 	// Both halves of the in-chat search must agree on the match-case toggle.
 	caseSensitive := r.URL.Query().Get("case") == "1"
-	webhttp.WriteJSON(w, Search(c.Messages, r.URL.Query().Get("q"), caseSensitive))
+	webhttp.WriteJSON(w, Search(entries, drawn, r.URL.Query().Get("q"), caseSensitive))
 }
 
-// parseLimitParam returns the ?limit= page size, honouring 1..500 inclusive;
-// anything else (absent, non-numeric, out of range) falls back to 50.
+// defaultPageTurns is the turns a page carries when the caller names no limit: a
+// few screens of an ordinary conversation, and one read for the common chat.
+const defaultPageTurns = 20
+
+// The two envelope keys every page shares; the rest are per handler.
+const (
+	keyEntries = "entries"
+	keySubject = "subject"
+)
+
+// parseLimitParam returns the ?limit= page size in TURNS, honouring 1..200
+// inclusive; anything else (absent, non-numeric, out of range) falls back to the
+// default.
 func parseLimitParam(r *http.Request) int {
-	return clampedQueryInt(r, "limit", 50, 1, 500)
-}
-
-// Byte budget bounds for the transcript WINDOW. None is a limit on the chat:
-// has_more plus before_id is how the rest is reached, and none bounds the live turn,
-// which rides beside the window under internal/agent's liveTurnGETCaps.
-const (
-	defaultMaxBytes = 1 << 20 // 1 MiB
-	// maxMaxBytes is the top of the ?max_bytes= range — the largest WINDOW a caller may
-	// ask for. It is no longer the turn floor's overrun stop: the newest turn is served
-	// whole past every caller ceiling, so the floor outranks this.
-	maxMaxBytes = 8 << 20 // 8 MiB
-	// maxWholeTurnBytes is the stop the turn floor may NOT override, at 3.5x the measured
-	// maximum total bytes per turn (4,784,437). One must exist, because an unconditional
-	// guarantee is an unbounded response and one transcript shape reaches it easily: where
-	// nothing ever settles a turn, `closesTurn` is false for every message so
-	// opensHeaderlessTurn never fires again and the WHOLE chat is one headerless turn (the
-	// shape TestHandleOne_APromptlessTranscriptIsCutByTheBytes exercises). So it is sized
-	// ABOVE the measured maximum rather than below it: past it the newest turn is cut
-	// mid-turn, which is a state the wire already represents — has_more plus a turn_offset
-	// naming a turn the window holds partially.
-	maxWholeTurnBytes = 16 << 20 // 16 MiB
-)
-
-// parseMaxBytesParam returns the validated ?max_bytes= budget for the WINDOW, defaulting
-// to defaultMaxBytes over the inclusive 1 KiB..maxMaxBytes range. The floor is 1 KiB
-// because anything under one message's envelope selects exactly one message
-// however small it is set, so it only hides a client bug.
-//
-// It bounds the window and not the response: the live turn is not charged against it, and
-// the turn floor may carry the window past it (up to maxWholeTurnBytes).
-func parseMaxBytesParam(r *http.Request) int {
-	return clampedQueryInt(r, "max_bytes", defaultMaxBytes, 1<<10, maxMaxBytes)
-}
-
-// Residency-count bounds, shared by ?blocks= and ?tool_calls=. The default is
-// several of the client's own residency budgets, so a caller naming neither gets
-// the byte-bounded answer; the ceiling is 8× it, as the byte budget's is.
-const (
-	defaultMaxBlocks = 1024
-	maxMaxBlocks     = 8 * defaultMaxBlocks
-)
-
-// parseBlocksParam returns the validated ?blocks= budget, defaulting to
-// defaultMaxBlocks over the inclusive 1..maxMaxBlocks range. The floor is 1
-// because that is the smallest a message can cost.
-func parseBlocksParam(r *http.Request) int {
-	return clampedQueryInt(r, "blocks", defaultMaxBlocks, 1, maxMaxBlocks)
-}
-
-// parseToolCallsParam returns the validated ?tool_calls= budget, the second half
-// of the client's residency pair. The default is the BLOCK default, so this budget
-// cannot cut a page the block budget admitted; the floor is 0, because a page of
-// pure prose costs no tool calls.
-func parseToolCallsParam(r *http.Request) int {
-	return clampedQueryInt(r, "tool_calls", defaultMaxBlocks, 0, maxMaxBlocks)
-}
-
-const defaultWindowTurns = 3
-
-// parseTurnsParam returns the validated ?turns= floor, defaulting to
-// defaultWindowTurns over the inclusive 1..50 range. The floor is 1 rather than 0
-// because a window ending mid-turn opens on a turn it can only continue.
-func parseTurnsParam(r *http.Request) int {
-	return clampedQueryInt(r, "turns", defaultWindowTurns, 1, 50)
-}
-
-// parseWindowBudget reads the five WINDOW budgets off the query. None of them describes
-// the whole response: the live turn rides beside the window under its own caps.
-func parseWindowBudget(r *http.Request) windowBudget {
-	return windowBudget{
-		Messages:  parseLimitParam(r),
-		Bytes:     parseMaxBytesParam(r),
-		Blocks:    parseBlocksParam(r),
-		ToolCalls: parseToolCallsParam(r),
-		Turns:     parseTurnsParam(r),
-	}
+	return clampedQueryInt(r, "limit", defaultPageTurns, 1, 200)
 }
 
 // clampedQueryInt returns the named query parameter when it parses as an integer
@@ -516,18 +282,6 @@ func clampedQueryInt(r *http.Request, name string, def, lo, hi int) int {
 	return n
 }
 
-// indexOfMessage returns the position of the message with the given id, the
-// exclusive upper bound of the page before it. Returns len(msgs) for an unknown
-// id, so an unknown cursor pages the newest window rather than an empty one.
-func indexOfMessage(msgs []marotte.Message, id string) int {
-	for i := range slices.Backward(msgs) {
-		if msgs[i].ID == id {
-			return i
-		}
-	}
-	return len(msgs)
-}
-
 // exportFormat is the requested export serialization.
 type exportFormat int
 
@@ -536,8 +290,8 @@ const (
 	exportFormatJSON
 )
 
-// handleExport serves GET /api/chats/{id}/export?format=md|json as a
-// downloadable Markdown transcript (the default) or the raw chat JSON.
+// handleExport serves GET /api/chats/{id}/export?format=md|json as a downloadable
+// Markdown transcript (the default) or the header plus every entry as JSON.
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID marotte.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -552,7 +306,11 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ma
 		httpreply.BadRequest(w, "unsupported export format (use md or json)")
 		return
 	}
-	c, found := rt.loadForExport(r.Context(), chatID)
+	c, entries, found, err := rt.loadForExport(r.Context(), chatID)
+	if err != nil {
+		httpreply.ServerError(w, "chat read failed", fmt.Errorf("chat export %s: %w", logsafe.Field(string(chatID)), err))
+		return
+	}
 	if !found {
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
@@ -560,13 +318,13 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ma
 	if format == exportFormatJSON {
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
-		webhttp.WriteJSON(w, c)
+		webhttp.WriteJSON(w, map[string]any{"chat": c, keyEntries: nonNilEntries(entries)})
 		return
 	}
 	w.Header().Set("Content-Disposition",
 		dispositionAttachment(exportFilename(c.Name, string(chatID), ".md")))
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	if _, err := io.WriteString(w, renderChatMarkdown(c)); err != nil {
+	if _, err := io.WriteString(w, renderChatMarkdown(c, entries)); err != nil {
 		slog.Debug("chat export: markdown write failed",
 			"chat_id", logsafe.Field(string(chatID)), "error", err)
 	}
@@ -585,9 +343,21 @@ func parseExportFormat(v string) (exportFormat, bool) {
 	}
 }
 
-// loadForExport returns the chat for chatID.
-func (rt *Router) loadForExport(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, bool) {
-	return rt.store.Get(ctx, chatID)
+// loadForExport returns the chat's header and every entry of its log; false for a
+// chat with no header.
+func (rt *Router) loadForExport(ctx context.Context, chatID marotte.ChatID) (*marotte.Chat, []marotte.Entry, bool, error) {
+	c, ok := rt.store.Get(ctx, chatID)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	entries, err := rt.store.All(ctx, chatID)
+	if err != nil {
+		if errors.Is(err, ErrChatNotFound) {
+			return nil, nil, false, nil
+		}
+		return nil, nil, false, err
+	}
+	return c, entries, true, nil
 }
 
 // dispositionAttachment builds an attachment Content-Disposition value via

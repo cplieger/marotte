@@ -2,12 +2,33 @@
    Chat Area
    ========================================================================== */
 
+/* `isolation: isolate` is what stops this element's own layering competing with app
+   CHROME, and it is load-bearing rather than tidy. `container-type: inline-size` does
+   NOT make this a stacking context in Chromium, so every z-index inside here lands in
+   the ROOT context beside `[id="sidebar"]`'s own `z-index: 2` (10-shell-app.css) — and
+   `[id="prompt-form"].bottom-bar` is `z-index: 10`, so the composer outranked the
+   sidebar. Reported on an iPad: the sidebar footer's status card is 253px wide inside a
+   260px panel, so it overflows by 9px, and the composer painted over that sliver, which
+   reads as the card being cut off at the panel's edge (`elementFromPoint` inside the
+   overflow answered `[id="prompt-form"]`; it answers the card now). Isolating fixes the
+   CLASS rather than the instance — nothing inside the chat area can outrank chrome —
+   and it costs nothing on either axis it might: `isolation` changes no positioning at
+   all (it creates no containing block, so nothing a fixed descendant resolves against
+   moves), and the phone drawer is `z-index: 100` (50-mobile.css), which still wins over
+   this whole layer.
+
+   NOT a positive `z-index` here: measured, `z-index: 200` on this element leaves the
+   composer above the card just the same, because it makes the chat area a stacking
+   context ABOVE the sidebar's 2 and takes the whole layer with it. `isolate` keeps this
+   layer at `auto`, which is what puts it under chrome. `chat-area-stacking.test.ts`
+   hit-tests both, and a hit test is the only reader of paint order a test page has. */
 [id="chat-area"] {
   position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  isolation: isolate;
   container: chat-area / inline-size;
 }
 
@@ -41,8 +62,14 @@
 
   /* Clearance for an overlay whose containing block is `#chat-area`, which starts
      ABOVE the in-flow bar: `.page-find` (24-find.css) and `.banner-stack`
-     (13-messages.css). `.page-find` is `position: fixed` and still resolves here,
-     because this element's own `container` declaration gives it layout containment.
+     (13-messages.css). `.page-find` is `position: fixed`, so it resolves against the
+     VIEWPORT, and this clearance is still right for it because the chat area's own top
+     edge IS the viewport's — the sidebar is a fixed column beside it, never above it.
+     This used to claim the `container` declaration gave the element layout containment
+     and so a containing block for a fixed descendant; measured in Chromium 152 with a
+     `position: fixed; inset: 0` probe, it gives NEITHER (the probe filled the whole
+     1024x768 viewport from a 764px-wide chat area), which is also why the isolation
+     above is needed.
 
      A box inside `#messages-wrap-outer` must NOT read this — that element is
      already below the bar, so the clearance is dead offset. `.chat-find` and
@@ -295,16 +322,16 @@
  * Settings, Docs and Git put their active section in a segmented bar, so a
  * subtitle naming that same section is the word twice, twenty pixels apart. But
  * that bar drops its labels when they stop fitting (`tab-bar-fit.ts` measures per
- * bar and writes `.tab-bar-icons`), and then the subtitle is the only text naming
+ * bar and writes `.seg-bar-icons`), and then the subtitle is the only text naming
  * the section — which is exactly the job `.settings-title-row` was doing.
  *
  * So the rule is: suppress the subtitle while a labelled segmented bar is on
- * screen, and show it otherwise. `tab-bar-fit.ts` publishes `.tab-bar-named` for
+ * screen, and show it otherwise. `tab-bar-fit.ts` publishes `.seg-bar-named` for
  * exactly that condition — visible AND labelled — because the derivation needs
  * the bar's visibility as well as its label mode, and it already measures both.
  * Deriving it here instead took a `:has()` chain of four pseudo-classes past
  * stylelint's ceiling, which was a fair complaint about the wrong owner. */
-[id="chat-area"]:has(.tab-bar-named) :is(.titlebar-subtitle, .titlebar-sep) {
+[id="chat-area"]:has(.seg-bar-named) :is(.titlebar-subtitle, .titlebar-sep) {
   display: none;
 }
 

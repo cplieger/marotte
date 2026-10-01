@@ -55,6 +55,17 @@ vi.mock("./dom.js", () => ({
   $: new Proxy({} as Record<string, HTMLElement>, { get: (_t, k: string) => h.stub(k) }),
   el: () => document.createElement("div"),
   byId: (id: string) => h.stub(id),
+  // `skeleton.ts` in this graph imports the name, and Browser Mode links for real
+  // rather than reading properties off a namespace object — so an absent export
+  // fails COLLECTION, before any case runs. The real body rather than `undefined`,
+  // so the placeholder still marks its host busy if a case ever drives the paint.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 vi.mock("./bus.js", () => ({
   onSSE: undefined,
@@ -63,6 +74,13 @@ vi.mock("./bus.js", () => ({
 }));
 
 vi.mock("./tabs.js", () => ({
+  // navigate.js's `openSpec` (the spec tab's door) imports these four beside
+  // `openTab`, and Browser Mode links for real, so one missing name fails this
+  // whole file's import.
+  activateTab: undefined,
+  parentChatRef: undefined,
+  setTabParent: undefined,
+  tabIdFor: undefined,
   setGitTab: undefined,
   openGitView: undefined,
   toggleFilesView: vi.fn(() => Promise.resolve()),

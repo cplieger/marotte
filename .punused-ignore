@@ -27,12 +27,13 @@
 # that generated file, and the generated decoder rejects any value outside
 # its union. Deleting the Go constant silently shrinks the contract, so a
 # legitimate server value would fail client-side decode. Verified by
-# grepping the VALUE, not the Go identifier:
-#   "other"          -> types.gen.ts ToolKind union   (+ static-src/tool-schema.ts OTHER profile)
-#   "refusal"        -> types.gen.ts StopReason union (+ static-src/refusal.ts)
-constant ToolKindOther
-
-# RunNodeStatus is the same contract, one entry for the whole enum rather than per
+# grepping the VALUE, not the Go identifier.
+#
+# ToolKindOther left this section: internal/translate/wire_enums.go's KAS-door
+# gate maps an unrecognized kind to it, so it has a production reference and
+# punused reports nothing for it.
+#
+# RunNodeStatus is one entry for the whole enum rather than per
 # member, because the reason is identical for all seven and does not depend on which
 # ones production happens to compare against today (run_ask.go and run_host.go name
 # only paused and running). It is a registered wire enum (internal/wirespec
@@ -45,19 +46,6 @@ constant ToolKindOther
 # declaration with go/parser rather than by importing it, so its use of these
 # constants is invisible to a reference search.
 constant RunNodeStatus
-
-# UserKind is that same contract with two members, and it is the shape the reason
-# above generalises to rather than a new one. It is a registered wire enum
-# (internal/wirespec wireEnums), so the const block IS the source of types.gen.ts's
-# `UserKind = "prompt" | "steer"` union AND of decoders.gen.ts's USER_KINDS array,
-# which reqOneOf validates every user row against. Production compares only against
-# UserKindSteer, because absent means prompt — so the value "prompt" reaches the wire
-# from a chat file rather than from a comparison, and no reference search can see it.
-# Deleting the constant narrows the union to "steer" alone, at which point the client
-# REJECTS a legitimate user_kind: "prompt" and decodeArray rethrows, losing the whole
-# message array for that chat until the page is reloaded. One entry for the enum, per
-# the RunNodeStatus reason.
-constant UserKindPrompt
 
 # --- 2. json-tagged fields on wiregen-registered structs. The struct is
 # registered in cmd/wire-codegen, so the field is part of the generated TS
@@ -307,3 +295,25 @@ method (*Service).PresenceTransitions
 # _meta.kiro block: no behavior may branch on it yet, so the accessor is the read
 # door for future capability logic and tests are its only consumers by design.
 method (*Bridge).AgentKiroCapabilities
+
+# --- 21. The entry log's own lifecycle and counter verbs. OpenEntryLog is
+# EXPORTED and hands back a value holding an open write descriptor, so Close is
+# that constructor's paired release verb: a caller that opens a log outside the
+# store (which is what every direct-open test does, including the reopen fixture
+# that simulates a process restart) has no other way to give the descriptor back.
+# The store itself releases through Remove, which is why Close has no store
+# caller. Counters is the log's own answer to how many turns it holds and which
+# is newest -- the value the header CACHES -- so it is the source a test compares
+# the header's turn_count against; deleting it removes the only way to check the
+# cache against its source, which is the disagreement class the entry log's
+# design exists to make impossible. Deletion was the alternative considered for
+# both and declined for those reasons, not for reachability.
+# TurnRange is the locked door onto turnRangeLocked, which production reaches
+# through TurnPage: it is the UNPAGED whole-turn read, so it is the oracle the
+# chat, agent and turnlog tests compare persisted entries and the paged answer
+# against. Migrating those callers to TurnPage would make the paging read its
+# own witness. Deletion was considered and declined for that reason.
+method (*EntryLog).Close
+method (*EntryLog).Counters
+method (*EntryLog).TurnRange
+

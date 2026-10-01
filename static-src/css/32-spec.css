@@ -1,0 +1,420 @@
+/* The spec tab (#spec-view): one Kiro spec's documents behind a segment bar,
+   tasks.md as a live checklist. See static-src/spec-view.ts. The tree skin is
+   the deleted specs board's (26-specs.css at f776c166^) under the page's class
+   vocabulary; the status glyphs are the shared work-status hooks that
+   fundamentals/todo.ts and task-list.ts paint too, drawn here once. */
+
+/* --- The view's layout: #run-view's column, no bottom bar ------------------ */
+
+[id="spec-view"] {
+  display: flex;
+  flex-direction: column;
+}
+
+[id="spec-view"] .page-content {
+  max-width: none;
+  scrollbar-gutter: stable both-edges;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden auto;
+}
+
+[id="spec-body"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  max-width: var(--content-max-w);
+  width: 100%;
+  margin-inline: auto;
+}
+
+.spec-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-block: var(--sp-3);
+}
+
+/* --- Header -------------------------------------------------------------- */
+
+.spec-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.spec-head-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.spec-name {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.spec-phase {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  padding: var(--sp-05) var(--sp-2);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-secondary);
+}
+
+.spec-phase-building {
+  color: var(--c-accent);
+  border-color: var(--c-accent);
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) infinite;
+
+  --beat-peak: 0.55;
+}
+
+.spec-progress-count,
+.spec-unreadable,
+.spec-truncated,
+.spec-empty-tasks {
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.spec-unreadable {
+  color: var(--c-yellow);
+}
+
+/* The progress bar: completed solid, in progress at the half ring's colour.
+   `--done` and `--active` are percentages the page writes. */
+.spec-progressbar {
+  position: relative;
+  height: var(--sp-1);
+  border-radius: var(--r-pill);
+  background: var(--c-bg-tertiary);
+  overflow: hidden;
+  display: flex;
+}
+
+.spec-progress-done,
+.spec-progress-active {
+  display: block;
+  height: 100%;
+}
+
+.spec-progress-done {
+  width: var(--done, 0%);
+  background: var(--c-green);
+}
+
+.spec-progress-active {
+  width: var(--active, 0%);
+  background: var(--c-accent);
+}
+
+.spec-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.spec-run-in-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.spec-run-in-select {
+  min-block-size: var(--ctl-h-dense);
+  padding-inline: var(--sp-2);
+  border-radius: var(--r);
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  font-size: var(--fs-base);
+}
+
+.spec-failure {
+  font-size: var(--fs-sm);
+  color: var(--c-red);
+}
+
+.spec-busy {
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) infinite;
+
+  --beat-peak: 0.55;
+}
+
+/* --- Segment dots ---------------------------------------------------------- */
+
+.spec-seg-dot {
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.spec-seg-present {
+  background: var(--c-green);
+}
+
+.spec-seg-missing {
+  border: 1px solid var(--c-text-tertiary);
+}
+
+.spec-seg-dot.spec-pulse {
+  border-color: var(--c-accent);
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) infinite;
+
+  --beat-peak: 0.45;
+}
+
+/* --- Panes ------------------------------------------------------------------ */
+
+.spec-doc-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+/* The approval badge: what the record says about the phase on screen, beside the
+   control that changes it. Two states, and neither is carried by hue alone
+   (WCAG 1.4.1) — the WORDS differ, so the tint is the second channel. */
+.spec-approval {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  white-space: nowrap;
+}
+
+.spec-approval[data-approval="current"] {
+  color: var(--c-green);
+}
+
+.spec-approval[data-approval="stale"] {
+  color: var(--c-yellow);
+}
+
+.spec-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-base);
+  color: var(--c-text-secondary);
+}
+
+.spec-empty {
+  padding: var(--sp-5) var(--sp-4);
+  text-align: center;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  overflow-wrap: anywhere;
+}
+
+/* --- Task tree ------------------------------------------------------------- */
+
+.spec-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.spec-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.spec-node-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  padding-inline-start: calc(var(--sp-2) + var(--depth, 0) * 1.125rem);
+  border-radius: var(--r-sm);
+}
+
+@media (any-hover: hover) {
+  .spec-node-row:hover {
+    background: var(--c-hover);
+  }
+}
+
+/* A dispatched task's row beats on its own opacity until the file moves or the
+   target's turn ends (design 1.4). */
+.spec-dispatched > .spec-node-row {
+  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) infinite;
+
+  --beat-peak: 0.55;
+}
+
+/* A task the target's turn ended without ticking says so on its own line under
+   the row, indented with the row so it reads as that row's note. Amber is the
+   spec page's one advisory ink, shared with the unreadable-lines count. */
+.spec-node-note {
+  /* The same inset .spec-node-detail takes, so a row's note and a row's detail
+     sit on one line. */
+  margin-inline-start: calc(
+    var(--sp-2) + var(--depth, 0) * 1.125rem + var(--icon-ui) + var(--sp-2)
+  );
+  margin-block-end: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--c-yellow);
+}
+
+/* Collapse toggle: a CSS-drawn chevron that rotates on collapse. */
+/* The spacer matches the toggle's FLOORED box, or a leaf row's text sits at a
+   different inset from a parent row's on the coarse tier. */
+.spec-toggle,
+.spec-toggle-spacer {
+  flex-shrink: 0;
+  width: var(--icon-ui);
+  height: var(--icon-ui);
+  min-width: var(--hit-floor);
+  min-height: var(--hit-floor);
+}
+
+.spec-toggle {
+  position: relative;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--c-text-tertiary);
+  transition: transform var(--dur-standard) var(--ease-standard);
+}
+
+.spec-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid currentcolor;
+  border-bottom: 2px solid currentcolor;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.spec-node.collapsed > .spec-node-row .spec-toggle {
+  transform: rotate(-90deg);
+}
+
+@media (any-hover: hover) {
+  .spec-toggle:hover {
+    color: var(--c-text-primary);
+  }
+}
+
+.spec-toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: 2px;
+}
+
+.spec-status {
+  flex-shrink: 0;
+}
+
+.spec-task-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-md);
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.spec-node-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.spec-node-detail {
+  margin-inline-start: calc(
+    var(--sp-2) + var(--depth, 0) * 1.125rem + var(--icon-ui) + var(--sp-2)
+  );
+  margin-block: var(--sp-05) var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+/* --- Badges ---------------------------------------------------------------- */
+
+.spec-badge {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  padding: 0.0625rem 0.4375rem;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.spec-badge-optional {
+  color: var(--c-text-tertiary);
+  border-color: var(--c-border);
+}
+
+/* The wave a task runs in. Numerals, so tabular figures keep the column
+   steady down a long list. */
+.spec-badge-wave {
+  color: var(--c-text-tertiary);
+  border-color: var(--c-border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- The shared status glyph ------------------------------------------------
+   Drawn once for every consumer of fundamentals/work-status.ts: a ring for
+   pending, a half ring for in progress, a filled ring with a check for completed,
+   and the queued tint on a pending ring. No character reaches the DOM. */
+
+.work-status {
+  display: inline-block;
+  position: relative;
+  flex-shrink: 0;
+  width: var(--icon-ui);
+  height: var(--icon-ui);
+  border-radius: 50%;
+  border: 2px solid var(--c-text-tertiary);
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+.work-status-in-progress {
+  border-color: var(--c-accent);
+  background: linear-gradient(to right, var(--c-accent) 50%, transparent 50%);
+}
+
+.work-status-completed {
+  border-color: var(--c-green);
+  background: var(--c-green);
+}
+
+.work-status-completed::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0.25rem;
+  height: 0.5rem;
+  border-right: 2px solid var(--c-on-accent);
+  border-bottom: 2px solid var(--c-on-accent);
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.work-status-queued {
+  border-color: var(--c-yellow);
+}
+
+/* --- Mobile ---------------------------------------------------------------- */
+
+@media (width <= 40rem) {
+  .spec-node-row {
+    padding-block: var(--sp-2);
+  }
+}

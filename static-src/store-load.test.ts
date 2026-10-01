@@ -1,78 +1,58 @@
-// Tests for store-load.ts loadMessages pagination — specifically the id-dedupe
-// when prepending an older page (a timestamp cursor can re-return a boundary
-// message whose ms ts is shared, which must not render/insert twice).
+// Tests for store-load.ts, the ENTRY-LOG loaders: the chat list, the window GET of section
+// 6.3 and the range read of 6.4. The unit is the TURN, so a page is a set of whole turns
+// walked into `TurnState`s, a position is a `seq`, and a `seq` that is not the next one is a
+// HOLE that asks for one range read rather than being folded in at the wrong index. There is
+// no window base: `turn_open.n` is session-absolute in every window.
+//
+// `./store.js` is mocked at the boundary, so this file owns WHICH door a window takes and
+// with what; what each door does to the store is store.test.ts's, against the real thing.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { Message, Session } from "./types.js";
+import type { Session, TurnState } from "./types.js";
 import { _resetForTest as resetVersions, hasSubject, versionMap } from "./subject-versions.js";
 // The module's own shape, for the fresh-instance loader at the foot of this file:
-// `chatListLoaded` is module state, so its cases re-evaluate the module and need a
-// type for what the dynamic import hands back.
+// `chatListLoaded`, `listReach` and the outcome counters are module state, so their cases
+// re-evaluate the module and need a type for what the dynamic import hands back.
 import type * as StoreLoad from "./store-load.js";
-// The store's shape, for the `importOriginal` call in its mock factory below. A
-// type-only import, so it adds no runtime edge the `vi.mock` would have to reach
-// around.
+// The store's shape, for the `importOriginal` call in its mock factory below. A type-only
+// import, so it adds no runtime edge the `vi.mock` would have to reach around.
 import type * as Store from "./store.js";
+import type { ChatHeader, Entry, OpenEntry, SubjectStamp, Usage } from "./wire/types.gen.js";
 
 const {
   sessions,
-  liveIDs,
-  watermarks,
   mockApiGetTyped,
   mockApiGetTypedOrError,
   mockSetSessions,
   mockUpsertHeader,
   mockBumpMessages,
-  mockRelatch,
-  mockHealSettled,
   mockRepublishToolCalls,
-  mockLatchFields,
-  mockUpsertMessage,
-  mockSetWatermark,
-  mockNoteLiveTurn,
-  mockNoteAdopted,
+  mockMarkWindowStale,
+  mockSetTurnOpen,
+  mockClearTurnState,
 } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
-  liveIDs: new Map<string, string>(),
-  // The chunk seq this client has already folded into a given message, keyed the way the
-  // store keys it: chat id to (message id, seq). Controllable so a case can put the live
-  // stream AHEAD of the answer being applied, which is the stale-response case.
-  watermarks: new Map<string, { messageID: string; seq: number }>(),
   mockApiGetTyped: vi.fn(),
-  // The status-bearing GET. `confirmChatExists` reads the STATUS rather than a
-  // collapsed null, so its fixture is the whole `ApiResult` envelope.
+  // The status-bearing GET. `confirmChatExists` reads the STATUS rather than a collapsed
+  // null, so its fixture is the whole `ApiResult` envelope.
   mockApiGetTypedOrError: vi.fn(),
   mockSetSessions: vi.fn(),
-  // The single adoption door for a chat header. A spy so the confirm cases can
-  // assert that a chat the server DOES know lands in the store.
+  // The single adoption door for a chat header. A spy so the confirm cases can assert that a
+  // chat the server DOES know lands in the store.
   mockUpsertHeader: vi.fn(),
   mockBumpMessages: vi.fn(),
-  mockRelatch: vi.fn(),
-  // The newest-page door's OTHER arm: the full teardown plus a relatch, run only when the
-  // page states `turn_open === false`. A spy for `mockRelatch`'s reason — this file owns
-  // WHICH arm a window takes, while what each arm does to the store is asserted against
-  // the real functions in turn-teardown.test.ts.
-  mockHealSettled: vi.fn(),
-  // The channel a MOUNTED tool card refreshes through. A spy, because what this file
-  // owns is that a fetched window is put on it at all and with which rows; what the
-  // channel then does to a card's signal is store.test.ts's, against the real one.
+  // The channel a MOUNTED tool card refreshes through. A spy, because what this file owns is
+  // that a fetched window is put on it at all and with which turns; what the channel then
+  // does to a card's signal is store.test.ts's, against the real one.
   mockRepublishToolCalls: vi.fn(),
-  // The header-derived latch seed. An INERT stub here on purpose: this file
-  // asserts the WIRING (that loadList consults it, with the existing row and the
-  // header), while what it returns and how that reaches the dot is asserted
-  // against the real store in tab-dot.test.ts. A stub that reproduced the real
-  // mapping would be a second copy of the logic under test.
-  // Params are declared so the call tuple is typed and the assertions below can
-  // read `calls[n][0]` (the existing row) and `calls[n][1]` (the header).
-  mockLatchFields: vi.fn((_existing: unknown, _header: unknown) => ({})),
-  // The four calls the in-flight-turn adoption makes, which are the four the live
-  // `message_created` door makes for the same content arriving on the stream. Spies
-  // rather than a fake store: what these cases are about is WHETHER the adoption happens
-  // and with what, and a fake that re-implemented the merge would assert itself.
-  mockUpsertMessage: vi.fn(),
-  mockSetWatermark: vi.fn(),
-  mockNoteLiveTurn: vi.fn(),
-  mockNoteAdopted: vi.fn(),
+  // The store's own gap mark. A spy: this file owns that a hole MARKS the window, and what
+  // the mark does to `residency` and to `transcriptStale` is store.test.ts's.
+  mockMarkWindowStale: vi.fn(),
+  mockSetTurnOpen: vi.fn(),
+  // The shared turn teardown, mocked at the boundary rather than run for real: the real one
+  // reaches the tab strip and the decision dock, and none of that is what a fetch-lifecycle
+  // file owns. turn-teardown.test.ts drives the real thing against the real store.
+  mockClearTurnState: vi.fn(),
 }));
 
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
@@ -80,22 +60,17 @@ vi.mock("./api-client.js", () => ({
   apiGetTyped: mockApiGetTyped,
   apiGetTypedOrError: mockApiGetTypedOrError,
 }));
-// The shared turn teardown, mocked at the boundary rather than run for real: the real
-// `healSettledChat` reaches the tab strip, the decision dock and the model-switch queue, and
-// none of that is what a fetch-lifecycle file owns. `turn-teardown.test.ts` drives the real
-// pair against the real store. The other two names are present-but-inert so real-ESM linking
-// succeeds; nothing here reaches them.
 vi.mock("./turn-teardown.js", () => ({
-  healSettledChat: mockHealSettled,
+  clearTurnState: mockClearTurnState,
+  // Present-but-inert so real-ESM linking succeeds; nothing here reaches them.
+  healSettledChat: vi.fn(),
   retractStaleThinking: vi.fn(),
-  clearTurnState: vi.fn(),
 }));
 vi.mock("./store.js", async (importOriginal) => {
-  // `derivedHasMore` is the REAL one, and that is deliberate: it is the rule the
-  // `has_more` cases below are ABOUT, so a hand-written copy here would assert the
-  // mock rather than the production rule and would go stale silently the first time
-  // the rule moved. Pure, two numbers in, no store state, so importing it costs
-  // nothing this factory exists to avoid.
+  // `derivedHasMore` is the REAL one, and that is deliberate: it is the rule the `has_more`
+  // cases below are ABOUT, so a hand-written copy here would assert the mock rather than the
+  // production rule and would go stale silently the first time the rule moved. Pure, two
+  // numbers in, no store state, so importing it costs nothing this factory exists to avoid.
   const { derivedHasMore } = await importOriginal<typeof Store>();
   return {
     derivedHasMore,
@@ -103,120 +78,260 @@ vi.mock("./store.js", async (importOriginal) => {
     getSessions: () => [...sessions.values()],
     setSessions: mockSetSessions,
     upsertHeader: mockUpsertHeader,
-    rebuildMsgIndex: vi.fn(),
     bumpMessages: mockBumpMessages,
-    // The outcome relatch loadMessages owes a newest-page load. A fn so the
-    // wiring cases below can assert the call and its ordering against bump.
-    relatchTurnVerdict: mockRelatch,
     republishWindowToolCalls: mockRepublishToolCalls,
-    latchFieldsFor: mockLatchFields,
-    // Identity here — the block-synthesis path is covered by store.test.ts; these
-    // tests assert pagination/dedupe by id.
-    normalizeMessage: (m: Message) => m,
-    // The store's in-flight marker: which message id the chat's current turn is
-    // streaming into, and therefore which one the chat file cannot carry yet.
-    liveTurnMessage: (id: string) => liveIDs.get(id),
-    // The four writers the fetched in-flight turn lands through, plus the reader that
-    // decides whether it may. `chunkWatermark` answers off the controllable map, so a
-    // case can put the live stream ahead of the answer being applied.
-    chunkWatermark: (id: string, messageID: string) => {
-      const wm = watermarks.get(id);
-      return wm?.messageID === messageID ? wm.seq : undefined;
-    },
-    setChunkWatermark: mockSetWatermark,
-    noteLiveTurnMessage: mockNoteLiveTurn,
-    noteAdoptedSnapshot: mockNoteAdopted,
-    upsertMessage: mockUpsertMessage,
-    // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-    // this graph and these names are imported somewhere in it. No case here calls
-    // them.
+    markWindowStale: mockMarkWindowStale,
+    setTurnOpen: mockSetTurnOpen,
+    // Present-but-inert so real-ESM linking succeeds: this graph reaches these names from
+    // somewhere. No case here calls them.
     getActive: vi.fn(() => undefined),
+    getActiveId: vi.fn(() => ""),
     tabStatusFor: vi.fn(() => ""),
-    // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-    // this graph and these names are imported somewhere in it. No case here calls
-    // them.
-    apiGet: vi.fn(),
+    registerTurnRepair: vi.fn(),
   };
 });
 
-import { loadMessages, loadList, confirmChatExists } from "./store-load.js";
+import {
+  loadList,
+  loadMessages,
+  confirmChatExists,
+  scheduleListRetry,
+  requestTurnRange,
+} from "./store-load.js";
 
-function msg(id: string, ts: number): Message {
-  return { id, role: "assistant", ts } as Message;
+// --- Fixtures -------------------------------------------------------------------------
+
+function usage(): Usage {
+  return {
+    context_pct: 0,
+    context_size: 0,
+    credits: 0,
+    last_turn_ms: 0,
+    has_real_data: false,
+  };
 }
 
-/** A turn's plan row: RoleAssistant, so only its shape tells it from a reply. */
-function planRow(id: string, ts: number): Message {
-  return { id, role: "assistant", ts, plan: [] } as unknown as Message;
-}
-
-/** A user row, the one shape that OPENS a turn and so belongs after the reply. */
-function userRow(id: string, ts: number): Message {
-  return { id, role: "user", ts } as Message;
-}
-
-function seedSession(id: string, messages: Message[]): void {
-  sessions.set(id, {
+// `Object.assign` rather than a spread: under `exactOptionalPropertyTypes` a spread of a
+// `Partial` widens every required field to include `undefined`, which the target refuses.
+function header(id: string, over: Partial<ChatHeader> = {}): ChatHeader {
+  const base: ChatHeader = {
     id,
-    messages,
-    message_count: messages.length,
-    has_more: true,
-  } as unknown as Session);
+    name: id,
+    usage: usage(),
+    created_at: 0,
+    updated_at: 0,
+    turn_count: 0,
+  };
+  return Object.assign(base, over);
 }
+
+/** The `turn_open` that opens `turnID` at session-absolute ordinal `n`. */
+function turnOpen(turnID: string, n: number): Entry {
+  return {
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "prompt", n, prompt: { id: `m-${turnID}`, text: "hi" } },
+  };
+}
+
+/** A sealed entry of any kind at `seq`. `lane` is `""` unless named, which is the
+ *  transcript's own lane. */
+function entry(
+  turnID: string,
+  seq: number,
+  kind: Entry["kind"],
+  payload: unknown = {},
+  opts: { readonly id?: string; readonly lane?: string } = {},
+): Entry {
+  const base: Entry = {
+    id: opts.id ?? `${turnID}-e${String(seq)}`,
+    turn: turnID,
+    kind,
+    seq,
+    ts: seq + 1,
+    payload,
+  };
+  return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
+}
+
+function textEntry(turnID: string, seq: number, text = "hi"): Entry {
+  return entry(turnID, seq, "text", { text });
+}
+
+/** An in-memory tail, one per `(turn, lane)`. */
+function openTail(
+  turnID: string,
+  id: string,
+  n: number,
+  opts: { readonly lane?: string; readonly text?: string } = {},
+): OpenEntry {
+  const base: OpenEntry = { turn: turnID, id, kind: "text", text: opts.text ?? "so far", n };
+  return opts.lane === undefined ? base : Object.assign(base, { lane: opts.lane });
+}
+
+function stamp(kind: string, ref: string, version: string, epoch?: string): SubjectStamp {
+  const base: SubjectStamp = { kind, ref, version };
+  return epoch === undefined ? base : Object.assign(base, { epoch });
+}
+
+function seedSession(id: string, over: Partial<Session> = {}): Session {
+  const base: Session = {
+    id,
+    name: id,
+    model: "",
+    acp_session_id: "",
+    current_mode_id: "",
+    usage: usage(),
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
+    has_more: false,
+    thinking: false,
+    working_label: "Thinking",
+  };
+  const s = Object.assign(base, over);
+  sessions.set(id, s);
+  return s;
+}
+
+/** Seat a resident turn on a session, entries in `seq` order. */
+function seedTurn(session: Session, turnID: string, entries: Entry[], open: OpenEntry[] = []) {
+  const state: TurnState = {
+    entries,
+    openEntries: new Map(open.map((o) => [o.lane ?? "", o])),
+  };
+  const close = entries.find((e) => e.kind === "turn_close");
+  if (close !== undefined) {
+    state.closeAt = close.seq;
+  }
+  session.turns.set(turnID, state);
+  session.turn_order.push(turnID);
+  return state;
+}
+
+interface PageAnswer {
+  readonly entries?: Entry[];
+  readonly open?: OpenEntry[];
+  readonly has_more?: boolean;
+  readonly live?: boolean;
+  readonly subject?: SubjectStamp[];
+  readonly draft?: string;
+  readonly header?: Partial<ChatHeader>;
+}
+
+/** The DECODED window answer. `apiGetTyped` is mocked, so the module's own decoder does not
+ *  run on this path — the raw-wire door below is what exercises it. */
+function answerPage(chatID: string, o: PageAnswer = {}): void {
+  mockApiGetTyped.mockResolvedValue({
+    chat: header(chatID, o.header ?? {}),
+    entries: o.entries ?? [],
+    open_entries: o.open ?? [],
+    has_more: o.has_more ?? false,
+    live: o.live,
+    subject: o.subject ?? [],
+    draft: o.draft ?? "",
+  });
+}
+
+/** Answer with RAW WIRE bytes, put through the module's OWN decoder — the same fold
+ *  `apiGetTyped` performs, throw collapsed to null. This is the only door that exercises
+ *  `decodeTolerant` and `decodeStamps`, which is what the drop-a-member cases are about. */
+function answerWire(raw: unknown): void {
+  mockApiGetTyped.mockImplementation((_path: string, decode: (v: unknown) => unknown) => {
+    try {
+      return Promise.resolve(decode(raw));
+    } catch {
+      return Promise.resolve(null);
+    }
+  });
+}
+
+/** The version held for one subject, read off the live map's snapshot. */
+function heldVersion(kind: string, ref: string): string | undefined {
+  return versionMap()
+    .snapshot()
+    .held.find((h) => h.kind === kind && h.ref === ref)?.version;
+}
+
+function heldCount(): number {
+  return versionMap().snapshot().held.length;
+}
+
+/** Every line one console spy recorded, joined, so a case can match one regex. */
+function logLines(spy: { readonly mock: { readonly calls: readonly unknown[][] } }): string {
+  return spy.mock.calls.map((c) => String(c[0])).join("\n");
+}
+
+function turnOf(chatID: string, turnID: string): TurnState {
+  const state = sessions.get(chatID)?.turns.get(turnID);
+  if (state === undefined) {
+    throw new Error(`no resident turn ${turnID}`);
+  }
+  return state;
+}
+
+function seqsOf(chatID: string, turnID: string): number[] {
+  return turnOf(chatID, turnID).entries.map((e) => e.seq);
+}
+
+/** The range reads this module issued, in order, read off the request path rather than off a
+ *  spy: `requestTurnRange` is this module's own export, so the observable is the GET. */
+function rangeReads(): { turnID: string; after: string | null }[] {
+  return mockApiGetTyped.mock.calls
+    .map((c) => String(c[0]))
+    .filter((p) => p.includes("/turns/"))
+    .map((p) => {
+      const u = new URL(p, "https://x");
+      const parts = u.pathname.split("/");
+      return {
+        turnID: decodeURIComponent(parts[parts.length - 1] ?? ""),
+        after: u.searchParams.get("after"),
+      };
+    });
+}
+
+let warn: ReturnType<typeof vi.spyOn>;
+let debug: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   sessions.clear();
-  liveIDs.clear();
-  watermarks.clear();
   resetVersions();
+  // Every loader reports its outcome on the console; a case that is about the LINE spies on
+  // it itself, and the rest would otherwise print one per assertion.
+  warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
 });
 
-describe("loadList pruning", () => {
-  // The unacknowledged-chat exemption is GONE, and this is the case that used to
-  // need it, asserted from the other side. A chat minted client-side was absent
-  // from /api/chats by definition, so `loadList` pruned its row on every SSE
-  // `connected` and nothing could bring it back. Server-minted ids remove the
-  // state: a chat with a store row is a chat the server has, so absence from the
-  // listing means DELETED and pruning is the correct answer.
-  it("prunes a chat the server does not list, with no unacknowledged exemption", async () => {
-    seedSession("real", []);
-    sessions.set("c-untracked", {
-      id: "c-untracked",
-      messages: [],
-      message_count: 0,
-    } as unknown as Session);
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "real", name: "Real", message_count: 0, usage: {} }],
-    });
+afterEach(() => {
+  warn.mockRestore();
+  debug.mockRestore();
+});
 
-    const ok = await loadList();
-    expect(ok).toBe(true);
+// --- loadList: pruning ----------------------------------------------------------------
+
+describe("loadList pruning", () => {
+  // Server-minted ids mean a chat with a store row is a chat the server has, so absence
+  // from the listing means DELETED and no id is exempt from the prune.
+  it("prunes a chat the server does not list", async () => {
+    seedSession("real");
+    seedSession("c-untracked");
+    mockApiGetTyped.mockResolvedValue({ chats: [header("real")] });
+
+    expect(await loadList()).toBe(true);
     const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
     expect(passed.map((s) => s.id)).toEqual(["real"]);
   });
 
-  // The direction the rescue above does NOT cover, kept so the prune cannot be
-  // read as "never prune": a chat the server really has forgotten still goes.
-  it("still prunes an acknowledged chat the server no longer lists", async () => {
-    seedSession("gone", []);
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "kept", name: "Kept", message_count: 0, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed.map((s) => s.id)).toEqual(["kept"]);
-  });
-
   it("keeps a chat that arrived while the request was in flight", async () => {
-    // `upsertHeader` builds that row from an SSE frame, so the answer being applied
-    // predates it and is not entitled to drop it.
+    // `upsertHeader` builds that row from an SSE frame, so the answer being applied predates
+    // it and is not entitled to drop it.
     mockApiGetTyped.mockImplementation(() => {
-      sessions.set("c-sse", { id: "c-sse", messages: [], message_count: 0 } as unknown as Session);
-      return Promise.resolve({
-        chats: [{ id: "kept", name: "Kept", message_count: 0, usage: {} }],
-      });
+      seedSession("c-sse");
+      return Promise.resolve({ chats: [header("kept")] });
     });
 
     await loadList();
@@ -225,1211 +340,1219 @@ describe("loadList pruning", () => {
   });
 
   it("drops a provisional row the server did not name", async () => {
-    // Identical on every axis the rule above tests — unknown before the request,
-    // unnamed by the answer — and the opposite meaning: the boot snapshot painted
-    // it, so the chat may have been deleted since that capture and there is nothing
-    // to preserve. Without the mark, a deleted chat outlives the answer that
-    // omitted it and every reader counting rows sees a phantom.
+    // Identical on every axis the rule above tests — unknown before the request, unnamed by
+    // the answer — and the opposite meaning: the boot snapshot painted it, so the chat may
+    // have been deleted since that capture and there is nothing to preserve.
     mockApiGetTyped.mockImplementation(() => {
-      sessions.set("c-hint", {
-        id: "c-hint",
-        messages: [],
-        message_count: 0,
-        provisional: true,
-      } as unknown as Session);
-      return Promise.resolve({
-        chats: [{ id: "kept", name: "Kept", message_count: 0, usage: {} }],
-      });
+      seedSession("c-hint", { provisional: true });
+      return Promise.resolve({ chats: [header("kept")] });
     });
 
     await loadList();
     const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
     expect(passed.map((s) => s.id)).toEqual(["kept"]);
   });
-});
 
-describe("loadMessages pagination dedupe", () => {
-  it("dedupes a boundary message by id when prepending an older page", async () => {
-    seedSession("c1", [msg("m2", 2), msg("m3", 3)]);
-    // The older page overlaps at m2. With the id cursor the server no longer
-    // re-returns a boundary message the way the old millisecond cursor could, but
-    // the client's id filter still has to make an overlapping or re-issued page
-    // harmless rather than a double render that also corrupts the msg index.
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 3 },
-      messages: [msg("m1", 1), msg("m2", 2)],
-      has_more: false,
-    });
+  it("commits nothing when the list does not decode", async () => {
+    seedSession("real");
+    mockApiGetTyped.mockResolvedValue(null);
 
-    const ok = await loadMessages("c1", "m3");
-    expect(ok).toBe(true);
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    // m2 appears once, not twice.
-    expect(ids).toEqual(["m1", "m2", "m3"]);
-  });
-
-  // The newest page REPLACES the persisted transcript but keeps the in-flight
-  // turn: the server accumulates it in an in-memory buffer and appends it to the
-  // chat file once, at turn_ended, so it is absent from this page while the live
-  // stream has already put it in the store. A blind whole-array replace
-  // therefore DELETED the reply the reader was watching, every time this ran
-  // mid-turn.
-  it("replaces the persisted page and keeps the in-flight turn", async () => {
-    seedSession("c1", [msg("streaming", 9)]);
-    liveIDs.set("c1", "streaming");
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("a", 1), msg("b", 2)],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["a", "b", "streaming"]);
-  });
-
-  // The reported bug, and the reason the boundary is a NAMED message rather than
-  // a position. The agent persists messages DURING a turn — HandlePlan appends
-  // one per plan update, and compaction, an infra-safety block and a cancel each
-  // append an event — so the newest id the page carries is routinely NEWER than
-  // the streaming reply. The old rule kept "everything after that id", which was
-  // nothing, and the replace dropped the reply: the reader switched tabs, came
-  // back to their own prompt above an empty turn body, and only a reload brought
-  // the output back, by which time the buffer had flushed to the file.
-  it("keeps the in-flight turn when the page carries a message persisted after it", async () => {
-    seedSession("c1", [msg("user", 1), msg("streaming", 2), msg("plan", 3)]);
-    liveIDs.set("c1", "streaming");
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      // What the chat file holds mid-turn: the prompt and the plan, not the reply.
-      messages: [msg("user", 1), msg("plan", 3)],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["user", "plan", "streaming"]);
-  });
-
-  // The other side of the same marker: once the turn ends the server persists the
-  // reply, `message_appended` clears the marker, and the page is authoritative
-  // for it. A second copy kept here would double-render the turn.
-  it("drops the local copy once the page carries the finished turn", async () => {
-    seedSession("c1", [msg("user", 1), msg("reply", 2)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("user", 1), msg("reply", 2)],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["user", "reply"]);
-  });
-
-  // A message the server persisted and broadcast while this request was in
-  // flight is newer than the answer being applied, so the answer cannot drop it.
-  // Nothing refetches on its own, so without this it would be missing from the
-  // transcript until the next tab switch.
-  it("keeps a message that arrived while the request was in flight", async () => {
-    seedSession("c1", [msg("a", 1)]);
-    mockApiGetTyped.mockImplementation(() => {
-      sessions.get("c1")?.messages.push(msg("raced", 2));
-      return Promise.resolve({
-        chat: { message_count: 1 },
-        messages: [msg("a", 1)],
-        has_more: false,
-      });
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["a", "raced"]);
-  });
-
-  // The rule is deliberately blind to WHY the page omits the in-flight message,
-  // because from here the two reasons look identical: it may be the turn the
-  // server has not flushed yet, or a turn a rewind removed. What this pins is
-  // that a message present in BOTH is the page's business and is never
-  // duplicated.
-  it("never duplicates a message the page also carries", async () => {
-    seedSession("c1", [msg("a", 1), msg("b", 2)]);
-    liveIDs.set("c1", "b");
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("a", 1), msg("b", 2)],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["a", "b"]);
-  });
-
-  // Same rule the live ingest path applies, in the one window it cannot reach: a
-  // row persisted DURING the fetch goes before the unflushed reply, and a row that
-  // OPENS a turn goes after it. Without this the re-adoption appended everything,
-  // so a plan row ingested mid-fetch landed below the reply — contradicting where
-  // the same row goes when no fetch is racing it, and where the file has it.
-  it("re-adopts a row ingested mid-fetch ahead of the in-flight turn", async () => {
-    seedSession("c1", [msg("live", 5)]);
-    liveIDs.set("c1", "live");
-    mockApiGetTyped.mockImplementation(() => {
-      // Both land while the request is in flight, and both land AFTER the live
-      // message locally — which is where appending them left them.
-      sessions.get("c1")?.messages.push(planRow("plan", 6), userRow("u-2", 7));
-      return Promise.resolve({
-        chat: { message_count: 1 },
-        messages: [msg("page", 1)],
-        has_more: false,
-      });
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["page", "plan", "live", "u-2"]);
-  });
-
-  // Inert with no in-flight turn among the kept rows: with nothing to insert
-  // against, local order is already the answer and re-ordering would invent one.
-  it("leaves the kept rows in local order when no turn is in flight", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockImplementation(() => {
-      sessions.get("c1")?.messages.push(userRow("u-2", 6), planRow("plan", 7));
-      return Promise.resolve({
-        chat: { message_count: 1 },
-        messages: [msg("page", 1)],
-        has_more: false,
-      });
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["page", "u-2", "plan"]);
-  });
-
-  it("keeps a scrolled-up window in order, ahead of the page", async () => {
-    // The local array holds an older page ahead of the newest one. Both older
-    // messages sit BEFORE the page's oldest, so the page says nothing about them
-    // and they stay where they are — this used to drop them, which was lossless
-    // only while a page was every real conversation whole.
-    seedSession("c1", [msg("old1", 1), msg("old2", 2), msg("c", 3)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("c", 3)],
-      has_more: true,
-    });
-
-    await loadMessages("c1");
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids).toEqual(["old1", "old2", "c"]);
+    expect(await loadList()).toBe(false);
+    expect(mockSetSessions).not.toHaveBeenCalled();
   });
 });
 
-// ---------------------------------------------------------------------------
-// `has_more` carried TWO kinds of value under one spelling — a server ANSWER, and
-// a client GUESS spelled `message_count > 0` for every row built from a header,
-// which carries no window at all. Two mechanisms propagated the guess to the "Load
-// older messages" button: this branch's own preservation rule, and `loadList`'s
-// sticky OR.
-//
-// The reported shape is the button appearing for no reason and one click making it
-// go away: the click fetched `before_id = messages[0].id`, got an empty page, and
-// `session.has_more = d.has_more` removed it.
-// ---------------------------------------------------------------------------
-describe("has_more is derived, never a guess preserved", () => {
-  it("answers false when a re-adopting page leaves every message held", async () => {
-    // The reported shape, with every input as it arrives in production. The row's
-    // `has_more` is the GUESS, planted when it was built from a header. The window
-    // then came to hold the WHOLE eight-message chat — the boot snapshot pushes up to
-    // 40 messages of the active chat, so a short one goes whole. And the newest page
-    // is cut short by a BUDGET rather than by the chat's length (a handful of
-    // tool-heavy turns is enough), so older messages are re-adopted in front of it
-    // and the answer describes a page rather than this window.
-    //
-    // The window has to hold EVERYTHING for the guess to be wrong: with a genuine
-    // tail resident, `has_more: true` is the right answer and the preservation was
-    // correct by accident (the case below is that direction).
-    seedSession(
-      "c1",
-      [1, 2, 3, 4, 5, 6, 7, 8].map((n) => msg(`m${String(n)}`, n)),
-    );
-    sessions.get("c1")!.has_more = true; // the guess
+// --- loadList: rebuilding a row from a header -----------------------------------------
+
+describe("loadList rebuilds each row from the header", () => {
+  async function rebuild(h: ChatHeader): Promise<Session> {
+    mockApiGetTyped.mockResolvedValue({ chats: [h] });
+    await loadList();
+    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
+    const row = passed[0];
+    if (row === undefined) {
+      throw new Error("no row committed");
+    }
+    return row;
+  }
+
+  it("takes the server's turn_count", async () => {
+    const row = await rebuild(header("c1", { turn_count: 7 }));
+    expect(row.turn_count).toBe(7);
+  });
+
+  it("carries the resident window over as ONE value", async () => {
+    // The map and the order describe the same turns, so carrying one without the other is a
+    // window that renders nothing or renders it twice.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+
+    const row = await rebuild(header("c1", { turn_count: 1 }));
+    expect([...row.turns.keys()]).toEqual(["t1"]);
+    expect(row.turn_order).toEqual(["t1"]);
+  });
+
+  it("DERIVES has_more over the header's count against the carried window", async () => {
+    // A header carries no window, so this is the derivation and never an answer. Never OR'd
+    // with the previous value: a sticky true is a Load-older button with nothing behind it.
+    const s = seedSession("c1", { has_more: true });
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+
+    expect((await rebuild(header("c1", { turn_count: 1 }))).has_more).toBe(false);
+    expect((await rebuild(header("c1", { turn_count: 4 }))).has_more).toBe(true);
+  });
+
+  it("answers has_more false for an empty chat", async () => {
+    seedSession("c1", { has_more: true });
+    expect((await rebuild(header("c1", { turn_count: 0 }))).has_more).toBe(false);
+  });
+
+  it("answers has_more true for a chat with turns and no resident window", async () => {
+    seedSession("c1");
+    expect((await rebuild(header("c1", { turn_count: 3 }))).has_more).toBe(true);
+  });
+
+  it("replaces last_turn_outcome, and an ABSENT one is a CLEAR", async () => {
+    // The server's own statement rather than client memory, unlike `model` and
+    // `effort_levels` one bullet over, which carry forward.
+    seedSession("c1", { last_turn_outcome: "failed" });
+    expect(
+      (await rebuild(header("c1", { last_turn_outcome: "completed" }))).last_turn_outcome,
+    ).toBe("completed");
+
+    seedSession("c1", { last_turn_outcome: "failed" });
+    expect((await rebuild(header("c1"))).last_turn_outcome).toBeUndefined();
+  });
+
+  it("replaces pending_model in both directions", async () => {
+    // The badge's ONE input: an absent `pending_model` is a CLEAR, which is how a pick
+    // applied at a turn's close reaches every device.
+    seedSession("c1", { pending_model: "old" });
+    expect((await rebuild(header("c1", { pending_model: "new" }))).pending_model).toBe("new");
+
+    seedSession("c1", { pending_model: "old" });
+    expect((await rebuild(header("c1"))).pending_model).toBeUndefined();
+  });
+
+  it("replaces updated_at, which is required on the wire", async () => {
+    seedSession("c1", { updated_at: 1 });
+    expect((await rebuild(header("c1", { updated_at: 999 }))).updated_at).toBe(999);
+  });
+
+  it("carries every client-only projection across the rebuild", async () => {
+    // The server sends none of these, so rebuilding from a header alone silently resets
+    // them — and `loadList` runs on every `connected`, so an ordinary network recovery
+    // dropped the agent's declared status and read a loaded chat as never-loaded.
+    const s = seedSession("c1", {
+      thinking: true,
+      working_label: "Working",
+      agent_status: "waiting_on_user",
+      residency: "loaded",
+      effort_levels: [{ id: "max", name: "Max" }],
+      effort_active: "max",
+      steers: [{ id: "s1", text: "wait", origin: "user" }],
+    });
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+
+    const row = await rebuild(header("c1", { turn_count: 1 }));
+    expect(row.thinking).toBe(true);
+    expect(row.working_label).toBe("Working");
+    expect(row.agent_status).toBe("waiting_on_user");
+    expect(row.residency).toBe("loaded");
+    expect(row.effort_levels).toEqual([{ id: "max", name: "Max" }]);
+    expect(row.effort_active).toBe("max");
+    expect(row.steers).toEqual([{ id: "s1", text: "wait", origin: "user" }]);
+  });
+
+  it("keeps the client's effort catalog when the header carries none", async () => {
+    seedSession("c1", { effort_levels: [{ id: "high", name: "High" }] });
+    const row = await rebuild(header("c1"));
+    expect(row.effort_levels).toEqual([{ id: "high", name: "High" }]);
+  });
+});
+
+// --- loadList: the digest stamp -------------------------------------------------------
+
+describe("loadList observes the chats stamp", () => {
+  it("observes it once the list is committed", async () => {
     mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 8 },
-      messages: [6, 7, 8].map((n) => msg(`m${String(n)}`, n)),
-      has_more: true,
-      draft: "",
+      chats: [header("c1")],
+      subject: stamp("chats", "", "9"),
+    });
+
+    await loadList();
+    expect(hasSubject("chats", "")).toBe(true);
+    expect(heldVersion("chats", "")).toBe("9");
+  });
+
+  it("observes nothing when the list does not decode", async () => {
+    mockApiGetTyped.mockResolvedValue(null);
+    await loadList();
+    expect(heldCount()).toBe(0);
+  });
+});
+
+// --- loadList: the retry ladder -------------------------------------------------------
+
+describe("the retry ladder behind a failed list load", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("climbs three rungs at a doubling delay and then gives up", async () => {
+    // Bounded because the next SSE `connected` refetches the list anyway: what this covers
+    // is the window in between, which no other trigger revisits.
+    mockApiGetTyped.mockResolvedValue(null);
+    await loadList();
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+
+    scheduleListRetry();
+    for (const delay of [1000, 2000, 4000]) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
+  });
+
+  it("arms nothing when the failure was an ABORT", async () => {
+    // An abort is a fact about a REQUEST, so it records no verdict about the server and a
+    // ladder armed on `!ok` would chase a load a newer one superseded. A FRESH instance,
+    // because the verdict is module state: the case above leaves it `unreachable`, and an
+    // abort leaving it alone is exactly the behaviour under test.
+    const loader = await freshLoader();
+    const controller = new AbortController();
+    mockApiGetTyped.mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve(null);
+    });
+    expect(await loader.loadList(controller.signal)).toBe(false);
+
+    loader.scheduleListRetry();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms nothing when the last attempt reached the server", async () => {
+    mockApiGetTyped.mockResolvedValue({ chats: [] });
+    await loadList();
+
+    scheduleListRetry();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+  });
+
+  it("is answered by any list that lands", async () => {
+    mockApiGetTyped.mockResolvedValue(null);
+    await loadList();
+    scheduleListRetry();
+
+    mockApiGetTyped.mockResolvedValue({ chats: [] });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+  });
+
+  it("REPLACES a ladder in flight rather than stacking beside it", async () => {
+    // Without this the orphaned timer also fires and the ladder fetches twice per rung.
+    mockApiGetTyped.mockResolvedValue(null);
+    await loadList();
+    scheduleListRetry();
+    scheduleListRetry();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+  });
+});
+
+// --- loadMessages: walking a page into turns ------------------------------------------
+
+describe("loadMessages walks a page's entries into whole turns", () => {
+  it("opens a TurnState per turn_open and appends every other entry at its seq", async () => {
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), textEntry("t1", 1), turnOpen("t2", 2), textEntry("t2", 1)],
+      header: { turn_count: 2 },
+    });
+
+    expect(await loadMessages("c1")).toBe(true);
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
+    expect(seqsOf("c1", "t1")).toEqual([0, 1]);
+    expect(seqsOf("c1", "t2")).toEqual([0, 1]);
+  });
+
+  it("keeps FILE order when two turns interleave", async () => {
+    // Two of a chat's turns are open together in one state, so a few lines of two turns
+    // alternate and nothing may assume a turn is a contiguous byte range.
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [
+        turnOpen("t1", 1),
+        turnOpen("t2", 2),
+        textEntry("t1", 1),
+        textEntry("t2", 1),
+        textEntry("t1", 2),
+      ],
+      header: { turn_count: 2 },
     });
 
     await loadMessages("c1");
-
-    const s = sessions.get("c1");
-    // Every message the chat has is held, so there is nothing older to fetch and the
-    // button has nothing behind it.
-    expect(s?.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"]);
-    expect(s?.message_count).toBe(8);
-    expect(s?.has_more).toBe(false);
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
+    expect(seqsOf("c1", "t1")).toEqual([0, 1, 2]);
+    expect(seqsOf("c1", "t2")).toEqual([0, 1]);
   });
 
-  it("still answers true when the window genuinely holds only part of the chat", async () => {
-    // The other direction, so the fix cannot be read as "always false": the same
-    // re-adopting shape over a chat with real history above the window.
-    seedSession(
-      "c1",
-      [3, 4, 5, 6].map((n) => msg(`m${String(n)}`, n)),
-    );
-    sessions.get("c1")!.has_more = false;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 40 },
-      messages: [5, 6].map((n) => msg(`m${String(n)}`, n)),
-      has_more: true,
+  it("caches a turn_close's seq as closeAt", async () => {
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), entry("t1", 1, "turn_close", { outcome: "completed" })],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(turnOf("c1", "t1").closeAt).toBe(1);
+  });
+
+  it("is idempotent by turn id", async () => {
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), turnOpen("t1", 1), textEntry("t1", 1)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1"]);
+    expect(seqsOf("c1", "t1")).toEqual([0, 1]);
+  });
+
+  it("seats each open tail under its own (turn, lane)", async () => {
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t1", "o-agent", 3), openTail("t1", "o-sub", 2, { lane: "sub-1" })],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    const open = turnOf("c1", "t1").openEntries;
+    expect([...open.keys()].sort()).toEqual(["", "sub-1"]);
+    expect(open.get("")?.id).toBe("o-agent");
+    // A lane-less tail is normalised to `""`, so no reader has to fold an absent lane.
+    expect(open.get("")?.lane).toBe("");
+    expect(open.get("sub-1")?.n).toBe(2);
+  });
+});
+
+// --- loadMessages: holes and the repair ----------------------------------------------
+
+describe("a gap the walk cannot fold in is a HOLE, and it asks for one range read", () => {
+  it("records the FIRST gap's watermark and asks past it", async () => {
+    // The first gap's watermark, kept: a later entry of the same turn sits past it, so its
+    // index would ask the repair for less than the turn is actually missing.
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), textEntry("t1", 2), textEntry("t1", 4)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(seqsOf("c1", "t1")).toEqual([0]);
+    expect(mockMarkWindowStale).toHaveBeenCalledWith("c1");
+    expect(rangeReads()).toEqual([{ turnID: "t1", after: "0" }]);
+  });
+
+  it("asks for the WHOLE turn when the page did not open it", async () => {
+    // A turn whose `turn_open` the tolerant decode dropped: the server serves whole turns,
+    // so an entry naming a turn this page did not open can only be that.
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), textEntry("t2", 1)],
+      header: { turn_count: 2 },
+    });
+
+    await loadMessages("c1");
+    expect(rangeReads()).toEqual([{ turnID: "t2", after: null }]);
+  });
+
+  it("asks for the whole turn when a TAIL names a turn the walk did not open", async () => {
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t9", "o-9", 1)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(rangeReads()).toEqual([{ turnID: "t9", after: null }]);
+  });
+
+  it("marks the window BEFORE it repaints, and repaints what did arrive", async () => {
+    // The store's own order: the window is stale in the same pass that renders the rest.
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), textEntry("t1", 3)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    const staleAt = mockMarkWindowStale.mock.invocationCallOrder[0] ?? 0;
+    const bumpAt = mockBumpMessages.mock.invocationCallOrder[0] ?? 0;
+    expect(staleAt).toBeLessThan(bumpAt);
+    expect(mockBumpMessages).toHaveBeenCalledWith("c1", "load");
+  });
+
+  it("marks nothing when the page is contiguous", async () => {
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), textEntry("t1", 1)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(mockMarkWindowStale).not.toHaveBeenCalled();
+    expect(rangeReads()).toEqual([]);
+  });
+});
+
+// --- loadMessages: the tolerant decode (addendum 9(b)) --------------------------------
+
+describe("an undecodable entry is DROPPED, never the window", () => {
+  it("keeps the rest of the page and leaves the gap to the range read", async () => {
+    // One unknown field may not cost the whole window: the member is dropped with a warn
+    // naming what it was, and the `seq` gap it leaves reaches the same hole check every
+    // other gap does.
+    seedSession("c1");
+    answerWire({
+      chat: header("c1", { turn_count: 1 }),
+      entries: [
+        turnOpen("c1-t1", 1),
+        { id: "bad", turn: "c1-t1", kind: "text", ts: 2 },
+        textEntry("c1-t1", 2),
+      ],
+      open_entries: [],
+      has_more: false,
+      subject: [],
       draft: "",
+    });
+
+    expect(await loadMessages("c1")).toBe(true);
+    expect(seqsOf("c1", "c1-t1")).toEqual([0]);
+    expect(rangeReads()).toEqual([{ turnID: "c1-t1", after: "0" }]);
+    // The warn IS the signal, so it names the member rather than dropping it silently.
+    expect(logLines(warn)).toMatch(/dropped text bad of turn c1-t1/);
+  });
+
+  it("drops an undecodable open tail the same way", async () => {
+    seedSession("c1");
+    answerWire({
+      chat: header("c1", { turn_count: 1 }),
+      entries: [turnOpen("t1", 1)],
+      open_entries: [{ turn: "t1", id: "o", kind: "text" }],
+      has_more: false,
+      subject: [],
+      draft: "",
+    });
+
+    expect(await loadMessages("c1")).toBe(true);
+    expect(turnOf("c1", "t1").openEntries.size).toBe(0);
+  });
+
+  it("refuses the WHOLE answer when the container is not an array", async () => {
+    // A reply whose `entries` is not an array is not a page with one bad line in it.
+    seedSession("c1", { residency: "loaded" });
+    answerWire({
+      chat: header("c1"),
+      entries: "nope",
+      open_entries: [],
+      has_more: false,
+      subject: [],
+      draft: "",
+    });
+
+    expect(await loadMessages("c1")).toBe(false);
+    expect(sessions.get("c1")?.residency).toBe("load_failed");
+  });
+
+  it("tolerates an answer that carries no subject list at all", async () => {
+    // Optional for the reason the `chats` stamp is: a server from before the stamp still
+    // answers a usable page.
+    seedSession("c1");
+    answerWire({
+      chat: header("c1", { turn_count: 1 }),
+      entries: [turnOpen("t1", 1)],
+      open_entries: [],
+      has_more: false,
+      draft: "",
+    });
+
+    expect(await loadMessages("c1")).toBe(true);
+    expect(heldCount()).toBe(0);
+  });
+});
+
+// --- loadMessages: merging a page with what is held -----------------------------------
+
+describe("mergeTurn keeps what landed while the request was in flight", () => {
+  it("puts held entries past the page's end back on, contiguously", async () => {
+    // The page is a point-in-time read, so an entry that landed during the flight is NEWER
+    // than the answer and the answer is not entitled to drop it.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1), textEntry("t1", 1), textEntry("t1", 2)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), textEntry("t1", 1)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(seqsOf("c1", "t1")).toEqual([0, 1, 2]);
+  });
+
+  it("stops at the first held entry whose seq is not next", async () => {
+    const s = seedSession("c1");
+    const held = seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    // A held array with a hole in it: index 1 carries seq 2, so nothing past the page's end
+    // may be re-seated.
+    held.entries.push(textEntry("t1", 2));
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
+
+    await loadMessages("c1");
+    expect(seqsOf("c1", "t1")).toEqual([0]);
+  });
+
+  it("re-caches closeAt for a held turn_close it carried back", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1), entry("t1", 1, "turn_close", { outcome: "completed" })]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
+
+    await loadMessages("c1");
+    expect(turnOf("c1", "t1").closeAt).toBe(1);
+  });
+
+  it("keeps a held tail the page carries at a LOWER n", async () => {
+    // A delta that landed during the flight leaves the tail at a higher `n`.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)], [openTail("t1", "o1", 5)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t1", "o1", 3)],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(turnOf("c1", "t1").openEntries.get("")?.n).toBe(5);
+  });
+
+  it("drops a held tail the page carries SEALED", async () => {
+    // The page carrying that entry as a sealed line IS the answer that the tail is history.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)], [openTail("t1", "o1", 5)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), entry("t1", 1, "text", { text: "done" }, { id: "o1" })],
+      header: { turn_count: 1 },
+    });
+
+    await loadMessages("c1");
+    expect(turnOf("c1", "t1").openEntries.size).toBe(0);
+  });
+
+  it("keeps a held tail in a lane the page says nothing about", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)], [openTail("t1", "o-sub", 2, { lane: "sub-1" })]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
+
+    await loadMessages("c1");
+    expect(turnOf("c1", "t1").openEntries.get("sub-1")?.id).toBe("o-sub");
+  });
+});
+
+// --- loadMessages: applyPage and has_more --------------------------------------------
+
+describe("applyPage decides whose has_more is the answer", () => {
+  it("PREPENDS an older page and takes the server's answer", async () => {
+    const s = seedSession("c1", { has_more: true });
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      has_more: false,
+      header: { turn_count: 2 },
+    });
+
+    await loadMessages("c1", "t2");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
+    expect(sessions.get("c1")?.has_more).toBe(false);
+  });
+
+  it("prepends only the turns it does not already hold", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), turnOpen("t2", 2)],
+      header: { turn_count: 2 },
+    });
+
+    await loadMessages("c1", "t2");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
+  });
+
+  it("takes the server's answer when a newest page STARTS the window", async () => {
+    seedSession("c1", { has_more: false });
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      has_more: true,
+      header: { turn_count: 9 },
     });
 
     await loadMessages("c1");
     expect(sessions.get("c1")?.has_more).toBe(true);
   });
 
-  it("takes the server's own answer when the page STARTS the window", async () => {
-    // The page is the whole window, so its `has_more` describes exactly the question
-    // the session's flag answers and the derivation must not overrule it. The count
-    // is deliberately HIGHER than the window: only the answer can be right here,
-    // because the server knows the cursor and the derivation does not.
-    seedSession("c1", [msg("m1", 1)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 9 },
-      messages: [msg("m1", 1)],
+  it("keeps the resident turns OLDER than the page's oldest, in front of it", async () => {
+    // Those are pages this client already fetched that the answer says nothing about, so
+    // dropping them would throw a paged-up reader's history away on every no-cursor reload.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    seedTurn(s, "t3", [turnOpen("t3", 3)]);
+    answerPage("c1", {
+      entries: [turnOpen("t2", 2), turnOpen("t3", 3)],
       has_more: false,
-      draft: "",
+      header: { turn_count: 3 },
+    });
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("DERIVES has_more when older turns sit in front of the page", async () => {
+    // The page said nothing about this window's left edge, so `has_more` falls back to the
+    // derivation rather than preserving the previous value: preserving is only right when
+    // that value was an ANSWER.
+    const s = seedSession("c1", { has_more: true });
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", {
+      entries: [turnOpen("t2", 2)],
+      has_more: true,
+      header: { turn_count: 2 },
     });
 
     await loadMessages("c1");
     expect(sessions.get("c1")?.has_more).toBe(false);
   });
 
-  it("takes the server's answer on a before_id page, which becomes the new oldest", async () => {
-    seedSession("c1", [msg("m2", 2)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-    });
-
-    await loadMessages("c1", "m2");
-    expect(sessions.get("c1")?.has_more).toBe(false);
-  });
-});
-
-describe("loadList's has_more is derived too", () => {
-  // The SECOND propagation mechanism, and it could only ever be wrong in the
-  // direction of a spurious button: `existing.has_more ||` made the value sticky, so
-  // once true no reconnect could clear it — and this runs on boot, on login and on
-  // every `connected` handshake.
-  it("clears a stale true when the header's count matches what is resident", async () => {
-    seedSession("c1", [msg("m1", 1), msg("m2", 2)]);
-    sessions.get("c1")!.has_more = true;
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "C", message_count: 2, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed.find((s) => s.id === "c1")?.has_more).toBe(false);
-  });
-
-  it("answers true for a genuinely paged chat", async () => {
-    seedSession("c1", [msg("m9", 9)]);
-    sessions.get("c1")!.has_more = false;
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "C", message_count: 9, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed.find((s) => s.id === "c1")?.has_more).toBe(true);
-  });
-
-  it("answers true for a chat with messages and no resident window", async () => {
-    // A row the client has never loaded: the derivation and the retired
-    // `message_count > 0` guess agree here, which is why the guess survived so long.
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "fresh", name: "F", message_count: 3, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed.find((s) => s.id === "fresh")?.has_more).toBe(true);
-  });
-
-  it("answers false for an empty chat", async () => {
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "empty", name: "E", message_count: 0, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed.find((s) => s.id === "empty")?.has_more).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The window BASE travels on the same subject `has_more` does — the oldest message
-// held — so it is adopted under the same condition.
-// ---------------------------------------------------------------------------
-describe("the window base", () => {
-  it("adopts the server's answer when the page starts the window", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 30 },
-      messages: [msg("m1", 1)],
-      has_more: true,
-      turn_offset: 7,
-      turn_segment_closed: true,
-      draft: "",
+  it("keeps a turn that OPENED while the request was in flight, behind the page's newest", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
+    const answer = mockApiGetTyped.getMockImplementation();
+    // t2 opens while the read is out: seated by the frame, absent from the answer.
+    mockApiGetTyped.mockImplementationOnce((...args: unknown[]) => {
+      seedTurn(s, "t2", [turnOpen("t2", 2)]);
+      return answer?.(...args);
     });
 
     await loadMessages("c1");
-    const s = sessions.get("c1");
-    expect(s?.turn_offset).toBe(7);
-    expect(s?.turn_segment_closed).toBe(true);
+    expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2"]);
   });
 
-  it("adopts it on a before_id page, whose page becomes the new oldest", async () => {
-    seedSession("c1", [msg("m9", 9)]);
-    sessions.get("c1")!.turn_offset = 7;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 30 },
-      messages: [msg("m8", 8)],
+  it("REPLACES the window when the page overlaps nothing it holds", async () => {
+    // No overlap means the window moved out from under what is held, and then the page
+    // replaces, which is the honest answer.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerPage("c1", {
+      entries: [turnOpen("t8", 8), turnOpen("t9", 9)],
       has_more: true,
-      turn_offset: 4,
-      turn_segment_closed: false,
-    });
-
-    await loadMessages("c1", "m9");
-    expect(sessions.get("c1")?.turn_offset).toBe(4);
-  });
-
-  it("leaves the recorded base alone when older pages sit in front of the page", async () => {
-    // The edge did not move, so whatever was recorded for it still describes it —
-    // and the page's own offset describes a DIFFERENT message.
-    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3)]);
-    sessions.get("c1")!.turn_offset = 2;
-    sessions.get("c1")!.turn_segment_closed = true;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 3 },
-      messages: [msg("m3", 3)],
-      has_more: true,
-      turn_offset: 99,
-      turn_segment_closed: false,
-      draft: "",
+      header: { turn_count: 9 },
     });
 
     await loadMessages("c1");
-    const s = sessions.get("c1");
-    expect(s?.turn_offset).toBe(2);
-    expect(s?.turn_segment_closed).toBe(true);
+    expect(sessions.get("c1")?.turn_order).toEqual(["t8", "t9"]);
+    expect(sessions.get("c1")?.has_more).toBe(true);
   });
 
-  it("forgets a recorded base when the server answers without one", async () => {
-    // A stripped field is read as no answer at all, and a base recorded for a
-    // DIFFERENT left edge is worse than none: `turnBaseOf`'s fallback numbers the
-    // window from 1, where a stale offset numbers it from nowhere.
-    seedSession("c1", [msg("m1", 1)]);
-    sessions.get("c1")!.turn_offset = 7;
-    sessions.get("c1")!.turn_segment_closed = true;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-      draft: "",
-    });
+  it("takes the server's turn_count before it reads has_more", async () => {
+    const s = seedSession("c1", { turn_count: 0 });
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t2", 2)], header: { turn_count: 5 } });
 
     await loadMessages("c1");
-    const s = sessions.get("c1");
-    expect(s?.turn_offset).toBeUndefined();
-    expect(s?.turn_segment_closed).toBeUndefined();
-  });
-
-  // `loadList` rebuilds a Session from a header, so every client-only projection it
-  // does not name is dropped — and a reconnect does not bump `syncEpoch`, so nothing
-  // refetches to put the base back.
-  it("survives a loadList that carries the window it describes", async () => {
-    seedSession("c1", [msg("m1", 1)]);
-    sessions.get("c1")!.turn_offset = 7;
-    sessions.get("c1")!.turn_segment_closed = true;
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "C", message_count: 30, usage: {} }],
-    });
-
-    await loadList();
-    const rebuilt = ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[]).find(
-      (s) => s.id === "c1",
-    );
-    expect(rebuilt?.messages.map((m) => m.id)).toEqual(["m1"]);
-    expect(rebuilt?.turn_offset).toBe(7);
-    expect(rebuilt?.turn_segment_closed).toBe(true);
-  });
-
-  it("is absent after a loadList when the row recorded none", async () => {
-    seedSession("c1", [msg("m1", 1)]);
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "C", message_count: 30, usage: {} }],
-    });
-
-    await loadList();
-    const rebuilt = ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[]).find(
-      (s) => s.id === "c1",
-    );
-    expect(rebuilt?.turn_offset).toBeUndefined();
-    expect(rebuilt?.turn_segment_closed).toBeUndefined();
-  });
-
-  it("carries neither half when the row holds only one", async () => {
-    // `adoptTurnBase`'s rule from the other side: one field is a stripped answer, not
-    // a partial fact, so an offset with no seed beside it must not travel alone.
-    seedSession("c1", [msg("m1", 1)]);
-    sessions.get("c1")!.turn_offset = 7;
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "C", message_count: 30, usage: {} }],
-    });
-
-    await loadList();
-    const rebuilt = ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[]).find(
-      (s) => s.id === "c1",
-    );
-    expect(rebuilt?.turn_offset).toBeUndefined();
-    expect(rebuilt?.turn_segment_closed).toBeUndefined();
+    expect(sessions.get("c1")?.turn_count).toBe(5);
+    expect(sessions.get("c1")?.has_more).toBe(true);
   });
 });
+
+// --- loadMessages: residency ---------------------------------------------------------
 
 describe("residency", () => {
-  // Only a successful NEWEST-page load may claim `loaded`: it is what the
-  // activation refetch gate trusts, so nothing weaker (background ingest, an
-  // older-page prepend, a failed fetch) can be allowed to set it.
   it("marks the chat loaded on a successful newest-page load", async () => {
-    seedSession("c1", []);
-    sessions.get("c1")!.residency = "evicted";
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("a", 1)],
-      has_more: false,
-    });
-
-    const ok = await loadMessages("c1");
-    expect(ok).toBe(true);
+    seedSession("c1");
+    answerPage("c1");
+    await loadMessages("c1");
     expect(sessions.get("c1")?.residency).toBe("loaded");
   });
 
-  it("an older-page prepend asserts nothing about residency", async () => {
-    seedSession("c1", [msg("m2", 2)]);
-    sessions.get("c1")!.residency = "partial";
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-    });
+  it("asserts nothing on an older-page prepend", async () => {
+    const s = seedSession("c1", { residency: "partial" });
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 2 } });
 
-    await loadMessages("c1", "m2");
+    await loadMessages("c1", "t2");
     expect(sessions.get("c1")?.residency).toBe("partial");
   });
 
-  it("a failed newest-page load marks the window load_failed", async () => {
-    seedSession("c1", []);
-    sessions.get("c1")!.residency = "evicted";
+  it("marks a failed newest-page load load_failed", async () => {
+    seedSession("c1", { residency: "loaded" });
     mockApiGetTyped.mockResolvedValue(null);
 
-    const ok = await loadMessages("c1");
-    expect(ok).toBe(false);
+    expect(await loadMessages("c1")).toBe(false);
     expect(sessions.get("c1")?.residency).toBe("load_failed");
   });
 
-  it("a failed older-page load leaves residency alone", async () => {
-    seedSession("c1", [msg("m2", 2)]);
-    sessions.get("c1")!.residency = "loaded";
+  it("leaves residency alone when an older-page load fails", async () => {
+    seedSession("c1", { residency: "loaded" });
     mockApiGetTyped.mockResolvedValue(null);
 
-    await loadMessages("c1", "m2");
+    expect(await loadMessages("c1", "t2")).toBe(false);
     expect(sessions.get("c1")?.residency).toBe("loaded");
   });
-
-  it("loadList carries residency across the header rebuild", async () => {
-    // The header list rebuilds Session objects from the server's headers, and
-    // residency is a client-only fact about the carried-over window: dropping
-    // it would make every reconnect read a loaded chat as never-loaded.
-    seedSession("c1", [msg("a", 1)]);
-    sessions.get("c1")!.residency = "loaded";
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 1, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed[0]?.residency).toBe("loaded");
-  });
 });
 
-describe("the digest stamps the loaders observe", () => {
-  // A response stamp is observed AFTER the commit, never before, so the version the map
-  // holds always describes state the store holds. The map's own rules (epoch binding,
-  // the stale refusal) are the library's; what THIS suite owns is which loads observe,
-  // and that a refused stamp leaves no claim behind.
-  function held(kind: string, ref: string): string | undefined {
-    return versionMap()
-      .snapshot()
-      .held.find((h) => h.kind === kind && h.ref === ref)?.version;
-  }
+// --- loadMessages: the stamps it observes --------------------------------------------
 
-  it("observes the chat stamp, epoch included, on a successful newest-page load", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("a", 1)],
-      has_more: false,
-      subject: { kind: "chat", ref: "c1", version: "7", epoch: "e1" },
-    });
-
-    const ok = await loadMessages("c1");
-
-    expect(ok).toBe(true);
-    expect(held("chat", "c1")).toBe("7");
-    expect(versionMap().epoch()).toBe("e1");
-  });
-
-  it("observes nothing on a beforeID prepend", async () => {
-    // An older page extends an already-trusted window and asserts nothing about the
-    // newest edge the stamp describes.
-    seedSession("c1", [msg("m2", 2)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-      subject: { kind: "chat", ref: "c1", version: "9", epoch: "e1" },
-    });
-
-    await loadMessages("c1", "m2");
-
-    expect(hasSubject("chat", "c1")).toBe(false);
-  });
-
-  it("observes nothing when the newest-page load fails", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue(null);
-
-    const ok = await loadMessages("c1");
-
-    expect(ok).toBe(false);
-    expect(hasSubject("chat", "c1")).toBe(false);
-  });
-
-  it("a stamp from a foreign epoch does not refill a bound map", async () => {
-    // The stream bound the map to the hub's epoch; an answer from a process that has
-    // since restarted (or one that raced the restart) carries another and is refused, so
-    // the next digest still names the chat instead of trusting a window from the wrong
-    // process.
-    versionMap().bind("e1");
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("a", 1)],
-      has_more: false,
-      subject: { kind: "chat", ref: "c1", version: "3", epoch: "e2" },
-    });
-
-    const ok = await loadMessages("c1");
-
-    expect(ok).toBe(true);
-    expect(hasSubject("chat", "c1")).toBe(false);
-    expect(versionMap().epoch()).toBe("e1");
-  });
-
-  it("loadList observes the chats stamp once the list is committed", async () => {
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "one", message_count: 0, usage: {} }],
-      subject: { kind: "chats", ref: "", version: "4", epoch: "e1" },
-    });
-
-    const ok = await loadList();
-
-    expect(ok).toBe(true);
-    expect(held("chats", "")).toBe("4");
-  });
-
-  it("loadList observes nothing when the list does not decode", async () => {
-    mockApiGetTyped.mockResolvedValue(null);
-
-    const ok = await loadList();
-
-    expect(ok).toBe(false);
-    expect(hasSubject("chats", "")).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The outcome relatch: a newest-page load re-derives the turn latches from the
-// persisted record it just applied. The latches are client memory, dropped by
-// every gap and absent on every fresh page, while turn_outcome is durable —
-// this call is the heal path that stopped a finished turn's green dot falling
-// to the hollow idle ring whenever the connection blinked.
-// ---------------------------------------------------------------------------
-
-describe("loadMessages outcome relatch", () => {
-  it("relatches after a newest-page load, once the window is settled", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("m1", 1)],
-      has_more: false,
+describe("the digest stamps a window certifies", () => {
+  it("observes the chat stamp and one live_turn per open turn, epoch included", async () => {
+    seedSession("c1");
+    answerPage("c1", {
+      subject: [stamp("chat", "c1", "12", "e1"), stamp("live_turn", "c1/t1", "3", "e1")],
     });
 
     await loadMessages("c1");
-    expect(mockRelatch).toHaveBeenCalledExactlyOnceWith("c1");
-    // After bumpMessages: the repaint and the dot must read one settled window.
-    const bumpOrder = mockBumpMessages.mock.invocationCallOrder[0] ?? Infinity;
-    const relatchOrder = mockRelatch.mock.invocationCallOrder[0] ?? 0;
-    expect(relatchOrder).toBeGreaterThan(bumpOrder);
+    expect(heldVersion("chat", "c1")).toBe("12");
+    expect(heldVersion("live_turn", "c1/t1")).toBe("3");
   });
 
-  it("does not relatch on an older-page prepend", async () => {
-    // A scroll-up extends the window; it says nothing new about how the last
-    // turn ended, and relatching from mid-history would be wrong anyway.
-    seedSession("c1", [msg("m2", 2)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-    });
+  it("observes them AFTER the commit", async () => {
+    seedSession("c1");
+    answerPage("c1", { subject: [stamp("chat", "c1", "1")] });
 
-    await loadMessages("c1", "m2");
-    expect(mockRelatch).not.toHaveBeenCalled();
+    await loadMessages("c1");
+    // A stamp certifies exactly the entries this page served, so it may not be recorded
+    // before they are in the store.
+    expect(sessions.get("c1")?.residency).toBe("loaded");
+    expect(hasSubject("chat", "c1")).toBe(true);
   });
 
-  it("does not relatch on a failed load", async () => {
-    seedSession("c1", []);
+  it("observes nothing on an older-page prepend", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], subject: [stamp("chat", "c1", "1")] });
+
+    await loadMessages("c1", "t2");
+    expect(heldCount()).toBe(0);
+  });
+
+  it("observes nothing when the load fails", async () => {
+    seedSession("c1");
     mockApiGetTyped.mockResolvedValue(null);
 
     await loadMessages("c1");
-    expect(mockRelatch).not.toHaveBeenCalled();
-  });
-
-  // The door's TWO arms, and which one runs is the whole licence question. A stated
-  // `turn_open === false` means no turn record AND no admitted prompt, which is the
-  // whole-liveness statement the full teardown requires; anything else has asserted
-  // nothing that would let this page drop a live turn's markers.
-  it("runs the FULL teardown when the page states the chat has no turn open", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-      turn_open: false,
-    });
-
-    await loadMessages("c1");
-
-    expect(mockHealSettled, "the full teardown").toHaveBeenCalledExactlyOnceWith("c1");
-    // Exclusive: the heal re-derives the verdict itself, so a second relatch here
-    // would be the same derivation twice on one settled window.
-    expect(mockRelatch, "the narrow re-derivation").not.toHaveBeenCalled();
-  });
-
-  it("only re-derives when the page states a turn IS open", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-      turn_open: true,
-    });
-
-    await loadMessages("c1");
-
-    expect(mockHealSettled, "the full teardown").not.toHaveBeenCalled();
-    expect(mockRelatch, "the narrow re-derivation").toHaveBeenCalledExactlyOnceWith("c1");
-  });
-
-  // The gate reads the RAW field, and this is the case that separates the two: the fold
-  // answers false for a step turn, so a gate reading it would run the teardown, whose
-  // `clearLiveTurnMessage` frees the next window replacement to delete the step's content.
-  it("does not run the full teardown for a RUN's step turn", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-      turn_open: true,
-      turn_workflow_step: true,
-    });
-
-    await loadMessages("c1");
-
-    expect(mockHealSettled, "the full teardown").not.toHaveBeenCalled();
-    expect(mockRelatch, "the narrow re-derivation").toHaveBeenCalledExactlyOnceWith("c1");
-  });
-
-  // The full teardown DROPS the in-flight marker, and that marker is the only thing
-  // stopping the window replacement above from deleting an unpersisted reply — which
-  // is why the retraction a run-scoped turn end runs leaves it standing. So the
-  // ORDER is load-bearing on this door too: the merge first, the teardown after, and
-  // the next fetch is what drops a reply the server has since persisted.
-  it("merges the window before the teardown that drops the in-flight marker", async () => {
-    // The stub does the one thing the real teardown does that this file models, so
-    // an ordering that ran it first would delete the reply rather than pass silently.
-    mockHealSettled.mockImplementation((chatID: string) => {
-      liveIDs.delete(chatID);
-    });
-    seedSession("c1", [msg("user", 1), msg("streaming", 2)]);
-    liveIDs.set("c1", "streaming");
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("user", 1)],
-      has_more: false,
-      turn_open: false,
-    });
-
-    await loadMessages("c1");
-
-    const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
-    expect(ids, "the reply this client is holding").toEqual(["user", "streaming"]);
-    expect(liveIDs.get("c1"), "the marker the teardown drops").toBeUndefined();
+    expect(heldCount()).toBe(0);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The fetched calls reach the cards already on screen.
-//
-// A mounted tool card reads the array this module replaces exactly once, at mount:
-// afterwards its DOM has one refresh channel, the per-call signal, and the repaint this
-// module schedules writes none. So the window replacement below has to put the page's own
-// calls on that channel, or a card built from the boot snapshot's truncated copy keeps it
-// for the life of the document.
-// ---------------------------------------------------------------------------
+// --- loadMessages: the server's liveness statement ------------------------------------
+
+describe("loadMessages turn_open", () => {
+  it("stores the server's statement from a newest page, in both directions", async () => {
+    seedSession("c1");
+    answerPage("c1", { live: true });
+    await loadMessages("c1");
+    expect(mockSetTurnOpen).toHaveBeenCalledWith("c1", true);
+
+    answerPage("c1", { live: false });
+    await loadMessages("c1");
+    expect(mockSetTurnOpen).toHaveBeenCalledWith("c1", false);
+  });
+
+  it("FORGETS it when the answer carries no statement", async () => {
+    // An ABSENT field is not a statement, and a `true` left standing would keep `turnLive`
+    // answering live off an answer nothing restates.
+    seedSession("c1", { turn_open: true });
+    answerPage("c1");
+
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.turn_open).toBeUndefined();
+    expect(mockSetTurnOpen).not.toHaveBeenCalled();
+  });
+
+  it("does not write it on an older-page fetch", async () => {
+    const s = seedSession("c1", { turn_open: true });
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], live: false });
+
+    await loadMessages("c1", "t2");
+    expect(mockSetTurnOpen).not.toHaveBeenCalled();
+    expect(sessions.get("c1")?.turn_open).toBe(true);
+  });
+
+  it("runs the teardown on a stated live === false, after the repaint", async () => {
+    // A stated `false` covers the chat's WHOLE liveness, so it retracts a `thinking` this
+    // client is holding for a turn that is over — and the repaint and the dot must read one
+    // settled window.
+    seedSession("c1");
+    answerPage("c1", { live: false });
+
+    await loadMessages("c1");
+    expect(mockClearTurnState).toHaveBeenCalledWith("c1");
+    const bumpAt = mockBumpMessages.mock.invocationCallOrder[0] ?? 0;
+    const tearAt = mockClearTurnState.mock.invocationCallOrder[0] ?? 0;
+    expect(bumpAt).toBeLessThan(tearAt);
+  });
+
+  it("runs no teardown on a live turn or on a silent answer", async () => {
+    seedSession("c1");
+    answerPage("c1", { live: true });
+    await loadMessages("c1");
+    answerPage("c1");
+    await loadMessages("c1");
+    expect(mockClearTurnState).not.toHaveBeenCalled();
+  });
+});
+
+// --- loadMessages: the card channel and the draft -------------------------------------
 
 describe("loadMessages publishes a fetched window's tool calls", () => {
-  /** An assistant row carrying one tool call, which is the shape a card is mounted from. */
-  function toolRow(id: string, ts: number, callID: string): Message {
-    return {
-      id,
-      role: "assistant",
-      ts,
-      tool_calls: [{ id: callID, title: "Run Command", kind: "execute", status: "completed", ts }],
-    } as unknown as Message;
-  }
-
-  it("hands the newest page's own rows to the card channel", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [toolRow("m1", 1, "tc1")],
-      has_more: false,
+  it("hands the newest page's own turns to the card channel", async () => {
+    // A card already on screen has ONE refresh channel, the per-call signal, and the repaint
+    // writes none — so a card built from a truncated copy would keep its hint for the life
+    // of the document.
+    seedSession("c1");
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), turnOpen("t2", 2)],
+      header: { turn_count: 2 },
     });
 
     await loadMessages("c1");
-
-    expect(mockRepublishToolCalls).toHaveBeenCalledExactlyOnceWith("c1", [
-      expect.objectContaining({ id: "m1" }),
-    ]);
-    // Before the repaint, so a paint that reads a card's state reads the published value
-    // rather than the one the mount was built from.
-    const publishOrder = mockRepublishToolCalls.mock.invocationCallOrder[0] ?? Infinity;
-    const bumpOrder = mockBumpMessages.mock.invocationCallOrder[0] ?? 0;
-    expect(publishOrder).toBeLessThan(bumpOrder);
+    expect(mockRepublishToolCalls).toHaveBeenCalledExactlyOnceWith("c1", ["t1", "t2"]);
   });
 
-  it("publishes the fetched rows only, never the local tail it kept", async () => {
-    // The in-flight turn's calls arrive on their own signal as they stream, so
-    // republishing the local copy would push a card BACKWARDS to whatever the store held
-    // before this answer.
-    seedSession("c1", [toolRow("streaming", 9, "tc-live")]);
-    liveIDs.set("c1", "streaming");
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [toolRow("m1", 1, "tc1")],
-      has_more: false,
-    });
+  it("publishes the fetched turns only, never the local tail it kept", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t2", 2)], header: { turn_count: 2 } });
 
     await loadMessages("c1");
-
-    const published = (mockRepublishToolCalls.mock.calls[0]?.[1] ?? []) as Message[];
-    expect(published.map((m) => m.id)).toEqual(["m1"]);
+    expect(mockRepublishToolCalls).toHaveBeenCalledExactlyOnceWith("c1", ["t2"]);
   });
 
   it("publishes nothing on an older-page prepend", async () => {
-    // A prepend mounts its rows fresh, so every card it produces is built from the
-    // fetched call already.
-    seedSession("c1", [toolRow("m2", 2, "tc2")]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [toolRow("m1", 1, "tc1")],
-      has_more: false,
-    });
+    // A prepended page mounts its cards fresh.
+    const s = seedSession("c1");
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)] });
 
-    await loadMessages("c1", "m2");
-
+    await loadMessages("c1", "t2");
     expect(mockRepublishToolCalls).not.toHaveBeenCalled();
   });
 
   it("publishes nothing on a failed load", async () => {
-    seedSession("c1", []);
+    seedSession("c1");
     mockApiGetTyped.mockResolvedValue(null);
 
     await loadMessages("c1");
-
     expect(mockRepublishToolCalls).not.toHaveBeenCalled();
   });
 });
 
-// ---------------------------------------------------------------------------
-// The header-derived latch seed.
-//
-// `loadList` runs at boot AND on every SSE `connected`, so it is the one door
-// that covers a fresh page, a brand-new browser session and a reconnect after
-// hours. It rebuilds every Session from a ChatHeader, and the two outcome latches
-// used to be a pure carry-over from an EXISTING in-memory session — so a client
-// that had just connected had nothing to carry and every tab fell to the hollow
-// `idle` ring however its last turn had really ended.
-//
-// These cases pin the WIRING: that the seed is consulted at all, and that it is
-// handed the two inputs its rules need. The mapping itself is store.test.ts's,
-// and the user-visible dot is tab-dot.test.ts's.
-// ---------------------------------------------------------------------------
-
-describe("loadList seeds the outcome latches from the header", () => {
-  it("consults the seed once per listed chat, with the header that carries the outcome", async () => {
-    mockApiGetTyped.mockResolvedValue({
-      chats: [
-        { id: "c1", name: "One", message_count: 0, usage: {}, last_turn_outcome: "completed" },
-        { id: "c2", name: "Two", message_count: 0, usage: {} },
-      ],
-    });
-
-    expect(await loadList()).toBe(true);
-    expect(mockLatchFields).toHaveBeenCalledTimes(2);
-    expect(mockLatchFields.mock.calls[0]?.[1]).toMatchObject({
-      id: "c1",
-      last_turn_outcome: "completed",
-    });
-    expect(mockLatchFields.mock.calls[1]?.[1]).toMatchObject({ id: "c2" });
+describe("loadMessages parks the server's draft", () => {
+  it("parks it on a newest page", async () => {
+    seedSession("c1");
+    answerPage("c1", { draft: "half a sentence" });
+    await loadMessages("c1");
+    expect(sessions.get("c1")?.draft).toBe("half a sentence");
   });
 
-  it("passes the EXISTING row so the seed can see a local latch and a live turn", async () => {
-    // Both of the seed's first two rules read the existing session, so handing it
-    // undefined would silently make the local verdict lose to the header's.
-    seedSession("c1", [msg("m1", 1)]);
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 1, usage: {} }],
-    });
+  it("does not park it on an older-page fetch, which is a scroll-up rather than an open", async () => {
+    const s = seedSession("c1", { draft: "kept" });
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)], draft: "from the page" });
 
-    await loadList();
-    expect(mockLatchFields.mock.calls[0]?.[0]).toMatchObject({ id: "c1" });
-  });
-
-  it("passes undefined for a chat this client has never seen", async () => {
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "fresh", name: "Fresh", message_count: 0, usage: {} }],
-    });
-
-    await loadList();
-    expect(mockLatchFields.mock.calls[0]?.[0]).toBeUndefined();
-  });
-
-  it("spreads whatever the seed returns onto the rebuilt session", async () => {
-    mockLatchFields.mockReturnValue({ turn_done: true } as never);
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 0, usage: {} }],
-    });
-
-    await loadList();
-    const passed = (mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[];
-    expect(passed[0]?.turn_done).toBe(true);
+    await loadMessages("c1", "t2");
+    expect(sessions.get("c1")?.draft).toBe("kept");
   });
 });
 
-// ---------------------------------------------------------------------------
-// The two SERVER facts the rebuilt row takes from the header, and the direction is
-// the OPPOSITE of `model` and `effort_levels` in the same literal: those fall back
-// to the existing row, because an absent value there means no news. Here an absent
-// value is a CLEAR, and preserving either one is a defect with a named consequence.
-// A carried-forward outcome makes a real movement invisible to the latch seed's
-// first rule, which compares the incoming outcome against the STORED one; a
-// carried-forward timestamp reports the wrong age beside the dot.
-// ---------------------------------------------------------------------------
-
-describe("loadList takes the header's word for the two server facts", () => {
-  /** The rebuilt row `loadList` handed to the store, which is what these assert on:
-   *  the row is built from the header rather than spread from the existing session. */
-  function rebuilt(): Session | undefined {
-    return ((mockSetSessions.mock.calls.at(-1)?.[0] ?? []) as Session[])[0];
-  }
-
-  it("writes the outcome and the timestamp the header carries", async () => {
-    mockApiGetTyped.mockResolvedValue({
-      chats: [
-        {
-          id: "c1",
-          name: "One",
-          message_count: 0,
-          usage: {},
-          last_turn_outcome: "failed",
-          updated_at: 222,
-        },
-      ],
-    });
-
-    expect(await loadList()).toBe(true);
-    expect(rebuilt()?.last_turn_outcome, "outcome").toBe("failed");
-    expect(rebuilt()?.updated_at, "timestamp").toBe(222);
-  });
-
-  it("CLEARS a stale outcome the header no longer reports, and replaces the timestamp", async () => {
-    // `last_turn_outcome` is omitempty on the wire, so an absent one is the shape a
-    // real header produces for a chat whose outcome went away. `updated_at` is 0
-    // here because that is the value a truthiness-based carry-over swallows while a
-    // nullish one lets through, so the assertion separates a replace from both.
-    seedSession("c1", []);
-    sessions.set("c1", {
-      ...(sessions.get("c1") as Session),
-      last_turn_outcome: "completed",
-      updated_at: 111,
-    });
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 0, usage: {}, updated_at: 0 }],
-    });
-
-    expect(await loadList()).toBe(true);
-    expect(rebuilt()?.last_turn_outcome, "outcome").toBeUndefined();
-    expect(rebuilt()?.updated_at, "timestamp").toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// `turn_open`: the server's liveness statement, riding the transcript response.
-//
-// The in-flight reply is in the server's in-memory buffer, so a turn in flight has
-// no carrier in this payload — and the client used to read that silence as "nothing
-// closed this turn" and derive `unknown`, a terminal verdict during a window in
-// which nothing can know one. Shipping the liveness in the SAME response is what
-// removes the window: there is no gap between the transcript painting and the
-// verdict arriving, because they are one payload.
-// ---------------------------------------------------------------------------
-
-describe("loadMessages turn_open", () => {
-  it("stores the server's statement from a newest-page load", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-    });
-
-    await loadMessages("c1");
-    expect(sessions.get("c1")?.turn_open).toBe(true);
-  });
-
-  it("never reads NOT LIVE as live when the field is ABSENT", async () => {
-    // Optional-tolerant for the same reason `draft` is: a server that predates the
-    // field, or a proxy that strips it, must not fail the whole chat load. Client
-    // and server ship in one image, so this is a guard rather than a path.
-    //
-    // The assertion is `not true` rather than `false` because what the loader owes is
-    // the property `turnLive` reads (`turn_open === true`), and an absent field must not
-    // satisfy it: reading a missing statement as live would claim a turn is running on
-    // every chat an older server serves. What the DECODER makes of an absent field is
-    // the wire case below, which this suite's mocked `apiGetTyped` otherwise bypasses.
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-    expect(sessions.get("c1")?.turn_open).not.toBe(true);
-  });
-
-  it("does not write it on an OLDER-page fetch", async () => {
-    // A scroll-up asserts nothing about whether a turn is running NOW, so it must
-    // not restate liveness — same rule the draft already follows. A stale `false`
-    // written here would put the projection back on `thinking` alone mid-turn.
-    seedSession("c1", [msg("m2", 2)]);
-    sessions.set("c1", { ...(sessions.get("c1") as Session), turn_open: true });
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-      turn_open: false,
-    });
-
-    await loadMessages("c1", "m2");
-    expect(sessions.get("c1")?.turn_open).toBe(true);
-  });
-
-  it("leaves a live thinking alone when the newest page says no turn is open", async () => {
-    // `turn_open` answers FALSE for the whole admission-to-bridge-ready window, so a
-    // refetch landing inside it would clear the one input protecting a prompt the
-    // server has already accepted, and the next repaint would derive a terminal
-    // outcome for the turn the reader is waiting on.
-    seedSession("c1", []);
-    sessions.set("c1", { ...(sessions.get("c1") as Session), thinking: true });
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: false,
-    });
-
-    await loadMessages("c1");
-    expect(sessions.get("c1")?.thinking).toBe(true);
-  });
-
-  // The owner marker, folded here because this is the one door where the two facts arrive
-  // apart. A run executes on the launching chat's session and its launching turn ended the
-  // moment the run was created, so without the fold that chat renders its own newest turn
-  // as running for the whole run.
-  it("folds a run's step turn to NOT this chat's own", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      turn_workflow_step: true,
-    });
-
-    await loadMessages("c1");
-    expect(sessions.get("c1")?.turn_open).toBe(false);
-  });
-
-  it("adopts the step's in-flight content even though the chat reads idle", async () => {
-    // Why the marker is ADDITIVE rather than a narrowing: the snapshot is the only copy
-    // of a live step's transcript, so the fold must not cost the content it describes.
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      turn_workflow_step: true,
-      live_turn: liveTurn("stepping", 4),
-    });
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.turn_open, "the chat's own liveness").toBe(false);
-    expect(mockNoteLiveTurn, "the step's unpersisted marker").toHaveBeenCalledWith(
-      "c1",
-      "stepping",
-    );
-  });
-
-  // Through the REAL decoder, which every other case here bypasses, because what an
-  // absent field decodes TO is the whole licence question at the door below: a collapse
-  // to false hands the full teardown a statement the answer never made, and the chats
-  // that reach it are exactly the ones served by something that does not send the field.
-  it("decodes an ABSENT field as no statement, and only re-derives on it", async () => {
-    seedSession("c1", []);
-    // A statement already held, so the forget is observable: an answer that says nothing
-    // must not leave the previous one standing either.
-    sessions.set("c1", { ...(sessions.get("c1") as Session), turn_open: true });
-    const rawBody = {
-      chat: {
-        id: "c1",
-        name: "c1",
-        usage: {
-          context_pct: 0,
-          context_size: 0,
-          credits: 0,
-          turn_count: 0,
-          last_turn_ms: 0,
-          has_real_data: false,
-        },
-        created_at: 1,
-        updated_at: 1,
-        message_count: 1,
-      },
-      messages: [{ id: "u1", role: "user", ts: 1 }],
-      has_more: false,
-    };
-    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
-      Promise.resolve(decode(rawBody)),
-    );
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.turn_open, "a statement nothing made").toBeUndefined();
-    expect(mockHealSettled, "the full teardown").not.toHaveBeenCalled();
-    expect(mockRelatch, "the narrow re-derivation").toHaveBeenCalledExactlyOnceWith("c1");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The render cause a fetched window is announced with.
-//
-// A fetched page is a REPLAY, and the paint has no way to know it from the array:
-// `messages.ts` marks the rows that arrived since its last pass and gives only
-// those the entry animation and the live-edge pin, and a cold open paints on
-// `setActive` BEFORE this fetch resolves — so the paint this drives is not a chat
-// switch, and its predecessor recorded no tail to append past. Announced as
-// `shape`, that state is indistinguishable from a first prompt, and a reopened
-// conversation's whole window read as arrivals: every row animated in unison, and
-// every user turn in it asked the scroller for the live edge.
-// ---------------------------------------------------------------------------
+// --- loadMessages: the replay announcement and the aborts ----------------------------
 
 describe("loadMessages announces a fetched window as a replay", () => {
   it("bumps the newest page with the load cause", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [userRow("u1", 1), msg("a1", 2)],
-      has_more: false,
-    });
+    seedSession("c1");
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
 
     await loadMessages("c1");
     expect(mockBumpMessages).toHaveBeenCalledExactlyOnceWith("c1", "load");
   });
 
   it("bumps an older-page prepend with it too", async () => {
-    // The same statement from the other branch. The tail arithmetic already read a
-    // prepend's rows as silent, so this is what makes that a claim the loader makes
-    // rather than a coincidence of where the tail sits.
-    seedSession("c1", [msg("m2", 2)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
+    const s = seedSession("c1");
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)] });
+
+    await loadMessages("c1", "t2");
+    expect(mockBumpMessages).toHaveBeenCalledExactlyOnceWith("c1", "load");
+  });
+
+  it("writes nothing at all when the read was aborted", async () => {
+    const s = seedSession("c1", { residency: "loaded" });
+    const controller = new AbortController();
+    mockApiGetTyped.mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve(null);
     });
 
-    await loadMessages("c1", "m2");
-    expect(mockBumpMessages).toHaveBeenCalledExactlyOnceWith("c1", "load");
+    expect(await loadMessages("c1", undefined, controller.signal)).toBe(false);
+    expect(s.residency).toBe("loaded");
+    expect(mockBumpMessages).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the chat left the store during the flight", async () => {
+    seedSession("c1");
+    mockApiGetTyped.mockImplementation(() => {
+      sessions.delete("c1");
+      return Promise.resolve({
+        chat: header("c1"),
+        entries: [],
+        open_entries: [],
+        has_more: false,
+        live: undefined,
+        subject: [],
+        draft: "",
+      });
+    });
+
+    expect(await loadMessages("c1")).toBe(false);
+    expect(mockBumpMessages).not.toHaveBeenCalled();
+  });
+});
+
+// --- confirmChatExists ---------------------------------------------------------------
+
+describe("confirmChatExists asks the SERVER about one chat id", () => {
+  function answer(over: { ok?: boolean; data?: unknown; status?: number; error?: string }): void {
+    mockApiGetTypedOrError.mockResolvedValue({
+      ok: over.ok ?? false,
+      data: over.data ?? null,
+      status: over.status ?? 0,
+      error: over.error ?? "",
+    });
+  }
+
+  it("adopts the header through the ONE door and answers exists", async () => {
+    // The same door the missed `chat_created` frame would have used, so no second
+    // Session-construction rule appears and the deep link opens.
+    answer({ ok: true, status: 200, data: { chat: header("c-abc") } });
+
+    expect(await confirmChatExists("c-abc")).toBe("exists");
+    expect(mockUpsertHeader).toHaveBeenCalledExactlyOnceWith(header("c-abc"));
+  });
+
+  it("asks for the cheapest page the endpoint will serve", async () => {
+    // The ONE read that names a limit: the transcript is not what is being asked about.
+    answer({ ok: true, status: 200, data: { chat: header("c-abc") } });
+
+    await confirmChatExists("c-abc");
+    expect(String(mockApiGetTypedOrError.mock.calls[0]?.[0])).toBe("/api/chats/c-abc?limit=1");
+  });
+
+  it("percent-encodes the id it asks about", async () => {
+    answer({ status: 404 });
+    await confirmChatExists("a/b");
+    expect(String(mockApiGetTypedOrError.mock.calls[0]?.[0])).toBe("/api/chats/a%2Fb?limit=1");
+  });
+
+  it("reads a 404 as the server reading its own store", async () => {
+    answer({ status: 404 });
+    expect(await confirmChatExists("c-abc")).toBe("gone");
+  });
+
+  it("reads a 400 as gone only for an id this client can SEE is not a chat id", async () => {
+    answer({ status: 400 });
+    expect(await confirmChatExists("not a chat id")).toBe("gone");
+  });
+
+  it("refuses to read a request-level 400 as no such chat", async () => {
+    // A stale CSRF header, a host check or a body limit is not evidence about a
+    // conversation, and reading one as "no such chat" is the false-terminal claim this
+    // whole path exists to remove.
+    answer({ status: 400 });
+    expect(await confirmChatExists("c-abc")).toBe("unresolved");
+  });
+
+  const shaped: [string, boolean][] = [
+    ["c-abc", true],
+    ["Abc_012-xyz", true],
+    ["", false],
+    ["a".repeat(128), true],
+    ["a".repeat(129), false],
+    ["c abc", false],
+    ["c.abc", false],
+    ["c/abc", false],
+    ["café", false],
+  ];
+  it.each(shaped)(
+    "shapes %s as %s, at least as permissively as the server's gate",
+    async (id, ok) => {
+      // KEEP IT AT LEAST AS PERMISSIVE as `ids.ValidChatID`: accepting an id the server would
+      // refuse costs one non-terminal `unresolved`, while refusing one it would ACCEPT reads a
+      // request-level 400 as "no such chat".
+      answer({ status: 400 });
+      expect(await confirmChatExists(id)).toBe(ok ? "unresolved" : "gone");
+    },
+  );
+
+  it("answers unresolved for every failure that is not the server answering", async () => {
+    for (const status of [0, 401, 403, 409, 500, 502, 503]) {
+      answer({ status });
+      expect(await confirmChatExists("c-abc")).toBe("unresolved");
+    }
+  });
+
+  it("answers unresolved for a 2xx whose body did not decode", async () => {
+    answer({ ok: true, status: 200, data: null });
+    expect(await confirmChatExists("c-abc")).toBe("unresolved");
+  });
+
+  it("adopts nothing on any answer that is not a decoded 2xx", async () => {
+    answer({ status: 404 });
+    await confirmChatExists("c-abc");
+    expect(mockUpsertHeader).not.toHaveBeenCalled();
+  });
+});
+
+// --- the range read of section 6.4 ---------------------------------------------------
+
+describe("the range read repairs one turn", () => {
+  function answerRange(o: {
+    entries?: Entry[];
+    open?: OpenEntry[];
+    subject?: SubjectStamp[];
+  }): void {
+    mockApiGetTyped.mockResolvedValue({
+      entries: o.entries ?? [],
+      open_entries: o.open ?? [],
+      subject: o.subject ?? [],
+    });
+  }
+
+  it("asks past `after` when the store holds part of the turn", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerRange({ entries: [textEntry("t1", 1)] });
+
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(mockApiGetTyped).toHaveBeenCalled());
+    expect(String(mockApiGetTyped.mock.calls[0]?.[0])).toBe("/api/chats/c1/turns/t1?after=0");
+  });
+
+  it("omits `after` for a turn the store does not hold at all", async () => {
+    // Which is what a lost `turn_opened` asks for.
+    seedSession("c1");
+    answerRange({ entries: [turnOpen("t1", 1)] });
+
+    requestTurnRange("c1", "t1");
+    await vi.waitFor(() => expect(mockApiGetTyped).toHaveBeenCalled());
+    expect(String(mockApiGetTyped.mock.calls[0]?.[0])).toBe("/api/chats/c1/turns/t1");
+  });
+
+  it("seats the answer's entries from the held turn's own end", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerRange({ entries: [textEntry("t1", 1), textEntry("t1", 2)] });
+
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(seqsOf("c1", "t1")).toEqual([0, 1, 2]));
+    expect(mockBumpMessages).toHaveBeenCalledWith("c1", "load");
+  });
+
+  it("REPLACES the turn's open tails with the answer's, lane set included", async () => {
+    // The answer is the turn's whole open state, so a lane the answer does not carry has no
+    // tail any more — unlike the WINDOW merge, where a held tail in an unmentioned lane
+    // survives because the page is a point-in-time read of a turn the client also streams.
+    const s = seedSession("c1");
+    seedTurn(
+      s,
+      "t1",
+      [turnOpen("t1", 1)],
+      [openTail("t1", "stale", 1), openTail("t1", "stale-sub", 1, { lane: "sub-1" })],
+    );
+    answerRange({ entries: [textEntry("t1", 1)], open: [openTail("t1", "fresh", 4)] });
+
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(turnOf("c1", "t1").entries).toHaveLength(2));
+    expect([...turnOf("c1", "t1").openEntries.values()].map((o) => o.id)).toEqual(["fresh"]);
+  });
+
+  it("stops at a SECOND gap rather than folding an entry in at the wrong index", async () => {
+    // The answer's entries are seated contiguously from the held turn's own end and the walk
+    // stops at the first `seq` that is not next, which is a second gap. The re-ask that gap
+    // asks for is NOT observable today — see the hand-off in this box's report: the
+    // recursive `requestTurnRange` runs while `runTurnRange` still holds the `(chat, turn)`
+    // key, so it early-returns and the warn below is the whole signal.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerRange({ entries: [textEntry("t1", 1), textEntry("t1", 3)] });
+
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(seqsOf("c1", "t1")).toEqual([0, 1]));
+    expect(logLines(warn)).toMatch(/turn range: c1 t1 left a gap at seq 2/);
+  });
+
+  it("seats a whole-turn answer by its turn_open.n among the resident turns", async () => {
+    // The ordinal is session-absolute in every window, so it orders a repaired turn against
+    // the ones already held without a second projection.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    seedTurn(s, "t3", [turnOpen("t3", 3)]);
+    answerRange({ entries: [turnOpen("t2", 2)] });
+
+    requestTurnRange("c1", "t2");
+    await vi.waitFor(() => expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t2", "t3"]));
+  });
+
+  it("seats a turn whose ordinal cannot be read at the END, where a newer turn belongs", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerRange({ entries: [entry("t9", 0, "turn_open", { source: "prompt" })] });
+
+    requestTurnRange("c1", "t9");
+    await vi.waitFor(() => expect(sessions.get("c1")?.turn_order).toEqual(["t1", "t9"]));
+  });
+
+  it("seats nothing and asks nothing again when the answer carried no turn_open", async () => {
+    // There is no turn to render and asking again would ask the same question.
+    seedSession("c1");
+    answerRange({ entries: [textEntry("t1", 1)] });
+
+    requestTurnRange("c1", "t1");
+    await vi.waitFor(() => expect(logLines(warn)).toMatch(/answered no turn_open/));
+    expect(sessions.get("c1")?.turns.size).toBe(0);
+    expect(rangeReads()).toHaveLength(1);
+  });
+
+  it("asks ONCE per (chat, turn) while a read is in flight", async () => {
+    // A burst of holes on one turn asks once, because the answer covers every gap that
+    // arrived while it was out.
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    let release = (): void => undefined;
+    mockApiGetTyped.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ entries: [], open_entries: [], subject: [] });
+        }),
+    );
+
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(mockApiGetTyped).toHaveBeenCalledTimes(1));
+    requestTurnRange("c1", "t1", 0);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.waitFor(() => expect(mockBumpMessages).toHaveBeenCalled());
+    requestTurnRange("c1", "t1", 0);
+    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
+    // Release the last one too: the in-flight table is module state, so a repair left out
+    // here would make every later case's `requestTurnRange("c1", "t1", …)` a no-op.
+    release();
+    await vi.waitFor(() => expect(mockBumpMessages).toHaveBeenCalledTimes(2));
+  });
+
+  it("leaves the window PARTIAL while another repair is still out", async () => {
+    // The restore is read after one lands, so `residency` may go back to `loaded` only when
+    // nothing is missing rather than after whichever answer arrives last. The restore
+    // ITSELF is not observable today; see this box's report for the hand-off.
+    const s = seedSession("c1", { residency: "partial" });
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    seedTurn(s, "t2", [turnOpen("t2", 1)]);
+    let release = (): void => undefined;
+    mockApiGetTyped.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ entries: [], open_entries: [], subject: [] });
+        }),
+    );
+    mockApiGetTyped.mockResolvedValue({
+      entries: [textEntry("t1", 1)],
+      open_entries: [],
+      subject: [],
+    });
+
+    requestTurnRange("c1", "t2", 0);
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(seqsOf("c1", "t1")).toEqual([0, 1]));
+    expect(sessions.get("c1")?.residency).toBe("partial");
+
+    release();
+    await vi.waitFor(() => expect(mockApiGetTyped).toHaveBeenCalledTimes(2));
+  });
+
+  it("leaves the window stale when the repair gets no answer", async () => {
+    // A repair that gets no answer must not hand the store a window it will trust.
+    const s = seedSession("c1", { residency: "partial" });
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    mockApiGetTyped.mockResolvedValue(null);
+
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(logLines(warn)).toMatch(/turn range: no answer for c1 t1/));
+    expect(sessions.get("c1")?.residency).toBe("partial");
+    expect(mockBumpMessages).not.toHaveBeenCalled();
+  });
+
+  it("observes the stamps the answer certifies", async () => {
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)]);
+    answerRange({
+      entries: [textEntry("t1", 1)],
+      subject: [stamp("live_turn", "c1/t1", "7")],
+    });
+
+    requestTurnRange("c1", "t1", 0);
+    await vi.waitFor(() => expect(heldVersion("live_turn", "c1/t1")).toBe("7"));
+  });
+
+  it("writes nothing for a chat the store no longer holds", async () => {
+    answerRange({ entries: [turnOpen("t1", 1)] });
+    requestTurnRange("c-gone", "t1");
+    await vi.waitFor(() => expect(mockApiGetTyped).toHaveBeenCalled());
+    expect(mockBumpMessages).not.toHaveBeenCalled();
   });
 });
 
 // ---------------------------------------------------------------------------
-// `chatListLoaded`: whether the store is ENTITLED to say a chat does not exist.
-//
-// An empty store has two meanings and they want opposite answers — the server said
-// there are no such chats, or the server could not be reached — and `app.ts` reaches
-// the second one on every boot whose chat fetch failed: it toasts, creates a fresh
-// chat, and then applies the URL's route anyway. So without this predicate a reload
-// of any `/chat/<id>` against a restarting server rewrote the URL and claimed the
-// conversation no longer exists, seconds after saying the chats could not be loaded.
-// A terminal verdict derived from absent data, which is the defect class `turn_open`
-// removes one surface over.
+// Module state: `chatListLoaded`, `serverMayAnswer` and the outcome counters.
 //
 // Each case takes a FRESH module instance, because the latch is module state and a
-// successful load anywhere in this file would otherwise decide the answer for the
-// rest of it.
+// successful load anywhere in this file would otherwise decide the answer for the rest
+// of it.
 // ---------------------------------------------------------------------------
 
 let bootSeq = 0;
 
 /** A fresh `store-load` instance, so the latch starts where a page load starts.
  *
- *  The busted specifier is what makes it fresh: the browser's module map is
- *  URL-keyed, so `vi.resetModules()` alone hands back the cached instance. The
- *  `.ts` extension is mandatory — written `.js` the suite stays green while v8
- *  attributes every evaluation to a file that does not exist. */
+ *  The busted specifier is what makes it fresh: the browser's module map is URL-keyed, so
+ *  `vi.resetModules()` alone hands back the cached instance. The `.ts` extension is
+ *  mandatory — written `.js` the suite stays green while v8 attributes every evaluation to a
+ *  file that does not exist. */
 async function freshLoader(): Promise<typeof StoreLoad> {
   vi.resetModules();
   bootSeq++;
@@ -1442,20 +1565,9 @@ describe("chatListLoaded", () => {
     expect(loader.chatListLoaded()).toBe(false);
   });
 
-  it("is true once a list has landed", async () => {
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 0, usage: {} }],
-    });
-
-    expect(await loader.loadList()).toBe(true);
-    expect(loader.chatListLoaded()).toBe(true);
-  });
-
   it("is true for a list that landed EMPTY, which is a real answer", async () => {
-    // The distinction the predicate exists for, from the side that is easy to get
-    // wrong: a server with no chats HAS answered, so a deep link naming one is
-    // genuinely dead and the router is entitled to say so.
+    // The distinction the predicate exists for, from the side that is easy to get wrong: a
+    // server with no chats HAS answered, so a deep link naming one is genuinely dead.
     const loader = await freshLoader();
     mockApiGetTyped.mockResolvedValue({ chats: [] });
 
@@ -1465,7 +1577,6 @@ describe("chatListLoaded", () => {
 
   it("stays false when the fetch failed", async () => {
     const loader = await freshLoader();
-    // What `apiGetTyped` answers for an unreachable server or an undecodable body.
     mockApiGetTyped.mockResolvedValue(null);
 
     expect(await loader.loadList()).toBe(false);
@@ -1473,14 +1584,10 @@ describe("chatListLoaded", () => {
   });
 
   it("stays true after a LATER failed refetch", async () => {
-    // Latched rather than a snapshot of the last attempt: once a list has landed the
-    // store holds a row per chat, and a failed refetch does not un-know them. It
-    // also self-heals in the other direction, because `loadList` runs on every SSE
-    // `connected`.
+    // Latched rather than a snapshot of the last attempt: once a list has landed the store
+    // holds a row per chat, and a failed refetch does not un-know them.
     const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 0, usage: {} }],
-    });
+    mockApiGetTyped.mockResolvedValue({ chats: [header("c1")] });
     await loader.loadList();
 
     mockApiGetTyped.mockResolvedValue(null);
@@ -1489,996 +1596,108 @@ describe("chatListLoaded", () => {
   });
 });
 
-describe("the refetch-outcome line", () => {
-  // The counters are module state, so each case takes a fresh instance and its counts
-  // start at zero. The mocked GET performs no fetch, so every line ends in `proto=?`; the
-  // regexes stop at `proto=` so they hold for a real request too.
-  it("a failed newest-page load warns with the chat id and the outcome counts", async () => {
+describe("serverMayAnswer", () => {
+  it("is true before anything has been tried", async () => {
     const loader = await freshLoader();
-    seedSession("c1", []);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(loader.serverMayAnswer()).toBe(true);
+  });
+
+  it("is false for a load that reached the network and failed", async () => {
+    const loader = await freshLoader();
+    mockApiGetTyped.mockResolvedValue(null);
+    await loader.loadList();
+    expect(loader.serverMayAnswer()).toBe(false);
+  });
+
+  it("is true for a load that was ABORTED, which is routine", async () => {
+    const loader = await freshLoader();
+    const controller = new AbortController();
+    mockApiGetTyped.mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve(null);
+    });
+    await loader.loadList(controller.signal);
+    expect(loader.serverMayAnswer()).toBe(true);
+  });
+
+  it("stays true once a list has landed, even after the server goes down", async () => {
+    // `listLoaded` is LATCHED where the reach is not, so rows in the store outlive a server
+    // that has since gone away.
+    const loader = await freshLoader();
+    mockApiGetTyped.mockResolvedValue({ chats: [header("c1")] });
+    await loader.loadList();
+
+    mockApiGetTyped.mockResolvedValue(null);
+    await loader.loadList();
+    expect(loader.serverMayAnswer()).toBe(true);
+  });
+});
+
+describe("the refetch-outcome line", () => {
+  // The counters are module state, so each case takes a fresh instance and its counts start
+  // at zero. The mocked GET performs no fetch, so every line ends in `proto=?`; the regexes
+  // stop at `proto=` so they hold for a real request too.
+  it("warns with the chat id and the counts when a newest-page load fails", async () => {
+    const loader = await freshLoader();
+    seedSession("c1");
     mockApiGetTyped.mockResolvedValue(null);
 
     await loader.loadMessages("c1");
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toMatch(
+    expect(logLines(warn)).toMatch(
       /^chat_get: c1 load_failed changed=0 unchanged=0 load_failed=1 proto=/,
     );
   });
 
-  it("a newest-page load that changed the window reports changed", async () => {
+  it("reports changed when the page moved the window", async () => {
     const loader = await freshLoader();
-    seedSession("c1", [msg("a", 1)]);
-    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("a", 1), msg("b", 2)],
-      has_more: false,
-    });
+    seedSession("c1");
+    answerPage("c1", { entries: [turnOpen("t1", 1)], header: { turn_count: 1 } });
 
     await loader.loadMessages("c1");
-    expect(debug).toHaveBeenCalledTimes(1);
-    expect(debug.mock.calls[0]?.[0]).toMatch(
+    expect(logLines(debug)).toMatch(
       /^chat_get: c1 changed changed=1 unchanged=0 load_failed=0 proto=/,
     );
   });
 
-  it("a newest-page load that returned the held window reports unchanged", async () => {
+  it("reports unchanged when the page carried the window it already held", async () => {
+    // The measurement is over turn ids plus each turn's entry ids and open tails: enough to
+    // tell a page that changed nothing from one that did.
     const loader = await freshLoader();
-    seedSession("c1", [msg("a", 1)]);
-    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("a", 1)],
-      has_more: false,
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1), textEntry("t1", 1)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1), textEntry("t1", 1)],
+      header: { turn_count: 1 },
     });
 
     await loader.loadMessages("c1");
-    expect(debug).toHaveBeenCalledTimes(1);
-    expect(debug.mock.calls[0]?.[0]).toMatch(
+    expect(logLines(debug)).toMatch(
       /^chat_get: c1 unchanged changed=0 unchanged=1 load_failed=0 proto=/,
     );
   });
 
-  it("an older-page prepend reports no outcome", async () => {
+  it("reads a moved open TAIL as a change", async () => {
     const loader = await freshLoader();
-    seedSession("c1", [msg("m2", 2)]);
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
+    const s = seedSession("c1");
+    seedTurn(s, "t1", [turnOpen("t1", 1)], [openTail("t1", "o1", 1)]);
+    answerPage("c1", {
+      entries: [turnOpen("t1", 1)],
+      open: [openTail("t1", "o1", 4)],
+      header: { turn_count: 1 },
     });
 
-    await loader.loadMessages("c1", "m2");
-    const lines = [...warn.mock.calls, ...debug.mock.calls]
-      .map((c) => c[0])
-      .filter((a): a is string => typeof a === "string" && a.startsWith("chat_get:"));
-    expect(lines).toEqual([]);
+    await loader.loadMessages("c1");
+    expect(logLines(debug)).toMatch(/c1 changed changed=1/);
   });
-});
 
-// ---------------------------------------------------------------------------
-// `serverMayAnswer`: whether asking the server about ONE id can be answered.
-//
-// The gate on the confirmation round trip, and it exists because `chatListLoaded`
-// answered a DIFFERENT question in that role and the difference cost a population.
-// The short-circuit argued that a client whose list never loaded would be answered
-// `unresolved` one request later, so the trip buys nothing — true when the server
-// is down, false when the boot load was ABORTED, which `loadList`'s own first line
-// (`listController?.abort()`) makes routine: a `connected`-driven refetch overtakes
-// the boot load and it returns false exactly like a load against a dead server. In
-// that population the chat exists, the server would answer 200, and the deep link
-// dead-ended anyway.
-//
-// So an abort is recorded as a fact about a REQUEST and nothing else, and only a
-// load that resolved and produced no list is evidence about the server.
-//
-// Fresh module per case, for `chatListLoaded`'s reason: both values are module state.
-// ---------------------------------------------------------------------------
-
-describe("serverMayAnswer", () => {
-  it("is true before any list has been read", async () => {
-    // Nothing has been established, so there is no evidence asking would fail — and
-    // a 404 is authoritative whether or not a list ever landed.
+  it("reports nothing at all on an older-page prepend", async () => {
     const loader = await freshLoader();
-    expect(loader.serverMayAnswer()).toBe(true);
-  });
-
-  it("is true once a list has landed", async () => {
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue({ chats: [] });
-
-    expect(await loader.loadList()).toBe(true);
-    expect(loader.serverMayAnswer()).toBe(true);
-  });
-
-  it("is FALSE when the load resolved and produced no list", async () => {
-    // Round 3's population, and the behaviour that must not regress: a reload of any
-    // `/chat/<id>` against a restarting server holds the URL and stays quiet, because
-    // boot has already said the chats could not be loaded.
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue(null);
-
-    expect(await loader.loadList()).toBe(false);
-    expect(loader.serverMayAnswer()).toBe(false);
-  });
-
-  it("stays TRUE when an ABORT is the last thing that completed", async () => {
-    // The recovered population, and the state the router actually meets. `loadList`
-    // aborts whatever is in flight before it starts, so a `connected`-driven refetch
-    // overtakes the boot load; the boot load then resolves aborted, boot toasts and
-    // creates a fallback chat, and `applyInitialRoute` runs — all while the refetch
-    // is still on the wire. So the only COMPLETED attempt at that moment is an abort,
-    // and the old gate read it as "do not ask" against a healthy server.
-    //
-    // The second load deliberately never resolves, which is what makes this the abort
-    // state rather than the recovery below: a successful load would overwrite the
-    // reach and the assertion would pass whatever the abort recorded.
-    const loader = await freshLoader();
-    let releaseFirst: (v: unknown) => void = () => undefined;
-    mockApiGetTyped.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          releaseFirst = resolve;
-        }),
-    );
-    mockApiGetTyped.mockImplementationOnce(() => new Promise(() => undefined));
-
-    const first = loader.loadList();
-    void loader.loadList();
-    releaseFirst({ chats: [] });
-
-    expect(await first).toBe(false);
-    expect(loader.chatListLoaded()).toBe(false);
-    expect(loader.serverMayAnswer()).toBe(true);
-  });
-
-  it("stays TRUE after an abort that a later load recovered", async () => {
-    // The self-heal, kept beside it: `loadList` runs on every SSE `connected`, so the
-    // superseding load is normally the one that lands.
-    const loader = await freshLoader();
-    let releaseFirst: (v: unknown) => void = () => undefined;
-    mockApiGetTyped.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          releaseFirst = resolve;
-        }),
-    );
-    mockApiGetTyped.mockResolvedValue({ chats: [] });
-
-    const first = loader.loadList();
-    const second = loader.loadList();
-    releaseFirst({ chats: [] });
-
-    expect(await first).toBe(false);
-    expect(await second).toBe(true);
-    expect(loader.serverMayAnswer()).toBe(true);
-  });
-
-  it("is true after a failed refetch that FOLLOWED a successful load", async () => {
-    // `listLoaded` is latched and the reach is not, and this is why both are read:
-    // the store still holds rows, and only BOOT toasts — so a reader here has been
-    // told nothing and a deep link is worth one request plus a retry rather than
-    // silence.
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue({
-      chats: [{ id: "c1", name: "One", message_count: 0, usage: {} }],
-    });
-    await loader.loadList();
-
-    mockApiGetTyped.mockResolvedValue(null);
-    expect(await loader.loadList()).toBe(false);
-    expect(loader.serverMayAnswer()).toBe(true);
-  });
-
-  it("goes false again on a fresh page whose FIRST load fails", async () => {
-    // The latch is per page load, so the recovery above cannot leak into the next
-    // boot and re-open the silent-dead-end the false arm exists to keep closed.
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue(null);
-
-    await loader.loadList();
-    expect(loader.serverMayAnswer()).toBe(false);
-    expect(loader.chatListLoaded()).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// `scheduleListRetry`: the bounded ladder the gap door arms for a list load that
-// reached the network and failed.
-//
-// The window it covers is the one no other trigger revisits: `loadList` runs on every
-// SSE `connected`, so a stream that DROPS heals itself, and a stream that stayed up
-// while the list request died has nothing else scheduled — the gap has already cleared
-// every claim this client held, so the sidebar sits on rows it was licensed to drop.
-//
-// Fresh module per case, for `chatListLoaded`'s reason: the reach, the timer and the
-// attempt count are all module state. Fake timers are installed AFTER the loader is
-// imported, because the import is a real fetch off the dev server.
-// ---------------------------------------------------------------------------
-
-describe("the retry ladder behind a failed list load", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("climbs three rungs at a doubling delay, then stops and says so", async () => {
-    const loader = await freshLoader();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockApiGetTyped.mockResolvedValue(null);
-    expect(await loader.loadList()).toBe(false);
-
-    vi.useFakeTimers();
-    loader.scheduleListRetry();
-
-    await vi.advanceTimersByTimeAsync(999);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(4000);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
-    // Bounded: a page left sitting on a dead server stops asking rather than polling it
-    // for the life of the document.
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-
-  it("arms nothing for a load an ABORT answered, which said nothing about the server", async () => {
-    // The reach gate, and the reason it cannot be `!ok` at the call site: `loadList`
-    // aborts whatever is in flight before it starts, so a superseded load returns false
-    // having learned nothing — and laddering on it would chase a request a newer one has
-    // already replaced. The second load deliberately never resolves, so the abort is the
-    // last thing that completed.
-    const loader = await freshLoader();
-    let releaseFirst: (v: unknown) => void = () => undefined;
-    mockApiGetTyped.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          releaseFirst = resolve;
-        }),
-    );
-    mockApiGetTyped.mockImplementationOnce(() => new Promise(() => undefined));
-
-    const first = loader.loadList();
-    void loader.loadList();
-    releaseFirst({ chats: [] });
-    expect(await first).toBe(false);
-
-    vi.useFakeTimers();
-    loader.scheduleListRetry();
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
-  });
-
-  it("is answered by a list that lands anywhere, not only by its own rung", async () => {
-    // The `connected` refetch normally beats the ladder to it, and once the list has
-    // landed there is nothing left to retry.
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValueOnce(null);
-    expect(await loader.loadList()).toBe(false);
-
-    vi.useFakeTimers();
-    loader.scheduleListRetry();
-    mockApiGetTyped.mockResolvedValue({ chats: [] });
-    expect(await loader.loadList()).toBe(true);
-
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
-  });
-
-  it("lets a second gap REPLACE the ladder rather than stacking one beside it", async () => {
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue(null);
-    expect(await loader.loadList()).toBe(false);
-
-    vi.useFakeTimers();
-    loader.scheduleListRetry();
-    await vi.advanceTimersByTimeAsync(500);
-    loader.scheduleListRetry();
-
-    // The first ladder's rung was due here and is gone with it.
-    await vi.advanceTimersByTimeAsync(500);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(1);
-    // The replacement's own first rung, one second after the second gap.
-    await vi.advanceTimersByTimeAsync(500);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
-  });
-
-  it("clears the rung it replaces, so a superseded rung cannot widen the ladder", async () => {
-    // The interleaving the door's own `cancelListRetry` does not cover, because it is the
-    // CONTINUATION that arms the second time: a fresh gap's load supersedes a rung's, so the
-    // aborted rung settles false with no reach verdict AFTER the door has already armed a
-    // replacement, and its continuation reads the newer failure's `unreachable` and arms
-    // again. Without the clear both timers are pending and each fetches.
-    const loader = await freshLoader();
-    mockApiGetTyped.mockResolvedValue(null);
-    expect(await loader.loadList()).toBe(false);
-
-    vi.useFakeTimers();
-    loader.scheduleListRetry();
-
-    // The rung's own load, held open so a newer one can supersede it.
-    let releaseRung: (v: unknown) => void = () => undefined;
-    mockApiGetTyped.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          releaseRung = resolve;
-        }),
-    );
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(2);
-
-    // The fresh gap: its own load aborts the rung's and then fails on its own account, so
-    // the door arms a replacement while the aborted rung has not settled.
-    expect(await loader.loadList()).toBe(false);
-    loader.scheduleListRetry();
-
-    releaseRung({ chats: [] });
-    await vi.advanceTimersByTimeAsync(0);
-
-    // ONE rung is armed, not two: the replacement's 1s timer is gone with it, and the
-    // continuation's own 2s rung is the only fetch inside this window.
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(mockApiGetTyped).toHaveBeenCalledTimes(4);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// `confirmChatExists`: the SERVER's answer about an id the store holds no row for.
-//
-// `chatListLoaded` above answers "has a list ever landed", and the router used to
-// treat that as licence to say a conversation no longer exists. It is one claim too
-// far: a list is authoritative at the instant it lands and stale from then on, so a
-// chat created on another device while this client's SSE was down is absent from a
-// store that is otherwise entitled to speak — and the reader got a terminal verdict
-// about a conversation that exists. That is the same class as reading an empty store
-// as proof of deletion, one population narrower.
-//
-// So the verdict comes from the server, and BOTH directions are pinned here: what
-// licenses the terminal claim (a 404, and a 400 for an id that is not a chat id at
-// all) and what refuses it (a 5xx, a dead network, an aborted request, an
-// undecodable body). @cplieger/fetch reports the whole no-answer family with either
-// status 0 or the real 2xx status plus `code: "decode"`, so none of them can be
-// mistaken for a 404.
-// ---------------------------------------------------------------------------
-
-/** A chat header the way `/api/chats/{id}` sends one. */
-function confirmHeader(id: string): unknown {
-  return { id, name: "Made elsewhere", message_count: 3, usage: {} };
-}
-
-describe("confirmChatExists", () => {
-  it("asks the single-chat endpoint for the named id, and for no transcript", async () => {
-    mockApiGetTypedOrError.mockResolvedValue({ ok: false, status: 404, data: null, error: "" });
-
-    await confirmChatExists("c-somewhere");
-
-    // `limit=1` rather than the endpoint's 50-message default: a verdict reads the
-    // header, so a page of transcript would be paid for and thrown away.
-    expect(mockApiGetTypedOrError.mock.calls[0]?.[0]).toBe("/api/chats/c-somewhere?limit=1");
-  });
-
-  it("percent-encodes the id it is handed", async () => {
-    mockApiGetTypedOrError.mockResolvedValue({ ok: false, status: 400, data: null, error: "" });
-
-    await confirmChatExists("c-a/b?c");
-
-    expect(mockApiGetTypedOrError.mock.calls[0]?.[0]).toBe("/api/chats/c-a%2Fb%3Fc?limit=1");
-  });
-
-  it("answers `exists` and ADOPTS the header for a chat the server knows", async () => {
-    // The direction that makes the round trip worth making: the deep link goes on to
-    // open rather than dead-ending, and the header lands through the same door the
-    // `chat_created` frame this client missed would have used.
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: true,
-      status: 200,
-      data: { chat: confirmHeader("c-elsewhere") },
-      error: "",
-    });
-
-    expect(await confirmChatExists("c-elsewhere")).toBe("exists");
-    expect(mockUpsertHeader).toHaveBeenCalledExactlyOnceWith(confirmHeader("c-elsewhere"));
-  });
-
-  it("answers `gone` for a 404, which is the server having read its own store", async () => {
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: false,
-      status: 404,
-      data: null,
-      error: "chat not found",
-    });
-
-    expect(await confirmChatExists("c-deleted")).toBe("gone");
-    expect(mockUpsertHeader).not.toHaveBeenCalled();
-  });
-
-  it("answers `gone` for a 400 on an id that is NOT SHAPED like a chat id", async () => {
-    // The server's own id-validity rule refused it, so there is no such chat and
-    // there never can be. Reading this as unresolved would hold the URL forever on
-    // the empty-state hero, which is the silent dead end the toast exists to close.
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: false,
-      status: 400,
-      data: null,
-      error: "invalid chat id",
-    });
-
-    expect(await confirmChatExists("not a chat id")).toBe("gone");
-  });
-
-  it("REFUSES the claim for a 400 on a WELL-SHAPED id", async () => {
-    // The narrowing, and the class it closes. A 400 is only evidence about a chat
-    // when something ties it to the chat, and the only thing that can is the id
-    // itself: measured against the route as it stands every 400 source IS id-shaped,
-    // so this changes no verdict today. What it stops is a middleware answering 400
-    // later for a request-level reason — a stale CSRF header, a host check, a body
-    // limit — being rendered as "that conversation no longer exists", which is the
-    // exact false-terminal-claim class this whole path exists to eliminate.
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: false,
-      status: 400,
-      data: null,
-      error: "invalid origin",
-    });
-
-    expect(await confirmChatExists("c-0123456789abcdef")).toBe("unresolved");
-    expect(mockUpsertHeader).not.toHaveBeenCalled();
-  });
-
-  it("keeps a 404 authoritative for a well-shaped id", async () => {
-    // The other half of the narrowing: it touches the 400 arm ONLY. A 404 is the
-    // server having read its own store, so the id's shape is irrelevant to it, and
-    // narrowing that arm too would leave the ordinary deleted-chat case unresolvable.
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: false,
-      status: 404,
-      data: null,
-      error: "chat not found",
-    });
-
-    expect(await confirmChatExists("c-0123456789abcdef")).toBe("gone");
-  });
-
-  it("treats every off-charset id as explainable, mirroring the server's gate", async () => {
-    // The shape rule is the server's (`ids.ValidChatID`: non-empty, at most 128
-    // bytes, nothing outside `[A-Za-z0-9_-]`), and this pins the boundary from the
-    // side that matters — an id the server WOULD refuse must still read as
-    // explainable, or a real malformed-id 400 becomes a silent held URL.
-    for (const id of [
-      "c-a/b",
-      "c-a.b",
-      "c-a b",
-      "../etc/passwd",
-      "c-\u00e9",
-      "c".repeat(129),
-      "..",
-    ]) {
-      mockApiGetTypedOrError.mockResolvedValue({
-        ok: false,
-        status: 400,
-        data: null,
-        error: "invalid chat id",
-      });
-      expect(await confirmChatExists(id), id).toBe("gone");
-    }
-  });
-
-  it("treats every ON-charset id as unexplainable, so the 400 stays non-terminal", async () => {
-    // The permissive direction the drift argument rests on. An id this client cannot
-    // fault is one whose 400 it cannot attribute, so the claim is refused.
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    for (const id of [
-      "c-0123456789abcdef",
-      "c-1730000000-abc",
-      "legacy_id",
-      "A-1",
-      "c".repeat(128),
-    ]) {
-      mockApiGetTypedOrError.mockResolvedValue({
-        ok: false,
-        status: 400,
-        data: null,
-        error: "invalid origin",
-      });
-      expect(await confirmChatExists(id), id).toBe("unresolved");
-    }
-  });
-
-  it("REFUSES the claim on a 500 — the server failed, it did not answer", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: false,
-      status: 500,
-      data: null,
-      error: "internal error",
-    });
-
-    expect(await confirmChatExists("c-real")).toBe("unresolved");
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-
-  it("REFUSES the claim when nothing reached the network", async () => {
-    // Status 0 is @cplieger/fetch's whole no-response family: a dead network, a
-    // timeout, a caller abort, a request it could not even build. Deriving a
-    // terminal verdict from any of them is the defect one layer down from the one
-    // this function exists to fix.
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: false,
-      status: 0,
-      data: null,
-      error: "network error",
-    });
-
-    expect(await confirmChatExists("c-real")).toBe("unresolved");
-  });
-
-  it("REFUSES the claim for a 200 whose body did not decode", async () => {
-    // A rejected decoder lands on the failure side carrying the real 2xx status, so
-    // the answer arrived and could not be read — which says nothing about the chat.
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockApiGetTypedOrError.mockResolvedValue({
-      ok: false,
-      status: 200,
-      data: null,
-      error: "$.chat_confirm: not an object",
-    });
-
-    expect(await confirmChatExists("c-real")).toBe("unresolved");
-    expect(mockUpsertHeader).not.toHaveBeenCalled();
-  });
-
-  it("REFUSES the claim for a 2xx that carried no body at all", async () => {
-    // An empty 2xx collapses to `data: null`, and an absent body is not a statement
-    // about the chat either. Falls through to the status test, which 200 fails.
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mockApiGetTypedOrError.mockResolvedValue({ ok: true, status: 200, data: null, error: "" });
-
-    expect(await confirmChatExists("c-real")).toBe("unresolved");
-    expect(mockUpsertHeader).not.toHaveBeenCalled();
-  });
-});
-
-describe("the no-cursor reload keeps the older pages already resident", () => {
-  // The byte budget changed what a newest page IS. While `limit = 50` messages
-  // returned every real conversation whole, "replace with the window" was
-  // lossless. Under the budget the newest page is frequently ONE message, and the
-  // reachable caller with no cursor is the gap heal — so a blind replace threw a
-  // paged-up reader's history away, and their scroll position with it.
-  it("re-adopts the messages older than the page's oldest", async () => {
-    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3), msg("m4", 4)]);
-    // The page is the newest two, which is what the byte budget answers for a
-    // chat whose recent messages are large.
-    mockApiGetTyped.mockResolvedValue({
-      chat: { id: "c1", message_count: 4 },
-      messages: [msg("m3", 3), msg("m4", 4)],
-      has_more: true,
-      draft: "",
-    });
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["m1", "m2", "m3", "m4"]);
-  });
-
-  // The page's answer is about the PAGE's start, so a re-adopting page says nothing
-  // about this window's left edge and `has_more` falls back to the derivation. Here
-  // all three messages are held against a count of 3, so the derivation answers false.
-  it("derives has_more when it re-adopted, rather than taking the page's answer", async () => {
-    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("m3", 3)]);
-    sessions.get("c1")!.has_more = false;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { id: "c1", message_count: 3 },
-      messages: [msg("m3", 3)],
-      has_more: true,
-      draft: "",
-    });
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.has_more).toBe(false);
-  });
-
-  it("adopts the page's has_more when nothing was re-adopted", async () => {
-    seedSession("c1", [msg("m3", 3)]);
-    sessions.get("c1")!.has_more = false;
-    mockApiGetTyped.mockResolvedValue({
-      chat: { id: "c1", message_count: 9 },
-      messages: [msg("m3", 3)],
-      has_more: true,
-      draft: "",
-    });
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.has_more).toBe(true);
-  });
-
-  // No overlap means the window moved out from under what is held, so the page
-  // replaces. Anchoring on the page's oldest id is what makes that decidable
-  // without a count or a timestamp.
-  it("replaces when the page shares no message with what is held", async () => {
-    seedSession("c1", [msg("old1", 1), msg("old2", 2)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { id: "c1", message_count: 2 },
-      messages: [msg("new1", 8), msg("new2", 9)],
-      has_more: true,
-      draft: "",
-    });
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["new1", "new2"]);
-  });
-
-  // The in-flight turn still has to survive, and it still goes at the END: the
-  // server accumulates it in memory and appends it to the chat file once, at
-  // turn_ended, so no page can carry it.
-  it("keeps the in-flight turn at the end while re-adopting the older pages", async () => {
-    seedSession("c1", [msg("m1", 1), msg("m2", 2), msg("live", 3)]);
-    liveIDs.set("c1", "live");
-    mockApiGetTyped.mockResolvedValue({
-      chat: { id: "c1", message_count: 2 },
-      messages: [msg("m2", 2)],
-      has_more: true,
-      draft: "",
-    });
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["m1", "m2", "live"]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The in-flight turn on the transcript GET (`live_turn`). Until the field existed the
-// response stated `turn_open` and carried nothing that described it, so a client that
-// found a chat busy at connect rendered the prompt over an empty body until the turn
-// ended. It is the ONE channel for that content: the connect carries `busy_chats` and no
-// turn transcript. The four calls below are the four the live `message_created` door
-// makes, so the same content lands in the same places whichever door delivers it.
-// ---------------------------------------------------------------------------
-
-/** The `live_turn` object as the decoder hands it over. `block_base` is spelled here
- *  because it is a REQUIRED wire field: a fixture omitting it would state a shape the
- *  server cannot send, and the ZERO default is the ordinary answer on this channel — its
- *  caps are wide enough that an ordinary turn is not cut. */
-function liveTurn(id: string, seq: number, truncated = false, blockBase = 0): unknown {
-  return { message: msg(id, 5), chunk_seq: seq, block_base: blockBase, truncated };
-}
-
-describe("loadMessages live turn", () => {
-  it("adopts the in-flight turn a mid-turn page carries", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      // What the chat file holds mid-turn: the prompt, and no reply.
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      live_turn: liveTurn("streaming", 4),
-    });
-
-    await loadMessages("c1");
-
-    expect(mockUpsertMessage).toHaveBeenCalledWith(
-      "c1",
-      expect.objectContaining({ id: "streaming" }),
-    );
-    // The dedup watermark: without it every chunk the server already folded in
-    // double-appends when the live stream resumes.
-    expect(mockSetWatermark).toHaveBeenCalledWith("c1", "streaming", 4);
-    // The unpersisted marker, or the NEXT refetch reads this message as one the server
-    // deliberately omitted and deletes it.
-    expect(mockNoteLiveTurn).toHaveBeenCalledWith("c1", "streaming");
-    // The snapshot record, which on this uncut answer says the window starts at 0 and
-    // nothing was withheld. A POSITIVE statement rather than a skipped call.
-    expect(mockNoteAdopted).toHaveBeenCalledWith("c1", "streaming", {
-      blockBase: 0,
-      truncated: false,
-    });
-  });
-
-  it("notes a truncated in-flight turn as the tail of a capped payload", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      live_turn: liveTurn("streaming", 4, true),
-    });
-
-    await loadMessages("c1");
-
-    // A reader shown the tail with nothing saying so reads a bounded payload as the whole
-    // reply, which is what makes the cap admissible in the first place.
-    expect(mockNoteAdopted).toHaveBeenCalledWith("c1", "streaming", {
-      blockBase: 0,
-      truncated: true,
-    });
-  });
-
-  // ONE RECORD ANSWERS FOR BOTH FACTS. A later GET for the same message outranks an earlier
-  // one — a wider read is the fresher answer — so its `truncated: false` is a statement
-  // about the SAME message rather than an absent field, and its base describes the array
-  // THIS response delivered. ONE unconditional write is what makes the answer REPLACE the
-  // record held for that id: a `false` here IS the retraction of an earlier marker. Without
-  // it the note stays on screen telling a reader that output is still coming for a reply
-  // they hold whole.
-  it.each([true, false])(
-    "records the GET's answer whichever way it reads (%s)",
-    async (truncated) => {
-      seedSession("c1", []);
-      mockApiGetTyped.mockResolvedValue({
-        chat: { message_count: 1 },
-        messages: [userRow("u1", 1)],
-        has_more: false,
-        turn_open: true,
-        live_turn: liveTurn("streaming", 4, truncated, 117),
-      });
-
-      await loadMessages("c1");
-
-      // EXACT calls rather than `toHaveBeenCalledWith`: what is being pinned is that there is
-      // ONE write per answer, so a re-introduced second door (a clear beside the note) shows
-      // up here as an extra call. And it is keyed on the message this answer describes, so an
-      // earlier turn that really was capped keeps its own record.
-      expect(mockNoteAdopted.mock.calls).toEqual([
-        ["c1", "streaming", { blockBase: 117, truncated }],
-      ]);
-    },
-  );
-
-  // THE STALE-ANSWER GATE. The response is a point-in-time read, and `mergeMessage`
-  // replaces content and blocks with the incoming's whenever they are non-empty — so
-  // adopting a copy older than what the live stream has already delivered would replace a
-  // fuller local accumulation with a shorter one, which is the reply visibly shrinking.
-  it("refuses an in-flight turn older than what the live stream already folded in", async () => {
-    seedSession("c1", []);
-    watermarks.set("c1", { messageID: "streaming", seq: 9 });
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      live_turn: liveTurn("streaming", 4),
-    });
-
-    await loadMessages("c1");
-
-    expect(mockUpsertMessage).not.toHaveBeenCalled();
-    // And the mark is left where the live stream put it: lowering it would let chunks 5..9
-    // arrive a second time.
-    expect(mockSetWatermark).not.toHaveBeenCalled();
-    expect(mockNoteLiveTurn).not.toHaveBeenCalled();
-  });
-
-  it("adopts an in-flight turn that is level with the local mark", async () => {
-    // The ordinary case for a client that folded nothing since the server rendered its
-    // answer, and the boundary the refusal above must not swallow.
-    seedSession("c1", []);
-    watermarks.set("c1", { messageID: "streaming", seq: 4 });
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      live_turn: liveTurn("streaming", 4),
-    });
-
-    await loadMessages("c1");
-
-    expect(mockUpsertMessage).toHaveBeenCalledWith(
-      "c1",
-      expect.objectContaining({ id: "streaming" }),
-    );
-  });
-
-  it("ignores an in-flight turn whose message has no id", async () => {
-    // An id is what the merge, the dedup and the unpersisted marker are all keyed on, so a
-    // message without one is not adoptable — and adopting it would mark the empty string as
-    // this chat's in-flight message.
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      live_turn: { message: { id: "", role: "assistant", ts: 5 }, chunk_seq: 4, truncated: false },
-    });
-
-    await loadMessages("c1");
-
-    expect(mockUpsertMessage).not.toHaveBeenCalled();
-    expect(mockNoteLiveTurn).not.toHaveBeenCalled();
-  });
-
-  // The server withholds the field on an older page, and the client refuses it too: a
-  // scroll-up asserts nothing about the live edge, so one gate on each side means a server
-  // that starts sending it there cannot re-adopt the turn on every page the reader walks
-  // back through.
-  it("does not adopt an in-flight turn from an older page", async () => {
-    seedSession("c1", [msg("m2", 2)]);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 2 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-      live_turn: liveTurn("streaming", 4),
-    });
-
-    await loadMessages("c1", "m2");
-
-    expect(mockUpsertMessage).not.toHaveBeenCalled();
-    expect(mockSetWatermark).not.toHaveBeenCalled();
-  });
-
-  it("adopts nothing when the page carries no in-flight turn", async () => {
-    // An idle chat, and an older server that has never heard of the field: both are
-    // "nothing to adopt", and neither may leave a marker behind.
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [msg("m1", 1)],
-      has_more: false,
-    });
-
-    await loadMessages("c1");
-
-    expect(mockUpsertMessage).not.toHaveBeenCalled();
-    expect(mockSetWatermark).not.toHaveBeenCalled();
-    expect(mockNoteLiveTurn).not.toHaveBeenCalled();
-  });
-
-  // The WIRE spelling, through the real decoder rather than a hand-built decoded object:
-  // every case above is handed the post-decode shape by the mocked fetch, so none of them
-  // would notice a renamed json tag or a decode that dropped the field.
-  it("decodes the field off the wire under the names the server sends", async () => {
-    seedSession("c1", []);
-    const rawHeader = {
-      id: "c1",
-      name: "c1",
-      usage: {
-        context_pct: 0,
-        context_size: 0,
-        credits: 0,
-        turn_count: 0,
-        last_turn_ms: 0,
-        has_real_data: false,
-      },
-      created_at: 1,
-      updated_at: 1,
-      message_count: 1,
-    };
-    const rawBody = {
-      chat: rawHeader,
-      messages: [{ id: "u1", role: "user", ts: 1 }],
-      has_more: false,
-      turn_open: true,
-      live_turn: {
-        message: { id: "streaming", role: "assistant", ts: 5, content: "half a reply" },
-        chunk_seq: 4,
-        block_base: 117,
-        truncated: true,
-      },
-    };
-    // Run the response through the decoder the loader passes in, which the other cases
-    // bypass.
-    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
-      Promise.resolve(decode(rawBody)),
-    );
-
-    await loadMessages("c1");
-
-    expect(mockUpsertMessage).toHaveBeenCalledWith(
-      "c1",
-      expect.objectContaining({ id: "streaming", content: "half a reply" }),
-    );
-    expect(mockSetWatermark).toHaveBeenCalledWith("c1", "streaming", 4);
-    // Both facts, off the wire spelling and through the GENERATED decoder: `reqNum` and
-    // `reqBool` refuse an absent or null field, so this is the one case in the file that
-    // would notice a renamed json tag or a decode that dropped either of them.
-    expect(mockNoteAdopted).toHaveBeenCalledWith("c1", "streaming", {
-      blockBase: 117,
-      truncated: true,
-    });
-  });
-
-  // THE ABSENCE GUARD IS THE CALLER'S, and this is the case that says so. The generated
-  // `decodeLiveTurn` is a `Decoder<LiveTurn>` whose `asObject` refuses undefined AND null
-  // by design, so a call site handing it a missing key fails the WHOLE load — for the
-  // majority population, since `internal/chat`'s router sets the key only while a turn is
-  // running. Driven through the real decoder, because a mocked resolve never reaches it.
-  it("loads an idle chat, whose response carries no live_turn, through the real decoder", async () => {
-    seedSession("c1", []);
-    const rawBody = {
-      chat: {
-        id: "c1",
-        name: "c1",
-        usage: {
-          context_pct: 0,
-          context_size: 0,
-          credits: 0,
-          turn_count: 0,
-          last_turn_ms: 0,
-          has_real_data: false,
-        },
-        created_at: 1,
-        updated_at: 1,
-        message_count: 1,
-      },
-      messages: [{ id: "u1", role: "user", ts: 1 }],
-      has_more: false,
-      turn_open: false,
-    };
-    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
-      Promise.resolve(decode(rawBody)),
-    );
-
-    await loadMessages("c1");
-
-    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["u1"]);
-    expect(mockNoteAdopted).not.toHaveBeenCalled();
-  });
-
-  // A `live_turn` PRESENT and carrying no `block_base` — the shape a server older than
-  // that field sends. Every field of the payload is required, so the generated decoder
-  // refuses it, and a throw out of `decodeChatGetResponseLocal` is a DECODE failure that
-  // `apiGetTyped` collapses to null: the whole window, not the one frame, for every chat
-  // with a running turn. So the refusal reads as NOTHING TO ADOPT — which is not the same
-  // as a base of 0, and this case pins that by asserting the record is never written.
-  it("loads the window when live_turn carries no block_base, and adopts nothing", async () => {
-    seedSession("c1", []);
-    const rawBody = {
-      chat: {
-        id: "c1",
-        name: "c1",
-        usage: {
-          context_pct: 0,
-          context_size: 0,
-          credits: 0,
-          turn_count: 0,
-          last_turn_ms: 0,
-          has_real_data: false,
-        },
-        created_at: 1,
-        updated_at: 1,
-        message_count: 1,
-      },
-      messages: [{ id: "u1", role: "user", ts: 1 }],
-      has_more: false,
-      turn_open: true,
-      live_turn: {
-        message: { id: "streaming", role: "assistant", ts: 5, content: "half a reply" },
-        chunk_seq: 4,
-        truncated: true,
-      },
-    };
-    // `apiGetTyped`'s own contract, mirrored: it hands a decoder throw back as null. A
-    // mock that let the throw escape would assert against a shape production never
-    // produces, and would pass for the wrong reason.
-    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) => {
-      try {
-        return Promise.resolve(decode(rawBody));
-      } catch {
-        return Promise.resolve(null);
-      }
-    });
-
-    const loaded = await loadMessages("c1");
-
-    expect(loaded).toBe(true);
-    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["u1"]);
-    expect(mockNoteAdopted).not.toHaveBeenCalled();
-    expect(mockSetWatermark).not.toHaveBeenCalled();
-    expect(mockUpsertMessage).not.toHaveBeenCalled();
+    const s = seedSession("c1");
+    seedTurn(s, "t2", [turnOpen("t2", 2)]);
+    answerPage("c1", { entries: [turnOpen("t1", 1)] });
+
+    await loader.loadMessages("c1", "t2");
+    expect(debug).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 });

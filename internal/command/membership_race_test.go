@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // TestMembership_ConcurrentCreateAndDeleteOfOneChat asserts the pair the two

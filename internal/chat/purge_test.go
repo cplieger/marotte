@@ -77,7 +77,7 @@ func TestPurgeScheduler_TriggerWithZeroRetentionIsNoOp(t *testing.T) {
 func TestPurgeScheduler_TriggerRunsPurgeWhenRetentionPositive(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	chatPath := filepath.Join(s.dir, "c1.json")
+	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 	ageChat(t, s, "c1", 48*time.Hour)
 
 	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
@@ -94,7 +94,7 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 	// but the scheduler should schedule a future purge.
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	chatPath := filepath.Join(s.dir, "c1.json")
+	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 
 	retention, calls := countingRetention(24 * time.Hour)
 	p := NewPurgeScheduler(s, retention)
@@ -125,7 +125,7 @@ func TestPurgeScheduler_TriggerWithNoChatsIsNoOp(t *testing.T) {
 func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	chatPath := filepath.Join(s.dir, "c1.json")
+	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 	ageChat(t, s, "c1", 48*time.Hour)
 
 	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
@@ -146,7 +146,7 @@ func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 func TestPurgeScheduler_StartInvokesTrigger(t *testing.T) {
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	chatPath := filepath.Join(s.dir, "c1.json")
+	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 	ageChat(t, s, "c1", 48*time.Hour)
 
 	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
@@ -186,12 +186,12 @@ func TestPurgeScheduler_ShortRetentionPurgesExpiredAndKeepsFresh(t *testing.T) {
 	// wait's floor exists for.
 	s, _ := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	chatPath := filepath.Join(s.dir, "c1.json")
+	chatPath := filepath.Join(s.dir, "c1", headerFileName)
 	ageChat(t, s, "c1", 48*time.Hour)
 
 	// A second chat with fresh activity, which must survive.
 	_, _ = s.Mutate(t.Context(), "c2", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
-	c2Path := filepath.Join(s.dir, "c2.json")
+	c2Path := filepath.Join(s.dir, "c2", headerFileName)
 
 	p := NewPurgeScheduler(s, func() time.Duration { return time.Second })
 	p.Start(t.Context())
@@ -237,7 +237,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		// Any entry older than retention must be purged after Trigger.
 		s, _ := newTestStore(t)
 		_, _ = s.Mutate(t.Context(), "old1", func(c *marotte.Chat, _ bool) bool { c.Name = "Old"; return true })
-		chatPath := filepath.Join(s.dir, "old1.json")
+		chatPath := filepath.Join(s.dir, "old1", headerFileName)
 		// Age it well past retention (stamp + mtime).
 		ageChat(t, s, "old1", 72*time.Hour)
 
@@ -256,7 +256,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		// Any entry younger than retention must NOT be purged.
 		s, _ := newTestStore(t)
 		_, _ = s.Mutate(t.Context(), "young1", func(c *marotte.Chat, _ bool) bool { c.Name = "Young"; return true })
-		chatPath := filepath.Join(s.dir, "young1.json")
+		chatPath := filepath.Join(s.dir, "young1", headerFileName)
 		// Fresh activity, so the retention window has not elapsed.
 
 		retention, calls := countingRetention(48 * time.Hour)
@@ -277,7 +277,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		// After Stop(), no purge should occur regardless of pending triggers.
 		s, _ := newTestStore(t)
 		_, _ = s.Mutate(t.Context(), "stop1", func(c *marotte.Chat, _ bool) bool { c.Name = "Stop"; return true })
-		chatPath := filepath.Join(s.dir, "stop1.json")
+		chatPath := filepath.Join(s.dir, "stop1", headerFileName)
 		ageChat(t, s, "stop1", 72*time.Hour)
 
 		retention := 24 * time.Hour
@@ -305,7 +305,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		// Each entry should be purged exactly once (no double-fire).
 		s, _ := newTestStore(t)
 		_, _ = s.Mutate(t.Context(), "dup1", func(c *marotte.Chat, _ bool) bool { c.Name = "Dup"; return true })
-		chatPath := filepath.Join(s.dir, "dup1.json")
+		chatPath := filepath.Join(s.dir, "dup1", headerFileName)
 		ageChat(t, s, "dup1", 72*time.Hour)
 
 		retention, calls := countingRetention(24 * time.Hour)
@@ -341,7 +341,7 @@ func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 
 	// keep: recent activity, but a backdated mtime.
 	_, _ = s.Mutate(ctx, "keep", func(c *marotte.Chat, _ bool) bool { c.Name = "K"; return true })
-	keepPath := filepath.Join(s.dir, "keep.json")
+	keepPath := filepath.Join(s.dir, "keep", headerFileName)
 	stale := time.Now().Add(-72 * time.Hour)
 	if err := os.Chtimes(keepPath, stale, stale); err != nil {
 		t.Fatalf("chtimes keep: %v", err)
@@ -349,7 +349,7 @@ func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 
 	// gone: genuinely stale activity.
 	_, _ = s.Mutate(ctx, "gone", func(c *marotte.Chat, _ bool) bool { c.Name = "G"; return true })
-	gonePath := filepath.Join(s.dir, "gone.json")
+	gonePath := filepath.Join(s.dir, "gone", headerFileName)
 	ageChat(t, s, "gone", 72*time.Hour)
 
 	s.purgeExpired(ctx, 24*time.Hour)
@@ -398,7 +398,7 @@ func TestPurgeExpired_WiresTheStoresHooksIntoTheService(t *testing.T) {
 
 		s.purgeExpired(ctx, 24*time.Hour)
 
-		if _, err := os.Stat(filepath.Join(s.dir, "live.json")); err != nil {
+		if _, err := os.Stat(filepath.Join(s.dir, "live", headerFileName)); err != nil {
 			t.Errorf("a chat the live predicate claims is open was purged: %v", err)
 		}
 	})
@@ -417,8 +417,8 @@ func TestPurge_TombstonesChatID(t *testing.T) {
 		t.Fatal("Get(setup) did not find chat")
 	}
 	c.UpdatedAt = time.Now().Add(-2 * time.Hour).UnixMilli()
-	if err := s.writeChat("c-purged", c); err != nil {
-		t.Fatalf("writeChat(setup) = %v, want nil", err)
+	if err := s.writeHeader(t.Context(), "c-purged", c); err != nil {
+		t.Fatalf("writeHeader(setup) = %v, want nil", err)
 	}
 
 	s.purgeExpired(t.Context(), time.Hour)

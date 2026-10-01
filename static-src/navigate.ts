@@ -34,7 +34,14 @@
 // ---------------------------------------------------------------------------
 
 import { openFile, openFileDiff, openFileGitDiff } from "./editor-openers.js";
-import { openGitView } from "./tabs.js";
+import {
+  activateTab,
+  openGitView,
+  openTab,
+  parentChatRef,
+  setTabParent,
+  tabIdFor,
+} from "./tabs.js";
 import { isSafeURL } from "./url-safety.js";
 import { absPath } from "./workspace.js";
 
@@ -98,6 +105,33 @@ export function openAtLine(path: string, line?: number): void {
     return;
   }
   openFile(absPath(path), line);
+}
+
+/** Open a spec's tab for `dir` (a workspace-relative spec directory), nested
+ *  under `chatID`'s tab when one is given.
+ *
+ *  Two doors, one router: a tool card whose path is under a spec directory
+ *  passes its chat, `/docs/specs` passes none. `open_tab` identifies a tab by
+ *  `(kind, ref)` alone and discards `parent` on a second open, so a spec opened
+ *  parentless from `/docs/specs` and then from its chat's card would land on a
+ *  page with a picker; `reparent_tab` is the one mutation that reassigns the
+ *  parent, and this is one of its two callers. */
+export async function openSpec(dir: string, chatID?: string): Promise<void> {
+  if (dir === "") {
+    return;
+  }
+  const parent = chatID === undefined || chatID === "" ? "" : tabIdFor("chat", chatID);
+  const existing = tabIdFor("spec", dir);
+  if (existing !== "" && parent !== "" && parentChatRef(existing) === "") {
+    await setTabParent(existing, parent);
+    activateTab(existing);
+    return;
+  }
+  await openTab(
+    parent === ""
+      ? { kind: "spec", ref: dir, owns: false }
+      : { kind: "spec", ref: dir, parent, owns: false },
+  );
 }
 
 /** Surface a URL the agent fetched. Returns false when the URL is not safe to

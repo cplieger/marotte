@@ -5,18 +5,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // newWithholdHub is a runtime whose push service HAS a subscriber, so a withheld
 // notification is the only thing that can keep the channel empty.
 func newWithholdHub(t *testing.T) (*Runtime, *runOutcomePush) {
 	t.Helper()
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	fp := newRunOutcomePush()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, fp

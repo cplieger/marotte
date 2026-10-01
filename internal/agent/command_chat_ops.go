@@ -19,7 +19,7 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID, 
 	// waiting_on_user survives ClearAtTurnEnd past turn end; the chat going away
 	// must clear it too, or a reconnect replays a status for a chat that's gone.
 	rt.bus.chatStatus.Clear(chatID)
-	rt.coord.CloseBridge(chatID)
+	rt.coord.CloseBridge(ctx, chatID, marotte.TurnOutcomeCancelled)
 	rt.agentTerms.KillForChat(chatID)
 	rt.coord.turns.forget(chatID)
 	if reapDurable {

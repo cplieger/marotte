@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // clientAPITimeout reads the shared fixture pinning @cplieger/fetch's
@@ -124,8 +124,8 @@ func (b *orderedBridge) CallAt(ctx context.Context, method string, params any) (
 type scriptedAdmission struct {
 	rec    *callRecorder
 	result marotte.TurnResult
-	// startEpoch is what StartTurn answers; zero exercises the no-epoch arm.
-	startEpoch              marotte.TurnEpoch
+	// startRefused makes StartTurn answer false: the dead-ctx / dropped-id arm.
+	startRefused            bool
 	afterReservationRelease func()
 	mu                      sync.Mutex
 	reserved                bool
@@ -175,32 +175,43 @@ func (a *scriptedAdmission) AdmissionHolderSource(marotte.ChatID) (marotte.TurnO
 	return 0, false
 }
 
-func (a *scriptedAdmission) StartTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource) marotte.TurnEpoch {
-	a.rec.add("startTurn")
-	return a.startEpoch
+// admissionTurnID is the one turn the scripted admission opens.
+const admissionTurnID = "t-1"
+
+func (a *scriptedAdmission) OpenTurn(context.Context, marotte.ChatID, marotte.TurnOpenSource, *marotte.EntryPrompt, func(*marotte.Chat)) (string, error) {
+	a.rec.add("openTurn")
+	return admissionTurnID, nil
 }
 
-func (a *scriptedAdmission) AwaitTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) (marotte.TurnResult, error) {
+func (a *scriptedAdmission) StartTurn(context.Context, marotte.ChatID, string) bool {
+	a.rec.add("startTurn")
+	return !a.startRefused
+}
+
+func (a *scriptedAdmission) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	a.rec.add("await")
 	return a.result, nil
 }
 
-func (a *scriptedAdmission) ReleaseTurn(marotte.ChatID, marotte.TurnEpoch) { a.rec.add("releaseTurn") }
+func (a *scriptedAdmission) ReleaseTurn(marotte.ChatID, string) { a.rec.add("releaseTurn") }
 
-func (a *scriptedAdmission) SettleTurnOnResponse(context.Context, marotte.ChatID, marotte.TurnEpoch, uint64, *marotte.RPCResponse) {
+func (a *scriptedAdmission) SettleTurnOnResponse(context.Context, marotte.ChatID, string, uint64, *marotte.RPCResponse) {
 	a.rec.add("settle")
 }
 
-func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, marotte.TurnEpoch) bool {
+func (a *scriptedAdmission) TurnOpenedAfter(marotte.ChatID, string) bool {
 	a.rec.add("openedAfter")
 	return false
 }
 
-func (a *scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) {
+func (a *scriptedAdmission) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
+
+func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string) {
+	a.rec.add("abandon")
 }
 
-func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID, marotte.TurnEpoch, marotte.StopReason, string) {
-	a.rec.add("abandon")
+func (a *scriptedAdmission) RecordDroppedSteer(context.Context, marotte.ChatID, ParkedSteer) {
+	a.rec.add("droppedSteer")
 }
 
 // admissionHost wires the scripted admission and the ordered bridge over the
@@ -245,18 +256,19 @@ func (h *admissionHost) errorCodes() []marotte.ErrorCode {
 }
 
 // newAdmissionFixture builds the wired prompt roles plus the join handle.
-func newAdmissionFixture(t *testing.T, result marotte.TurnResult, epoch marotte.TurnEpoch) (*admissionHost, *promptRoles, *promptJoin) {
+func newAdmissionFixture(t *testing.T, result marotte.TurnResult, startRefused bool) (*admissionHost, *promptRoles, *promptJoin) {
 	t.Helper()
 	rec := &callRecorder{}
 	host := &admissionHost{
 		hostDouble: newTestHost(t, testsupport.NewInMemoryChatStore()),
-		admission:  &scriptedAdmission{rec: rec, result: result, startEpoch: epoch},
+		admission:  &scriptedAdmission{rec: rec, result: result, startRefused: startRefused},
 		bridge:     &orderedBridge{rec: rec},
 		rec:        rec,
 	}
 	roles := promptRolesOf(host)
 	roles.bridges = host
 	roles.bus = host
+	roles.admission = host.admission
 	roles.turnOutcome = host.admission
 	join := &promptJoin{}
 	roles.lifecycle = join
@@ -267,7 +279,7 @@ func newAdmissionFixture(t *testing.T, result marotte.TurnResult, epoch marotte.
 // OpenBridge is still parked, and the turn's call happens only afterwards.
 func TestCmdPrompt_AcksBeforeOpenBridgeAndTurnCompletion(t *testing.T) {
 	gate := make(chan struct{})
-	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, 1)
+	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, false)
 	blocked := &gatedBridgeAccess{inner: host, gate: gate}
 	roles.bridges = blocked
 
@@ -299,10 +311,10 @@ type gatedBridgeAccess struct {
 	gate  chan struct{}
 }
 
-func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge { return g.inner.Bridge(id) }
-func (g *gatedBridgeAccess) CloseBridge(id marotte.ChatID)   { g.inner.CloseBridge(id) }
-func (g *gatedBridgeAccess) AwaitReplayAdopted(ctx context.Context, id marotte.ChatID) error {
-	return g.inner.AwaitReplayAdopted(ctx, id)
+func (g *gatedBridgeAccess) Bridge(id marotte.ChatID) Bridge   { return g.inner.Bridge(id) }
+func (g *gatedBridgeAccess) BridgeLive(id marotte.ChatID) bool { return g.inner.BridgeLive(id) }
+func (g *gatedBridgeAccess) CloseBridge(ctx context.Context, id marotte.ChatID, outcome marotte.TurnOutcome) {
+	g.inner.CloseBridge(ctx, id, outcome)
 }
 
 func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, model string) (Bridge, error) {
@@ -313,10 +325,10 @@ func (g *gatedBridgeAccess) OpenBridge(ctx context.Context, id marotte.ChatID, m
 	return g.inner.OpenBridge(ctx, id, model)
 }
 
-// A 409'd prompt leaves the chat exactly as an accepted one does pre-ack: the
-// user message persisted, the name derived, the draft cleared — persist
-// precedes admission, and the client's no-text-restore discipline rests on it.
-func TestCmdPrompt_A409LeavesThePersistedRowIntact(t *testing.T) {
+// A refused admission WRITES NOTHING: no turn is opened, so the log never holds
+// a turn no process owns, and the draft that held the text stays where the
+// client's 409-to-steer conversion can still find it.
+func TestCmdPrompt_A409WritesNothing(t *testing.T) {
 	cases := map[string]struct {
 		refusal    AdmissionOutcome
 		wantReason string
@@ -335,6 +347,7 @@ func TestCmdPrompt_A409LeavesThePersistedRowIntact(t *testing.T) {
 			roles := promptRolesOf(host)
 			roles.bridges = host
 			roles.bus = host
+			roles.admission = host.admission
 			roles.turnOutcome = host.admission
 			seedEmptyChat(t, store, "c1")
 			if _, err := store.SetDraft(t.Context(), "c1", "typed text"); err != nil {
@@ -357,11 +370,11 @@ func TestCmdPrompt_A409LeavesThePersistedRowIntact(t *testing.T) {
 			if !ok {
 				t.Fatal("chat vanished")
 			}
-			if len(c.Messages) != 1 || c.Messages[0].ID != "m-1" {
-				t.Errorf("messages = %+v, want the refused prompt's user row persisted", c.Messages)
+			if host.admission.rec.indexOf("openTurn") != -1 {
+				t.Errorf("a refused prompt opened a turn; log = %v", host.admission.rec.snapshot())
 			}
-			if c.Draft != "" {
-				t.Errorf("draft = %q, want it cleared before the refusal", c.Draft)
+			if c.Draft != "typed text" {
+				t.Errorf("draft = %q, want the refused prompt's text left in place", c.Draft)
 			}
 		})
 	}
@@ -394,11 +407,11 @@ func TestWriteErr_EmitsTheReasonAdditively(t *testing.T) {
 	})
 }
 
-// A StartTurn that answers epoch zero is a failed turn, never a silent one and
-// never an ACP call: the failure is broadcast, and BOTH holds release so the
-// chat is not wedged.
-func TestCmdPrompt_ZeroEpochStartTurnFailsLoudAndReleasesBothSlots(t *testing.T) {
-	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, 0)
+// A StartTurn that answers false is a failed turn, never a silent one and never
+// an ACP call: the turn CmdPrompt opened is closed by the turn end rule, the
+// failure is broadcast, and BOTH holds release so the chat is not wedged.
+func TestCmdPrompt_ARefusedStartTurnFailsLoudAndReleasesBothSlots(t *testing.T) {
+	host, roles, join := newAdmissionFixture(t, marotte.TurnResult{}, true)
 
 	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
@@ -406,7 +419,10 @@ func TestCmdPrompt_ZeroEpochStartTurnFailsLoudAndReleasesBothSlots(t *testing.T)
 	join.join()
 
 	if host.rec.indexOf("call") != -1 {
-		t.Error("an ACP call was made for a turn that never opened")
+		t.Error("an ACP call was made for a turn that never started")
+	}
+	if host.rec.indexOf("abandon") == -1 {
+		t.Error("the opened turn was never closed by the turn end rule")
 	}
 	codes := host.errorCodes()
 	if len(codes) != 1 || codes[0] != marotte.ErrCodePromptFailed {
@@ -430,13 +446,14 @@ func TestCmdPrompt_CallFailureBroadcastsAndReleases(t *testing.T) {
 	failing := recordingBridge{callErr: errors.New("the pipe died")}
 	host := &admissionHost{
 		hostDouble: newTestHost(t, testsupport.NewInMemoryChatStore()),
-		admission:  &scriptedAdmission{rec: rec, startEpoch: 1},
+		admission:  &scriptedAdmission{rec: rec},
 		bridge:     &orderedBridge{rec: rec, recordingBridge: failing},
 		rec:        rec,
 	}
 	roles := promptRolesOf(host)
 	roles.bridges = host
 	roles.bus = host
+	roles.admission = host.admission
 	roles.turnOutcome = host.admission
 	join := &promptJoin{}
 	roles.lifecycle = join
@@ -466,12 +483,12 @@ func firingResult() marotte.TurnResult {
 }
 
 // The settled path's release order is the design's contract: the result is
-// captured while the epoch handle is held, the bridge slot and the reservation
+// captured while the turn handle is held, the bridge slot and the reservation
 // release BEFORE the recovery arbitrates, the recovery's predicates read a
 // still-live record, and ReleaseTurn goes LAST. The test FAILS if ReleaseTurn
 // precedes the recovery read.
 func TestCmdPrompt_RecoveryReadsTheCapturedResultBeforeTheHandleGoes(t *testing.T) {
-	host, roles, join := newAdmissionFixture(t, firingResult(), 1)
+	host, roles, join := newAdmissionFixture(t, firingResult(), false)
 
 	if _, err := CmdPrompt(t.Context(), roles, promptReq(t, "c1", "do the thing")); err != nil {
 		t.Fatalf("CmdPrompt = %v, want the early ack", err)
@@ -500,7 +517,7 @@ func TestCmdPrompt_RecoveryReadsTheCapturedResultBeforeTheHandleGoes(t *testing.
 // between the releases and the re-reserve) acquires BOTH, and the recovery's
 // try-reserve refusal abandons the retry.
 func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
-	host, roles, join := newAdmissionFixture(t, firingResult(), 1)
+	host, roles, join := newAdmissionFixture(t, firingResult(), false)
 	var competitor AdmissionOutcome
 	competitorGotBridge := false
 	host.admission.afterReservationRelease = func() {
@@ -537,20 +554,22 @@ func TestCmdPrompt_APromptDuringRecoveryPreemptsTheRetry(t *testing.T) {
 	}
 }
 
-// A re-send of the same text after a 409-starting reuses the message id, so
-// the append dedupes and the fresh attempt replays the ack.
+// A re-send of the same text after a 409-starting reuses the message id: the
+// refused attempt opened nothing, so the fresh attempt opens the one turn and
+// replays the ack.
 func TestCmdPrompt_IdempotentRetryReplaysTheAck(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	rec := &callRecorder{}
 	host := &admissionHost{
 		hostDouble: newTestHost(t, store),
-		admission:  &scriptedAdmission{rec: rec, admitFirst: AdmissionStarting, startEpoch: 1},
+		admission:  &scriptedAdmission{rec: rec, admitFirst: AdmissionStarting},
 		bridge:     &orderedBridge{rec: rec},
 		rec:        rec,
 	}
 	roles := promptRolesOf(host)
 	roles.bridges = host
 	roles.bus = host
+	roles.admission = host.admission
 	roles.turnOutcome = host.admission
 	join := &promptJoin{}
 	roles.lifecycle = join
@@ -569,14 +588,13 @@ func TestCmdPrompt_IdempotentRetryReplaysTheAck(t *testing.T) {
 	if !ok || !ack.Accepted || ack.MessageID != "m-1" {
 		t.Fatalf("re-send answered %+v, want the ack with the same message id", got)
 	}
-	c, _ := store.Get(t.Context(), "c1")
-	users := 0
-	for i := range c.Messages {
-		if c.Messages[i].Role == marotte.RoleUser {
-			users++
+	opened := 0
+	for _, e := range rec.snapshot() {
+		if e == "openTurn" {
+			opened++
 		}
 	}
-	if users != 1 {
-		t.Errorf("user rows = %d, want 1: the retry's append must dedupe on the message id", users)
+	if opened != 1 {
+		t.Errorf("turns opened = %d, want 1: the refused attempt wrote nothing and the retry opened the turn", opened)
 	}
 }

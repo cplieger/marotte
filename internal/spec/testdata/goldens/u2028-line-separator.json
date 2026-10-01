@@ -1,0 +1,43 @@
+{
+  "input_file": "u2028-line-separator.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1 Before",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "723d243db09e0b9a996f5d63a7d379b0e9058b0048f4123baec09dcad2f601cd",
+      "detail": "- [ ] 1.1 text with a line separator inside is not a task\n- [ ] 1.2 text with a paragraph separator inside is not a task either",
+      "children": []
+    },
+    {
+      "id": "L4",
+      "line": 4,
+      "indent": 0,
+      "number": "2",
+      "text": "2 After",
+      "status": "completed",
+      "queued": false,
+      "optional": false,
+      "hash": "d1fecf3642b3dbd7e10f91d3bebc91fdbf0befa44aad8d97d53860f5bc924be7",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 1,
+    "in_progress": 0,
+    "completed": 1,
+    "queued": 0,
+    "total": 2
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

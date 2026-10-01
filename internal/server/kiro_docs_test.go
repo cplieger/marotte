@@ -197,15 +197,18 @@ func TestScanKiroDocs_SpecsGroupAndOrder(t *testing.T) {
 		"specs/alpha/study.md":        {Data: []byte("# Study — Alpha\n")},
 		"specs/beta/requirements.md":  {Data: []byte("# Requirements — Beta\n")},
 		"specs/beta/tasks.md":         {Data: []byte("# Tasks — Beta\n")},
+		"specs/gamma/tasks.md":        {Data: []byte("# Tasks — Gamma\n")},
+		"specs/gamma/bugfix.md":       {Data: []byte("# Bugfix — Gamma\n")},
+		"specs/gamma/analysis.md":     {Data: []byte("# Analysis — Gamma\n")},
 	}
 	specs := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil).docs, catSpec)
-	if len(specs) != 5 {
-		t.Fatalf("got %d spec rows, want 5: %+v", len(specs), specs)
+	if len(specs) != 8 {
+		t.Fatalf("got %d spec rows, want 8: %+v", len(specs), specs)
 	}
 	if specs[0].Name != "Requirements — Alpha" {
 		t.Errorf("first row = %q, want the H1 (specs carry no front-matter)", specs[0].Name)
 	}
-	// requirements → design → tasks → lexical, grouped by feature.
+	// requirements or bugfix → design → tasks → lexical, grouped by feature.
 	var order []string
 	for _, d := range specs {
 		order = append(order, d.Group+"/"+strings.TrimSuffix(pathBase(d.Path), ".md"))
@@ -213,6 +216,7 @@ func TestScanKiroDocs_SpecsGroupAndOrder(t *testing.T) {
 	want := []string{
 		"alpha/requirements", "alpha/design", "alpha/study",
 		"beta/requirements", "beta/tasks",
+		"gamma/bugfix", "gamma/tasks", "gamma/analysis",
 	}
 	if !slices.Equal(order, want) {
 		t.Errorf("order = %v, want %v", order, want)

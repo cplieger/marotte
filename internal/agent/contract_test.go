@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // --- Bridge contract test ---
@@ -129,10 +129,10 @@ func TestFakeBridge_SharedContract(t *testing.T) {
 
 // --- ChatStore contract test ---
 
-func TestFakeChatStore_Contract(t *testing.T) {
+func TestTestChatStore_Contract(t *testing.T) {
 	testsupport.ChatStoreContractTest(t, func(t *testing.T) testsupport.ChatStoreContract {
 		t.Helper()
-		return newFakeChatStore()
+		return newTestChatStore()
 	})
 }
 

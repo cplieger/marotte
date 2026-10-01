@@ -15,8 +15,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // CmdSetDraft records the chat's unsent composer text. An empty Text is a

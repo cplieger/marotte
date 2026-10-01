@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/marotte/internal/liveness"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 const (

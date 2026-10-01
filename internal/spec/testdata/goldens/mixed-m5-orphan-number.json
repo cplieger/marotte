@@ -1,0 +1,56 @@
+{
+  "input_file": "mixed-m5-orphan-number.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L2",
+      "line": 2,
+      "indent": 0,
+      "number": "2.1",
+      "text": "2.1 first",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "d17c0e44ed99b58aad781a9b084082cbe51e0d0a66d89d8b37b1f71bddaadf01",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 0,
+      "number": "2.2",
+      "text": "2.2 second",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "b80c8b13854c341282d7e78dfacd9e0bbbcb064ac1f805bce10095565273aa55",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L4",
+      "line": 4,
+      "indent": 0,
+      "number": "3",
+      "text": "3 third",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "f0ba2ce698698cafcebf6c622625da09faa9d5d556feeebd8093fe9ed6d7d430",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

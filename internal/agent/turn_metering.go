@@ -28,20 +28,15 @@ func (bc *BridgeCoordinator) AccumulateSpend(ctx context.Context, chatID marotte
 }
 
 // StageConversationTurnSummary records a CONVERSATION turn's reported duration on
-// the chat's open turn and writes the accumulated result. Satisfies
-// translate.TurnMetering. Several frames can describe one turn, so the duration
-// accumulates and staging on the TURN is what bounds that sum and counts one
-// conversation turn per turn; a turn reporting no duration leaves the previous
-// measurement alone.
+// the header. Satisfies translate.TurnMetering. The per-turn sum lives on the
+// open turn's aggregate, which the translator meters itself; the turn count is
+// the log's, written by WriteCounters at the close.
 func (bc *BridgeCoordinator) StageConversationTurnSummary(ctx context.Context, chatID marotte.ChatID, elapsedMs float64) {
-	total, first := bc.turns.stageTurnSummary(chatID, elapsedMs)
+	if elapsedMs <= 0 {
+		return
+	}
 	bc.mutateUsage(ctx, chatID, func(u *marotte.Usage) {
-		if first {
-			u.TurnCount++
-		}
-		if total > 0 {
-			u.LastTurnMs = total
-		}
+		u.LastTurnMs = elapsedMs
 	})
 }
 

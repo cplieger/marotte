@@ -7,14 +7,17 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
-func newCompactionReapFixture(t *testing.T) (*Runtime, marotte.TurnEpoch, context.Context) {
+// newCompactionReapFixture stages a prompt turn whose bridge holds a cancellable
+// prompt call, the state the reap's interrupt reaches into.
+func newCompactionReapFixture(t *testing.T) (*Runtime, string, *turnlog.Turn, context.Context) {
 	t.Helper()
 	h, cs, _ := newTestHub()
 	seedChat(t, cs, "c1")
-	epoch, _ := h.stagePromptTurn(t, "c1")
-	t.Cleanup(func() { h.ReleaseTurn("c1", epoch) })
+	turnID, log := h.stagePromptTurn(t, "c1")
+	t.Cleanup(func() { h.ReleaseTurn("c1", turnID) })
 
 	pctx, cancel := context.WithCancelCause(t.Context())
 	t.Cleanup(func() { cancel(nil) })
@@ -23,11 +26,23 @@ func newCompactionReapFixture(t *testing.T) (*Runtime, marotte.TurnEpoch, contex
 	sb.state = bridgePrompting
 	sb.promptCancel = cancel
 	sb.mu.Unlock()
-	return h, epoch, pctx
+	return h, turnID, log, pctx
+}
+
+// startTool records an unsettled tool call on the turn. Inside a synctest bubble
+// its stamp is the fake clock's, which is what the reap compares against.
+func startTool(t *testing.T, log *turnlog.Turn, id string) {
+	t.Helper()
+	_, err := log.ToolCall(t.Context(), "", &marotte.EntryToolCall{
+		ID: id, Title: id, Kind: marotte.ToolKindExecute, Status: marotte.ToolInProgress,
+	})
+	if err != nil {
+		t.Fatalf("ToolCall(%q) failed: %v", id, err)
+	}
 }
 
 func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
-	h, _, pctx := newCompactionReapFixture(t)
+	h, turnID, _, pctx := newCompactionReapFixture(t)
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", "compaction failed")
 		time.Sleep(compactionFailedTurnBudget)
@@ -39,15 +54,18 @@ func TestCompactionReap_TripsTheSilentTurn(t *testing.T) {
 	}
 	lc := h.coord.turns.lifecycleFor("c1")
 	lc.mu.Lock()
-	turn := lc.cur
+	turn := lc.own
 	lc.mu.Unlock()
+	if turn == nil || turn.ID != turnID {
+		t.Fatalf("own turn after the reap = %v, want %q still open", turn, turnID)
+	}
 	if got := h.coord.turns.interruptCause(turn); got != "compaction failed" {
 		t.Errorf("interrupt cause = %q, want %q", got, "compaction failed")
 	}
 }
 
 func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
-	h, _, pctx := newCompactionReapFixture(t)
+	h, _, _, pctx := newCompactionReapFixture(t)
 	gen := h.coord.turns.attachForward("c1")
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", "compaction failed")
@@ -66,15 +84,13 @@ func TestCompactionReap_ReArmsWhenTheBackendSpoke(t *testing.T) {
 }
 
 func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) {
-	h, _, pctx := newCompactionReapFixture(t)
-	buf, _ := h.coord.OpenTurnBuffer("c1")
+	h, _, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
 		// Inside the bubble, and before the arm: synctest's clock starts at
 		// 2000-01-01, so a start recorded outside it lands in the real present
 		// and would read as newer than the arm rather than older.
-		buf.ToolCalls = append(buf.ToolCalls, marotte.ToolCall{ID: "tool", Status: marotte.ToolInProgress})
-		buf.RecordToolStart("tool")
+		startTool(t, log, "tool")
 		time.Sleep(time.Millisecond)
 
 		h.coord.CompactionFailed("c1", "compaction failed")
@@ -87,14 +103,12 @@ func TestCompactionReap_DoesNotRearmForAToolThatPredatesTheBudget(t *testing.T) 
 }
 
 func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) {
-	h, epoch, pctx := newCompactionReapFixture(t)
-	buf, _ := h.coord.OpenTurnBuffer("c1")
+	h, _, log, pctx := newCompactionReapFixture(t)
 
 	synctest.Test(t, func(t *testing.T) {
 		h.coord.CompactionFailed("c1", "compaction failed")
 		time.Sleep(time.Millisecond)
-		buf.ToolCalls = append(buf.ToolCalls, marotte.ToolCall{ID: "tool", Status: marotte.ToolInProgress})
-		buf.RecordToolStart("tool")
+		startTool(t, log, "tool")
 
 		time.Sleep(compactionFailedTurnBudget - time.Millisecond)
 		synctest.Wait()
@@ -107,7 +121,7 @@ func TestCompactionReap_KeepsAToolThatStartedInsideTheBudgetAlive(t *testing.T) 
 			t.Error("a long-running tool was treated as a flat timeout")
 		}
 
-		turn, ok := h.coord.turns.claimEpoch(t.Context(), "c1", epoch)
+		turn, ok := h.coord.turns.claimOwn(t.Context(), "c1")
 		if !ok {
 			t.Fatal("normal closer could not claim the tool-running turn")
 		}
@@ -121,15 +135,15 @@ func TestCompactionReap_WithNoOpenTurnArmsNothing(t *testing.T) {
 	lc := h.coord.turns.lifecycleFor("c1")
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	if lc.cur != nil {
+	if lc.own != nil {
 		t.Error("CompactionFailed with no open turn created turn state")
 	}
 }
 
 func TestCompactionReap_StoppedWhenTheTurnClosesNormally(t *testing.T) {
-	h, epoch, _ := newCompactionReapFixture(t)
+	h, _, _, _ := newCompactionReapFixture(t)
 	h.coord.CompactionFailed("c1", "compaction failed")
-	turn, ok := h.coord.turns.claimEpoch(t.Context(), "c1", epoch)
+	turn, ok := h.coord.turns.claimOwn(t.Context(), "c1")
 	if !ok {
 		t.Fatal("normal closer could not claim the armed turn")
 	}

@@ -1,0 +1,380 @@
+/* ==========================================================================
+   Page lists: the shell a full-page surface sits in, the segmented switcher at
+   its top, and the row family inside it. Settings, the configuration browser,
+   the git view and History all draw from here. FIRST in the feature range: every
+   rule here is a BASE a page slice overrides by coming later at equal
+   specificity. The selected treatment stays in 70-selection.css.
+   ========================================================================== */
+
+/* The INSET lives here, not in 50-mobile.css, which carries cross-surface shell
+   rules only. `flex: 1 0 auto` and not `flex: 1`: basis 0 with no content floor
+   clamps the shell to exactly the scrollport, so a tall panel overflows the box,
+   stranding the bottom inset a viewport up and letting the sticky header scroll
+   away with its containing block. */
+.page-shell {
+  max-width: var(--content-max-w);
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  gap: var(--sp-4);
+}
+
+@media (width <= 48rem) {
+  .page-shell {
+    padding: var(--sp-3);
+  }
+}
+
+/* NO `env(safe-area-inset-top)` here: this sticky row sits inside a SCROLLER
+   whose top edge is `.chat-toolbar`'s bottom (12-chat.css), which already paid the
+   inset, so adding it pays it twice — measured 47px of dead space above the bar at
+   390x844 with the iPhone values, invisible in Chromium, where every inset is 0. */
+.page-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--c-bg-primary);
+  padding-block: var(--sp-2);
+}
+
+/* --- The segmented switcher ---------------------------------------------- */
+
+/* The nesting rule is inner = outer − border − inset (web.md "A nested rounded
+ * corner"), derived the OTHER way round: from a 6px bar the segment would be 1px,
+ * square, on the one element whose job is to read as a pressable pill, so the
+ * SEGMENT keeps its shape and the bar takes 4 + 1 + 4 = 9px. A calc rather than a
+ * token because no rung of the 12/8/6/4 ladder is 5px apart from another. */
+.seg-bar {
+  display: flex;
+  flex-wrap: wrap;
+
+  --seg-inset: 0.25rem;
+  --seg-radius: var(--r-sm);
+
+  gap: var(--seg-inset);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: calc(var(--seg-radius) + 1px + var(--seg-inset));
+  padding: var(--seg-inset);
+}
+
+.seg {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--seg-radius);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro),
+    border-color var(--dur-micro) var(--ease-standard);
+
+  /* Scoped away from the selected segment, or hover repaints the selected fill.
+     The SELECTION-TINTED wash every tab-shaped control shares (01-tokens.css),
+     gated so a tap does not latch it; touch takes 03-base.css's press floor. */
+  @media (any-hover: hover) {
+    &:not(.active):hover {
+      background: var(--c-hover-select);
+      color: var(--c-text-primary);
+    }
+  }
+
+  /* Ungated: press is the channel a touchscreen has instead of hover. `box-shadow:
+     none` opts out of 03-base.css's universal wash, which this real button reaches,
+     or a press would step the tinted rung and the achromatic wash at once. */
+  &:not(.active):active {
+    background: var(--c-press-select);
+    color: var(--c-text-primary);
+    box-shadow: none;
+  }
+
+  /* Selected: 70-selection.css. The reserved 1px border above stays with it —
+     removing it resizes the segment by 2px. */
+}
+
+/* Icon + label, or icon-only when the bar cannot fit its labels: tab-bar-fit.ts
+   measures per bar and sets .seg-bar-icons when any label would truncate. One
+   truncated label flips the WHOLE bar, because a row mixing text pills and icon
+   pills reads as broken. The label stays in the DOM for the accessible name. */
+.seg-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.seg-bar-icons .seg {
+  & > .seg-label {
+    display: none;
+  }
+}
+
+/* --- The row ------------------------------------------------------------- */
+
+/* A ROW'S HEIGHT IS A TOKEN, NEVER THE SUM OF ITS CONTENT: what does not fit
+   truncates on its own line, so every title in a list sits at one offset, and
+   the only thing that may grow is `.entry-detail`, a SIBLING below. The tier is
+   `--row-h` (01-tokens.css), set once on the LIST. FLEX rather than grid for the
+   three slots: a grid charges its `column-gap` between TRACKS, so an absent lead
+   would leave 12px of dead inset on every row of a list that carries none. */
+.entry {
+  block-size: var(--row-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding-inline: var(--sp-4);
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-item);
+  line-height: var(--lh-ui);
+}
+
+.entry-lead {
+  inline-size: var(--icon-ui);
+  block-size: var(--icon-ui);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* A ROW WITH ONE DESTINATION PUTS THE BOX INSIDE THE CONTROL (marotte-ui.md): the
+   body IS the open target, and `align-self: stretch` is what makes that target the
+   row's height rather than its text's. A row that opens nothing is the same box as
+   a `div`, so only the button form needs the appearance reset. */
+button.entry-open,
+.entry-body {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--sp-05);
+}
+
+button.entry-open {
+  appearance: none;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  padding: 0;
+  cursor: pointer;
+
+  /* Inset, or the container's clip cuts the ring off. */
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset-inset);
+  }
+
+  /* ONE HOVER RECIPE (marotte-ui.md), gated so a tap does not latch it. */
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-hover);
+    }
+  }
+}
+
+/* ONE TEXT LINE TALL WHATEVER SITS IN IT: a badge (19px) is taller than the
+   title's line box (16.9px fine) and would drop a badged row's subtitle 1px below
+   its neighbours'. The badge centres on the text and overhangs the line instead. */
+.entry-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  block-size: 1lh;
+}
+
+/* THE NAME GROUP IS THE LINE'S ONE GROWER and the title shrinks inside it, so the
+   git letter sits one gap after the name's last glyph while the badges and the
+   time keep the trailing edge; a title at `flex: 1` put it beside the badges. */
+.entry-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.entry-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--fs-item);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.entry-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+.entry-time {
+  font-size: var(--fs-item-meta);
+  color: var(--c-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* THE SUBTITLE REGION KEEPS ITS LINES WHEN THE TEXT IS SHORT OR ABSENT: the body
+   centres in the row, so a region that shrank to its content would lift that row's
+   title 8.7px off the offset its neighbours share (measured, a chat with no
+   description). `lh` is the element's own line, so the floor holds at every tier. */
+.entry-sub {
+  font-size: var(--fs-item-meta);
+  color: var(--c-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-block-size: 1lh;
+}
+
+/* The description region of a three-line row: two lines, then an ellipsis. */
+.entry-sub-clamp {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-block-size: 2lh;
+}
+
+/* Two single lines where a kind has two facts instead of a description. NO gap: the
+   pair has to measure exactly the two-line clamp's 2lh, or its title sits 1px high. */
+.entry-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.entry-sub-mono {
+  font-family: var(--font-mono);
+}
+
+/* ONE CONTROL HEIGHT PER ROW (marotte-ui.md): every action in the slot reads the
+   dense tier, icon or text. `max()` rather than the bare token because the
+   universal hit floor (61-mcp-tools.css) scores zero and LOSES to this rule, which
+   would take a 40px button beside a 44px sibling on coarse; `.list-row .btn-small`
+   spells it the same way. `.entry` leads the slot selectors for specificity: a
+   control's own class declares its height and its hover fill in a LATER slice, and
+   at a tie the later slice wins (measured, a text action at 36px in a 32px row). */
+.entry-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+.entry .entry-actions > * {
+  min-block-size: max(var(--ctl-h-dense), var(--hit-floor));
+  min-inline-size: var(--hit-floor);
+  padding-block: 0;
+}
+
+/* The inline switch's leading margin is for a switch that follows text; here the
+   slot's gap is the spacing. */
+.entry .entry-actions > .toggle-inline {
+  margin-inline-start: 0;
+}
+
+/* A SWITCH'S HIDDEN INPUT IS THE TARGET HERE. `.toggle` (18-pages.css) collapses it
+   to 0x0 at the label's corner, which put the universal checkbox expander
+   (61-mcp-tools.css) 10px into the open control beside it on coarse: a tap on the
+   row's trailing edge flipped the hook. Sized to the slot's floored box and layered
+   over the track, the input answers the hit test and the expander sits inside it. */
+.entry .entry-actions .toggle > input {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  z-index: 1;
+  cursor: pointer;
+}
+
+/* Quiet at rest, one rung under the titles beside it, so a column of pencils and
+   trash cans does not compete with them; `.entry` outranks `.icon-btn`'s ink. */
+.entry .entry-actions > .icon-btn {
+  color: var(--c-text-tertiary);
+}
+
+/* A control inside a hovered row needs its fill LAYERED over the row's wash: an
+   `.icon-btn` hovers to `--c-bg-tertiary`, and a row whose own hover is that rung
+   leaves its buttons at 1.0:1 under the pointer. Gated, so a tap latches none. */
+@media (any-hover: hover) {
+  .entry .entry-actions > *:hover {
+    background-image: var(--layer-hover);
+  }
+
+  .entry .entry-actions > .icon-btn:hover {
+    color: var(--c-text-primary);
+  }
+
+  .entry .entry-actions > .entry-delete:hover {
+    color: var(--c-danger);
+  }
+}
+
+/* The one place a row grows, BELOW it as a sibling, so the row never moves.
+   `interpolate-size: allow-keywords` on `:root` makes `height: auto` transition;
+   no entry animation, because the content decides the height. */
+.entry-detail {
+  height: 0;
+  overflow: hidden;
+  background: var(--c-bg-secondary);
+  transition: height var(--dur-standard) var(--ease-standard);
+}
+
+.entry-detail.open {
+  height: auto;
+}
+
+/* Placeholder rows at the list's own tier, so the swap to real rows moves nothing. */
+.entry-skel {
+  pointer-events: none;
+}
+
+.entry-skel-title {
+  block-size: 0.875rem;
+  inline-size: 45%;
+}
+
+.entry-skel-sub {
+  block-size: 0.75rem;
+  inline-size: 70%;
+}
+
+/* A GROUP IS A SECTION, NOT A ROW: the label sits on the PAGE rung above its own
+   container, so it stops reading as a short row in the same fill as the rows. */
+.entry-section-label {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.0313rem;
+  color: var(--c-text-secondary);
+  padding: var(--sp-3) var(--sp-3) var(--sp-1);
+}

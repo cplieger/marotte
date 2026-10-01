@@ -1,0 +1,76 @@
+{
+  "note": "One recorded-shape session/load replay of a turn that was compacted MID-BRACKET: turn_start, prose, the separator+summary pair, more prose, turn_end. It exists to pin the compaction id both sides mint from the summary bytes, and that the separator closes no turn.",
+  "summary": "Earlier we agreed to keep the offset index in memory.",
+  "frames": [
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": { "kiro": { "replay": true, "kind": "turn_start", "turnStart": true } }
+      }
+    },
+    {
+      "kind": "agent_message_chunk",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "reading the design" },
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "9f1c-say",
+            "timestamp": "2026-09-15T10:00:01.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "kiro": { "replay": true, "kind": "summarization_separator", "summarizationSeparator": true }
+        }
+      }
+    },
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "kind": "summary_message",
+            "summaryMessage": { "content": "Earlier we agreed to keep the offset index in memory." }
+          }
+        }
+      }
+    },
+    {
+      "kind": "agent_message_chunk",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "continuing after the summary" },
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "messageId": "9f1c-say",
+            "timestamp": "2026-09-15T10:00:09.000Z"
+          }
+        }
+      }
+    },
+    {
+      "kind": "session_info_update",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "kiro": {
+            "replay": true,
+            "kind": "turn_end",
+            "turnEnd": { "stopReason": "end_turn" }
+          }
+        }
+      }
+    }
+  ]
+}

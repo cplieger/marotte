@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/ignore"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -101,29 +100,6 @@ func TestKiroFSStatConfinesPath(t *testing.T) {
 	}
 }
 
-// TestKiroFSStatIsNotIgnoreFiltered pins a deliberate asymmetry with
-// read_directory. A filtered stat would make KAS's derived exists() report false
-// for a file that IS there, and because writes are not ignore-filtered (git
-// semantics) the agent's next move on a false absent is to create it — clobbering
-// the file the ignore entry existed to keep out of the way.
-func TestKiroFSStatIsNotIgnoreFiltered(t *testing.T) {
-	work := t.TempDir()
-	if err := os.WriteFile(filepath.Join(work, "secret.env"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h, br := hubForFSTest(t, work)
-	h.inbound.ignore = matcherFor(t, work, "secret.env")
-
-	h.inbound.respondKiroFSStat(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSStat, "secret.env"))
-	<-br.done
-	if br.response.err != nil {
-		t.Fatalf("err = %v, want nil: stat must stay honest for an ignored path", br.response.err)
-	}
-	if body, ok := br.response.result.(kiroStatBody); !ok || body.Type != fsTypeFile {
-		t.Errorf("result = %+v, want a file stat", br.response.result)
-	}
-}
-
 // --- read_directory ---
 
 func TestKiroFSReadDirectory(t *testing.T) {
@@ -159,18 +135,21 @@ func TestKiroFSReadDirectory(t *testing.T) {
 	}
 }
 
-// TestKiroFSReadDirectoryAppliesIgnoreFilter is the security gain that makes this
-// verb worth declaring at all: without it the listing is the discovery vector for
-// exactly the files the read filter refuses to open.
-func TestKiroFSReadDirectoryAppliesIgnoreFilter(t *testing.T) {
+// TestKiroFSReadDirectoryFiltersNothing pins the accepted residual of outsourcing
+// enforcement to KAS: its ignore evaluators judge the DIRECTORY a listing names,
+// not the names inside it, so a `.kiroignore`d file is still listed while its
+// contents stay unreadable. marotte adds no filter of its own — a second matcher
+// here would have to agree with KAS's gitignore semantics forever, and where it
+// disagreed the panel would describe a rule neither side applies. So the listing
+// is honest and the panel copy states the consequence.
+func TestKiroFSReadDirectoryFiltersNothing(t *testing.T) {
 	work := t.TempDir()
-	for _, name := range []string{"keep.txt", ".env.dec"} {
+	for _, name := range []string{"keep.txt", ".env.dec", ".kiroignore"} {
 		if err := os.WriteFile(filepath.Join(work, name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	h, br := hubForFSTest(t, work)
-	h.inbound.ignore = matcherFor(t, work, ".env.dec")
 
 	h.inbound.respondKiroFSReadDirectory(t.Context(), "c1", kiroFSMsg(t, 1, methodKiroFSReadDirectory, "."))
 	<-br.done
@@ -181,19 +160,17 @@ func TestKiroFSReadDirectoryAppliesIgnoreFilter(t *testing.T) {
 	if !ok {
 		t.Fatalf("result type = %T, want kiroReadDirBody", br.response.result)
 	}
+	got := map[string]bool{}
 	for _, e := range body.Entries {
-		if e.Name == ".env.dec" {
-			t.Error("an ignored entry reached the listing; the filter is the point of declaring readDirectory")
-		}
+		got[e.Name] = true
 	}
-	var sawKeep bool
-	for _, e := range body.Entries {
-		if e.Name == "keep.txt" {
-			sawKeep = true
+	// `.env.dec` is the worked example the panel copy uses, and `.kiroignore` is
+	// the always-sent floor: naming both is what makes a re-added client-side
+	// filter fail here rather than merely changing one row.
+	for _, name := range []string{"keep.txt", ".env.dec", ".kiroignore"} {
+		if !got[name] {
+			t.Errorf("%q is missing from the listing; marotte filters no entry, KAS does the enforcing", name)
 		}
-	}
-	if !sawKeep {
-		t.Error("the filter dropped a non-ignored entry")
 	}
 }
 
@@ -402,20 +379,6 @@ func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 			}
 		})
 	}
-}
-
-// matcherFor builds a real ignore.Matcher over workDir by writing the patterns
-// into a `.kiroignore` there — one of the two names
-// settings.DefaultAgentIgnoreFiles() seeds, so the matcher picks it up with no
-// config.json. A real matcher rather than a stub: the filter's whole value is
-// that it agrees with the read path, and a stub could not show that.
-func matcherFor(t *testing.T, workDir string, patterns ...string) *ignore.Matcher {
-	t.Helper()
-	body := strings.Join(patterns, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(workDir, ".kiroignore"), []byte(body), 0o600); err != nil {
-		t.Fatalf("write ignore file: %v", err)
-	}
-	return ignore.NewMatcher(t.TempDir(), workDir)
 }
 
 // TestHandleKiroFSRequest_AnOrdinaryRequestNeitherPanicsNorApologises pins the

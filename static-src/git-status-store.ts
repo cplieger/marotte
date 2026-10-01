@@ -9,7 +9,7 @@
 // decorate a row.
 //
 // IT HOLDS NO TIMER. It polled every 15 s and fired an extra FULL scan on every
-// `turn_ended`, and one scan is 270 git subprocesses across 54 worktrees, so the
+// `turn_closed`, and one scan is 270 git subprocesses across 54 worktrees, so the
 // steady-state cost of an idle page was a scan every 15 seconds for a tree
 // nothing had touched. A turn ending is a GUESS that the tree changed; the client
 // already holds the fact and was throwing it away. So every automatic refresh is a
@@ -18,7 +18,7 @@
 //
 // The facts, and between them they cover every writer:
 //
-//   the agent      a repo-mutating tool call completing   handlers/messages.ts
+//   the agent      a repo-mutating tool call completing   handlers/entries.ts
 //   the editor     a save landing                         editor-core.ts
 //   the shell      the panel closing                      shell.ts
 //   anything else  the tab becoming visible again          below
@@ -258,7 +258,7 @@ function startOnFirstSubscriber(): void {
  *
  *  Exported because the trigger is not this module's: the facts that the tree moved
  *  arrive at their own sites — a repo-mutating tool call completing
- *  (`handlers/messages.ts`), an editor save, a file-browser action — and travel
+ *  (`handlers/entries.ts`), an editor save, a file-browser action — and travel
  *  here through `git.ts`'s markGitDirty. A user gesture in the Changes tab has its
  *  own forced-refresh path.
  *

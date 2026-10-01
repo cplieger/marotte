@@ -38,7 +38,9 @@
   position: fixed;
   top: 0;
   left: 0;
-  height: var(--app-h);
+
+  /* Anchored like `[id="app"]` (02-reset.css), which owns the reason. */
+  bottom: calc(-1 * var(--shell-shortfall, 0px));
   width: var(--sidebar-w);
   z-index: 2;
 }
@@ -615,6 +617,13 @@
   gap: var(--sp-3);
   min-height: var(--sidebar-band-h);
 
+  /* The row's one control height, so both controls cannot resolve it separately.
+     `.icon-btn` declares no height, so this is its glyph plus its padding lifted by
+     the hit floor — the expression, not the 32/44 it resolves to, because every term
+     is a rem token. `account-btn-css.test.ts` measures the two boxes equal at every
+     tier, which is what catches an `.icon-btn` padding change splitting the pair. */
+  --footer-ctl-h: max(var(--hit-floor), calc(var(--icon-ui) + 2 * var(--sp-2)));
+
   /* THE BOUNDARY BETWEEN THE TAB LIST AND THE FOOTER. With many tabs the strip runs
      right up to the footer and the two read as one column; this is the line that
      separates them. Same COLOUR token as the header's own hairline and the panel's
@@ -655,21 +664,15 @@
    (`--c-hover`, marotte-ui.md "ONE HOVER RECIPE"). `account-btn-css.test.ts` reads
    both rules out of the sheet and fails when they diverge.
 
-   Button chrome is stripped by NAMED declarations rather than `all: unset`, and
-   the reason is a cascade fact rather than tidiness: that shorthand resets
-   `min-width`/`min-height` at this selector's own (0,1,0), which is what made
-   `.status-dot` INVISIBLE to the app-wide zero-specificity hit floor
-   (61-mcp-tools.css) and forced it to grow an `::after` expander. What actually
-   carries this target is `align-self: stretch` against `.sidebar-footer`'s
-   `min-height: var(--sidebar-band-h)` — 51px of content band at every tier, past
-   both the 24px fine floor and the 44px coarse one — so the floor's `min-height`
-   is a BACKSTOP here, not the mechanism. Naming the declarations is what keeps that
-   backstop reachable: with `all: unset` a later change that drops the stretch would
-   silently produce an 8px-tall target and nothing would catch it.
+   The box is `--footer-ctl-h` tall and centred by the footer, not stretched to the
+   band: hover, press and the focus ring are the element's own background, so one
+   box is what keeps all three the pill the logout button beside it paints. Shape
+   ruling in marotte-ui.md "THE FOOTER'S TWO CONTROLS ARE ONE PILL SIZE".
 
-   `min-width: 0` below opts out of the floor's OTHER axis on purpose, the way
-   `.send-btn` does: this box is the band's whole width, so a 44px inline floor
-   would be describing nothing. */
+   Button chrome is stripped by NAMED declarations rather than `all: unset`: that
+   shorthand resets `min-width`/`min-height` at this selector's own (0,1,0), which
+   is what made `.status-dot` invisible to the app-wide hit floor
+   (61-mcp-tools.css). Naming them keeps the floor reachable as a backstop. */
 .account-btn {
   appearance: none;
   background: none;
@@ -688,8 +691,11 @@
   align-items: center;
   gap: var(--sp-3);
   flex: 1;
+
+  /* Opts out of the floor's INLINE axis, the way `.send-btn` does: this box is the
+     band's whole width, so a 44px inline floor would be describing nothing. */
   min-width: 0;
-  align-self: stretch;
+  min-block-size: var(--footer-ctl-h);
 
   /* THE WASH BLEEDS `--sp-2` PAST THE CONTENT ON BOTH INLINE EDGES AND NOTHING ON
      SCREEN MOVES. The pair is exact, not approximate — with W the footer's content
@@ -718,9 +724,8 @@
      BOTH AXES ARE SPELLED, and the block one is not decoration: 02-reset.css's only
      `button` rule sets `touch-action` and `-webkit-tap-highlight-color` and nothing
      else, so Chromium's UA `padding-block: 1px` is never reset and would survive a
-     `padding-inline` shorthand here. Harmless on the pixel — this box is
-     `align-self: stretch` at 51px and the address is centred — but it would
-     contradict the claim above that chrome is stripped by named declarations. */
+     `padding-inline` shorthand here, adding to a `min-block-size` box the address
+     already fits inside. */
   padding: 0 var(--sp-2);
   margin-inline: calc(-1 * var(--sp-2));
   border-radius: var(--r);
@@ -792,14 +797,14 @@
   text-box: trim-both cap alphabetic;
   padding-block: 0.35em;
 
-  /* THE TARGET IS THE FOOTER'S WHOLE BAND, and `.account-btn` above is the box that
-     carries it now. Four declarations left with it and each for its own reason:
-     `align-self: stretch` and `border-radius: var(--r)` moved, because the box that
-     fills the band and paints a wash is the BUTTON; `align-content: center` was
-     DELETED with the stretch it corrected (this span is now a flex item of an
-     `align-items: center` parent, so its box is its content height and there is no
-     free space to distribute — and it would be inert on `.account-btn`, which
-     declares no `flex-wrap`); and `-webkit-tap-highlight-color: transparent` went
+  /* THE TARGET IS THE ROW, and `.account-btn` above is the box that carries it now.
+     Four declarations left with it and each for its own reason: the stretch and
+     `border-radius: var(--r)` moved, because the box that paints a wash is the
+     BUTTON; `align-content: center` was DELETED with the stretch it corrected (this
+     span is now a flex item of an `align-items: center` parent, so its box is its
+     content height and there is no free space to distribute — and it would be inert
+     on `.account-btn`, which declares no `flex-wrap`); and
+     `-webkit-tap-highlight-color: transparent` went
      too, because 02-reset.css gives every `button` both that and
      `touch-action: manipulation`, so it was load-bearing only while this was an
      `<a>`.
@@ -849,8 +854,8 @@
    chrome to strip), `cursor: pointer` (the button's), `position: relative` (nothing
    positions against it now), `anchor-name: --status-dot` (zero consumers anywhere in
    css/ or static-src/), the `&:focus-visible` block (a span is not focusable), and
-   the whole `&::after` hit expander — the target is `.account-btn`'s own band at
-   every tier, so there is ONE mark rule and no second spelling to keep in step. */
+   the whole `&::after` hit expander — `.account-btn`'s own box clears the hit floor
+   at every tier, so there is ONE mark rule and no second spelling to keep in step. */
 .status-dot {
   display: block;
   inline-size: var(--dot-size);
@@ -932,28 +937,16 @@
   display: inline-flex;
   align-items: center;
 
-  /* The anchor used to hold a content-sized 8px trigger; it holds the footer's wide
-     control now, so it takes the row's slack instead of refusing it (`flex-shrink: 0`
-     is what left). `min-width: 0` is what lets the address inside actually clip, and
-     `align-self: stretch` is what gives the button a full-band box to stretch into.
+  /* It holds the footer's wide control, so it takes the row's slack instead of
+     refusing it (`flex-shrink: 0` is what left) and `min-width: 0` is what lets the
+     address inside actually clip.
 
-     ONE CONSEQUENCE, accepted and pinned rather than worked around: the status card
-     is `position: absolute; bottom: calc(100% + var(--sp-1))` against this anchor
-     (15-input.css `.pill-status-content`), so `100%` is the ANCHOR's height — which
-     is exactly what `align-self: stretch` changes. The card RISES ~21.5px on desktop
-     (from an 8px anchor centred in the 51px band to the full band) and ~3.5px on a
-     phone, `--pill-max-block` loses the same amount out of a ~700px budget, and the
-     open card stops overlapping its own trigger by the 17.5px it does today. That
-     overlap was tolerable while the trigger was an 8px disc under the card; it is
-     not once the trigger is a 240px row painting a hover wash and a press wash. The
-     desktop geometry is moving TO the phone geometry rather than away from anything.
-
-     Not a shared-class change: this footer is the only consumer in `css/` and in
-     `static/index.html` (15-input.css only mentions the class in a comment), plus the
-     two footer test fixtures this change already updates. */
+     It does NOT stretch to the band, and that is the popup's contract rather than a
+     preference: `.pill-status-content` is `bottom: calc(100% + var(--sp-1))` against
+     this box (15-input.css), so a box taller than the trigger makes that 4px a lie.
+     Wrapping the trigger keeps the card 4px above it at every tier. */
   flex: 1;
   min-width: 0;
-  align-self: stretch;
 }
 
 .icon-btn {

@@ -27,7 +27,10 @@ type Identity struct {
 	lastProbe   time.Time
 	fingerprint string
 	mu          sync.Mutex
-	absent      bool
+	// absentProbes counts consecutive empty readings after a known identity. One
+	// is a transient (whoami answers signed-out whenever its JSON lacks `email`,
+	// which a credential refresh can do for one reading); the second retires.
+	absentProbes int
 }
 
 // NewIdentity returns an identity registrar backed by kiro-cli whoami.
@@ -47,8 +50,9 @@ func NewIdentity(cliPath func() string, env func() []string, retire func()) *Ide
 }
 
 // Observe adopts fp and retires live sessions when a known identity changes.
-// Empty means absent; it can trigger retirement but never replaces the last
-// known baseline.
+// Empty means absent: it never replaces the last known baseline, and it retires
+// only once the NEXT probe is still empty, so one transient signed-out reading
+// does not stop every idle bridge and the workflow steps they host.
 func (id *Identity) Observe(fp string) {
 	if id == nil {
 		return
@@ -57,19 +61,38 @@ func (id *Identity) Observe(fp string) {
 	id.mu.Lock()
 	switch {
 	case fp == "":
-		if id.fingerprint != "" && !id.absent {
-			changed = true
+		if id.fingerprint != "" {
+			id.absentProbes++
+			changed = id.absentProbes == 2
 		}
-		id.absent = true
 	case id.fingerprint == "":
 		id.fingerprint = fp
-		id.absent = false
+		id.absentProbes = 0
 	case id.fingerprint == fp:
-		id.absent = false
+		id.absentProbes = 0
 	default:
 		id.fingerprint = fp
-		id.absent = false
+		id.absentProbes = 0
 		changed = true
+	}
+	retire := id.retire
+	id.mu.Unlock()
+	if changed && retire != nil {
+		retire()
+	}
+}
+
+// SignedOut records a sign-out marotte performed itself, so there is no reading
+// to debounce: a clean `kiro-cli logout` exit is the answer, and the live
+// sessions retire at once. Absent still never becomes the baseline.
+func (id *Identity) SignedOut() {
+	if id == nil {
+		return
+	}
+	id.mu.Lock()
+	changed := id.fingerprint != "" && id.absentProbes < 2
+	if id.fingerprint != "" {
+		id.absentProbes = 2
 	}
 	retire := id.retire
 	id.mu.Unlock()

@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/command"
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // persistedTabs is the collection as it sits on disk, the set every device projects.
@@ -53,11 +53,11 @@ func newTabbedRuntime(t *testing.T) (*Runtime, string) {
 	if err != nil {
 		t.Fatalf("tabs.NewStore: %v", err)
 	}
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
 		WithTabs(st), WithConfigDir(dir))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 	return h, dir

@@ -14,9 +14,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,6 +54,9 @@ func run() error {
 		return err
 	}
 	if err := buildCSS(); err != nil {
+		return err
+	}
+	if err := fingerprintFonts(); err != nil {
 		return err
 	}
 	return writePrecacheManifest()
@@ -324,6 +329,162 @@ func buildErr(what string, result *api.BuildResult) error {
 		return fmt.Errorf("%s bundle failed:\n%s", what, strings.Join(msgs, "\n"))
 	}
 	return nil
+}
+
+const (
+	fontsSubdir   = "vendor/fonts"
+	fontURLPrefix = "/vendor/fonts/"
+)
+
+// fontRef captures a /vendor/fonts name out of a url(), whatever its quoting and
+// whitespace — the bundle concatenates the published UI's CSS beside marotte's own, so
+// neither is one author's to choose. Anchored on url( because a PROSE mention of the
+// path in a comment is not a face: 00-fonts.css carries one, and an unanchored scan read
+// a face out of it and failed the build on an asset nothing fetched. Matched everywhere
+// it occurs: a reference this misses keeps naming a file the rename already moved, which
+// is the one failure mode that is silent.
+var fontRef = regexp.MustCompile(`url\(\s*["']?/vendor/fonts/([^"')\s]+)`)
+
+// stampedFontName matches the name stampFont produces, which is also the name
+// internal/server.assetCachePolicy reads its cache verdict off.
+var stampedFontName = regexp.MustCompile(`^(.+)\.[0-9a-f]{8}(\.[^.]+)$`)
+
+// fingerprintFonts renames each face the bundle names to <stem>.<8 hex><ext> and
+// rewrites the bundle's url()s.
+//
+// An unfetched font tree is SKIPPED, matching the server's own boot report, because
+// scripts/dev-fonts.sh is a separate step from this command. A tree that exists and
+// lacks a named face is a half-finished fetch, so that is an error.
+func fingerprintFonts() error {
+	cssPath := filepath.Join(outDir, "style.css")
+	css, err := os.ReadFile(cssPath)
+	if err != nil {
+		return fmt.Errorf("font fingerprint: read bundle: %w", err)
+	}
+	names := cssFontNames(string(css))
+	if len(names) == 0 {
+		return errors.New("font fingerprint: the bundle names no /vendor/fonts asset")
+	}
+	dir := filepath.Join(outDir, fontsSubdir)
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		fmt.Printf("bundle: fonts not fetched, %d faces left un-stamped (run scripts/dev-fonts.sh)\n", len(names))
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("font fingerprint: %w", err)
+	}
+	rewrites := make(map[string]string, len(names))
+	for _, name := range names {
+		hashed, err := stampFont(dir, name)
+		if err != nil {
+			return err
+		}
+		if hashed != name {
+			rewrites[name] = hashed
+		}
+	}
+	rewritten := fontRef.ReplaceAllStringFunc(string(css), func(ref string) string {
+		head := strings.LastIndex(ref, fontURLPrefix) + len(fontURLPrefix)
+		if hashed, ok := rewrites[ref[head:]]; ok {
+			return ref[:head] + hashed
+		}
+		return ref
+	})
+	if err := os.WriteFile(cssPath, []byte(rewritten), 0o600); err != nil {
+		return fmt.Errorf("font fingerprint: rewrite bundle: %w", err)
+	}
+	fmt.Printf("bundle: fonts %d content-addressed of %d named\n", len(rewrites), len(names))
+	return nil
+}
+
+// cssFontNames lists the /vendor/fonts names the bundle references, deduplicated: the
+// overlay is named once per weight/style pair and must be renamed once.
+func cssFontNames(css string) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, m := range fontRef.FindAllStringSubmatch(css, -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			names = append(names, m[1])
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// stampFont renames one face to its content-addressed name and returns that name.
+func stampFont(dir, name string) (string, error) {
+	// A URL component reaches a filesystem path here.
+	if name != filepath.Base(name) || name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("font fingerprint: %q names a path rather than a file", name)
+	}
+	src, err := fontSource(dir, name)
+	if err != nil {
+		return "", err
+	}
+	sum, err := hashFile(src)
+	if err != nil {
+		return "", err
+	}
+	ext := filepath.Ext(name)
+	hashed := strings.TrimSuffix(name, ext) + "." + sum + ext
+	if filepath.Base(src) == hashed {
+		return hashed, nil
+	}
+	if err := os.Rename(src, filepath.Join(dir, hashed)); err != nil {
+		return "", fmt.Errorf("font fingerprint: rename %s: %w", name, err)
+	}
+	return hashed, nil
+}
+
+// fontSource resolves the file holding the named face: the upstream name when present,
+// else the one stamped sibling a previous run left. Both spellings are accepted because
+// the bundle is regenerated from css/00-fonts.css and so always names the upstream face
+// while the tree holds the stamped one, which is what makes a repeat run a no-op.
+func fontSource(dir, name string) (string, error) {
+	upstream := filepath.Join(dir, name)
+	if info, err := os.Lstat(upstream); err == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("font fingerprint: %s is not a regular file", name)
+		}
+		return upstream, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("font fingerprint: %w", err)
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	matches, err := filepath.Glob(filepath.Join(dir, stem+".????????"+ext))
+	if err != nil {
+		return "", fmt.Errorf("font fingerprint: %w", err)
+	}
+	stamped := make([]string, 0, 1)
+	for _, m := range matches {
+		if stampedFontName.MatchString(filepath.Base(m)) {
+			stamped = append(stamped, m)
+		}
+	}
+	switch len(stamped) {
+	case 1:
+		return stamped[0], nil
+	case 0:
+		return "", fmt.Errorf("font fingerprint: the bundle names %s, which the font tree does not hold", name)
+	default:
+		return "", fmt.Errorf("font fingerprint: %s has %d stamped copies; remove %s and re-fetch", name, len(stamped), fontsSubdir)
+	}
+}
+
+// hashFile returns the first 8 hex digits of the file's SHA-256, streamed so a 9 MB face
+// is not held in memory beside the bundle.
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // a name the bundle's own CSS declared, checked as a plain filename
+	if err != nil {
+		return "", fmt.Errorf("font fingerprint: %w", err)
+	}
+	defer f.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, f); err != nil {
+		return "", fmt.Errorf("font fingerprint: hash %s: %w", filepath.Base(path), err)
+	}
+	return hex.EncodeToString(sum.Sum(nil))[:8], nil
 }
 
 // cssManifest is one ordered concat source: a manifest file listing CSS paths relative

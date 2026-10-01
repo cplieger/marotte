@@ -510,6 +510,27 @@ describe("the depth ladder", () => {
     expect(opened).toEqual(["diff:/workspace/src/a.ts"]);
   });
 
+  it("the `+N more hunks` count opens the same diff as the stats", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    setWorkspaceRoot("/workspace");
+    opened.length = 0;
+    // Ten changes ten lines apart: ten hunks, more than the 24-row window holds.
+    const lines = Array.from({ length: 100 }, (_, i) => `line ${String(i)}`);
+    const changed = lines.map((l, i) => (i % 10 === 0 ? `${l} changed` : l));
+    const edit = buildToolCard({
+      id: "t8c",
+      title: "strReplace",
+      kind: "edit",
+      status: "completed",
+      input: { path: "src/a.ts", oldStr: lines.join("\n"), newStr: changed.join("\n") },
+      live: false,
+    });
+    const more = edit.querySelector<HTMLButtonElement>("button.tool-diff-more");
+    expect(more?.textContent).toMatch(/^\+\d+ more hunks$/);
+    more?.click();
+    expect(opened).toEqual(["diff:/workspace/src/a.ts"]);
+  });
+
   it("a move states from and to, which its claim line cannot carry", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
@@ -526,11 +547,8 @@ describe("the depth ladder", () => {
   });
 });
 
-describe("the search-hit seam", () => {
-  it("linkifies a search tool's output, which is where the hits are", async () => {
-    // linkifyPaths ran on prose and turn headers but never on tool output, so a
-    // grep result line — `path:line: match`, the whole point of the tool — was
-    // plain text with nothing to click.
+describe("a tool's output renders verbatim", () => {
+  it("linkifies nothing, and keeps the path text as written", async () => {
     const { buildToolCard } = await import("./tool-card.js");
     const card = buildToolCard({
       id: "s1",
@@ -538,15 +556,16 @@ describe("the search-hit seam", () => {
       kind: "search",
       status: "completed",
       input: { query: "needle" },
-      output: "src/a.ts:42: found the needle\n",
+      output: "src/a.ts:42: some match\n",
       live: false,
     });
-    // The output is painted on first open, with the linkify pass in it.
+    // The output is painted on first open, so the assertions need the region open.
     document.body.appendChild(card);
     card.querySelector<HTMLElement>(".tool-disclosure")?.click();
-    const link = card.querySelector<HTMLElement>(".tool-output .inline-file-link");
-    expect(link).not.toBeNull();
-    expect(link?.textContent).toContain("a.ts:42");
+    expect(card.querySelector(".tool-output .inline-file-link")).toBeNull();
+    expect(card.querySelectorAll(".tool-output button.inline-file-link")).toHaveLength(0);
+    // Verbatim: the path token is still one run of text, not a chip's label.
+    expect(card.querySelector(".tool-output")?.textContent).toContain("src/a.ts:42: some match");
     card.remove();
   });
 });
@@ -859,8 +878,7 @@ describe("tool card: whole-header disclosure", () => {
 //
 // A collapsed card is a claim line, and a transcript mounts dozens of them, so
 // nothing with a cost in it — the denial rows, the input dump, painting the
-// output through the ANSI renderer and the path linkifier — runs until a reader
-// asks. `.tool-output` is the exception: it is part of the shell, because the
+// output through the ANSI renderer — runs until a reader asks. `.tool-output` is the exception: it is part of the shell, because the
 // live update path streams chunks straight into it and a streaming card has
 // usually not been opened.
 // ---------------------------------------------------------------------------
@@ -1157,8 +1175,8 @@ describe("a card with nothing to disclose", () => {
     // The same diffs-only cut as the case above, one field short. The fetch guard is
     // `detailsBody`'s — an empty `chatID` returns before the request — so a card with
     // no chat id can reach neither deferred piece, and keeping its chevron would open
-    // onto a region that can never fill. `run-step-blocks.ts` calls
-    // `toolCardOptsFor(tc, true)` with no chat id, which is what makes this reachable.
+    // onto a region that can never fill. `toolCardOptsFor`'s `chatID` defaults to `""`,
+    // so a card built for work no chat owns is what makes this reachable.
     const card = buildToolCard({
       id: "bare-full-nochat",
       title: "fsWrite",
@@ -1483,5 +1501,76 @@ describe("deferred content a previewed card loads on open", () => {
     await settle();
     expect(card.querySelector(".tool-diff-preview")).not.toBeNull();
     card.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spec door: only for a path a spec directory holds.
+// ---------------------------------------------------------------------------
+
+describe("the spec door on a file chip", () => {
+  const card = (path: string): HTMLElement =>
+    buildToolCard({
+      id: `spec-door-${path}`,
+      title: "fsWrite",
+      kind: "edit",
+      status: "completed",
+      input: { path },
+      live: false,
+    });
+
+  it("offers it for a path a spec directory holds, carrying that directory", () => {
+    const door = card(".kiro/specs/demo/tasks.md").querySelector(".tool-spec-link");
+    expect(door).not.toBeNull();
+    // The DIRECTORY, not the file: it is the spec tab's ref, and the page reads
+    // every document of the directory rather than the one this card wrote.
+    expect(door?.getAttribute("data-spec-dir")).toBe(".kiro/specs/demo");
+    // Chrome-marked, so find-in-chat prunes it rather than matching UI copy.
+    expect(door?.hasAttribute("data-vk-chrome")).toBe(true);
+  });
+
+  it("resolves a spec directory under a nested repo root", () => {
+    expect(
+      card("myrepo/.kiro/specs/demo/design.md")
+        .querySelector(".tool-spec-link")
+        ?.getAttribute("data-spec-dir"),
+    ).toBe("myrepo/.kiro/specs/demo");
+  });
+
+  it("withholds it from every other path, the .kiro tree included", () => {
+    for (const path of [
+      "src/main.ts",
+      ".kiro/steering/marotte.md",
+      ".kiro/specs",
+      "notes/.kiro/specs.md",
+      "a/b/.kiro/specs/demo/tasks.md",
+    ]) {
+      expect(card(path).querySelector(".tool-spec-link"), path).toBeNull();
+    }
+  });
+
+  it("offers it for a FILE sitting directly in the specs root, which is the shared rule", () => {
+    // `specDirOf` is lexical and cannot tell a directory from a file, deliberately:
+    // it is the twin of Go's `spec.DirOf`, whose `the_directory` case exists so a
+    // DELETE of a spec directory marks it. So one segment under `specs/` reads as a
+    // spec directory whatever it is, and the door opens a page that answers 404 and
+    // renders the empty state naming it (design 1.7). Characterized rather than
+    // narrowed here: the rule has one owner across the two languages, and Kiro writes
+    // `.kiro/specs/<name>/<doc>.md`, never a loose file in that root.
+    expect(
+      card(".kiro/specs/tasks.md").querySelector(".tool-spec-link")?.getAttribute("data-spec-dir"),
+    ).toBe(".kiro/specs/tasks.md");
+  });
+
+  it("withholds it from a card that names no file at all", () => {
+    const bare = buildToolCard({
+      id: "spec-door-bare",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+    });
+    expect(bare.querySelector(".tool-file-link")).toBeNull();
+    expect(bare.querySelector(".tool-spec-link")).toBeNull();
   });
 });

@@ -13,6 +13,7 @@
 // degenerate one — it is what a chat with no bridge has.
 import { beforeEach, describe, expect, it } from "vitest";
 import { effortPillLabel, setCatalogEfforts } from "./effort.js";
+import { makeSession } from "./__test-helpers__/model.js";
 import type { ModelInfo, Session } from "./types.js";
 
 /** A catalog entry: its default tier, and whether it advertises effort at all. */
@@ -33,7 +34,7 @@ function session(fields: {
   effort_active?: string;
   effort_levels?: { id: string; name?: string }[];
 }): Session {
-  return { id: "c1", effort: "", ...fields } as unknown as Session;
+  return makeSession({ id: "c1", effort: "", ...fields });
 }
 
 function fiveTiers(): { id: string; name?: string }[] {

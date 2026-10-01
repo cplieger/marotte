@@ -127,6 +127,27 @@
   display: none;
 }
 
+/* THE TURN FOOTER'S CONTROL BOX, shared by the row's action buttons and by its ledger
+   trigger, whose box spans the `i` and the turn's lead fact: ONE definition, so the two
+   cannot drift. `height` is the PAINT and the zero-specificity floor below lifts it to
+   `--hit-floor`, which is what makes the pair one box at every tier; the BAND is the
+   row's own (29-turns.css). `box-shadow` is in the transition because 03-base.css's
+   universal press wash is an inset shadow, and a member declaring its own `transition`
+   without it gets a wash that appears and leaves in one frame. */
+.turn-action-btn,
+.turn-ledger-summary {
+  height: var(--ctl-h-sm);
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
 /* NO resting `opacity`. It was 0.6, and it COMPOUNDED with the row's own 0.7 for
    an effective 0.42: the copy and export glyphs measured 1.967:1 dark / 1.742:1
    light against the card, the lowest ratio anywhere in the app and well under the
@@ -138,18 +159,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
+
+  /* Square, so the one control-box token above answers both axes. */
+  width: var(--ctl-h-sm);
   padding: 0;
-  border: none;
-  background: transparent;
-  /* --r-sm is the ladder's rung for a 16-24px box; this is 24px. */
-  border-radius: var(--r-sm);
-  color: inherit;
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
 }
 
 /* REQUIRED, not defensive, and the same trap 31-exec-view.css records at
@@ -163,7 +176,8 @@
   display: none;
 }
 
-.turn-action-btn:hover {
+.turn-action-btn:hover,
+.turn-ledger-summary:hover {
   background: var(--c-hover);
   color: var(--c-text-primary);
 }
@@ -353,16 +367,13 @@
 .shell-panel.shell-fullscreen {
   position: fixed !important;
 
-  /* `bottom` is AUTO because the stated height governs, and the inline offsets
-   * stay because they are what gives the panel its width — the base rule sets
-   * none, so in flow it spans as a block-level flex child and here it has to be
-   * told. Written `inset: 0` this rule was over-constrained on the block axis
-   * (top, bottom AND a non-auto height), which CSS 2.1 section 10.6.4 resolves
-   * by ignoring `bottom` — the same result, from a rule that does not say which
-   * of the two it meant. */
-  inset: 0 0 auto !important;
+  /* Anchored like `[id="app"]` (02-reset.css), which owns the reason. The base
+   * rule's docked `height` has to be neutralised or the block axis is
+   * over-constrained and CSS 2.1 section 10.6.4 drops `bottom`. */
+  inset: 0 !important;
+  bottom: calc(-1 * var(--shell-shortfall, 0px)) !important;
   z-index: 9999;
-  height: var(--app-h) !important;
+  height: auto !important;
   max-height: none !important;
   border-radius: 0;
 
@@ -579,12 +590,22 @@ input[type="radio"] {
  * own closing sentence asked for exactly this: restore the floor in the same
  * change as the viewport meta.
  *
- * THE COST IS REAL AND IS PAID DELIBERATELY: on a coarse pointer every field in
- * the app reads 16px against 11-14px around it, the composer included, which is
- * how the floor was reported the first time. It is the price of not loading
- * zoomed; the alternative is a per-control audit against a real device this
- * container cannot make. `max(…, 1em)` so a control that INHERITS something
- * larger keeps it rather than being clamped down to the floor.
+ * THE COST WAS REAL AND IS NOW PAID DOWN RATHER THAN ACCEPTED. This block used to
+ * end "on a coarse pointer every field in the app reads 16px against 11-14px
+ * around it, the composer included, which is how the floor was reported the first
+ * time" — reported a SECOND time in 2026-09 against the upload picker's path box,
+ * and measured across the app at the iPad preset: 28 controls read larger than the
+ * nearest string beside them, 17 of them by 5px against an 11px label. The floor
+ * is not what moved, because it cannot be: it is what stops the page zooming when
+ * a control under 16px takes focus, and `readonly` does NOT exempt an input from
+ * that zoom, so a readout needs it as much as a field being typed into. What moved
+ * is the type AROUND the field — 01-tokens.css "The FORM type scale" declares the
+ * two rungs a floored field needs beside it, a label one rung under and a
+ * row-sharing control matching, and 14 label and peer sites read them. Lift
+ * the neighbours, never lower the floor: the lift is verifiable in a browser and
+ * lowering the floor is a per-control audit against a real device this container
+ * cannot make. `max(…, 1em)` so a control that INHERITS something larger keeps it
+ * rather than being clamped down to the floor.
  *
  * Real specificity, not `:where()`, and that is the whole mechanism: a component
  * class has to LOSE to this, or the one control that matters most
@@ -622,21 +643,112 @@ input[type="radio"] {
   font-size: var(--fs-xs);
 }
 
-/* Tool error explanation button + result */
+/* Tool error explanation button + result.
+ *
+ * THE TRIGGER IS A CIRCULAR ICON BUTTON IN THE FAILED CARD'S BOTTOM-RIGHT, and the
+ * RESERVED STRIP below is what stops it sitting on the card's own content — a
+ * z-index would not, because both things it would cover are content rather than
+ * chrome. `.tool-details` is force-opened on a failure and is a scroll region
+ * (`overflow-y: auto`, its own scrollbar at the card's inline end), and on a card
+ * the reader has COLLAPSED that corner is the claim row's trailing edge, where
+ * `.tool-file-link` lives. Reservation beats an overlay (marotte-ui.md "Design").
+ *
+ * `:has(> …)` rather than an unconditional strip, because the trigger BECOMES the
+ * result IN PLACE (`btn.className = "tool-explain-result"`) and a result is an
+ * in-flow block that wants no strip. `position` is declared here rather than on
+ * `.tool-call` so the whole change is one block in one file, and it is ADDITIVE
+ * rather than a re-parenting: `content-visibility: auto` (14-tools.css) already
+ * applies layout containment, which makes that card a containing block for every
+ * absolutely positioned descendant it has.
+ *
+ * ALWAYS VISIBLE, never hover-only: this app is touch-first and a coarse pointer has
+ * no hover to reveal an affordance with. Hover adds the fill and nothing withdraws.
+ *
+ * THE FOCUS RING is 40-a11y.css's zero-specificity floor, so nothing here declares
+ * `outline` in any state — and the corner inset below (>= 8px) clears that ring's
+ * 3px reach inside `.tool-call`'s `overflow: hidden`, which is why this control is
+ * NOT a member of that file's inset-ring list. */
+.tool-call:has(> .tool-explain-btn) {
+  /* THE CORNER INSET, a `max()` rather than --sp-2 because it also has to clear the
+     TARGET expander below. `--hit-floor` and `--ctl-h-sm` move on different tiers
+     (`:root[data-touched]` raises the floor to 44px and leaves the small-control
+     rung at 24px), so at a flat 8px the expander reaches 2px past the card's padding
+     box and the `overflow: hidden` clips away the very target it exists to grow.
+     8px on both ordinary tiers, 10px there. */
+  --explain-inset: max(var(--sp-2), calc((var(--hit-floor) - var(--ctl-h-sm)) / 2));
+
+  position: relative;
+
+  /* The disc's own box plus that inset on both sides, so it is centred in the strip
+     and every flow child ends at or above the strip's top edge. Cost, stated: a
+     failed card carrying output grows 40px on a fine pointer and 52px on a coarse
+     one, one row's worth against an output region up to 300px. */
+  padding-block-end: calc(var(--ctl-h-sm) + 2 * var(--explain-inset));
+}
+
 .tool-explain-btn {
-  font-size: var(--fs-xs);
-  color: var(--c-accent);
-  background: none;
+  position: absolute;
+  inset-block-end: var(--explain-inset);
+  inset-inline-end: var(--explain-inset);
+
+  /* THE PAINTED DISC IS THE SMALL-CONTROL RUNG; THE TARGET IS --hit-floor, through
+     the `::after` below. The app-wide floor (this file, further down) sets PHYSICAL
+     `min-width`/`min-height`, and a logical property is a DIFFERENT one resolved by
+     source order rather than by specificity — so the opt-out has to be physical too.
+     Idiom copied from `.send-btn` (15-input.css) and `.tool-file-link`
+     (14-tools.css) rather than invented here. */
+  min-width: 0;
+  min-height: 0;
+  inline-size: var(--ctl-h-sm);
+  block-size: var(--ctl-h-sm);
+
+  /* A circle is a deliberate SHAPE rather than a nesting decision, so it takes no
+     concentric radius from the card it sits in (web.md's own carve-out). */
+  border-radius: 50%;
   border: 1px solid var(--c-accent);
-  border-radius: var(--r-sm);
-  padding: 2px var(--sp-2);
+  background: none;
+  color: var(--c-accent);
   cursor: pointer;
-  margin: var(--sp-1) var(--sp-3);
+
+  /* A floor-widened icon button centres its glyph, or it paints visibly off-centre
+     (rule 3 at the floor below). The glyph sizes itself from `--icon-ui` through
+     `.ic-ui` (03-base.css); nothing here states its pixels. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
-.tool-explain-btn:hover {
-  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+/* THE TARGET, not the paint: unpainted, sized off the tier's own floor so it follows
+   a pointer change with no second declaration. Reach is `(--hit-floor - 100%) / 2`
+   per side, which the corner inset above is derived to clear. */
+.tool-explain-btn::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--hit-floor) - 100%) / -2);
+}
+
+/* ICON-ONLY, so the pending spinner REPLACES the glyph instead of sitting beside it:
+   `.btn-loading::before` (14-tools.css) is a 16px mark with a trailing margin
+   authored for a label, and the two together overflow the disc. The dim and the
+   `cursor: progress` are 40-a11y.css's busy face, keyed on the `aria-busy`
+   `bindLoadingState` already sets. */
+.tool-explain-btn.btn-loading > .ic-ui {
+  display: none;
+}
+
+.tool-explain-btn.btn-loading::before {
+  margin-inline-end: 0;
+}
+
+/* `any-hover`, never `hover`: those queries report only the PRIMARY input, so a
+   `hover: hover` gate drops the rule on every touch-primary device (web.md) — and on
+   a bare touchscreen a `:hover` fill latches after a tap, which is what the gate is
+   for. Touch gets 03-base.css's app-wide `:active` press instead. */
+@media (any-hover: hover) {
+  .tool-explain-btn:hover {
+    background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  }
 }
 
 .tool-explain-result {

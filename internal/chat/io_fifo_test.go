@@ -29,7 +29,7 @@ func withinBudget(t *testing.T, budget time.Duration, fn func() error) error {
 	}
 }
 
-// mkfifoChat plants a FIFO at a chat id's file name and returns the id.
+// mkfifoChat plants a FIFO where a chat id's header belongs and returns the id.
 func mkfifoChat(t *testing.T, dir string) marotte.ChatID {
 	t.Helper()
 	if _, err := os.Stat("/dev/null"); err != nil {
@@ -39,20 +39,23 @@ func mkfifoChat(t *testing.T, dir string) marotte.ChatID {
 	if !chatIDPattern(id) {
 		t.Fatalf("fixture id %q is not a valid chat id", id)
 	}
-	if err := syscall.Mkfifo(filepath.Join(dir, string(id)+chatFileSuffix), 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, string(id)), 0o700); err != nil {
+		t.Fatalf("chat dir: %v", err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, string(id), headerFileName), 0o600); err != nil {
 		t.Skipf("mkfifo unsupported here: %v", err)
 	}
 	return id
 }
 
-// A FIFO at <chats>/<valid-chat-id>.json is a one-command permanent wedge of every chat
+// A FIFO at <chats>/<valid-chat-id>/chat.json is a one-command permanent wedge of every chat
 // read, and the /config volume is reachable both by the operator and by the agent's shell.
 func TestGet_RefusesAFifoInsteadOfBlockingForever(t *testing.T) {
 	s, _ := newTestStore(t)
 	id := mkfifoChat(t, s.dir)
 
 	err := withinBudget(t, 3*time.Second, func() error {
-		_, err := s.load(id)
+		_, err := s.load(t.Context(), id)
 		return err
 	})
 	if !errors.Is(err, atomicfile.ErrNotRegular) {
@@ -120,19 +123,21 @@ func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	}
 }
 
-// A link at <chats>/<id>.json makes another file's bytes reachable through the chat read,
-// the header projection and both search paths.
-func TestReadCappedFile_RefusesASymlink(t *testing.T) {
+// A link at <chats>/<id>/chat.json makes another file's bytes reachable through the
+// chat read, the header projection and both search paths.
+func TestOpenChatFile_RefusesASymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.json")
-	if err := os.WriteFile(target, []byte(`{"id":"x","messages":[]}`), 0o600); err != nil {
+	if err := os.WriteFile(target, []byte(`{"id":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(dir, "m-link0000-bbbb.json")
+	link := filepath.Join(dir, headerFileName)
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
-	if _, err := readCappedFile(link, "chat link", 0); err == nil {
-		t.Error("readCappedFile followed a symlink at a chat file name")
+	f, _, err := openChatFile(link, "chat link")
+	if err == nil {
+		f.Close()
+		t.Error("openChatFile followed a symlink at a chat header name")
 	}
 }

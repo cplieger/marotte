@@ -193,6 +193,16 @@
      * raise the status fraction there rather than making this opaque. */
     --c-border: color-mix(in oklch, var(--c-text-primary) 16%, transparent);
 
+    /* A placeholder's fill. An ALIAS of the border wash rather than a second
+     * spelling of it: a 16% ink wash reads as "structure, not content" for a
+     * hairline and for a bar alike, so the two answer the same question and two
+     * derivations of one value would be the --c-user-bubble defect over again.
+     * The name exists so a retune is ONE edit rather than twelve selectors, and
+     * so a border decision cannot silently move every placeholder in the app.
+     * Diverge on a MEASUREMENT that a filled area wants a different strength
+     * than a line — never on symmetry. */
+    --c-skeleton: var(--c-border);
+
     /* ---- THE TAB ACTIVITY DOT -------------------------------------------- *
      * THE VALUES ARE web-terminal-kiro's: both apps put an activity dot on a tab
      * strip and one signal must not carry two colours. The HUE is the source's in
@@ -270,10 +280,9 @@
      * so a hovered row is no closer to reading as selected than it was.
      *
      * A wash, like the ladder's, so it stays relative to whatever surface the
-     * bar sits on. Read by the three tab-shaped controls (`.tab`,
-     * `.settings-tab`, `.mcp-modal-tab`) and deliberately by nothing else: a
-     * row whose selected state is not this accent fill has no hue of its own to
-     * echo, so it takes `--c-hover`.
+     * bar sits on. Read by the two tab-shaped controls (`.tab`, `.seg`) and
+     * deliberately by nothing else: a row whose selected state is not this accent
+     * fill has no hue of its own to echo, so it takes `--c-hover`.
      *
      * REJECTED, measured rather than reasoned: a diluted step of
      * `--c-selected-bg` itself, which is the obvious way to make hover preview
@@ -351,6 +360,12 @@
     --fw-medium: 500;
     --fw-semibold: 600;
     --fw-bold: 700;
+
+    /* The line height of a SINGLE-LINE UI text run — a row title, a row's
+     * subtitle, a segment's label — so a row's block budget is arithmetic rather
+     * than a per-slice literal. Untiered: it is a ratio, so it follows whichever
+     * --fs-* the element reads. Prose keeps its own taller measure. */
+    --lh-ui: 1.3;
     --sp-05: 0.125rem;
     --hairline: 1px;
     --sp-1: 0.25rem;
@@ -359,27 +374,6 @@
     --sp-4: 1rem;
     --sp-5: 1.25rem;
     --sidebar-w: 16.25rem;
-    /* THE SHELL'S HEIGHT, and the unit differs by DISPLAY MODE because only one
-       of the two viewport-percentage families is stable. CSS Values 4 section
-       6.1.2 defines the large units (`lvh`, and plain `vh`) against the viewport
-       sized with every dynamically retracted UA interface assumed retracted, and
-       states their sizes are fixed unless the viewport itself is resized; `dvh`
-       is explicitly not stable even while the viewport is unchanged. An installed
-       standalone PWA has no retractable chrome, so the large unit is both correct
-       there and the only one immune to a transiently short layout viewport —
-       which is what iOS hands the web view on a cold launch from the home screen.
-       A browser TAB does have retractable chrome, where `lvh` is the classic bug
-       that hides bottom-anchored UI under the address bar, so it gets `dvh`.
-       `(display-mode: standalone)` is the Web App Manifest spec's own way to tell
-       the two apart. Read by `[id="app"]` (02-reset.css), `[id="sidebar"]`
-       (10-shell-app.css) and the fullscreen shell (61-mcp-tools.css) — the three
-       boxes that would otherwise take their height from whatever rectangle the OS
-       gives the fixed-positioning containing block. It lives in THIS layer rather
-       than beside its first reader: `tokens` is declared after `reset`
-       (00-header.css), so a same-named declaration added here would silently
-       outrank one in the reset layer, and one owner in the winning layer is what
-       makes that unrepresentable. */
-    --app-h: 100dvh;
     /* THE measure, for every full-page surface. The transcript, the composer, the
        dock, the run page and a delegate's page all end on this column, so a reader
        crossing between them learns one pair of edges (user ruling, 2026-09-10).
@@ -397,15 +391,25 @@
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
-  }
 
-  /* The standalone branch of --app-h, reasoned about at its base declaration
-   * above. Same specificity as that `:root`, so SOURCE ORDER is the whole
-   * override and this block may not move above it. */
-  @media (display-mode: standalone) {
-    :root {
-      --app-h: 100lvh;
-    }
+    /* ---- List-row heights ------------------------------------------------ *
+     * A row's height is a TOKEN, never the sum of its content: content that does
+     * not fit truncates on its own line and the row never grows (marotte-ui.md
+     * "One row height per list"). Two rungs, because a list carries either a
+     * title plus one line of metadata or a title plus a description region, and
+     * a page picks one for every row it renders. POINTER-TIERED like --ctl-h
+     * above: a coarse row is one rung taller because its inks and its actions
+     * are, not because a finger needs a bigger row than the ink it holds. */
+    --row-h-2: 3.5rem;
+    --row-h-3: 4.5rem;
+
+    /* The rung IN FORCE for the list being rendered, which is what a row reads.
+     * Declared here rather than on the row, because it has to be settable from
+     * whatever element owns the list — a declaration on `.entry` itself would
+     * outrank any inherited value, so no ancestor could set the tier at all. A
+     * three-line list overrides it once (28-docs.css `.docs-panel`) and every row
+     * under it follows. */
+    --row-h: var(--row-h-2);
   }
 
   /* A finger or a pen: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA), against
@@ -415,6 +419,8 @@
     --ctl-h-dense: 2.5rem;
     --ctl-h-sm: 2.25rem;
     --hit-floor: 2.75rem;
+    --row-h-2: 3.75rem;
+    --row-h-3: 4.75rem;
   }
 
   /* THE THIRD TIER STATE, and it moves --hit-floor ALONE. `data-touched` is
@@ -443,6 +449,8 @@
       --ctl-h-dense: 2.5rem;
       --ctl-h-sm: 2.25rem;
       --hit-floor: 2.75rem;
+      --row-h-2: 3.75rem;
+      --row-h-3: 4.75rem;
     }
   }
 
@@ -487,6 +495,16 @@
      * size sit side by side visibly drifting. Faster than a dot's ambient period:
      * a spinner marks the one control the reader is waiting on. */
     --spin-dur: 0.6s;
+    /* ---- Skeletons ------------------------------------------------------- *
+     * The placeholder pulse. Slower than --dot-beat-dur above, which is slower
+     * than --spin-dur: the three sit on one ambient-to-urgent ladder. A skeleton
+     * reports work on a surface the reader has not got yet, which is the least
+     * urgent thing in the app, so it is the slowest.
+     *
+     * A token rather than a literal, for --spin-dur's own reason: a second
+     * consumer written with a literal drifts silently, and
+     * `skeleton-period.test.ts` sweeps every stylesheet for one. */
+    --skeleton-dur: 1.5s;
     --icon-stroke-inline: 1;
     --icon-stroke-ui: 1;
     --icon-stroke-lg: 2;
@@ -504,18 +522,42 @@
   }
 
   :root {
-    /* ---- The POPUP type scale -------------------------------------------- *
-     * A popup row's own text, and a caption beside it. Both popup families read
-     * them — `.popup` (11-popups.css) and `.pill-expand-content` (15-input.css) —
-     * and THE TIER IS THE POINTER, like --ctl-h and --hit-floor above, because a
-     * width query cannot separate a tablet from a desktop.
+    /* ---- The ITEM type scale --------------------------------------------- *
+     * An ITEM's own text and the metadata beside it: a list row's title and its
+     * subtitle, a popup row and its caption, one tier for both because they are
+     * the same object at two sizes of container. The --fs-popup-* names are
+     * ALIASES declared once, here: an alias re-resolves per tier by itself, so
+     * the tier blocks below move only the item pair. THE TIER IS THE POINTER, like
+     * --ctl-h above; two rungs rather than a coarse tier over the whole --fs-*
+     * scale, or a lifted caption would EQUAL --fs-md wherever they pair. */
+    --fs-item: var(--fs-base);
+    --fs-item-meta: var(--fs-sm);
+    --fs-popup: var(--fs-item);
+    --fs-popup-meta: var(--fs-item-meta);
+
+    /* ---- The FORM type scale --------------------------------------------- *
+     * A form field's own LABEL or hint, and a control that shares a ROW with a
+     * field. It exists because a field's size is not this app's to choose on the
+     * coarse tier: the iOS text-entry floor (61-mcp-tools.css) puts every input,
+     * textarea and select at 16px so focusing one cannot zoom the page, and a
+     * label left at --fs-xs then sits 5px UNDER its own field. Measured across
+     * the app at the iPad preset before these two rungs: 28 controls read larger
+     * than the nearest string beside them, 17 of them by 5px.
      *
-     * TWO RUNGS RATHER THAN A COARSE TIER OVER THE WHOLE --fs-* SCALE: a popup
-     * lift re-assigns a rung (a caption becomes body text, 11px to 14px), so
-     * delivering it by moving --fs-xs would make that rung EQUAL --fs-md and
-     * collapse the two wherever they pair, at 179 and 30 reads. */
-    --fs-popup: var(--fs-base);
-    --fs-popup-meta: var(--fs-xs);
+     * TWO RUNGS BECAUSE RANK DIFFERS. A label is metadata, so it stays one rung
+     * under the field it names; a control sharing the field's row is equal rank,
+     * so it MATCHES the floor and the row reads as one row. Do not fold them:
+     * a 16px hint is not a hint, and a 14px button beside a 16px field is the
+     * inversion one rung smaller.
+     *
+     * THE TIER IS THE POINTER, like --ctl-h, --hit-floor and --fs-item above,
+     * because a width query cannot separate a tablet from a desktop.
+     *
+     * --fs-sm AT THE FINE TIER FOR BOTH, so the form-label rung is uniform: the
+     * eleven sites that read --fs-xs move up 1px on a mouse, which is the price
+     * of one rung rather than two tokens that differ only in a legacy value. */
+    --fs-form-label: var(--fs-sm);
+    --fs-form-peer: var(--fs-sm);
   }
 
   :root {
@@ -542,20 +584,21 @@
   }
 
   /* A caption stays one step under its row, so it cannot outsize the control it
-   * labels (`.pill-model-meta` beside a model row's own name is the tight case,
-   * and the one popup-parity.test.ts measures), and --fs-sm is the floor every
-   * popup keeps on a finger. The effort slider's caption used to be that case
-   * against the knob's own label; the knob carries no text now, so `.effort-label`
-   * has nothing beside it to outsize. */
+   * labels: `.pill-model-meta` beside a model row's own name is the tight case,
+   * and the one popup-parity.test.ts measures. */
   :root[data-pointer="coarse"] {
-    --fs-popup: var(--fs-md);
-    --fs-popup-meta: var(--fs-sm);
+    --fs-item: var(--fs-md);
+    --fs-item-meta: var(--fs-base);
+    --fs-form-label: var(--fs-md);
+    --fs-form-peer: var(--fs-lg);
   }
 
   @media (width <= 48rem) {
     :root:not([data-pointer="fine"]) {
-      --fs-popup: var(--fs-md);
-      --fs-popup-meta: var(--fs-sm);
+      --fs-item: var(--fs-md);
+      --fs-item-meta: var(--fs-base);
+      --fs-form-label: var(--fs-md);
+      --fs-form-peer: var(--fs-lg);
     }
   }
 

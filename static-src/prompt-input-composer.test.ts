@@ -30,7 +30,8 @@ import type * as Store from "./store.js";
 import type * as ComposerState from "./composer-state.js";
 import type * as PromptInput from "./prompt-input.js";
 import type * as ShareTarget from "./share-target.js";
-import type { Session } from "./types.js";
+import type { Session, TurnState } from "./types.js";
+import type { Entry, EntryTurnOpen } from "./wire/types.gen.js";
 
 /** Cache-buster for the re-imports below.
  *
@@ -77,7 +78,39 @@ vi.mock("./chat.js", () => ({ createPlannerSession: vi.fn() }));
 /** The one prompt the chat has already sent, so ArrowUp has somewhere to go. */
 const PRIOR_PROMPT = "the prompt I sent an hour ago";
 
+/** One sent prompt, as the store holds it: a turn whose `turn_open` CARRIES it.
+ *
+ *  The history the composer cycles through is the `turn_open.prompt.text` of each
+ *  resident turn, newest first, so a prompt is a TURN here rather than a row in a
+ *  message array — `userPrompts()` walks `turn_order` in reverse and reads that one
+ *  field. `n` is the session-absolute ordinal the appender assigns, so it is the
+ *  prompt's position in the whole session and not its index in this window. */
+function promptTurn(id: string, n: number, text: string): [string, TurnState] {
+  const turnID = `${id}-t${String(n)}`;
+  const payload: EntryTurnOpen = {
+    source: "prompt",
+    n,
+    prompt: { id: `m-${turnID}`, text },
+  };
+  const open: Entry = {
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
+    ts: n,
+    payload,
+  };
+  return [turnID, { entries: [open], openEntries: new Map() }];
+}
+
 function makeSession(id: string, prompts: string[]): Session {
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const [i, text] of prompts.entries()) {
+    const [turnID, state] = promptTurn(id, i + 1, text);
+    turns.set(turnID, state);
+    order.push(turnID);
+  }
   return {
     id,
     name: id,
@@ -88,17 +121,12 @@ function makeSession(id: string, prompts: string[]): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: prompts.length,
-    messages: prompts.map((content, i) => ({
-      id: `m${String(i)}`,
-      role: "user" as const,
-      content,
-      ts: i + 1,
-    })),
+    turns,
+    turn_order: order,
+    turn_count: prompts.length,
     has_more: false,
     thinking: false,
     working_label: "Thinking",

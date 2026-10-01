@@ -1,0 +1,70 @@
+{
+  "input_file": "heading-cut.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 0,
+      "number": "1",
+      "text": "1 First task",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "3ce83c15da98781a9fd87ecdab7b6c76f5ac702c130625de78b21bce0b446e25",
+      "detail": "- Verify: something\n- _Requirements: 1.1_",
+      "children": []
+    },
+    {
+      "id": "L7",
+      "line": 7,
+      "indent": 0,
+      "number": "2",
+      "text": "2 Last task owns the rest of the file",
+      "status": "completed",
+      "queued": false,
+      "optional": false,
+      "hash": "087d7c263ac30b2a29e5cf5af93cfbda967fbd4d4af2b3746952cda7e4ce660e",
+      "detail": "- Verify: the tail",
+      "children": []
+    },
+    {
+      "id": "L17",
+      "line": 17,
+      "indent": 0,
+      "number": "",
+      "text": "Unnumbered parent with a heading inside its content",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "49fbdef68d75b1d193abe0ea4f211a246132d883f3a43677b73baa572d3d8b94",
+      "detail": "prose line",
+      "children": [
+        {
+          "id": "L21",
+          "line": 21,
+          "indent": 2,
+          "number": "",
+          "text": "child after the heading",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "4dc9cfb072f15fa742515f5bffc7f607296a53356b68fbbdd96ff2f9ec4b4ab5",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 1,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

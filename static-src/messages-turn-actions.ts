@@ -12,6 +12,8 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 import type { Turn } from "./turns.js";
+import { payloadOf } from "./turns.js";
+import { entryRenders, firstPlanSeq } from "./block-window.js";
 import { ICON_COPY, ICON_COPY_MD, ICON_SOURCE, ICON_LINK, ICON_EXPORT } from "./icons.js";
 import { getActive, getActiveId } from "./store.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -231,9 +233,9 @@ export function mountTurnFooterActions(footer: HTMLElement, card: HTMLElement, t
     }),
   );
   const srcBtn = makeBtn(ICON_SOURCE, "View markdown source", (btn) => {
-    // Re-resolved at click time rather than captured at mount: a later
-    // message_appended carrying the server's sanitized content would otherwise
-    // leave a stale source behind an unchanging button.
+    // Re-resolved at click time rather than captured at mount: a sealed entry
+    // carrying the server's sanitized text would otherwise leave a stale source
+    // behind an unchanging button.
     toggleTurnSource(card, turnMarkdown(current()), btn);
   });
   srcBtn.classList.add("turn-action-src");
@@ -310,27 +312,32 @@ export function resetTurnSourceView(card: HTMLElement): void {
   }
 }
 
-/** Hide the block regions of a body that is showing raw source, after something
- *  mounted into it: `toggleTurnSource` hides the regions it FINDS, and a new ROW brings
- *  an unhidden one with it. A window move makes that reachable on any scroll. */
+/** Hide the rows of a body that is showing raw source, after something mounted into
+ *  it: `toggleTurnSource` hides the rows it FINDS, and a window move brings an
+ *  unhidden one with it on any scroll. */
 export function syncSourceView(body: HTMLElement): void {
   const raw = body.querySelector<HTMLElement>(`:scope > .${RAW_CLASS}`);
   if (raw === null || raw.classList.contains("hidden")) {
     return;
   }
-  for (const region of body.querySelectorAll<HTMLElement>(".assistant-blocks")) {
-    region.classList.add("hidden");
+  for (const row of bodyRenders(body)) {
+    row.classList.add("hidden");
   }
+}
+
+/** The rows a body renders: every child but the raw view. The body holds one element
+ *  per rendered entry, so there is no grouping element to hide in their place. */
+function bodyRenders(body: HTMLElement): HTMLElement[] {
+  return [...body.querySelectorAll<HTMLElement>(`:scope > :not(.${RAW_CLASS})`)];
 }
 
 /**
  * Show the turn's markdown SOURCE in place of its rendering, and back.
  *
- * The WHOLE rendered output swaps — on the OPEN body that is every
- * `.assistant-blocks` region (tool cards, reasoning traces and subagent boxes
- * included), on the folded FACE it is the prose bubble. The source is one
- * document, so every word the model wrote arrives at the top of it; a
- * half-swap would show the same turn in two different orders at once.
+ * The WHOLE rendered output swaps — on the OPEN body that is every row it holds
+ * (tool cards, reasoning traces and subagent boxes included), on the folded FACE it is
+ * the prose bubble. The source is one document, so every word the model wrote arrives
+ * at the top of it; a half-swap would show the same turn in two different orders at once.
  *
  * Mechanics carried over from the per-message version:
  *
@@ -340,8 +347,8 @@ export function syncSourceView(body: HTMLElement): void {
  *   - Exactly one of the two carries `.hidden` (`display: none !important`),
  *     because find-in-chat's walker prunes `.hidden` subtrees; `opacity` or
  *     `visibility` would leave both in the tree and double-count matches.
- *   - CONTAINERS hide, never children one by one, so a block arriving after
- *     the toggle lands inside an already-hidden region.
+ *   - ROWS hide one at a time, because the body holds one element per entry and there is
+ *     no grouping element left; `syncSourceView` re-hides a row a later mount brings in.
  */
 function toggleTurnSource(card: HTMLElement, source: string, btn: HTMLButtonElement): void {
   const host = activeSurface(card);
@@ -386,39 +393,46 @@ function activeSurface(card: HTMLElement): HTMLElement | null {
   return card.querySelector<HTMLElement>(":scope > .turn-body");
 }
 
-/** The rendered regions the source hides: every block region in the body plus
- *  the face's prose bubble. Queried plural because `updateAssistantBody`'s
- *  self-healing path can leave two block regions behind; hiding only the first
- *  would leave a stray body on screen. */
+/** The rendered surfaces the source hides: every row the open body holds plus the
+ *  face's prose bubble. */
 function renderedRegions(card: HTMLElement): HTMLElement[] {
+  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
   return [
-    ...card.querySelectorAll<HTMLElement>(
-      ":scope > .turn-body .assistant-blocks, :scope > .turn-face > .turn-face-prose",
-    ),
+    ...(body === null ? [] : bodyRenders(body)),
+    ...card.querySelectorAll<HTMLElement>(":scope > .turn-face > .turn-face-prose"),
   ];
 }
 
-/** The turn's markdown, for "copy as markdown" and the source view: every
- *  assistant message's stored content joined in order, falling back to its
- *  parent-authored text blocks when a block-mode message carries an empty
- *  top-level `content`. */
+/** The turn's markdown, for "copy as markdown" and the source view: the agent's
+ *  own prose, one paragraph per PROSE RUN.
+ *
+ *  A run's `text` entries are one stream — the renderer feeds them to a single
+ *  markdown parser, so a construct may straddle two — which is why they
+ *  concatenate and only a run boundary spends a blank line. `entryRenders` is
+ *  the whole boundary test, the renderer's own answer rather than a second
+ *  reading of it, so a `steer_ack` ends a run without contributing to it. */
 export function turnMarkdown(t: Turn): string {
   const parts: string[] = [];
-  for (const m of t.body) {
-    if (m.role !== "assistant") {
+  let run = "";
+  const firstPlan = firstPlanSeq(t, "");
+  const flush = (): void => {
+    if (run.trim() !== "") {
+      parts.push(run);
+    }
+    run = "";
+  };
+  for (const e of t.body) {
+    if (!entryRenders(e, "", firstPlan)) {
       continue;
     }
-    let text = m.content ?? "";
-    if (text.trim() === "") {
-      text = (m.blocks ?? [])
-        .map((b) => (b.type === "text" && (b.agent_subtask_id ?? "") === "" ? (b.text ?? "") : ""))
-        .filter((s) => s !== "")
-        .join("\n\n");
+    const text = payloadOf(e, "text");
+    if (text === undefined) {
+      flush();
+      continue;
     }
-    if (text.trim() !== "") {
-      parts.push(text);
-    }
+    run += text.text;
   }
+  flush();
   return parts.join("\n\n");
 }
 

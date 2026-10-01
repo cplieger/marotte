@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/buffer"
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/tabs"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
 // Fixture sizes, all deliberately OVER the state measured on the live instance
@@ -56,44 +56,29 @@ func newBudgetRuntime(t *testing.T) *Runtime {
 	if err != nil {
 		t.Fatalf("tabs.NewStore(%q): %v", dir, err)
 	}
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	rt := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs,
 		WithTabs(st), WithConfigDir(dir))
-	cs.Bus = rt
+	cs.wire(rt)
 	rt.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, rt) })
 	return rt
 }
 
-// busyChatsWithHugeTurns opens n busy chats and fills each one's turn buffer. WHAT
-// the fixture must hold is what decides whether each assertion can fail at all:
-//
-//   - A PROMPT-sourced open turn per chat, so each chat is in the busy set.
-//   - A buffer whose turn has STARTED and holds 3 MiB of Reasoning, 1 MiB of
-//     Content and 20 tool calls of 100 KiB each, written through the buffer's own
-//     Append* methods: if any connect path ever reads a turn's content again, these
-//     are the bytes the flatness gate sees.
-//   - One open chat TAB per chat, matching the live shape.
-//   - 2 pending permission asks and 1 pending run ask, so the connect carries a
-//     real pending set beside the busy list.
+// busyChatsWithHugeTurns opens n busy chats, each with a PROMPT-sourced open turn
+// holding 3 MiB of reasoning, 1 MiB of text and 20 tool calls of 100 KiB (the bytes
+// the flatness gate would see if a connect path ever read a turn again), one open
+// chat TAB, and 2 pending permission asks plus 1 run ask across the set so the
+// connect carries a real pending set beside the busy list.
 func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []marotte.ChatID {
 	tb.Helper()
 	ids := make([]marotte.ChatID, 0, n)
 	for i := range n {
 		id := marotte.ChatID(fmt.Sprintf("c-budget-%02d", i))
 		rt.bridge.mgr.orInsert(id)
-		if epoch := rt.coord.StartTurn(tb.Context(), id, marotte.TurnSourcePrompt); epoch == 0 {
-			tb.Fatalf("StartTurn(%q) refused, so the chat is not busy and the connect replays nothing", id)
-		}
-		buf := rt.liveTurnBuffer(id)
-		if buf == nil {
-			tb.Fatalf("no live turn buffer for %q, so there is nothing to fill", id)
-		}
-		if opened, _ := buf.StartTurn("m-" + string(id)); !opened {
-			tb.Fatalf("turn for %q was already started, so the fixture is not the one filling it", id)
-		}
-		fillTurnBuffer(buf, string(id))
+		_, log := rt.stagePromptTurn(tb, id)
+		fillTurn(tb, log, string(id))
 		openBudgetChatTab(tb, rt, id)
 		ids = append(ids, id)
 	}
@@ -101,29 +86,36 @@ func busyChatsWithHugeTurns(tb testing.TB, rt *Runtime, n int) []marotte.ChatID 
 	return ids
 }
 
-// fillTurnBuffer writes one turn's worth of content through the buffer's own append
-// methods. Reasoning and Content arrive as separate streams because they land in
-// separate builders AND separate blocks, which is the shape a snapshot doubles.
-func fillTurnBuffer(buf *buffer.Buffer, chatID string) {
+// fillTurn writes one turn's worth of content through the accumulator's own
+// methods: reasoning and text as separate lanes of deltas, then the tool calls,
+// each with its output already settled.
+func fillTurn(tb testing.TB, log *turnlog.Turn, chatID string) {
+	tb.Helper()
+	ctx := tb.Context()
 	reasoning := strings.Repeat("r", fixtureReasoningBytes/fixtureDeltaChunks)
 	content := strings.Repeat("c", fixtureContentBytes/fixtureDeltaChunks)
 	for range fixtureDeltaChunks {
-		buf.AppendThinkingDelta(reasoning, "")
+		if _, err := log.ThinkingDelta(ctx, "", "say-"+chatID, reasoning); err != nil {
+			tb.Fatalf("ThinkingDelta(%q): %v", chatID, err)
+		}
 	}
 	for range fixtureDeltaChunks {
-		buf.AppendTextDelta(content, "")
+		if _, err := log.TextDelta(ctx, "", "say-"+chatID, content); err != nil {
+			tb.Fatalf("TextDelta(%q): %v", chatID, err)
+		}
 	}
 	output := strings.Repeat("o", fixtureToolOutputBytes)
 	for i := range fixtureToolCalls {
 		toolID := fmt.Sprintf("%s-tool-%02d", chatID, i)
-		buf.AppendToolCall(&marotte.ToolCall{
+		if _, err := log.ToolCall(ctx, "", &marotte.EntryToolCall{
 			ID:     toolID,
 			Title:  "budget fixture",
 			Kind:   marotte.ToolKindExecute,
 			Status: marotte.ToolCompleted,
 			Output: output,
-		})
-		buf.AppendToolUseBlock(toolID, "")
+		}); err != nil {
+			tb.Fatalf("ToolCall(%q): %v", toolID, err)
+		}
 	}
 }
 

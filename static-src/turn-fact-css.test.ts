@@ -1,21 +1,8 @@
-// The footer's fact slot: one outcome fact beside the `i`, clipped rather than
-// wrapped, in the row's only flexible track. What has to hold is that the text never
-// wraps, never pushes the `…` trigger or Rewind off the row, and is gated on no
-// pointer state anywhere in the shipped bundle — a hover cannot carry a value, so a
-// hover gate on it would take the run time away from every touch device.
-//
-// Two kinds of claim, which is why this file needs both halves of the css-rules
-// helper (the shape `turn-dot-visibility-css.test.ts` states).
-//
-// COMPUTED, against the real assembled cascade: where the slot lands beside the
-// button on desktop, and what a long fact does at 360px with the coarse tier — the
-// phone case is measured in an IFRAME, because the `…` collapse and Rewind's word
-// both live behind `width <= 40rem`.
-//
-// SOURCE, because computed style cannot answer it: that the inline gap is this
-// element's own margin rather than a grid column-gap, which column it takes, and
-// that no rule in the bundle makes it conditional on a pointer. Which query a rule
-// sits in is only readable as text or through the CSSOM.
+// The footer's fact slot: one fact inside the ledger trigger, clipped rather than
+// wrapped, and gated on no pointer state anywhere in the bundle — a hover cannot carry a
+// value, so a hover gate would take it from every touch device. The narrow cases are
+// measured in an IFRAME because the `…` collapse and Rewind's word live behind
+// `width <= 40rem`.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
@@ -72,13 +59,11 @@ function mountCard(
   const text = doc.createElement("span");
   text.className = "turn-ledger-text";
   text.textContent = opts.word ?? "";
-  ledger.append(info, glyph, text);
-  footer.appendChild(ledger);
-
   const slot = doc.createElement("span");
   slot.className = "turn-fact";
   slot.textContent = opts.fact;
-  footer.appendChild(slot);
+  ledger.append(info, glyph, text, slot);
+  footer.appendChild(ledger);
 
   let actions: HTMLElement | null = null;
   if (opts.actions === true) {
@@ -141,11 +126,11 @@ function mountDelegate(doc: Document, fact: string): Mounted {
   glyph.className = "turn-ledger-glyph";
   const text = doc.createElement("span");
   text.className = "turn-ledger-text";
-  ledger.append(info, glyph, text);
   const slot = doc.createElement("span");
   slot.className = "turn-fact";
   slot.textContent = fact;
-  footer.append(ledger, slot);
+  ledger.append(info, glyph, text, slot);
+  footer.append(ledger);
   foot.appendChild(footer);
   delegate.appendChild(foot);
   mounted.get(doc)?.remove();
@@ -345,9 +330,12 @@ describe("the slot is WITHHELD where the track cannot hold a whole fact", () => 
     return m.slot;
   }
 
-  // 306.4px is 19.15rem, the threshold; a coarse track reaches the 25.3px floor there.
+  // 302.9px is 18.93rem, the threshold; a coarse row's slot reaches the 24.2px floor
+  // there, measured inside the trigger that holds the slot. ABOVE brackets it within
+  // 4px on purpose: the query is the only thing deciding `display` here, so the reading
+  // carries no measurement noise, and a threshold widened back out fails this case.
   const BELOW = 300;
-  const ABOVE = 312;
+  const ABOVE = 306;
 
   it("withholds it on a non-clean turn with Rewind, and not one pixel wider", () => {
     expect(cs(atContainerWidth(BELOW, { word: "Outcome unknown", rewind: true })).display).toBe(
@@ -403,25 +391,30 @@ describe("the slot, read as source", () => {
     expect(gated).toEqual([]);
   });
 
-  it("carries its inline gap as a margin, never as a grid column-gap", () => {
+  it("carries its inline gap as the trigger's own flex gap, never a grid column-gap", () => {
     // A column gap is charged between tracks even when the next one is EMPTY, so a
-    // footer with no Rewind would hold its trailing control off the gutter.
-    const slot = ruleContaining(turns, ".turn-footer > .turn-fact", "top");
-    expect(slot.body).toMatch(/margin-inline-start:/u);
+    // footer with no Rewind would hold its trailing control off the gutter. The slot
+    // sits INSIDE the trigger, so what separates it from the outcome word is that
+    // button's `gap` — one value, present exactly when the span is.
+    expect(ruleContaining(turns, ".turn-ledger-summary", "top").body).toMatch(
+      /gap:\s*var\(--sp-2\)/u,
+    );
     const footer = ruleContaining(turns, ".turn-footer", "top");
     expect(footer.body).toMatch(/row-gap:/u);
     expect(footer.body).not.toMatch(/column-gap:/u);
     expect(footer.body).not.toMatch(/[^-]gap:/u);
   });
 
-  it("takes the row's only flexible track, between the button and the controls", () => {
-    // The button shrink-wraps and the fact takes what is left, which is what makes
-    // the trailing controls unpushable by construction.
+  it("leaves the row's flexible track as slack, the button's own track growing to it", () => {
+    // The button shrink-wraps around the slot and the `1fr` beside it takes the
+    // remainder, which is what makes the trailing controls unpushable by construction.
+    // The slot declares no track of its own: it is a flex child of the button, not a
+    // grid item of the row.
     expect(ruleContaining(turns, ".turn-footer", "top").body).toMatch(
       /grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+auto\s+auto/u,
     );
-    expect(ruleContaining(turns, ".turn-footer > .turn-fact", "top").body).toMatch(
-      /grid-column:\s*2/u,
+    expect(ruleContaining(turns, ".turn-ledger-summary > .turn-fact", "top").body).not.toMatch(
+      /grid-column:/u,
     );
     expect(ruleContaining(turns, ".turn-footer > .turn-actions-buttons", "top").body).toMatch(
       /grid-column:\s*3/u,

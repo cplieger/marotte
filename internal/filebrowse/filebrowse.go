@@ -26,22 +26,25 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"syscall"
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 )
 
+// MaxFileSize is the editor's read and write cap on /api/file. The spec
+// endpoint reads through the same constant so the two doors cannot drift.
+const MaxFileSize = 2 * 1024 * 1024
+
 const (
-	maxFileSize   = 2 * 1024 * 1024   // 2 MB for /api/file read/write
-	maxUploadSize = 50 * 1024 * 1024  // 50 MB per multipart upload
-	maxCopySize   = 100 * 1024 * 1024 // 100 MB per single-file copy
+	maxUploadSize = 256 * 1024 * 1024 // 256 MB per multipart upload
 	binarySniffN  = 8192              // bytes of prefix checked for NUL
 	// multipartMaxMemory is the in-RAM buffer ceiling
 	// ParseMultipartForm uses before spilling parts to a tmpfile.
 	// Small on purpose: the HTTP body cap is enforced by
 	// MaxBytesReader; this value only decides when parts page to disk.
 	// Matches the 1 MiB default net/http uses via `defaultMaxMemory`
-	// and keeps concurrent uploads from stacking 50 MiB each in RAM.
+	// and keeps concurrent uploads from stacking 256 MiB each in RAM.
 	multipartMaxMemory = 1 * 1024 * 1024
 
 	// respPath is the response-body key echoing the request path back
@@ -84,6 +87,21 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // error response (e.g. for a validation failure with a specific status
 // code) and handleFilesAction should not double-write.
 var errHandled = errors.New("handled")
+
+// errNoSpaceLeft is the client message every 507 on this surface carries.
+const errNoSpaceLeft = "not enough space left on the volume"
+
+// isOutOfSpace reports whether err is a volume-full write failure, which the
+// write paths answer with 507 rather than a generic 500 so the user is told
+// what to fix rather than told it broke.
+//
+// EDQUOT as well as ENOSPC: this fleet's volumes sit on ZFS datasets with
+// quotas, and a quota-exhausted write reports EDQUOT where a genuinely full
+// filesystem reports ENOSPC. TestIsOutOfSpace_MatchesThroughAtomicfileWrapping
+// pins the wrapping errors.Is walks to reach either errno.
+func isOutOfSpace(err error) bool {
+	return errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT)
+}
 
 // resolveOrForbid is the common path-resolve prelude: returns the resolved
 // location or writes a 403 and returns (loc{}, false).

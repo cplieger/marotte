@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
 // getEffective issues GET /api/settings against a config dir and decodes the
@@ -90,8 +90,14 @@ func TestSettingsGet_ResolvesDefaultsUnderStoredValues(t *testing.T) {
 	if got.NotifyPRStatus {
 		t.Error("notify_pr_status = true, want false: it is the one keyed kind that defaults OFF, because a pull request's CI verdict is already on the forge — the polarity is not uniform across the three")
 	}
-	if len(got.AgentIgnoreFiles) == 0 {
-		t.Error("agent_ignore_files is empty; this is the live bug — the panel rendered an empty chip row while the filter applied two patterns")
+	// The seeded list is EMPTY and the FLOOR is what enforces anything, so what a
+	// client must never receive here is null: the wire field carries no omitempty,
+	// so nil marshals as null and the required string[] cannot decode one.
+	if got.AgentIgnoreFiles == nil {
+		t.Error("agent_ignore_files is nil; it marshals as null and the client cannot decode it")
+	}
+	if len(got.AgentIgnoreFiles) != 0 {
+		t.Errorf("agent_ignore_files = %v, want it empty: a seeded entry filters reads nobody asked to filter", got.AgentIgnoreFiles)
 	}
 	// And the master switch really is off, so the assertion above is about polarity
 	// rather than about everything defaulting true.
@@ -150,6 +156,12 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 				if !slices.Equal(got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles()) {
 					t.Errorf("agent_ignore_files = %v, want the default %v", got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
 				}
+				// The default is EMPTY, so slices.Equal cannot tell it from nil —
+				// assign-on-success has to be checked on the nil axis or this case
+				// goes green with the discipline removed.
+				if got.AgentIgnoreFiles == nil {
+					t.Error("agent_ignore_files is nil; the default must stand, and nil marshals as null")
+				}
 			},
 		},
 		{
@@ -167,6 +179,9 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 					t.Errorf("agent_ignore_files = %v, want the whole default %v with nothing of the stored list in it",
 						got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
 				}
+				if got.AgentIgnoreFiles == nil {
+					t.Error("agent_ignore_files is nil; the default must stand, and nil marshals as null")
+				}
 			},
 		},
 		{
@@ -179,6 +194,12 @@ func TestSettingsGet_AWrongTypedStoredValueYieldsTheDefault(t *testing.T) {
 				if !slices.Equal(got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles()) {
 					t.Errorf("agent_ignore_files = %v, want the default %v; a stored null must not empty the list",
 						got.AgentIgnoreFiles, settings.DefaultAgentIgnoreFiles())
+				}
+				// Nil is the ONLY axis this case has left: the default is empty, so a
+				// wiped list and the default compare equal. Removing errStoredNull
+				// leaves the field nil, which this catches and slices.Equal cannot.
+				if got.AgentIgnoreFiles == nil {
+					t.Error("agent_ignore_files is nil; a stored null must be refused, not assigned")
 				}
 			},
 		},

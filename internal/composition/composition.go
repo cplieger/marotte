@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
-	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/bridge"
@@ -27,18 +26,21 @@ import (
 	"github.com/cplieger/marotte/internal/git"
 	"github.com/cplieger/marotte/internal/kirosession"
 	"github.com/cplieger/marotte/internal/logctl"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
+	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
 	"github.com/cplieger/marotte/internal/server"
 	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workspace"
+	"github.com/cplieger/toolbelt/v3"
 )
 
 // App holds all wired-up services for the marotte server.
@@ -120,7 +122,15 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
 	}
 
-	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil)
+	// The third reader of KeySecurityProfile, and the composition root is where it
+	// belongs: internal/mcp renders a file and holds none of the policy vocabulary,
+	// so the rung table and the unknown-id fallback stay in policyfile and only the
+	// wire between them is here. Read per render rather than captured, so a profile
+	// change reaches the file — see mcp.WithAutoApprove.
+	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil,
+		mcp.WithAutoApprove(func(ctx context.Context) bool {
+			return honoursAutoApproveFor(ctx, cfg.ConfigDir)
+		}))
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +150,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// waits on it. Created here because the runtime is built before the server.
 	listenerBound := make(chan struct{})
 	tabStore := openTabStore(cfg.ConfigDir)
+	approvalStore := openSpecApprovalStore(cfg.ConfigDir)
 	authReadiness := new(command.AuthReadiness)
 	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
@@ -151,6 +162,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		agent.WithSchedules(scheduleStore),
 		agent.WithRunLeases(leaseStore),
 		agent.WithTabs(tabStore),
+		agent.WithSpecApprovals(approvalStore),
 		agent.WithVersions(versions))
 	chat.WithBroadcaster(h)(chatStore)
 	// The two chat GET envelopes stamp the hub's epoch beside their version, and
@@ -243,17 +255,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// A chat someone has OPEN is not abandoned work, bridge or draft or neither. That
 	// makes retention opt-out for a chat left open forever, which is accepted.
 	chat.WithOpenTab(h.Membership().HasOpenTab)(chatStore)
-	// Not a retention predicate: the chat store's HTTP surface reads it, and without it
-	// that surface's silence about a buffered turn reads as "nothing closed this turn".
-	// It states WHOSE turn as well, so a run's step turn does not read as the launching
-	// chat's own. Injected post-construction for WithLive's reason — the store cannot
-	// import the agent.
-	chat.WithTurnOpen(h.TurnOpenState)(chatStore)
-	// The CONTENT half of the line above, and the ONE channel for an in-flight turn: the
-	// SSE connect carries `busy_chats` and no turn transcript, so without this a client
-	// that finds a chat busy at connect renders the prompt over an empty body until the
-	// turn ends.
-	chat.WithLiveTurn(h.LiveTurn)(chatStore)
+	// Not retention predicates: the transcript GET reads both, the registry's liveness
+	// verdict and the open turns' in-memory tails. Injected post-construction for
+	// WithLive's reason — the store cannot import the agent.
+	chat.WithLiveTurn(h.TurnLive)(chatStore)
+	chat.WithOpenTurns(h.OpenTurns)(chatStore)
 	chat.WithOnPurge(func(id marotte.ChatID, sessionChain []string) {
 		// After the per-chat record lock is released: it keeps the lock order acyclic.
 		// RetentionClose reaps the chain itself, through the same reaper wired above, so
@@ -285,6 +291,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// The recycle a security-profile change needs, or the policy view describes the
 		// profile that was in force before it.
 		server.WithPolicyReload(h),
+		// The re-render the same change needs, or the outgoing rung's MCP auto-approve
+		// posture stands on every live chat until the next MCP mutation.
+		server.WithMCPRenderer(mcpStore),
 		server.WithStaticFS(static),
 		server.WithKiroCLI(kiro.cliPath, kiro.env),
 		server.WithKiroReady(kiro.ready),
@@ -292,6 +301,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithAuthUnavailable(authReadiness.Unavailable),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithTabs(tabStore),
+		server.WithSpecApprovals(approvalStore),
 		server.WithWorkDir(cfg.WorkDir),
 		server.WithTrustedProxies(cfg.TrustedProxies),
 		server.WithHostPolicy(cfg.HostPolicy),
@@ -406,6 +416,31 @@ func chatRetention(ctx context.Context, configDir string) time.Duration {
 		return 0
 	}
 	return time.Duration(days) * 24 * time.Hour
+}
+
+// honoursAutoApproveFor is the one production line joining the rung in force to
+// what reaches KAS's MCP config: it reads the setting and asks the ladder whether
+// that rung lets a server's own auto_approve list through.
+//
+// Package-level rather than a closure at the mcp.New call because it is otherwise
+// addressable by nothing: the ladder is tested per rung and the render per bool,
+// both against injected values, so inverting this line leaves composition, mcp,
+// policyfile and server all green. composition_autoapprove_test.go tables it.
+func honoursAutoApproveFor(ctx context.Context, configDir string) bool {
+	return policyfile.HonoursAutoApprove(securityProfileID(ctx, configDir))
+}
+
+// securityProfileID reads the persisted security-profile id, empty when unset or
+// unreadable. Resolving the empty case is policyfile.HonoursAutoApprove's job, so this
+// stays a plain read and the unknown-id rule keeps one owner.
+//
+// FieldInto rather than FieldStrict, matching agent.securityPresets: the two readers must
+// agree about the posture in force, and an unreadable file is the same "no opinion" as an
+// absent key for a value whose fallback is the ladder's own default rung.
+func securityProfileID(ctx context.Context, configDir string) string {
+	var id string
+	settings.FieldInto(ctx, configDir, settings.KeySecurityProfile, &id)
+	return id
 }
 
 // sweepStaleTemps removes orphan temps left by SIGKILL between CreateTemp and Rename,
@@ -733,6 +768,18 @@ func openTabStore(dir string) *tabs.Store {
 	st, err := tabs.NewStore(dir)
 	if err != nil {
 		slog.Warn("tab arrangement starting empty", "error", err)
+	}
+	return st
+}
+
+// openSpecApprovalStore opens the spec-phase approval record, ALWAYS returning a
+// store: an approval is re-creatable by approving again (invariant 6), and no
+// store would take the approve command down with it while leaving the badge with
+// nothing to show.
+func openSpecApprovalStore(dir string) *specapproval.Store {
+	st, err := specapproval.NewStore(dir)
+	if err != nil {
+		slog.Warn("spec approvals starting empty", "error", err)
 	}
 	return st
 }

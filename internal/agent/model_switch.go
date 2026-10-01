@@ -1,6 +1,7 @@
 package agent
 
-// KIRO-CLI 2.0.1 tui.js:886710603bed3fb6 — payload shapes pinned.
+// A model switch never touches a turn: it writes pending_model on the header and
+// applies it when the chat is idle, at once or from the closer that makes it idle.
 
 import (
 	"context"
@@ -10,9 +11,10 @@ import (
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 )
 
 // resolveSwitchModel returns the effective model after applying the
@@ -32,6 +34,8 @@ var responseOK2 = map[string]bool{"ok": true}
 // is well-formed, so the refusal is about entitlement, not the request.
 var errModelNotServed = errors.New("that model is not available on this account")
 
+// cmdSwitchModel records the pick as pending_model and applies it when the chat is
+// idle. A request resolving to the model already set answers ok and writes nothing.
 func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientCommand) (any, error) {
 	if cmd.ChatID == "" {
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrMissingChatID)
@@ -42,89 +46,84 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *marotte.ClientComman
 			return nil, command.StatusError(http.StatusBadRequest, command.ErrInvalidPayload)
 		}
 	}
-
 	if !ids.ValidIdent(p.Model) {
 		return nil, command.StatusError(http.StatusBadRequest, command.ErrInvalidPayload)
 	}
-
 	chat, ok := rt.chatStore.Get(ctx, cmd.ChatID)
 	if !ok {
 		return nil, command.StatusError(http.StatusNotFound, command.ErrChatNotFound)
 	}
-
 	model, isSwitch := resolveSwitchModel(chat, p)
-
-	if isSwitch {
-		if err := rt.refuseUnservedModel(ctx, cmd.ChatID, chat, model); err != nil {
-			return nil, err
-		}
-		// A pick on a chat that never ran is a preference the first session/new
-		// carries; falling through would spawn a ~300MB bridge tree for a pill click.
-		if chat.ACPSessionID == "" && len(chat.Messages) == 0 && !rt.HasLiveBridge(cmd.ChatID) {
-			rt.persistModelPick(ctx, cmd.ChatID, model)
-			return responseOK2, nil
-		}
-		if rt.coord.TryFastModelSwitch(ctx, cmd.ChatID, model, rt.coord.EffortForSwitch(ctx, model)) {
-			rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
-			return responseOK2, nil
-		}
+	if !isSwitch {
+		return responseOK2, nil
 	}
-
-	return rt.switchByRestart(ctx, cmd, chat, model, isSwitch)
-}
-
-// persistModelPick records a pre-session model choice: no event row, no usage
-// reset, no bridge. Clears Effort, since a tier picked under the previous model
-// does not carry onto this one.
-func (rt *Runtime) persistModelPick(ctx context.Context, chatID marotte.ChatID, model string) {
-	if _, err := rt.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
+	if err := rt.refuseUnservedModel(ctx, cmd.ChatID, chat, model); err != nil {
+		return nil, err
+	}
+	if _, err := rt.chatStore.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		c.Model = model
-		c.Effort = ""
+		c.PendingModel = model
 		return true
 	}); err != nil {
-		slog.Error("switch_model: persist pre-session pick", "chat_id", chatID, "error", err)
-	}
-}
-
-// switchByRestart is the fallback when the in-session swap did not take: tear
-// the bridge down and let OpenBridge try session/load, then session/new.
-func (rt *Runtime) switchByRestart(
-	ctx context.Context, cmd *marotte.ClientCommand,
-	chat *marotte.Chat, model string, isSwitch bool,
-) (any, error) {
-	rt.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
-	rt.coord.CloseBridge(cmd.ChatID)
-
-	sb, err := rt.coord.OpenBridge(ctx, cmd.ChatID, model)
-	if err != nil {
-		rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, cmd.ChatID, marotte.ErrorPayload{Code: marotte.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
+		slog.Error("switch_model: write pending_model", "chat_id", cmd.ChatID, "error", err)
 		return nil, command.StatusError(http.StatusInternalServerError, err)
 	}
-	if isSwitch {
-		rt.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
-	}
-
-	resumed := chat.ACPSessionID != "" && string(sb.SessionID()) == chat.ACPSessionID
-	if resumed {
-		slog.Info("model switch: fallback, session/load succeeded",
-			"chat_id", cmd.ChatID, "model", model)
-		// A resumed session restores KAS's own persisted model, so without this
-		// the switch silently does not happen. Through the bridge this function
-		// HOLDS: a fresh lookup by chat id can hit the old bridge's cleanup evicting
-		// the new entry.
-		if isSwitch && !rt.coord.applyModelSwitch(ctx, cmd.ChatID, sb, model, rt.coord.EffortForSwitch(ctx, model)) {
-			slog.Warn("model switch: the resumed session kept its own model",
-				"chat_id", cmd.ChatID, "model", model)
-		}
-	} else {
-		slog.Info("model switch: fallback, fresh session started",
-			"chat_id", cmd.ChatID, "model", model)
-	}
-
+	rt.applyPendingModel(ctx, cmd.ChatID)
 	return responseOK2, nil
+}
+
+// applyPendingModel applies the header's pending_model when the chat is idle: on a
+// live bridge through session/set_config_option, with the model_switched entry
+// appended between turns and the header taking the pick; with no bridge the pick
+// lands on model directly and the next OpenBridge carries it. A busy chat leaves
+// the pick set for the closer that makes it idle. The idle predicate is read
+// under the lifecycle mutex, and the bridge call runs with no lock held.
+func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID) {
+	ctx = durable.Context(ctx)
+	if rt.coord.turns.live(chatID) {
+		return
+	}
+	chat, ok := rt.chatStore.Get(ctx, chatID)
+	if !ok || chat.PendingModel == "" {
+		return
+	}
+	model, from := chat.PendingModel, chat.Model
+	if !rt.coord.bridgeLive(chatID) {
+		rt.coord.persistModelPick(ctx, chatID, model)
+		return
+	}
+	// Resolved ONCE: the level the session is told and the level the entry records
+	// have to be the same value, and PersistModelSwitch clears Chat.Effort, so a
+	// second read after it would answer for a chat that has just forgotten its tier.
+	effort := rt.coord.EffortForSwitch(ctx, model)
+	if !rt.coord.ApplyModelSwitch(ctx, chatID, model, effort) {
+		rt.clearPendingModel(ctx, chatID)
+		rt.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
+			Code:    marotte.ErrCodeSwitchFailed,
+			Message: rpcerr.Text(errSwitchRefused),
+		}))
+		return
+	}
+	rt.coord.PersistModelSwitch(ctx, chatID,
+		marotte.EntryModelSwitched{From: from, To: model, Effort: effort}, chat.Usage.ContextSize)
+}
+
+// errSwitchRefused is what the reader sees when the session declined the swap.
+var errSwitchRefused = errors.New("the session refused the model switch; try again later")
+
+// clearPendingModel drops a pick the session refused, so the badge stops pulsing.
+func (rt *Runtime) clearPendingModel(ctx context.Context, chatID marotte.ChatID) {
+	if _, err := rt.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
+		if !ex || c.PendingModel == "" {
+			return false
+		}
+		c.PendingModel = ""
+		return true
+	}); err != nil {
+		slog.Error("switch_model: clear pending_model", "chat_id", chatID, "error", err)
+	}
 }
 
 // refuseUnservedModel is the LOUD half of the entitlement check: a spawn withholds

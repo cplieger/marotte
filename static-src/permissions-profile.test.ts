@@ -349,6 +349,66 @@ describe("selecting a profile", () => {
   });
 });
 
+// A selection REPLACES the policy across three files, and the server serializes
+// nothing: two overlapping POSTs each snapshot both writable files before writing, so
+// the second's snapshot can hold the first's rules and a failure in it then restores
+// the FIRST profile's rules under a config.json naming the second. Disabling the
+// Customize button alone left the radios, which are the controls that actually start
+// a selection — reachable by double-clicking two rungs inside one round trip.
+describe("a selection in flight", () => {
+  /** A dispatch that stays pending until the returned function is called. */
+  function pendingProfileWrite(): () => void {
+    let release = (): void => undefined;
+    mocks.profileDispatch.mockReturnValue(
+      new Promise((resolve) => {
+        release = () => {
+          resolve({ ok: true });
+        };
+      }),
+    );
+    return () => {
+      release();
+    };
+  }
+
+  it("makes the whole radiogroup inert until the write answers", async () => {
+    await mount(view("guarded"));
+    const release = pendingProfileWrite();
+
+    await pick("trusted");
+    expect(radios().every((r) => r.disabled)).toBe(true);
+    expect(customizeBtn().disabled).toBe(true);
+
+    release();
+    await flush();
+    expect(radios().some((r) => r.disabled)).toBe(false);
+    expect(customizeBtn().disabled).toBe(false);
+  });
+
+  it("releases the radios when the write fails", async () => {
+    await mount(view("guarded"));
+    mocks.profileDispatch.mockResolvedValue({ error: "policy file is not writable" });
+
+    await pick("trusted");
+
+    expect(radios().some((r) => r.disabled)).toBe(false);
+    expect(statusText()).toContain("policy file is not writable");
+  });
+
+  it("covers the Customize door too", async () => {
+    await mount(view("trusted"));
+    const release = pendingProfileWrite();
+
+    customizeBtn().click();
+    await flush();
+    expect(radios().every((r) => r.disabled)).toBe(true);
+
+    release();
+    await flush();
+    expect(radios().some((r) => r.disabled)).toBe(false);
+  });
+});
+
 describe("the table outside Custom", () => {
   // With a profile in charge, a hand-edit would be a second writer of one posture
   // and the first thing to disagree with the picker. Disabled rather than only
@@ -385,7 +445,39 @@ describe("the table outside Custom", () => {
   });
 });
 
+/** Does this description CLAIM step coverage, as opposed to denying it? Both forms
+ *  name a workflow step, so the denial is what separates them. */
+function claimsStepCoverage(desc: string): boolean {
+  return /workflow step/i.test(desc) && !/not covered/i.test(desc);
+}
+
 describe("what a profile description promises", () => {
+  // The one SERVER fact these strings duplicate — which rung writes file rules —
+  // asserted from the client's side, because the wire carries id and presets only.
+  // Exactly one PRESET rung may claim step coverage, and it is the rung the picker
+  // itself calls loosest: the ladder's second-to-last position, which is where
+  // renderProfiles reads it from too. Custom is excluded because it holds no
+  // presets at all, so it claims coverage on a different mechanism.
+  it("claims step coverage on exactly one preset rung, the loosest", async () => {
+    await mount(view("guarded"));
+    const presets = LADDER.filter((p) => p.id !== "custom").map((p) => p.id);
+    const claiming = presets.filter((id) => claimsStepCoverage(descriptionFor(id)));
+    expect(claiming).toEqual([LADDER[LADDER.length - 2]?.id]);
+  });
+
+  // read-only grants read-all, which is fs_read OUTSIDE the workspace. "Reads any
+  // file on this machine" covers that in general terms and never names the
+  // consequence, so a reader picking a rung called read-only was not told it exposes
+  // credentials. internal/policyfile/profile.go names it at the grant and states
+  // that the picker's description is where a reader learns it.
+  it("names read-only's real escalation rather than describing it in general terms", async () => {
+    await mount(view("guarded"));
+    const desc = descriptionFor("read-only");
+    expect(desc).toContain("outside this workspace");
+    expect(desc).toContain("SSH key");
+    expect(desc).toContain("no prompt");
+  });
+
   // A profile has two halves and they reach different places. Its presets ride the
   // session door and cover only the sessions marotte opens; Kiro creates a workflow
   // step's session itself, so a preset never arrives there. Only the loosest rung

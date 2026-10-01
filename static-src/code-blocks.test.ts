@@ -285,13 +285,13 @@ describe("decorateStreamingCodeTail: a fence that has not closed", () => {
     expect(run).toHaveBeenCalledWith("echo hi");
   });
 
-  it("labels the shell button as typing, not running", () => {
+  it("labels the shell button as running the command", () => {
     setShellRunCallback(vi.fn());
     const { root } = fixture("bash", "echo hi");
     decorateCodeBlocks(root);
     const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
-    expect(buttons[1]?.getAttribute("data-tooltip")).toBe("Type in shell");
-    expect(buttons[1]?.getAttribute("aria-label")).toBe("Type in shell, without running it");
+    expect(buttons[1]?.getAttribute("data-tooltip")).toBe("Run in shell");
+    expect(buttons[1]?.getAttribute("aria-label")).toBe("Run in shell");
   });
 
   it("gives a multi-line block Copy only", () => {

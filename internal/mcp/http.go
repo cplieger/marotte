@@ -64,7 +64,25 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		webhttp.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
+		// `honours_auto_approve` rides the LIST rather than a settings payload or
+		// the permissions view, and both halves of that are deliberate.
+		//
+		// It rides THIS response because the panel rendering the `auto_approve`
+		// chips already reads it, so a suspension needs no second fetch — and
+		// `GET /api/permissions` is utility-bridge-backed and deliberately lazy,
+		// so asking it would put a subprocess round trip on the MCP panel's open.
+		// `internal/settings`' own TestKnownKeys_CoversTheClientSurface refuses the
+		// third option outright: `security_profile` is not in the effective view,
+		// "owned by the permissions endpoints, not this payload".
+		//
+		// It is the RESOLVED decision and not a profile id, so this package still
+		// holds none of the ladder's vocabulary — and it comes from the same
+		// resolver writeKASConfig reads, which is what stops the chips and KAS's
+		// own file disagreeing about whether the grant is in force.
+		webhttp.WriteJSON(w, map[string]any{
+			"servers":              s.List(r.Context()),
+			"honours_auto_approve": s.honoursAutoApprove(r.Context()),
+		})
 	case http.MethodPost:
 		var in Server
 		if !httpreply.DecodeJSON(w, r, &in) {

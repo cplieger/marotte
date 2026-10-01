@@ -1,0 +1,5 @@
+- [ ] Audit the exporters
+  - [ ] Read the metrics registry
+  - [ ] Check the label cardinality
+- [ ] Ship the dashboard
+  - [ ] Wire the datasource

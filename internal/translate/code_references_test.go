@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
 // codeRefsPayload extracts the CodeReferencesPayload from the single
@@ -37,12 +38,9 @@ func countCodeRefEvents(events *[]marotte.ServerEvent) int {
 	return n
 }
 
-// startedBuf returns an in-flight assistant buffer for chatID with a
-// message id set (mirrors ensureTurnStarted).
-func startedBuf(deps *baseDeps, chatID marotte.ChatID, msgID string) {
-	buf := deps.bufStore.GetOrInit(chatID)
-	buf.Started = true
-	buf.MessageID = msgID
+// startedTurn opens the chat's turn, the one OwnTurn answers with.
+func startedTurn(deps *baseDeps, chatID marotte.ChatID) *turnlog.Turn {
+	return deps.turns.chatTurn(chatID)
 }
 
 func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *marotte.RPCResponse {
@@ -54,31 +52,29 @@ func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *marotte.
 }
 
 // TestHandleCodeReferences_HappyPath pins that a well-formed notification on
-// an in-flight turn accumulates the references onto the buffer and broadcasts
-// exactly one code_references event carrying the turn's message id and the
-// full list.
+// an open turn accumulates the references onto the turn and broadcasts exactly
+// one code_references event carrying the turn's id and the full list.
 func TestHandleCodeReferences_HappyPath(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
-	startedBuf(deps, chatID, "m-1")
+	turn := startedTurn(deps, chatID)
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
 		{"licenseName": "MIT", "repository": "github.com/foo/bar", "url": "https://github.com/foo/bar"},
 	}))
 
 	p := codeRefsPayload(t, events)
-	if p.MessageID != "m-1" {
-		t.Errorf("payload MessageID = %q, want %q", p.MessageID, "m-1")
+	if p.Turn != turn.ID() {
+		t.Errorf("payload Turn = %q, want %q", p.Turn, turn.ID())
 	}
 	if len(p.References) != 1 || p.References[0].LicenseName != "MIT" ||
 		p.References[0].Repository != "github.com/foo/bar" ||
 		p.References[0].URL != "https://github.com/foo/bar" {
 		t.Errorf("payload References = %+v, want one MIT/foo/bar reference", p.References)
 	}
-	buf := deps.bufStore.GetOrInit(chatID)
-	if len(buf.CodeReferences) != 1 {
-		t.Errorf("buffer CodeReferences = %+v, want 1 accumulated", buf.CodeReferences)
+	if refs := turn.CodeReferences(); len(refs) != 1 {
+		t.Errorf("turn CodeReferences = %+v, want 1 accumulated", refs)
 	}
 }
 
@@ -89,7 +85,7 @@ func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
-	startedBuf(deps, chatID, "m-1")
+	turn := startedTurn(deps, chatID)
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
 		{"licenseName": "", "repository": "github.com/x/y", "url": "https://github.com/x/y"},
@@ -98,29 +94,29 @@ func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 	if n := countCodeRefEvents(events); n != 0 {
 		t.Errorf("broadcast count = %d, want 0 (all references had empty license)", n)
 	}
-	if buf := deps.bufStore.GetOrInit(chatID); len(buf.CodeReferences) != 0 {
-		t.Errorf("buffer CodeReferences = %+v, want none", buf.CodeReferences)
+	if refs := turn.CodeReferences(); len(refs) != 0 {
+		t.Errorf("turn CodeReferences = %+v, want none", refs)
 	}
 }
 
 // TestHandleCodeReferences_NoTurnInFlight pins that a notification arriving
-// with no started turn is dropped: no broadcast, and nothing accumulated onto
-// the (freshly GetOrInit'd) buffer so it can't contaminate the next turn.
+// with no open turn is dropped: no broadcast, and no turn opened for it, so it
+// can't contaminate the next turn.
 func TestHandleCodeReferences_NoTurnInFlight(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
-	// No startedBuf: buffer is absent / not started.
+	// No startedTurn: the chat has no open turn.
 
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
 		{"licenseName": "Apache-2.0", "repository": "github.com/a/b", "url": "https://github.com/a/b"},
 	}))
 
 	if n := countCodeRefEvents(events); n != 0 {
-		t.Errorf("broadcast count = %d, want 0 (no in-flight turn)", n)
+		t.Errorf("broadcast count = %d, want 0 (no open turn)", n)
 	}
-	if buf := deps.bufStore.GetOrInit(chatID); len(buf.CodeReferences) != 0 {
-		t.Errorf("buffer CodeReferences = %+v, want none (must not attach to a not-started turn)", buf.CodeReferences)
+	if deps.turns.chats[chatID] != nil {
+		t.Error("a turn was opened for the references; want none (a frame with no turn to join is dropped)")
 	}
 }
 
@@ -134,7 +130,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 		deps.parent = "sess-parent"
 		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("c1")
-		startedBuf(deps, chatID, "m-1")
+		startedTurn(deps, chatID)
 
 		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-sub", []map[string]any{
 			{"licenseName": "MIT", "repository": "r", "url": "https://example.com"},
@@ -148,7 +144,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 		deps.parent = "sess-parent"
 		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("c1")
-		startedBuf(deps, chatID, "m-1")
+		startedTurn(deps, chatID)
 
 		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-parent", []map[string]any{
 			{"licenseName": "MIT", "repository": "r", "url": "https://example.com"},
@@ -166,7 +162,7 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
-	startedBuf(deps, chatID, "m-1")
+	turn := startedTurn(deps, chatID)
 
 	ref := []map[string]any{{"licenseName": "MIT", "repository": "r", "url": "https://example.com"}}
 	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", ref))
@@ -183,8 +179,8 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 	if len(p.References) != 1 {
 		t.Errorf("deduped References = %+v, want 1 (identical reference must not duplicate)", p.References)
 	}
-	if buf := deps.bufStore.GetOrInit(chatID); len(buf.CodeReferences) != 1 {
-		t.Errorf("buffer CodeReferences = %+v, want 1 after dedup", buf.CodeReferences)
+	if refs := turn.CodeReferences(); len(refs) != 1 {
+		t.Errorf("turn CodeReferences = %+v, want 1 after dedup", refs)
 	}
 }
 
@@ -194,7 +190,7 @@ func TestHandleCodeReferences_MalformedParamsNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
-	startedBuf(deps, chatID, "m-1")
+	startedTurn(deps, chatID)
 
 	tr.HandleCodeReferences(t.Context(), chatID, &marotte.RPCResponse{Params: []byte("{")})
 	if n := countCodeRefEvents(events); n != 0 {

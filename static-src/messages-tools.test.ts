@@ -3,29 +3,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolCall } from "./types.js";
 
-// Mock messages-tools.ts's heavy DOM/store deps so the import resolves without
-// pulling the store, subagent modals, tool-card, etc. output-render + reactive
-// stay real (applyOutputUpdate paints through renderOutput + el).
-vi.mock("./store-signals.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  blockKey: undefined,
-  blockTextSigs: undefined,
-  blockThinkingSigs: undefined,
-  toolCallSigs: undefined,
-  // Real key composition: messages-tools keys its card registry on the
-  // composite at module scope, so an `undefined` here throws at import.
-  toolCallSigKey: vi.fn((chatID: string, toolID: string) => `${chatID}\u0000${toolID}`),
-  ensureBlockTextSig: undefined,
-  ensureBlockThinkingSig: undefined,
-  peekToolCallSig: undefined,
-  clearBlockSigsFor: undefined,
-  clearAllBlockSigs: undefined,
-  ensureToolCallSig: vi.fn(() => ({ value: undefined })),
-  clearToolCallSig: vi.fn(),
-}));
+// Mock messages-tools.ts's heavy DOM deps so the import resolves without pulling
+// tool-card's builders or the group's collapse. store-signals, output-render and
+// reactive stay real (applyOutputUpdate paints through renderOutput + el).
 vi.mock("./tool-group.js", () => ({
   maybeCollapseGroup: vi.fn(),
 }));
@@ -49,6 +29,10 @@ vi.mock("./tool-card.js", () => ({
   refreshToolDisclosure: vi.fn(),
   buildToolCard: vi.fn(() => document.createElement("div")),
   insertDiffPreview: vi.fn(),
+  // Inert: the mount effect calls it on every pass and this file's cards have no
+  // `.tool-header`, so the real writer would be a no-op here anyway. Its own
+  // behaviour is pinned in `tool-card-silence.test.ts`.
+  syncSilenceMarker: vi.fn(),
 }));
 
 import { applyOutputUpdate, updateToolCall } from "./messages-tools.js";

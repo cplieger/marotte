@@ -24,14 +24,15 @@ import { page } from "vitest/browser";
 import { loadCSS, mountAppCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
 /** The member used to LOCATE each capping rule, and it is the one member of the
- *  five that can be.
+ *  four that can be.
  *
  *  `ruleContaining` splits the whole prelude on commas and compares each trimmed
  *  piece for equality, so the FIRST name inside the `:where(` is glued to the
  *  `.dock-card > :where(` in front of it and the LAST one to the `)` behind it —
- *  neither trims to itself. That leaves the three middle names, of which
- *  `.run-input-body` and `.user-input-body` each carry a rule of their own
- *  further down the file, and `ruleContaining` demands exactly one match. */
+ *  neither trims to itself. That leaves the two middle names, and `.dock-ask-body`
+ *  carries four rules of its own further down the file (its own layout, its
+ *  `strong`, and the two yellow faces), while `ruleContaining` demands exactly one
+ *  match. */
 const ANCHOR = ".elicitation-body";
 
 /** The regions named inside a capping rule's `:where(...)`.
@@ -119,7 +120,7 @@ describe("the phone step-down, measured at real viewport sizes", () => {
     const card = document.createElement("div");
     card.className = "dock-card";
     const region = document.createElement("div");
-    region.className = "run-input-body";
+    region.className = "dock-ask-body";
     card.appendChild(region);
     document.body.appendChild(card);
     const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize);

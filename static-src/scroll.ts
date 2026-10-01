@@ -1387,15 +1387,10 @@ class ScrollController {
    *
    *  Rects carry ancestor TRANSFORMS where `offsetTop` did not, and only one
    *  strictly BETWEEN the scroller and `el` skews the reading: a common
-   *  ancestor's cancels against the scroller's own rect. The live pair is the
-   *  entry animation — `.turn[data-chat-entry]` translates 16px and
-   *  `.msg-wrap[data-chat-entry]` a further 4px — so 20px measured, DOWNWARD,
-   *  decaying to 0 across the 250ms entry (12.5px after one frame, 2px by
-   *  125ms). Accepted rather than unwound: it biases the pin toward the bottom,
-   *  which is where Following already wants to be, at a fifth of
-   *  BOTTOM_TOLERANCE_PX and under the half of it `anchorTop` already adds, and
-   *  the live-edge case is clamped away entirely. `landsAtLiveEdge` spends the
-   *  same 20px as slack at its own threshold, resolving toward Following. */
+   *  ancestor's cancels against the scroller's own rect. A skew that only decays
+   *  (a mount animation settling to 0) biases the pin toward the bottom, which is
+   *  where Following already wants to be, and the live-edge case is clamped away
+   *  by `landsAtLiveEdge`'s own tolerance. */
   private scrollFrameRect(el: HTMLElement): { top: number; bottom: number } | null {
     if (!el.isConnected || el.getClientRects().length === 0) {
       return null;

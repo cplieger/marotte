@@ -46,10 +46,10 @@ function mount(
   return card;
 }
 
-/** The answer row's buttons, in order. Scoped to `.run-input-actions` because the
+/** The answer row's buttons, in order. Scoped to `.dock-ask-actions` because the
  *  question's own clamp opener is a button too and belongs to the body. */
 function actionLabels(card: HTMLElement): (string | null)[] {
-  return [...card.querySelectorAll(".run-input-actions button")].map((b) => b.textContent);
+  return [...card.querySelectorAll(".dock-ask-actions button")].map((b) => b.textContent);
 }
 
 function button(card: HTMLElement, label: string): HTMLButtonElement {
@@ -153,7 +153,7 @@ describe("buildRunInputCard", () => {
     // opener is a button too, and it belongs to the body rather than to the ways
     // this ask can be answered.
     expect(
-      [...card.querySelectorAll(".run-input-actions button")].map((b) => b.textContent),
+      [...card.querySelectorAll(".dock-ask-actions button")].map((b) => b.textContent),
     ).toEqual(["Send answer"]);
   });
 

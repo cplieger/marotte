@@ -35,22 +35,48 @@ func TestIdentity_ObserveRetiresOncePerChange(t *testing.T) {
 	}
 }
 
-func TestIdentity_AbsentRetiresOnceAndNeverBecomesBaseline(t *testing.T) {
+// A single empty reading after a known identity is a transient (a credential
+// refresh mid-probe answers signed-out), so it retires nothing; the second
+// consecutive one retires, once, and absent never becomes the baseline.
+func TestIdentity_AbsentRetiresOnTheSecondReadingAndNeverBecomesBaseline(t *testing.T) {
 	retired := 0
 	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
 
 	id.Observe("account-a")
 	id.Observe("")
+	if retired != 0 {
+		t.Fatalf("one absent reading retired %d times, want 0 (a transient)", retired)
+	}
+	id.Observe("")
+	if retired != 1 {
+		t.Fatalf("two absent readings retired %d times, want 1", retired)
+	}
 	id.Observe("")
 	id.Observe("account-a")
-
 	if retired != 1 {
-		t.Errorf("Observe absent then the original identity retired %d times, want 1", retired)
+		t.Errorf("a third absent reading then the original identity retired %d times, want 1", retired)
 	}
 
 	id.Observe("account-b")
 	if retired != 2 {
 		t.Errorf("Observe identity after absent retired %d times, want 2; absent must not replace the baseline", retired)
+	}
+}
+
+// A transient empty reading between two readings of the same identity is not a
+// change: the count resets on the identity's return, so a later single empty
+// reading is again a transient rather than the second of a pair.
+func TestIdentity_ATransientAbsenceResetsOnTheIdentitysReturn(t *testing.T) {
+	retired := 0
+	id, _ := newTestIdentity(func() { retired++ }, func() (string, error) { return "", nil })
+
+	id.Observe("account-a")
+	id.Observe("")
+	id.Observe("account-a")
+	id.Observe("")
+
+	if retired != 0 {
+		t.Errorf("two non-consecutive absent readings retired %d times, want 0", retired)
 	}
 }
 
@@ -186,7 +212,11 @@ func TestReadIdentity_ObservesASignOutTheCLIReports(t *testing.T) {
 	if got := h.readIdentity(t.Context()); got.State != WhoamiSignedOut {
 		t.Fatalf("readIdentity state = %q, want %q", got.State, WhoamiSignedOut)
 	}
+	if retired != 0 {
+		t.Fatalf("one reported sign-out retired %d times, want 0 (a single reading is a transient)", retired)
+	}
+	h.readIdentity(t.Context())
 	if retired != 1 {
-		t.Errorf("readIdentity retired %d times on a reported sign-out, want 1", retired)
+		t.Errorf("readIdentity retired %d times on two reported sign-outs, want 1", retired)
 	}
 }

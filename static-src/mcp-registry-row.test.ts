@@ -6,7 +6,16 @@
 // install buttons beside it rather than inside its `<summary>`. So two structural
 // properties are pinned here that the old flat card had no way to get wrong — the
 // row starts closed, and installing is reachable without opening it.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// The configured list is the row's second input, so it is driven from here. Hoisted
+// because the factory below is lifted above module-level bindings.
+const state = vi.hoisted(() => ({ configured: [] as unknown[] }));
+
+vi.mock("./mcp-state.js", () => ({
+  configuredServers: () => state.configured,
+  SECRET_MASK: "***",
+}));
 
 vi.mock("./dom.js", () => ({
   byId: () => document.createElement("div"),
@@ -26,6 +35,33 @@ vi.mock("./actions/index.js", () => ({
 
 import { renderRegistryResult } from "./mcp-panels-search.js";
 import type { RegistryEntry as Entry } from "./wire/types.gen.js";
+import type { KeyPair, Server } from "./mcp-state.js";
+
+/** A configured record, with only the fields the row's match and satisfaction
+ *  checks read spelled out per case. */
+function server(patch: Partial<Server> & { name: string }): Server {
+  return {
+    id: `id-${patch.name}`,
+    transport: "http",
+    enabled: true,
+    created_at: 0,
+    updated_at: 0,
+    ...patch,
+  };
+}
+
+const pairs = (...names: string[]): KeyPair[] => names.map((name) => ({ name, value: "***" }));
+
+/** The one requirements label of a single-option row. */
+function label(row: HTMLElement): string {
+  const p = row.querySelector(".mcp-requires-label");
+  expect(p).not.toBeNull();
+  return p!.textContent ?? "";
+}
+
+beforeEach(() => {
+  state.configured = [];
+});
 
 const liveRemote: Entry = {
   name: "ex/live",
@@ -223,6 +259,139 @@ describe("install preview on a registry row", () => {
     expect([...row.querySelectorAll(".mcp-install-id")].map((c) => c.textContent)).toEqual([
       "npm: @ex/both",
       "http: https://both/mcp",
+    ]);
+  });
+});
+
+describe("a registry row whose server is already configured", () => {
+  // The defect: the preview is written for a reader about to install, and a
+  // reader who already owns the server was shown the same "Needs 1 of 2" — a
+  // demand for credentials that are already on disk. What they are asking is
+  // what is still MISSING, which is a different sentence and a different mark.
+  const remote: Entry = {
+    name: "ex/cf",
+    remotes: [
+      {
+        type: "http",
+        url: "https://mcp.ex.com/mcp",
+        headers: [{ name: "Authorization", required: true, secret: true }, { name: "X-Tenant" }],
+      },
+    ],
+  };
+
+  it("keeps the unconfigured label when nothing matches", () => {
+    state.configured = [server({ name: "unrelated", url: "https://other/mcp" })];
+    expect(label(renderRegistryResult(remote))).toBe("Needs 1 of 2 headers");
+  });
+
+  it("matches on the slug the install button would write", () => {
+    // `simplifyName("ex/cf")` is `cf`, so a row the reader installed under that
+    // name is the row this option would land on.
+    state.configured = [server({ name: "cf", headers: pairs("Authorization") })];
+    expect(label(renderRegistryResult(remote))).toBe(
+      "Already configured — all required headers set",
+    );
+  });
+
+  it("matches a remote on its URL under any name the reader chose", () => {
+    // The endpoint names one server whatever the row is called, and it is the
+    // only basis on which the satisfaction claim below is true.
+    state.configured = [
+      server({ name: "my-own-name", url: "https://mcp.ex.com/mcp", headers: pairs("X-Tenant") }),
+    ];
+    expect(label(renderRegistryResult(remote))).toBe(
+      "Already configured — 1 of 1 required headers still missing",
+    );
+  });
+
+  it("marks the fields the record holds and leaves the rest unmarked", () => {
+    state.configured = [server({ name: "cf", headers: pairs("X-Tenant") })];
+    const items = [...renderRegistryResult(remote).querySelectorAll(".mcp-requires-list > li")];
+    expect(items).toHaveLength(2);
+    // Authorization is required and absent: Required, no Set.
+    expect(items[0]!.querySelector(".mcp-pair-mark-required")).not.toBeNull();
+    expect(items[0]!.querySelector(".mcp-pair-mark-set")).toBeNull();
+    // X-Tenant is optional and present: Set, no Required.
+    expect(items[1]!.querySelector(".mcp-pair-mark-required")).toBeNull();
+    expect(items[1]!.querySelector(".mcp-pair-mark-set")!.textContent).toBe("Set");
+  });
+
+  it("never marks a field on an unconfigured row", () => {
+    // There is no record, so nothing can be set: a Set mark here would be a
+    // claim about a server that does not exist.
+    expect(renderRegistryResult(remote).querySelectorAll(".mcp-pair-mark-set")).toHaveLength(0);
+  });
+
+  it("says only that the server is configured when nothing is required", () => {
+    state.configured = [server({ name: "opt" })];
+    const row = renderRegistryResult({
+      name: "ex/opt",
+      remotes: [{ type: "http", url: "https://opt/mcp", headers: [{ name: "X-Tenant" }] }],
+    });
+    expect(label(row)).toBe("Already configured");
+  });
+
+  it("matches a header case-insensitively and an env var exactly", () => {
+    // HTTP says a header name is case-insensitive; the shell says an env var is
+    // not. Reading either the other way is a wrong answer about what is on disk.
+    state.configured = [
+      server({ name: "case", headers: pairs("authorization"), env: pairs("github_token") }),
+    ];
+    expect(
+      label(
+        renderRegistryResult({
+          name: "ex/case",
+          remotes: [
+            {
+              type: "http",
+              url: "https://case/mcp",
+              headers: [{ name: "Authorization", required: true }],
+            },
+          ],
+        }),
+      ),
+    ).toBe("Already configured — all required headers set");
+    expect(
+      label(
+        renderRegistryResult({
+          name: "ex/case",
+          packages: [
+            {
+              registry_type: "npm",
+              identifier: "@ex/case",
+              env_vars: [{ name: "GITHUB_TOKEN", required: true }],
+            },
+          ],
+        }),
+      ),
+    ).toBe("Already configured — 1 of 1 required environment variables still missing");
+  });
+
+  it("never satisfies a declared header from an env var of the same name", () => {
+    // A hand-edited mcp.json can carry both; a header the transport reads is not
+    // interchangeable with a variable the process reads.
+    // Named to MATCH (slug `cf`), so the configured branch is genuinely taken and
+    // the assertion is about the satisfaction check rather than about the match.
+    state.configured = [server({ name: "cf", env: pairs("Authorization") })];
+    expect(label(renderRegistryResult(remote))).toBe(
+      "Already configured — 1 of 1 required headers still missing",
+    );
+  });
+
+  it("answers both install options of one entry against the same snapshot", () => {
+    state.configured = [server({ name: "both", env: pairs("A") })];
+    const row = renderRegistryResult({
+      name: "ex/both",
+      packages: [
+        { registry_type: "npm", identifier: "@ex/both", env_vars: [{ name: "A", required: true }] },
+      ],
+      remotes: [
+        { type: "http", url: "https://both/mcp", headers: [{ name: "B", required: true }] },
+      ],
+    });
+    expect([...row.querySelectorAll(".mcp-requires-label")].map((p) => p.textContent)).toEqual([
+      "Already configured — all required environment variables set",
+      "Already configured — 1 of 1 required headers still missing",
     ]);
   });
 });

@@ -13,6 +13,7 @@ import { el } from "@cplieger/reactive";
 import { CHROME_ATTR } from "../chrome-attr.js";
 import { reconcile, type ReconcileSpec } from "../reconcile.js";
 import type { PlanStatus } from "../types.js";
+import { paintStatus } from "./work-status.js";
 
 /** A normalized todo item; status reuses PlanStatus. */
 export interface TodoItem {
@@ -20,20 +21,14 @@ export interface TodoItem {
   status: PlanStatus;
 }
 
-const GLYPH: Readonly<Record<PlanStatus, string>> = {
-  pending: "\u2610", // ☐
-  in_progress: "\u25D0", // ◐
-  completed: "\u2611", // ☑
-};
-
 const rowSpec: ReconcileSpec<TodoItem> = {
   key: (t) => t.content,
   mount: (t) => buildRow(t),
   update: (row, t) => {
     row.dataset["status"] = t.status;
-    const glyph = row.querySelector(".todo-glyph");
+    const glyph = row.querySelector<HTMLElement>(".todo-glyph");
     if (glyph !== null) {
-      glyph.textContent = GLYPH[t.status];
+      paintStatus(glyph, t.status);
     }
   },
 };
@@ -41,14 +36,9 @@ const rowSpec: ReconcileSpec<TodoItem> = {
 function buildRow(t: TodoItem): HTMLDivElement {
   const row = el("div", { className: "todo-row" }) as HTMLDivElement;
   row.dataset["status"] = t.status;
-  row.append(
-    el(
-      "span",
-      { className: "todo-glyph", "aria-hidden": "true", [CHROME_ATTR]: "" },
-      GLYPH[t.status],
-    ),
-    el("span", { className: "todo-text" }, t.content),
-  );
+  const glyph = el("span", { className: "todo-glyph", [CHROME_ATTR]: "" });
+  paintStatus(glyph, t.status);
+  row.append(glyph, el("span", { className: "todo-text" }, t.content));
   return row;
 }
 

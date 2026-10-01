@@ -38,10 +38,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
+	"github.com/cplieger/toolbelt/v3"
 )
 
 // unfitRootMsg must match logRootIntegrityRefusal's per-finding message. The

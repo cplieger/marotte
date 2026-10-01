@@ -12,8 +12,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func draftReq(t *testing.T, chatID marotte.ChatID, text string) *marotte.ClientCommand {
@@ -155,24 +155,19 @@ func TestCmdSetDraft_DoesNotCreateAChat(t *testing.T) {
 	}
 }
 
-// The prompt path clears the draft in the same Mutate that appends the user
-// message. Belt to the client's own set_draft("") braces: if that POST is lost,
-// a reload would otherwise put the sent message back in the box.
-func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
+// The prompt path clears the draft in the header write a sent prompt owes: a
+// reload would otherwise put the sent message back in the box.
+func TestSettleComposerOnPrompt_ClearsTheDraft(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	if _, err := store.SetDraft(t.Context(), "c1", "the message about to be sent"); err != nil {
 		t.Fatalf("SetDraft: %v", err)
 	}
-	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
+	settleComposerOnPrompt(t.Context(), store, &capturingBus{}, "c1", &marotte.PromptCommand{
 		Text:      "the message about to be sent",
 		MessageID: "m-1",
 	})
-	if err != nil {
-		t.Fatalf("appendUserMessage: %v", err)
-	}
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -190,22 +185,18 @@ func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 // GET seeds the box from. The client's own clearing set_draft is not a substitute
 // for the same reason the clear above is not redundant — that POST can be lost or
 // superseded.
-func TestAppendUserMessage_AnnouncesTheClearedComposer(t *testing.T) {
+func TestSettleComposerOnPrompt_AnnouncesTheClearedComposer(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	if _, err := store.SetDraft(t.Context(), "c1", "the message about to be sent"); err != nil {
 		t.Fatalf("SetDraft: %v", err)
 	}
-	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 	bus := &capturingBus{}
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
+	settleComposerOnPrompt(t.Context(), store, bus, "c1", &marotte.PromptCommand{
 		Text:      "the message about to be sent",
 		MessageID: "m-1",
 	})
-	if err != nil {
-		t.Fatalf("appendUserMessage: %v", err)
-	}
 
 	frames := bus.draftFrames(t)
 	if len(frames) != 1 {
@@ -221,23 +212,19 @@ func TestAppendUserMessage_AnnouncesTheClearedComposer(t *testing.T) {
 
 // The staged files are the other half of the same composer, so clearing them
 // alone still earns the frame: a chat can hold attachments with no text.
-func TestAppendUserMessage_AnnouncesClearedAttachmentsWithNoDraft(t *testing.T) {
+func TestSettleComposerOnPrompt_AnnouncesClearedAttachmentsWithNoDraft(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	if _, err := store.SetAttachments(t.Context(), "c1", []string{"docs/spec.pdf"}); err != nil {
 		t.Fatalf("SetAttachments: %v", err)
 	}
-	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 	bus := &capturingBus{}
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
+	settleComposerOnPrompt(t.Context(), store, bus, "c1", &marotte.PromptCommand{
 		Text:        "have a look",
 		MessageID:   "m-1",
 		Attachments: []marotte.Attachment{{Path: "docs/spec.pdf", Name: "spec.pdf"}},
 	})
-	if err != nil {
-		t.Fatalf("appendUserMessage: %v", err)
-	}
 
 	if frames := bus.draftFrames(t); len(frames) != 1 {
 		t.Fatalf("draft_changed frames = %d, want 1: the send cleared the staged files", len(frames))
@@ -247,19 +234,15 @@ func TestAppendUserMessage_AnnouncesClearedAttachmentsWithNoDraft(t *testing.T) 
 // A prompt sent with an empty composer has nothing to announce, and that is the
 // common case — the same rule broadcastComposer applies to a write that changed
 // nothing, so the frame keeps meaning something changed.
-func TestAppendUserMessage_SaysNothingWhenTheComposerWasEmpty(t *testing.T) {
+func TestSettleComposerOnPrompt_SaysNothingWhenTheComposerWasEmpty(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
-	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 	bus := &capturingBus{}
 
-	err := appendUserMessage(t.Context(), deps, bus, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
+	settleComposerOnPrompt(t.Context(), store, bus, "c1", &marotte.PromptCommand{
 		Text:      "typed and sent without pausing",
 		MessageID: "m-1",
 	})
-	if err != nil {
-		t.Fatalf("appendUserMessage: %v", err)
-	}
 
 	if frames := bus.draftFrames(t); len(frames) != 0 {
 		t.Errorf("draft_changed frames = %#v, want none", frames)
@@ -270,38 +253,23 @@ func TestAppendUserMessage_SaysNothingWhenTheComposerWasEmpty(t *testing.T) {
 // BuildPromptBlocks consumes PromptCommand.Attachments on the way to KAS and
 // folds each one into a content block — a document becomes a `resource`, an image
 // becomes an `image`, and only the leftover case becomes an "Attached file: …"
-// text line. So for the two inlined kinds the path never appears in Content at
+// text line. So for the two inlined kinds the path never appears in the text at
 // all, and a turn read back later had no way to say what was attached: the client
 // could not linkify what was not there, and the sent request rendered as text
-// only. Stamping them on the user message is what lets a turn header draw them.
-func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedEmptyChat(t, store, "c1")
-	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
-
+// only. The turn_open's prompt is what lets a turn header draw them.
+func TestPromptEntry_CarriesTheAttachments(t *testing.T) {
 	atts := []marotte.Attachment{
 		{Path: "out/shot.png", Name: "shot.png"},
 		{Path: "docs/spec.pdf", Name: "spec.pdf"},
 	}
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
+	got := promptEntry(&marotte.PromptCommand{
 		Text:        "have a look at these",
 		MessageID:   "m-1",
 		Attachments: atts,
 	})
-	if err != nil {
-		t.Fatalf("appendUserMessage: %v", err)
-	}
 
-	c, ok := store.Get(t.Context(), "c1")
-	if !ok {
-		t.Fatal("chat vanished")
-	}
-	if len(c.Messages) != 1 {
-		t.Fatalf("messages = %d, want 1", len(c.Messages))
-	}
-	got := c.Messages[0]
-	if got.Role != marotte.RoleUser {
-		t.Errorf("role = %q, want user", got.Role)
+	if got.ID != "m-1" || got.Text != "have a look at these" {
+		t.Errorf("promptEntry = %+v, want id m-1 and the prompt's text", got)
 	}
 	if len(got.Attachments) != len(atts) {
 		t.Fatalf("attachments = %#v, want %#v", got.Attachments, atts)
@@ -312,32 +280,17 @@ func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
 		}
 	}
 	// The image path is deliberately absent from the text: that is the whole
-	// reason the field exists rather than the client re-reading Content.
-	if strings.Contains(got.Content, "out/shot.png") {
-		t.Errorf("content = %q, unexpectedly carries the attachment path", got.Content)
+	// reason the field exists rather than the client re-reading the text.
+	if strings.Contains(got.Text, "out/shot.png") {
+		t.Errorf("text = %q, unexpectedly carries the attachment path", got.Text)
 	}
 }
 
-// A prompt with no attachments must persist none, so `omitempty` keeps the field
+// A prompt with no attachments must carry none, so `omitempty` keeps the field
 // off the wire and off disk for the overwhelmingly common case.
-func TestAppendUserMessage_NoAttachmentsPersistsNone(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	seedEmptyChat(t, store, "c1")
-	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
-
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
-		Text:      "just a question",
-		MessageID: "m-1",
-	})
-	if err != nil {
-		t.Fatalf("appendUserMessage: %v", err)
-	}
-
-	c, _ := store.Get(t.Context(), "c1")
-	if len(c.Messages) != 1 {
-		t.Fatalf("messages = %d, want 1", len(c.Messages))
-	}
-	if c.Messages[0].Attachments != nil {
-		t.Errorf("attachments = %#v, want nil", c.Messages[0].Attachments)
+func TestPromptEntry_NoAttachmentsCarriesNone(t *testing.T) {
+	got := promptEntry(&marotte.PromptCommand{Text: "just a question", MessageID: "m-1"})
+	if got.Attachments != nil {
+		t.Errorf("attachments = %#v, want nil", got.Attachments)
 	}
 }

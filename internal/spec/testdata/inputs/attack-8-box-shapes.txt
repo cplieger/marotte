@@ -1,0 +1,17 @@
+- [] bare
+- [	] tab in box
+- [  ] two spaces
+-[ ] no space after marker
+- [ ]no space after box
+- [ ] 
+- [x]
+* [X] star marker
++ [~] plus marker
+1. [ ] ordered dot
+1) [ ] ordered paren
+- [ ]* optional
+- [ ]\* escaped optional
+- [ ]** double star
+- [-] hyphen box
+- [y] unknown box
+  	 - [ ] mixed indent

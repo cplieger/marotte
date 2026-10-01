@@ -4,42 +4,6 @@ import "encoding/json"
 
 // Per-event payload structs for SSE events; the envelope types live in events.go.
 
-// TurnEndedPayload is the payload for type="turn_ended".
-type TurnEndedPayload struct {
-	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
-	// Refusal accompanies stop_reason "refusal"; also persisted on the message, so
-	// this copy is for the live render.
-	Refusal *RefusalInfo `json:"refusal,omitempty"`
-	// Outcome is the turn's RESULT and what a client reads. StopReason travels beside
-	// it as the wire's raw text because the enum is OPEN, and no consumer may branch
-	// on that text: an unmeasured value maps to `unknown`.
-	Outcome    TurnOutcome `json:"outcome,omitempty"`
-	StopReason StopReason  `json:"stop_reason,omitempty"`
-	// Model answered this turn. Persisted on the message too (Message.TurnModel) so the
-	// footer survives a reload; empty when the turn produced no buffer.
-	Model        string  `json:"model,omitempty"`
-	CreditsDelta float64 `json:"credits_delta,omitempty"`
-	ElapsedMs    float64 `json:"elapsed_ms,omitempty"`
-	// Truncated means the model stopped at a bound: completed, answer cut off.
-	Truncated bool `json:"truncated,omitempty"`
-	// Superseded means this turn was DISPLACED by a replacement starting on the same
-	// chat, so its end says nothing about whether the chat is idle. Only
-	// closerWireDisplaced sets it; a client reads it as "report, do not settle".
-	//
-	// A CLOSER-derived fact rather than a registry read: displaceEngineTurn closes the
-	// old turn immediately BEFORE opening its replacement, so a post-hoc open-turn read
-	// answers false for both producers and discriminates nothing.
-	Superseded bool `json:"superseded,omitempty"`
-	// WorkflowStep means the ending turn was opened only because a workflow STEP's
-	// frames folded onto this chat (TurnSourceWorkflowStep), so it was never this
-	// chat's own conversational turn: the reader's own turn may be live right now, and
-	// every chat-scoped teardown would tear down THAT turn's state.
-	//
-	// Absent means "this chat's own turn", which is what an older server's frame must
-	// keep meaning.
-	WorkflowStep bool `json:"workflow_step,omitempty"`
-}
-
 // FileChange tracks per-file change stats during a turn.
 type FileChange struct {
 	LinesAdded   int  `json:"lines_added"`
@@ -85,8 +49,8 @@ type ConnectedPayload struct {
 	// BusyStated says whether BusyChats is the COMPLETE set, and it is the ONE flag two
 	// conditions clear: a topic-filtered connect (the list is scoped) and an over-cap
 	// workspace (the list is withheld). No omitempty, so wiregen emits a REQUIRED field
-	// and an absent marker can never read as "stated" — the discipline
-	// LiveTurn.Truncated already follows.
+	// and an absent marker can never read as "stated": a withheld list is withheld
+	// WHOLE rather than truncated, so a reader has to be told which it holds.
 	BusyStated bool `json:"busy_stated"`
 	// LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when
 	// the lease store holds more than maxConnectLiveRuns rows, in which case the list
@@ -230,25 +194,6 @@ func DecisionRunID(payload any) string {
 	}
 }
 
-// MessageChunkPayload is the payload for type="message_chunk" (assistant streaming deltas).
-// BlockIndex addresses the content block this delta belongs to and may go BACKWARDS
-// mid-turn: a tool_call bumps its own subtask's next text chunk to a new index while an
-// interleaved OTHER subtask does not. Accumulate BY INDEX, never into the newest block.
-type MessageChunkPayload struct {
-	// Refusal tags this delta as the model-refusal explanation, set on at most one chunk
-	// per turn so the live renderer can style the callout without waiting for turn_ended.
-	Refusal        *RefusalInfo `json:"refusal,omitempty"`
-	MessageID      string       `json:"message_id"`
-	Delta          string       `json:"delta"`
-	AgentSubtaskID string       `json:"agent_subtask_id,omitempty"`
-	BlockIndex     int          `json:"block_index"`
-	// Seq is the delta's 1-based sequence number within the turn. A client that adopted a
-	// live_turn off the transcript GET drops chunks at or below its chunk_seq watermark —
-	// they are already folded in — instead of double-appending them.
-	Seq         int64 `json:"seq,omitempty"`
-	IsReasoning bool  `json:"is_reasoning,omitempty"`
-}
-
 // ErrorCode identifies an SSE error event class.
 type ErrorCode string
 
@@ -288,12 +233,12 @@ const (
 type ErrorPayload struct {
 	Code    ErrorCode `json:"code"`
 	Message string    `json:"message"`
-	// TurnScoped reports that this failure finalized a turn now carrying the same Message
-	// durably, so the reason is already in that turn's card. A property of the EMISSION,
-	// not of the Code: three of the five emitters behind ErrCodePromptFailed and
-	// ErrCodeRecoveryFailed never open a turn, so no per-code answer fits both groups.
-	// Absent means NO, the safe direction — report the failure rather than trust an inline
-	// row that may not exist.
+	// TurnScoped reports that this failure finalized a turn whose entry log now carries
+	// the same text durably, so the reason is already in that turn's card. A property of the EMISSION,
+	// not of the Code: the recovery's respawn failure shares ErrCodeRecoveryFailed with
+	// the retry turn's abandon and closes no turn, so no per-code answer fits. Absent
+	// means NO, the safe direction — report the failure rather than trust an inline row
+	// that may not exist.
 	TurnScoped bool `json:"turn_scoped,omitempty"`
 }
 
@@ -304,10 +249,14 @@ type WorkingLabelPayload struct {
 }
 
 // CodeReferencesPayload is the payload for type="code_references": the licensed-code
-// attributions on the in-flight assistant turn. References is the full deduped list, so a
-// later notification REPLACES rather than appends. Also persisted on the Message.
+// attributions on the in-flight turn. References is the full deduped list, so a later
+// notification REPLACES rather than appends. Live only; the durable value is the
+// turn_close aggregate's code_references. Chat-scoped: KAS broadcasts one references
+// list to every session in the bridge process, so a step's copy carries the chat's own
+// attributions and there is nothing a run-scoped frame could report that this one does
+// not.
 type CodeReferencesPayload struct {
-	MessageID  string          `json:"message_id"`
+	Turn       string          `json:"turn"`
 	References []CodeReference `json:"references"`
 }
 
@@ -421,59 +370,6 @@ const (
 	// errors.Is(err, ErrBridgeExited), never by this code.
 	RPCCodeBridgeExited = -32000
 )
-
-// ToolCallPayload is the payload for type="tool_call". BlockIndex is the tool_use block's
-// position in the assistant message's Blocks array, so the card lands between the right
-// surrounding text blocks.
-type ToolCallPayload struct {
-	MessageID  string   `json:"message_id"`
-	ToolCall   ToolCall `json:"tool_call"`
-	BlockIndex int      `json:"block_index"`
-}
-
-// ToolCallUpdatePayload is the payload for type="tool_call_update": a DELTA addressed by
-// id, carrying only what this frame changed. Every field is omitempty and means
-// "unchanged" when absent; OutputDelta's meaning depends on OutputReplace. The transcript
-// GET's live_turn remains the whole-object channel — a reconnecting client has no delta
-// base.
-type ToolCallUpdatePayload struct {
-	// The three metadata blocks, each sent whole when it changed; none accumulates.
-	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
-	Disclosed  *ToolDisclosed  `json:"disclosed,omitempty"`
-	Denial     *ToolDenial     `json:"denial,omitempty"`
-	MessageID  string          `json:"message_id"`
-	ToolCallID string          `json:"tool_call_id"`
-	// Title and Kind: KAS sends them nullish on most updates, so absent is "keep".
-	Title  string     `json:"title,omitempty"`
-	Kind   ToolKind   `json:"kind,omitempty"`
-	Status ToolStatus `json:"status,omitempty"`
-	// OutputDelta is normally the text to APPEND; when OutputReplace is set it is the
-	// whole output instead. The replace case is load-bearing: at completion a terminal's
-	// full stream wins over the ACP fragments already on the card (adoptTerminalOutput).
-	OutputDelta string `json:"output_delta,omitempty"`
-	// The four late identity attachments: each is adopted once, on at most one frame.
-	TerminalID     string `json:"terminal_id,omitempty"`
-	SubSessionID   string `json:"sub_session_id,omitempty"`
-	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
-	WorkflowID     string `json:"workflow_id,omitempty"`
-	// OutputSpans style the WHOLE output at absolute offsets, so they are sent entire
-	// whenever they change. Empty for output carrying no escape sequence.
-	OutputSpans []TextSpan `json:"output_spans,omitempty"`
-	// DiffsAppended are the diffs this frame added; diffs only ever append, so there is
-	// no replace case.
-	DiffsAppended []ToolDiff `json:"diffs_appended,omitempty"`
-	// Locations are REPLACED wholesale when present.
-	Locations []ToolLocation `json:"locations,omitempty"`
-	// The three non-pointer scalars last, so the GC scan region stops above them (govet
-	// fieldalignment). OutputReplace's meaning is on OutputDelta.
-	DurationMs    int  `json:"duration_ms,omitempty"`
-	OutputReplace bool `json:"output_replace,omitempty"`
-	// Declined is a ONE-WAY latch, so absent means unchanged rather than false: the
-	// mark is set on the terminal frame that reports the refusal and no later frame
-	// carries a verdict. That is what makes `omitempty` on a bool correct here — the
-	// only value it ever sends is true.
-	Declined bool `json:"declined,omitempty"`
-}
 
 // TerminalOutputPayload is the payload for type="terminal_output". Data is PLAIN text with
 // escape sequences parsed off server-side, so the browser never builds HTML out of
@@ -621,33 +517,6 @@ type AgentNoticePayload struct {
 	Text     string `json:"text"`
 }
 
-// SteerInjectedPayload is the payload for type="steer_injected": the model has now READ the
-// steer. Broadcast TWICE for a steer the agent answers, carrying different halves — KAS's
-// steering channel sends Text with no Ack, then the assistant TEXT stream sends Ack with no
-// Text when the `[STEERING steer-<id>: …]` marker closes. Reading a steer and acting on it are
-// separate moments, so the client merges both onto the chip by SteerID.
-type SteerInjectedPayload struct {
-	SteerID string `json:"steer_id"`
-	Text    string `json:"text"`
-	// Ack is the agent's own statement of what it did, lifted out of the acknowledgement
-	// marker marotte hides from the transcript: "read" becomes "read: rebased onto main
-	// instead". Empty on the read frame, and empty when the agent emitted no marker.
-	Ack string `json:"ack,omitempty"`
-	// Origin is whose words these are, as on SteerQueuedPayload. On BOTH because an
-	// agent-injected steer has no queued frame, so for the case Origin names this frame is
-	// the only one.
-	Origin SteerOrigin `json:"origin"`
-}
-
-// SteerClearedPayload is the payload for type="steer_cleared": the steers named here were
-// dropped from the buffer without reaching the model. KAS clears at every turn boundary and on
-// an explicit steer_clear, so an id appearing after its steer_injected is housekeeping, while
-// one appearing WITHOUT an injected is a message nothing ever read — which is why injected is
-// its own event.
-type SteerClearedPayload struct {
-	SteerIDs []string `json:"steer_ids"`
-}
-
 // TabsChangedPayload is the payload for type="tabs_changed": ONE committed mutation of the
 // open-tab set, workspace-global, so the chat id is empty. REMOVAL IS STATED, never inferred:
 // absence from Order never means closure, and a client holding a tab the order does not name
@@ -672,4 +541,19 @@ type TabsChangedPayload struct {
 	// MAY ADVANCE IT — adopting a response's v+2 would make another device's in-flight v+1
 	// read as stale, so no gap could ever be detected.
 	Version uint64 `json:"version"`
+}
+
+// SpecChangedPayload is the payload for type="spec_changed": the workspace-relative spec
+// directory whose files changed. Workspace-global, so the chat id is empty.
+type SpecChangedPayload struct {
+	Dir string `json:"dir"`
+}
+
+// SpecApprovedPayload is the payload for type="spec_approved": the
+// workspace-relative spec directory whose approval record moved. Pure
+// invalidation — it carries neither the phase nor the hash, because the client
+// refetches the spec rather than patching a badge from an event.
+// Workspace-global, so the chat id is empty.
+type SpecApprovedPayload struct {
+	Dir string `json:"dir"`
 }

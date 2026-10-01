@@ -27,6 +27,7 @@ vi.mock("../api-client.js", () => ({
   },
 }));
 
+import { success as toastSuccess } from "../toast.js";
 import {
   loadTools,
   createTool,
@@ -40,6 +41,7 @@ import {
   cancelToolJob,
   runDiagnostics,
   seedMcp,
+  applyManifest,
   getToolsStatus,
 } from "./tools.js";
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
@@ -187,6 +189,65 @@ describe("tools.ensure", () => {
 });
 
 describe("tools.search", () => {
+  // The engine this build pins states neither additive field, so ABSENT has to
+  // read as unstated rather than as a zero or a negative: a `matched: 0` would
+  // make every reply look cut to nothing, and an `apt_state: "unavailable"` would
+  // assert a permanent condition the engine never claimed.
+  it("leaves both additive fields absent when the engine states neither", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ results: [], apt_available: true, truncated: false }), {
+        status: 200,
+      }),
+    );
+    const d = await searchTools.dispatch({ q: "rg" });
+    expect(d).not.toBeNull();
+    expect(d).not.toHaveProperty("apt_state");
+    expect(d).not.toHaveProperty("matched");
+    // Everything the pinned engine DOES state still arrives.
+    expect(d?.apt_available).toBe(true);
+    expect(d?.truncated).toBe(false);
+  });
+
+  it("reads both additive fields when the engine states them", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [],
+          apt_available: false,
+          apt_state: "indexing",
+          matched: 6627,
+          truncated: true,
+        }),
+        { status: 200 },
+      ),
+    );
+    const d = await searchTools.dispatch({ q: "python" });
+    expect(d?.apt_state).toBe("indexing");
+    expect(d?.matched).toBe(6627);
+  });
+
+  // Neither field is in the generated wire type yet, so the body is the only
+  // thing vouching for them: a value of the wrong shape is unstated, never
+  // rendered. A string `matched` would print as a denominator, and an unknown
+  // apt state would fall off the exhaustive switch.
+  it("treats a wrong-shaped additive field as unstated", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [],
+          apt_available: true,
+          apt_state: "warming",
+          matched: "many",
+          truncated: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    const d = await searchTools.dispatch({ q: "rg" });
+    expect(d).not.toHaveProperty("apt_state");
+    expect(d).not.toHaveProperty("matched");
+  });
+
   it("GETs with the query encoded and dedupes", async () => {
     mockFetch.mockImplementation(
       () =>
@@ -276,6 +337,27 @@ describe("tools.seed_mcp", () => {
     await Promise.all([p1, p2]);
     // Second call starts after first finishes (serialized via scope "tools")
     expect(log[1]! - log[0]!).toBeGreaterThanOrEqual(50);
+  });
+});
+
+describe("tools.apply_manifest", () => {
+  // The engine answers 202 {"job": null} when the manifest and the volume already
+  // agree, and no other surface reports that: no job means no SSE frame, no output
+  // line and no pill busy state, so the toast is the only channel left.
+  it("says so when the run produced no job", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ job: null }), { status: 202 }));
+    await applyManifest.dispatch(undefined);
+    expect(mockFetch.mock.calls[0]![0]).toBe("/api/tools/reconcile");
+    expect(vi.mocked(toastSuccess)).toHaveBeenCalledWith(
+      "Nothing to converge: the manifest and the volume already agree.",
+    );
+  });
+
+  it("stays silent when a job was enqueued", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    const d = await applyManifest.dispatch(undefined);
+    expect(d?.job?.id).toBe("tj-1");
+    expect(vi.mocked(toastSuccess)).not.toHaveBeenCalled();
   });
 });
 

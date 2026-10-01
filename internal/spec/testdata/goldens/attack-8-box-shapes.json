@@ -1,0 +1,95 @@
+{
+  "input_file": "attack-8-box-shapes.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L8",
+      "line": 8,
+      "indent": 0,
+      "number": "",
+      "text": "star marker",
+      "status": "completed",
+      "queued": false,
+      "optional": false,
+      "hash": "f6296922c100c1ecb64b2942b99de0f7f85eaf02ef9e9ee2750b4c1f5f0eaf2d",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L9",
+      "line": 9,
+      "indent": 0,
+      "number": "",
+      "text": "plus marker",
+      "status": "pending",
+      "queued": true,
+      "optional": false,
+      "hash": "73b4c2e9c53325ab2c9f2f6a528cb4d5a09d2aa1924da5286c9f3fd4f775a334",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L12",
+      "line": 12,
+      "indent": 0,
+      "number": "",
+      "text": "optional",
+      "status": "pending",
+      "queued": false,
+      "optional": true,
+      "hash": "ec91fdd9256cb75ae611249b50cb7eb16533f0fa91b86239ec1d439a1ea033b8",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L13",
+      "line": 13,
+      "indent": 0,
+      "number": "",
+      "text": "escaped optional",
+      "status": "pending",
+      "queued": false,
+      "optional": true,
+      "hash": "b96c8302f2695179cb085e94b6baa8db737002e84d1af9b01919b02e4928019c",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L15",
+      "line": 15,
+      "indent": 0,
+      "number": "",
+      "text": "hyphen box",
+      "status": "in_progress",
+      "queued": false,
+      "optional": false,
+      "hash": "718555751284404f7184c39e9ebb6b492d39b1203fcc80dc8f7a522d843096cd",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L17",
+      "line": 17,
+      "indent": 4,
+      "number": "",
+      "text": "mixed indent",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "1caf3a7e5d62864164ba732868dfb75730381bc2f059cbd3797f09e76690d50b",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 1,
+    "completed": 1,
+    "queued": 1,
+    "total": 4
+  },
+  "unreadable_lines": 10,
+  "truncated": null
+}

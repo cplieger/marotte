@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// Status indicators, context bar, input disable state.
+// Status indicators and the context bar.
 //
 // Send-button state lives in prompt-input.ts since it's part of the input
 // affordance (busy=cancel, idle=send). Agent lifecycle is expressed via
-// the send button and the per-message streaming cursor — no separate
+// the send button and the streaming caret on the open entry — no separate
 // "thinking" indicator.
 // ---------------------------------------------------------------------------
 
@@ -34,8 +34,12 @@ interface ContextBarUpdate {
    *  reasoning effort, or no level resolved at all. This module renders it and
    *  decides nothing about it. */
   effort?: string;
+  /** The model pick awaiting its apply, from the header's `pending_model`, or "" when none
+   *  is pending. Every device carries it, and it clears when a header arrives with the field
+   *  empty — so the badge is a READ rather than a local queue's memory. */
+  pendingModel?: string;
   metering?: MeteringItem[];
-  msgCount?: number;
+  entryCount?: number;
   toolCount?: number;
   summarizedCount?: number;
 }
@@ -60,7 +64,7 @@ class ContextBarController {
   private updateImpl(opts: ContextBarUpdate): void {
     const { pct, contextSize, summarizationPct, credits, turnCount, lastTurnMs, model } = opts;
     const metering = opts.metering ?? [];
-    const msgCount = opts.msgCount ?? 0;
+    const entryCount = opts.entryCount ?? 0;
     const toolCount = opts.toolCount ?? 0;
     const summarizedCount = opts.summarizedCount ?? 0;
     const clamped = Math.min(100, Math.max(0, pct));
@@ -75,10 +79,14 @@ class ContextBarController {
     $.contextRingWedge.style.strokeDashoffset = wedge.dashoffset;
     $.contextLabel.textContent = `${pct.toFixed(0)}%`;
 
-    $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
-
     // Empty model = server-side default; label it "auto" rather than blank.
     const modelLabel = model === "" ? "auto" : humanName(model);
+    const pending = opts.pendingModel ?? "";
+    $.switchModelBtn.classList.toggle("pending", pending !== "");
+    $.switchModelBtn.setAttribute(
+      "data-tooltip",
+      pending === "" ? "Switch model" : `Switch to ${humanName(pending)} after current turn`,
+    );
     $.ctxModelPill.textContent = modelLabel;
 
     // The tier rides its OWN element, not the model label, for two reasons. The
@@ -92,11 +100,13 @@ class ContextBarController {
     // The button's aria-label wins over its own text, so the current selection
     // reaches assistive tech only from here. Spelled in words rather than with
     // the separator, which a screen reader reads out.
-    $.switchModelBtn.setAttribute(
-      "aria-label",
+    const current =
       effort === ""
         ? `Switch model, currently ${modelLabel}`
-        : `Switch model, currently ${modelLabel} at ${effort} reasoning effort`,
+        : `Switch model, currently ${modelLabel} at ${effort} reasoning effort`;
+    $.switchModelBtn.setAttribute(
+      "aria-label",
+      pending === "" ? current : `${current}, switching to ${humanName(pending)} after this turn`,
     );
     $.ctxTokens.textContent =
       contextSize > 0
@@ -105,10 +115,10 @@ class ContextBarController {
     $.ctxCredits.textContent = credits > 0 ? `${credits.toFixed(2)} cr` : "0.00 cr";
     $.ctxTurns.textContent = String(turnCount);
     $.ctxLastTurn.textContent = lastTurnMs > 0 ? `${(lastTurnMs / 1000).toFixed(1)}s` : "-";
-    $.ctxMsgs.textContent =
+    $.ctxEntries.textContent =
       summarizedCount > 0
-        ? `${String(msgCount)} (${String(summarizedCount)} summarized)`
-        : String(msgCount);
+        ? `${String(entryCount)} (${String(summarizedCount)} summarized)`
+        : String(entryCount);
     $.ctxTools.textContent = String(toolCount);
 
     renderMetering(metering);
@@ -263,5 +273,5 @@ export function refreshRuntimeLine(): Promise<void> {
 // context-ui.ts. status.ts used to write the `disabled` DOM props too
 // (setInputDisabled), which fought prompt-input's send-state machine on every
 // turn boundary — last-writer-wins left the state unreliable. That second writer
-// is gone, and so is the disable itself: nothing may lock the composer (see
-// prompt-input.ts's header).
+// is gone, and so is the disable itself: nothing may lock the composer
+// (prompt-input.ts: "Nothing here disables the composer").

@@ -1,82 +1,10 @@
-// ---------------------------------------------------------------------------
-// The steer stack: full-width rows in the bottom bar, above the message box,
-// listing the mid-turn messages KAS is holding and which of them the model has
-// read.
+// The steer stack: the mid-turn messages KAS is holding and none it has read, a pure
+// projection of `activeSession.steers`. A row leaves on its own `steer` ENTRY.
 //
-// WHERE IT SITS, AND WHY. A sibling of `.prompt-box` inside `#prompt-form`,
-// under `#decision-dock`. These are messages already SENT, so they belong beside
-// the box rather than inside it; the bar grows upward to expose them, exactly as
-// it does for a permission ask. Below the dock because a permission ask BLOCKS
-// the turn, so it outranks a record of what has already gone. Oldest at the top:
-// `session.steers` is in arrival order and renders in it, so a new message
-// appears at the bottom and pushes the older ones up.
-//
-// It replaced a horizontal chip row wedged between the textarea and the pill
-// row, where a 60-character preview was all that fitted and the row read as
-// composer furniture rather than as a record of sent messages.
-//
-// EVERY ROW IS THE USER'S OWN MESSAGE. That is what the stack says: this is what
-// you told the agent, whether it has seen it, and what it did about it. An
-// agent's own progress notice arrives on the same KAS buffer and used to land
-// here as a steer carrying a severity, which put a line the agent wrote inside
-// the message box styled as something typed into it. Those are `agent_notice`
-// now and they toast.
-//
-// A pure projection of `activeSession.steers`, which is itself written only by
-// the three steer SSE events (store.ts). This module sends nothing and records
-// nothing; it renders server state and offers the controls the WIRE can honour.
-//
-// THE STACK HOLDS ONLY WHAT THE AGENT HAS NOT READ. That is the invariant, and
-// it is what a person steering a live turn is watching: these messages are in
-// KAS's buffer and the agent is still doing the thing you are trying to redirect.
-// A steer LEAVES the stack the moment it is read (`steer_injected`) or dropped at
-// a turn boundary (`steer_cleared`), and reappears INSIDE the turn transcript as
-// a note at the block it landed on (fundamentals/steer-note.ts). So the count
-// here falling to zero is the whole read signal; there is no settled row to
-// distinguish, and there is no checkmark.
-//
-// That replaced a green check on the row plus the agent's own account of what it
-// did (`[STEERING steer-<id>: ...]`, which marotte strips from the transcript as
-// machinery). Both were real information in the wrong place: a tick in the
-// composer while the transcript showed the agent change course with nothing
-// explaining why. The ack rides the transcript note now.
-//
-// TWO STATES, and both are "not read yet". `pending` is this device's own claim
-// that a POST is in flight — drawn on submit, so the row appears on the keystroke
-// rather than after a round trip, and un-drawn by the action's rollback if the
-// POST fails. Once KAS's `steer_queued` frame confirms it, the row is SENT and
-// gains its controls, because only then is there a server-side id a clear can
-// address.
-//
-// WHAT THE CONTROLS CAN BE, measured against KAS's own source rather than
-// assumed (re-measured on 2.21.2). There are exactly two steer verbs,
-// `_session/steer` and `_session/steer/clear`, and `handleSessionSteerClear`
-// reads ONLY `sessionId`: it drains the whole buffer through
-// `clearSteeringAtTurnBoundary` and bumps the steering epoch. Nothing on the wire
-// injects. Four rules follow:
-//
-//   - A `pending` row carries no controls at all. Its id is derived rather than
-//     confirmed, so there is no server-side id to clear; a control there would
-//     be a button that cannot act yet.
-//   - Send now stops the TURN and sends the message as a new one, the only
-//     reading the wire can honour. It leads the column; `steer-resend.ts` owns
-//     the mechanism.
-//   - Discard appears on the confirmed rows and always drops EVERY unread
-//     message.
-//     With one unread that is unambiguous, so it acts immediately. With more it
-//     confirms first, naming the count, because a × beside one row looks like it
-//     removes that row.
-//   - Edit appears only when exactly ONE message is unread. It is discard plus
-//     the text back in the composer, which is the only honest spelling of an
-//     edit here. With two or more unread it is withheld, because taking one back
-//     would silently drop the others.
-//
-// The rejected alternative, for the next person who reaches for it: clear the
-// buffer and re-send the keepers to synthesize a per-row delete. It changes
-// every survivor's id, and it has a real failure window — the turn can end
-// between the clear and the re-sends, leaving messages that were shown as kept
-// simply gone.
-// ---------------------------------------------------------------------------
+// Measured on KAS 2.21.2, and it bounds every control: the only steer verbs are
+// `_session/steer` and `_session/steer/clear`, and the clear reads `sessionId` alone.
+// So nothing injects and nothing removes ONE row. Shape, history and the rejected
+// per-row delete: marotte-client.md "Send discipline, steering & model pill".
 
 import { el, computed, effect, touch } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
@@ -102,18 +30,9 @@ export function initPendingSteers(): void {
   }
   bound = true;
   const stack = $.steerStack;
-  // Re-render only when the active chat, the steer texts, their SENDING state or
-  // their ORIGIN change. The computed returns a string so it dedups by value — an
-  // unrelated session write (usage, thinking, a streaming chunk) must not re-render
-  // the stack — so every term `render` goes on to branch on has to be in the key.
-  // `pending` is here or a row gaining its controls on `steer_queued` would repaint
-  // nothing; `origin` is here for the same reason one rung down, because it gates
-  // the send-now arrow and a row receives TWO confirmations from two channels (the
-  // POST reply, hardcoded `user`, and the SSE frame, resolved server-side). Whichever
-  // lands second changes origin ALONE, and without this term that write produces no
-  // render at all — so `syncActions` is never asked to rebuild and a corrected row
-  // stays wrong until something else forces a full render, which is what made a
-  // tab switch look like the fix.
+  // A value-deduped key, so every term `render` branches on has to be IN it: `origin`
+  // and `compacted` each arrive ALONE, and a key missing either produces no render at
+  // all for the write that carries it.
   const sig = computed(() => {
     const s = activeSession.value;
     const steers = s?.steers ?? [];
@@ -121,7 +40,15 @@ export function initPendingSteers(): void {
       (s?.id ?? "") +
       "\u0001" +
       steers
-        .map((e) => (e.pending === true ? "1" : "0") + "\u0002" + e.origin + "\u0002" + e.text)
+        .map(
+          (e) =>
+            (e.pending === true ? "1" : "0") +
+            (e.compacted === true ? "1" : "0") +
+            "\u0002" +
+            e.origin +
+            "\u0002" +
+            e.text,
+        )
         .join("\u0000")
     );
   });
@@ -171,21 +98,10 @@ function render(stack: HTMLUListElement): void {
   prevId = id;
 }
 
-/** KEYED BY THE STEER'S OWN ID, so a row survives its own confirmation.
- *
- *  The node is what has to be kept. `.steer-row` enters through `@starting-style`
- *  (26-dock.css), which supplies a before-change style to every element being
- *  rendered for the FIRST time — so a freshly inserted node always fades in from
- *  `opacity: 0` and `translateY(4px)`, and one Send produces two renders a round
- *  trip apart (`recordSteerSent`, then `recordSteerQueued` off the POST's own
- *  reply). Rebuilding the row on the second one therefore replayed that entry
- *  fade over a row already on screen, interrupting the first fade mid-flight:
- *  the row appeared, dropped back to invisible and appeared again. Keeping the
- *  node makes the second render an attribute write, which `@starting-style`
- *  cannot re-fire.
- *
- *  `waiting` is stack-wide rather than per-entry, so the spec is built per render
- *  rather than held as a module constant. */
+/** KEYED BY THE STEER'S OWN ID, so a row survives its own confirmation: one Send
+ *  produces two renders a round trip apart, and `.steer-row`'s `@starting-style`
+ *  entry (26-dock.css) re-fires on a REBUILT node, so the row appeared, vanished and
+ *  appeared again. `waiting` is stack-wide, so the spec is built per render. */
 function rowSpec(waiting: number): ReconcileSpec<PendingSteer> {
   return {
     key: (steer) => steer.id,
@@ -196,18 +112,22 @@ function rowSpec(waiting: number): ReconcileSpec<PendingSteer> {
   };
 }
 
-/** Bring an existing row up to date in place. Everything a render can change is
- *  written here: the state (attribute, word and accessible name), the message, and
- *  the controls. `sending` -> `sent` is the transition every steer makes. */
+/** Bring an existing row up to date in place: state, compaction marker, message and
+ *  controls. `compacted` is a LATCH the store only ever sets, so it is written and
+ *  never cleared. */
 function updateRow(row: HTMLElement, steer: PendingSteer, waiting: number): void {
   const sending = steer.pending === true;
+  const compacted = steer.compacted === true;
   row.dataset["state"] = sending ? "sending" : "sent";
+  if (compacted) {
+    row.dataset["compacted"] = "";
+  }
   row.dataset["tooltip"] = steer.text;
-  row.setAttribute("aria-label", accessibleName(steer.text, sending));
+  row.setAttribute("aria-label", accessibleName(steer.text, sending, compacted));
 
   const label = row.querySelector(".steer-state-label");
   if (label !== null) {
-    label.textContent = sending ? "Sending" : "Sent";
+    label.textContent = stateWord(sending, compacted);
   }
 
   syncText(row, steer.text);
@@ -231,16 +151,11 @@ function syncText(row: HTMLElement, text: string): void {
 /** The signature the row's controls were last built for. */
 const actionSig = new WeakMap<HTMLElement, string>();
 
-/** Build, replace or remove the controls, and leave them alone when none of the
- *  inputs moved. Leaving them alone is the point: replacing a button takes focus off
- *  one a keyboard reader is on, and a second message arriving is a render where every
- *  earlier row's controls are unchanged.
+/** Build, replace or remove the controls, and leave them alone when no input moved:
+ *  replacing a button takes focus off one a keyboard reader is on.
  *
  *  The signature enumerates EVERY input `fillActions` branches on, `origin` included:
- *  a second `steer_queued` for a row whose `sending` and `waiting` are unchanged
- *  rewrites the entry's origin (`store.ts` recordSteerQueued, "the frame's origin wins
- *  in every branch"), and a key missing that term reports no change and leaves the
- *  send-now arrow standing for a row that no longer earns one. */
+ *  a key missing it leaves the arrow standing on a row that no longer earns one. */
 function syncActions(
   row: HTMLElement,
   steer: PendingSteer,
@@ -262,6 +177,7 @@ function syncActions(
  *  decides whether Edit is offerable — see the header. */
 function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
   const sending = steer.pending === true;
+  const compacted = steer.compacted === true;
 
   const state = el(
     "span",
@@ -269,7 +185,7 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
     el("span", { className: "steer-state-icon", "aria-hidden": "true" }, iconEl(ICON_HOURGLASS)),
     // The word, not only the glyph. "Sent" is the fact the user asked this stack
     // to state: the message has left, it is not a draft, and it is waiting.
-    el("span", { className: "steer-state-label" }, sending ? "Sending" : "Sent"),
+    el("span", { className: "steer-state-label" }, stateWord(sending, compacted)),
   );
 
   // Collapsed to one line and clipped to four in CSS, never truncated here: the
@@ -293,12 +209,15 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
       "data-tooltip": steer.text,
       // The state is carried by the glyph AND the label, both visual, so it has
       // to be in the accessible name too.
-      "aria-label": accessibleName(steer.text, sending),
+      "aria-label": accessibleName(steer.text, sending, compacted),
     },
     state,
     text,
     actions,
   );
+  if (compacted) {
+    row.dataset["compacted"] = "";
+  }
 
   // Through the same helper the update path uses, so the signature it compares
   // against is recorded for the row's first paint too.
@@ -306,19 +225,12 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
   return row;
 }
 
-/** Put the right-hand controls into the column, or empty it.
+/** Put the right-hand controls into the column, or empty it. A row still SENDING
+ *  gets NONE: nothing on the wire can address a derived id yet.
  *
- *  A row still SENDING gets NONE: its id is derived rather than confirmed, so
- *  `_session/steer/clear` has nothing to address yet and a control would be one
- *  that cannot act. It gains them when `steer_queued` lands.
- *
- *  The COLUMN is there in both states, and that is what stops the confirmation
- *  moving anything: a control is floored to the hit-target size, so a column
- *  arriving with its buttons grew the row — 8px on a mouse, 28px on a phone — and
- *  the bar grows UPWARD, so the transcript moved by the same amount in the same
- *  frame the row was still fading in. `.steer-actions` reserves that height while
- *  the column is empty (26-dock.css), which is the reserved-box rule the turn
- *  footer's elapsed slot already follows. */
+ *  The COLUMN is there in both states, which is what stops the confirmation moving the
+ *  transcript: the bar grows UPWARD, so `.steer-actions` reserves that height while it
+ *  is empty (26-dock.css). */
 function fillActions(
   column: HTMLElement,
   steer: PendingSteer,
@@ -406,14 +318,10 @@ function actionButton(
   return btn;
 }
 
-/** Stop the running turn and send this message as a new one.
- *
- *  THE PRESSED ROW LEADS, then every other carried row in arrival order. Sending only
- *  the pressed one was rejected: the same cancel drains KAS's whole buffer, so the
- *  others would be lost — the very loss the boundary resend exists to remove, on a
- *  different button.
- *
- *  It records an ORDER and cancels; the boundary reads the text (`steer-resend.ts`). */
+/** Stop the running turn and send this message as a new one: the pressed row LEADS
+ *  and every other carried row follows, because the same cancel drains KAS's whole
+ *  buffer and sending one alone would lose the rest. It records an ORDER and cancels;
+ *  the boundary reads the text (`steer-resend.ts`). */
 async function sendSteerNow(steerID: string): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
@@ -436,11 +344,11 @@ async function sendSteerNow(steerID: string): Promise<void> {
   }
 }
 
-/** Take the only unread steer back and put its text in the composer.
- *
- *  The order matters: the box is filled BEFORE the clear is dispatched, so a
- *  failed clear leaves the user holding the text rather than losing it. The
- *  stack repaints from KAS's own `steer_cleared` frame, not from this call. */
+/** Take the only unread steer back and put its text in the composer. The box is
+ *  filled BEFORE the clear is dispatched, so a failed clear leaves the user holding
+ *  the text. On KAS 2.21.4 the clear leaves every live execution's read cursor where
+ *  it was, so the retyped message is invisible to the running turn until as many
+ *  messages have arrived as that execution had read (kirodotdev/Kiro#11449). */
 async function editSteer(text: string): Promise<void> {
   const chatID = getActiveId();
   if (chatID === "") {
@@ -473,25 +381,31 @@ async function discardSteers(waiting: number): Promise<void> {
     }
   }
   announce("Discarding messages the agent hasn't read");
-  // Fire and forget: the stack repaints from KAS's own `steer_cleared` frame, not
-  // from this reply, so every device agrees and a reconnect cannot leave a row
+  // Fire and forget: the stack repaints from the `steer` entry the clear produces,
+  // not from this reply, so every device agrees and a reconnect cannot leave a row
   // behind for a message that is gone.
   await clearSteers.dispatch({ chatID });
 }
 
-// accessibleName spells out the row's state in words, because the glyph and the
-// label's styling are both visual.
-//
-// Nothing is shortened here. The text is collapsed to one line, because an
-// accessible name is announced as a single string and stray newlines buy
-// nothing, but the whole of it is present: the visible row clamps to fit, and a
-// reader who cannot see it is not subject to that constraint. The row's
-// data-tooltip carries the same string for a mouse.
-function accessibleName(text: string, sending: boolean): string {
+// The row's state in words, because the glyph and the label's styling are both
+// visual, and the WHOLE message collapsed to one line: the visible row clamps to fit
+// and a reader who cannot see it is not subject to that.
+function accessibleName(text: string, sending: boolean, compacted: boolean): string {
   const steerText = oneLine(text);
   return sending
     ? `Sending, not in the agent's buffer yet: ${steerText}`
-    : `Sent, waiting for the agent: ${steerText}`;
+    : `${stateWord(false, compacted)}, waiting for the agent: ${steerText}`;
+}
+
+// stateWord is the row's state in words, and the ONE spelling of it: the label and
+// the accessible name both read it, so they cannot say different things. The marker
+// extends the SENT word alone, because a row still sending is one round trip from
+// `sent`; `data-compacted` is written in both states, so nothing keyed on it has a gap.
+function stateWord(sending: boolean, compacted: boolean): string {
+  if (sending) {
+    return "Sending";
+  }
+  return compacted ? "Sent, context compacted since" : "Sent";
 }
 
 // oneLine collapses whitespace without shortening. A steer is one message

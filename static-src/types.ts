@@ -17,23 +17,48 @@ export type {
   // Enums
   AlwaysAllowBlock,
   DecisionKind,
+  EntryKind,
   ErrorCode,
-  EventKind,
   ForgeKind,
   PlanStatus,
   ReadState,
-  Role,
   RunNodeStatus,
   RunStatus,
   RunStepTranscriptState,
   SafetyStatus,
   SettledBy,
   SteerOrigin,
+  SteerReason,
+  SteerState,
   StopReason,
   TabKind,
   ToolKind,
   ToolStatus,
   Transport,
+  TurnOpenSourceName,
+  TurnOutcome,
+  TurnRevertCause,
+  // The entry log: one envelope type plus one payload type per kind
+  Entry,
+  OpenEntry,
+  EntryCompaction,
+  EntryCompactionFailed,
+  EntryModeSwitched,
+  EntryModelSwitched,
+  EntryPlan,
+  EntryPrompt,
+  EntryReconciled,
+  EntrySafetyBlocked,
+  EntrySteer,
+  EntrySteerAck,
+  EntryText,
+  EntryThinking,
+  EntryToolCall,
+  EntryToolResult,
+  EntryTurnBind,
+  EntryTurnClose,
+  EntryTurnOpen,
+  EntryTurnRevert,
   // Domain shapes
   AccountUsage,
   AccountUsageBreakdown,
@@ -41,8 +66,6 @@ export type {
   Attachment,
   ChatHeader,
   FileChange,
-  Message,
-  Block,
   CodeReference,
   RefusalInfo,
   ToolDisclosed,
@@ -71,6 +94,14 @@ export type {
   // SSE payloads
   ChatDeletedPayload,
   CodeReferencesPayload,
+  // The entry log's frames: one payload type per SSE event of the log
+  TurnOpenedPayload,
+  EntryOpenedPayload,
+  EntryDeltaPayload,
+  EntrySealedPayload,
+  EntryAppendedPayload,
+  TurnClosedPayload,
+  ToolProgressPayload,
   ConnectedPayload,
   DecisionSettledPayload,
   DraftChangedPayload,
@@ -87,7 +118,6 @@ export type {
   MCPDisconnectedPayload,
   MCPFailedPayload,
   MCPOAuthPayload,
-  MessageChunkPayload,
   OpenExternalURLPayload,
   PermissionNeededPayload,
   PermissionsChangedPayload,
@@ -95,8 +125,6 @@ export type {
   SafetyProperty,
   SafetyStatusPayload,
   SafetyPropertiesPayload,
-  ToolCallPayload,
-  ToolCallUpdatePayload,
   CatalogInfo,
   AptPackage,
   Inventory,
@@ -112,7 +140,6 @@ export type {
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
-  RunStepPayload,
   RunInputNeededPayload,
   RunInputSettledPayload,
   RunAnswerRequest,
@@ -124,15 +151,14 @@ export type {
   RunStepTranscript,
   SystemTool,
   SteerQueuedPayload,
-  SteerInjectedPayload,
-  SteerClearedPayload,
   AgentNoticePayload,
   TabsChangedPayload,
+  SpecApprovedPayload,
+  SpecChangedPayload,
   TextSpan,
   TerminalCreatedPayload,
   TerminalOutputPayload,
   TerminalExitedPayload,
-  TurnEndedPayload,
   SubjectStamp,
   PendingSnapshotPayload,
   StatusSnapshotPayload,
@@ -144,13 +170,86 @@ export type {
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
 import type {
-  Message,
+  Entry,
+  EntryCompaction,
+  EntryCompactionFailed,
+  EntryKind,
+  EntryModeSwitched,
+  EntryModelSwitched,
+  EntryPlan,
+  EntryReconciled,
+  EntrySafetyBlocked,
+  EntrySteer,
+  EntrySteerAck,
+  EntryText,
+  EntryThinking,
+  EntryToolCall,
+  EntryToolResult,
+  EntryTurnBind,
+  EntryTurnClose,
+  EntryTurnOpen,
+  EntryTurnRevert,
+  OpenEntry,
   SessionEffortLevel,
   SteerOrigin,
   SubjectStamp,
   TurnOutcome,
   Usage,
 } from "./wire/types.gen.js";
+
+// --- The entry log, client side ---
+
+/** Which payload type each entry kind carries.
+ *
+ *  The wire declares `Entry.payload` as `unknown`, because Go's own field is an
+ *  `any` chosen by `Kind`. This map is the client's statement of that choice, and
+ *  it is an interface keyed by `EntryKind` rather than a `Record<string, …>` so a
+ *  kind added to the wire enum fails the type check here until it names a payload.
+ *  `entries.ts` is the one place that narrows an `Entry` through it. */
+export interface EntryPayload {
+  turn_open: EntryTurnOpen;
+  turn_bind: EntryTurnBind;
+  text: EntryText;
+  thinking: EntryThinking;
+  tool_call: EntryToolCall;
+  tool_result: EntryToolResult;
+  steer: EntrySteer;
+  steer_ack: EntrySteerAck;
+  plan: EntryPlan;
+  compaction: EntryCompaction;
+  compaction_failed: EntryCompactionFailed;
+  safety_blocked: EntrySafetyBlocked;
+  model_switched: EntryModelSwitched;
+  mode_switched: EntryModeSwitched;
+  turn_revert: EntryTurnRevert;
+  reconciled: EntryReconciled;
+  turn_close: EntryTurnClose;
+}
+
+/** One sealed entry whose payload is narrowed to its kind's. */
+export type KindedEntry<K extends EntryKind> = Omit<Entry, "kind" | "payload"> & {
+  kind: K;
+  payload: EntryPayload[K];
+};
+
+/** Every entry, as a discriminated union over `kind`, so a dispatcher's switch is
+ *  TOTAL by type rather than by a default arm. */
+export type AnyEntry = { [K in EntryKind]: KindedEntry<K> }[EntryKind];
+
+/** One turn's client state: the sealed entries plus whatever is still coalescing.
+ *
+ *  `entries[0]` is always the `turn_open` and the invariant is
+ *  `entries[i].seq === i` — any other `seq` is a HOLE, which is what triggers the
+ *  one range read of section 6.4 rather than being folded in at the wrong index.
+ *  `openEntries` is keyed by LANE (`""` is the agent that owns the log's turn, a
+ *  uuid is a delegate's), because a lane coalesces one entry at a time. */
+export interface TurnState {
+  entries: Entry[];
+  openEntries: Map<string, OpenEntry>;
+  /** Where the `turn_close` was appended, cached so `closeOf` is not a scan.
+   *  Absent while the turn is open, which is what `turnLive` reads. */
+  closeAt?: number;
+}
 
 // --- Client-only types ---
 
@@ -207,8 +306,8 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
  *  pressed Send and is owed a row for it — and `chat.steer`'s `rollback`
  *  un-draws that entry if the POST fails, in the same gesture that puts the
  *  text back in the composer. Everything else is still the server's: the
- *  confirmed id (`steer_queued`), the promotion into the transcript
- *  (`steer_injected`) and the drop at a turn boundary (`steer_cleared`).
+ *  confirmed id (`steer_queued`), and the `steer` ENTRY that arrives as
+ *  `entry_appended` carrying `state: read` or `state: dropped`.
  *
  *  A `pending` entry renders as "Sending" and NOTHING else — no Edit, no
  *  Discard, because there is no server-side id to clear yet. Reconciliation is
@@ -222,14 +321,18 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
  *  KAS buffer but arrives as `agent_notice`, so nothing here needs a field for
  *  whose words it holds.
  *
- *  A steer LEAVES this array when the agent reads it or a boundary drops it,
- *  and becomes a `SteerMark` — see below. So the array is strictly "waiting",
- *  which is why there is no `injected` flag any more: the dock's lifetime is
- *  the turn, and a mark's lifetime is the loaded transcript.
+ *  A steer LEAVES this array when `appendEntry` sees a `steer` entry with its
+ *  id, whatever the state, and at the `turn_closed` that settles the chat for
+ *  a row KAS was holding when its bridge died. The transcript's record IS that
+ *  entry, at its own `seq`; nothing here outlives it. So the array is strictly
+ *  "waiting", which is why there is no `injected` flag.
  *
- *  It replaced a `QueuedPrompt` FIFO that held text until `turn_ended` and then
- *  sent it as a NEW turn — so a correction always arrived after the work it was
- *  correcting had finished. A steer lands in the turn already running. */
+ *  `compacted` is the one field the SERVER never writes: a compaction landing
+ *  while a row is still waiting is a client-side arrival-order fact, marked on
+ *  every row then in the dock.
+ *
+ *  A steer lands in the turn already running, so a row here is never a message
+ *  held back for a later one. */
 export interface PendingSteer {
   /** KAS's own steer id (`steer-<uuid>`), and the key for every lifecycle
    *  event. Client-minted and echoed back, so the row that appears is the
@@ -246,52 +349,19 @@ export interface PendingSteer {
    *  claim that a POST is in flight, and its id is derived rather than
    *  confirmed. Absent on every entry the server has acknowledged. */
   pending?: boolean;
-}
-
-/** Where in a running turn a steer was read.
- *
- *  BLOCK granularity, not message granularity, and that is forced: KAS calls
- *  `StartTurn` once per turn, so a whole turn accumulates into ONE assistant
- *  message and "chronologically at the injection point" can only mean between
- *  two of that message's blocks. */
-export interface SteerAnchor {
-  /** The assistant message the steer landed in. Empty when the steer was read
-   *  before the turn had produced anything; the store rebinds it to the first
-   *  assistant message that arrives. */
-  msgID: string;
-  /** How many blocks that message had at the moment of promotion. The mark
-   *  renders immediately before the block at this index. */
-  blockIndex: number;
-}
-
-/** A steer that has LEFT the dock and now renders inside the turn transcript.
- *
- *  Two ways in, and the row says which: the agent read it (`steer_injected`),
- *  or a turn boundary dropped it unread (`steer_cleared` → `dropped`). The
- *  second is worth a row precisely because it is the fact a reader would
- *  otherwise never learn — "I sent this and the agent never saw it".
- *
- *  Its lifetime is the LOADED TRANSCRIPT rather than the turn, which is why it
- *  is a separate field from `steers`: the dock empties at every boundary and
- *  this must survive one. */
-export interface SteerMark {
-  id: string;
-  text: string;
-  /** Whose words these are, carried over from the dock entry or read off the
-   *  frame that promoted it. What decides the note's TITLE, which is the whole
-   *  reason the field exists: one label made a workflow's report read as
-   *  something the reader had typed. */
-  origin: SteerOrigin;
-  /** What the agent said it DID about the steer, from the acknowledgement
-   *  marker KAS asks it to close its response with. Arrives later than the read
-   *  frame and on a different channel (the text stream, not the steering one),
-   *  because reading a steer and acting on it are separate moments. Absent
-   *  until the marker closes, and absent for good if the agent never emits
-   *  one. */
-  ack?: string;
-  /** The agent never read it: a turn boundary cleared the buffer first. */
-  dropped?: boolean;
-  anchor: SteerAnchor;
+  /** A compaction landed while this row was still WAITING, so the agent will read
+   *  it against a summarized context rather than the conversation the reader wrote
+   *  it against. CLIENT-ONLY and set on ARRIVAL ORDER rather than on any timestamp
+   *  (the `entries.ts` handler marks every row then in the dock when a `compaction`
+   *  entry lands), which is the order the server broadcast in. The one moment the
+   *  fact is actionable is while the steer is unread, because the reader can still
+   *  take it back and rephrase it.
+   *
+   *  A row that arrives AFTER the compaction is never marked — the compaction is in
+   *  its past on both sides. Lost on a reconnect, where the dock is rebuilt from
+   *  `waiting` and holds no order against the log; the alternative is comparing two
+   *  wall clocks, which this design refuses everywhere else. */
+  compacted?: true;
 }
 
 // --- Local session state (client-only projection of server chat) ---
@@ -327,85 +397,51 @@ export interface Session {
    *  an empty `effort` and still runs at a level. */
   effort_active?: string;
   usage: Usage;
-  messages: Message[];
-  message_count: number;
+  /** This chat's resident slice of the entry log, one `TurnState` per turn, keyed
+   *  by turn id. The transcript's rendering unit is the turn, and each entry names
+   *  its own turn, so grouping is a partition rather than an inference. */
+  turns: Map<string, TurnState>;
+  /** The resident turn ids in FILE order — the order the appender wrote them, which
+   *  is the order the transcript renders. A separate array rather than the Map's own
+   *  insertion order because an older page is PREPENDED, and a Map cannot. */
+  turn_order: string[];
+  /** How many turns the whole session holds, from `ChatHeader`. `has_more` is about
+   *  this window's left edge; this is about the session. */
+  turn_count: number;
+  /** The turns a `turn_revert` took out of this window, client-only. It exists so the
+   *  range read has a second refusal beside the abort: an answer already decoded when
+   *  the frame landed would otherwise reach `applyTurnRange`, which seats a turn the
+   *  store does not hold — putting back exactly what the drop removed. It cannot be
+   *  spelled as "absent from `turn_order`", because that is also every turn whose own
+   *  `turn_opened` was lost, and re-reading THOSE is what the repair is for. */
+  reverted?: Set<string>;
   has_more: boolean;
   thinking: boolean;
   /** The SERVER'S LAST STATEMENT about whether this chat has a turn of its OWN
-   *  open, from `GET /api/chats/{id}`'s `turn_open` folded with its
-   *  `turn_workflow_step` owner marker — so a workflow step's turn, which folds
-   *  onto the launching chat's session while that chat's own agent is idle, reads
-   *  FALSE here. The wire's own `turn_open` is wider (any open turn) and is read
-   *  RAW at exactly one place, `store-load.ts`'s teardown arm. NOT live state and
-   *  deliberately not a second `thinking`: `thinking` is this client's own memory
-   *  of a stream it has seen, and it starts false, so on a mid-turn reload the
-   *  newest turn's absent carrier reads as `unknown` — a terminal verdict for a
-   *  running turn. Optional-tolerant because it is: a server predating the field
-   *  decodes as absent and behaves as this client did before it existed. Three
-   *  writers and one deliberate non-writer; the table is on `turnLive` in
-   *  store.ts, which is the ONE reader. */
+   *  open, from the single-chat GET's `live` field — the turn registry's own
+   *  answer rather than anything in the log, which is why it is named apart from
+   *  the `turn_open` entry kind. NOT live state and deliberately not a second
+   *  `thinking`: `thinking` is this client's own memory of a stream it has seen,
+   *  and it starts false, so on a mid-turn reload the newest turn's absent
+   *  carrier would read as a terminal verdict over a running turn. OPTIONAL
+   *  because an ANSWER that states nothing must not collapse to false: the field
+   *  is forgotten rather than written when the GET omits it, so `turnLive` falls
+   *  back to the log instead of answering settled off a silence. The table of
+   *  writers is on `turnLive` in store.ts, which is the ONE reader. */
   turn_open?: boolean;
-  /** The server's statement about the OLDEST MESSAGE HELD — `has_more`'s own
-   *  subject: how many turns precede the turn that message belongs to, so
-   *  `turn_offset + 1` is that turn's session-absolute ordinal. `store.ts`
-   *  `turnBaseOf` is the reader.
-   *
-   *  Absent is treated as the session's start, which IS a guess and deliberately the
-   *  same one the code made before these fields existed; it is only reachable for a
-   *  chat whose transcript the activation refetches anyway. */
-  turn_offset?: number;
-  /** Whether the segment before the oldest message held had already closed —
-   *  `projectTurns`' carried state, seeded. See `turns.ts` `TurnWindowBase` for why
-   *  the count alone is insufficient. */
-  turn_segment_closed?: boolean;
   working_label: string;
   /** Agent-declared activity status from the KAS focus_update channel
    *  (chat_status SSE): "in_progress" | "waiting_on_user" | "completed" |
    *  "idle". Client-only and ephemeral — cleared on the next prompt send
    *  and on a transport gap, never persisted. */
   agent_status?: string;
-  /** This chat's last TURN failed — `turn_ended` carrying outcome `failed` or
-   *  `refused`. Client-only and latched, for the same reason `agent_status` is:
-   *  the failure is a settled fact until the next turn, and a background chat's
-   *  failure is otherwise invisible, because the ONE error surface that paints a
-   *  SHARED control — the agent-down send face — is deliberately withheld from a
-   *  background chat by `handlers/turn.ts`, to keep one chat's failure off
-   *  another's send button. Its sibling surface is a toast, which is raised for
-   *  every chat and withheld from none. Cleared by the next
-   *  `setThinking(id, true)` and by the transport-gap reconciler, exactly like
-   *  `agent_status`.
-   *
-   *  NOT set by the `error` SSE: that handler stopped touching turn state when
-   *  `endsTurn` was removed, so a `switch_failed` or `bridge_start_failed` frame
-   *  reports without latching. `tabs.ts`'s narrow "turn failed" dot phrase is
-   *  written against exactly this breadth. */
-  turn_failed?: boolean;
-  /** This chat's last turn finished. Client-only and latched, the mirror of
-   *  `turn_failed`.
-   *
-   *  It exists because the agent-declared `completed` status is the higher-
-   *  fidelity signal and NOT a guaranteed one: it only arrives when the model
-   *  calls `update_session_information`, so a turn that ended without one fell
-   *  to `idle` and "this chat finished" — the whole point of the tab dot — was
-   *  true only sometimes. `turn_ended` always arrives, so the latch is what makes
-   *  the promise hold; `completed` still wins where it lands, because it is the
-   *  agent's own verdict rather than the transport's.
-   *
-   *  Set on EVERY finished turn, whoever is watching. It used to be set only for
-   *  a chat the reader was NOT looking at, so it meant "finished while you were
-   *  away" — and the cost of that was the dot falling back to hollow `idle` at
-   *  the one moment the reader was watching a turn complete. Cleared by the next
-   *  `setThinking(id, true)` and by the transport-gap reconciler, exactly like
-   *  `turn_failed`; NOT by opening the chat, because seeing a finished turn does
-   *  not un-finish it. Never set for a cancelled turn: nothing was finished. */
-  turn_done?: boolean;
   /** How this chat's newest FINISHED turn ended, verbatim from
    *  `ChatHeader.last_turn_outcome`. NOT a latch and not client memory: it is the
    *  server's own statement, so a header read REPLACES it — an absent outcome is a
    *  CLEAR, which is the opposite of how `model` and `effort_levels` carry forward.
    *
-   *  Three readers: `relatchTurnVerdict`'s fallback for a chat with no resident
-   *  transcript, `latchFieldsFor`'s freshness rule, and the boot snapshot. */
+   *  Read by `tabStatusFor` (the dot's `failed` and `done` arms both grade it) and by the
+   *  boot snapshot's provisional row. */
   last_turn_outcome?: TurnOutcome;
   /** `ChatHeader.updated_at`, epoch millis, bumped by every `Mutate`. So it is LAST
    *  ACTIVITY rather than "finished at" — good enough for "finished ~2h ago", which
@@ -413,15 +449,18 @@ export interface Session {
    *  by every header read, like `last_turn_outcome`. */
   updated_at?: number;
   /** Mid-turn steers the agent has NOT read yet: the bottom dock's rows.
-   *  Written on submit (intent) and by the three steer SSE events (fact);
-   *  emptied at every turn boundary because that is when KAS clears its own
-   *  buffer, and each entry that leaves becomes a `steer_marks` entry. */
+   *  Written on submit (intent) and by `steer_queued` (fact).
+   *
+   *  A row LEAVES on its own `steer` ENTRY, whatever that entry's state, and every
+   *  row still here leaves at a `turn_closed` that settles the chat. There is no
+   *  second field for a read steer: the entry IS the transcript fact, positioned by
+   *  seal order in the turn body, so nothing anchors a note against a block index. */
   steers?: PendingSteer[];
-  /** Steers that have left the dock and now render INSIDE the turn transcript,
-   *  each anchored at the block it was injected before. Survives the turn
-   *  boundary that empties `steers`, so its lifetime is the loaded transcript;
-   *  `store-load.ts` carries it across a header refetch for the same reason. */
-  steer_marks?: SteerMark[];
+  /** The model the reader picked for the NEXT turn, from `ChatHeader.pending_model`.
+   *  The badge's ONE input — the `.pending` class and the "after current turn"
+   *  tooltip render while it is non-empty and clear when a header arrives with it
+   *  empty, on every device. The switcher keeps no local queue and has no drain. */
+  pending_model?: string;
   supervised_mode?: boolean;
   /** Reasoning-effort level ("low".."max", "" = the engine default). The
    *  fourth per-chat composer setting, beside model, mode and supervised; it

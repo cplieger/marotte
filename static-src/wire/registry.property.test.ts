@@ -22,14 +22,14 @@ const registeredEvents = [
   "mcp_disconnected",
   "mcp_failed",
   "mcp_oauth_needed",
-  "message_appended",
-  "message_chunk",
-  "message_created",
-  "message_updated",
   "permission_needed",
-  "tool_call",
-  "tool_call_update",
-  "turn_ended",
+  "turn_opened",
+  "entry_opened",
+  "entry_delta",
+  "entry_sealed",
+  "entry_appended",
+  "tool_progress",
+  "turn_closed",
 ] as const;
 
 describe("wire registry completeness", () => {
@@ -62,7 +62,7 @@ describe("wire registry completeness", () => {
     // fc.constantFrom, so no event is skipped). An empty object is missing the
     // required fields of most payloads; the decoder must reject it via the
     // validators.ts failure mode (TypeError), not crash with some other error.
-    // Payloads with no required fields (turn_ended, whoami) decode {} fine —
+    // Payloads with no required fields (whoami) decode {} fine —
     // that's an accepted no-throw outcome, not a failure.
     for (const eventName of registeredEvents) {
       const decoder = lookupSSEDecoder(eventName);

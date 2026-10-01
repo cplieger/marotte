@@ -44,7 +44,7 @@ func TestChatHeader_CarriesNoWorkspaceCatalog(t *testing.T) {
 // The same claim one layer down: the record on disk must not hold a second copy either, or
 // the holder and the chat files can disagree about what the workspace can run.
 func TestChat_PersistsNoWorkspaceCatalog(t *testing.T) {
-	b, err := json.Marshal(&Chat{ID: "c1", Name: "Hello", Messages: []Message{}})
+	b, err := json.Marshal(&Chat{ID: "c1", Name: "Hello"})
 	if err != nil {
 		t.Fatalf("marshal chat: %v", err)
 	}

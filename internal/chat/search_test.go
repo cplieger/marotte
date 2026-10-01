@@ -11,180 +11,188 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-func msg(id string, role marotte.Role, content string) marotte.Message {
-	return marotte.Message{ID: id, Role: role, Content: content, Ts: 100}
+// turnFixture accumulates one turn's entries in file order, seq assigned as the
+// appender would.
+type turnFixture struct {
+	id      string
+	entries []marotte.Entry
 }
 
-// transcript: turn 1 = u1/a1, turn 2 = u2/a2.
-func transcript() []marotte.Message {
-	return []marotte.Message{
-		msg("u1", marotte.RoleUser, "how does the retry work"),
-		msg("a1", marotte.RoleAssistant, "The retry uses exponential backoff."),
-		msg("u2", marotte.RoleUser, "now fix the composer"),
-		msg("a2", marotte.RoleAssistant, "Done, the composer grows upward."),
+// openTurn starts a turn whose turn_open carries the prompt and the ordinal n.
+func openTurn(id string, n uint64, prompt *marotte.EntryPrompt) *turnFixture {
+	tf := &turnFixture{id: id}
+	return tf.add("", id, marotte.EntryKindTurnOpen, marotte.EntryTurnOpen{Prompt: prompt, Source: marotte.TurnOpenNamePrompt, N: n})
+}
+
+// prompt is a turn_open prompt with no attachments.
+func prompt(id, text string) *marotte.EntryPrompt {
+	return &marotte.EntryPrompt{ID: id, Text: text}
+}
+
+func (tf *turnFixture) add(lane, id string, kind marotte.EntryKind, payload any) *turnFixture {
+	e := entryOf(tf.id, lane, id, kind, payload)
+	e.Seq = uint64(len(tf.entries))
+	tf.entries = append(tf.entries, *e)
+	return tf
+}
+
+func (tf *turnFixture) text(id, s string) *turnFixture {
+	return tf.add("", id, marotte.EntryKindText, marotte.EntryText{Text: s})
+}
+
+func (tf *turnFixture) laneText(lane, id, s string) *turnFixture {
+	return tf.add(lane, id, marotte.EntryKindText, marotte.EntryText{Text: s})
+}
+
+func (tf *turnFixture) thinking(id, s string) *turnFixture {
+	return tf.add("", id, marotte.EntryKindThinking, marotte.EntryThinking{Text: s})
+}
+
+// tool appends the tool_call and, when res is non-nil, its tool_result.
+func (tf *turnFixture) tool(call marotte.EntryToolCall, res *marotte.EntryToolResult) *turnFixture {
+	tf.add("", call.ID, marotte.EntryKindToolCall, call)
+	if res != nil {
+		tf.add("", marotte.ToolResultID(call.ID), marotte.EntryKindToolResult, *res)
 	}
+	return tf
+}
+
+func (tf *turnFixture) close(p marotte.EntryTurnClose) *turnFixture {
+	return tf.add("", tf.id+":close", marotte.EntryKindTurnClose, p)
+}
+
+// chatOf joins turns in file order with every turn drawn.
+func chatOf(turns ...*turnFixture) ([]marotte.Entry, map[string]struct{}) {
+	var entries []marotte.Entry
+	drawn := make(map[string]struct{}, len(turns))
+	for _, tf := range turns {
+		entries = append(entries, tf.entries...)
+		drawn[tf.id] = struct{}{}
+	}
+	return entries, drawn
+}
+
+// oneText is a one-turn chat holding a single text entry.
+func oneText(s string) ([]marotte.Entry, map[string]struct{}) {
+	return chatOf(openTurn("t-1", 1, nil).text("a1", s))
+}
+
+// oneTool is a one-turn chat holding one tool_call and its tool_result.
+func oneTool(call marotte.EntryToolCall, res *marotte.EntryToolResult) ([]marotte.Entry, map[string]struct{}) {
+	return chatOf(openTurn("t-1", 1, nil).tool(call, res))
+}
+
+// search runs Search over a fixture with the case flag off.
+func search(entries []marotte.Entry, drawn map[string]struct{}, q string) []Hit {
+	return Search(entries, drawn, q, false).Matches
+}
+
+// transcript: turn 1 asks about the retry, turn 2 about the composer.
+func transcript() ([]marotte.Entry, map[string]struct{}) {
+	return chatOf(
+		openTurn("t-1", 1, prompt("m-1", "how does the retry work")).
+			text("a1", "The retry uses exponential backoff.").
+			close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}),
+		openTurn("t-2", 2, prompt("m-2", "now fix the composer")).
+			text("a2", "Done, the composer grows upward.").
+			close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}),
+	)
 }
 
 func TestSearch_FindsTextAndNamesItsTurn(t *testing.T) {
-	hits := Search(transcript(), "composer", false).Matches
+	entries, drawn := transcript()
+	hits := search(entries, drawn, "composer")
 	if len(hits) != 2 {
-		t.Fatalf("got %d hits, want 2 (u2 and a2)", len(hits))
+		t.Fatalf("Search(%q) = %d hits, want 2 (the prompt and the reply)", "composer", len(hits))
 	}
-	if hits[0].MessageID != "u2" || hits[0].Turn != 2 {
-		t.Errorf("hit 0 = %+v, want u2 in turn 2", hits[0])
+	if hits[0].TurnID != "t-2" || hits[0].EntryID != "t-2" || hits[0].Turn != 2 || hits[0].SegmentKind != SegmentPrompt {
+		t.Errorf("hit 0 = %+v, want the prompt of t-2 in turn 2", hits[0])
 	}
-	// The turn's OPENER, not the matched message — the fold state keys on it, and
-	// a hit on an assistant message has to resolve back to its turn.
-	if hits[1].MessageID != "a2" || hits[1].TurnMessageID != "u2" {
-		t.Errorf("hit 1 = %+v, want a2 resolving to opener u2", hits[1])
+	if hits[1].TurnID != "t-2" || hits[1].EntryID != "a2" || hits[1].Turn != 2 {
+		t.Errorf("hit 1 = %+v, want a2 in turn t-2 (ordinal 2)", hits[1])
 	}
 }
 
 // The match-case flag governs the FREE TEXT only. The scoped filters stay
-// case-insensitive whatever the reader asked for: `role:` is an enum, and a path
-// filter that suddenly cared about case would be a behaviour change nobody
+// case-insensitive whatever the reader asked for: a path is typed from memory,
+// and a filter that suddenly cared about case would be a behaviour change nobody
 // requested by ticking a box labelled "match case".
 func TestSearch_CaseSensitivity(t *testing.T) {
-	msgs := []marotte.Message{
-		msg("u1", marotte.RoleUser, "now fix the composer"),
-		msg("a1", marotte.RoleAssistant, "Done, the Composer grows upward."),
-	}
-	filtered := []marotte.Message{{
-		ID:           "u1",
-		Role:         marotte.RoleUser,
-		Content:      "look at the Composer",
-		Ts:           100,
-		ChangedFiles: map[string]*marotte.FileChange{"static-src/Composer.ts": {}},
-		ToolCalls:    []marotte.ToolCall{{ID: "t1", Title: "ReadFile", Kind: marotte.ToolKindRead}},
-	}}
+	plain, plainDrawn := chatOf(openTurn("t-1", 1, prompt("m-1", "now fix the composer")).
+		text("a1", "Done, the Composer grows upward."))
+	filtered, filteredDrawn := chatOf(openTurn("t-1", 1, prompt("m-1", "look at the Composer")).
+		tool(marotte.EntryToolCall{
+			ID: "tc1", Title: "ReadFile", Kind: marotte.ToolKindRead,
+			Locations: []marotte.ToolLocation{{Path: "static-src/Composer.ts"}},
+		}, nil))
 
 	cases := []struct {
 		name          string
-		msgs          []marotte.Message
+		entries       []marotte.Entry
+		drawn         map[string]struct{}
 		query         string
 		caseSensitive bool
 		want          int
 	}{
-		// The behaviour every existing client gets, and the default on the wire.
-		{name: "insensitive finds both spellings", msgs: msgs, query: "composer", want: 2},
-		{name: "insensitive from an upper-case query", msgs: msgs, query: "COMPOSER", want: 2},
-		{
-			name:          "sensitive finds only the exact spelling",
-			msgs:          msgs,
-			query:         "composer",
-			caseSensitive: true,
-			want:          1,
-		},
-		{
-			name:          "sensitive finds the capitalised spelling",
-			msgs:          msgs,
-			query:         "Composer",
-			caseSensitive: true,
-			want:          1,
-		},
-		{
-			name:          "sensitive finds nothing when nothing matches exactly",
-			msgs:          msgs,
-			query:         "COMPOSER",
-			caseSensitive: true,
-			want:          0,
-		},
-		// The filters are unaffected in either mode.
-		{
-			name:          "a file filter stays case-insensitive under match-case",
-			msgs:          filtered,
-			query:         "file:composer.ts",
-			caseSensitive: true,
-			want:          1,
-		},
-		{
-			name:          "a tool filter stays case-insensitive under match-case",
-			msgs:          filtered,
-			query:         "tool:readfile",
-			caseSensitive: true,
-			want:          1,
-		},
-		{
-			name:          "a role filter stays case-insensitive under match-case",
-			msgs:          filtered,
-			query:         "role:USER",
-			caseSensitive: true,
-			want:          1,
-		},
-		// A filter plus free text: the filter is folded, the text is not.
-		{
-			name:          "the free text half still respects match-case",
-			msgs:          filtered,
-			query:         "role:user composer",
-			caseSensitive: true,
-			want:          0,
-		},
-		{
-			name:          "the free text half matches at its own casing",
-			msgs:          filtered,
-			query:         "role:user Composer",
-			caseSensitive: true,
-			want:          1,
-		},
+		{name: "insensitive finds both spellings", entries: plain, drawn: plainDrawn, query: "composer", want: 2},
+		{name: "insensitive from an upper-case query", entries: plain, drawn: plainDrawn, query: "COMPOSER", want: 2},
+		{name: "sensitive finds only the exact spelling", entries: plain, drawn: plainDrawn, query: "composer", caseSensitive: true, want: 1},
+		{name: "sensitive finds the capitalised spelling", entries: plain, drawn: plainDrawn, query: "Composer", caseSensitive: true, want: 1},
+		{name: "sensitive finds nothing when nothing matches exactly", entries: plain, drawn: plainDrawn, query: "COMPOSER", caseSensitive: true, want: 0},
+		{name: "a file filter stays case-insensitive under match-case", entries: filtered, drawn: filteredDrawn, query: "file:composer.ts", caseSensitive: true, want: 1},
+		{name: "a tool filter stays case-insensitive under match-case", entries: filtered, drawn: filteredDrawn, query: "tool:readfile", caseSensitive: true, want: 1},
+		{name: "the free text half still respects match-case", entries: filtered, drawn: filteredDrawn, query: "turn:1 composer", caseSensitive: true, want: 0},
+		{name: "the free text half matches at its own casing", entries: filtered, drawn: filteredDrawn, query: "turn:1 Composer", caseSensitive: true, want: 1},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := len(Search(tc.msgs, tc.query, tc.caseSensitive).Matches); got != tc.want {
-				t.Errorf("Search(%q, case=%v) = %d hits, want %d",
-					tc.query, tc.caseSensitive, got, tc.want)
+			if got := len(Search(tc.entries, tc.drawn, tc.query, tc.caseSensitive).Matches); got != tc.want {
+				t.Errorf("Search(%q, case=%v) = %d hits, want %d", tc.query, tc.caseSensitive, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestSearch_CaseSensitiveOffsetsStayRuneIndices(t *testing.T) {
-	// The rune-offset arithmetic reads a prefix of the HAYSTACK, which is the
-	// folded string in insensitive mode and the original in sensitive mode. Both
-	// have to land on the same rune index for the client to highlight the right
-	// occurrence.
-	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "héllo wörld Needle")}
+// The rune-offset arithmetic reads a prefix of the HAYSTACK, which is the folded
+// string in insensitive mode and the original in sensitive mode; both must land
+// on the same rune index for the client to highlight the right occurrence.
+func TestSearch_OffsetsAreRuneIndicesInBothCaseModes(t *testing.T) {
+	entries, drawn := oneText("héllo wörld Needle")
 	for _, cs := range []bool{false, true} {
-		hits := Search(msgs, "Needle", cs).Matches
+		hits := Search(entries, drawn, "Needle", cs).Matches
 		if len(hits) != 1 {
-			t.Fatalf("case=%v: got %d hits, want 1", cs, len(hits))
+			t.Fatalf("Search(case=%v) = %d hits, want 1", cs, len(hits))
 		}
 		if want := len([]rune("héllo wörld ")); hits[0].Offset != want {
-			t.Errorf("case=%v: offset = %d, want %d", cs, hits[0].Offset, want)
+			t.Errorf("Search(case=%v) offset = %d, want %d (a rune index, not a byte)", cs, hits[0].Offset, want)
 		}
 	}
 }
 
-func TestSearch_ReportsEveryOccurrenceInOneMessage(t *testing.T) {
-	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "retry retry retry")}
-	hits := Search(msgs, "retry", false).Matches
+// Offsets are relative to the matched ENTRY's own segment, never to the turn,
+// so a tool call between two text entries does not shift the second one.
+func TestSearch_EveryOccurrenceIsAHitAtItsOwnOffset(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("a1", "intro paragraph").
+		tool(marotte.EntryToolCall{ID: "tc1", Title: "shell"}, nil).
+		text("a2", "retry retry retry"))
+	hits := search(entries, drawn, "retry")
 	if len(hits) != 3 {
-		t.Fatalf("got %d hits, want 3", len(hits))
+		t.Fatalf("Search(%q) = %d hits, want 3", "retry", len(hits))
 	}
-	// Offsets are RUNE indices so the client highlights the right occurrence
-	// rather than always the first.
 	for i, want := range []int{0, 6, 12} {
-		if hits[i].Offset != want {
-			t.Errorf("hit %d offset = %d, want %d", i, hits[i].Offset, want)
+		if hits[i].EntryID != "a2" || hits[i].Offset != want || hits[i].SegmentLen != 17 {
+			t.Errorf("hit %d = %+v, want a2 at offset %d of 17", i, hits[i], want)
 		}
-	}
-}
-
-func TestSearch_OffsetsAreRuneIndicesNotBytes(t *testing.T) {
-	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "héllo wörld needle")}
-	hits := Search(msgs, "needle", false).Matches
-	if len(hits) != 1 {
-		t.Fatalf("got %d hits, want 1", len(hits))
-	}
-	if want := len([]rune("héllo wörld ")); hits[0].Offset != want {
-		t.Errorf("offset = %d, want %d (rune index, not byte)", hits[0].Offset, want)
 	}
 }
 
 func TestSearch_EmptyQueryFindsNothing(t *testing.T) {
+	entries, drawn := transcript()
 	for _, q := range []string{"", "   "} {
-		if got := Search(transcript(), q, false).Matches; len(got) != 0 {
-			t.Errorf("query %q returned %d hits", q, len(got))
+		if got := search(entries, drawn, q); len(got) != 0 {
+			t.Errorf("Search(%q) = %d hits, want 0", q, len(got))
 		}
 	}
 }
@@ -192,129 +200,130 @@ func TestSearch_EmptyQueryFindsNothing(t *testing.T) {
 // An empty result must marshal as [] rather than null, so the client has one
 // empty case instead of two.
 func TestSearch_NeverReturnsNil(t *testing.T) {
-	if Search(transcript(), "", false).Matches == nil {
-		t.Error("empty query returned a nil slice")
+	entries, drawn := transcript()
+	if search(entries, drawn, "") == nil {
+		t.Error("an empty query returned a nil slice")
 	}
-	if Search(nil, "anything", false).Matches == nil {
-		t.Error("empty transcript returned a nil slice")
+	if Search(nil, nil, "anything", false).Matches == nil {
+		t.Error("an empty log returned a nil slice")
 	}
 }
 
-func TestSearch_SearchesReasoningAndToolOutput(t *testing.T) {
-	msgs := []marotte.Message{
-		{
-			ID: "a1", Role: marotte.RoleAssistant, Ts: 1,
-			Reasoning: "considering a mutex here",
-			ToolCalls: []marotte.ToolCall{{ID: "t1", Title: "shell", Output: "permission denied"}},
-		},
+// "Which turn printed that error" is asked more often than "which turn
+// mentioned it", so a tool_result's output is searched, and so is the thinking.
+func TestSearch_SearchesThinkingAndToolOutput(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		thinking("th1", "considering a mutex here").
+		tool(marotte.EntryToolCall{ID: "tc1", Title: "shell"},
+			&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "permission denied"}))
+	if hits := search(entries, drawn, "permission denied"); len(hits) != 1 || hits[0].SegmentKind != SegmentToolOutput || hits[0].EntryID != "tc1:result" {
+		t.Errorf("Search(%q) = %+v, want one tool_output hit on tc1:result", "permission denied", hits)
 	}
-	// "which turn printed that error" is asked more often than "which turn
-	// mentioned it", so tool output is searchable.
-	if len(Search(msgs, "permission denied", false).Matches) == 0 {
-		t.Error("tool output is not searchable")
-	}
-	if len(Search(msgs, "mutex", false).Matches) == 0 {
-		t.Error("the thinking trace is not searchable")
+	if hits := search(entries, drawn, "mutex"); len(hits) != 1 || hits[0].SegmentKind != SegmentReasoning {
+		t.Errorf("Search(%q) = %+v, want one reasoning hit", "mutex", hits)
 	}
 }
 
 func TestSearch_ScopedFilters(t *testing.T) {
-	msgs := []marotte.Message{
-		msg("u1", marotte.RoleUser, "look at auth"),
-		{
-			ID: "a1", Role: marotte.RoleAssistant, Ts: 2, Content: "reading it",
-			ToolCalls: []marotte.ToolCall{
-				{ID: "t1", Title: "readFile", Kind: "read", Locations: []marotte.ToolLocation{{Path: "internal/auth/token.go"}}},
+	entries, drawn := chatOf(
+		openTurn("t-1", 1, prompt("m-1", "look at auth")).
+			text("a1", "reading it").
+			tool(marotte.EntryToolCall{
+				ID: "tc1", Title: "readFile", Kind: marotte.ToolKindRead,
+				Locations: []marotte.ToolLocation{{Path: "internal/auth/token.go"}},
 			},
-		},
-		msg("u2", marotte.RoleUser, "and the composer"),
-		{
-			ID: "a2", Role: marotte.RoleAssistant, Ts: 4, Content: "editing it",
-			ChangedFiles: map[string]*marotte.FileChange{"static-src/composer.ts": {LinesAdded: 3}},
-		},
-	}
-
-	t.Run("role", func(t *testing.T) {
-		for _, h := range Search(msgs, "role:user", false).Matches {
-			if h.Role != marotte.RoleUser {
-				t.Errorf("role:user returned a %s message", h.Role)
-			}
-		}
-		if len(Search(msgs, "role:user", false).Matches) != 2 {
-			t.Errorf("role:user matched %d, want 2", len(Search(msgs, "role:user", false).Matches))
-		}
-	})
+				&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "package auth"}),
+		openTurn("t-2", 2, prompt("m-2", "and the composer")).
+			text("a2", "editing it").
+			tool(marotte.EntryToolCall{ID: "tc2", Title: "Replace in File", Kind: marotte.ToolKindEdit},
+				&marotte.EntryToolResult{
+					Status: marotte.ToolCompleted,
+					Diffs:  []marotte.ToolDiff{{Path: "static-src/composer.ts", NewText: "grow()"}},
+				}),
+	)
 
 	t.Run("turn", func(t *testing.T) {
-		hits := Search(msgs, "turn:2", false).Matches
+		hits := search(entries, drawn, "turn:2")
 		if len(hits) == 0 {
 			t.Fatal("turn:2 matched nothing")
 		}
 		for _, h := range hits {
-			if h.Turn != 2 {
-				t.Errorf("turn:2 returned a hit in turn %d", h.Turn)
+			if h.Turn != 2 || h.TurnID != "t-2" {
+				t.Errorf("turn:2 returned a hit in turn %d (%s)", h.Turn, h.TurnID)
 			}
 		}
 	})
 
-	// A file only READ never appears in changed_files, and "the turn where you
-	// looked at auth.go" is a real question — so locations count too.
+	// A file only READ has a location and no diff, and "the turn where you
+	// looked at auth.go" is a real question, so locations count too; a WRITE
+	// is found through its result's diff path.
 	t.Run("file matches a read as well as a write", func(t *testing.T) {
-		if got := Search(msgs, "file:token.go", false).Matches; len(got) != 1 || got[0].MessageID != "a1" {
-			t.Errorf("file:token.go = %+v, want the reading turn", got)
+		got := search(entries, drawn, "file:token.go")
+		if len(got) != 2 || got[0].EntryID != "tc1" || got[1].EntryID != "tc1:result" {
+			t.Errorf("file:token.go = %+v, want the reading call and its result", got)
 		}
-		if got := Search(msgs, "file:composer.ts", false).Matches; len(got) != 1 || got[0].MessageID != "a2" {
-			t.Errorf("file:composer.ts = %+v, want the writing turn", got)
+		got = search(entries, drawn, "file:composer.ts")
+		if len(got) != 1 || got[0].EntryID != "tc2:result" {
+			t.Errorf("file:composer.ts = %+v, want the writing result alone", got)
 		}
 	})
 
 	t.Run("tool matches title or kind", func(t *testing.T) {
-		if len(Search(msgs, "tool:readFile", false).Matches) != 1 {
-			t.Error("tool:readFile did not match by title")
+		if got := search(entries, drawn, "tool:readFile"); len(got) != 2 {
+			t.Errorf("tool:readFile = %d hits, want 2 (the call and its result)", len(got))
 		}
-		if len(Search(msgs, "tool:read", false).Matches) != 1 {
-			t.Error("tool:read did not match by kind")
+		if got := search(entries, drawn, "tool:edit"); len(got) != 2 {
+			t.Errorf("tool:edit = %d hits by kind, want 2", len(got))
 		}
 	})
 
 	t.Run("filters combine", func(t *testing.T) {
-		if got := Search(msgs, "role:user turn:1", false).Matches; len(got) != 1 || got[0].MessageID != "u1" {
-			t.Errorf("combined filters = %+v", got)
+		if got := search(entries, drawn, "tool:read turn:1"); len(got) != 2 {
+			t.Errorf("tool:read turn:1 = %+v, want the two tc1 entries", got)
 		}
-		// A filter that excludes everything returns nothing rather than ignoring
-		// itself.
-		if got := Search(msgs, "role:user turn:99", false).Matches; len(got) != 0 {
-			t.Errorf("impossible combination returned %d hits", len(got))
+		// A filter that excludes everything returns nothing rather than
+		// ignoring itself.
+		if got := search(entries, drawn, "tool:read turn:99"); len(got) != 0 {
+			t.Errorf("an impossible combination returned %d hits", len(got))
 		}
 	})
 
 	t.Run("filter plus free text", func(t *testing.T) {
-		if got := Search(msgs, "role:user composer", false).Matches; len(got) != 1 || got[0].MessageID != "u2" {
-			t.Errorf("filter+text = %+v", got)
+		if got := search(entries, drawn, "turn:1 auth"); len(got) != 2 || got[0].EntryID != "t-1" || got[1].EntryID != "tc1:result" {
+			t.Errorf("turn:1 auth = %+v, want the prompt and the output of turn 1", got)
 		}
 	})
 }
 
-// A reader typing a URL means it literally, so an unknown prefix stays text.
-func TestSearch_UnknownPrefixStaysFreeText(t *testing.T) {
-	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "see https://example.com for more")}
-	if len(Search(msgs, "https://example.com", false).Matches) == 0 {
-		t.Error("a colon-bearing term was parsed as a filter and lost")
+// A colon-bearing term that names no filter stays text: a URL is meant
+// literally, `turn:abc` and `turn:0` name no turn (turns count from 1), and
+// `role:` is not a filter over entries.
+func TestSearch_UnknownOrUnparseablePrefixStaysFreeText(t *testing.T) {
+	cases := []struct {
+		name, content, query string
+	}{
+		{name: "a URL", content: "see https://example.com for more", query: "https://example.com"},
+		{name: "a non-numeric turn", content: "the turn:abc marker", query: "turn:abc"},
+		{name: "turn zero", content: "see turn:0 for the trace", query: "turn:0"},
+		{name: "role", content: "the role:user marker", query: "role:user"},
 	}
-}
-
-func TestSearch_NonNumericTurnStaysFreeText(t *testing.T) {
-	msgs := []marotte.Message{msg("u1", marotte.RoleUser, "the turn:abc marker")}
-	if len(Search(msgs, "turn:abc", false).Matches) == 0 {
-		t.Error("an unparseable turn filter should fall back to text")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, drawn := oneText(tc.content)
+			hits := search(entries, drawn, tc.query)
+			if len(hits) != 1 || hits[0].SegmentKind != SegmentContent {
+				t.Errorf("Search(%q) = %+v, want one content hit: the term is free text", tc.query, hits)
+			}
+		})
 	}
 }
 
 func TestSearch_ExcerptCarriesContextAndCollapsesWhitespace(t *testing.T) {
 	long := strings.Repeat("a ", 100) + "needle " + strings.Repeat("b ", 100)
-	hits := Search([]marotte.Message{msg("u1", marotte.RoleUser, long)}, "needle", false).Matches
+	entries, drawn := oneText(long)
+	hits := search(entries, drawn, "needle")
 	if len(hits) != 1 {
-		t.Fatalf("got %d hits", len(hits))
+		t.Fatalf("Search(%q) = %d hits, want 1", "needle", len(hits))
 	}
 	ex := hits[0].Excerpt
 	if !strings.Contains(ex, "needle") {
@@ -328,10 +337,36 @@ func TestSearch_ExcerptCarriesContextAndCollapsesWhitespace(t *testing.T) {
 	}
 }
 
+// An excerpt marks a cut with an ellipsis and carries a fixed radius of context
+// around the match. A mark on an uncut side claims text was dropped when none
+// was, and a short radius silently loses context the reader needs.
+func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "match fills the whole text", content: "needle tail", want: "needle tail"},
+		{name: "text continues past the radius", content: "needle" + strings.Repeat(" x", 100), want: "needle" + strings.Repeat(" x", 30) + "\u2026"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, drawn := oneText(tc.content)
+			hits := search(entries, drawn, "needle")
+			if len(hits) != 1 {
+				t.Fatalf("Search(%q) = %d hits, want 1", tc.content, len(hits))
+			}
+			if got := hits[0].Excerpt; got != tc.want {
+				t.Errorf("Search(%q) excerpt = %q, want %q", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
 // The hit LIST is cut at maxSearchHits and the COUNT is not: a reader shown 200
 // hits out of 340 is told 340, so the cap reads as a floor rather than a total.
-// Truncated stays false because every message was read; the cut is stated by
-// Matched exceeding the list, never by that flag.
+// Scanned is every entry of a drawn turn, and Truncated stays false because
+// everything was read; the cut is stated by Matched exceeding the list.
 func TestSearch_MatchedCountsPastTheHitCap(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -346,94 +381,142 @@ func TestSearch_MatchedCountsPastTheHitCap(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			msgs := []marotte.Message{
-				msg("u1", marotte.RoleUser, strings.Repeat("hit ", tc.occurrences)),
-				msg("a1", marotte.RoleAssistant, "nothing here"),
-			}
-			res := Search(msgs, "hit", false)
+			entries, drawn := chatOf(openTurn("t-1", 1, nil).
+				text("a1", strings.Repeat("hit ", tc.occurrences)).
+				text("a2", "nothing here"))
+			res := Search(entries, drawn, "hit", false)
 			if len(res.Matches) != tc.wantHits {
 				t.Errorf("%d occurrences: got %d hits, want %d", tc.occurrences, len(res.Matches), tc.wantHits)
 			}
 			if res.Matched != tc.occurrences {
 				t.Errorf("%d occurrences: Matched = %d, want %d", tc.occurrences, res.Matched, tc.occurrences)
 			}
-			if res.Scanned != len(msgs) {
-				t.Errorf("%d occurrences: Scanned = %d, want %d (every message is read)", tc.occurrences, res.Scanned, len(msgs))
+			if res.Scanned != len(entries) {
+				t.Errorf("%d occurrences: Scanned = %d, want %d (every entry of a drawn turn is read)", tc.occurrences, res.Scanned, len(entries))
 			}
 			if res.Truncated {
-				t.Errorf("%d occurrences: Truncated = true, want false: the scan read everything and the cut is Matched > len(Matches)", tc.occurrences)
+				t.Errorf("%d occurrences: Truncated = true, want false: the cut is Matched > len(Matches)", tc.occurrences)
 			}
 		})
 	}
 }
 
-// searchChat's second result is the byte volume of exactly the segments the scan
-// read: every span a message exposes, prose or not, and nothing from a message a
-// filter excluded. Cross-chat ranking divides its occurrence count by this, so the
-// two must cover one span set or a chat is normalised by text it was never
-// searched for, or searched in text it is not normalised by.
-func TestSearchChat_CharsAreTheSpansTheScanRead(t *testing.T) {
-	msgs := []marotte.Message{
-		msg("u1", marotte.RoleUser, "abc"),
-		{
-			ID: "a1", Role: marotte.RoleAssistant,
-			Blocks: []marotte.Block{
-				{Type: marotte.BlockText, Text: "defg"},
-				{Type: marotte.BlockThinking, Thinking: "hijkl"},
-				{Type: marotte.BlockToolUse, ToolCallID: "t1"},
-			},
-			ToolCalls: []marotte.ToolCall{{ID: "t1", Title: "run", Output: "mnopqrs"}},
-		},
-	}
+// searchEntries' second result is the byte volume of exactly the segments the
+// scan read: every span every entry exposes, and nothing from an entry a filter
+// excluded. Cross-chat ranking divides its occurrence count by this, so the two
+// must cover one span set.
+func TestSearchEntries_CharsAreTheSpansTheScanRead(t *testing.T) {
+	entries, drawn := chatOf(
+		openTurn("t-1", 1, prompt("m-1", "abc")).
+			text("a1", "defg").
+			thinking("th1", "hijkl").
+			tool(marotte.EntryToolCall{ID: "tc1", Title: "run"},
+				&marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "mnopqrs"}),
+		openTurn("t-2", 2, prompt("m-2", "tu")).text("a2", "vwxyz"),
+	)
 	tests := []struct {
 		name  string
 		query string
 		want  int
 	}{
-		{name: "every_span_of_every_message", query: "zzz", want: len("abc") + len("defg") + len("hijkl") + len("run") + len("mnopqrs")},
-		{name: "a_message_a_filter_excludes_is_not_read", query: "zzz role:user", want: len("abc")},
+		{name: "every span of every entry", query: "zzz", want: len("abc") + len("defg") + len("hijkl") + len("run") + len("mnopqrs") + len("tu") + len("vwxyz")},
+		{name: "an entry a filter excludes is not read", query: "zzz turn:2", want: len("tu") + len("vwxyz")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, got := searchChat(msgs, tc.query, false); got != tc.want {
-				t.Errorf("searchChat(%q) chars = %d, want %d", tc.query, got, tc.want)
+			if _, got := searchEntries(entries, drawn, tc.query, false); got != tc.want {
+				t.Errorf("searchEntries(%q) chars = %d, want %d", tc.query, got, tc.want)
 			}
 		})
 	}
 }
 
-// The turn numbers a hit reports and the ones the rail draws come from the same
-// projection, so they cannot disagree by construction.
-func TestSearch_TurnNumbersMatchTheRailProjection(t *testing.T) {
-	msgs := transcript()
-	summaries := projectTurnSummaries(msgs, false)
-	byOpener := make(map[string]int, len(summaries))
-	for _, s := range summaries {
-		byOpener[s.ID] = s.N
+// A turn the rail does not draw has no card and no rail row, so its segments
+// are skipped: a hit there would name an n nothing shows and an entry the
+// client cannot find. Its entries are not scanned either.
+func TestSearch_AnUndrawnTurnIsSkipped(t *testing.T) {
+	entries, drawn := chatOf(
+		openTurn("t-1", 1, prompt("m-1", "find the needle")).text("a1", "one needle").
+			close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeCompleted}),
+		openTurn("t-2", 2, nil).
+			close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeFailed, FailureReason: "the needle retry came back empty"}),
+	)
+	delete(drawn, "t-2")
+	res := Search(entries, drawn, "needle", false)
+	for _, h := range res.Matches {
+		if h.TurnID == "t-2" {
+			t.Errorf("hit %+v names the undrawn turn", h)
+		}
 	}
-	for _, h := range Search(msgs, "the", false).Matches {
-		if byOpener[h.TurnMessageID] != h.Turn {
-			t.Errorf("hit %+v disagrees with the projection (%d)", h, byOpener[h.TurnMessageID])
+	if res.Matched != 2 || res.Scanned != 3 {
+		t.Errorf("Matched = %d, Scanned = %d, want 2 and 3: the undrawn turn's two entries are neither matched nor scanned", res.Matched, res.Scanned)
+	}
+}
+
+// seedSearchChat writes one closed prompt turn into a store: the header named
+// name, the prompt, one text entry per reply, and the close. It answers the turn id.
+func seedSearchChat(t *testing.T, s *Store, id marotte.ChatID, name, promptText string, replies ...string) string {
+	t.Helper()
+	opened, err := s.OpenTurn(t.Context(), id, &TurnSpec{
+		Source: marotte.TurnOpenNamePrompt,
+		Prompt: &marotte.EntryPrompt{ID: "m-" + string(id), Text: promptText},
+	}, func(c *marotte.Chat) { c.Name = name })
+	if err != nil {
+		t.Fatalf("OpenTurn(%s): %v", id, err)
+	}
+	for i, reply := range replies {
+		e := entryOf(opened.Turn, "", opened.Turn+"-say-"+strconv.Itoa(i), marotte.EntryKindText, marotte.EntryText{Text: reply})
+		if err := s.Append(t.Context(), id, e); err != nil {
+			t.Fatalf("Append(text %d): %v", i, err)
+		}
+	}
+	closeTurn(t, s, id, opened.Turn, marotte.TurnOutcomeCompleted)
+	return opened.Turn
+}
+
+// searchVia drives GET /api/chats/{id}/search and decodes the reply.
+func searchVia(t *testing.T, s *Store, id marotte.ChatID, query string) SearchResult {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/"+string(id)+"/search"+query, nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /search%s = %d, body = %s", query, rec.Code, rec.Body.String())
+	}
+	var body SearchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	return body
+}
+
+// The turn ordinal a hit reports and the one the rail draws are both the
+// turn_open's n, read off the same log, so they cannot disagree.
+func TestSearch_TurnNumbersMatchTheRailRows(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedSearchChat(t, s, "c1", "One", "how does the retry work", "The retry uses exponential backoff.")
+	seedSearchChat(t, s, "c1", "One", "now fix the composer", "Done, the composer grows upward.")
+	byTurn := make(map[string]int)
+	for _, row := range railRows(t, s, "c1") {
+		byTurn[row.ID] = row.N
+	}
+	hits := searchVia(t, s, "c1", "?q=the").Matches
+	if len(hits) == 0 {
+		t.Fatal("the seeded chat matched nothing")
+	}
+	for _, h := range hits {
+		if byTurn[h.TurnID] != h.Turn {
+			t.Errorf("hit %+v disagrees with the rail (n=%d)", h, byTurn[h.TurnID])
 		}
 	}
 }
 
-// TestHandleSearch_CaseParam pins the HTTP half of the match-case toggle. Both
-// halves of the in-chat search have to agree on the flag — the client highlights
-// in the DOM while this enumerates session-wide — so it rides the request rather
-// than being a default either side could get wrong.
+// Both halves of the in-chat search have to agree on the match-case toggle: the
+// client highlights in the DOM while this enumerates session-wide, so the flag
+// rides the request rather than being a default either side could get wrong.
 func TestHandleSearch_CaseParam(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "One"
-		c.Messages = []marotte.Message{
-			msg("u1", marotte.RoleUser, "now fix the composer"),
-			msg("a1", marotte.RoleAssistant, "Done, the Composer grows upward."),
-		}
-		return true
-	}); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
+	seedSearchChat(t, s, "c1", "One", "now fix the composer", "Done, the Composer grows upward.")
 
 	cases := []struct {
 		name  string
@@ -445,41 +528,20 @@ func TestHandleSearch_CaseParam(t *testing.T) {
 		{name: "case=0 is insensitive", query: "?q=composer&case=0", want: 2},
 		{name: "an unrecognised value is insensitive", query: "?q=composer&case=yes", want: 2},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/search"+tc.query, nil)
-			rec := httptest.NewRecorder()
-			NewRouter(s).handleOne(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-			}
-			var body SearchResult
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
-			}
-			if len(body.Matches) != tc.want {
-				t.Errorf("%s: %d hits, want %d", tc.query, len(body.Matches), tc.want)
+			if got := len(searchVia(t, s, "c1", tc.query).Matches); got != tc.want {
+				t.Errorf("%s: %d hits, want %d", tc.query, got, tc.want)
 			}
 		})
 	}
 }
 
 // The handler writes the scan's own reply, so the tally reaches the wire: a cut
-// list arrives beside the count that says it was cut. The envelope's spelling is
-// pinned by testdata/search_hits.json, which the TypeScript decoder reads.
+// list arrives beside the count that says it was cut.
 func TestHandleSearch_ReportsTheTally(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "One"
-		c.Messages = []marotte.Message{
-			msg("u1", marotte.RoleUser, strings.Repeat("hit ", maxSearchHits+1)),
-			msg("a1", marotte.RoleAssistant, "one lonely miss"),
-		}
-		return true
-	}); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
+	seedSearchChat(t, s, "c1", "One", "count these", strings.Repeat("hit ", maxSearchHits+1), "one lonely miss")
 
 	cases := []struct {
 		name        string
@@ -490,27 +552,18 @@ func TestHandleSearch_ReportsTheTally(t *testing.T) {
 		{name: "past the cap", query: "hit", wantHits: maxSearchHits, wantMatched: maxSearchHits + 1},
 		{name: "under the cap", query: "lonely", wantHits: 1, wantMatched: 1},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/search?q="+tc.query, nil)
-			rec := httptest.NewRecorder()
-			NewRouter(s).handleOne(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-			}
-			var body SearchResult
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
-			}
+			body := searchVia(t, s, "c1", "?q="+tc.query)
 			if len(body.Matches) != tc.wantHits {
 				t.Errorf("q=%s: %d hits, want %d", tc.query, len(body.Matches), tc.wantHits)
 			}
 			if body.Matched != tc.wantMatched {
 				t.Errorf("q=%s: matched = %d, want %d", tc.query, body.Matched, tc.wantMatched)
 			}
-			if body.Scanned != 2 {
-				t.Errorf("q=%s: scanned = %d, want 2", tc.query, body.Scanned)
+			// turn_open, two text entries, turn_close.
+			if body.Scanned != 4 {
+				t.Errorf("q=%s: scanned = %d, want 4", tc.query, body.Scanned)
 			}
 			if body.Truncated {
 				t.Errorf("q=%s: truncated = true, want false", tc.query)
@@ -519,150 +572,44 @@ func TestHandleSearch_ReportsTheTally(t *testing.T) {
 	}
 }
 
-// The chat's TITLE is not part of the in-chat search, and this is the layer that
-// can say so: Search takes []marotte.Message and never sees a name, so only the
-// handler — which holds the whole record and passes `c.Messages` alone — can pin
-// the decision.
-//
-// It is a DECISION rather than an omission. SearchAll already answers "which
-// conversation", and a title hit names no position inside a transcript for the
-// client to navigate to, so it would be counted-but-unreachable.
-//
-// Red check: pass the chat's Name to Search as a synthetic message and this
-// finds a hit.
+// The chat's TITLE is not part of the in-chat search, and the handler is the
+// layer that can say so: Search sees entries and never a name. It is a DECISION,
+// not an omission: SearchAll already answers "which conversation", and a title
+// hit names no position inside a transcript for the client to navigate to.
 func TestHandleSearch_ChatNameIsNotSearched(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "The needle investigation"
-		c.Messages = []marotte.Message{
-			msg("u1", marotte.RoleUser, "what now"),
-			msg("a1", marotte.RoleAssistant, "nothing to report"),
-		}
-		return true
-	}); err != nil {
-		t.Fatalf("seed chat: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/search?q=needle", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	var body SearchResult
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
-	}
+	seedSearchChat(t, s, "c1", "The needle investigation", "what now", "nothing to report")
+	body := searchVia(t, s, "c1", "?q=needle")
 	if len(body.Matches) != 0 || body.Matched != 0 {
 		t.Errorf("the chat NAME matched %d times (matched=%d), want 0: %+v", len(body.Matches), body.Matched, body.Matches)
 	}
 }
 
-// `turn:` takes an absolute turn ordinal, and turns are numbered from 1. Turn 0
-// names no turn, so `turn:0` is not a filter — it is the text the user typed.
-func TestSearch_TurnZeroIsNotAFilter(t *testing.T) {
-	msgs := []marotte.Message{
-		msg("u1", marotte.RoleUser, "see turn:0 for the trace"),
-		msg("a1", marotte.RoleAssistant, "acknowledged"),
-	}
-	hits := Search(msgs, "turn:0", false).Matches
-	if len(hits) != 1 {
-		t.Fatalf("Search(%q) returned %d hits, want 1: turn 0 is free text, not a turn filter", "turn:0", len(hits))
-	}
-	if hits[0].MessageID != "u1" {
-		t.Errorf("Search(%q) hit = %+v, want the message containing that text", "turn:0", hits[0])
-	}
-}
-
-// A message whose thinking trace dwarfs its prose is searchable like any other.
-// The two are concatenated before the scan, so the buffer sized for them must
-// account for both.
-func TestSearch_MessageWithMoreThinkingThanProse(t *testing.T) {
-	m := msg("a1", marotte.RoleAssistant, "ok")
-	m.Reasoning = strings.Repeat("thinking ", 200) + "needle"
-
-	hits := Search([]marotte.Message{m}, "needle", false).Matches
-	if len(hits) != 1 {
-		t.Fatalf("Search over a message with a %d-byte reasoning trace and a %d-byte body returned %d hits, want 1",
-			len(m.Reasoning), len(m.Content), len(hits))
-	}
-}
-
-// An excerpt marks a cut with an ellipsis and carries a fixed radius of context
-// around the match. A mark on an uncut side claims text was dropped when none
-// was, and a short radius silently loses context the reader needs.
-func TestSearch_ExcerptMarksOnlyTheSidesItActuallyCut(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{
-			name:    "match_fills_the_whole_text",
-			content: "needle tail",
-			want:    "needle tail",
-		},
-		{
-			name:    "text_continues_past_the_radius",
-			content: "needle" + strings.Repeat(" x", 100),
-			want:    "needle" + strings.Repeat(" x", 30) + "\u2026",
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			hits := Search([]marotte.Message{msg("u1", marotte.RoleUser, tc.content)}, "needle", false).Matches
-			if len(hits) != 1 {
-				t.Fatalf("Search(%q) returned %d hits, want 1", tc.content, len(hits))
-			}
-			if got := hits[0].Excerpt; got != tc.want {
-				t.Errorf("Search(%q) excerpt = %q, want %q", tc.content, got, tc.want)
-			}
-		})
-	}
-}
-
-// blockMsg builds a block-bearing assistant message whose legacy Content and
-// Reasoning fields mirror the block texts — the shape the buffer persists,
-// since one Append*Delta call fills the block array AND the legacy builders.
-func blockMsg(id string, blocks []marotte.Block, tools ...marotte.ToolCall) marotte.Message {
-	var content, reasoning strings.Builder
-	for _, b := range blocks {
-		content.WriteString(b.Text)
-		reasoning.WriteString(b.Thinking)
-	}
-	return marotte.Message{
-		ID:        id,
-		Role:      marotte.RoleAssistant,
-		Ts:        100,
-		Content:   content.String(),
-		Reasoning: reasoning.String(),
-		Blocks:    blocks,
-		ToolCalls: tools,
-	}
-}
-
-// wantHit is the segment-addressing half of an expected hit; assertBlockHits
-// checks it field by field so a failure names the exact coordinate that broke.
+// wantHit is the segment-addressing half of an expected hit; assertHits checks it
+// field by field so a failure names the exact coordinate that broke.
 type wantHit struct {
-	blockIndex *int
+	entry      string
+	lane       string
 	kind       SegmentKind
-	subtask    string
 	offset     int
 	segmentLen int
 }
 
-func assertBlockHits(t *testing.T, hits []Hit, want []wantHit) {
+func assertHits(t *testing.T, hits []Hit, want []wantHit) {
 	t.Helper()
 	if len(hits) != len(want) {
 		t.Fatalf("got %d hits, want %d: %+v", len(hits), len(want), hits)
 	}
 	for i, w := range want {
 		h := hits[i]
+		if h.EntryID != w.entry {
+			t.Errorf("hit %d EntryID = %q, want %q", i, h.EntryID, w.entry)
+		}
 		if h.SegmentKind != w.kind {
 			t.Errorf("hit %d SegmentKind = %q, want %q", i, h.SegmentKind, w.kind)
 		}
-		if h.AgentSubtaskID != w.subtask {
-			t.Errorf("hit %d AgentSubtaskID = %q, want %q", i, h.AgentSubtaskID, w.subtask)
+		if h.Lane != w.lane {
+			t.Errorf("hit %d Lane = %q, want %q", i, h.Lane, w.lane)
 		}
 		if h.Offset != w.offset {
 			t.Errorf("hit %d Offset = %d, want %d", i, h.Offset, w.offset)
@@ -670,155 +617,100 @@ func assertBlockHits(t *testing.T, hits []Hit, want []wantHit) {
 		if h.SegmentLen != w.segmentLen {
 			t.Errorf("hit %d SegmentLen = %d, want %d", i, h.SegmentLen, w.segmentLen)
 		}
-		switch {
-		case w.blockIndex == nil && h.BlockIndex != nil:
-			t.Errorf("hit %d BlockIndex = %d, want nil", i, *h.BlockIndex)
-		case w.blockIndex != nil && h.BlockIndex == nil:
-			t.Errorf("hit %d BlockIndex = nil, want %d", i, *w.blockIndex)
-		case w.blockIndex != nil && *h.BlockIndex != *w.blockIndex:
-			t.Errorf("hit %d BlockIndex = %d, want %d", i, *h.BlockIndex, *w.blockIndex)
-		}
 	}
 }
 
-// The same text in a parent block and a delegate block is two different places:
-// each hit names its own block and subtask, and both offsets are relative to
-// their OWN segment, so the two identical prefixes yield identical offsets.
-func TestSearch_DistinguishesParentAndDelegateBlocks(t *testing.T) {
-	m := blockMsg("a1", []marotte.Block{
-		{Type: marotte.BlockText, Text: "the needle in the parent"},
-		{Type: marotte.BlockText, Text: "the needle in the delegate", AgentSubtaskID: "sub-1"},
-	})
-	hits := Search([]marotte.Message{m}, "needle", false).Matches
-	assertBlockHits(t, hits, []wantHit{
-		{kind: SegmentContent, blockIndex: new(0), subtask: "", offset: 4, segmentLen: 24},
-		{kind: SegmentContent, blockIndex: new(1), subtask: "sub-1", offset: 4, segmentLen: 26},
+// The same text in the agent's lane and a delegate's lane is two different
+// places: each hit names its own entry and lane, and both offsets are relative
+// to their OWN segment, so the two identical prefixes yield identical offsets.
+func TestSearch_DistinguishesParentAndDelegateLanes(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("a1", "the needle in the parent").
+		laneText("sub-1", "a2", "the needle in the delegate"))
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "a1", kind: SegmentContent, offset: 4, segmentLen: 24},
+		{entry: "a2", lane: "sub-1", kind: SegmentContent, offset: 4, segmentLen: 26},
 	})
 }
 
-// Two occurrences INSIDE one block are two hits with distinct segment-relative
-// offsets — not offsets into any concatenation of the message.
-func TestSearch_TwoHitsInOneBlockGetSegmentRelativeOffsets(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{
-			{Type: marotte.BlockText, Text: "intro paragraph"},
-			{Type: marotte.BlockToolUse, ToolCallID: "t1"},
-			{Type: marotte.BlockText, Text: "needle then a needle"},
-		},
-		marotte.ToolCall{ID: "t1", Title: "shell"},
-	)
-	hits := Search([]marotte.Message{m}, "needle", false).Matches
-	assertBlockHits(t, hits, []wantHit{
-		{kind: SegmentContent, blockIndex: new(2), offset: 0, segmentLen: 20},
-		{kind: SegmentContent, blockIndex: new(2), offset: 14, segmentLen: 20},
+// A tool call's title is a segment of its tool_call entry and its output a
+// segment of the tool_result: two entries, two hits, each offset relative to
+// its own span, both in the call's lane.
+func TestSearch_ToolTitleAndOutputAreSegmentsOfTheCallAndTheResult(t *testing.T) {
+	tf := openTurn("t-1", 1, nil).text("a1", "running the search now")
+	tf.add("sub-9", "tc1", marotte.EntryKindToolCall, marotte.EntryToolCall{ID: "tc1", Title: "grep needle"})
+	tf.add("sub-9", "tc1:result", marotte.EntryKindToolResult, marotte.EntryToolResult{Status: marotte.ToolCompleted, Output: "found a needle here"})
+	entries, drawn := chatOf(tf)
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1", lane: "sub-9", kind: SegmentToolTitle, offset: 5, segmentLen: 11},
+		{entry: "tc1:result", lane: "sub-9", kind: SegmentToolOutput, offset: 8, segmentLen: 19},
 	})
 }
 
-// A tool block exposes its title and its output as SEPARATE segments SHARING
-// the block index: the kind disambiguates them, and an output hit's offset is
-// relative to the output segment, not the title.
-func TestSearch_ToolTitleAndOutputAreSeparateSegmentsSharingTheBlock(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{
-			{Type: marotte.BlockText, Text: "running the search now"},
-			{Type: marotte.BlockToolUse, ToolCallID: "t1", AgentSubtaskID: "sub-9"},
-		},
-		marotte.ToolCall{ID: "t1", Title: "grep needle", Output: "found a needle here"},
-	)
-	hits := Search([]marotte.Message{m}, "needle", false).Matches
-	assertBlockHits(t, hits, []wantHit{
-		{kind: SegmentToolTitle, blockIndex: new(1), subtask: "sub-9", offset: 5, segmentLen: 11},
-		{kind: SegmentToolOutput, blockIndex: new(1), subtask: "sub-9", offset: 8, segmentLen: 19},
-	})
-}
-
-// A diff-bearing call's new_text is a segment of its own, sharing the tool
-// block's index and carrying a RUNE offset like every other segment. The diff's
-// PATH is deliberately not searched — it is already reachable through the `file:`
-// filter and through the title — so a needle in the path yields nothing.
-//
-// Red check: drop the diff arm from toolSegments and this finds nothing.
+// A diff-bearing result's new_text is a segment of its own carrying a RUNE
+// offset. The diff's PATH is not searched: it is reachable through `file:` and
+// through the title, so a needle in the path yields nothing.
 func TestSearch_DiffNewTextIsSearched(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1", AgentSubtaskID: "sub-2"}},
-		marotte.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []marotte.ToolDiff{{
-			Path: "needle.go", NewText: "åß needle",
-		}}},
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{Path: "needle.go", NewText: "åß needle"}}},
 	)
-	hits := Search([]marotte.Message{m}, "needle", false).Matches
 	// "åß " is 3 runes (5 bytes); the whole segment is 9 runes (11 bytes).
-	assertBlockHits(t, hits, []wantHit{
-		{kind: SegmentToolDiff, blockIndex: new(0), subtask: "sub-2", offset: 3, segmentLen: 9},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1:result", kind: SegmentToolDiff, offset: 3, segmentLen: 9},
 	})
 }
 
-// The new_text-only decision, pinned so it cannot silently become both: 97.4% of
-// old_text's lines are also in new_text, so searching both would mint a second
-// hit for one rendered line. The stated loss is exactly this — a line the edit
-// REMOVED is not findable through the diff.
-//
-// Red check: add an old_text arm to toolSegments and this finds a hit.
+// new_text only: 97.4% of old_text's lines are also in new_text, so searching
+// both would mint a second hit for one rendered line. The stated loss is exactly
+// this: a line the edit REMOVED is not findable through the diff.
 func TestSearch_DiffOldTextIsNotSearched(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		marotte.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []marotte.ToolDiff{{
-			OldText: "the needle used to live here",
-			NewText: "and now it does not",
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{
+			OldText: "the needle used to live here", NewText: "and now it does not",
 		}}},
 	)
-	if hits := Search([]marotte.Message{m}, "needle", false).Matches; len(hits) != 0 {
+	if hits := search(entries, drawn, "needle"); len(hits) != 0 {
 		t.Errorf("Search found %d hits in a diff's old_text, want 0: %+v", len(hits), hits)
 	}
 }
 
-// A file DELETE has an empty new_text, so it contributes no segment at all —
-// the other half of the stated loss, and the reason the arm is guarded rather
-// than emitting an empty span nothing can ever match.
+// A file DELETE has an empty new_text, so it contributes no segment at all: the
+// title is the only span, so the one hit is a title hit.
 func TestSearch_DiffWithEmptyNewTextContributesNoSegment(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		marotte.ToolCall{ID: "t1", Title: "Delete needle.go", Diffs: []marotte.ToolDiff{{
-			OldText: "the needle used to live here", NewText: "",
-		}}},
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{ID: "tc1", Title: "Delete needle.go"},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{OldText: "the needle used to live here"}}},
 	)
-	// The title is the only span, so the one hit is a title hit.
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolTitle, blockIndex: new(0), offset: 7, segmentLen: 16},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1", kind: SegmentToolTitle, offset: 7, segmentLen: 16},
 	})
 }
 
 // Only Diffs[0] is searched, because nothing renders or fetches a second diff:
 // a hit past the first would be a counted match with no destination.
-//
-// Red check: loop toolSegments over every diff and this finds two hits.
 func TestSearch_OnlyTheFirstDiffIsSearched(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		marotte.ToolCall{ID: "t1", Title: "Replace in File", Diffs: []marotte.ToolDiff{
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{
 			{Path: "a.go", NewText: "first needle"},
 			{Path: "b.go", NewText: "second needle"},
 		}},
 	)
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolDiff, blockIndex: new(0), offset: 6, segmentLen: 12},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1:result", kind: SegmentToolDiff, offset: 6, segmentLen: 12},
 	})
 }
 
-// inputCall builds a tool call whose only searchable span is its input, so a
-// hit's kind and offset can be read without a title or an output competing.
-func inputCall(input string) marotte.ToolCall {
-	return marotte.ToolCall{ID: "t1", Title: "Write File", Input: json.RawMessage(input)}
+// inputCall builds a tool_call whose only searchable span is its input.
+func inputCall(input string) marotte.EntryToolCall {
+	return marotte.EntryToolCall{ID: "tc1", Title: "Write File", Input: json.RawMessage(input)}
 }
 
-// Only the string LEAF VALUES of an input are searched, and each clause of that
-// is a separate case: a needle in a KEY is not text a reader searches for, a
-// number or a bool is not either, and every string at any depth is covered so a
-// nested array element is reachable.
-//
-// Red checks, one case each: neuter takeLeafSlot's key branch and the KEY case
-// finds a hit; append every token rather than only strings and the bool and
-// number cases do; push an object frame for `[` as well and the array case loses
-// its second element to the key/value alternation.
+// Only the string LEAF VALUES of an input are searched: a needle in a KEY is not
+// text a reader searches for, a number or a bool is not either, and every string
+// at any depth is covered so a nested array element is reachable.
 func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -831,10 +723,10 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 	}, {
 		name:  "a needle in a string value is a tool_input hit",
 		input: `{"cmd":"grep needle here"}`,
-		want:  []wantHit{{kind: SegmentToolInput, blockIndex: new(0), offset: 5, segmentLen: 16}},
+		want:  []wantHit{{entry: "tc1", kind: SegmentToolInput, offset: 5, segmentLen: 16}},
 	}, {
-		// A bool is not text a reader searches for, so the query is the bool's own
-		// spelling: `true` would match every call carrying a flag.
+		// The query is the bool's own spelling: `true` would match every call
+		// carrying a flag.
 		name:  "a bool leaf is not searched",
 		query: "true",
 		input: `{"recurse":true}`,
@@ -847,13 +739,13 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 		// "outer\ndeep needle\ntail", so the hit sits 11 runes in.
 		name:  "a string nested in an array of objects is covered",
 		input: `{"a":"outer","edits":[{"newStr":"deep needle"}],"z":"tail"}`,
-		want:  []wantHit{{kind: SegmentToolInput, blockIndex: new(0), offset: 11, segmentLen: 22}},
+		want:  []wantHit{{entry: "tc1", kind: SegmentToolInput, offset: 11, segmentLen: 22}},
 	}, {
 		// An array ELEMENT is a value, never a key, so a walk that alternates
 		// key/value inside an array would drop every second path.
 		name:  "every element of a string array is covered",
 		input: `{"paths":["a.go","needle.go"]}`,
-		want:  []wantHit{{kind: SegmentToolInput, blockIndex: new(0), offset: 5, segmentLen: 14}},
+		want:  []wantHit{{entry: "tc1", kind: SegmentToolInput, offset: 5, segmentLen: 14}},
 	}}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -861,381 +753,347 @@ func TestSearch_ToolInputSearchesStringLeavesOnly(t *testing.T) {
 			if query == "" {
 				query = "needle"
 			}
-			m := blockMsg("a1",
-				[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-				inputCall(tc.input),
-			)
-			hits := Search([]marotte.Message{m}, query, false).Matches
+			entries, drawn := oneTool(inputCall(tc.input), nil)
+			hits := search(entries, drawn, query)
 			if tc.want == nil {
 				if len(hits) != 0 {
 					t.Errorf("Search(%q) found %d hits, want 0: %+v", query, len(hits), hits)
 				}
 				return
 			}
-			assertBlockHits(t, hits, tc.want)
+			assertHits(t, hits, tc.want)
 		})
 	}
 }
 
 // Leaves are joined in DOCUMENT order, which is the order the card prints them,
-// so two occurrences come back at the offsets that order gives them — the
-// property that keeps the golden stable and the client's cursor still between two
-// requests for one query. A map round trip would randomise it.
-//
-// The two leaves are deliberately different lengths, so the expected offsets
-// (0, 24) belong to this order alone: swapped, the same two leaves yield 11 and
-// 18. The keys are reverse-alphabetical for the same reason — a sorted walk
-// cannot produce document order by accident here.
-//
-// Red check: sort the leaves before joining them and this fails. A map round
-// trip is the shape actually refused, and it would fail this only SOMETIMES,
-// which is the whole objection to it.
+// so two occurrences come back at the offsets that order gives them. The two
+// leaves are different lengths, so the expected offsets (0, 24) belong to this
+// order alone: swapped, the same two leaves yield 11 and 18; the keys are
+// reverse-alphabetical so a sorted walk cannot produce document order by accident.
 func TestSearch_ToolInputLeafOrderIsDocumentOrder(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		inputCall(`{"z":"needle first","a":"and then a needle"}`),
-	)
+	entries, drawn := oneTool(inputCall(`{"z":"needle first","a":"and then a needle"}`), nil)
 	// "needle first\nand then a needle" is one 30-rune segment.
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolInput, blockIndex: new(0), offset: 0, segmentLen: 30},
-		{kind: SegmentToolInput, blockIndex: new(0), offset: 24, segmentLen: 30},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1", kind: SegmentToolInput, offset: 0, segmentLen: 30},
+		{entry: "tc1", kind: SegmentToolInput, offset: 24, segmentLen: 30},
 	})
 }
 
-// An input hit's offset is a RUNE index into the joined leaf text, like every
-// other segment's, even when an earlier leaf carries multi-byte text.
 func TestSearch_ToolInputOffsetIsARuneIndex(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		inputCall(`{"a":"åß","b":"ü needle"}`),
-	)
+	entries, drawn := oneTool(inputCall(`{"a":"åß","b":"ü needle"}`), nil)
 	// "åß\nü " is 5 runes (8 bytes); the whole segment is 11 runes (14 bytes).
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolInput, blockIndex: new(0), offset: 5, segmentLen: 11},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1", kind: SegmentToolInput, offset: 5, segmentLen: 11},
 	})
 }
 
-// An edit call sends its payload twice — once as the input's newStr, once as the
-// diff the card renders — and that is ONE rendered write, so it is one hit, on
-// the kind whose element actually holds the text. The skip is what makes it so.
-//
-// Red check: drop the containment skip and this finds two hits.
+// An edit call sends its payload twice, as the input's newStr on the tool_call
+// and as the diff on the tool_result, and that is ONE rendered write, so it is
+// one hit, on the entry whose element holds the text.
 func TestSearch_InputLeafDoesNotDoubleCountItsDiff(t *testing.T) {
 	const payload = "func fetch(ctx context.Context) error { return needle(ctx) }"
 	if len(payload) < inputLeafDedupeMin {
 		t.Fatalf("payload is %d bytes, under inputLeafDedupeMin (%d): the skip would not apply", len(payload), inputLeafDedupeMin)
 	}
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		marotte.ToolCall{
-			ID: "t1", Title: "Replace in File",
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{
+			ID: "tc1", Title: "Replace in File",
 			Input: json.RawMessage(`{"path":"fetch.go","newStr":` + strconv.Quote(payload) + `}`),
-			Diffs: []marotte.ToolDiff{{Path: "fetch.go", NewText: payload}},
 		},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{Path: "fetch.go", NewText: payload}}},
 	)
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolDiff, blockIndex: new(0), offset: 47, segmentLen: 60},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1:result", kind: SegmentToolDiff, offset: 47, segmentLen: 60},
 	})
 }
 
-// A malformed input is a NORMAL value: non-JSON bytes and the literal `null`
-// boundInput writes for an input it could neither parse nor shorten both yield no
-// segment, with no error to the caller — a search must not fail because one tool
-// call's input is odd.
-func TestSearch_MalformedInputYieldsNoHit(t *testing.T) {
+// A missing input is a NORMAL value: the literal `null` the bound writes for an
+// input it could neither parse nor shorten, and an absent input, both yield no
+// segment, with no error to the caller. These are the two shapes a log line can
+// hold; malformed bytes cannot reach a persisted payload and are the walker's own case.
+func TestSearch_MissingInputYieldsNoHit(t *testing.T) {
+	for _, input := range []string{`null`, ``} {
+		entries, drawn := oneTool(inputCall(input), nil)
+		if hits := search(entries, drawn, "needle"); len(hits) != 0 {
+			t.Errorf("Search found %d hits in input %q, want 0: %+v", len(hits), input, hits)
+		}
+	}
+}
+
+// The leaf walker answers "" for bytes it cannot parse rather than a partial
+// segment or an error: a truncated document is malformed like any other.
+func TestInputLeafText_MalformedBytesYieldNoText(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
 	}{
-		{name: "the literal null boundInput writes", input: `null`},
 		{name: "truncated object", input: `{"cmd":"needle"`},
 		{name: "unterminated object", input: `{`},
 		{name: "bare word", input: `needle`},
 		{name: "trailing garbage past a valid object", input: `{"cmd":"needle"} needle`},
-		{name: "absent", input: ``},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := blockMsg("a1",
-				[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-				inputCall(tc.input),
-			)
-			if hits := Search([]marotte.Message{m}, "needle", false).Matches; len(hits) != 0 {
-				t.Errorf("Search found %d hits in input %q, want 0: %+v", len(hits), tc.input, hits)
+			if got := inputLeafText(json.RawMessage(tc.input), ""); got != "" {
+				t.Errorf("inputLeafText(%q) = %q, want empty", tc.input, got)
 			}
 		})
 	}
 }
 
-// An agent-authored plan renders as a card in the message's own row, so each
-// entry's content is a searchable span of its own — one segment per entry, with
-// no block index, because a plan is a property of the MESSAGE.
-//
-// This test is the ONLY measurement of plan coverage that will ever exist: the
-// corpus carries 0 plan entries fleet-wide, so no reading of a real chat can say
-// whether the producer works.
-//
-// Red check: drop the plan loop from messageTailSegments and this finds nothing.
+// A plan entry renders as a card, so each of its entries is a searchable span
+// of its own: one segment per plan entry, all on the plan entry's id.
 func TestSearch_PlanIsSearched(t *testing.T) {
-	m := blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "starting now"}})
-	m.Plan = []marotte.PlanEntry{
-		{Content: "Read the needle", Status: marotte.PlanCompleted},
-		{Content: "Fix the needle", Status: marotte.PlanPending},
-	}
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentPlan, offset: 9, segmentLen: 15},
-		{kind: SegmentPlan, offset: 8, segmentLen: 14},
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("a1", "starting now").
+		add("", "plan-1", marotte.EntryKindPlan, marotte.EntryPlan{Entries: []marotte.PlanEntry{
+			{Content: "Read the needle", Status: marotte.PlanCompleted},
+			{Content: "Fix the needle", Status: marotte.PlanPending},
+		}}))
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "plan-1", kind: SegmentPlan, offset: 9, segmentLen: 15},
+		{entry: "plan-1", kind: SegmentPlan, offset: 8, segmentLen: 14},
 	})
 }
 
-// A denial's RESOURCE is the one reader-facing string in the policy verdict — the
-// command or path that was refused — so it is the one field searched.
-//
-// The other measurement the corpus cannot supply: 0 denials fleet-wide.
-//
-// Red check: drop the denial arm from toolSegments and this finds nothing.
+// A denial's RESOURCE is the one reader-facing string in the policy verdict, the
+// command or path that was refused, so it is the one field searched.
 func TestSearch_DenialResourceIsSearched(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		marotte.ToolCall{ID: "t1", Title: "Run Command", Denial: &marotte.ToolDenial{
-			Capability: "shell",
-			Resource:   "rm -rf needle",
-			Scope:      "user",
-			Source:     "permissions.yaml",
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{ID: "tc1", Title: "Run Command"},
+		&marotte.EntryToolResult{Status: marotte.ToolFailed, Denial: &marotte.ToolDenial{
+			Capability: "shell", Resource: "rm -rf needle", Scope: "user", Source: "permissions.yaml",
 		}},
 	)
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolDenial, blockIndex: new(0), offset: 7, segmentLen: 13},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1:result", kind: SegmentToolDenial, offset: 7, segmentLen: 13},
 	})
 }
 
-// A turn that ended badly persists WHY, and the card renders it as a notice, so
-// the reason is a searchable span of the message that carries it. A real corpus
-// population, unlike plan and denial: 240 messages.
-//
-// Red check: drop the turn-failure arm from messageTailSegments and this finds
-// nothing.
+// A turn that ended badly persists WHY on its turn_close, and the card's footer
+// renders it, so the reason is a searchable span of that entry.
 func TestSearch_TurnFailureReasonIsSearched(t *testing.T) {
-	m := blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "partial answer"}})
-	m.TurnFailureReason = "the needle budget ran out"
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentTurnFailure, offset: 4, segmentLen: 25},
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("a1", "partial answer").
+		close(marotte.EntryTurnClose{Outcome: marotte.TurnOutcomeFailed, FailureReason: "the needle budget ran out"}))
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "t-1:close", kind: SegmentTurnFailure, offset: 4, segmentLen: 25},
+	})
+}
+
+// A steer entry's text is the note the transcript renders for it, so it is a
+// `steer` segment; an agent-origin note is searched the same way.
+func TestSearch_SteerTextIsSearched(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("a1", "working on it").
+		add("", "steer-1", marotte.EntryKindSteer, marotte.EntrySteer{
+			Text: "also check the needle", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+		}))
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "steer-1", kind: SegmentSteer, offset: 15, segmentLen: 21},
+	})
+}
+
+// A compaction failure's reason and a safety block's properties both render as
+// text in the turn, so each is a content segment of its own entry.
+func TestSearch_CompactionFailedAndSafetyBlockedAreContentSegments(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		add("", "cf-1", marotte.EntryKindCompactionFailed, marotte.EntryCompactionFailed{Reason: "needle too large"}).
+		add("", "sb-1", marotte.EntryKindSafetyBlocked, marotte.EntrySafetyBlocked{Properties: []string{"deletes data", "moves the needle"}}))
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "cf-1", kind: SegmentContent, offset: 0, segmentLen: 16},
+		{entry: "sb-1", kind: SegmentContent, offset: 23, segmentLen: 29},
 	})
 }
 
 // An attachment is searched by the NAME the pill renders and NOT by the path,
 // which lives in a `title` attribute the client's DOM walker cannot mark. Both
 // directions, because either half alone would pass while the other broke.
-//
-// Red check: search Path instead of Name and the second case finds a hit.
 func TestSearch_AttachmentNameIsSearchedAndPathIsNot(t *testing.T) {
-	m := msg("u1", marotte.RoleUser, "have a look")
-	m.Attachments = []marotte.Attachment{
-		{Path: "docs/haystack/notes.md", Name: "needle-notes.md"},
-	}
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentAttachment, offset: 0, segmentLen: 15},
+	entries, drawn := chatOf(openTurn("t-1", 1, &marotte.EntryPrompt{
+		ID: "m-1", Text: "have a look",
+		Attachments: []marotte.Attachment{{Path: "docs/haystack/notes.md", Name: "needle-notes.md"}},
+	}))
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "t-1", kind: SegmentAttachment, offset: 0, segmentLen: 15},
 	})
-	if hits := Search([]marotte.Message{m}, "haystack", false).Matches; len(hits) != 0 {
+	if hits := search(entries, drawn, "haystack"); len(hits) != 0 {
 		t.Errorf("the attachment PATH matched %d times, want 0: %+v", len(hits), hits)
 	}
 }
 
-// A `disclose_context` call's display name is what the card SHOWS — disclosedClaim
-// replaces the title with it — so a reader who can see a skill name must be able
-// to find it. DisplayName only: URI is not rendered and Type is a class name.
-//
-// Red check: drop the disclosed arm from toolSegments and this finds nothing.
+// A `disclose_context` result's display name is what the card SHOWS, replacing
+// the title, so a reader who can see a skill name must be able to find it.
+// DisplayName only: URI is not rendered and Type is a class name.
 func TestSearch_DisclosedDisplayNameIsSearched(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		marotte.ToolCall{ID: "t1", Title: "Disclose Context", Disclosed: &marotte.ToolDisclosed{
-			Type:        "skill",
-			DisplayName: "needle-review",
-			URI:         "file:///workspace/.kiro/skills/haystack/SKILL.md",
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{ID: "tc1", Title: "Disclose Context"},
+		&marotte.EntryToolResult{Status: marotte.ToolCompleted, Disclosed: &marotte.ToolDisclosed{
+			Type: "skill", DisplayName: "needle-review", URI: "file:///workspace/.kiro/skills/haystack/SKILL.md",
 		}},
 	)
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolDisclosed, blockIndex: new(0), offset: 0, segmentLen: 13},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1:result", kind: SegmentToolDisclosed, offset: 0, segmentLen: 13},
 	})
-	// The URI is not rendered anywhere, so a hit in it would be unreachable.
-	if hits := Search([]marotte.Message{m}, "haystack", false).Matches; len(hits) != 0 {
+	if hits := search(entries, drawn, "haystack"); len(hits) != 0 {
 		t.Errorf("the disclosed URI matched %d times, want 0: %+v", len(hits), hits)
 	}
 }
 
-// The fields fix 4 deliberately leaves unsearched, each for a stated reason, and
-// each asserted where a needle in it would otherwise be indistinguishable from a
-// gap. Chat.Name is NOT here — Search takes []marotte.Message and cannot see a
-// name — and has its own test at the layer that can (TestHandleSearch_ChatNameIsNotSearched).
+// The fields deliberately left unsearched, each for a stated reason, and each
+// asserted where a needle in it would otherwise be indistinguishable from a gap.
 func TestSearch_UnsearchedFieldsStayUnsearched(t *testing.T) {
 	tests := []struct {
 		name string
 		why  string
-		mut  func(m *marotte.Message)
+		turn func() *turnFixture
 	}{
 		{
 			name: "ToolDiff.OldText",
 			why:  "a line the edit REMOVED has no rendered surface in the card's mini-diff",
-			mut: func(m *marotte.Message) {
-				m.ToolCalls[0].Diffs = []marotte.ToolDiff{{Path: "f.go", OldText: "gone needle", NewText: "kept"}}
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, nil).tool(marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
+					&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{{Path: "f.go", OldText: "gone needle", NewText: "kept"}}})
 			},
 		},
 		{
 			name: "the second diff",
 			why:  "nothing renders or fetches Diffs[1], so a hit there is counted-but-unreachable",
-			mut: func(m *marotte.Message) {
-				m.ToolCalls[0].Diffs = []marotte.ToolDiff{
-					{Path: "a.go", NewText: "first"},
-					{Path: "b.go", NewText: "second needle"},
-				}
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, nil).tool(marotte.EntryToolCall{ID: "tc1", Title: "Replace in File"},
+					&marotte.EntryToolResult{Status: marotte.ToolCompleted, Diffs: []marotte.ToolDiff{
+						{Path: "a.go", NewText: "first"}, {Path: "b.go", NewText: "second needle"},
+					}})
 			},
 		},
 		{
 			name: "Attachment.Path",
 			why:  "the path lives in a title ATTRIBUTE the DOM walker cannot mark",
-			mut: func(m *marotte.Message) {
-				m.Attachments = []marotte.Attachment{{Path: "needle/notes.md", Name: "notes.md"}}
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, &marotte.EntryPrompt{
+					ID: "m-1", Text: "look",
+					Attachments: []marotte.Attachment{{Path: "needle/notes.md", Name: "notes.md"}},
+				})
 			},
 		},
 		{
-			name: "Denial.Capability",
-			why:  "a closed vocabulary, not reader-facing text",
-			mut: func(m *marotte.Message) {
-				m.ToolCalls[0].Denial = &marotte.ToolDenial{Capability: "needle", Resource: "rm -rf /"}
-			},
-		},
-		{
-			name: "the denial rule's match patterns",
-			why:  "policy text, reachable and editable through Settings -> Permissions",
-			mut: func(m *marotte.Message) {
-				m.ToolCalls[0].Denial = &marotte.ToolDenial{
-					Resource: "rm -rf /",
-					Rule: &marotte.ToolDenialRule{
-						Capability: "shell", Effect: "deny",
-						Match: []string{"needle*"}, Exclude: []string{"needle-safe"},
-					},
-				}
+			name: "Denial.Capability and the rule's patterns",
+			why:  "a closed vocabulary and policy text editable through Settings, not reader-facing text",
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, nil).tool(marotte.EntryToolCall{ID: "tc1", Title: "Run Command"},
+					&marotte.EntryToolResult{Status: marotte.ToolFailed, Denial: &marotte.ToolDenial{
+						Capability: "needle", Resource: "rm -rf /",
+						Rule: &marotte.ToolDenialRule{Capability: "shell", Effect: "deny", Match: []string{"needle*"}, Exclude: []string{"needle-safe"}},
+					}})
 			},
 		},
 		{
 			name: "Disclosed.URI",
 			why:  "the card renders the display name, never the uri",
-			mut: func(m *marotte.Message) {
-				m.ToolCalls[0].Disclosed = &marotte.ToolDisclosed{
-					Type: "skill", DisplayName: "review", URI: "file:///needle/SKILL.md",
-				}
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, nil).tool(marotte.EntryToolCall{ID: "tc1", Title: "Disclose Context"},
+					&marotte.EntryToolResult{Status: marotte.ToolCompleted, Disclosed: &marotte.ToolDisclosed{
+						Type: "skill", DisplayName: "review", URI: "file:///needle/SKILL.md",
+					}})
 			},
 		},
 		{
-			name: "Message.CodeReferences",
+			name: "turn_close.code_references",
 			why:  "attributions are TURN-scoped; KAS drops the span that would locate one",
-			mut: func(m *marotte.Message) {
-				m.CodeReferences = []marotte.CodeReference{{LicenseName: "needle", Repository: "needle/repo"}}
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, nil).close(marotte.EntryTurnClose{
+					Outcome:        marotte.TurnOutcomeCompleted,
+					CodeReferences: []marotte.CodeReference{{LicenseName: "needle", Repository: "needle/repo"}},
+				})
 			},
 		},
 		{
 			name: "ToolCall.Locations[].Path",
 			why:  "already reachable through the `file:` filter and through the title",
-			mut: func(m *marotte.Message) {
-				m.ToolCalls[0].Locations = []marotte.ToolLocation{{Path: "needle.go", Line: 12}}
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, nil).tool(marotte.EntryToolCall{
+					ID: "tc1", Title: "Read File",
+					Locations: []marotte.ToolLocation{{Path: "needle.go", Line: 12}},
+				}, nil)
+			},
+		},
+		{
+			name: "the compaction summary",
+			why:  "the model's own account of history already searchable at its source",
+			turn: func() *turnFixture {
+				return openTurn("t-1", 1, nil).add("", "compaction-1", marotte.EntryKindCompaction,
+					marotte.EntryCompaction{Summary: "the needle was moved"})
 			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := blockMsg("a1",
-				[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-				marotte.ToolCall{ID: "t1", Title: "Replace in File"},
-			)
-			tc.mut(&m)
-			if hits := Search([]marotte.Message{m}, "needle", false).Matches; len(hits) != 0 {
+			entries, drawn := chatOf(tc.turn())
+			if hits := search(entries, drawn, "needle"); len(hits) != 0 {
 				t.Errorf("%s is searched (%d hits) but %s: %+v", tc.name, len(hits), tc.why, hits)
 			}
 		})
 	}
 }
 
-// A tool call's segments come out in the order the CARD renders them, so
-// stepping a card walks it the way a reader reads it — and bestHit's
-// list-position tie-break is pinned to a stated order rather than to an accident
-// of declaration.
-//
-// Red check: move any one arm of toolSegments past its neighbour — the diff below
-// the output, the input above the diff, the denial below the input, the disclosed
-// below the diff — and the expected order goes red.
+// A tool call's segments come out in the order the CARD renders them: the
+// create half (title, input) on the tool_call, then the settled half
+// (disclosed, diff, denial, output) on the tool_result. Stepping a card walks it
+// the way a reader reads it, and bestHit's list-position tie-break is pinned to
+// a stated order rather than to an accident of declaration.
 func TestSearch_SegmentOrderFollowsTheRenderedCard(t *testing.T) {
-	m := blockMsg("a1",
-		[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-		marotte.ToolCall{
-			ID: "t1", Title: "grep needle", Output: "found a needle here",
+	entries, drawn := oneTool(
+		marotte.EntryToolCall{ID: "tc1", Title: "grep needle", Input: json.RawMessage(`{"cmd":"a needle in the input"}`)},
+		&marotte.EntryToolResult{
+			Status:    marotte.ToolCompleted,
+			Output:    "found a needle here",
 			Disclosed: &marotte.ToolDisclosed{Type: "skill", DisplayName: "the needle skill"},
 			Denial:    &marotte.ToolDenial{Capability: "shell", Resource: "a needle to deny"},
-			Input:     json.RawMessage(`{"cmd":"a needle in the input"}`),
 			Diffs:     []marotte.ToolDiff{{Path: "fetch.go", NewText: "a needle in the diff"}},
 		},
 	)
-	assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, []wantHit{
-		{kind: SegmentToolTitle, blockIndex: new(0), offset: 5, segmentLen: 11},
-		{kind: SegmentToolDisclosed, blockIndex: new(0), offset: 4, segmentLen: 16},
-		{kind: SegmentToolDiff, blockIndex: new(0), offset: 2, segmentLen: 20},
-		{kind: SegmentToolDenial, blockIndex: new(0), offset: 2, segmentLen: 16},
-		{kind: SegmentToolInput, blockIndex: new(0), offset: 2, segmentLen: 21},
-		{kind: SegmentToolOutput, blockIndex: new(0), offset: 8, segmentLen: 19},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "tc1", kind: SegmentToolTitle, offset: 5, segmentLen: 11},
+		{entry: "tc1", kind: SegmentToolInput, offset: 2, segmentLen: 21},
+		{entry: "tc1:result", kind: SegmentToolDisclosed, offset: 4, segmentLen: 16},
+		{entry: "tc1:result", kind: SegmentToolDiff, offset: 2, segmentLen: 20},
+		{entry: "tc1:result", kind: SegmentToolDenial, offset: 2, segmentLen: 16},
+		{entry: "tc1:result", kind: SegmentToolOutput, offset: 8, segmentLen: 19},
 	})
 }
 
-// A MESSAGE-level span comes after every block of the message that carries it,
-// and the three arrive in one stated order: attachments, plan entries, the turn
-// failure reason. Both message shapes end with the same tail, so a pre-blocks
-// message is covered by the same producer.
-//
-// Red check: reorder the three loops in messageTailSegments, or drop the call
-// from either messageSegments or legacySegments, and one of the two cases fails.
-func TestSearch_MessageLevelSegmentsComeAfterTheBlocks(t *testing.T) {
-	tail := func(m *marotte.Message) {
-		m.Attachments = []marotte.Attachment{{Path: "a.md", Name: "needle-a"}}
-		m.Plan = []marotte.PlanEntry{{Content: "needle-plan", Status: marotte.PlanPending}}
-		m.TurnFailureReason = "needle-reason"
-	}
-	want := []wantHit{
-		{kind: SegmentContent, blockIndex: new(0), offset: 0, segmentLen: 13},
-		{kind: SegmentAttachment, offset: 0, segmentLen: 8},
-		{kind: SegmentPlan, offset: 0, segmentLen: 11},
-		{kind: SegmentTurnFailure, offset: 0, segmentLen: 13},
-	}
-
-	t.Run("block-bearing", func(t *testing.T) {
-		m := blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "needle-block!"}})
-		tail(&m)
-		assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, want)
+// Hits arrive in FILE order across entries and across interleaved turns: the
+// log's position is the only order, so a prompt, a plan and a close are found
+// where they sit rather than in a per-kind tail.
+func TestSearch_HitsFollowFileOrder(t *testing.T) {
+	a := openTurn("t-1", 1, prompt("m-1", "needle one")).text("a1", "needle two")
+	b := openTurn("t-2", 2, nil).text("b1", "needle three").close(marotte.EntryTurnClose{
+		Outcome: marotte.TurnOutcomeFailed, FailureReason: "needle four",
 	})
-
-	t.Run("legacy blockless", func(t *testing.T) {
-		m := marotte.Message{ID: "a1", Role: marotte.RoleAssistant, Ts: 1, Content: "needle-block!"}
-		tail(&m)
-		// The legacy content segment carries no block index; everything else matches.
-		legacy := append([]wantHit(nil), want...)
-		legacy[0].blockIndex = nil
-		assertBlockHits(t, Search([]marotte.Message{m}, "needle", false).Matches, legacy)
-	})
+	a.add("", "plan-1", marotte.EntryKindPlan, marotte.EntryPlan{Entries: []marotte.PlanEntry{{Content: "needle five"}}})
+	// Interleave: t-1's entries, then t-2's, then t-1's late plan.
+	entries := append(append([]marotte.Entry{}, a.entries[:2]...), b.entries...)
+	entries = append(entries, a.entries[2])
+	drawn := map[string]struct{}{"t-1": {}, "t-2": {}}
+	var got []string
+	for _, h := range search(entries, drawn, "needle") {
+		got = append(got, h.EntryID+"/"+string(h.SegmentKind))
+	}
+	want := []string{"t-1/prompt", "a1/content", "b1/content", "t-2:close/turn_failure", "plan-1/plan"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("hit order = %v, want %v", got, want)
+	}
 }
 
-// Every kind segmentKinds declares has a producer that can actually reach it.
-// Read off the SAME slice the golden's kind loop reads, so a kind added without
-// a producer fails here instead of passing both quietly.
-//
-// TWO queries, not one: segmentKinds includes SegmentMessage, which only a
-// FILTER-ONLY query produces (appendMessageHits' q.text == "" branch), so a
-// single free-text run can never satisfy this and its failure would read as a
-// missing producer rather than a missing query.
-//
-// Red check: declare a const in segmentKinds with no producer and this fails.
+// Every kind segmentKinds declares has a producer that can reach it, read off
+// the SAME slice the golden's kind loop reads. Two queries: SegmentEntry is
+// produced by a FILTER-ONLY query alone.
 func TestSearch_SegmentKindsAreExhaustive(t *testing.T) {
-	msgs := searchContractMessages()
+	entries, drawn := searchContractEntries()
 	seen := make(map[SegmentKind]int)
-	for _, q := range []string{"retry", "role:assistant"} {
-		hits := Search(msgs, q, false).Matches
+	for _, q := range []string{"retry", "turn:2"} {
+		hits := search(entries, drawn, q)
 		if len(hits) == 0 {
 			t.Fatalf("Search(%q) found nothing; it can vouch for no kind at all", q)
 		}
@@ -1250,94 +1108,61 @@ func TestSearch_SegmentKindsAreExhaustive(t *testing.T) {
 	}
 }
 
-// A message persisted before blocks existed has no block array to address:
-// its prose and thinking fall back to ONE content segment over the legacy
-// content/reasoning concatenation (the existing searchable shape), and its
-// tool calls keep their own segments — all without a block index.
-func TestSearch_LegacyBlocklessMessageFallsBackToOneContentSegment(t *testing.T) {
-	m := marotte.Message{
-		ID: "a1", Role: marotte.RoleAssistant, Ts: 1,
-		Content:   "prose needle",
-		Reasoning: "thinking needle",
-		ToolCalls: []marotte.ToolCall{{ID: "t1", Title: "shell", Output: "output needle"}},
-	}
-	hits := Search([]marotte.Message{m}, "needle", false).Matches
-	// "prose needle\nthinking needle" is one 28-rune segment.
-	assertBlockHits(t, hits, []wantHit{
-		{kind: SegmentContent, offset: 6, segmentLen: 28},
-		{kind: SegmentContent, offset: 22, segmentLen: 28},
-		{kind: SegmentToolOutput, offset: 7, segmentLen: 13},
-	})
-}
-
 // Segment offsets and lengths count RUNES, not bytes, and are relative to the
-// matched segment even when earlier segments hold multi-byte text.
+// matched entry even when an earlier entry holds multi-byte text.
 func TestSearch_SegmentOffsetsAreRuneIndices(t *testing.T) {
-	m := blockMsg("a1", []marotte.Block{
-		{Type: marotte.BlockText, Text: "héllo wörld"},
-		{Type: marotte.BlockThinking, Thinking: "åß needle"},
-	})
-	hits := Search([]marotte.Message{m}, "needle", false).Matches
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("a1", "héllo wörld").
+		thinking("th1", "åß needle"))
 	// "åß " is 3 runes (5 bytes); the whole segment is 9 runes (11 bytes).
-	assertBlockHits(t, hits, []wantHit{
-		{kind: SegmentReasoning, blockIndex: new(1), offset: 3, segmentLen: 9},
+	assertHits(t, search(entries, drawn, "needle"), []wantHit{
+		{entry: "th1", kind: SegmentReasoning, offset: 3, segmentLen: 9},
 	})
 }
 
-// A filter-only query keeps its one-synthetic-hit-per-message contract, carried
-// as segment_kind "message": offset 0, zero segment length, no block index —
-// the hit locates the message, not a span inside it. A tool-only assistant
-// message with empty prose is still listed.
-func TestSearch_FilterOnlyHitsAreMessageKind(t *testing.T) {
-	msgs := []marotte.Message{
-		blockMsg("a1", []marotte.Block{{Type: marotte.BlockText, Text: "prose here"}}),
-		blockMsg("a2",
-			[]marotte.Block{{Type: marotte.BlockToolUse, ToolCallID: "t1"}},
-			marotte.ToolCall{ID: "t1", Title: "shell", Output: "ran fine"},
-		),
-	}
-	hits := Search(msgs, "role:assistant", false).Matches
-	assertBlockHits(t, hits, []wantHit{
-		{kind: SegmentMessage, offset: 0, segmentLen: 0},
-		{kind: SegmentMessage, offset: 0, segmentLen: 0},
+// A filter-only query yields one synthetic hit per matching entry, carried as
+// segment_kind "entry": offset 0, zero segment length, locating the entry rather
+// than a span inside it. A tool_call with no text is still listed, with an
+// excerpt from its first span.
+func TestSearch_FilterOnlyHitsAreEntryKind(t *testing.T) {
+	entries, drawn := chatOf(openTurn("t-1", 1, nil).
+		text("a1", "prose here").
+		tool(marotte.EntryToolCall{ID: "tc1", Title: "shell"}, nil))
+	hits := search(entries, drawn, "turn:1")
+	assertHits(t, hits, []wantHit{
+		{entry: "t-1", kind: SegmentEntry},
+		{entry: "a1", kind: SegmentEntry},
+		{entry: "tc1", kind: SegmentEntry},
 	})
-	if hits[0].MessageID != "a1" || hits[1].MessageID != "a2" {
-		t.Errorf("hits name %q and %q, want a1 and a2", hits[0].MessageID, hits[1].MessageID)
-	}
-	// The tool-only message still gets a usable excerpt.
-	if hits[1].Excerpt == "" {
-		t.Error("tool-only message got an empty excerpt")
+	if hits[2].Excerpt != "shell" {
+		t.Errorf("tool-only entry excerpt = %q, want its title", hits[2].Excerpt)
 	}
 }
 
-// block_index and agent_subtask_id are OPTIONAL on the generated type, and the
-// encoder's half of that is omitting them when unset rather than writing null:
-// the bytes the golden pins carry no null, so a message-kind hit must stay that
-// way.
+// lane is OPTIONAL on the generated type, and the encoder's half of that is
+// omitting it when unset rather than writing an empty string.
 func TestHit_WireShape(t *testing.T) {
 	full, err := json.Marshal(Hit{
-		MessageID:      "m1",
-		SegmentKind:    SegmentToolOutput,
-		AgentSubtaskID: "sub-1",
-		BlockIndex:     new(3),
-		Offset:         8,
-		SegmentLen:     19,
+		TurnID: "t-1", EntryID: "tc1:result", SegmentKind: SegmentToolOutput, Lane: "sub-1", Turn: 3, Offset: 8, SegmentLen: 19,
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, key := range []string{`"segment_kind":"tool_output"`, `"agent_subtask_id":"sub-1"`, `"block_index":3`, `"segment_len":19`, `"offset":8`} {
+	for _, key := range []string{`"turn_id":"t-1"`, `"entry_id":"tc1:result"`, `"segment_kind":"tool_output"`, `"lane":"sub-1"`, `"turn":3`, `"offset":8`, `"segment_len":19`} {
 		if !strings.Contains(string(full), key) {
 			t.Errorf("marshalled hit %s lacks %s", full, key)
 		}
 	}
-	minimal, err := json.Marshal(Hit{MessageID: "m1", SegmentKind: SegmentMessage})
+	minimal, err := json.Marshal(Hit{TurnID: "t-1", EntryID: "a1", SegmentKind: SegmentEntry})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, key := range []string{"block_index", "agent_subtask_id"} {
-		if strings.Contains(string(minimal), key) {
-			t.Errorf("marshalled filter-only hit %s carries %s, want it omitted", minimal, key)
+	if strings.Contains(string(minimal), "lane") {
+		t.Errorf("marshalled agent-lane hit %s carries lane, want it omitted", minimal)
+	}
+	for _, key := range []string{"message_id", "block_index", "agent_subtask_id"} {
+		if strings.Contains(string(full), key) {
+			t.Errorf("marshalled hit %s carries the deleted %s", full, key)
 		}
 	}
 }

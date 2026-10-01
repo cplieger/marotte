@@ -2,11 +2,12 @@ package translate
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // safetyStatusPayloads collects every EventSafetyStatus payload broadcast.
@@ -208,25 +209,23 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 	})
 }
 
-// infraBlockMessages returns the persisted RoleEvent messages on chatID whose
-// EventKind is infra_safety_blocked.
-func infraBlockMessages(t *testing.T, store *testsupport.InMemoryChatStore, chatID marotte.ChatID) []marotte.Message {
+// safetyBlocksOf decodes every safety_blocked entry the chat holds: sealed in its
+// open turn or filed after its newest close.
+func safetyBlocksOf(t *testing.T, deps *baseDeps, chatID marotte.ChatID) []marotte.EntrySafetyBlocked {
 	t.Helper()
-	c, ok := store.Get(t.Context(), chatID)
-	if !ok {
-		return nil
-	}
-	var got []marotte.Message
-	for _, m := range c.Messages {
-		if m.EventKind == marotte.EventInfraSafetyBlocked {
-			got = append(got, m)
+	var out []marotte.EntrySafetyBlocked
+	for _, entries := range [][]marotte.Entry{deps.chatEntries(chatID), deps.between[chatID]} {
+		for i := range entries {
+			if entries[i].Kind == marotte.EntryKindSafetyBlocked {
+				out = append(out, decodePayload[marotte.EntrySafetyBlocked](t, &entries[i]))
+			}
 		}
 	}
-	return got
+	return out
 }
 
 // depsWithStore wires an InMemoryChatStore into event-capturing deps and seeds
-// chatID (AppendMessage no-ops on a missing chat, so the chat must exist).
+// chatID, so the header reads the handlers make find a record.
 func depsWithStore(t *testing.T, chatID marotte.ChatID) (*baseDeps, *[]marotte.ServerEvent, *testsupport.InMemoryChatStore) {
 	t.Helper()
 	deps, events := newEventCaptureDeps()
@@ -239,12 +238,11 @@ func depsWithStore(t *testing.T, chatID marotte.ChatID) (*baseDeps, *[]marotte.S
 }
 
 // TestHandleSafetyStatusChanged_BlockedPersistsEvent pins the enforce-mode
-// surface: a blocked status persists a permanent inline event message
-// (EventKind infra_safety_blocked) carrying the violated properties, IN
-// ADDITION to the transient safety_status banner SSE. The permanent record is
-// what makes the refusal outlive the fleeting banner.
+// surface: a blocked status appends a durable safety_blocked entry carrying the
+// violated properties, IN ADDITION to the transient safety_status banner SSE.
+// The permanent record is what makes the refusal outlive the fleeting banner.
 func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
-	deps, events, store := depsWithStore(t, "c1")
+	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
@@ -258,23 +256,23 @@ func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 	if got := safetyStatusPayloads(t, events); len(got) != 1 || got[0].Status != marotte.SafetyStatusBlocked {
 		t.Fatalf("want one blocked safety_status broadcast, got %+v", got)
 	}
-	// Permanent record: exactly one block event, role=event, carrying the WHY.
-	msgs := infraBlockMessages(t, store, "c1")
-	if len(msgs) != 1 {
-		t.Fatalf("infra_safety_blocked event count = %d, want 1", len(msgs))
+	// Permanent record: exactly one safety_blocked entry carrying the WHY.
+	blocks := safetyBlocksOf(t, deps, "c1")
+	if len(blocks) != 1 {
+		t.Fatalf("safety_blocked entry count = %d, want 1", len(blocks))
 	}
-	if msgs[0].Role != marotte.RoleEvent {
-		t.Errorf("Role = %q, want event", msgs[0].Role)
+	if want := []string{"no public S3 buckets", "encrypt at rest"}; !slices.Equal(blocks[0].Properties, want) {
+		t.Errorf("Properties = %q, want the violated properties %q", blocks[0].Properties, want)
 	}
-	if !strings.Contains(msgs[0].Content, "no public S3 buckets") || !strings.Contains(msgs[0].Content, "encrypt at rest") {
-		t.Errorf("Content = %q, want the violated properties", msgs[0].Content)
+	if !hasEntryAppended(events, marotte.EntryKindSafetyBlocked) {
+		t.Error("no entry_appended{safety_blocked} frame: the record is born sealed and must be announced")
 	}
 }
 
 // TestHandleSafetyStatusChanged_BlockedFallsBackToDetail pins that a block with
 // no properties records the gate's detail rather than an empty event.
 func TestHandleSafetyStatusChanged_BlockedFallsBackToDetail(t *testing.T) {
-	deps, _, store := depsWithStore(t, "c1")
+	deps, _, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
@@ -282,9 +280,9 @@ func TestHandleSafetyStatusChanged_BlockedFallsBackToDetail(t *testing.T) {
 		"detail": "policy violation",
 	})})
 
-	msgs := infraBlockMessages(t, store, "c1")
-	if len(msgs) != 1 || msgs[0].Content != "policy violation" {
-		t.Fatalf("want one block event with detail fallback, got %+v", msgs)
+	blocks := safetyBlocksOf(t, deps, "c1")
+	if len(blocks) != 1 || !slices.Equal(blocks[0].Properties, []string{"policy violation"}) {
+		t.Fatalf("want one safety_blocked entry with the detail as its one property, got %+v", blocks)
 	}
 }
 
@@ -294,15 +292,15 @@ func TestHandleSafetyStatusChanged_BlockedFallsBackToDetail(t *testing.T) {
 func TestHandleSafetyStatusChanged_NonBlockedNoPersist(t *testing.T) {
 	for _, status := range []string{"idle", "formalizing", "evaluating", "error"} {
 		t.Run(status, func(t *testing.T) {
-			deps, _, store := depsWithStore(t, "c1")
+			deps, _, _ := depsWithStore(t, "c1")
 			tr := New(rolesOf(deps))
 
 			tr.HandleSafetyStatusChanged(t.Context(), "c1", &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
 				"status": status,
 			})})
 
-			if msgs := infraBlockMessages(t, store, "c1"); len(msgs) != 0 {
-				t.Fatalf("status %q persisted %d event(s), want 0", status, len(msgs))
+			if blocks := safetyBlocksOf(t, deps, "c1"); len(blocks) != 0 {
+				t.Fatalf("status %q persisted %d safety_blocked entr(ies), want 0", status, len(blocks))
 			}
 		})
 	}
@@ -326,7 +324,7 @@ func TestHandleSafetyStatusChanged_BlockPersistSpeaksOnlyOnFailure(t *testing.T)
 			var logs bytes.Buffer
 			t.Cleanup(captureSlog(&logs))
 			deps, _ := newEventCaptureDeps()
-			deps.store = &recStore{appendErr: tc.appendErr}
+			deps.turns.appendErr = tc.appendErr
 			tr := New(rolesOf(deps))
 
 			tr.HandleSafetyStatusChanged(t.Context(), "c1", &marotte.RPCResponse{Params: mustJSON(t, map[string]any{
@@ -336,7 +334,8 @@ func TestHandleSafetyStatusChanged_BlockPersistSpeaksOnlyOnFailure(t *testing.T)
 				"blockedProperties": []string{"no public S3 buckets"},
 			})})
 
-			got := strings.Contains(logs.String(), `msg="safety: append block event"`)
+			got := strings.Contains(logs.String(), `msg="entry log: append refused; the frame is dropped"`) &&
+				strings.Contains(logs.String(), "entry=safety_blocked")
 			if got != tc.wantLogged {
 				t.Errorf("HandleSafetyStatusChanged(blocked, appendErr=%v) logged the append error = %t, want %t; logs = %q",
 					tc.appendErr, got, tc.wantLogged, logs.String())

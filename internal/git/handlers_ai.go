@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
-	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/webhttp/v3"
 )
 

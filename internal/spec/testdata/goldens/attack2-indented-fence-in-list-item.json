@@ -1,0 +1,56 @@
+{
+  "input_file": "attack2-indented-fence-in-list-item.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Task",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "90d296e2333758d8da59fc72538302c748aa262dcf6be9ca6ccdf8565b1a9614",
+      "detail": "  ```",
+      "children": []
+    },
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 0,
+      "number": "2",
+      "text": "2. Task two",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "b091e427e96fdc2de30d9f7f2899a2a80a3bfa07fbb6362160b29bf0d59f84f3",
+      "detail": "  ```",
+      "children": []
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "3",
+      "text": "3. Task three",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "8f9efeb02105202ef5eadf99c607cd00616b37277b4a3ab374f206d46b40fead",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

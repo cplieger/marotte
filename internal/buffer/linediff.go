@@ -79,14 +79,14 @@ func lcsLen(a, b []string) int {
 	return prev[len(b)]
 }
 
-// lineDelta reports how many lines a diff added and removed.
+// LineDelta reports how many lines a diff added and removed.
 //
 // A real diff, not a newline count per side: KAS sends whole-file text for its
 // edit tools, so counting newlines reported the whole file as deleted and
 // re-added for a one-line change (~100x on the live volume). added =
 // len(newLines) - lcs and removed = len(oldLines) - lcs, so the LCS LENGTH is all
 // this needs; the prefix/suffix trim is what makes the whole-file case cheap.
-func lineDelta(oldText, newText string) (added, removed int) {
+func LineDelta(oldText, newText string) (added, removed int) {
 	if oldText == newText {
 		return 0, 0
 	}

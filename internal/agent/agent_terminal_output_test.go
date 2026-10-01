@@ -326,8 +326,9 @@ func TestTerminalOutput_SurvivesReleaseAndIsEvictedAtTheTurnBoundary(t *testing.
 	}
 
 	// Every tool call in the turn has settled by the boundary, so a record still here
-	// has had its chance. The boundary is an epoch, published by the winning closer.
-	h.agentTerms.CloseTurn("c1", h.agentTerms.turnEpochOf("c1")+1)
+	// has had its chance. The boundary is the closing turn's id, published by the
+	// winning closer, and a record spawned with no turn open belongs to the next close.
+	h.agentTerms.CloseTurn("c1", "t-next")
 	if _, _, ok := h.agentTerms.Output(termID); ok {
 		t.Error("the record survived the turn boundary, so it grows with the session")
 	}
@@ -593,32 +594,32 @@ func TestTerminalOutput_AnAgentLimitCannotRaiseTheAppsCap(t *testing.T) {
 	}
 }
 
-// A terminal outliving the turn it was created in still has its record evicted at the
-// next boundary: eviction compares the record's OWNING EPOCH against the turn now
-// closing, so a command released two turns later must not leave its bytes behind.
-func TestCloseTurn_EvictsARecordCreatedInAnEarlierTurn(t *testing.T) {
+// Eviction is by equality on the turn id: a turn's close takes that turn's records
+// and leaves a record another turn owns alone, so one turn's boundary cannot take the
+// bytes a completion in another turn is still coming to adopt.
+func TestCloseTurn_EvictsOnlyTheClosingTurnsRecords(t *testing.T) {
 	t.Parallel()
 	at := bareTerminals()
-
-	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
-	at.mu.Lock()
-	term.epoch = 2 // what termCreate stamps: the chat's open turn
-	at.mu.Unlock()
-	term.output.Write([]byte("slow\n"))
-
-	at.CloseTurn("c1", 2) // turn 2 ends while the command runs on
-
-	at.mu.Lock()
-	at.retire("t1", term)
-	at.mu.Unlock()
-	if _, ok := at.peekRetired("t1"); !ok {
-		t.Fatal("Setup: the record was not retired, so the eviction below asserts nothing")
+	for _, turn := range []string{"t2", "t3"} {
+		term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
+		term.turn = turn // what termCreate stamps: the chat's open turn
+		term.output.Write([]byte(turn + "\n"))
+		at.mu.Lock()
+		at.retire("term-"+turn, term)
+		at.mu.Unlock()
 	}
 
-	at.CloseTurn("c1", 3)
-	if raw, ok := at.peekRetired("t1"); ok {
-		t.Errorf("peekRetired(t1) = (%q, true) after turn 3 closed, want it evicted;"+
-			" a record from an earlier turn grows with the session", raw)
+	at.CloseTurn("c1", "t3")
+	if raw, ok := at.peekRetired("term-t3"); ok {
+		t.Errorf("peekRetired(term-t3) = (%q, true) after t3 closed, want it evicted", raw)
+	}
+	if _, ok := at.peekRetired("term-t2"); !ok {
+		t.Error("t3's close evicted t2's record: eviction is by equality on the turn id")
+	}
+
+	at.CloseTurn("c1", "t2")
+	if raw, ok := at.peekRetired("term-t2"); ok {
+		t.Errorf("peekRetired(term-t2) = (%q, true) after t2 closed, want it evicted", raw)
 	}
 }
 
@@ -666,9 +667,9 @@ func TestKillForTurn_ReportsOnlyARealTeardown(t *testing.T) {
 
 	t.Run("one_terminal_killed", func(t *testing.T) {
 		at := newAgentTerminals(nil, nil, nil,
-			(&epochStub{cur: map[marotte.ChatID]marotte.TurnEpoch{"c1": 4}}).read)
+			(&turnStub{cur: map[marotte.ChatID]string{"c1": "t4"}}).read)
 		term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
-		term.epoch = 4 // this turn's, so the cancel is its to take
+		term.turn = "t4" // this turn's, so the cancel is its to take
 		at.terms["t1"] = term
 		at.byChatID["c1"] = []string{"t1"}
 
@@ -715,14 +716,24 @@ func TestHandleTerminalRequest_ReportsAnUndeliverableRefusal(t *testing.T) {
 	})
 }
 
+// turnStub is a controllable current-turn reader. A chat absent from the map is idle.
+type turnStub struct {
+	cur map[marotte.ChatID]string
+}
+
+func (s *turnStub) read(chatID marotte.ChatID) (string, bool) {
+	turn, ok := s.cur[chatID]
+	return turn, ok
+}
+
 // stageTerminal registers a terminal the way termCreate does: read the chat's current
-// turn through production code (turnEpochOf), then insert.
+// turn through production code (turnOf), then insert.
 func stageTerminal(h *Runtime, id string, chatID marotte.ChatID) {
-	epoch := h.agentTerms.turnEpochOf(chatID)
+	turn := h.agentTerms.turnOf(chatID)
 	h.agentTerms.mu.Lock()
 	defer h.agentTerms.mu.Unlock()
 	term := newAgentTerminal(&exec.Cmd{}, chatID, 64)
-	term.epoch = epoch
+	term.turn = turn
 	h.agentTerms.terms[id] = term
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], id)
 }
@@ -737,17 +748,14 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	ctx := t.Context()
 
 	// A turn marotte did not prompt: the first frame of the bracket opens it.
-	h.stageTurnBuffer(t, "c1")
+	h.stageWireTurn(t, "c1")
 	stageTerminal(h, "agent-bg", "c1")
 
 	// It ends on the wire's own bracket — no prompt wrapper anywhere on this path.
 	h.coord.WireTurnEnd(ctx, "c1", marotte.StopReasonEndTurn, "")
 
 	// The user's next turn, with a command of its own.
-	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
-	if epoch == 0 {
-		t.Fatal("Setup: StartTurn refused, so there is no turn to cancel")
-	}
+	h.stagePromptTurn(t, "c1")
 	stageTerminal(h, "prompt-cmd", "c1")
 
 	h.agentTerms.KillForTurn("c1")
@@ -760,5 +768,60 @@ func TestKillForTurn_DoesNotKillAnAgentInitiatedTurnsTerminals(t *testing.T) {
 	}
 	if _, ok := h.agentTerms.terms["prompt-cmd"]; ok {
 		t.Error("the cancelled turn's own terminal survived the interrupt")
+	}
+}
+
+// TestKillForTurn_ScopedToTheOpenTurn pins the interrupt gate's scope: a cancel
+// kills the CURRENT turn's terminals and leaves a background command an earlier
+// turn started alone. The boundary is one turn id giving way to the next.
+func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
+	turns := &turnStub{cur: map[marotte.ChatID]string{"c1": "t7", "c2": "t3"}}
+	at := newAgentTerminals(nil, nil, nil, turns.read)
+	add := func(id string, chat marotte.ChatID) {
+		turn := at.turnOf(chat)
+		at.mu.Lock()
+		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
+		term.turn = turn
+		at.terms[id] = term
+		at.byChatID[chat] = append(at.byChatID[chat], id)
+		at.mu.Unlock()
+	}
+
+	add("t1-old", "c1")    // turn t7's background command
+	turns.cur["c1"] = "t8" // turn t7 closed and turn t8 opened
+	add("t2-cur", "c1")    // turn t8, the open turn
+	add("t2-cur-b", "c1")
+	add("other-chat", "c2")
+
+	at.KillForTurn("c1")
+
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if _, ok := at.terms["t1-old"]; !ok {
+		t.Error("an earlier turn's terminal was killed — that background command was not the cancel's to take")
+	}
+	if _, ok := at.terms["t2-cur"]; ok {
+		t.Error("the open turn's terminal survived the interrupt")
+	}
+	if _, ok := at.terms["t2-cur-b"]; ok {
+		t.Error("the open turn's second terminal survived the interrupt")
+	}
+	if _, ok := at.terms["other-chat"]; !ok {
+		t.Error("another chat's terminal was killed")
+	}
+	if got := len(at.byChatID["c1"]); got != 1 {
+		t.Errorf("c1's index holds %d ids, want 1 (the survivor)", got)
+	}
+}
+
+// TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals (the
+// overwhelmingly common case) touches nothing.
+func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
+	at := newAgentTerminals(nil, nil, nil, (&turnStub{}).read) // every chat idle
+	at.KillForTurn("c1")                                       // must not panic or create entries
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if len(at.terms) != 0 || len(at.byChatID["c1"]) != 0 {
+		t.Errorf("no-op kill mutated the registry: %d terms", len(at.terms))
 	}
 }

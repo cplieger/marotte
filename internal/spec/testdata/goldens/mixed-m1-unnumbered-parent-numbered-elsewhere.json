@@ -1,0 +1,84 @@
+{
+  "input_file": "mixed-m1-unnumbered-parent-numbered-elsewhere.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L2",
+      "line": 2,
+      "indent": 0,
+      "number": "",
+      "text": "Set up the harness",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "b3ed94c44590b14dedfbf355688f7b90bf3190ad2f20cdd33ee759ea0a2a46d7",
+      "detail": "",
+      "children": [
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 2,
+          "number": "",
+          "text": "wire the fixture",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "5c7e0083356315c216a0e6fdfcf8271228adf6c86a1996610b1bbfc21e8cbfa1",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L4",
+          "line": 4,
+          "indent": 2,
+          "number": "",
+          "text": "add the golden file",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "3af8ce2c0094d135f1c35f7795d46b41e0c02fba844df1ef90e80b965542a476",
+          "detail": "",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "2",
+      "text": "2 Do the numbered thing",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "3669984368c02443abf9f77db94c1e1274f5c543a89b34fc79d013431e9bb0b3",
+      "detail": "",
+      "children": [
+        {
+          "id": "L6",
+          "line": 6,
+          "indent": 2,
+          "number": "2.1",
+          "text": "2.1 sub of two",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "30f98073aa315d3c56db4b2b8ab0a60c7ad3c1c5b2bc2d636e4b5aaeaa8e6811",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

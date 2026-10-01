@@ -178,6 +178,9 @@ export default defineConfig({
             provider: playwright({
               launchOptions: {
                 channel: "chromium",
+                // Past ~49 test files in one browser session Chromium drops animation-frame
+                // delivery to ~1Hz; `frame-budget.ts` owns the per-file budgets.
+                args: ["--disable-frame-rate-limit"],
               },
             }),
             instances: [{ browser: "chromium" }],
@@ -188,6 +191,31 @@ export default defineConfig({
             // A failure screenshot per failing test is noise in CI and cannot
             // be read from a job log; the assertion diff is the artifact.
             screenshotFailures: false,
+            // `commands` is a `test.browser` option and NOT a `test` option; the
+            // two nest one line apart and the wrong one type-checks nowhere.
+            commands: {
+              /** Emulate the two accessibility media features this app declares
+               *  arms for. Page-level, so the test iframe inherits it, and
+               *  per-test rather than through the provider's `contextOptions` —
+               *  that option is global to the project and would put every
+               *  browser file under the emulation, silently inverting the
+               *  `tab-dot.test.ts` family. `cdp()` reaches the same feature and
+               *  is declined: vitest 5 types its `CDPSession` as an empty
+               *  interface, so `Emulation.setEmulatedMedia` would need an
+               *  untyped cast, where this reaches a fully-typed Playwright
+               *  `page`. One command for both features because they are one
+               *  mechanism, and `emulateMedia` takes both in a single call, so a
+               *  test can hold all four combinations. */
+              async emulateA11yMedia(
+                { page },
+                features: {
+                  reducedMotion?: "reduce" | "no-preference";
+                  forcedColors?: "active" | "none";
+                },
+              ) {
+                await page.emulateMedia(features);
+              },
+            },
           },
         },
       },
@@ -222,10 +250,10 @@ export default defineConfig({
     // Fail fast on first suite error in CI; run all in watch mode.
     bail: process.env["CI"] ? 1 : 0,
 
-    // ONE retry in CI. It does NOT cover the interception race the anchor route
-    // above closes: that one links the real module for a whole FILE, so both
-    // attempts fail identically in the same hook and a retry never recovered it.
-    // What it still covers is the OTHER shared-context defect,
+    // ONE retry in CI. It does NOT cover vitest-dev/vitest#8339, where a hoisted
+    // `vi.mock` silently does not apply: that links the real module for a whole
+    // FILE, so both attempts fail identically in the same hook and a retry never
+    // recovered it. What it still covers is the OTHER shared-context defect,
     // `route.fulfill: Route is already handled!` (vitest-dev/vitest#10819, open),
     // which `fileParallelism: false` reduces but has not eliminated — it was
     // still seen in CI with parallelism already off.

@@ -13,10 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // leased grants a manual lease so a bounds test has something to arm: a run with no
@@ -192,8 +191,8 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 			}
 			time.Sleep(time.Millisecond)
 		}
-		if got := h.runs.endReason(id); got != runEndOverran {
-			t.Fatalf("round %d: the fired timer recorded %q, want %q", round, got, runEndOverran)
+		if got := h.runs.endReason(id); got != runEndStalled {
+			t.Fatalf("round %d: the fired timer recorded %q, want %q", round, got, runEndStalled)
 		}
 	}
 }
@@ -237,8 +236,8 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if got := h.runs.endReason(id); got != runEndOverran {
-		t.Errorf("recorded %q, want %q", got, runEndOverran)
+	if got := h.runs.endReason(id); got != runEndStalled {
+		t.Errorf("recorded %q, want %q", got, runEndStalled)
 	}
 	// The log line is the whole compensation: a restart silently loses the clock.
 	const wantLine = "a run's deadline is not durable, so it will not survive a restart; this process still bounds the run"
@@ -307,31 +306,6 @@ func TestCancelExpiredRun_ReportsAScheduleRowItCouldNotWrite(t *testing.T) {
 	}
 	if out := logs.String(); !strings.Contains(out, `"schedule_id":"sched-gone"`) {
 		t.Errorf("the failed-outcome line does not name the schedule it is about: %s", out)
-	}
-}
-
-// TestStepTurnCap_ReportsACancelItCouldNotIssue: the breach is reported, and the
-// claim is handed BACK so the user's Cancel still works on a run marotte failed
-// to stop.
-func TestStepTurnCap_ReportsACancelItCouldNotIssue(t *testing.T) {
-	logs := captureLogs(t)
-	h, _, br := newTestHub()
-	const id = "wf_1"
-	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("bridge gone")}
-	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
-	h.runs.armDeadline(t.Context(), id)
-
-	h.runs.StepTurnCapExceeded(id, "node-3", translate.StepTurnCap+1)
-
-	const wantLine = "could not cancel a run that breached its bound"
-	if out := logs.String(); !strings.Contains(out, `"msg":"`+wantLine+`"`) {
-		t.Errorf("a bound whose cancel failed reported nothing; want a line reading %q. Got: %s",
-			wantLine, out)
-	}
-	if !h.runs.claimTermination(id) {
-		t.Error("the run stayed claimed after its cancel failed, so the user's own Cancel " +
-			"silently does nothing on a run that is still executing")
 	}
 }
 
@@ -525,8 +499,8 @@ func TestRunDeadline_FiresAndCancelsAtTheDeadline(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if got := h.runs.endReason(id); got != runEndOverran {
-		t.Errorf("the expired run recorded %q, want %q", got, runEndOverran)
+	if got := h.runs.endReason(id); got != runEndStalled {
+		t.Errorf("the expired run recorded %q, want %q", got, runEndStalled)
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Errorf("no cancel went out for the expired run: %v", br.callLog())
@@ -673,25 +647,25 @@ func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
 	}
 }
 
-// TestClaimRunTermination_ScheduleDeadlineAndStepCapCannotBothRecord: the first
-// reason stands, or the later write overwrites it and both issue a cancel.
-func TestClaimRunTermination_ScheduleDeadlineAndStepCapCannotBothRecord(t *testing.T) {
+// TestClaimRunTermination_OrphanSweepAndScheduleDeadlineCannotBothRecord: the
+// first reason stands, or the later write overwrites it and both issue a cancel.
+func TestClaimRunTermination_OrphanSweepAndScheduleDeadlineCannotBothRecord(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
 	const id = "wf_1"
 
-	// The step cap gets there first.
+	// The orphan sweep gets there first.
 	if !h.claimTermination(id) {
-		t.Fatal("the step cap could not claim the run")
+		t.Fatal("the orphan sweep could not claim the run")
 	}
-	h.recordEnd(id, runEndStepCap)
+	h.recordEnd(id, runEndOrphaned)
 
 	// The schedule deadline, arriving on the same run.
 	if h.claimTermination(id) {
-		t.Fatal("the schedule deadline claimed a run the step cap was already ending")
+		t.Fatal("the schedule deadline claimed a run the orphan sweep was already ending")
 	}
-	if got := h.endReason(id); got != runEndStepCap {
-		t.Errorf("endReason = %q, want the first reason %q", got, runEndStepCap)
+	if got := h.endReason(id); got != runEndOrphaned {
+		t.Errorf("endReason = %q, want the first reason %q", got, runEndOrphaned)
 	}
 }
 
@@ -801,7 +775,7 @@ func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 
 	h.claimTermination(id)
 	h.recordEnd(id, runEndOverran)
-	h.recordEnd("wf_other", runEndStepCap)
+	h.recordEnd("wf_other", runEndOrphaned)
 
 	h.clearEnd(id)
 
@@ -819,7 +793,7 @@ func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 		t.Errorf("the eviction queue still names the cleared run: %v", order)
 	}
 	// A neighbour is untouched.
-	if got := h.endReason("wf_other"); got != runEndStepCap {
+	if got := h.endReason("wf_other"); got != runEndOrphaned {
 		t.Errorf("clearing one run's reason changed another's to %q", got)
 	}
 }
@@ -971,13 +945,13 @@ func TestRunEndReason_DistinguishesABoundFromAUserCancel(t *testing.T) {
 		t.Errorf("a run nothing recorded reported %q; a user cancel must read as empty", got)
 	}
 	h.recordEnd("wf_overran", runEndOverran)
-	h.recordEnd("wf_step", runEndStepCap)
+	h.recordEnd("wf_orphan", runEndOrphaned)
 
 	if got := h.endReason("wf_overran"); got != runEndOverran {
 		t.Errorf("endReason(overran) = %q, want %q", got, runEndOverran)
 	}
-	if got := h.endReason("wf_step"); got != runEndStepCap {
-		t.Errorf("endReason(step cap) = %q, want %q", got, runEndStepCap)
+	if got := h.endReason("wf_orphan"); got != runEndOrphaned {
+		t.Errorf("endReason(orphaned) = %q, want %q", got, runEndOrphaned)
 	}
 	// A shared map must not answer for a key it does not hold.
 	if got := h.endReason("wf_user_cancelled"); got != "" {
@@ -1027,7 +1001,7 @@ func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 	h := &Runs{}
 
 	h.recordEnd("wf_1", runEndOverran)
-	h.recordEnd("wf_1", runEndStepCap)
+	h.recordEnd("wf_1", runEndOrphaned)
 
 	h.mu.Lock()
 	order := len(h.bounds.order)
@@ -1035,57 +1009,14 @@ func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 	if order != 1 {
 		t.Errorf("the eviction queue holds %d entries for one run, want 1", order)
 	}
-	if got := h.endReason("wf_1"); got != runEndStepCap {
-		t.Errorf("endReason = %q, want the latest reason %q", got, runEndStepCap)
+	if got := h.endReason("wf_1"); got != runEndOrphaned {
+		t.Errorf("endReason = %q, want the latest reason %q", got, runEndOrphaned)
 	}
 	// An empty reason is not a reason: recording one would put a run in the queue
 	// whose row then reads as unbounded anyway.
 	h.recordEnd("wf_2", "")
 	if got := h.endReason("wf_2"); got != "" {
 		t.Errorf("an empty reason was recorded as %q", got)
-	}
-}
-
-// TestStepTurnCapExceeded_CancelsOncePerRun pins the enforcement's arithmetic
-// without a bridge behind it.
-//
-// The cancel itself needs a live utility session, so this asserts the two facts
-// that decide whether it is issued at all and what the row says afterwards: the
-// arm is taken exactly once, and the reason recorded is the step cap rather than
-// the wall clock.
-func TestStepTurnCapExceeded_CancelsOncePerRun(t *testing.T) {
-	t.Parallel()
-	h := &Runs{}
-
-	// Unarmed: a run marotte is not bounding is not one it may cancel, and a
-	// breach reported for it records nothing.
-	h.StepTurnCapExceeded("wf_unarmed", "node-1", 200)
-	if got := h.endReason("wf_unarmed"); got != "" {
-		t.Errorf("an unarmed run recorded %q; the arm is the authority to act", got)
-	}
-}
-
-// TestStepTurnCapExceeded_DoesNotConsumeTheDeadlineItLoses: the step cap's gate
-// reads the lease's deadline rather than clearing it, because a breach that loses
-// the termination claim must leave the wall clock to whoever won. Clearing it would
-// strip the bound from a run that is still executing.
-func TestStepTurnCapExceeded_DoesNotConsumeTheDeadlineItLoses(t *testing.T) {
-	h := &Runs{}
-	const id = "wf_1"
-	leased(t, h, id)
-	h.armDeadline(t.Context(), id)
-
-	// Something else is already ending the run.
-	if !h.claimTermination(id) {
-		t.Fatal("the fixture could not take the claim it needs to hold")
-	}
-	h.StepTurnCapExceeded(id, "node-1", 200)
-
-	if !h.bounded(id) {
-		t.Error("a losing step-cap breach dropped the deadline of a run it did not terminate")
-	}
-	if got := h.endReason(id); got != "" {
-		t.Errorf("a losing step-cap breach recorded %q over the winner's reason", got)
 	}
 }
 
@@ -1271,13 +1202,12 @@ func TestRunBoundConstants_HoldTheirRelationships(t *testing.T) {
 	}
 }
 
-// TestObserveComplete_ClosesTheStepDrivenTurnOnlyOnATerminalStatus is the third thing riding
-// the terminal gate, and the only one whose subject is the LAUNCHING CHAT rather than the run.
-// A chat-parented run's step frames fold onto that chat and open a turn there, and the bracket
-// path cannot close it because the attribution gate drops a step's own turn_end — so the run
-// reaching terminal is its only closer. `paused` must not do it: the next step folds into the
-// same turn.
-func TestObserveComplete_ClosesTheStepDrivenTurnOnlyOnATerminalStatus(t *testing.T) {
+// TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus is the third thing riding
+// the terminal gate. A step whose node_complete never arrived holds an open turn in the
+// RUN's record, and the run reaching terminal is its only closer. `paused` must not do
+// it: the next step folds into the same turn. The launching chat holds no turn at all,
+// because a step opens a run turn and never a chat turn.
+func TestObserveComplete_ClosesTheStepTurnOnlyOnATerminalStatus(t *testing.T) {
 	for _, tc := range []struct {
 		status    string
 		stillOpen bool
@@ -1289,44 +1219,49 @@ func TestObserveComplete_ClosesTheStepDrivenTurnOnlyOnATerminalStatus(t *testing
 		{"paused", true},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
-			h, cs, _ := newTestHub()
-			t.Cleanup(func() { shutdownHub(t, h) })
+			h := newBudgetRuntime(t)
 			const launching marotte.ChatID = "c-parent"
-			stagedStepTurn(t, h, cs, launching, "the step's reply")
+			if _, _, err := h.runs.log.Open(t.Context(), "wf_1", "seq/coder", "sess-step", launching); err != nil {
+				t.Fatalf("Open(step turn): %v", err)
+			}
 
 			h.runs.observeComplete(t.Context(), launching, runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": "wf_1", "status": tc.status,
 			}))
 
-			if open := h.liveTurnBuffer(launching) != nil; open != tc.stillOpen {
+			if open := h.runs.log.Turn("wf_1", "seq/coder") != nil; open != tc.stillOpen {
 				t.Errorf("the step turn is still open = %v after status %q, want %v",
 					open, tc.status, tc.stillOpen)
+			}
+			if h.liveTurn(launching) != nil {
+				t.Errorf("the launching chat %q holds a turn; a step opens a run turn only", launching)
 			}
 		})
 	}
 }
 
-// TestObserveComplete_LeavesAParentlessRunsChatIDAlone pins the guard keeping a PARENTLESS
-// run's terminal frame out of the turn lifecycle. The empty chat id is reachable on every such
-// run, and a run that folds onto no chat has no turn to close. The fixture MANUFACTURES the
-// turn to make the guard observable, because nothing in the run dispatch path folds a step
-// frame under that id; what is pinned is that the terminal frame does not reach the lifecycle
-// at all, whatever happens to be keyed there.
-func TestObserveComplete_LeavesAParentlessRunsChatIDAlone(t *testing.T) {
-	for _, chatID := range []marotte.ChatID{"", "run:wf_1"} {
-		t.Run(string(chatID), func(t *testing.T) {
-			h, cs, _ := newTestHub()
-			t.Cleanup(func() { shutdownHub(t, h) })
-			stagedStepTurn(t, h, cs, chatID, "content keyed under a parentless run's id")
+// TestObserveComplete_ClosesAParentlessRunsStepTurns pins that the close is keyed on the
+// WORKFLOW, not on the frame's chat id. A parentless run's lifecycle frames arrive with an
+// empty chat id, and its steps are hosted under the synthetic run chat; the terminal frame
+// closes them all the same, and no chat turn was minted under either id.
+func TestObserveComplete_ClosesAParentlessRunsStepTurns(t *testing.T) {
+	h := newBudgetRuntime(t)
+	host := runChatID("wf_1")
+	if _, _, err := h.runs.log.Open(t.Context(), "wf_1", "seq/coder", "sess-step", host); err != nil {
+		t.Fatalf("Open(step turn): %v", err)
+	}
 
-			h.runs.observeComplete(t.Context(), chatID, runNotif(methodWFRunComplete, map[string]any{
-				"workflowId": "wf_1", "status": "completed",
-			}))
+	h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+		"workflowId": "wf_1", "status": "completed",
+	}))
 
-			if h.liveTurnBuffer(chatID) == nil {
-				t.Errorf("a parentless run's terminal frame closed a turn keyed under %q", chatID)
-			}
-		})
+	if h.runs.log.Turn("wf_1", "seq/coder") != nil {
+		t.Error("a parentless run's terminal frame left its step turn open")
+	}
+	for _, chatID := range []marotte.ChatID{"", host} {
+		if h.liveTurn(chatID) != nil {
+			t.Errorf("a chat turn is keyed under %q; a step opens no chat turn", chatID)
+		}
 	}
 }
 

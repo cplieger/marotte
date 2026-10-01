@@ -88,6 +88,7 @@ const OUTCOMES: TurnOutcome[] = [
   "refused",
   "unknown",
   "failed",
+  "empty",
 ];
 
 describe("the footer stamps its severity", () => {
@@ -166,7 +167,7 @@ describe("the rail stamps its severity", () => {
     await loadTurnRail("c-attr");
 
     const markers = [...rail().querySelectorAll<HTMLElement>(".rail-marker")];
-    expect(markers, "one marker per turn, no clustering at seven").toHaveLength(OUTCOMES.length);
+    expect(markers, "one marker per turn, no clustering at eight").toHaveLength(OUTCOMES.length);
     for (const [i, marker] of markers.entries()) {
       const outcome = OUTCOMES[i];
       expect(marker.dataset["outcome"], `marker ${String(i)}`).toBe(outcome);

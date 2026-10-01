@@ -62,11 +62,11 @@ func (r *turnRegistry) sealPosition(chatID marotte.ChatID, gen uint64) {
 // waits for. It does NOT stop early once the awaited turn has finalized — the wait
 // also orders whether a LATER turn opened, the empty-turn gate's structural clause,
 // and returning early let a re-prompt duplicate execution and spend.
-func (r *turnRegistry) awaitPosition(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, seq uint64) bool {
+func (r *turnRegistry) awaitPosition(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64) bool {
 	lc := r.lifecycleFor(chatID)
 	lc.mu.Lock()
 	gen := lc.fwdGen
-	if t := lc.turnLocked(epoch); t != nil {
+	if t := lc.turnLocked(turnID); t != nil {
 		t.NeedSeq = seq
 		t.needGen = gen
 	}

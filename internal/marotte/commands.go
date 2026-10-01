@@ -35,6 +35,12 @@ const (
 	CmdCloseTab    CommandType = "close_tab"
 	CmdReorderTabs CommandType = "reorder_tabs"
 	CmdPinTab      CommandType = "pin_tab"
+	CmdReparentTab CommandType = "reparent_tab"
+	// CmdApproveSpecPhase records a human sign-off on one phase of a spec. It is
+	// a COMMAND rather than a REST POST because invariant 1 puts every mutation
+	// through this envelope; its chat_id is EMPTY, because a spec is
+	// workspace-global rather than a chat's.
+	CmdApproveSpecPhase CommandType = "approve_spec_phase"
 )
 
 // ClientCommand is the envelope for every command the browser posts. Type
@@ -57,6 +63,9 @@ type PromptCommand struct {
 	MessageID   string       `json:"message_id"`
 	Model       string       `json:"model,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// Resends names the dropped steers whose text the client carried into this
+	// prompt; it lands on turn_open.prompt.resends so the record states the resend.
+	Resends []string `json:"resends,omitempty"`
 }
 
 // Attachment is a file staged beside a prompt; its extension decides whether it
@@ -172,6 +181,10 @@ type UserInputResponseCommand struct {
 // inclusive, so keeping turn N means addressing turn N+1.
 type RewindChatCommand struct {
 	MessageID string `json:"message_id"`
+	// Confirmed says the reader was told which live runs the cut would stop and
+	// chose to go on. Without it a cut holding a live run's launch answers 409
+	// naming the runs, and nothing is reverted.
+	Confirmed bool `json:"confirmed,omitempty"`
 }
 
 // SetEffortCommand is the payload for type="set_effort", applying a reasoning
@@ -265,6 +278,9 @@ type SetSupervisedModeCommand struct {
 type SteerCommand struct {
 	Text      string `json:"text"`
 	MessageID string `json:"message_id"`
+	// Resends names the dropped steers whose text this one re-sends (a boundary
+	// resend); it lands on the steer entry's resends.
+	Resends []string `json:"resends,omitempty"`
 }
 
 // OpenTabCommand is the payload for type="open_tab": open a tab for something
@@ -321,4 +337,26 @@ type PinTabCommand struct {
 	ID     string `json:"id"`
 	OpID   string `json:"op_id,omitempty"`
 	Pinned bool   `json:"pinned"`
+}
+
+// ReparentTabCommand is the payload for type="reparent_tab": hang an open tab
+// under an open chat tab. Idempotent when the parent is unchanged; 404 for an
+// id that is not open, 409 when Parent is not an open chat tab.
+type ReparentTabCommand struct {
+	ID     string `json:"id"`
+	Parent string `json:"parent"`
+	OpID   string `json:"op_id,omitempty"`
+}
+
+// ApproveSpecPhaseCommand is the payload for type="approve_spec_phase": record
+// that a human approved Phase of the spec at Dir, as it was at Hash.
+//
+// Hash is the COMPARE-AND-SWAP precondition, not a value the server trusts: the
+// handler re-reads the document and refuses a mismatch with the current hash, so
+// approving a version you have not seen records nothing. Phase is one of
+// specapproval.Phases(); Hash is a sha256 hex digest.
+type ApproveSpecPhaseCommand struct {
+	Dir   string `json:"dir"`
+	Phase string `json:"phase"`
+	Hash  string `json:"hash"`
 }

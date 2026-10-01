@@ -239,6 +239,12 @@ function registerOpeners(): void {
       },
       refresh: vi.fn(),
     },
+    spec: {
+      show: (dir) => {
+        record("spec", dir);
+      },
+      refresh: vi.fn(),
+    },
   });
 }
 

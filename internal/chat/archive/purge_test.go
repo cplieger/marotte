@@ -41,16 +41,16 @@ func TestPurge_RetentionCutoff(t *testing.T) {
 	}
 }
 
-// TestPurge_SkipsNonChatFiles verifies Purge only touches files that are
-// valid chat .json files: non-.json files, files with invalid chat ids,
-// and subdirectories are left untouched even when old.
+// TestPurge_SkipsNonChatFiles verifies Purge only touches directories that are
+// chats: a plain file, a directory whose name is not a chat id, and a chat-id
+// directory holding no header are left untouched even when old.
 func TestPurge_SkipsNonChatFiles(t *testing.T) {
 	var rec purgeRecorder
 	svc, _, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
 
 	chatPath := writeAgedChat(t, dir, "valid01", 48*time.Hour)
 
-	// Non-.json file (old): must survive.
+	// A plain file (old): must survive.
 	notesPath := filepath.Join(dir, "notes.txt")
 	if err := os.WriteFile(notesPath, []byte("keep"), 0o600); err != nil {
 		t.Fatalf("write notes: %v", err)
@@ -60,19 +60,25 @@ func TestPurge_SkipsNonChatFiles(t *testing.T) {
 		t.Fatalf("chtimes notes: %v", err)
 	}
 
-	// .json file with an invalid chat id ('.' is not allowed): must survive.
-	badIDPath := filepath.Join(dir, "bad.id.json")
-	if err := os.WriteFile(badIDPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write bad-id file: %v", err)
+	// A directory whose name is not a chat id ('.' is not allowed): must survive.
+	badIDPath := filepath.Join(dir, "bad.id")
+	if err := os.MkdirAll(badIDPath, 0o700); err != nil {
+		t.Fatalf("mkdir bad-id dir: %v", err)
 	}
-	if err := os.Chtimes(badIDPath, old, old); err != nil {
+	if err := os.WriteFile(filepath.Join(badIDPath, headerFileName), []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write bad-id header: %v", err)
+	}
+	if err := os.Chtimes(filepath.Join(badIDPath, headerFileName), old, old); err != nil {
 		t.Fatalf("chtimes bad-id: %v", err)
 	}
 
-	// Directory with a .json suffix: must survive (IsDir guard).
-	dirPath := filepath.Join(dir, "skipdir.json")
-	if err := os.MkdirAll(dirPath, 0o700); err != nil {
-		t.Fatalf("mkdir skipdir: %v", err)
+	// A chat-id directory with no header: skipped, never removed.
+	headerlessPath := filepath.Join(dir, "headerless01")
+	if err := os.MkdirAll(headerlessPath, 0o700); err != nil {
+		t.Fatalf("mkdir headerless: %v", err)
+	}
+	if err := os.Chtimes(headerlessPath, old, old); err != nil {
+		t.Fatalf("chtimes headerless: %v", err)
 	}
 
 	svc.Purge(t.Context(), 24*time.Hour)
@@ -81,13 +87,13 @@ func TestPurge_SkipsNonChatFiles(t *testing.T) {
 		t.Errorf("valid old chat was not purged: %s", chatPath)
 	}
 	if !exists(t, notesPath) {
-		t.Errorf("non-.json file was purged: %s", notesPath)
+		t.Errorf("plain file was purged: %s", notesPath)
 	}
 	if !exists(t, badIDPath) {
-		t.Errorf("invalid-id .json file was purged: %s", badIDPath)
+		t.Errorf("invalid-id directory was purged: %s", badIDPath)
 	}
-	if !exists(t, dirPath) {
-		t.Errorf("subdirectory was purged: %s", dirPath)
+	if !exists(t, headerlessPath) {
+		t.Errorf("headerless chat directory was purged: %s", headerlessPath)
 	}
 	if got := rec.sorted(); !slices.Equal(got, []string{"valid01"}) {
 		t.Errorf("onPurge fired for %v, want [valid01]", got)
@@ -314,12 +320,11 @@ func TestPurge_SkipsVanishedEntryWithoutAborting(t *testing.T) {
 	var rec purgeRecorder
 	svc, _, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
 
-	// A dangling symlink with a valid chat-id .json name: ReadDir lists
-	// it, but os.Stat (which follows the link) fails with ErrNotExist —
-	// exactly the "entry disappeared mid-scan" path purgeOne must skip.
-	vanished := filepath.Join(dir, "vanished.json")
-	if err := os.Symlink(filepath.Join(dir, "no-such-target.json"), vanished); err != nil {
-		t.Skipf("symlinks unsupported on this platform: %v", err)
+	// A chat-id directory whose header is gone: ReadDir lists the directory, but
+	// the stat of its chat.json fails with ErrNotExist — exactly the "entry
+	// disappeared mid-scan" path purgeOne must skip.
+	if err := os.MkdirAll(filepath.Join(dir, "vanished"), 0o700); err != nil {
+		t.Fatalf("mkdir vanished: %v", err)
 	}
 	realOld := writeAgedChat(t, dir, "realold", 48*time.Hour)
 
@@ -380,7 +385,7 @@ func TestPurgeScheduler_APassWithNothingToPurgeBacksOff(t *testing.T) {
 		t.Errorf("second idle wait = %v, want longer than the first (%v): consecutive passes "+
 			"that purge nothing must back off", second, first)
 	}
-	if !exists(t, filepath.Join(dir, "pinned.json")) {
+	if !exists(t, filepath.Join(dir, "pinned", headerFileName)) {
 		t.Error("the exempt chat was purged; the premise of this test is gone")
 	}
 }

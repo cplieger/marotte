@@ -1,19 +1,9 @@
 package command
 
-// Mid-turn steering, via KAS's own buffer.
-//
-// A prompt typed while a turn is running used to go into a client-side
-// queue and be sent as a fresh turn on turn_ended — the wrong shape, since
-// the user is correcting work in progress and the queue guaranteed the
-// correction arrived only after the work it was correcting had finished.
-//
-// `_session/steer` is KAS's verb: it appends to a per-session steering
-// buffer, and the graph consumes it at the next node boundary as an
-// ordinary human turn, resetting the agent's iteration counter. Nothing is
-// cancelled and nothing is discarded.
-//
-// So marotte keeps no queue: idle sends are prompts, mid-turn sends are
-// steers, and the buffer that used to live in the browser is KAS's.
+// Mid-turn steering, via KAS's own buffer. `_session/steer` appends to a
+// per-session steering buffer the graph consumes at the next node boundary as an
+// ordinary human turn; nothing is cancelled and nothing is discarded. So marotte
+// keeps no queue: idle sends are prompts, mid-turn sends are steers.
 
 import (
 	"context"
@@ -58,93 +48,98 @@ var (
 // prompt.
 const reasonNoTurn = "no_turn"
 
-// CmdSteer delivers a message into the running turn.
-//
-// Requires a live bridge and a holder whose turn actually drains the
-// steering buffer: KAS queues a steer for any live session, so one
-// delivered to an idle chat — or into a `!cmd` shell turn — would sit
-// unread with the chip stuck "queued". A wire-started turn is steerable:
-// the engine's own turn drains the buffer at its next node boundary.
+// reasonFull is the 409 refusal class for a steer the chat's parked set cannot
+// hold. Not `no_turn`, deliberately: the client converts that one into a prompt,
+// and a prompt would meet the same running turn.
+const reasonFull = "full"
+
+// errSteerFull is the refusal for a parked steer that would be the 65th.
+var errSteerFull = errors.New("too many messages are waiting for this turn to start — wait for it, then send again")
+
+// steerReply is KAS's answer to one _session/steer.
+type steerReply struct {
+	MessageID string `json:"messageId"`
+	Dropped   string `json:"dropped"`
+	Queued    bool   `json:"queued"`
+}
+
+// sendSteer issues one _session/steer for the steer steerID names. KAS prefixes
+// the messageId it is sent into the steer's own id, so the wire carries the id
+// with marotte.SteerIDPrefix removed and the reply carries steerID back.
+func sendSteer(ctx context.Context, sb sessionCaller, steerID, text string) (steerReply, error) {
+	var reply steerReply
+	resp, err := sb.Call(ctx, marotte.MethodSessionSteer, SessionParams(sb, map[string]any{
+		"message":   text,
+		"messageId": strings.TrimPrefix(steerID, marotte.SteerIDPrefix),
+	}))
+	if err != nil {
+		return reply, err
+	}
+	if resp != nil && resp.Result != nil {
+		_ = json.Unmarshal(resp.Result, &reply)
+	}
+	return reply, nil
+}
+
+// CmdSteer delivers a message into the running turn. It requires a holder whose
+// turn drains the steering buffer: KAS queues a steer for any live session, so one
+// sent to an idle chat or a `!cmd` shell turn would sit unread with the chip stuck
+// "queued". A prompt whose bridge is still spawning, or whose parked steers are
+// still being delivered, PARKS the steer for the prompt goroutine instead.
 func CmdSteer(
 	ctx context.Context,
 	bridges BridgeAccess,
-	outcome TurnOutcomeAccess,
+	admission TurnAdmission,
 	steers SteerRecorder,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	var p marotte.SteerCommand
-	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
-		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
-	}
-	text := strings.TrimSpace(p.Text)
-	switch {
-	case text == "":
-		return nil, StatusError(http.StatusBadRequest, errEmptyPrompt)
-	case len(text) > maxSteerBytes:
-		return nil, StatusError(http.StatusRequestEntityTooLarge, errPromptTooLong)
-	case !ValidMessageID(p.MessageID):
-		return nil, StatusError(http.StatusBadRequest, errMissingMessageID)
-	case notificationPrefix.MatchString(text):
-		return nil, StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
+	text, steerID, resends, err := steerText(cmd)
+	if err != nil {
+		return nil, err
 	}
 
-	bridge := bridges.Bridge(cmd.ChatID)
-	if bridge == nil {
-		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
-	}
-	source, held := outcome.AdmissionHolderSource(cmd.ChatID)
+	source, held := admission.AdmissionHolderSource(cmd.ChatID)
 	if !held || source == marotte.TurnSourceLocalShell {
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
 	}
 
-	// RECORDED BEFORE THE CALL, and the ordering is the whole point: KAS emits
-	// `steering_queued` BEFORE it answers this RPC, and that notification is folded
-	// on the bridge's own Forward goroutine with nothing serializing the two — so a
-	// ledger written after the response RACES the fold, and SteerOrigin answers
-	// `agent` for the user's own words whenever the fold wins. Measured on the live
-	// store before this moved: 9 of 18 steers whose queued-time origin is
-	// observable were labelled the agent's.
-	//
-	// The id is derivable (marotte.SteerIDFor) because KAS prefixes the messageId we
-	// send and stamps that on both the reply and the notification. The two shapes
-	// that would make it wrong are already refused above: an empty id by
-	// ValidMessageID, and a notification-prefixed text — which KAS would file under
-	// `notify-` instead — by errSteerLooksLikeNotification.
-	//
-	// A refused steer leaves a stale entry, deliberately unswept: nothing else can
-	// carry a `steer-` id, so it can mislabel nothing, and the TTL reclaims it.
-	steers.RecordUserSteer(cmd.ChatID, marotte.SteerIDFor(p.MessageID))
+	if source.PromptClass() && (!bridges.BridgeLive(cmd.ChatID) || steers.HasParkedSteers(cmd.ChatID)) {
+		// Both park conditions and the drain's exit test are one locked read on the
+		// ledger, so a steer arriving mid-drain joins the tail rather than reaching
+		// KAS ahead of a row typed before it.
+		return parkSteer(steers, cmd.ChatID, ParkedSteer{ID: steerID, Text: text, Resends: resends})
+	}
+	bridge := bridges.Bridge(cmd.ChatID)
+	if bridge == nil {
+		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
+	}
 
-	resp, err := bridge.Call(ctx, marotte.MethodSessionSteer, SessionParams(bridge, map[string]any{
-		"message":   text,
-		"messageId": p.MessageID,
-	}))
+	// RECORDED BEFORE THE CALL: KAS emits `steering_queued` before it answers this
+	// RPC and the fold runs on the bridge's Forward goroutine with nothing
+	// serializing the two, so a ledger written after the response races the fold
+	// and SteerOrigin answers `agent` for the user's own words (measured: 9 of 18).
+	// A refused steer leaves a stale entry, deliberately unswept: nothing else can
+	// carry a `steer-` id, so it mislabels nothing, and the TTL reclaims it.
+	steers.RecordUserSteer(cmd.ChatID, steerID, resends)
+
+	result, err := sendSteer(ctx, bridge, steerID, text)
 	if err != nil {
 		// KAS throws (rather than answering) for an unknown session and
 		// an empty message, both already ruled out — so an error here is
 		// a transport or session-liveness failure.
-		steers.ForgetUserSteer(cmd.ChatID, marotte.SteerIDFor(p.MessageID))
+		steers.ForgetUserSteer(cmd.ChatID, steerID)
 		slog.Warn("steer: bridge call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)
-	}
-
-	var result struct {
-		MessageID string `json:"messageId"`
-		Dropped   string `json:"dropped"`
-		Queued    bool   `json:"queued"`
-	}
-	if resp != nil && resp.Result != nil {
-		_ = json.Unmarshal(resp.Result, &result)
 	}
 	if !result.Queued {
 		// `dropped: "epoch_changed"` means the turn boundary moved while
 		// KAS was persisting: the message never reached the model. 409
 		// rather than 502 — the client's answer is to send it as an
 		// ordinary prompt.
-		steers.ForgetUserSteer(cmd.ChatID, marotte.SteerIDFor(p.MessageID))
+		steers.ForgetUserSteer(cmd.ChatID, steerID)
 		slog.Info("steer dropped", "chat", cmd.ChatID, "reason", result.Dropped)
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerDropped)
 	}
@@ -152,8 +147,8 @@ func CmdSteer(
 	// The id KAS RETURNED. Normally identical to the pre-call record above, so this
 	// is an idempotent second write; it is kept so a KAS that ever returns an id we
 	// did not derive still gets that steer labelled as the user's.
-	steers.RecordUserSteer(cmd.ChatID, result.MessageID)
-	if result.MessageID != marotte.SteerIDFor(p.MessageID) {
+	steers.RecordUserSteer(cmd.ChatID, result.MessageID, resends)
+	if result.MessageID != steerID {
 		// The derivation above is what lets the ledger be written before the call,
 		// so a disagreement retires that reasoning rather than merely logging an
 		// oddity. An empty id is the sharper case: RecordUserSteer no-ops on it, so
@@ -162,7 +157,7 @@ func CmdSteer(
 		slog.Warn("steer id is not the derived one; the pre-call ledger entry may not match later frames",
 			"chat", cmd.ChatID,
 			"returned", result.MessageID,
-			"derived", marotte.SteerIDFor(p.MessageID))
+			"derived", steerID)
 	}
 
 	// No event is broadcast here: KAS answers a successful steer with its
@@ -170,6 +165,43 @@ func CmdSteer(
 	// the SSE the chip row renders from.
 	slog.Info("steer queued", "chat", cmd.ChatID, "steer_id", result.MessageID)
 	return responseWith(map[string]any{"steer_id": result.MessageID}), nil
+}
+
+// steerText validates the steer payload and answers its trimmed text, the id KAS
+// will stamp on it and the dropped steers it re-sends. The id is derivable
+// (marotte.SteerIDFor) because KAS prefixes the messageId we send and stamps that
+// on both the reply and the notification; the two shapes that would make it wrong
+// are refused here: an empty id, and a notification-prefixed text KAS would file
+// under `notify-`.
+func steerText(cmd *marotte.ClientCommand) (text, steerID string, resends []string, err error) {
+	var p marotte.SteerCommand
+	if json.Unmarshal(cmd.Payload, &p) != nil {
+		return "", "", nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
+	}
+	text = strings.TrimSpace(p.Text)
+	switch {
+	case text == "":
+		return "", "", nil, StatusError(http.StatusBadRequest, errEmptyPrompt)
+	case len(text) > maxSteerBytes:
+		return "", "", nil, StatusError(http.StatusRequestEntityTooLarge, errPromptTooLong)
+	case !ValidMessageID(p.MessageID):
+		return "", "", nil, StatusError(http.StatusBadRequest, errMissingMessageID)
+	case notificationPrefix.MatchString(text):
+		return "", "", nil, StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
+	}
+	return text, marotte.SteerIDFor(p.MessageID), p.Resends, nil
+}
+
+// parkSteer holds the steer for the prompt goroutine to issue once the turn is
+// live, in arrival order behind the rows already parked.
+func parkSteer(steers SteerRecorder, chatID marotte.ChatID, steer ParkedSteer) (any, error) {
+	steers.RecordUserSteer(chatID, steer.ID, steer.Resends)
+	if !steers.ParkSteer(chatID, steer.ID, steer.Text, steer.Resends) {
+		steers.ForgetUserSteer(chatID, steer.ID)
+		return nil, StatusErrorReason(http.StatusConflict, reasonFull, errSteerFull)
+	}
+	slog.Info("steer parked", "chat", chatID, "steer_id", steer.ID)
+	return responseWith(map[string]any{"steer_id": steer.ID}), nil
 }
 
 // CmdSteerClear drops every steer still queued for the chat's session. Does

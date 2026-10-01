@@ -51,11 +51,11 @@ func postAlive(rt *Runtime, tag string) *httptest.ResponseRecorder {
 }
 
 func TestHandleAlive_RecordsAValidTagAndAnswers204(t *testing.T) {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	table := &recordingPresence{}
 	h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs, WithPresence(table))
-	cs.Bus = h
+	cs.wire(h)
 	t.Cleanup(func() { shutdownHub(t, h) })
 
 	rec := postAlive(h, "amxAEqwvwjG23476CxNmK6")
@@ -81,11 +81,11 @@ func TestHandleAlive_RefusesAnAbsentOrMalformedTag(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs := newFakeChatStore()
+			cs := newTestChatStore()
 			br := newFakeBridge()
 			table := &recordingPresence{}
 			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs, WithPresence(table))
-			cs.Bus = h
+			cs.wire(h)
 			t.Cleanup(func() { shutdownHub(t, h) })
 
 			rec := postAlive(h, tc.tag)
@@ -119,11 +119,11 @@ func TestHandleAlive_WithoutATableAcceptsAndDrops(t *testing.T) {
 // The hub's presence hook reaches the wired table with the tag the connect
 // presented: one connected and one disconnected per served connection.
 func TestPresenceHook_ForwardsConnectAndDisconnectWithTheTag(t *testing.T) {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	table := &recordingPresence{}
 	h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs, WithPresence(table))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 

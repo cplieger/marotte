@@ -1,0 +1,6 @@
+- [ ] 1) Paren-numbered root
+  - [ ] 1.1) Paren-numbered child
+- [ ] 2. Dot-numbered root
+  - [ ] 2.1. Dot-numbered child with a trailing dot
+3. [ ] 3 An ordered-list marker whose own number is 3
+3.1) [ ] 3.1 An ordered marker with a dotted number

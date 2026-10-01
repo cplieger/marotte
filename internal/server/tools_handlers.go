@@ -5,10 +5,13 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"os/exec"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/toolbelt/v3"
+	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -46,4 +49,32 @@ func handleToolStatus(w http.ResponseWriter, r *http.Request) {
 		out[b] = err == nil
 	}
 	webhttp.WriteJSON(w, out)
+}
+
+// handleToolReconcile: POST /api/tools/reconcile
+//
+// Converge the volume on whatever tools.json now says, rather than at the next
+// boot only. Job-shaped rather than blocking: Reconcile enqueues and returns, so
+// the answer is the same 202 {job} every toolbelt mutation gives and progress
+// streams over the tool_job_* SSE; a null job means nothing to converge.
+//
+// Registered method-lessly; see ListenAndServe for why.
+func (s *Server) handleToolReconcile(w http.ResponseWriter, r *http.Request) {
+	if !httpreply.RequireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if s.tools == nil {
+		httpreply.NotFound(w, "the tools engine is not wired")
+		return
+	}
+	job, _, err := s.tools.Reconcile(toolbelt.ReconcileFull)
+	if err != nil {
+		// Reconcile loads the manifest before it enqueues, so a hand-edited
+		// tools.json is a caller-triggerable refusal rather than a fault: 400
+		// carrying the reason, as every neighbouring /api/tools mutation gives.
+		slog.Warn("tools: reconcile refused", "error", err)
+		httpreply.BadRequest(w, err.Error())
+		return
+	}
+	webhttp.WriteJSONStatus(w, http.StatusAccepted, httpapi.JobResponse{Job: job})
 }

@@ -30,10 +30,10 @@ import (
 // supply a context-aware or recording bridge.
 func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	t.Helper()
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	factory := func() ACPBridge { return br }
 	h := New(t.Context(), workDir, factory, cs)
-	cs.Bus = h
+	cs.wire(h)
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
 		return true

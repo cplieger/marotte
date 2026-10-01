@@ -16,7 +16,7 @@ import (
 const clientPolicyPath = "../../static-src/upload-policy.ts"
 
 var (
-	// MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+	// MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 	clientBytesRe = regexp.MustCompile(
 		`MAX_UPLOAD_BYTES\s*=\s*(\d+)\s*\*\s*(\d+)\s*\*\s*(\d+)\s*;`,
 	)
@@ -32,7 +32,7 @@ var (
 	)
 )
 
-// productOf multiplies a regexp's numeric submatches, so `50 * 1024 * 1024`
+// productOf multiplies a regexp's numeric submatches, so `256 * 1024 * 1024`
 // and `1024 * 1024` both read as one value.
 func productOf(t *testing.T, name string, factors [][]byte) int {
 	t.Helper()

@@ -1,29 +1,25 @@
-// THE HISTORY ROW'S TARGET IS THE WHOLE BOX, minus the one destructive control in
-// it.
-//
-// The open control used to be a button around the TITLE TEXT, so the target was
-// the shape of that text: measured on the shipped stylesheet, 27.8% of the row on
-// a mouse and 39.0% under a finger, a band with the kind chip outside it at the
-// leading edge, the date outside it at the trailing one, and the row's own second
-// and third lines below it. A click anywhere still opened the row through the
-// container's delegated listener, so nothing about a mouse click was broken —
-// which is why it survived: what the shape decided was the press feedback, the
-// focus ring, and what a pointer or an accessibility check resolves at the row's
-// own centre, which was a `<span>`.
+// THE HISTORY ROW'S TARGET IS THE WHOLE BODY, minus the one destructive control in
+// it. On the shared `.entry` row the body IS the control: it stretches to the row's
+// full height and runs from the row's content edge to the actions slot. The row's
+// `padding-inline` is the CARD's inset and is outside the control by design
+// (11-page-lists.css), so the edge these cases measure is the content edge.
 //
 // Real layout in real Chromium, because every assertion here is a box or a hit
-// test and a DOM emulator reports 0 for both.
+// test. The rows are built through the REAL builder, so the fixture cannot drift
+// from what history.ts produces.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { entryRow } from "./entry-row.js";
 
 let style: HTMLStyleElement;
 const host = document.createElement("div");
 
-/** A history row as `history.ts` `buildRow` assembles one. `history.test.ts`
- *  pins that this shape is the one the builder produces; this file owns what the
- *  stylesheet then does with it. */
-function mountRow(opts: { delete: boolean; detail?: boolean }): {
+const noop = (): void => undefined;
+
+/** A history row as `history.ts` `buildRow` assembles one: the same spec shape,
+ *  with the delete button in the actions slot. */
+function mountRow(opts: { delete: boolean; sub?: boolean }): {
   row: HTMLElement;
   open: HTMLElement;
   del: HTMLButtonElement | null;
@@ -32,54 +28,39 @@ function mountRow(opts: { delete: boolean; detail?: boolean }): {
   container.id = "history-table";
   container.className = "list-container";
 
-  const row = document.createElement("div");
-  row.className = "list-row history-table-row";
-  row.setAttribute("data-key", "s:sess_1");
-
-  const open = document.createElement("button");
-  open.type = "button";
-  open.className = "history-row-main";
-  open.setAttribute("aria-label", "Open Rebuild the timeline rail");
-
-  const kind = document.createElement("span");
-  kind.className = "history-kind history-kind-chat";
-  kind.textContent = "Chat";
-  const title = document.createElement("span");
-  title.className = "list-row-title";
-  const name = document.createElement("span");
-  name.className = "list-row-name";
-  name.textContent = "Rebuild the timeline rail";
-  title.append(name);
-  if (opts.detail !== false) {
-    const summary = document.createElement("span");
-    summary.className = "list-row-summary";
-    summary.textContent = "a one line summary of the conversation";
-    const facts = document.createElement("span");
-    facts.className = "history-facts";
-    facts.textContent = "opus · vibe · 12 turns";
-    title.append(summary, facts);
-  }
-  const meta = document.createElement("span");
-  meta.className = "list-row-meta";
-  meta.textContent = "10/09/2026, 18:36:21";
-  open.append(kind, title, meta);
-
   let del: HTMLButtonElement | null = null;
   if (opts.delete) {
     del = document.createElement("button");
     del.type = "button";
-    del.className = "history-delete";
+    del.className = "icon-btn entry-delete";
     del.setAttribute("data-history-delete", "s:sess_1");
     del.setAttribute("aria-label", "Delete Rebuild the timeline rail");
   }
 
-  row.append(open);
-  if (del !== null) {
-    row.append(del);
-  }
+  const row = entryRow({
+    key: "s:sess_1",
+    title: "Rebuild the timeline rail",
+    time: { ms: Date.now() - 90_000 },
+    sub:
+      opts.sub === false
+        ? undefined
+        : { kind: "line", text: "a one line summary of the conversation" },
+    actions: del === null ? undefined : [del],
+    open: { name: "Rebuild the timeline rail", onOpen: noop },
+  });
   container.appendChild(row);
   host.replaceChildren(container);
+  const open = row.querySelector<HTMLElement>("button.entry-open");
+  if (open === null) {
+    throw new Error("the builder produced no open control");
+  }
   return { row, open, del };
+}
+
+/** The row's content edge: the card's inset is the row's own and sits outside the
+ *  control. */
+function contentLeft(row: HTMLElement): number {
+  return row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft);
 }
 
 /** Whether a point activates the open control: a hit on any of its descendants
@@ -110,19 +91,16 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
     document.documentElement.dataset["pointer"] = tier;
   });
 
-  it("gives the open control the row's full height and its leading edge", () => {
+  it("gives the open control the row's full height and its content edge", () => {
     const { row, open } = mountRow({ delete: true });
     const r = row.getBoundingClientRect();
     const o = open.getBoundingClientRect();
-    // The row carries no inset of its own, so the control starts where the row
-    // does and is as tall as it is. Both halves are what an inset on the ROW
-    // would take away.
-    expect(o.left, "the control starts at the row's leading edge").toBeCloseTo(r.left, 0);
+    expect(o.left, "the control starts at the row's content edge").toBeCloseTo(contentLeft(row), 0);
     expect(o.top, "and at its top").toBeCloseTo(r.top, 0);
     expect(o.height, "and it is the row's whole height").toBeCloseTo(r.height, 0);
   });
 
-  it("covers all but the delete button's own column", () => {
+  it("covers all but the inset and the delete button's own column", () => {
     const { row, open, del } = mountRow({ delete: true });
     const r = row.getBoundingClientRect();
     const o = open.getBoundingClientRect();
@@ -145,10 +123,10 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
     const r = row.getBoundingClientRect();
     const cy = r.top + r.height / 2;
     // The four places the old band excluded: the row's own centre (which resolved
-    // to a summary span), the kind chip's gutter at the leading edge, the row's
-    // last line, and the date.
+    // to a summary span), the content's leading edge, the row's last line, and the
+    // time slot at the trailing end of the title line.
     expect(opens(open, r.left + r.width / 2, cy), "the row's centre").toBe(true);
-    expect(opens(open, r.left + 2, cy), "the leading edge").toBe(true);
+    expect(opens(open, contentLeft(row) + 2, cy), "the content's leading edge").toBe(true);
     expect(opens(open, r.left + r.width / 2, r.bottom - 2), "the last line").toBe(true);
     expect(opens(open, r.left + r.width / 2, r.top + 2), "the first line").toBe(true);
   });
@@ -165,13 +143,11 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
     expect(opens(open, cx, cy), "and the open control does not").toBe(false);
   });
 
-  it("fills the height of a ONE-LINE row, where the delete button sets it", () => {
-    // The title alone is shorter than the delete button's 44px touch target on a
-    // coarse pointer, so the row's height comes from the delete. Both are
-    // `button`s reading the same `--hit-floor`, which is what keeps the control
-    // level with it; centred at its content height instead it would leave a dead
-    // strip above and below, which is this file's shape one axis in.
-    const { row, open } = mountRow({ delete: true, detail: false });
+  it("fills the height of a ONE-LINE row, which is the tier's height like any other", () => {
+    // The row's height is the `--row-h` token, never its content, so a row with no
+    // subtitle is exactly as tall as one with, and the control spans all of it
+    // rather than centring at its text's height.
+    const { row, open } = mountRow({ delete: true, sub: false });
     const r = row.getBoundingClientRect();
     const o = open.getBoundingClientRect();
     expect(o.height, `control ${o.height} against row ${r.height}`).toBeCloseTo(r.height, 0);
@@ -179,14 +155,17 @@ describe.each(["fine", "coarse"] as const)("on a %s pointer", (tier) => {
     expect(opens(open, r.left + r.width / 2, r.bottom - 1), "and its bottom edge").toBe(true);
   });
 
-  it("reaches the trailing edge when the row has no delete button", () => {
+  it("reaches the content's trailing edge when the row has no delete button", () => {
     // A run still moving carries none (`buildDeleteButton` withholds it), and the
     // control grows into the space rather than leaving a dead strip.
     const { row, open, del } = mountRow({ delete: false });
     expect(del).toBeNull();
     const r = row.getBoundingClientRect();
     const o = open.getBoundingClientRect();
-    expect(o.right).toBeCloseTo(r.right, 0);
-    expect(opens(open, r.right - 2, r.top + r.height / 2), "the trailing edge opens").toBe(true);
+    const contentRight = r.right - parseFloat(getComputedStyle(row).paddingRight);
+    expect(o.right).toBeCloseTo(contentRight, 0);
+    expect(opens(open, contentRight - 2, r.top + r.height / 2), "the trailing edge opens").toBe(
+      true,
+    );
   });
 });

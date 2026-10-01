@@ -538,41 +538,51 @@ naive enable also silences the clarification round.`,
 		key:      "specPhaseCheckpoints",
 		door:     doorConnection,
 		resolver: resolverCapability,
-		send:     false,
-		because: `WITHHELD, pending a probe that prices it. specPhaseCheckpoints is a
-capability KAS lifts onto its agentContext at initialize
-(specPhaseCheckpoints: capabilities?.specPhaseCheckpoints) and reads as
-=== true when building the spec-mode prompt, where it selects a different
-workflow-selection process and injects a "# Phase Checkpoints" section.
+		value:    true,
+		send:     true,
+		because: `specPhaseCheckpoints is a capability KAS lifts onto its agentContext at
+initialize (specPhaseCheckpoints: capabilities?.specPhaseCheckpoints) and
+reads as === true when building the spec-mode prompt, where it selects a
+different workflow-selection process and injects a "# Phase Checkpoints"
+section.
 
 It is a promise about the CLIENT, not a feature request: declaring it
 tells the agent to stop at phase boundaries and expect the client to
-carry the user across them. marotte has no spec surface to stop at, so
-the checkpoints would land as prose in a chat transcript and the agent
-would wait for an affordance that does not exist.
+carry the user across them. The checkpoint arrives as an ordinary
+_kiro/userInput ask, so the interaction dock renders it and the
+answer rides user_input_response like any other.
 
-Recorded rather than left absent because the census reads it off the
-bundle every version, and an unclaimed line invites somebody to claim it.
-The order is: a spec surface first, then this.`,
+The promise is now kept, which is why this is sent: the spec tab
+(static-src/spec-view.ts) renders the document under review and mounts a
+dock host of its own, so the ask and the document are one tab apart. The
+one contract the flag could not be flipped without: after tasks.md the
+checkpoint offers "Run required tasks", "Run required and optional
+tasks" and "Not now", and KAS's prompt tells the agent that the CLIENT
+carries a Run answer out and then ends the turn — so the page dispatches
+its own Run all for both (the second with the not-marked-optional clause
+dropped), or the reader picks Run and the turn ends with nothing running.`,
 	},
 	{
 		key:      "requirementsAnalysis",
 		door:     doorConnection,
 		resolver: resolverCapability,
-		send:     false,
-		because: `WITHHELD, pending a probe that prices it. requirementsAnalysis is the
-sibling of specPhaseCheckpoints on the same lift
-(requirementsAnalysis: capabilities?.requirementsAnalysis, also read off
-clientMeta) and the same === true gate in the spec-mode prompt builder,
-where it turns on a requirements-analysis step ahead of the plan.
+		value:    true,
+		send:     true,
+		because: `requirementsAnalysis is the sibling of specPhaseCheckpoints on the same
+lift (requirementsAnalysis: capabilities?.requirementsAnalysis, also read
+off clientMeta) and the same === true gate in the spec-mode prompt
+builder, where it turns on a requirements-analysis step ahead of the plan
+and adds an "Analyze requirements" option to the requirements-phase
+checkpoint.
 
-Same reasoning and the same blocker: it reshapes what a spec-mode turn
-produces, for a spec surface marotte does not ship. Withholding leaves
-the prompt on the arm marotte can actually render.
+It needs NO client work of its own: the analysis is a tool the agent
+calls and a document it rewrites, so what renders for it is the
+requirements document the spec tab already shows and the extra option on
+a checkpoint card the dock already draws.
 
-Both spec capabilities are cheap to flip once there is somewhere for
-their output to go, and neither is a security decision, which is why they
-are recorded together as a pair rather than argued separately.`,
+Both spec capabilities are sent together for the reason they were
+withheld together: they are two thirds of one spec-mode prompt arm, and
+neither is a security decision.`,
 	},
 	{
 		key:      "policyPreset",

@@ -1,36 +1,59 @@
 // ---------------------------------------------------------------------------
-// A PAGED transcript numbers its turns SESSION-ABSOLUTELY.
+// A CARD'S ORDINAL AND ITS ANCHOR ID BOTH COME FROM `turn_open.n`.
 //
-// The store is a newest-first window, so `projectTurns`' own scan starts at the
-// window and cannot know what precedes it. Told nothing, it numbered turn 1 of the
-// PAGE as turn 1 of the session: a card reading `#1` beside a rail marker reading
-// `#14`, and — because the offset moves every time an older page lands — a number
-// that CHANGED under the reader mid-scroll. The window response now carries the
-// left edge (`turn_offset` / `turn_segment_closed`) and `store.ts turnBaseOf` feeds
-// it to the paint pass.
+// The turn-base mechanism this file was written for is DELETED. The store held a
+// newest-first window of MESSAGES, `projectTurns`' scan could not know what preceded
+// it, and told nothing it numbered turn 1 of the PAGE as turn 1 of the session — so
+// the window response carried its left edge (`turn_offset` / `turn_segment_closed`)
+// and `store.ts turnBaseOf` fed that base to the paint pass. Measured: `turn_offset`,
+// `turn_segment_closed`, `turnBaseOf`, `TurnWindowBase` and `WHOLE_SESSION` appear in
+// NO production module — two comments mentioning the old names are the only hits. The
+// appender assigns `n` at the turn's open, so an ordinal is session-absolute in every
+// window and nothing carries a base across a page edge.
 //
-// REAL PAINT over REAL layout, following messages-send-pin.test.ts's harness: what
-// is under test is what the renderer WRITES (`.turn-n` text, the card's anchor id,
-// the folded row's search-hit count), and none of those is reachable from the
-// projection alone. The second case is the one that matters most and the one a
-// pure-projection test cannot express at all: it repaints over an older page and
-// asserts the cards already on screen keep their numbers.
+// WHAT SURVIVES IS THE JOIN, and it is pinned nowhere else: `messages.ts` reads that
+// ordinal into the header AND into `turnAnchorID`, so a `#turn-N` fragment names the
+// turn the rail's own session-wide index calls by that number. The two ends are each
+// covered already — `turns.node.test.ts` pins `projectTurns` taking the ordinal from
+// `turn_open.n` rather than the window's position, and `fundamentals/turn-header.test.ts`
+// pins the header rendering `#N` from the number it is handed — and neither can see a
+// paint that hands one of them a different number from the other.
 //
-// EVERY WAIT POLLS AN OBSERVABLE, for that file's reason: a fixed sleep here would
-// have to cover a real paint and real layout on a box CI packs onto four cores.
+// TWO ORACLES DROPPED OUT LOUD:
+//
+//   (1) "keeps every visible turn's number when an older page is prepended", which was
+//   this file's centrepiece. Its mechanism is the base being REPLACED per page, and
+//   there is no base: a prepend adds older turns carrying their own `n` and recomputes
+//   nothing, so the case is true by construction. Its one residual killer — a renderer
+//   deriving the number positionally, which a prepend would renumber — is killed by
+//   case 1 below (a window starting at 12 reads `#1` under that mutant) and, at the
+//   projection, by `turns.node.test.ts`.
+//
+//   (2) "resolves a folded row's search-hit count against the server's absolute turn".
+//   The defect it pinned is unreachable AND its fixture is unrepresentable: there is no
+//   window-local `n` to look an absolute key up with, and `Hit` is reshaped to
+//   `{turn_id, entry_id, segment_kind, offset, segment_len}` with no `turn` member to
+//   stage. HAND-OFF, by file and field: `chat-search.ts` still keys `countsByTurn` by
+//   `h.turn` (its own diagnostic, and that module is not this fence's), and
+//   `messages.ts:1467` still asks `searchHitCount(t.n)`. When that keying moves to
+//   `turn_id` the call site moves to `t.id`, and the badge — that the count lands on the
+//   turn the server said matched and on no other — wants a case then.
+//
+// REAL PAINT over the real renderer, because what is under test is what `messages.ts`
+// WRITES; no geometry is staged, since neither case reads a box.
 // ---------------------------------------------------------------------------
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
-import type { Message, Session } from "./types.js";
+import { makeSession } from "./__test-helpers__/model.js";
+import type { TurnState } from "./types.js";
+import type { Entry } from "./wire/types.gen.js";
 
-// The DOM the renderer's import graph resolves at load, nested the way the page
-// nests it.
+// The DOM the renderer's import graph resolves at load, nested the way the page nests
+// it: `#messages-wrap` is the scroller inside the positioned wrapper.
 const outer = document.createElement("div");
 outer.id = "messages-wrap-outer";
-outer.style.cssText = "position:relative;";
 const wrap = document.createElement("div");
 wrap.id = "messages-wrap";
-wrap.style.cssText = "height:300px;overflow-y:auto;overflow-anchor:none;position:relative;";
 const messagesEl = document.createElement("div");
 messagesEl.id = "messages";
 wrap.appendChild(messagesEl);
@@ -49,70 +72,54 @@ for (const [id, tag] of [
   }
   document.body.appendChild(e);
 }
-// Deterministic card boxes: production gets them from a stylesheet.
-const style = document.createElement("style");
-style.textContent = `.turn{block-size:200px}`;
-document.head.appendChild(style);
 
-// The rail's session-wide index is its own fetch and the pagination door is a
-// network read; neither is what these cases are about.
+// The rail's session-wide index is its own fetch and is not what these cases are
+// about. Spy-wrapped rather than replaced: this module has a dozen other exports the
+// graph links.
 vi.mock("./api-client.js", { spy: true });
-vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
 const store = await import("./store.js");
-const { observeStamp } = await import("./subject-versions.js");
 const messages = await import("./messages.js");
-const search = await import("./chat-search.js");
-const { apiGet, apiGetTyped } = await import("./api-client.js");
+const { apiGet } = await import("./api-client.js");
 
 messages.mountChatView();
 
-function user(id: string): Message {
-  return { id, role: "user", ts: 1, content: `prompt ${id}` } as Message;
-}
-
-function assistant(id: string, text: string): Message {
+function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
-    id,
-    role: "assistant",
-    ts: 2,
-    content: text,
-    blocks: [{ type: "text", text }],
-  } as Message;
+    id: `${turnID}-e${String(at)}`,
+    turn: turnID,
+    kind,
+    seq: at,
+    ts: at + 1,
+    payload,
+  } as Entry;
 }
 
-/** Turn `n` as the pair of messages that make one: the user message that OPENS it,
- *  whose id is the reconcile key, and its reply. */
-function turnPair(n: number): Message[] {
-  return [user(`u${String(n)}`), assistant(`a${String(n)}`, `reply ${String(n)}`)];
+/** A reader-opened turn at session ordinal `n`: the `turn_open` the appender stamped,
+ *  one text entry so the body has something, and its close. */
+function promptTurn(n: number, request: string): Entry[] {
+  const id = `t${String(n)}`;
+  return [
+    sealed(id, 0, "turn_open", {
+      prompt: { id: `${id}-p`, text: request },
+      source: "prompt",
+      n,
+    }),
+    sealed(id, 1, "text", { text: `reply ${String(n)}` }),
+    sealed(id, 2, "turn_close", { outcome: "completed" }),
+  ];
 }
 
-function pairs(from: number, to: number): Message[] {
-  const out: Message[] = [];
-  for (let n = from; n <= to; n++) {
-    out.push(...turnPair(n));
-  }
-  return out;
-}
-
-/** A session holding a WINDOW: `turn_offset` is what the server answered for its
- *  oldest message, and `message_count` is the whole chat's, so `has_more` is honest.
- *  `residency` is `loaded`, or an activation refetches and the mocked loader
- *  answers nothing. */
-function windowed(id: string, msgs: Message[], offset: number, total: number): Session {
-  observeStamp({ kind: "chat", ref: id, version: "1" });
-  return {
-    id,
-    name: id,
-    messages: msgs,
-    message_count: total,
-    has_more: msgs.length < total,
-    turn_offset: offset,
-    turn_segment_closed: false,
-    residency: "loaded",
-    thinking: false,
-    working_label: "",
-  } as unknown as Session;
+/** An AGENT-INITIATED turn at ordinal `n`: no `prompt` on its `turn_open`, so the header
+ *  has no request to render and `turnIsDrawn` admits it on its body's text entry. The
+ *  population case 1 cannot reach. */
+function agentTurn(n: number): Entry[] {
+  const id = `t${String(n)}`;
+  return [
+    sealed(id, 0, "turn_open", { source: "agent", n }),
+    sealed(id, 1, "text", { text: `unprompted ${String(n)}` }),
+    sealed(id, 2, "turn_close", { outcome: "completed" }),
+  ];
 }
 
 let seq = 0;
@@ -120,7 +127,7 @@ let seq = 0;
  *  active, so a reused id paints nothing and the case runs against an empty view. */
 function nextChat(): string {
   seq += 1;
-  return `t${String(seq)}`;
+  return `n${String(seq)}`;
 }
 
 async function until(pred: () => boolean, what: string): Promise<void> {
@@ -148,133 +155,79 @@ function anchorIDs(): string[] {
   return cards().map((c) => c.id);
 }
 
-/** The search-hit badge each card advertises, keyed by reconcile key. Empty string
- *  is what `setHitCount` writes for a turn with no hits. */
-function hitBadges(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const c of cards()) {
-    const key = c.getAttribute("data-reconcile-key");
-    if (key !== null) {
-      out[key] =
-        c.querySelector<HTMLElement>(":scope > .turn-header > .turn-head-row > .turn-hit-count")
-          ?.textContent ?? "MISSING";
+/** Paint `turnEntries` as chat `id`'s window and wait for the cards to mount.
+ *
+ *  `turn_count` is the WHOLE chat's, so a window of three turns out of fourteen is
+ *  honest about its left edge — which is the shape the retired base mechanism existed
+ *  for and the one an absolute ordinal has to be right about without it. */
+async function paint(
+  id: string,
+  turnEntries: readonly (readonly Entry[])[],
+  total: number,
+): Promise<void> {
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const entries of turnEntries) {
+    const first = entries[0];
+    if (first === undefined) {
+      continue;
     }
+    turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+    order.push(first.turn);
   }
-  return out;
-}
-
-/** Every card's number, keyed by its reconcile key, so two paints can be compared
- *  across a prepend that changed which cards exist. */
-function numbersByKey(): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const c of cards()) {
-    const key = c.getAttribute("data-reconcile-key");
-    if (key !== null) {
-      out.set(key, c.querySelector(".turn-n")?.textContent ?? "");
-    }
-  }
-  return out;
-}
-
-/** Paint `msgs` as chat `id`'s window and wait for the cards to mount. */
-async function paint(id: string, msgs: Message[], offset: number, total: number): Promise<void> {
-  const expected = msgs.filter((m) => m.role === "user").length;
-  store.setSessions([windowed(id, msgs, offset, total)]);
+  store.setSessions([
+    {
+      ...makeSession({ id, name: id, has_more: order.length < total }),
+      turns,
+      turn_order: order,
+      turn_count: total,
+    },
+  ]);
   store.setActive(id);
-  await until(() => cards().length === expected, `${String(expected)} cards to mount for ${id}`);
-}
-
-/** What `loadMessages(id, oldest.id)` leaves behind, applied the way that function
- *  applies it: the older page in FRONT of the window, the base replaced by the
- *  server's answer for the NEW oldest message, then the `load` bump the loader ends
- *  on. Not a second `paint`, deliberately — `setActive` is a no-op for the chat
- *  already active, so a repaint has to come from the store mutation, which is also
- *  what production does. */
-async function prependPage(id: string, older: Message[], offset: number): Promise<void> {
-  const s = store.get(id);
-  if (s === undefined) {
-    throw new Error(`no session for ${id}`);
-  }
-  const expected = [...older, ...s.messages].filter((m) => m.role === "user").length;
-  s.messages = [...older, ...s.messages];
-  s.turn_offset = offset;
   store.bumpMessages(id, "load");
-  await until(() => cards().length === expected, `${String(expected)} cards after the prepend`);
+  await until(
+    () => cards().length === order.length,
+    `${String(order.length)} cards to mount for ${id}`,
+  );
 }
 
 beforeEach(() => {
   vi.mocked(apiGet).mockResolvedValue({ turns: [] });
-  search.resetServerSearch();
 });
 
 describe("a paged transcript's rendered turn numbers", () => {
-  it("numbers the window from its absolute ordinal, not from 1", async () => {
-    // Turns 12-14 of a 14-turn chat: 11 precede the window, so the oldest card the
-    // reader can see is #12. Base-less, all three read #1..#3.
+  it("numbers a window from `turn_open.n`, and the anchor id agrees", async () => {
+    // Turns 12-14 of a 14-turn chat: eleven precede the window, so the oldest card the
+    // reader can see is #12. A renderer counting the window's own positions reads
+    // #1..#3, which is the defect the deleted base mechanism existed to prevent and
+    // which the appender's own `n` now makes unreachable.
     const id = nextChat();
-    await paint(id, pairs(12, 14), 11, 28);
+    await paint(
+      id,
+      [promptTurn(12, "twelfth"), promptTurn(13, "thirteenth"), promptTurn(14, "last")],
+      14,
+    );
 
     expect(renderedNumbers()).toEqual(["#12", "#13", "#14"]);
     // The anchor moves with the number, so a `#turn-{n}` fragment names the turn the
-    // rail's own session-wide index calls by that number.
+    // rail's own session-wide index calls by that number. Asserted beside the header's
+    // text because ONE paint writes both and nothing else compares them.
     expect(anchorIDs()).toEqual(["turn-12", "turn-13", "turn-14"]);
   });
 
-  it("keeps every visible turn's number when an older page is prepended", async () => {
-    // The property the whole base mechanism exists for. A window-local scan renumbers
-    // on every prepend, so the card the reader was looking at silently became a
-    // different turn — and the rail marker it was clicked from stopped matching it.
+  it("takes an agent-initiated turn's ordinal from `n` as well", async () => {
+    // The header's other branch: no `prompt` on the `turn_open`, so there is no request
+    // to read a number out of and `data-trigger` says the trigger was the system's.
+    // A join that derived the ordinal from the trigger has nothing to derive it from
+    // here, so this is the case that says it is read off `n` rather than off the prompt.
     const id = nextChat();
-    await paint(id, pairs(12, 14), 11, 28);
-    const before = numbersByKey();
-    expect([...before.keys()]).toEqual(["u12", "u13", "u14"]);
+    await paint(id, [promptTurn(7, "seventh"), agentTurn(8)], 8);
 
-    // Turns 9-11 arrive in front, and the server's answer for the new oldest message
-    // (u9) is that 8 turns precede it.
-    await prependPage(id, pairs(9, 11), 8);
-
-    expect(renderedNumbers()).toEqual(["#9", "#10", "#11", "#12", "#13", "#14"]);
-    const after = numbersByKey();
-    for (const [key, n] of before) {
-      expect(`${key} was ${n} and is ${after.get(key) ?? "gone"}`).toBe(
-        `${key} was ${n} and is ${n}`,
-      );
-    }
-  });
-
-  it("resolves a folded row's search-hit count against the server's absolute turn", async () => {
-    // `chat-search.ts` keys `countsByTurn` by `Hit.turn`, which the server
-    // computes over the WHOLE message array. A window-local `n` looked that absolute
-    // key up, so a folded row on any paged chat advertised the wrong count — 0 for a
-    // turn holding matches, and another turn's total for one that did not.
-    const id = nextChat();
-    // Two matches inside turn 13, which is the SECOND card of the window — so a
-    // window-local scan would put this count on the card the server called turn 12.
-    const hit = (offset: number): Record<string, unknown> => ({
-      turn: 13,
-      turn_message_id: "u13",
-      message_id: "a13",
-      excerpt: "reply 13",
-      role: "assistant",
-      segment_kind: "content",
-      offset,
-      segment_len: 8,
-    });
-    // Through the caller's OWN decoder, so the staged envelope is held to the wire
-    // shape rather than passing on a cast.
-    vi.mocked(apiGetTyped).mockImplementation(((_path: string, decode: (v: unknown) => unknown) =>
-      Promise.resolve(
-        decode({ matches: [hit(0), hit(6)], scanned: 28, matched: 2, truncated: false }),
-      )) as typeof apiGetTyped);
-    await search.runServerSearch(id, "reply");
-    expect(search.searchHitCount(13)).toBe(2);
-    // The rail's own index fetch runs during the paint below and must not answer
-    // with hits.
-    vi.mocked(apiGet).mockResolvedValue({ turns: [] });
-
-    await paint(id, pairs(12, 14), 11, 28);
-
-    // The count lands on the turn the SERVER said matched, and on no other.
-    expect(hitBadges()).toEqual({ u12: "", u13: "2", u14: "" });
+    expect(renderedNumbers()).toEqual(["#7", "#8"]);
+    expect(anchorIDs()).toEqual(["turn-7", "turn-8"]);
+    const trigger = cards().map(
+      (c) => c.querySelector<HTMLElement>(":scope > .turn-header")?.dataset["trigger"] ?? "",
+    );
+    expect(trigger).toEqual(["user", "system"]);
   });
 });

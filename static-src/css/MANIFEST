@@ -51,20 +51,22 @@
 02-reset.css
 03-base.css
 10-shell-app.css
+# The page-list system: the shell, the segmented switcher and the row family
+# every full-page list draws from. EARLY in the feature range for
+# 10-shell-app.css's own reason — every rule in it is a base the page slices
+# (17-settings, 18-pages, 28-docs) override by coming later at equal specificity.
+11-page-lists.css
 11-popups.css
 12-chat.css
 12-tabs.css
 13-messages.css
-# The capped-snapshot note. Its own slice, immediately after the messages skin so
-# it wins a tie by source order; 13-messages.css is the natural home and was held
-# open by a concurrent session.
-13-truncation.css
 29-turns.css
 23-shortcuts.css
 24-find.css
 14-tools.css
 27-run-card.css
 31-exec-view.css
+32-spec.css
 15-ansi.css
 15-input.css
 26-dock.css

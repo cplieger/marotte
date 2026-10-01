@@ -20,8 +20,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 // TestSendFailureLogCarriesTheTagNotTheEndpoint pins the log-key contract on the

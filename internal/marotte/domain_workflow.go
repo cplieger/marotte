@@ -49,9 +49,10 @@ type RunStartedPayload struct {
 type RunProgressPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	NodeID     string `json:"node_id,omitempty"`
-	// NodePath addresses ONE execution of a node, joined with "/" — the same
-	// spelling RunStepPayload.NodePath uses. Empty on the run-level and
-	// shape-changing kinds, which is what tells the client to refetch instead.
+	// NodePath addresses ONE execution of a node, joined with "/", spelling an
+	// iteration container `iter-<n>` as the run's entry log does. Empty on the
+	// run-level and shape-changing kinds, which is what tells the client to
+	// refetch instead.
 	NodePath string `json:"node_path,omitempty"`
 	// Status is the node's status after this frame, in KAS's own NodeState
 	// vocabulary so it drops straight onto the cached tree.
@@ -80,37 +81,6 @@ type RunFinishedPayload struct {
 	Name       string `json:"name,omitempty"`
 }
 
-// RunStepKind discriminates what a run_step frame carries: the three block kinds a
-// transcript already renders, because a step's content IS a transcript.
-type RunStepKind string
-
-// The three run-step kinds.
-const (
-	// RunStepText is a delta of the step agent's own prose.
-	RunStepText RunStepKind = "text"
-	// RunStepThinking is a delta of its reasoning.
-	RunStepThinking RunStepKind = "thinking"
-	// RunStepTool is one tool call, whole: sent on create and on every update,
-	// folded server-side, so a client renders the frame it holds and accumulates
-	// nothing. The one surface with no endpoint to refetch.
-	RunStepTool RunStepKind = "tool"
-)
-
-// RunStepPayload is the payload for type="run_step".
-//
-// NodePath, not NodeID, because a repeat's iterations share a node id and two
-// passes of a loop body would write into each other's rows. NOT byte-identical to
-// `inspect`'s state tree: KAS spells an iteration container `iter-<n>` here and
-// `<repeatId>#<n>` there, so the client translates. ToolCall is whole because a
-// parentless run has no chat and so no buffer to fold into.
-type RunStepPayload struct {
-	ToolCall   *ToolCall   `json:"tool_call,omitempty"`
-	WorkflowID string      `json:"workflow_id"`
-	NodePath   string      `json:"node_path"`
-	Kind       RunStepKind `json:"kind"`
-	Delta      string      `json:"delta,omitempty"`
-}
-
 // RunStepTranscriptState is the verdict GET /api/runs/{id}/steps/{path...} answers
 // with. A registered wire enum, so the three values have one definition across both
 // languages and a client's branch over them is total. Three rather than a
@@ -120,7 +90,7 @@ type RunStepTranscriptState string
 
 // The three step-transcript verdicts.
 const (
-	// RunStepTranscriptReady: the transcript was read. Messages may still be EMPTY,
+	// RunStepTranscriptReady: the transcript was read. Entries may still be EMPTY,
 	// which is its own fact — the step ran and produced no prose.
 	RunStepTranscriptReady RunStepTranscriptState = "ready"
 	// RunStepTranscriptGone: KAS holds no session for the step, so there is nothing
@@ -131,9 +101,30 @@ const (
 	RunStepTranscriptUnavailable RunStepTranscriptState = "unavailable"
 )
 
-// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply, projected from
-// KAS's replay per request and PERSISTED BY NOTHING. It exists because a step's
-// transcript is on no other endpoint: `inspect` carries what a step DECLARED.
+// RunStepTranscriptSource names where a step transcript was read from. A registered
+// wire enum: the two sources answer a LIVE step differently (the log answers `ready`
+// with the turn's sealed entries and its open tails; the replay answers
+// `unavailable`, because session/load on a live session fails), and the pane reads
+// the source to know which it got.
+type RunStepTranscriptSource string
+
+// The two step-transcript sources.
+const (
+	// RunStepTranscriptSourceLog: the run's own entry log, the primary read for
+	// every run written after the cutover.
+	RunStepTranscriptSourceLog RunStepTranscriptSource = "log"
+	// RunStepTranscriptSourceReplay: KAS's replay of the step's own session,
+	// projected into the same shape. The fallback for a path the log holds no turn
+	// for: a run predating the cutover, or one launched from the TUI. Lossy (no
+	// diffs, no terminal blocks, no model id).
+	RunStepTranscriptSourceReplay RunStepTranscriptSource = "replay"
+)
+
+// RunStepTranscript is GET /api/runs/{id}/steps/{path...}'s reply: every turn of
+// the run's log whose turn_open.node_path is the requested path, turn_open and
+// turn_close included, in file order, plus the open tails of any such turn still
+// open; or, when the log holds no turn for the path, KAS's replay projected into
+// the same shape. PERSISTED BY NOTHING beyond the log itself.
 //
 // NO `omitempty` on ANY field, deliberately: the generator emits a REQUIRED
 // TypeScript field without it, which stops a client inventing a fallback for the
@@ -141,12 +132,20 @@ const (
 type RunStepTranscript struct {
 	// WorkflowID and NodePath echo the request, so a client holding several reads in
 	// flight tells the answers apart without correlating.
-	WorkflowID string                 `json:"workflow_id"`
-	NodePath   string                 `json:"node_path"`
-	State      RunStepTranscriptState `json:"state"`
-	// Messages is the step's transcript, filtered to the ASSISTANT rows. Empty on any
-	// state but ready, and legitimately empty on ready.
-	Messages []Message `json:"messages"`
+	WorkflowID string                  `json:"workflow_id"`
+	NodePath   string                  `json:"node_path"`
+	State      RunStepTranscriptState  `json:"state"`
+	Source     RunStepTranscriptSource `json:"source"`
+	// Entries is the step's transcript. Empty on any state but ready, and
+	// legitimately empty on ready.
+	Entries []Entry `json:"entries"`
+	// OpenEntries holds the in-memory tails of the path's open turns: empty on a
+	// settled path and on the replay source.
+	OpenEntries []OpenEntry `json:"open_entries"`
+	// Subject is one run_turn stamp per open turn of the requested path, read under
+	// the run store's lock with the entries it certifies; empty on a settled path and
+	// on the replay source, which no subject versions.
+	Subject []*SubjectStamp `json:"subject"`
 }
 
 // RunInputNeededPayload is the payload for type="run_input_needed": a workflow STEP

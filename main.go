@@ -12,9 +12,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/toolbelt/v3"
 	"github.com/cplieger/marotte/internal/composition"
 	"github.com/cplieger/marotte/internal/workspace"
+	"github.com/cplieger/toolbelt/v3"
 )
 
 // There are no compile-time interface assertions here any more, and no `var _ =`

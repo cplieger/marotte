@@ -21,8 +21,8 @@ import (
 )
 
 // fakeBroadcaster captures broadcasts for assertions. Access is guarded
-// by mu so concurrent appends from parallel AppendMessage goroutines
-// don't race the slice header.
+// by mu so concurrent appends from parallel Append goroutines don't race
+// the slice header.
 type fakeBroadcaster struct {
 	events []marotte.ServerEvent
 	count  atomic.Int32
@@ -67,44 +67,13 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 	return s, b
 }
 
-// newCappedTestStore is newTestStore with an injected chat-file cap, so the
-// size-refusal paths are reachable at a few KiB instead of the derived cap.
-func newCappedTestStore(t *testing.T, capBytes int64) *Store {
-	t.Helper()
-	s, err := NewStore(t.TempDir(), WithChatFileCap(capBytes))
-	if err != nil {
-		t.Fatalf("NewStore(WithChatFileCap(%d)): %v", capBytes, err)
-	}
-	return s
-}
-
-// writeOversizeChat writes a VALID chat file whose encoded size exceeds capBytes, so a
-// refusal can only come from the size gate. Real bytes rather than a sparse os.Truncate:
-// the header path streams and parses, so a file of NUL bytes would be refused as
-// malformed JSON and the test would pass with no size gate at all.
-func writeOversizeChat(t *testing.T, path string, capBytes int64) {
-	t.Helper()
-	id := strings.TrimSuffix(filepath.Base(path), chatFileSuffix)
-	c := &marotte.Chat{ID: id, Name: strings.Repeat("n", int(capBytes)+1)}
-	data, err := json.Marshal(c)
-	if err != nil {
-		t.Fatalf("Setup: marshal oversize chat: %v", err)
-	}
-	if int64(len(data)) <= capBytes {
-		t.Fatalf("Setup: fixture is %d bytes, needs to exceed the %d-byte cap", len(data), capBytes)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("Setup: write oversize chat: %v", err)
-	}
-}
-
 // ageChat backdates a chat so it is eligible for purge, writing BOTH its
 // UpdatedAt and its mtime. Purge ages from the chat's own UpdatedAt — its last
 // activity — so aging the mtime alone does not make an entry purgeable; mtime is
 // written too because it is the fallback for a chat that cannot be read.
 func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	t.Helper()
-	path := filepath.Join(s.dir, id+chatFileSuffix)
+	path := filepath.Join(s.dir, id, headerFileName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read chat %s: %v", id, err)
@@ -396,93 +365,6 @@ func TestList_SkipsMalformedChatFile(t *testing.T) {
 	}
 }
 
-// --- AppendMessage ---
-
-func TestAppendMessage_AddsAndBroadcasts(t *testing.T) {
-	s, b := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	b.reset()
-
-	msg := &marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: "hi"}
-	if err := s.AppendMessage(t.Context(), "c1", msg); err != nil {
-		t.Fatalf("AppendMessage error = %v", err)
-	}
-
-	got, _ := s.Get(t.Context(), "c1")
-	if len(got.Messages) != 1 || got.Messages[0].Content != "hi" {
-		t.Errorf("messages = %+v", got.Messages)
-	}
-	if got.Messages[0].Ts == 0 {
-		t.Error("Ts not auto-filled")
-	}
-	// Two events: chat_updated (from Mutate's save-success broadcast)
-	// then message_appended (fired after Mutate returns, so clients
-	// never see a message echo referencing content that wasn't saved).
-	evs := b.snapshot()
-	if len(evs) != 2 {
-		t.Fatalf("events = %+v", evs)
-	}
-	if evs[0].Type != "chat_updated" {
-		t.Errorf("first event = %q, want chat_updated", evs[0].Type)
-	}
-	if evs[1].Type != "message_appended" {
-		t.Errorf("second event = %q, want message_appended", evs[1].Type)
-	}
-}
-
-func TestAppendMessage_NoOpOnMissingChat(t *testing.T) {
-	s, b := newTestStore(t)
-	err := s.AppendMessage(t.Context(), "nonexistent", &marotte.Message{ID: "m1", Role: marotte.RoleUser})
-	if err != nil {
-		t.Errorf("error on missing chat: %v", err)
-	}
-	if len(b.events) != 0 {
-		t.Errorf("events: %+v", b.events)
-	}
-}
-
-// --- UpdateMessage ---
-
-func TestUpdateMessage_MutatesInPlace(t *testing.T) {
-	s, b := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.AppendMessage(t.Context(), "c1", &marotte.Message{ID: "m1", Role: marotte.RoleAssistant, Content: "old"})
-	b.reset()
-
-	err := s.UpdateMessage(t.Context(), "c1", "m1", func(m *marotte.Message) { m.Content = "new" })
-	if err != nil {
-		t.Fatalf("UpdateMessage error = %v", err)
-	}
-	got, _ := s.Get(t.Context(), "c1")
-	if got.Messages[0].Content != "new" {
-		t.Errorf("content = %q", got.Messages[0].Content)
-	}
-	// Two events: chat_updated (from Mutate's save-success broadcast)
-	// then message_updated (fired after Mutate returns — same
-	// save-before-broadcast discipline as AppendMessage).
-	evs := b.snapshot()
-	if len(evs) != 2 {
-		t.Fatalf("events: %+v", evs)
-	}
-	if evs[0].Type != "chat_updated" {
-		t.Errorf("first event = %q, want chat_updated", evs[0].Type)
-	}
-	if evs[1].Type != "message_updated" {
-		t.Errorf("second event = %q, want message_updated", evs[1].Type)
-	}
-}
-
-func TestUpdateMessage_NoOpOnMissingMessage(t *testing.T) {
-	s, b := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	b.reset()
-
-	_ = s.UpdateMessage(t.Context(), "c1", "nonexistent", func(*marotte.Message) {})
-	if evs := b.snapshot(); len(evs) != 0 {
-		t.Errorf("events: %+v", evs)
-	}
-}
-
 // --- Delete ---
 
 func TestDelete_RemovesFileAndBroadcasts(t *testing.T) {
@@ -535,7 +417,6 @@ func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	// a persisted write.
 	_, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, exists bool) bool {
 		c.Name = "resurrected"
-		c.Messages = append(c.Messages, marotte.Message{Role: marotte.RoleUser, Content: "ghost"})
 		return true
 	})
 	if !errors.Is(err, ErrTombstoned) {
@@ -594,29 +475,23 @@ func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
 	}
 }
 
-func TestAppendMessage_OnTombstonedChatIsRefused(t *testing.T) {
+func TestAppend_OnTombstonedChatIsRefused(t *testing.T) {
 	s, b := newTestStore(t)
 	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	_ = s.Delete(t.Context(), "c1")
 	b.reset()
 
-	// Mutate's tombstone check runs before the mutator when the chat
-	// doesn't exist, so AppendMessage's `if !exists { return false }`
-	// early-return never fires here — the tombstone guard short-circuits
-	// first. This test pins that path: after Delete, AppendMessage writes
-	// nothing, emits nothing, and PROPAGATES the refusal, so a late
-	// handler cannot read the dropped message as appended.
-	err := s.AppendMessage(t.Context(), "c1", &marotte.Message{Role: marotte.RoleUser, Content: "ghost"})
+	// A late handler racing the delete appends nothing, emits nothing, and gets
+	// the refusal back, so it cannot read the dropped entry as persisted.
+	err := s.Append(t.Context(), "c1", entryOf("t-ghost", "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "ghost"}))
 	if !errors.Is(err, ErrTombstoned) {
-		t.Fatalf("AppendMessage error = %v, want ErrTombstoned", err)
+		t.Fatalf("Append error = %v, want ErrTombstoned", err)
 	}
 	if _, ok := s.Get(t.Context(), "c1"); ok {
-		t.Error("chat was recreated via AppendMessage after delete")
+		t.Error("chat was recreated via Append after delete")
 	}
-	for _, e := range b.snapshot() {
-		if e.Type == "message_appended" || e.Type == "chat_created" {
-			t.Errorf("unexpected event: %+v", e)
-		}
+	if n := len(b.snapshot()); n != 0 {
+		t.Errorf("events after a refused append = %d, want 0: %+v", n, b.snapshot())
 	}
 }
 
@@ -624,11 +499,10 @@ func TestAppendMessage_OnTombstonedChatIsRefused(t *testing.T) {
 
 func TestHandleList_ReturnsHeaders(t *testing.T) {
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "One"
-		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: "x"}}
-		return true
-	})
+	openPromptTurn(t, s, "c1", "m-1")
+	if err := s.WriteCounters(t.Context(), "c1"); err != nil {
+		t.Fatalf("WriteCounters: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats", nil)
 	rec := httptest.NewRecorder()
@@ -638,169 +512,12 @@ func TestHandleList_ReturnsHeaders(t *testing.T) {
 		t.Fatalf("code = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `"message_count":1`) {
-		t.Errorf("body = %q", body)
+	if !strings.Contains(body, `"turn_count":1`) {
+		t.Errorf("body = %q, want the header's turn_count", body)
 	}
-	// Header response should NOT include raw messages.
-	if strings.Contains(body, "messages") && strings.Contains(body, `"role":"user"`) {
-		t.Errorf("messages leaked into list response: %q", body)
-	}
-}
-
-func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
-	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "One"
-		c.Messages = []marotte.Message{
-			{ID: "m1", Role: marotte.RoleUser, Content: "a", Ts: 100},
-			{ID: "m2", Role: marotte.RoleAssistant, Content: "b", Ts: 200},
-		}
-		return true
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-
-	if rec.Code != 200 {
-		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `"role":"user"`) || !strings.Contains(body, `"role":"assistant"`) {
-		t.Errorf("missing messages: %q", body)
-	}
-}
-
-// TestHandleOne_PaginationSurvivesUnorderedTimestamps pins the two states that
-// made a `?before=<ts>` cursor lose a page, both reachable on the real wire.
-//
-// Message.Ts is not non-decreasing across the slice: a sender stamps it outside
-// the per-chat lock the append takes, so two writers can stamp in one order and
-// append in the other, and a replayed compaction event deliberately reuses its
-// predecessor's exact Ts, so a tie group always exists. Both cases assert one
-// property: paging back from the newest window skips nothing.
-func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
-	cases := []struct {
-		name     string
-		msgs     []marotte.Message
-		beforeID string
-		wantIDs  []string
-	}{
-		{
-			// The cursor message SHARES its millisecond with the two before it,
-			// which is the state applySummary guarantees after a replayed
-			// compaction. A timestamp search lands on the FIRST message at that
-			// value, so it excludes b and c along with d and answers [a].
-			name: "a tie group holding the cursor is paged rather than skipped",
-			msgs: []marotte.Message{
-				{ID: "a", Role: marotte.RoleUser, Ts: 100},
-				{ID: "b", Role: marotte.RoleUser, Ts: 120},
-				{ID: "c", Role: marotte.RoleEvent, Ts: 120},
-				{ID: "d", Role: marotte.RoleAssistant, Ts: 120},
-				{ID: "e", Role: marotte.RoleUser, Ts: 130},
-			},
-			beforeID: "d",
-			wantIDs:  []string{"a", "b", "c"},
-		},
-		{
-			// Two writers stamped 120 and 119 and appended in the other order, so
-			// the slice is not non-decreasing and a binary search over it is
-			// undefined. Here it answers [a], dropping b.
-			name: "an inverted cursor is paged in array order",
-			msgs: []marotte.Message{
-				{ID: "a", Role: marotte.RoleUser, Ts: 100},
-				{ID: "b", Role: marotte.RoleUser, Ts: 120},
-				{ID: "c", Role: marotte.RoleEvent, Ts: 119},
-				{ID: "d", Role: marotte.RoleUser, Ts: 130},
-			},
-			beforeID: "c",
-			wantIDs:  []string{"a", "b"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s, _ := newTestStore(t)
-			_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-				c.Name = "A"
-				c.Messages = tc.msgs
-				return true
-			})
-			req := httptest.NewRequest(http.MethodGet,
-				"/api/chats/c1?before_id="+tc.beforeID, nil)
-			rec := httptest.NewRecorder()
-			NewRouter(s).handleOne(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-			}
-			var got struct {
-				Messages []marotte.Message `json:"messages"`
-			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
-			ids := make([]string, 0, len(got.Messages))
-			for i := range got.Messages {
-				ids = append(ids, got.Messages[i].ID)
-			}
-			if !slices.Equal(ids, tc.wantIDs) {
-				t.Errorf("page = %v, want %v", ids, tc.wantIDs)
-			}
-		})
-	}
-}
-
-func TestHandleOne_Pagination(t *testing.T) {
-	cases := []struct {
-		name        string
-		query       string
-		wantIDs     []string
-		wantHasMore bool
-	}{
-		{"no_params_returns_all", "", []string{"a", "b", "c", "d", "e"}, false},
-		{"limit_clamps_window_and_flags_more", "?limit=2", []string{"d", "e"}, true},
-		{"before_id_is_exclusive_of_the_named_message", "?before_id=d", []string{"a", "b", "c"}, false},
-		{"before_id_unknown_returns_the_newest_window", "?before_id=nope", []string{"a", "b", "c", "d", "e"}, false},
-		{"before_id_oldest_returns_none", "?before_id=a", []string{}, false},
-		{"limit_and_before_id_combined", "?before_id=e&limit=2", []string{"c", "d"}, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s, _ := newTestStore(t)
-			_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-				c.Name = "A"
-				c.Messages = []marotte.Message{
-					{ID: "a", Role: marotte.RoleUser, Content: "1", Ts: 100},
-					{ID: "b", Role: marotte.RoleUser, Content: "2", Ts: 110},
-					{ID: "c", Role: marotte.RoleUser, Content: "3", Ts: 120},
-					{ID: "d", Role: marotte.RoleUser, Content: "4", Ts: 130},
-					{ID: "e", Role: marotte.RoleUser, Content: "5", Ts: 140},
-				}
-				return true
-			})
-			req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
-			rec := httptest.NewRecorder()
-			NewRouter(s).handleOne(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
-			}
-			var got struct {
-				Messages []marotte.Message `json:"messages"`
-				HasMore  bool              `json:"has_more"`
-			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
-			ids := make([]string, len(got.Messages))
-			for i, m := range got.Messages {
-				ids[i] = m.ID
-			}
-			if !slices.Equal(ids, tc.wantIDs) {
-				t.Errorf("ids = %v, want %v", ids, tc.wantIDs)
-			}
-			if got.HasMore != tc.wantHasMore {
-				t.Errorf("has_more = %v, want %v", got.HasMore, tc.wantHasMore)
-			}
-		})
+	// The list carries headers alone, never the log.
+	if strings.Contains(body, `"entries"`) || strings.Contains(body, `"payload"`) {
+		t.Errorf("entries leaked into list response: %q", body)
 	}
 }
 
@@ -840,11 +557,15 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	_, _ = s1.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "Saved"
 		c.ACPSessionID = "acp-1"
-		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: "hi"}}
 		return true
 	})
+	turn := openPromptTurn(t, s1, "c1", "m-1")
+	if err := s1.Append(t.Context(), "c1", entryOf(turn, "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "hi"})); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	closeTurn(t, s1, "c1", turn, marotte.TurnOutcomeCompleted)
 
-	// Reopen.
+	// Reopen: the header and the log both come back off disk.
 	s2, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore reopen: %v", err)
@@ -856,8 +577,12 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	if got.Name != "Saved" || got.ACPSessionID != "acp-1" {
 		t.Errorf("reloaded chat: %+v", got)
 	}
-	if len(got.Messages) != 1 {
-		t.Errorf("messages lost: %+v", got.Messages)
+	page, err := s2.TurnPage(t.Context(), "c1", turn, 0)
+	if err != nil {
+		t.Fatalf("TurnPage after reopen: %v", err)
+	}
+	if got := turnsOfPage(page.Entries); got != turn+":turn_open "+turn+":text "+turn+":turn_close" {
+		t.Errorf("entries after reopen = %q, want the whole closed turn", got)
 	}
 }
 
@@ -935,11 +660,7 @@ func TestHandleOne_BaseRejectsNonGET(t *testing.T) {
 
 func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "A"
-		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: "x", Ts: 100}}
-		return true
-	})
+	openPromptTurn(t, s, "c1", "m-1")
 	cases := []struct {
 		name  string
 		query string
@@ -948,8 +669,8 @@ func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 		{"limit_zero", "?limit=0"},
 		{"limit_negative", "?limit=-5"},
 		{"limit_over_max", "?limit=10000"},
-		{"before_id_unknown", "?before_id=nope"},
-		{"before_id_empty", "?before_id="},
+		{"unknown_param", "?before_id=nope"},
+		{"unknown_param_empty", "?before_id="},
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
@@ -958,8 +679,8 @@ func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("handleOne(%s) code = %d, want 200 (invalid params should fall back)", tc.name, rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), `"id":"m1"`) {
-			t.Errorf("handleOne(%s) did not return messages: %s", tc.name, rec.Body.String())
+		if !strings.Contains(rec.Body.String(), `"kind":"turn_open"`) {
+			t.Errorf("handleOne(%s) did not return the page: %s", tc.name, rec.Body.String())
 		}
 	}
 }
@@ -993,48 +714,62 @@ func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 
 // --- Concurrency ---
 
-func TestMutate_SerializesSameChatConcurrentAppends(t *testing.T) {
+func TestAppend_SerializesSameChatConcurrentAppends(t *testing.T) {
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
+	turn := openPromptTurn(t, s, "c1", "m-1")
 
 	const N = 50
 	var wg sync.WaitGroup
 	for i := range N {
 		wg.Go(func() {
-			_ = s.AppendMessage(t.Context(), "c1", &marotte.Message{
-				ID: fmt.Sprintf("m%d", i), Role: marotte.RoleUser, Content: "x",
-			})
+			_ = s.Append(t.Context(), "c1", entryOf(turn, "", fmt.Sprintf("a%d", i), marotte.EntryKindText, marotte.EntryText{Text: "x"}))
 		})
 	}
 	wg.Wait()
-	got, _ := s.Get(t.Context(), "c1")
-	if len(got.Messages) != N {
-		t.Errorf("concurrent appends: len = %d, want %d (per-chat mutex should serialize)", len(got.Messages), N)
+	page, err := s.TurnPage(t.Context(), "c1", turn, 0)
+	if err != nil {
+		t.Fatalf("TurnPage: %v", err)
+	}
+	entries := page.Entries
+	if len(entries) != N+1 {
+		t.Fatalf("concurrent appends: %d entries, want %d (per-chat mutex should serialize)", len(entries), N+1)
+	}
+	for i := range entries {
+		if entries[i].Seq != uint64(i) {
+			t.Errorf("entry %d has seq %d, want %d: seq is assigned under the lock, contiguous from 0", i, entries[i].Seq, i)
+		}
 	}
 }
 
-func TestMutate_DifferentChatsAreIndependent(t *testing.T) {
-	// Two chats should not block each other. We assert completion of
-	// N mutations on each chat runs to success with no deadlock.
+func TestAppend_DifferentChatsAreIndependent(t *testing.T) {
+	// Two chats must not block each other: N appends on each run to completion
+	// with no deadlock and each log holds its own N.
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "a", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, _ = s.Mutate(t.Context(), "b", func(c *marotte.Chat, _ bool) bool { c.Name = "B"; return true })
+	ta := openPromptTurn(t, s, "a", "m-a")
+	tb := openPromptTurn(t, s, "b", "m-b")
 
 	const N = 20
 	var wg sync.WaitGroup
 	for i := range N {
 		wg.Go(func() {
-			_ = s.AppendMessage(t.Context(), "a", &marotte.Message{ID: fmt.Sprintf("a%d", i), Role: marotte.RoleUser, Content: "x"})
+			_ = s.Append(t.Context(), "a", entryOf(ta, "", fmt.Sprintf("a%d", i), marotte.EntryKindText, marotte.EntryText{Text: "x"}))
 		})
 		wg.Go(func() {
-			_ = s.AppendMessage(t.Context(), "b", &marotte.Message{ID: fmt.Sprintf("b%d", i), Role: marotte.RoleUser, Content: "x"})
+			_ = s.Append(t.Context(), "b", entryOf(tb, "", fmt.Sprintf("b%d", i), marotte.EntryKindText, marotte.EntryText{Text: "x"}))
 		})
 	}
 	wg.Wait()
-	a, _ := s.Get(t.Context(), "a")
-	b, _ := s.Get(t.Context(), "b")
-	if len(a.Messages) != N || len(b.Messages) != N {
-		t.Errorf("independent chats: a=%d b=%d want %d each", len(a.Messages), len(b.Messages), N)
+	pageA, err := s.TurnPage(t.Context(), "a", ta, 0)
+	if err != nil {
+		t.Fatalf("TurnPage(a): %v", err)
+	}
+	pageB, err := s.TurnPage(t.Context(), "b", tb, 0)
+	if err != nil {
+		t.Fatalf("TurnPage(b): %v", err)
+	}
+	a, b := pageA.Entries, pageB.Entries
+	if len(a) != N+1 || len(b) != N+1 {
+		t.Errorf("independent chats: a=%d b=%d want %d each", len(a), len(b), N+1)
 	}
 }
 
@@ -1162,32 +897,6 @@ func TestNewStore_MkdirFailurePropagatesError(t *testing.T) {
 	}
 }
 
-// --- Size cap on load ---
-
-func TestGet_RejectsOversizeChatFile(t *testing.T) {
-	// The cap is a security control: a corrupted or adversarial chat file must
-	// not OOM the process. The cap is INJECTED at 2 KiB so the refusal branch is
-	// reachable without a multi-MiB fixture.
-	s := newCappedTestStore(t, 2<<10)
-	path := filepath.Join(s.dir, "big.json")
-	writeOversizeChat(t, path, 2<<10)
-	if _, ok := s.Get(t.Context(), "big"); ok {
-		t.Error("Get on oversize chat file returned ok=true, want false")
-	}
-}
-
-func TestList_SkipsOversizeChatFile(t *testing.T) {
-	// The same guardrail must keep one oversize file from erasing the
-	// sidebar for every other chat. List should log-and-skip, not fail.
-	s := newCappedTestStore(t, 2<<10)
-	_, _ = s.Mutate(t.Context(), "good", func(c *marotte.Chat, _ bool) bool { c.Name = "ok"; return true })
-	writeOversizeChat(t, filepath.Join(s.dir, "big.json"), 2<<10)
-	headers := s.List(t.Context())
-	if len(headers) != 1 || headers[0].ID != "good" {
-		t.Errorf("List() = %+v, want only the good chat (oversize skipped)", headers)
-	}
-}
-
 // --- Parse error must not silently overwrite ---
 
 func TestMutate_PropagatesParseErrorDoesNotOverwrite(t *testing.T) {
@@ -1197,8 +906,11 @@ func TestMutate_PropagatesParseErrorDoesNotOverwrite(t *testing.T) {
 	// instead of losing the user's history to an implicit "rewrite from
 	// empty" operation.
 	s, _ := newTestStore(t)
-	badPath := filepath.Join(s.dir, "c1.json")
+	badPath := filepath.Join(s.dir, "c1", headerFileName)
 	const garbage = "{not json"
+	if err := os.MkdirAll(filepath.Dir(badPath), 0o700); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 	if err := os.WriteFile(badPath, []byte(garbage), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -1244,28 +956,6 @@ func TestMutate_RefusesMutatorReassigningChatID(t *testing.T) {
 	}
 	if _, ok := s.Get(t.Context(), "c2"); ok {
 		t.Error("c2 was written via the reassigned id")
-	}
-}
-
-// --- UpdateMessage no-op on missing chat ---
-
-func TestUpdateMessage_NoOpOnMissingChat(t *testing.T) {
-	// A late tool_call_update racing a chat delete would otherwise
-	// auto-create the chat via Mutate's `!exists` path. UpdateMessage
-	// must early-return from its mutator when the chat doesn't exist
-	// so no ghost file is written and no broadcast is emitted.
-	s, b := newTestStore(t)
-	err := s.UpdateMessage(t.Context(), "never-existed", "m1", func(m *marotte.Message) {
-		m.Content = "ghost"
-	})
-	if err != nil {
-		t.Errorf("UpdateMessage on missing chat = %v, want nil", err)
-	}
-	if _, ok := s.Get(t.Context(), "never-existed"); ok {
-		t.Error("UpdateMessage resurrected a never-existed chat")
-	}
-	if evs := b.snapshot(); len(evs) != 0 {
-		t.Errorf("UpdateMessage on missing chat broadcast events: %+v", evs)
 	}
 }
 
@@ -1349,13 +1039,7 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 
 func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "Named Chat"
-		c.Messages = []marotte.Message{
-			{ID: "m1", Role: marotte.RoleUser, Content: "hi"},
-		}
-		return true
-	})
+	exportSeed(t, s, "c1", "Named Chat")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=json", nil)
 	rec := httptest.NewRecorder()
@@ -1368,20 +1052,14 @@ func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 	if !strings.Contains(disp, `attachment`) || !strings.Contains(disp, "Named Chat-c1.json") {
 		t.Errorf("Content-Disposition = %q, want attachment with <name>-<id>.json", disp)
 	}
-	if !strings.Contains(rec.Body.String(), `"role":"user"`) {
-		t.Errorf("body = %q, want full chat including messages", rec.Body.String())
+	if body := rec.Body.String(); !strings.Contains(body, `"kind":"turn_open"`) || !strings.Contains(body, `"name":"Named Chat"`) {
+		t.Errorf("body = %q, want the header beside the log's entries", body)
 	}
 }
 
 func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "Named Chat"
-		c.Messages = []marotte.Message{
-			{ID: "m1", Role: marotte.RoleUser, Content: "hi"},
-		}
-		return true
-	})
+	exportSeed(t, s, "c1", "Named Chat")
 
 	// No ?format= param — Markdown is the default.
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
@@ -1399,8 +1077,8 @@ func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 		t.Errorf("Content-Disposition = %q, want attachment with <name>-<id>.md", disp)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "# Named Chat") || !strings.Contains(body, "## User") {
-		t.Errorf("body = %q, want Markdown transcript with title and role headings", body)
+	if !strings.Contains(body, "# Named Chat") || !strings.Contains(body, "**User**") {
+		t.Errorf("body = %q, want Markdown transcript with title and the prompt heading", body)
 	}
 }
 
@@ -1540,10 +1218,8 @@ func TestMutate_RejectsInvalidUTF8(t *testing.T) {
 			mutate: func(c *marotte.Chat) { c.Name = "bad\xff\xfename" },
 		},
 		{
-			name: "invalid utf-8 in message content",
-			mutate: func(c *marotte.Chat) {
-				c.Messages = append(c.Messages, marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: "ok\xffbad"})
-			},
+			name:   "invalid utf-8 in the draft",
+			mutate: func(c *marotte.Chat) { c.Draft = "ok\xffbad" },
 		},
 	}
 	for _, tc := range cases {
@@ -1566,33 +1242,6 @@ func TestMutate_RejectsInvalidUTF8(t *testing.T) {
 	}
 }
 
-// ?limit= honours the inclusive 1..500 range its doc comment states. Silently
-// substituting the default for a page size at either end of that range is a
-// paging bug the client cannot see: it asked for 500 and got 50.
-func TestParseLimitParam_HonoursTheInclusiveRange(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-		want  int
-	}{
-		{name: "absent", query: "", want: 50},
-		{name: "smallest_accepted", query: "?limit=1", want: 1},
-		{name: "largest_accepted", query: "?limit=500", want: 500},
-		{name: "one_past_the_largest", query: "?limit=501", want: 50},
-		{name: "zero", query: "?limit=0", want: 50},
-		{name: "negative", query: "?limit=-3", want: 50},
-		{name: "not_a_number", query: "?limit=many", want: 50},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)
-			if got := parseLimitParam(r); got != tc.want {
-				t.Errorf("parseLimitParam(%q) = %d, want %d", tc.query, got, tc.want)
-			}
-		})
-	}
-}
-
 // A completed export says nothing about failing. The line exists for a client
 // that hung up mid-download, and it reads as a fact about THIS export — so
 // emitting it on every success is worst exactly when someone has turned Debug
@@ -1600,11 +1249,7 @@ func TestParseLimitParam_HonoursTheInclusiveRange(t *testing.T) {
 func TestHandleExport_SuccessfulMarkdownWriteIsQuiet(t *testing.T) {
 	logs := captureStoreSlog(t)
 	s, _ := newTestStore(t)
-	_, _ = s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Name = "Named Chat"
-		c.Messages = []marotte.Message{{ID: "m1", Role: marotte.RoleUser, Content: "hi"}}
-		return true
-	})
+	exportSeed(t, s, "c1", "Named Chat")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
@@ -1649,5 +1294,18 @@ func TestMutate_RefusesACancelledContext(t *testing.T) {
 	}
 	if events := b.snapshot(); len(events) != 0 {
 		t.Errorf("a refused Mutate broadcast %d events, want none", len(events))
+	}
+}
+
+// exportSeed writes one named chat holding a prompt turn with a reply, the shape
+// the export handlers render.
+func exportSeed(t *testing.T, s *Store, id marotte.ChatID, name string) {
+	t.Helper()
+	turn := openPromptTurn(t, s, id, "m-"+string(id))
+	if _, err := s.Mutate(t.Context(), id, func(c *marotte.Chat, _ bool) bool { c.Name = name; return true }); err != nil {
+		t.Fatalf("Mutate(name): %v", err)
+	}
+	if err := s.Append(t.Context(), id, entryOf(turn, "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "hi back"})); err != nil {
+		t.Fatalf("Append: %v", err)
 	}
 }

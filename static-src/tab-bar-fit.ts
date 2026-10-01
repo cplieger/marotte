@@ -12,7 +12,7 @@
 /** Bars are measured in icon-plus-label mode, so the icon-only class comes
  *  off before reading. The remove + read + toggle runs synchronously inside
  *  one frame, so there is no visible flicker. */
-const ICONS_CLASS = "tab-bar-icons";
+const ICONS_CLASS = "seg-bar-icons";
 
 /** Set while this bar is VISIBLE and showing its labels, i.e. while it names its
  *  own active section. 12-chat.css reads it to suppress the title bar's subtitle,
@@ -22,12 +22,12 @@ const ICONS_CLASS = "tab-bar-icons";
  *  bar's visibility as well as its label mode, and a `:has()` chain carrying both
  *  ran past stylelint's complexity ceiling — which was the right complaint: this
  *  module already measures, so it is the one place that knows. */
-const NAMED_CLASS = "tab-bar-named";
+const NAMED_CLASS = "seg-bar-named";
 
 function measure(bar: HTMLElement): void {
   bar.classList.remove(ICONS_CLASS);
   let overflows = false;
-  for (const seg of bar.querySelectorAll<HTMLElement>(".settings-tab")) {
+  for (const seg of bar.querySelectorAll<HTMLElement>(".seg")) {
     // A hidden bar (display: none view) reports 0/0 — no overflow, label
     // mode. The ResizeObserver fires again when the view shows and the bar
     // gains real geometry, so hidden bars self-correct on reveal.

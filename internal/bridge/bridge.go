@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/kascap"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/version"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // scannerLineCap is the per-frame content cap for the bridge's stdout: a full

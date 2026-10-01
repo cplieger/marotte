@@ -4,7 +4,7 @@
   "sseFixtureTags": "marotte_test",
   "scripts": {
     "pretest": "rm -rf node_modules/.vite",
-    "test": "vitest --run",
+    "test": "vitest --run --reporter=default --reporter=json --outputFile.json=.vitest/duration-report.json && node scripts/check-suite-duration.ts .vitest/duration-report.json",
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",
     "typecheck": "tsc -project tsconfig.json && tsc -project tsconfig.sw.json",
@@ -21,7 +21,7 @@
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
-    "@types/node": "25.9.8",
+    "@types/node": "26.6.3",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/browser": "5.0.2",
     "@vitest/browser-playwright": "5.0.2",
@@ -45,8 +45,8 @@
     "@cplieger/reactive": "2.1.2",
     "@cplieger/sse": "1.1.1",
     "@cplieger/ui-primitives": "3.1.1",
-    "@cplieger/web-terminal-engine": "5.2.0",
-    "@cplieger/web-terminal-ui": "7.3.2"
+    "@cplieger/web-terminal-engine": "6.0.1",
+    "@cplieger/web-terminal-ui": "8.0.1"
   },
   "overrides": {
     "qs": "^6.15.2"

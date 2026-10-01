@@ -13,7 +13,7 @@ import (
 func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		deps, events := newEventCaptureDeps()
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
+		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("prop-chat")
 
 		type action int
@@ -34,7 +34,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 				payload := mustJSONRapid(map[string]any{
 					"content": map[string]any{"type": "text", "text": rapid.String().Draw(rt, "text")},
 				})
-				tr.HandleAssistantChunk(t.Context(), chatID, payload, false)
+				tr.HandleAssistantChunk(t.Context(), chatID, payload, false, FrameAttribution{})
 
 			case actToolCall:
 				id := rapid.StringMatching(`[a-z]{4,8}`).Draw(rt, "toolID")
@@ -64,21 +64,26 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 				payload := mustJSONRapid(map[string]any{
 					"entries": []any{},
 				})
-				tr.HandlePlan(t.Context(), chatID, payload)
+				tr.HandlePlan(t.Context(), chatID, payload, FrameAttribution{})
 			}
 		}
 
 		// Invariant: no panics reached here.
-		// Invariant: message_created emitted at most once per chunk sequence.
-		createdCount := 0
+		// Invariant: ONE entry_opened per open entry. The first frame carrying
+		// content opens the entry and every later one folds into it, so a second
+		// open under one id is two entries for one run of prose.
+		opened := map[string]int{}
 		for _, evt := range *events {
-			if evt.Type == marotte.EventMessageCreated {
-				createdCount++
+			p, ok := evt.Payload.(marotte.EntryOpenedPayload)
+			if !ok {
+				continue
 			}
+			opened[p.Open.ID]++
 		}
-		// Should be at most 1 message_created (first chunk triggers it).
-		if createdCount > 1 {
-			rt.Fatalf("message_created emitted %d times, want <= 1", createdCount)
+		for id, n := range opened {
+			if n > 1 {
+				rt.Fatalf("entry_opened emitted %d times for entry %q, want 1", n, id)
+			}
 		}
 	})
 }

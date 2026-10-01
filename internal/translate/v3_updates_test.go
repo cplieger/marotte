@@ -40,7 +40,7 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 		{"value": "model-c", "name": "Model C"}, // no _meta at all
 	})
 
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw)
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw, FrameAttribution{})
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -94,7 +94,7 @@ func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 		{"value": "medium", "name": "Medium"},
 		{"value": "high", "name": "High"},
 	})
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw)
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw, FrameAttribution{})
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -128,8 +128,8 @@ func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	tr := New(rolesOf(deps))
 
 	tr.HandleConfigOptionUpdate(t.Context(), "c1",
-		configEffortUpdate(t, "high", []map[string]any{{"value": "high", "name": "High"}}))
-	tr.HandleConfigOptionUpdate(t.Context(), "c1", configEffortUpdate(t, "", nil))
+		configEffortUpdate(t, "high", []map[string]any{{"value": "high", "name": "High"}}), FrameAttribution{})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configEffortUpdate(t, "", nil), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if len(c.EffortLevels) != 0 {
@@ -470,9 +470,6 @@ func TestPersistTurnSummary_ZeroElapsedKeepsThePreviousDuration(t *testing.T) {
 	if c.Usage.LastTurnMs != 1200 {
 		t.Errorf("Usage.LastTurnMs after a zero-elapsed turn = %v, want 1200 (the previous measurement)", c.Usage.LastTurnMs)
 	}
-	if c.Usage.TurnCount != 2 {
-		t.Errorf("Usage.TurnCount = %d, want 2 (both turns counted)", c.Usage.TurnCount)
-	}
 }
 
 // A turn that spent nothing is not evidence of real spend. HasRealData is what
@@ -495,9 +492,6 @@ func TestPersistTurnSummary_ZeroCreditsIsNotRealSpend(t *testing.T) {
 	if c.Usage.HasRealData {
 		t.Error("Usage.HasRealData after a zero-credit turn = true, want false (nothing was spent)")
 	}
-	if c.Usage.TurnCount != 1 {
-		t.Errorf("Usage.TurnCount = %d, want 1 (the turn still happened)", c.Usage.TurnCount)
-	}
 }
 
 // An effort-only config frame must leave the model catalog standing. KAS sends
@@ -511,10 +505,10 @@ func TestHandleConfigOptionUpdate_EffortOnlyFrameKeepsTheModelCatalog(t *testing
 	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelUpdate(t, "model-a", []map[string]any{
 		{"value": "model-a", "name": "Model A"},
 		{"value": "model-b", "name": "Model B"},
-	}))
+	}), FrameAttribution{})
 	tr.HandleConfigOptionUpdate(t.Context(), "c1", configEffortUpdate(t, "high", []map[string]any{
 		{"value": "high", "name": "High"},
-	}))
+	}), FrameAttribution{})
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -630,7 +624,7 @@ func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
 		{"value": "new-b", "name": "New B"},
 		{"value": "new-c", "name": "New C"},
 		{"value": "new-d", "name": "New D"},
-	}))
+	}), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if !slices.Equal(c.ServedModelIDs, []string{"new-a", "new-b", "new-c", "new-d"}) {
@@ -647,10 +641,84 @@ func TestHandleConfigOptionUpdate_KeepsEndOfLifeIDsInTheServedSet(t *testing.T) 
 	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelUpdate(t, "new", []map[string]any{
 		{"value": "old", "name": "Old", "description": "[Deprecated]"},
 		{"value": "new", "name": "New"},
-	}))
+	}), FrameAttribution{})
 
 	c, _ := store.Get(t.Context(), "c1")
 	if !slices.Equal(c.ServedModelIDs, []string{"old", "new"}) {
 		t.Errorf("ServedModelIDs = %v, want [old new]", c.ServedModelIDs)
+	}
+}
+
+// configModelAndEffortUpdate is one frame carrying both selects, the shape a session
+// reports after a model switch.
+func configModelAndEffortUpdate(t *testing.T, model, effort string) []byte {
+	t.Helper()
+	return mustJSON(t, map[string]any{
+		"configOptions": []map[string]any{
+			{
+				"id":           "model",
+				"type":         "select",
+				"currentValue": model,
+				"options":      []map[string]any{{"value": "opus", "name": "Opus"}, {"value": "fable", "name": "Fable"}},
+			},
+			{
+				"id":           "effortLevel",
+				"type":         "select",
+				"currentValue": effort,
+				"options":      []map[string]any{{"value": "high", "name": "High"}, {"value": "max", "name": "Max"}},
+			},
+		},
+	})
+}
+
+// A workflow step's config frame arrives under the LAUNCHING chat's id carrying the
+// step's own model and effort. The catalog half is a workspace fact any session may
+// report; the current values are the step session's and must not become the chat's,
+// or a chat switched to Opus reverts to the step's model every time a run posts.
+func TestHandleConfigOptionUpdate_AStepsFrameRefreshesTheCatalogAndWritesNoSessionState(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	_, _ = store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.Model = "opus"
+		c.EffortActive = "max"
+		c.EffortLevels = []marotte.SessionEffortLevel{{ID: "max", Name: "Max"}}
+		return true
+	})
+
+	for _, attr := range []FrameAttribution{
+		{Step: true, SessionID: "sess-step", RunID: "wf_1", NodePath: "wf_1/step"},
+		{SubSessionID: "sess-sub", SessionID: "sess-sub"},
+	} {
+		tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "fable", "high"), attr)
+
+		c, _ := store.Get(t.Context(), "c1")
+		if c.Model != "opus" {
+			t.Errorf("attr %+v: Model = %q, want opus (a foreign session's current model stays off the chat)", attr, c.Model)
+		}
+		if c.EffortActive != "max" {
+			t.Errorf("attr %+v: EffortActive = %q, want max", attr, c.EffortActive)
+		}
+		if len(c.EffortLevels) != 1 || c.EffortLevels[0].ID != "max" {
+			t.Errorf("attr %+v: EffortLevels = %v, want the chat's own [max]", attr, c.EffortLevels)
+		}
+		if !slices.Equal(c.ServedModelIDs, []string{"opus", "fable"}) {
+			t.Errorf("attr %+v: ServedModelIDs = %v, want [opus fable] (the catalog half applies)", attr, c.ServedModelIDs)
+		}
+	}
+	if len(deps.catalogModels) != 2 {
+		t.Errorf("catalog models = %+v, want the two the step reported", deps.catalogModels)
+	}
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configModelAndEffortUpdate(t, "fable", "high"), FrameAttribution{})
+
+	c, _ := store.Get(t.Context(), "c1")
+	if c.Model != "fable" {
+		t.Errorf("own frame: Model = %q, want fable", c.Model)
+	}
+	if c.EffortActive != "high" {
+		t.Errorf("own frame: EffortActive = %q, want high", c.EffortActive)
+	}
+	if len(c.EffortLevels) != 2 {
+		t.Errorf("own frame: EffortLevels = %v, want the two the session reported", c.EffortLevels)
 	}
 }

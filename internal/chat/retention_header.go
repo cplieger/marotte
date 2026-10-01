@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/cplieger/jsoncap/v2"
@@ -20,20 +21,16 @@ const (
 	keyDraft         = "draft"
 )
 
-// LoadRetentionHeader reads the retention projection of chatID's file.
-//
-// The purge used to answer its three small questions by decoding the WHOLE chat,
-// once per chat per pass, over files that reach several MB of tool output no
-// retention decision looks at.
+// LoadRetentionHeader reads the retention projection of chatID's header.
 func (s *Store) LoadRetentionHeader(chatID marotte.ChatID) (archive.RetentionHeader, error) {
-	path, err := s.pathFor(chatID)
+	dir, err := s.pathFor(chatID)
 	if err != nil {
 		return archive.RetentionHeader{}, err
 	}
-	return readRetentionHeader(path, "chat "+string(chatID), s.fileCap)
+	return readRetentionHeader(filepath.Join(dir, headerFileName), "chat "+string(chatID))
 }
 
-// readRetentionHeader streams a chat file and decodes ONLY the retention fields,
+// readRetentionHeader streams a chat header and decodes ONLY the retention fields,
 // token-skipping every other value.
 //
 // A projection rather than a sidecar the writer keeps in step: a second copy can
@@ -41,20 +38,17 @@ func (s *Store) LoadRetentionHeader(chatID marotte.ChatID) (archive.RetentionHea
 // is not the chat's. The walk does not stop at the last field it wants, though
 // write order would allow it — a later `draft` key would be missed and a chat
 // somebody is typing in purged.
-func readRetentionHeader(path, label string, fileCap chatFileCap) (archive.RetentionHeader, error) {
+func readRetentionHeader(path, label string) (archive.RetentionHeader, error) {
 	// openChatFile carries the path guard and the OpenRegular reasoning.
 	f, info, err := openChatFile(path, label)
 	if err != nil {
 		return archive.RetentionHeader{}, err
 	}
 	defer func() { _ = f.Close() }()
-	if info.Size() > maxHeaderScanBytes {
-		return archive.RetentionHeader{}, errFileTooLarge(label, info.Size(), maxHeaderScanBytes)
+	if info.Size() > maxHeaderBytes {
+		return archive.RetentionHeader{}, errFileTooLarge(label, info.Size(), maxHeaderBytes)
 	}
-	if !fileCap.unlimited() && info.Size() > int64(fileCap) {
-		return archive.RetentionHeader{}, errFileTooLarge(label, info.Size(), int64(fileCap))
-	}
-	h, err := decodeRetentionHeader(bufio.NewReader(io.LimitReader(f, maxHeaderScanBytes)))
+	h, err := decodeRetentionHeader(bufio.NewReader(io.LimitReader(f, maxHeaderBytes)))
 	if err != nil {
 		return archive.RetentionHeader{}, fmt.Errorf("parse %s: %w", label, err)
 	}
@@ -62,8 +56,8 @@ func readRetentionHeader(path, label string, fileCap chatFileCap) (archive.Reten
 }
 
 // decodeRetentionHeader is the projection itself, over any reader, so the parsing
-// contract is testable without a file. Not one Message, block, tool call or diff
-// is materialized: the messages array is walked at the token level.
+// contract is testable without a file. Nothing the verdict does not need is
+// materialized: every other key is skipped at the token level.
 func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 	var (
 		h        archive.RetentionHeader
@@ -98,6 +92,11 @@ func decodeRetentionHeader(r io.Reader) (archive.RetentionHeader, error) {
 		}
 	})
 	if err != nil {
+		return archive.RetentionHeader{}, err
+	}
+	// Trailing bytes after the object make encoding/json refuse the file, so the
+	// store cannot open this chat; retention must not read a verdict out of it.
+	if err := dec.End(); err != nil {
 		return archive.RetentionHeader{}, err
 	}
 	// marotte's own composition of the two id fields, called rather than

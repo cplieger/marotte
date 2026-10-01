@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // newVersionedTestStore is newTestStore with a registry the test can read back.
@@ -89,29 +89,6 @@ func TestMutate_HeaderFrameCarriesChatsAndNoChatStamp(t *testing.T) {
 	}
 }
 
-func TestAppendMessage_FrameCarriesTheChatVersionMutateMinted(t *testing.T) {
-	s, b, v := newVersionedTestStore(t)
-	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { return true }); err != nil {
-		t.Fatalf("Setup: Mutate: %v", err)
-	}
-	b.reset()
-	if err := s.AppendMessage(t.Context(), "c1", &marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: "hi"}); err != nil {
-		t.Fatalf("AppendMessage: %v", err)
-	}
-	evts := b.snapshot()
-	if len(evts) != 2 || evts[0].Type != marotte.EventChatUpdated || evts[1].Type != marotte.EventMessageAppended {
-		t.Fatalf("broadcast order = %v, want [chat_updated message_appended]", eventTypes(evts))
-	}
-	cur, _ := v.Current(subject.KindChat, "c1")
-	want := marotte.SubjectStamp{Kind: "chat", Ref: "c1", Version: cur}
-	if evts[1].Subject == nil || *evts[1].Subject != want {
-		t.Errorf("message_appended Subject = %+v, want %+v", evts[1].Subject, want)
-	}
-	if evts[0].Subject == nil || evts[0].Subject.Kind != "chats" {
-		t.Errorf("header frame Subject = %+v, want a chats stamp", evts[0].Subject)
-	}
-}
-
 func TestMutate_DeclinedMutatorReturnsNoVersionAndMovesNothing(t *testing.T) {
 	s, _, v := newVersionedTestStore(t)
 	if _, err := s.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { return true }); err != nil {
@@ -192,12 +169,4 @@ func TestSetDraft_FillsComposerStateVersion(t *testing.T) {
 	if after, _ := v.Current(subject.KindChat, "c1"); after != cur {
 		t.Errorf("chat version moved %q -> %q on an unchanged draft", cur, after)
 	}
-}
-
-func eventTypes(evts []marotte.ServerEvent) []marotte.EventType {
-	out := make([]marotte.EventType, len(evts))
-	for i, e := range evts {
-		out[i] = e.Type
-	}
-	return out
 }

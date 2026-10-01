@@ -2,25 +2,17 @@
 // The Workflows sub-tab of the configuration browser (/docs/workflows): the
 // launchable recipes, each with the app's ONE run affordance — Run ⇄ Cancel.
 //
-// RPC-sourced, unlike the five document tabs. A workflow definition is not a
-// `.kiro` file: the bundled recipes are compiled INTO the KAS bundle, and
-// agent-authored ones land under KAS's own sessions tree — a file scan here
-// would show zero workflows forever. `GET /api/recipes` fronts
-// `_kiro/workflow/listRecipes`, which returns both populations together.
-//
-// The button is Run ⇄ Cancel because a recipe runs ONCE at a time (user
-// decision) — one live run per definition, globally, whoever launched it — so
-// a row maps to at most one run and can represent that run's state honestly.
-// Cancel here is a STOP, the user's gesture throughout the app; there is no
-// Retry, Continue, Pause or Resume anywhere (a terminal run's row returns to
-// Run, which starts a FRESH run).
-//
-// Launching is PARENTLESS and opens a run tab: it touches no chat, appends to
-// no transcript, and wakes nothing on completion. The agent's own launches
-// (run_workflow mid-turn) never come through here and keep their chat.
+// RPC-sourced, unlike the five document tabs: a workflow definition is not a
+// `.kiro` file (bundled recipes are compiled INTO KAS, agent-authored ones live
+// under its sessions tree), so `GET /api/recipes` fronts `_kiro/workflow/listRecipes`.
+// Run ⇄ Cancel because a recipe runs ONCE at a time, globally, whoever launched
+// it, so a row maps to at most one run; Cancel is a STOP, and a terminal run's row
+// returns to Run, which starts a FRESH run. Launching is PARENTLESS and opens a
+// run tab; the agent's own launches (run_workflow mid-turn) never come through here.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { join as joinKey } from "@cplieger/keyenc";
 import { onBus, onSSE, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
@@ -31,7 +23,9 @@ import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings } from "./persist.js";
 import { openSettingsView } from "./tabs.js";
+import { forceReflow } from "./dom.js";
 import type { Recipe, WorkflowRun } from "./types.js";
+import { entryDetail, entryList, entryRow } from "./entry-row.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
@@ -190,14 +184,14 @@ async function refreshSchedules(): Promise<void> {
   paint();
 }
 
-/** Reflect a recipe's schedule onto its row's summary line. */
-function syncSchedule(row: HTMLElement, source: string): void {
-  const line = row.querySelector<HTMLElement>(".recipe-sched-summary");
+/** Reflect a recipe's schedule onto its row's second line and its button. */
+function syncSchedule(row: HTMLElement, r: Recipe): void {
+  const line = scheduleLineOf(row);
   if (line === null) {
     return;
   }
-  const view = schedules.get(source);
-  line.textContent = summaryLine(view);
+  const view = schedules.get(r.source);
+  line.textContent = scheduleLine(r);
   line.classList.toggle("is-scheduled", view?.enabled === true);
   const btn = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
   if (btn !== null) {
@@ -296,6 +290,19 @@ async function refreshRuns(): Promise<void> {
   paint();
 }
 
+/** What the list reconciles: a recipe's row, and — for the one recipe whose input
+ *  form is open — the `.entry-detail` region right under it. The detail is a KEYED
+ *  member rather than a stray sibling, because `reconcile` re-seats every keyed
+ *  row around an unkeyed node; keyed, it is placed with its row and its typed
+ *  values survive every repaint. */
+type RecipeEntry =
+  | { readonly kind: "row"; readonly recipe: Recipe }
+  | { readonly kind: "detail"; readonly recipe: Recipe };
+
+/** The recipe whose input form is open, by source; at most one, like a `<details>`
+ *  group. */
+let openForm: string | null = null;
+
 function paint(): void {
   if (container === null) {
     return;
@@ -318,9 +325,16 @@ function paint(): void {
     );
     return;
   }
-  for (const child of [...container.children]) {
-    if (child.getAttribute("data-reconcile-key") === null) {
-      child.remove();
+  let list = container.querySelector<HTMLElement>(":scope > .list-container");
+  if (list === null) {
+    list = entryList();
+    container.replaceChildren(list);
+  }
+  const entries: RecipeEntry[] = [];
+  for (const recipe of rows) {
+    entries.push({ kind: "row", recipe });
+    if (recipe.source === openForm) {
+      entries.push({ kind: "detail", recipe });
     }
   }
   // Keyed on `source`, which is stable across a filter change — so a keystroke
@@ -328,23 +342,30 @@ function paint(): void {
   // list. `recipeRow`'s click-time lookup deliberately stays against the
   // UNFILTERED `recipes`: a row is clicked for the recipe it names, whatever the
   // box says.
-  reconcile(container, rows, {
-    key: (r: Recipe) => r.source,
-    mount: (r: Recipe) => recipeRow(r),
-    update: (row: HTMLElement, r: Recipe) => {
-      syncButton(row, r);
-      syncSchedule(row, r.source);
+  reconcile(list, entries, {
+    key: (e: RecipeEntry) => joinKey(e.kind, e.recipe.source),
+    mount: (e: RecipeEntry) => (e.kind === "row" ? recipeRow(e.recipe) : inputForm(e.recipe)),
+    update: (node: HTMLElement, e: RecipeEntry) => {
+      // A kept detail is left alone: it holds what the reader has typed.
+      if (e.kind === "row") {
+        syncButton(node, e.recipe);
+        syncSchedule(node, e.recipe);
+      }
     },
   });
+  // The region mounts closed and opens from a flushed layout, which is what turns
+  // `height: 0 → auto` into the transition rather than a jump. No scroll into
+  // view: an in-place expansion moving content under the reader is the
+  // layout-shift class the UI rules forbid.
+  const detail = list.querySelector<HTMLElement>(".entry-detail:not(.open)");
+  if (detail !== null) {
+    forceReflow(detail);
+    detail.classList.add("open");
+    detail.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  }
 }
 
 function recipeRow(r: Recipe): HTMLElement {
-  const name = el("span", { className: "list-row-name" }, r.name);
-  const meta = el(
-    "span",
-    { className: "list-row-meta docs-row-meta" },
-    ...(r.built_in === true ? [el("span", { className: "docs-badge" }, "bundled")] : []),
-  );
   const btn = el("button", {
     type: "button",
     className: "btn-small recipe-run-btn",
@@ -369,37 +390,34 @@ function recipeRow(r: Recipe): HTMLElement {
   schedBtn.textContent = "Schedule";
   wireSchedulePopup(schedBtn, r.source);
 
-  // Every block goes on the SURFACE, never on the row. `.docs-row` is a
-  // horizontal flex container (it holds an activation surface beside a control
-  // slot), so a block appended to the row is laid out BESIDE its siblings rather
-  // than under them — which is what this function used to do, for four blocks,
-  // giving each one a left edge equal to the running sum of the text widths
-  // before it. The column lives on `.docs-row-surface`; the five document tabs
-  // moved onto it and this one was not migrated with them.
-  const surface = el(
-    "div",
-    { className: "docs-row-surface" },
-    el("div", { className: "docs-row-top" }, name, meta, schedBtn, btn),
-  );
-  surface.appendChild(el("div", { className: "recipe-sched-summary" }));
-  const desc = r.description ?? "";
-  if (desc !== "") {
-    surface.appendChild(el("div", { className: "docs-row-sub" }, desc));
-  }
-  const inputs = Object.keys(r.inputs ?? {});
-  if (inputs.length > 0) {
-    surface.appendChild(
-      el("div", { className: "recipe-inputs-note" }, `Inputs: ${inputs.join(", ")}`),
-    );
-  }
-  const row = el(
-    "div",
-    { className: "list-row docs-row recipe-row", "data-recipe": r.source },
-    surface,
-  );
+  // No `open`: a recipe row is not a door. Its one destination is the run its
+  // button launches, and that run opens its own tab.
+  const row = entryRow({
+    key: r.source,
+    title: r.name,
+    badges: r.built_in === true ? [el("span", { className: "docs-badge" }, "bundled")] : undefined,
+    sub: {
+      kind: "lines",
+      lines: [{ text: r.description ?? "" }, { text: scheduleLine(r) }],
+    },
+    actions: [schedBtn, btn],
+    data: { "data-recipe": r.source },
+  });
   syncButton(row, r);
-  syncSchedule(row, r.source);
+  syncSchedule(row, r);
   return row;
+}
+
+/** The row's second line: the schedule's state, then the declared inputs. */
+function scheduleLine(r: Recipe): string {
+  const inputs = Object.keys(r.inputs ?? {});
+  const sched = summaryLine(schedules.get(r.source));
+  return inputs.length === 0 ? sched : `${sched} · Inputs: ${inputs.join(", ")}`;
+}
+
+/** The line `scheduleLine` fills: the second of the row's two subtitle lines. */
+function scheduleLineOf(row: HTMLElement): HTMLElement | null {
+  return row.querySelector<HTMLElement>(".entry-lines > .entry-sub:nth-child(2)");
 }
 
 /** Reflect the recipe's live-run state onto its button. */
@@ -423,38 +441,21 @@ function onRunButton(r: Recipe): void {
     void cancelRun.dispatch(live.workflow_id);
     return;
   }
-  const declared = Object.keys(r.inputs ?? {});
-  if (declared.length === 0) {
+  if (Object.keys(r.inputs ?? {}).length === 0) {
     launch(r, {});
     return;
   }
-  toggleInputForm(r, declared);
+  openForm = openForm === r.source ? null : r.source;
+  paint();
 }
 
-/** Inline input collection — an expanding row section, deliberately not a
- *  modal. Empty values are allowed (KAS accepts them; templates resolve
- *  empty), so this collects rather than validates. */
-function toggleInputForm(r: Recipe, declared: string[]): void {
-  const row = container?.querySelector<HTMLElement>(`[data-recipe="${CSS.escape(r.source)}"]`);
-  if (row === null || row === undefined) {
-    return;
-  }
-  const existing = row.querySelector(".recipe-input-form");
-  if (existing !== null) {
-    existing.remove();
-    return;
-  }
-  // The form is a block of the row's column, so it hosts on the surface like
-  // every other block. On the row it became a flex item on the main line, where
-  // two declared inputs at min-width 14rem cannot fit and pushed the panel into
-  // a horizontal scrollbar (its overflow-y: auto computes overflow-x: auto too).
-  const host = row.querySelector<HTMLElement>(".docs-row-surface");
-  if (host === null) {
-    return;
-  }
+/** Inline input collection in the `.entry-detail` region under the row —
+ *  deliberately not a modal. Empty values are allowed (KAS accepts them; templates
+ *  resolve empty), so this collects rather than validates. */
+function inputForm(r: Recipe): HTMLElement {
   const fields = new Map<string, HTMLInputElement>();
   const form = el("form", { className: "recipe-input-form" });
-  for (const key of declared) {
+  for (const key of Object.keys(r.inputs ?? {})) {
     const input = el("input", {
       type: "text",
       className: "recipe-input",
@@ -464,12 +465,7 @@ function toggleInputForm(r: Recipe, declared: string[]): void {
     fields.set(key, input);
     form.appendChild(el("label", { className: "recipe-input-label" }, `${key}: `, input));
   }
-  const go = el(
-    "button",
-    { type: "submit", className: "btn-small" },
-    "Launch",
-  ) as HTMLButtonElement;
-  form.appendChild(go);
+  form.appendChild(el("button", { type: "submit", className: "btn-small" }, "Launch"));
   form.addEventListener("submit", (e: Event) => {
     e.preventDefault();
     const inputs: Record<string, string> = {};
@@ -478,11 +474,11 @@ function toggleInputForm(r: Recipe, declared: string[]): void {
         inputs[key] = field.value;
       }
     }
-    form.remove();
+    openForm = null;
+    paint();
     launch(r, inputs);
   });
-  host.appendChild(form);
-  fields.values().next().value?.focus();
+  return entryDetail(form);
 }
 
 function launch(r: Recipe, inputs: Record<string, string>): void {

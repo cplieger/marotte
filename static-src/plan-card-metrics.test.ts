@@ -141,8 +141,8 @@ function planCard(i: number): HTMLElement {
   return card;
 }
 
-/** The production nesting: a fixed-height scroller holding the `.msg-wrap` block
- *  container a turn's cards live in. `.msg-wrap` is a flex column with a gap, and
+/** The production nesting: a fixed-height scroller holding the `.turn-body` block
+ *  container a turn's cards live in. `.turn-body` is a flex column with a gap, and
  *  the gap is the same in all three readings, so it cancels out of the drift while
  *  staying faithful to what the transcript lays out. */
 function mountList(): { wrap: HTMLElement; list: HTMLElement } {
@@ -150,7 +150,7 @@ function mountList(): { wrap: HTMLElement; list: HTMLElement } {
   wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
 
   const list = document.createElement("div");
-  list.className = "msg-wrap";
+  list.className = "turn-body";
   for (let i = 0; i < CARDS; i++) {
     list.appendChild(planCard(i));
   }
@@ -196,7 +196,7 @@ interface Metrics {
   /** A rendered card's block padding plus its border -- exactly the term the
    *  estimate must not claim, and the scale the assertion is stated against. */
   readonly boxModelPx: number;
-  /** `.msg-wrap`'s own `row-gap`. It cancels out of the drift, which is why the
+  /** `.turn-body`'s own `row-gap`. It cancels out of the drift, which is why the
    *  three readings can ignore it, and it does NOT cancel out of a per-card height:
    *  199 gaps over 200 cards is ~12px a card, which is most of the box-model term
    *  the assertion is measured against. */
@@ -278,7 +278,7 @@ function expectContentBoxEstimate(m: Metrics): void {
   // well resolved a skipped card to 90px against a real 70, so HALF that term is the
   // width of the disagreement a font may produce and the double-count may not hide in.
   // 200 cards carry 199 gaps, so the gap comes out BEFORE the division — leaving it
-  // in charges each card ~12px of `.msg-wrap` and swallows most of the box-model term.
+  // in charges each card ~12px of `.turn-body` and swallows most of the box-model term.
   const realCardHeight = (m.listRendered - (CARDS - 1) * m.gapPx) / CARDS;
   const realContent = realCardHeight - m.boxModelPx;
   expect(

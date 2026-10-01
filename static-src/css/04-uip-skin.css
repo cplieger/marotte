@@ -272,6 +272,47 @@
   padding: 4px 8px;
   border-radius: var(--r-sm);
 
+  /* THE TRAILING SPACE IS A BORDER, NOT PADDING, and this is the same mechanism
+     27-run-card.css records for `.run-step-capture` with a different remedy.
+     `overflow: hidden` clips at the PADDING box, so block-end padding inside a
+     clip region leaves a band the first overflowing line paints its ascenders
+     into: the content box here is EXACTLY --tooltip-lines line boxes, so the
+     clamp itself lands correctly and the clip sat 4px lower, where the third
+     line rendered 3.5-4px of its 14-15px band (measured 2026-09-18 over the
+     assembled bundle: Chromium 0.286 of a line with 23-32 ink pixels per device
+     row at dpr 3, Firefox 0.267 with 26-35, WebKit 0.250 with zero ink — WebKit
+     is the one engine that keeps `display: -webkit-box` and clips the third
+     line's ink entirely, so its clean read is not a pass anywhere else).
+
+     A margin is not available (the box has a background and a shadow, and a
+     margin would put the space outside both) and the inner-wrapper shape is not
+     either, because the tooltip ELEMENT is @cplieger/ui-primitives' and this
+     rule is marotte's own skin. A BORDER is outside the clip region, and
+     `background-clip` defaults to `border-box`, so the 4px is filled with this
+     tooltip's own background and reads exactly as the padding did. The border
+     box is unchanged at 38px, so `placeAnchored` — which measures the border
+     box — is unaffected, and so is the shadow ring that outlines it. */
+  padding-block: 4px 0;
+  border-block-end: 4px solid transparent;
+
+  /* FORCED COLOURS FORCE A BORDER COLOUR, so a transparent border used as SPACING
+   * becomes a 4px rule under every tooltip. Measured under emulation in Chromium
+   * and Firefox: `border-bottom-color` resolves to rgb(0, 0, 0) against a
+   * background forced to rgb(255, 255, 255). `Canvas` is the same system colour
+   * the UA forces the background to, so the space stays invisible while the clip
+   * stays on the content edge and the border box stays 38px — reverting to
+   * padding here would put the half-line cut back in the one mode where the
+   * sliver is CanvasText on Canvas.
+   *
+   * BESIDE THE RULE IT MODIFIES rather than in 40-a11y.css, which is the same
+   * ruling `.skeleton`'s own forced-colours arm follows: that arm sits in
+   * 30-utilities.css with the rule it modifies, and 40-a11y.css declares no
+   * `.skeleton` rule at all, so the two files' owners cannot collide over it.
+   * The tooltip's block-end space is one fact and it has one owner. */
+  @media (forced-colors: active) {
+    border-block-end-color: Canvas;
+  }
+
   /* ONE SIZE CLASS FOR EVERY TOOLTIP IN THE APP (user ruling, 2026-09-12): the
    * only admissible difference is between VIEWS, which is the viewport term
    * inside --tooltip-max-w. Both numbers are tokens in 01-tokens.css, where the

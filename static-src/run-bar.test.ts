@@ -39,7 +39,6 @@ vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m
 const openRunView = vi.hoisted(() => vi.fn());
 vi.mock("./run-view.js", () => ({
   openRunView,
-  runTabProjectsChat: vi.fn(() => false),
 }));
 
 const announce = vi.hoisted(() => vi.fn());

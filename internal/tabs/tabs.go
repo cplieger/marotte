@@ -51,10 +51,10 @@
 //
 // # Errors
 //
-// ErrBadKind, ErrBadRef, ErrTooMany and ErrOrderMismatch are package-scope
-// sentinels; each function's doc names the ones it returns and every one of them
-// is wrapped with the offending value, so compare with errors.Is and never with
-// the message text.
+// ErrBadKind, ErrBadRef, ErrTooMany, ErrOrderMismatch, ErrNotOpen and ErrCycle
+// are package-scope sentinels; each function's doc names the ones it returns and
+// every one of them is wrapped with the offending value, so compare with
+// errors.Is and never with the message text.
 package tabs
 
 import (
@@ -136,6 +136,13 @@ var (
 	// ErrBadRef means the ref does not fit its kind: missing where the kind
 	// needs one, present on a singleton, or over MaxRefBytes.
 	ErrBadRef = errors.New("bad tab ref")
+	// ErrNotOpen means the id handed to Reparent names no open tab. A pin on
+	// an absent tab is a silent no-op for Close's reason; a reparent is a
+	// statement about where a tab sits, so it is refused.
+	ErrNotOpen = errors.New("tab is not open")
+	// ErrCycle means Reparent was asked to hang a tab under itself or under one
+	// of its own descendants.
+	ErrCycle = errors.New("a tab cannot be its own ancestor")
 )
 
 // file is the on-disk document: the tabs and the version they carry, written

@@ -238,4 +238,64 @@ describe("against real layout", () => {
   // and leaves every geometry read unchanged, so such a case passes identically
   // under `contain: paint` (measured). The choice is pinned as a declaration
   // above, where it is falsifiable.
+
+  /** A turn body holding the entries `build` returns, inside the card that owns the
+   *  gap. Real layout, because the question is what the ENTRIES measure apart. */
+  function body(...entries: readonly HTMLElement[]): HTMLElement {
+    const turn = document.createElement("div");
+    turn.className = "turn";
+    const b = document.createElement("div");
+    b.className = "turn-body";
+    b.style.inlineSize = "640px";
+    for (const e of entries) {
+      b.appendChild(e);
+    }
+    turn.appendChild(b);
+    stage.appendChild(turn);
+    return b;
+  }
+
+  /** One entry of `cls`, given a height so an intrinsic-size reserve cannot stand in
+   *  for a measurement. */
+  function entry(cls: string): HTMLElement {
+    const el = document.createElement("div");
+    el.className = cls;
+    el.style.blockSize = "40px";
+    return el;
+  }
+
+  /** The vertical distance between two rendered siblings. */
+  function between(a: HTMLElement, b: HTMLElement): number {
+    return b.getBoundingClientRect().top - a.getBoundingClientRect().bottom;
+  }
+
+  it("spaces two entries by the turn body's own gap and nothing else", () => {
+    // The container that spaces a turn's blocks is `.turn-body` (29-turns.css) and
+    // there is no level between it and an entry: the per-message wrap and the
+    // boxless block region are deleted (`git show HEAD:static-src/css/13-messages.css`
+    // `.msg-wrap`, `git show HEAD:static-src/css/14-tools.css` `.assistant-blocks`).
+    // MEASURED rather than read off `row-gap`, because a margin on either entry
+    // stacks on the gap and a declaration cannot see that — which is the defect the
+    // 0.0px boundaries were the other half of.
+    const a = entry("msg-row");
+    const b = entry("msg-row");
+    const host = body(a, b);
+    const gap = Number.parseFloat(getComputedStyle(host).rowGap);
+    expect(gap, "the body declares a gap at all").toBeGreaterThan(0);
+    expect(between(a, b)).toBeCloseTo(gap, 1);
+  });
+
+  it("adds no margin of its own on a reasoning trace or a code-references row", () => {
+    // Both carry `margin: 0` for exactly this reason (13-messages.css), and both
+    // comments cited the retired wrap until the wrap went, so the claim is worth
+    // pinning where it is falsifiable: a margin here reads as a 20px boundary
+    // beside a 12px one.
+    const row = entry("msg-row");
+    const reasoning = entry("reasoning-block");
+    const refs = entry("code-refs");
+    const host = body(row, reasoning, refs);
+    const gap = Number.parseFloat(getComputedStyle(host).rowGap);
+    expect(between(row, reasoning)).toBeCloseTo(gap, 1);
+    expect(between(reasoning, refs)).toBeCloseTo(gap, 1);
+  });
 });

@@ -26,7 +26,7 @@
  * `--focus-ring` was adopted at 39 sites and MISSING from 27 interactive
  * families — the whole `.btn` group, `.pill` and all six pill triggers,
  * `.send-btn`, `.sidebar-action-btn`, `.list-row-btn`, `.git-action-btn`,
- * `.chip`, `.popup-item`, `.settings-tab`, `.mcp-modal-tab`, `.picker-btn`,
+ * `.chip`, `.popup-item`, `.seg`, `.picker-btn`,
  * `.effort-btn`, `.shell-header-btn`, `.turn-action-btn`, `.mcp-row`,
  * `.section-option`, `.sched-row` — so a keyboard user's focus simply vanished
  * on most of the app. `70-selection.css` records the gap in a comment beside
@@ -89,7 +89,7 @@
  * whose target the app-wide floor grows to 44px under a finger, inside 4px of block
  * padding whose only other job was clearing this ring — so the band was 52px for a
  * 44px target, which is what a phone reader reported as the footer being too tall.
- * With the padding gone the control is flush on the block edges its card clips, so it
+ * With the padding gone the control is flush on the edges its card clips, so it
  * is here on the same criterion as every other member. Each card's HEAD was already a
  * member (`a.subagent-header`, `.run-head`), so this is the card's two ends agreeing
  * rather than a new concession. The TURN card's own ledger is deliberately NOT here:
@@ -120,15 +120,15 @@
  * action button); `focus-ring-clip.test.ts` pins that on all four edges, so a member
  * with thinner padding fails there rather than painting the ring over its own text.
  *
- * RESIDUAL: a square ring inside a ROUNDED clip loses its corner, since every member
- * computes `border-radius: 0` while its card clips to an arc. The figures below are
- * COMPUTED FROM THAT ARC rather than read off a pixel: the padding-box corner is a
- * quarter circle of `radius - border` whose centre sits `radius` in from both edges, so
- * the full 2px of width is back at the distance where the arc has passed the band's own
- * depth, y = 2. That is 3px along each edge on a `--r` card (radius 5 centred (6,6))
- * and 7.42px on `.run-card` (radius 11 centred (12,12)). Left as is: rounding it means
- * a per-card `border-radius` on every member, several rules across four stylesheets, to
- * round an outline the cards already clip identically at rest and on hover. */
+ * RESIDUAL: a square ring inside a ROUNDED clip loses its corner while its card clips to
+ * an arc. The figures below are COMPUTED FROM THAT ARC rather than read off a pixel:
+ * the padding-box corner is a quarter circle of `radius - border` whose centre sits
+ * `radius` in from both edges, so the full 2px of width is back at the distance where the
+ * arc has passed the band's own depth, y = 2. That is 3px along each edge on a `--r` card
+ * (radius 5 centred (6,6)) and 7.42px on `.run-card` (radius 11 centred (12,12)). Left
+ * as is: rounding it means a per-card `border-radius` on every member, several rules
+ * across four stylesheets, to round an outline the cards already clip identically at
+ * rest and on hover. */
 a.subagent-header:focus-visible,
 .subagent-container.has-disclosure > .subagent-header:focus-visible,
 .subagent-foot > .subagent-footer > .turn-ledger-summary:focus-visible,
@@ -272,6 +272,14 @@ a.run-step-head:focus-visible,
   .tool-call,
   .subagent-block {
     border: 1px solid CanvasText;
+  }
+
+  /* The streaming caret is a drawn box (13-messages.css), so its background is
+   * forced to Canvas and it paints invisibly against it — measured white-on-white.
+   * The glyph it replaced survived on `color`, which is forced to CanvasText. */
+  .message.assistant.streaming:empty::after,
+  .message.assistant.streaming [data-vk-caret]::after {
+    background: CanvasText;
   }
 }
 

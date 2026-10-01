@@ -83,9 +83,9 @@ func chatBridge(t *testing.T, h *Runtime, chatID marotte.ChatID) *fakeBridge {
 func agentLaunchedRun(t *testing.T, results map[string]json.RawMessage, errs map[string]error) (*Runtime, *spawnRecorder) {
 	t.Helper()
 	rec := &spawnRecorder{results: results, errs: errs}
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	h := New(t.Context(), "/tmp/work", rec.factory, cs)
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"
@@ -221,9 +221,9 @@ func TestCancelForSessions_RoutesWithTheChatRecordALREADYDELETED(t *testing.T) {
 		// lease stays put — nothing in this test turns on it.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}}
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	h := New(t.Context(), "/tmp/work", rec.factory, cs)
-	cs.Bus = h
+	cs.wire(h)
 	owner, ok := rec.factory().(*fakeBridge)
 	if !ok {
 		t.Fatal("Setup: the recorder handed back something other than a fake")
@@ -261,9 +261,9 @@ func TestCancelForSessions_PrefersTheRunsOWNProcess(t *testing.T) {
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}}
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	h := New(t.Context(), "/tmp/work", rec.factory, cs)
-	cs.Bus = h
+	cs.wire(h)
 	chatBr, ok := rec.factory().(*fakeBridge)
 	if !ok {
 		t.Fatal("Setup: the recorder handed back something other than a fake")
@@ -405,17 +405,15 @@ func TestRecordEnd_IsNotStampedOnARunThatDidNotStop(t *testing.T) {
 	})
 }
 
-// restoreCancelRetryDelay points the re-attempt backoff at d for one test, over the
-// package default TestMain parks it at.
+// setCancelRetryDelay points rs's re-attempt backoff at d, over the hour buildTestHub
+// parks it at: the production ladder is 5s, 10s, 20s, and a test that waited it out
+// would take 35 seconds.
 //
-// A `var` for the same reason healBaseDelay is one: the production ladder is 5s,
-// 10s, 20s, and a test that waited it out would take 35 seconds. Restored through
-// t.Cleanup rather than defer, so a subtest's failure path cannot leak it.
-func restoreCancelRetryDelay(t *testing.T, d time.Duration) {
-	t.Helper()
-	prev := cancelRetryBaseDelay
-	cancelRetryBaseDelay = d
-	t.Cleanup(func() { cancelRetryBaseDelay = prev })
+// Set on the instance and never restored: the ladder's timers are untracked and can
+// outlive the test, so a restore in t.Cleanup would be a write racing their reads.
+// The value dies with the runtime. Call it before anything can start a ladder.
+func setCancelRetryDelay(rs *Runs, d time.Duration) {
+	rs.cancelRetryBase = d
 }
 
 // TestRetryTermination_IsBoundedAndDoesNotReFireForever. Keeping the deadline is what makes
@@ -426,7 +424,7 @@ func restoreCancelRetryDelay(t *testing.T, d time.Duration) {
 func TestRetryTermination_IsBoundedAndDoesNotReFireForever(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
-	restoreCancelRetryDelay(t, time.Millisecond)
+	setCancelRetryDelay(h.runs, time.Millisecond)
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
@@ -484,9 +482,10 @@ func awaitCalls(t *testing.T, br *fakeBridge, method string, want int, why strin
 // logging logMsgCancelUnretried having never re-attempted. A refusal is evidence about a
 // MOMENT, so a completed node returns the budget, as it returns the heal budget beside it.
 func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
+	logs := captureLogs(t)
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("owner is live")}
-	restoreCancelRetryDelay(t, time.Millisecond)
+	setCancelRetryDelay(h.runs, time.Millisecond)
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
@@ -499,6 +498,17 @@ func TestHealProgress_RefillsTheCancelRetryBudget(t *testing.T) {
 	awaitCalls(t, br, methodKiroWorkflowCancel, spent,
 		"the ladder is not re-installing itself, so the budget was never spent and "+
 			"this test cannot observe a refill")
+	// The fake logs the last call BEFORE that attempt's goroutine releases the
+	// termination claim and asks the spent budget for another rung. Wait for that ask's
+	// refusal, or the press below finds the claim held and no-ops, and the node below
+	// can refill the budget under the old ladder instead of the new one.
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), logMsgCancelUnretried) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the spent ladder never logged %q, so it is still running", logMsgCancelUnretried)
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	// The run completes a node: it has moved on, whatever our refusals said.
 	h.translateACPEvent("c1", runNotif(methodWFNodeComplete, map[string]any{
@@ -538,7 +548,7 @@ func TestRetryTermination_ARunNoLongerBoundedIsLeftAlone(t *testing.T) {
 	// the park below has to land inside it, and the settle after it has to OUTLAST it
 	// or the timer never fires and the guard is never exercised.
 	const base = 200 * time.Millisecond
-	restoreCancelRetryDelay(t, base)
+	setCancelRetryDelay(h.runs, base)
 	leased(t, h.runs, "wf_1")
 	h.runs.armDeadline(t.Context(), "wf_1")
 
@@ -646,7 +656,7 @@ func TestCancelUnretriedMessage_IsGreppable(t *testing.T) {
 		}
 	}
 	for _, other := range []string{
-		logMsgRunStalled, logMsgRunBackstop, logMsgStepCap, logMsgRunOrphaned, logMsgRunYieldedToSlot,
+		logMsgRunStalled, logMsgRunBackstop, logMsgRunOrphaned, logMsgRunYieldedToSlot,
 	} {
 		if logMsgCancelUnretried == other {
 			t.Errorf("logMsgCancelUnretried duplicates %q, so a rule reading one would "+

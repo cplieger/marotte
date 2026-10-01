@@ -179,6 +179,17 @@ vi.mock("./dom.js", () => ({
     }
     return el;
   },
+  // Same real-ESM-linking reason as `byId` above: `skeleton.ts` in this graph
+  // imports the name, so an absent export fails the whole FILE at collection.
+  // `setBusy`'s own body rather than `undefined`, because the open path reaches an
+  // admitted `paintPlaceholder`, which marks its host busy through it.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 
 const { clearAgentLineCache } = await import("./editor-ui.js");
@@ -220,6 +231,10 @@ beforeEach(() => {
     editor: { show: activateFile, refresh: vi.fn(), close: closeEditorFile },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
+    // `TabOpeners` gained a required `spec` member, so a fixture without one does not
+    // type-check. Inert here: no case opens a spec tab, and closing the member is not
+    // this suite taking a position on the kind.
+    spec: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();

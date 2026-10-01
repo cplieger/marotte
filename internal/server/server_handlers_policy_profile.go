@@ -10,10 +10,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -152,6 +153,16 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 		s.failProfileSelection(r.Context(), w, roots, snap, err)
 		return
 	}
+	// AFTER persistProfile, and that ordering is the whole correctness of this
+	// call: the renderer resolves the rung by READING the setting this handler has
+	// just written, so running it any earlier renders the outgoing profile's
+	// posture and the suspension silently does not happen.
+	//
+	// durable.Context for the reason stated at server_handlers_settings.go's
+	// ignore-files arm: the profile has already landed, so a reader closing the tab
+	// mid-POST would otherwise leave KAS's mcp.json carrying the OUTGOING rung's
+	// autoApprove grants — the wider posture, standing until the next MCP mutation.
+	s.renderMCPForProfile(durable.Context(r.Context()), profile.ID)
 	// The presets ride the session door, so the sessions already running still
 	// carry the OLD profile. Recycling the utility session is what makes GET
 	// /api/permissions describe the new one; chat bridges pick it up when their
@@ -166,6 +177,34 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventPermissionsChanged, "",
 		marotte.PermissionsChangedPayload{Status: "success"}))
+}
+
+// renderMCPForProfile re-renders KAS's MCP config so the newly selected rung's
+// auto-approve posture applies to the chats already running. KAS watches that file
+// and re-merges on change, which is what makes a suspension immediate instead of
+// waiting for whenever the user next opens a chat.
+//
+// It must be called AFTER the profile is persisted; the renderer reads the setting.
+//
+// A FAILURE LOGS AND THE SELECTION STILL ANSWERS 200, which is deliberate and is
+// the opposite of failProfileSelection's treatment. By this point both policy files
+// and config.json have landed, so the selection HAS happened: a 500 would tell the
+// user their profile did not change when it did, and restoring the policy files
+// here would leave config.json naming a profile whose rules are no longer on disk —
+// strictly worse than a stale MCP file. So the log names the consequence instead:
+// the previous rung's auto-approve posture stands until the next render, which is
+// the next MCP config mutation or the boot reconcile after a restart.
+//
+// Its own method rather than three lines inline because handlePolicyProfile sits at
+// its cognitive-complexity ceiling, the same reason rulesInForce below is one.
+func (s *Server) renderMCPForProfile(ctx context.Context, profileID string) {
+	if s.mcpRender == nil {
+		return
+	}
+	if err := s.mcpRender.RenderKASConfig(ctx); err != nil {
+		slog.Error("security profile: re-rendering the MCP config failed; the previous profile's auto-approve posture stands until the next MCP change or restart",
+			"profile", profileID, "error", err)
+	}
 }
 
 // rulesInForce is what the OUTGOING profile currently contributes to policy, as

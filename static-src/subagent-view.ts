@@ -75,8 +75,8 @@ import {
   updateDetachedBody,
 } from "./messages-blocks.js";
 import { refreshChatView } from "./chat.js";
-import { get, isThinking, messagesVersionOf } from "./store.js";
-import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
+import { chatTurnLive, get, isThinking, messagesVersionOf } from "./store.js";
+import { laneSig } from "./store-signals.js";
 import { ICON_TAB_AGENT } from "./icons.js";
 import {
   blockShape,
@@ -88,20 +88,12 @@ import {
 } from "./subagent-slice.js";
 import { subagentToExec } from "./subagent-exec-source.js";
 import { parseSubagentRef, subagentRef } from "./tab-materialize.js";
-import type { Message } from "./types.js";
+import type { TurnState } from "./types.js";
 
-/** The synthetic message id ONE MEMBER's detached render is keyed under.
- *
- *  One per (chat, subtask) rather than the real message's, for three reasons. A
- *  delegate's blocks can span two assistant messages — a mid-turn model switch splits
- *  a turn — and this page renders them as ONE transcript. `messages-blocks.ts` holds a
- *  single render map keyed by message id, so reusing the real id would have the two
- *  surfaces clobber each other's render state and then dispose the wrong one. And the
- *  page now mounts SEVERAL members at once, so the key has to name the member rather
- *  than the page. */
-function renderID(chatID: string, subtaskID: string): string {
-  return `sub:${chatID}:${subtaskID}`;
-}
+/** A detached render is addressed by `(turn, lane)`, which is `messages-blocks.ts`'s
+ *  own render key: the transcript holds that same turn under the EMPTY lane, so the two
+ *  surfaces cannot clobber each other's render state. There is no synthetic id and no
+ *  copy of the turn — the lane IS the identity. */
 
 /** The identity of one PAGE INSTANCE: the GROUP, never the member the tab names.
  *
@@ -138,7 +130,10 @@ const shown = signal<{ chatID: string; subtaskID: string }>({ chatID: "", subtas
 interface BodyRender {
   /** The host `exec-view/`'s detail pane hands out for this member's node. */
   host: HTMLElement;
-  /** The block shape already mounted, for the update-versus-rebuild decision.
+  /** The turn this member's lane was mounted from, which is half its render key. Held
+   *  because the DISPOSE has to name it after the projection has moved on. */
+  turnID: string;
+  /** The entry shape already mounted, for the update-versus-rebuild decision.
    *
    *  The dispatcher's incremental update appends past a watermark, so it is correct
    *  only while the prefix it mounted is unchanged. Growth at the tail keeps it; a
@@ -290,38 +285,33 @@ function installEffects(): void {
     // and `shown` is already a dependency — and reading it above minted a
     // `messagesVersionSigs` entry under the key `""`.
     touch(messagesVersionOf(chatID));
-    const messages = get(chatID)?.messages ?? [];
-    const projection = sliceSubagentGroup(messages, subtaskID, isThinking(chatID));
+    const session = get(chatID);
+    const projection =
+      session === undefined
+        ? { group: { pipeline: "", driver: undefined, members: [] }, slices: new Map() }
+        : sliceSubagentGroup(session, subtaskID, isThinking(chatID));
     subscribeToDeltas(projection);
     paint(chatID, subtaskID, projection);
   });
 }
 
-/** Subscribe this effect to EVERY member's streaming blocks.
+/** Subscribe this effect to EVERY member's LANE.
  *
- *  A text delta does NOT bump the chat's version: the transcript's fine-grained path
- *  writes a per-(message, block) signal instead, precisely so one chunk does not
- *  repaint a whole conversation. This page has to read the same signals or a
- *  delegate's prose would arrive in jumps, whenever some structural change happened to
- *  fire.
+ *  A delta does NOT bump the chat's version: the store writes the entry's own streaming
+ *  signal and bumps the lane's coarse signal instead, precisely so one
+ *  chunk does not repaint a whole conversation. This page reads the LANE signal, which
+ *  is bumped on every open, delta, seal and laned append in that lane — one
+ *  subscription per member, in place of a signal per mounted entry, and it is what
+ *  carries a delta to a page whose chat has no transcript view open at all.
  *
  *  Every member rather than the tab's own, because the page mounts a sibling's
- *  transcript the moment the reader selects it, so a sibling's blocks are as much this
- *  page's as the tab's own. This is the FINE-GRAINED half of a channel that also bumps
- *  the chat's version, so what it buys is a delta painting in the tick it was written
- *  rather than on the following microtask — the coarse bump is what makes it arrive at
- *  all.
- *
- *  `get` rather than `ensure`, and that distinction is load-bearing. Minting a signal
- *  here would change the TRANSCRIPT's behaviour: `store.appendChunk` falls back to a
- *  full repaint only while no signal exists, so creating one for a block the
- *  transcript judged settled would silence that fallback and freeze the transcript's
- *  own bubble. Reading an absent signal is safe — the fallback fires, the chat's
- *  version bumps, and this effect re-runs anyway. */
+ *  transcript the moment the reader selects it, so a sibling's lane is as much this
+ *  page's as the tab's own. */
 function subscribeToDeltas(projection: SubagentProjection): void {
-  for (const slice of projection.slices.values()) {
-    for (const key of slice.sourceKeys) {
-      touch(blockTextSigs.get(key), blockThinkingSigs.get(key));
+  for (const [lane, slice] of projection.slices) {
+    const turnID = slice.turn?.id;
+    if (turnID !== undefined) {
+      touch(laneSig(turnID, lane));
     }
   }
 }
@@ -335,7 +325,7 @@ function paint(chatID: string, subtaskID: string, projection: SubagentProjection
   // Nothing resident for this delegate: no blocks AND no invocation. One honest
   // sentence per situation, because a blank page reads as a broken one in both.
   const own = projection.slices.get(subtaskID);
-  if (own === undefined || (own.blocks.length === 0 && own.invocation === undefined)) {
+  if (own === undefined || (!holdsOutput(own) && own.invocation === undefined)) {
     unmount();
     host.replaceChildren(el("div", { className: "list-empty" }, notResidentNote(chatID)));
     return;
@@ -353,7 +343,7 @@ function paint(chatID: string, subtaskID: string, projection: SubagentProjection
   m.projection = projection;
   inPaint = true;
   try {
-    m.view.render(subagentToExec(subtaskID, projection));
+    m.view.render(subagentToExec(subtaskID, projection, chatTurnLive(chatID)));
   } finally {
     inPaint = false;
   }
@@ -375,13 +365,15 @@ function syncBodies(m: MountedPage): void {
   // An EMPTY slice is left unmounted deliberately: `exec-view/detail.ts` shows the
   // empty note only while its host has no children, and that note is the honest answer
   // for a delegate that has produced nothing yet.
-  if (slice !== undefined && slice.blocks.length > 0 && !m.bodies.has(wanted)) {
+  const turnID = slice?.turn?.id;
+  if (slice !== undefined && turnID !== undefined && holdsOutput(slice) && !m.bodies.has(wanted)) {
     m.bodies.set(wanted, {
-      // The host the detail pane hands out for that node. `run-step-blocks.ts` is
-      // deliberately NOT reused for what goes in it: that module applies
-      // `RunStepPayload` frames, and these blocks are persisted, so they go through
-      // the transcript's own dispatcher instead.
+      // The host the detail pane hands out for that node. The entries go through the
+      // transcript's OWN dispatcher, with this lane as the render root, so the page
+      // gets the prose-run rule, the fold rules and a nested grandchild's card for
+      // free.
       host: m.view.bodyFor(wanted),
+      turnID,
       shape: [],
       sealed: false,
     });
@@ -402,19 +394,23 @@ function renderBody(
   subtaskID: string,
   slice: SubagentSlice,
 ): void {
-  // Derived rather than stored on the record: both halves are in hand and stable
-  // (`mounted.chatID` is readonly, `subtaskID` is the map key), so one function is
-  // what stops the build, the update, the seal and the dispose disagreeing about it.
-  const key = renderID(chatID, subtaskID);
-  const shape = blockShape(slice.blocks);
-  const message = syntheticMessage(key, slice);
-  if (shapeExtends(rec.shape, shape) && rec.shape.length > 0) {
-    updateDetachedBody(rec.host, message, chatID, subtaskID, slice.live, slice.sourceKeys);
+  const turn = slice.turn;
+  if (turn === undefined) {
+    return;
+  }
+  const shape = blockShape(slice.entries);
+  // A turn the window no longer holds under the same id is a REBUILD whatever the
+  // shape says: the render is keyed `(turn, lane)`, so the mounted one belongs to a
+  // turn this pass is not rendering.
+  const sameTurn = rec.turnID === turn.id;
+  if (sameTurn && shapeExtends(rec.shape, shape) && rec.shape.length > 0) {
+    updateDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
   } else {
-    disposeDetachedBody(key, subtaskID);
+    disposeDetachedBody(rec.turnID, subtaskID);
     rec.host.replaceChildren();
+    rec.turnID = turn.id;
     rec.sealed = false;
-    buildDetachedBody(rec.host, message, chatID, subtaskID, slice.live, slice.sourceKeys);
+    buildDetachedBody(rec.host, turn, chatID, subtaskID, slice.live);
   }
   rec.shape = shape;
 
@@ -423,7 +419,7 @@ function renderBody(
   // per member: a stage can finish while its siblings carry on.
   if (!slice.live && !rec.sealed) {
     rec.sealed = true;
-    finalizeDetachedBody(key, subtaskID);
+    finalizeDetachedBody(turn.id, subtaskID);
   }
 }
 
@@ -486,8 +482,8 @@ function unmount(): void {
     return;
   }
   mounted = undefined;
-  for (const subtaskID of m.bodies.keys()) {
-    disposeDetachedBody(renderID(m.chatID, subtaskID), subtaskID);
+  for (const [subtaskID, rec] of m.bodies) {
+    disposeDetachedBody(rec.turnID, subtaskID);
   }
   m.view.dispose();
   m.view.root.remove();
@@ -518,17 +514,13 @@ function notResidentNote(chatID: string): string {
     : "This delegate's turn is not in the loaded history. Scroll up in the conversation to load it.";
 }
 
-/** The synthetic message the dispatcher renders. Its id is the render key, so the
- *  build, the update, the seal and the dispose cannot disagree about it. */
-function syntheticMessage(id: string, slice: SubagentSlice): Message {
-  return {
-    id,
-    role: "assistant",
-    ts: 0,
-    content: "",
-    blocks: slice.blocks,
-    tool_calls: slice.toolCalls,
-  };
+/** Whether the lane holds anything to render — a sealed entry or one still open.
+ *
+ *  The open half is what makes a delegate's FIRST streamed words mount a body: an open
+ *  entry never reaches the log, so a lane whose only content is arriving now has no
+ *  sealed entry at all. */
+function holdsOutput(slice: SubagentSlice): boolean {
+  return slice.entries.length > 0 || slice.open;
 }
 
 /** Open (or focus) a delegate's page.
@@ -561,14 +553,35 @@ export function openSubagentView(chatID: string, subtaskID: string): Promise<voi
  *  hold the window — its page already renders the not-resident notice, so
  *  eviction changes nothing it was showing. */
 export function subagentTabProjectsChat(chatID: string): boolean {
-  const msgs = get(chatID)?.messages ?? [];
-  for (const m of msgs) {
-    for (const b of m.blocks ?? []) {
-      const st = b.agent_subtask_id;
-      if (st !== undefined && st !== "" && hasTab("subagent", subagentRef(chatID, st))) {
+  const session = get(chatID);
+  if (session === undefined) {
+    return false;
+  }
+  for (const state of session.turns.values()) {
+    for (const lane of laneNames(state)) {
+      if (hasTab("subagent", subagentRef(chatID, lane))) {
         return true;
       }
     }
   }
   return false;
+}
+
+/** Every DELEGATE lane one resident turn holds. The empty lane is the log's own agent
+ *  and names no delegate; an open entry counts, because a delegate whose first words
+ *  are still arriving is exactly one whose window must not be evicted. */
+function laneNames(state: TurnState): Set<string> {
+  const out = new Set<string>();
+  for (const e of state.entries) {
+    const lane = e.lane ?? "";
+    if (lane !== "") {
+      out.add(lane);
+    }
+  }
+  for (const lane of state.openEntries.keys()) {
+    if (lane !== "") {
+      out.add(lane);
+    }
+  }
+  return out;
 }

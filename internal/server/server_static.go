@@ -21,18 +21,19 @@ const (
 	immutableAsset  = "public, max-age=31536000, immutable"
 	revalidateAsset = "no-cache"
 	noStoreHTML     = "no-store"
-	// Thirty days and NOT `immutable`: a face's @font-face URL is a fixed name in
-	// css/00-fonts.css, so the bytes change under that name on a Monaspace or
-	// glyph-font bump, and without `immutable` a reload revalidates against the
-	// content-hash ETag instead of serving the old file for a year.
-	fontAsset = "public, max-age=2592000"
 )
 
 // fontAssetPrefix is where the Dockerfile writes the two web faces. The trailing
 // slash is load-bearing: without it the prefix also matches a sibling directory
-// whose name merely starts with it, which would hand that directory a
-// thirty-day policy nothing here decided to give it.
+// whose name merely starts with it, which would hand that directory a policy
+// nothing here decided to give it.
 const fontAssetPrefix = "vendor/fonts/"
+
+// stampedFont matches the `<stem>.<8 lowercase hex><ext>` name cmd/bundle's
+// fingerprintFonts stamps. Reading the verdict off the NAME is what makes dropping
+// that step degrade to revalidation rather than to a stale face, and it keeps the
+// unhashed licence texts beside the fonts out of a year-long promise.
+var stampedFont = regexp.MustCompile(`\.[0-9a-f]{8}\.[^./]+$`)
 
 // contentHashedAsset matches the one naming shape whose bytes its name pins:
 // cmd/bundle's `chunks/[name]-[hash]`, the hash 8 uppercase base32 characters.
@@ -48,8 +49,8 @@ func assetCachePolicy(assetPath string) string {
 		return immutableAsset
 	case strings.HasSuffix(assetPath, ".html"):
 		return noStoreHTML
-	case strings.HasPrefix(assetPath, fontAssetPrefix):
-		return fontAsset
+	case strings.HasPrefix(assetPath, fontAssetPrefix) && stampedFont.MatchString(assetPath):
+		return immutableAsset
 	default:
 		return revalidateAsset
 	}
@@ -75,26 +76,24 @@ func reportMissingServiceWorker(staticFS fs.FS) {
 		"path", serviceWorkerPath, "remedy", "go run ./cmd/bundle, then rebuild")
 }
 
-// terminalFontPath is one of the faces css/00-fonts.css declares, so its absence
-// means the whole vendor/fonts tree is missing.
-const terminalFontPath = fontAssetPrefix + "WebTerminalGlyphs.woff2"
+// terminalFontGlob names one of the faces css/00-fonts.css declares, so no match means
+// the whole vendor/fonts tree is missing. A glob rather than a path because cmd/bundle
+// stamps a content hash before the extension.
+const terminalFontGlob = fontAssetPrefix + "WebTerminalGlyphs*.woff2"
 
-// reportMissingTerminalFonts states at boot that the shell terminal will render
-// on the platform monospace. `//go:embed static` fails SOFT on a missing
-// subdirectory and static/vendor is gitignored, so a `go build` of a clone that
-// never ran scripts/dev-fonts.sh embeds no faces; the SPA fallback then answers
-// each .woff2 with index.html, which the browser discards as a font and reports
-// nowhere. The glyphs are the ones that tile, so what a reader sees is seams
-// between rows and lattices that do not line up — a rendering fault with no
+// reportMissingTerminalFonts states at boot that the shell terminal will render on the
+// platform monospace. `//go:embed static` fails SOFT on a missing subdirectory and
+// static/vendor is gitignored, so a clone that never ran scripts/dev-fonts.sh embeds no
+// faces — and the SPA fallback answers each .woff2 with index.html, so the fault has no
 // server-side symptom at all.
 //
 // spaHandler is built once per ListenAndServe, so this is one line per boot.
 func reportMissingTerminalFonts(staticFS fs.FS) {
-	if _, err := fs.Stat(staticFS, terminalFontPath); err == nil {
+	if matches, err := fs.Glob(staticFS, terminalFontGlob); err == nil && len(matches) > 0 {
 		return
 	}
 	slog.Warn("server: no terminal fonts in the embedded static tree; the shell renders on the platform monospace",
-		"path", terminalFontPath, "remedy", "bash scripts/dev-fonts.sh, then rebuild")
+		"path", terminalFontGlob, "remedy", "bash scripts/dev-fonts.sh, then rebuild")
 }
 
 // spaHandler serves the embedded FS, falling back to index.html for any path

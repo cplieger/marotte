@@ -5,6 +5,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("./dom.js", () => ({
   $: new Proxy({}, { get: () => document.createElement("div") }),
   el: () => document.createElement("div"),
+  // Same real-ESM-linking reason as the `./bus.js` mock below, and the real body
+  // rather than `undefined`: `skeleton.ts` marks its host busy through this name, so
+  // a case that drives the paint gets the behaviour rather than a TypeError.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 vi.mock("./bus.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
@@ -20,6 +30,12 @@ vi.mock("./tabs.js", () => ({
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
+  // navigate.js's `openSpec` (the spec tab's door) imports these five, and Browser
+  // Mode links for real, so one missing name fails this whole file's import.
+  activateTab: undefined,
+  parentChatRef: undefined,
+  setTabParent: undefined,
+  tabIdFor: undefined,
   setGitTab: undefined,
   openGitView: undefined,
   toggleFilesView: vi.fn(() => Promise.resolve()),

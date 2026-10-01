@@ -45,6 +45,9 @@ vi.mock("./actions/settings.js", () => ({
 vi.mock("./api-client.js", () => ({
   apiGet: vi.fn(() => Promise.resolve(undefined)),
   apiGetTyped: vi.fn(),
+  // settings-steering.ts is in this graph and reads the ETag off the response
+  // headers, so the name has to exist for Browser Mode's real linking.
+  apiGetWithHeaders: vi.fn(() => Promise.resolve({ data: null, headers: null })),
 }));
 vi.mock("./wire/decoders.gen.js", () => ({ decodeWhoamiResponse: vi.fn() }));
 vi.mock("./save-indicator.js", () => ({
@@ -191,14 +194,22 @@ vi.mock("./settings-notifications.js", () => ({
 
 const {
   adoptThemeFromSettings,
+  applyGeneralPanel,
   extractDiagnosticVersion,
-  initChatRetention,
   initDiagnostics,
   initExperimentalToggles,
+  initGeneralPanelControls,
   initPostAuthUI,
   themeStorage,
   _resetThemeForTest,
 } = await import("./settings.js");
+
+/** Wire the General panel's listeners once, then seed it — the two halves the
+ *  `settings_updated` arm keeps apart, in the order boot runs them. */
+function initRetention(s: Parameters<typeof applyGeneralPanel>[0]): void {
+  initGeneralPanelControls();
+  applyGeneralPanel(s);
+}
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 6; i++) {
@@ -403,7 +414,7 @@ describe("initDiagnostics", () => {
 // HIDDEN rather than disabled — a greyed-out field still showing the last
 // number reads as the value in force. The number survives in the DOM, so
 // unchecking restores it instead of falling back to a default.
-describe("initChatRetention", () => {
+describe("the chat-retention row", () => {
   function seedRetentionDom(): void {
     document.body.innerHTML = `
       <div class="section-option">
@@ -438,7 +449,7 @@ describe("initChatRetention", () => {
   });
 
   it("shows the Days-kept row for a day count", () => {
-    initChatRetention(settingsPayload({ chat_retention_days: 14 }));
+    initRetention(settingsPayload({ chat_retention_days: 14 }));
 
     expect(foreverInput().checked).toBe(false);
     expect(daysRow().classList.contains("hidden")).toBe(false);
@@ -446,7 +457,7 @@ describe("initChatRetention", () => {
   });
 
   it("hides the Days-kept row when the stored value is forever", () => {
-    initChatRetention(settingsPayload({ chat_retention_days: -1 }));
+    initRetention(settingsPayload({ chat_retention_days: -1 }));
 
     expect(foreverInput().checked).toBe(true);
     expect(daysRow().classList.contains("hidden")).toBe(true);
@@ -455,9 +466,35 @@ describe("initChatRetention", () => {
     expect(daysInput().disabled).toBe(false);
   });
 
+  // The seed half runs again on every `settings_updated`, which is what makes a
+  // retention window chosen on another device reach THIS screen's controls rather
+  // than only its behaviour. The listeners must not run again with it: N seeds
+  // would mean N listeners and N identical writes per click.
+  it("follows a remote change and still writes once per click", async () => {
+    const { patchSettings } = await import("./persist.js");
+    initRetention(settingsPayload({ chat_retention_days: 14 }));
+
+    applyGeneralPanel(settingsPayload({ chat_retention_days: -1 }));
+    expect(foreverInput().checked).toBe(true);
+    expect(daysRow().classList.contains("hidden")).toBe(true);
+
+    toggleForever(false);
+    expect(patchSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not rewrite the day box while the reader is in it", () => {
+    initRetention(settingsPayload({ chat_retention_days: 14 }));
+    daysInput().focus();
+    daysInput().value = "3";
+
+    applyGeneralPanel(settingsPayload({ chat_retention_days: 30 }));
+
+    expect(daysInput().value, "a half-typed number survives an unrelated remote change").toBe("3");
+  });
+
   it("hides the row on check and restores it, with its number, on uncheck", async () => {
     const { patchSettings } = await import("./persist.js");
-    initChatRetention(settingsPayload({ chat_retention_days: 30 }));
+    initRetention(settingsPayload({ chat_retention_days: 30 }));
 
     toggleForever(true);
     expect(daysRow().classList.contains("hidden")).toBe(true);
@@ -605,11 +642,13 @@ describe("initExperimentalToggles", () => {
   }
 
   /** Wire the toggles and wait out the initial read, so a late arrival of it
-   *  cannot land between a test's own toggle and its assertion. */
+   *  cannot land between a test's own toggle and its assertion. The default mock
+   *  answers no value for any key, and `hooks.showStatus` is the one row whose own
+   *  default is ON, so it is what says the read has landed. */
   async function initFlags(): Promise<void> {
     initExperimentalToggles();
     await vi.waitFor(() => {
-      expect(box("flag-telemetry").checked).toBe(true);
+      expect(box("flag-hooks-status").checked).toBe(true);
     });
   }
 
@@ -722,6 +761,36 @@ describe("initExperimentalToggles", () => {
     });
     expect(box("flag-telemetry").checked).toBe(false);
     expect(box("flag-disable-inherit-resources").checked).toBe(true);
+  });
+
+  // The endpoint answers "" for a key `cli.json` does not carry AND for a read it
+  // could not make, and the three rows do not share a polarity — so one blanket
+  // unset-means-on rule claimed telemetry was on while it was off, and claimed
+  // default-resource inheritance was disabled while it was not.
+  it("renders an absent key at that row's own default, not at one shared rule", async () => {
+    const { apiGet } = await import("./api-client.js");
+    vi.mocked(apiGet).mockResolvedValueOnce({ settings: {} });
+
+    initExperimentalToggles();
+
+    await vi.waitFor(() => {
+      expect(box("flag-hooks-status").checked).toBe(true);
+    });
+    expect(box("flag-telemetry").checked).toBe(false);
+    expect(box("flag-disable-inherit-resources").checked).toBe(false);
+  });
+
+  // The loader runs on every General-tab activation. Each listener it left behind
+  // meant another identical PUT per click, and each of those is a `kiro-cli
+  // settings` SPAWN on the server.
+  it("leaves one listener per checkbox however many times the panel is opened", async () => {
+    await initFlags();
+    await initFlags();
+    await initFlags();
+
+    toggle("flag-telemetry", false);
+
+    expect(H.mockKiroDispatch).toHaveBeenCalledTimes(1);
   });
 
   it("discards a superseded read rather than painting it over a newer one", async () => {

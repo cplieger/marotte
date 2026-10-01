@@ -357,9 +357,12 @@ function ensureBuilt(): void {
   if (barEl !== null) {
     return;
   }
-  const count = el("span", {
+  // A DIV, and `search-status` beside its own class, for find-in-chat.ts's reason:
+  // the counter is a LINE under the controls (24-find.css `.search-status`), which
+  // collapses to zero height while empty, so it needs a block box of its own.
+  const count = el("div", {
     id: "editor-find-count",
-    className: "editor-find-count",
+    className: "editor-find-count search-status",
     role: "status",
     "aria-live": "polite",
     "aria-atomic": "true",
@@ -397,9 +400,13 @@ function ensureBuilt(): void {
     matchCase: true,
     closeButton: true,
     compose: ({ input, caseButton, closeButton }) => [
-      input,
+      el(
+        "div",
+        { className: "editor-find-row" },
+        input,
+        el("div", { className: "editor-find-nav" }, caseButton, prevBtn, nextBtn, closeButton),
+      ),
       count,
-      el("div", { className: "editor-find-nav" }, caseButton, prevBtn, nextBtn, closeButton),
     ],
     // SYNCHRONOUS: there is no network here, so the count paints in the same tick
     // as the keystroke that asked for it rather than a microtask later.

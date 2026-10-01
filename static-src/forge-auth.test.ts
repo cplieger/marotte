@@ -1,5 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// `tools.ts` reaches the editor openers, which drag the whole editor graph in
+// behind them. Cut it at that edge rather than widening every partial mock the
+// subgraph would need; no case here opens a file.
+vi.mock("./editor-openers.js", () => ({
+  openFile: vi.fn(),
+  openFileDiff: vi.fn(),
+  openFileInBackground: vi.fn(),
+  openFileGitDiff: vi.fn(),
+  fetchGitDiffSources: vi.fn(),
+  activateFile: vi.fn(),
+  refreshFile: vi.fn(),
+  closeEditorFile: vi.fn(),
+}));
 vi.mock("./api-client.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
@@ -325,7 +338,10 @@ describe("forge-auth: 4-section layout", () => {
     // Identity renders a terminal label, not the loading shimmer.
     const primary = row.querySelector<HTMLElement>(".forge-account-primary")!;
     expect(primary.textContent).toBe("Saved connection");
+    // Both shapes a shimmer can take on this row: a class on the host, and a nested
+    // placeholder inside it. A terminal state carries neither.
     expect(primary.classList.contains("skeleton")).toBe(false);
+    expect(primary.querySelector(".skeleton")).toBeNull();
     // The reinstall pointer rides the standard error line.
     expect(row.querySelector(".forge-account-error")?.textContent).toContain("Settings → Tools");
     // No Manage link, no Sign out: both act through the absent CLI.

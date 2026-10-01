@@ -46,11 +46,11 @@ type EffectiveSettings struct {
 	// LastMergeMethod is the PR merge method picked last ("squash" or "rebase"),
 	// the merge dialog's default. Empty means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
-	// AgentIgnoreFiles is the ignore-file basename list the agent read filter
-	// applies. Its default is non-empty (settings.DefaultAgentIgnoreFiles), which
-	// is why an absent key must not read as the zero value: the client rendered an
-	// empty chip row while the filter was applying two patterns, and the first
-	// edit persisted that emptiness.
+	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
+	// which is what enforces it; marotte runs no matcher of its own. The default is
+	// EMPTY (settings.DefaultAgentIgnoreFiles), and an absent key must still not
+	// read as the zero value: the panel row is authoritative on write, so a client
+	// falling back to an empty list persists that emptiness on the next edit.
 	AgentIgnoreFiles []string `json:"agent_ignore_files"`
 	// ChatRetentionDays is -1 (keep forever), 0 (delete on close) or a day count.
 	// Zero is the most destructive value in the document, so absent must never

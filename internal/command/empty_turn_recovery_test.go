@@ -6,6 +6,7 @@ package command
 import (
 	"context"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -25,23 +26,25 @@ type recoveryOutcome struct {
 	mu          sync.Mutex
 }
 
-func (o *recoveryOutcome) StartTurn(_ context.Context, _ marotte.ChatID, source marotte.TurnOpenSource) marotte.TurnEpoch {
+func (o *recoveryOutcome) OpenTurn(_ context.Context, _ marotte.ChatID, source marotte.TurnOpenSource, _ *marotte.EntryPrompt, _ func(*marotte.Chat)) (string, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.openedTurns = append(o.openedTurns, source)
-	return marotte.TurnEpoch(len(o.openedTurns))
+	return "t-" + strconv.Itoa(len(o.openedTurns)), nil
 }
 
-func (o *recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) (marotte.TurnResult, error) {
+func (o *recoveryOutcome) StartTurn(context.Context, marotte.ChatID, string) bool { return true }
+
+func (o *recoveryOutcome) AwaitTurn(context.Context, marotte.ChatID, string) (marotte.TurnResult, error) {
 	return marotte.TurnResult{}, marotte.ErrNoSuchTurn
 }
 
-func (o *recoveryOutcome) ReleaseTurn(marotte.ChatID, marotte.TurnEpoch) {}
+func (o *recoveryOutcome) ReleaseTurn(marotte.ChatID, string) {}
 
-func (o *recoveryOutcome) SettleTurnOnResponse(context.Context, marotte.ChatID, marotte.TurnEpoch, uint64, *marotte.RPCResponse) {
+func (o *recoveryOutcome) SettleTurnOnResponse(context.Context, marotte.ChatID, string, uint64, *marotte.RPCResponse) {
 }
 
-func (o *recoveryOutcome) TurnOpenedAfter(marotte.ChatID, marotte.TurnEpoch) bool { return o.laterTurn }
+func (o *recoveryOutcome) TurnOpenedAfter(marotte.ChatID, string) bool { return o.laterTurn }
 
 func (o *recoveryOutcome) AdmissionHolderSource(marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return 0, false
@@ -70,11 +73,12 @@ func (o *recoveryOutcome) ReleaseTurnReservation(marotte.ChatID) {
 	o.reserved = false
 }
 
-func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, marotte.TurnEpoch) {
+func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID, string, string) {}
+
+func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string) {
 }
 
-func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, marotte.TurnEpoch, marotte.StopReason, string) {
-}
+func (o *recoveryOutcome) RecordDroppedSteer(context.Context, marotte.ChatID, ParkedSteer) {}
 
 // recoveryBridges records whether the recovery tore the session down, which is the
 // first irreversible thing it does and therefore the cleanest observable for
@@ -84,7 +88,9 @@ type recoveryBridges struct {
 	closed int
 }
 
-func (b *recoveryBridges) CloseBridge(marotte.ChatID) { b.closed++ }
+func (b *recoveryBridges) CloseBridge(context.Context, marotte.ChatID, marotte.TurnOutcome) {
+	b.closed++
+}
 
 func (b *recoveryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
 	return &recoveryBridge{}, nil
@@ -155,7 +161,7 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 			// A zero-content or tool-only auto-wake never sends agentInitiated, so a
 			// mis-binding is never revised and the mis-bound pre-open closes with the
 			// first three clauses satisfied. What it necessarily violates is this one:
-			// the real agent-initiated turn is a later epoch on the same chat.
+			// the real agent-initiated turn is a later turn on the same chat.
 			name:      "a later turn opened, so the bracket this turn closed on was not ours",
 			result:    firing,
 			laterTurn: true,
@@ -168,7 +174,11 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 			bridges := &recoveryBridges{benchDeps: newBenchDeps()}
 			p := &marotte.PromptCommand{Text: "an ordinary question", MessageID: "m1"}
 
-			recoverEmptyTurn(t.Context(), bridges, bridges, bridges, outcome, "c1", 1, tc.result, p, map[string]any{})
+			roles := promptRolesOf(bridges)
+			roles.admission = outcome
+			roles.turnOutcome = outcome
+
+			recoverEmptyTurn(t.Context(), roles, "c1", "t-0", tc.result, p, map[string]any{})
 
 			fired := bridges.closed > 0
 			if fired != tc.wantFire {

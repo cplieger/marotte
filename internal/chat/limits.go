@@ -31,16 +31,6 @@ const (
 	implausibleLimit = 1 << 62
 )
 
-// maxHeaderScanBytes bounds ONE streaming header scan, independently of the chat
-// cap and so in force when that cap is unlimited; without it readHeadersParallel
-// would stream a hostile file of any size, eight at a time.
-//
-// The scan holds no message bytes, so its cost is sequential I/O: 512 MiB bounds
-// one sidebar refresh to 4 GiB of reads. It is also what a 16 GiB container
-// derives, the top of the plausible range, so no capped deployment can write a
-// chat its own header scan would refuse. A file over it is refused loudly.
-const maxHeaderScanBytes = 512 << 20
-
 // chatFileCap is the per-chat-file byte cap: the read bound, the write bound,
 // and 0 for UNLIMITED.
 //

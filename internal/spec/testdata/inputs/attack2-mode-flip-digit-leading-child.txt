@@ -1,0 +1,5 @@
+- [ ] Audit the exporters
+  - [ ] Read the metrics registry
+  - [ ] 12 label pairs exceed the budget, trim them
+- [ ] Ship the dashboard
+  - [ ] Wire the datasource

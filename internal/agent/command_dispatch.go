@@ -2,8 +2,9 @@ package agent
 
 import (
 	"github.com/cplieger/marotte/internal/command"
-	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/specapproval"
+	"github.com/cplieger/marotte/internal/tabs"
 )
 
 // registerCommandHandlers populates the dispatcher with the dispatch table.
@@ -14,6 +15,9 @@ func (rt *Runtime) registerCommandHandlers() {
 		Bus:       rt.bus,
 		Tabs:      tabSetOrNil(rt.tabs),
 		Runs:      rt.runs,
+		RunCutter: rt.runs,
+		Effort:    rt.coord,
+		Modes:     rt.coord,
 		Teardown:  rt,
 		Perms:     rt.bus,
 		Terminals: rt.agentTerms,
@@ -28,16 +32,28 @@ func (rt *Runtime) registerCommandHandlers() {
 		},
 		Lifecycle:     rt.lifecycle,
 		MCP:           rt.mcpRegistry,
+		Admission:     rt,
 		TurnOutcome:   rt,
 		Steers:        rt.steerLedger,
 		Status:        rt,
 		AuthReadiness: rt.authReadiness,
+		SpecApprovals: specApprovalsOrNil(rt.specApprovals),
 	})
 
 	rt.dispatcher.Register(marotte.CmdSwitchModel, rt.cmdSwitchModel)
 }
 
 func tabSetOrNil(st *tabs.Store) command.TabSet {
+	if st == nil {
+		return nil
+	}
+	return st
+}
+
+// specApprovalsOrNil keeps a nil store a nil INTERFACE, tabSetOrNil's reason: an
+// interface holding a typed nil is not nil, so the handler's unavailable branch
+// would never be taken and it would nil-deref instead.
+func specApprovalsOrNil(st *specapproval.Store) command.SpecApprovals {
 	if st == nil {
 		return nil
 	}

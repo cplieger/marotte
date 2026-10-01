@@ -44,6 +44,7 @@ const OUTCOMES: TurnOutcome[] = [
   "refused",
   "unknown",
   "failed",
+  "empty",
 ];
 
 /** The four MARK surfaces, each as the selector prefix its severity arms take
@@ -320,7 +321,7 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
   });
 
   it("grades every outcome, so the sweep above is a partition rather than a sample", () => {
-    // What makes OUTCOMES total: an eighth member added to the generated union with
+    // What makes OUTCOMES total: a ninth member added to the generated union with
     // no entry here would silently drop out of every case in this file.
     const graded = new Map<TurnSeverity, TurnOutcome[]>();
     for (const o of OUTCOMES) {
@@ -330,7 +331,7 @@ describe("no hue may be set per OUTCOME behind the severity partition", () => {
     expect(Object.fromEntries(graded)).toEqual({
       running: ["running"],
       clean: ["completed"],
-      stopped: ["cancelled", "unknown"],
+      stopped: ["cancelled", "unknown", "empty"],
       broken: ["interrupted", "refused", "failed"],
     });
   });

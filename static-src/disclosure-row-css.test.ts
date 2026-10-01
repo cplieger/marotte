@@ -836,13 +836,13 @@ describe("turn body surface", () => {
 describe("sub-page menu bars", () => {
   it("shows icon before label until measured icon-only mode", () => {
     const bar = document.createElement("nav");
-    bar.className = "settings-tab-bar";
+    bar.className = "seg-bar";
     const tab = document.createElement("button");
-    tab.className = "settings-tab";
+    tab.className = "seg";
     const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    icon.classList.add("settings-tab-icon");
+    icon.classList.add("seg-icon");
     const label = document.createElement("span");
-    label.className = "settings-tab-label";
+    label.className = "seg-label";
     label.textContent = "General";
     tab.append(icon, label);
     bar.appendChild(tab);
@@ -853,13 +853,13 @@ describe("sub-page menu bars", () => {
     expect(css(label, "display")).not.toBe("none");
     expect(tab.firstElementChild).toBe(icon);
 
-    bar.classList.add("tab-bar-icons");
+    bar.classList.add("seg-bar-icons");
     expect(css(icon, "display")).toBe("block");
     expect(css(label, "display")).toBe("none");
   });
 
   // THE SUBTITLE DEFERS TO A LABELLED BAR, and this is the dependency that makes
-  // it work. `tab-bar-fit.ts` publishes `.tab-bar-named` while a bar is VISIBLE
+  // it work. `tab-bar-fit.ts` publishes `.seg-bar-named` while a bar is VISIBLE
   // and showing its labels, i.e. while it names its own active section, and
   // 12-chat.css suppresses the title bar's subtitle for exactly that condition —
   // otherwise the section name prints twice, twenty pixels apart. When the bar
@@ -880,16 +880,16 @@ describe("sub-page menu bars", () => {
     subtitle.textContent = "Tools";
     heading.append(subtitle);
     const bar = document.createElement("nav");
-    bar.className = "settings-tab-bar";
+    bar.className = "seg-bar";
     area.append(heading, bar);
     mount(area);
 
     // Labelled bar: it names the section, so the subtitle stands down.
-    bar.classList.add("tab-bar-named");
+    bar.classList.add("seg-bar-named");
     expect(css(subtitle, "display")).toBe("none");
 
     // Labels dropped: the subtitle is the only name left on screen.
-    bar.classList.remove("tab-bar-named");
+    bar.classList.remove("seg-bar-named");
     expect(css(subtitle, "display")).not.toBe("none");
   });
 });

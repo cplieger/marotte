@@ -32,8 +32,8 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
 
-import type { Message } from "./types.js";
 import type { Turn } from "./turns.js";
+import type { Entry, EntryText } from "./wire/types.gen.js";
 import { loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 vi.mock("./store.js", () => ({
@@ -78,12 +78,18 @@ function mountCard(id: string): HTMLDetailsElement {
   footer.className = "turn-footer";
   card.appendChild(footer);
   document.body.appendChild(card);
-  const msg: Message = { id, role: "assistant", ts: 1, content: "reply" };
+  // The turn's body is ENTRIES, and prose is a `text` entry in the turn's own lane:
+  // `mountTurnFooterActions` returns early on an empty `turnMarkdown`, which switches
+  // on `kind` and reads that payload's `text`, so a body carrying no such entry mounts
+  // no footer at all and every case below would fail on the menu lookup.
+  const payload: EntryText = { text: "reply" };
+  const reply: Entry = { id: `${id}-e1`, turn: id, kind: "text", seq: 1, ts: 1, payload };
   const turn: Turn = {
     id,
     n: 1,
     trigger: undefined,
-    body: [msg],
+    body: [reply],
+    openEntries: new Map(),
     ts: 1,
     outcome: "completed",
     rewindTo: undefined,

@@ -27,10 +27,11 @@ var (
 	// chat: ", so it reaches the user verbatim.
 	errRewindNoSession         = errors.New("this chat has no agent session yet, so there is nothing to roll back to")
 	errRewindSessionNotResumed = errors.New("this chat's original session could not be resumed, so there is nothing to roll back to")
-	// Both stand in for an internal error the client must not be shown; only
-	// the second is worth retrying, once the resume settles.
-	errRewindNoBridge      = errors.New("this chat's agent session could not be started, so the rewind was not attempted")
-	errRewindReplayPending = errors.New("this chat's history is still being restored, so the rewind was not attempted — try again in a moment")
+	// Stands in for an internal error the client must not be shown.
+	errRewindNoBridge = errors.New("this chat's agent session could not be started, so the rewind was not attempted")
+	// errRewindTurnOpen is the 409 for a rewind while a turn is running or admitted:
+	// KAS refuses a mid-turn revert, and the log's cut must not race a fold.
+	errRewindTurnOpen = errors.New("a turn is still running in this chat — wait for it to finish, then rewind")
 	// Appended to a refused revert whose target carries no agent-side id: a turn from
 	// before the id was recorded, one whose assignment frame never arrived, and one whose
 	// id was dropped when the chat retired the session that minted it. One sentence serves

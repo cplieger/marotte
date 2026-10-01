@@ -51,6 +51,7 @@ const EVERY_OUTCOME = [
   "failed",
   "refused",
   "unknown",
+  "empty",
 ] as const satisfies readonly TurnOutcome[];
 
 describe("the severity table agrees with the Go implementation", () => {
@@ -66,7 +67,7 @@ describe("the severity table agrees with the Go implementation", () => {
 
   it("covers every outcome the wire can send", () => {
     // The other direction, and it is what makes the table a contract rather than a
-    // sample: an eighth outcome with no row reaches five surfaces that must be
+    // sample: a ninth outcome with no row reaches five surfaces that must be
     // total over the severity, so it fails here instead of there.
     const rows = new Set(loadCases().map((c) => c.outcome));
     for (const outcome of EVERY_OUTCOME) {

@@ -196,7 +196,25 @@
   padding: var(--sp-2) 0.75rem;
   min-height: var(--btn-h);
   display: flex;
-  align-items: center;
+
+  /* THIS ROW'S LABEL WRAPS, so its leading controls align to the FIRST line box
+     rather than to the middle of the block. `.tool-group-count` carries no rule of
+     its own, so it is a plain flex item that wraps: measured at 390px, a twelve-call
+     summary renders over five lines and takes the header to 101px, where a two-call
+     one still fits on one line at 44px. The reader's own report is the wide case —
+     a summary wrapping to about sixteen lines, with the chevron and the verdict mark
+     centred beside line eight, arbitrarily far from the row they act on. The two
+     sibling box headers take the stated one-line exception instead; see
+     `.tool-header` and `.subagent-header`. */
+  align-items: flex-start;
+
+  /* The row's ONE-LINE content box, which is exactly what its own two declarations
+     above produce: `min-height` less `padding-block` twice. The leading controls
+     read it below to centre their glyph on the line the label starts on, so a row
+     that does NOT wrap renders byte-identically to the centring this replaced —
+     20px fine and 28px coarse, against a line box measured at 16px on both tiers, so
+     the floor is what binds at both. */
+  --row-first-line: calc(var(--btn-h) - 2 * var(--sp-2));
 
   /* The SAME gap a member card's `.tool-header` uses, so the group header and
      the rows under it are one component rather than two densities. It has to be
@@ -251,8 +269,20 @@
   --chev-turn: 0deg;
 }
 
+/* OPTICAL ALIGNMENT TO THE FIRST LINE, not a flush top edge. `align-items: flex-start`
+   above already puts these boxes' tops on the label's first line; the margin centres
+   each glyph WITHIN that line the way the row's own centring did, so the conversion
+   costs a one-line group nothing. A margin rather than a `min-block-size`, because the
+   verdict slot's box is DECLARED (`.tool-group-icon` below) and growing it would move
+   the mark inside it — the one thing `tool-group-mark-css.test.ts` pins. Two
+   declarations because each reads its own box; there is no shared length. */
 .tool-group-header > .disclosure-chevron {
   color: var(--c-text-tertiary);
+  margin-block-start: calc((var(--row-first-line) - var(--chev-size)) / 2);
+}
+
+.tool-group-header > .tool-group-icon {
+  margin-block-start: calc((var(--row-first-line) - var(--icon-ui)) / 2);
 }
 
 .tool-summary {
@@ -280,6 +310,14 @@
      row is its containing block. */
   position: relative;
   display: flex;
+
+  /* CENTRING IS CORRECT HERE, and the condition is that this row CANNOT wrap:
+     `.tool-title` is `white-space: nowrap` + `text-overflow: ellipsis`, so a long
+     title clips rather than growing the row, and the subtitle is a SIBLING of this
+     header rather than a child. So the middle IS the first line box, which is also
+     what makes `.tool-disclosure`'s `inset-block-start: 50%` honest. The moment a
+     wrappable child lands in this row, both of those stop being true together and
+     this row joins `.tool-group-header`'s treatment. */
   align-items: center;
   gap: var(--sp-2);
   padding-block: var(--sp-2);
@@ -486,6 +524,19 @@
 /* No .tool-status rules: the status word they styled is deleted. A finished card
    printing the literal enum value `completed` was the claim "Tool call
    completed", which restates nothing the row does not already say. */
+
+/* THE SILENCE MARKER STATES A FACT, so it is worded text in the hint ink rather
+   than a mark: hue would make it a verdict, and this client cannot tell a call
+   doing slow work from one that will never answer. Hint ink clears 4.5:1 on the
+   hovered box since the ink ramp was cut against it (01-tokens.css), and the row
+   never wraps — the header is one line and the words are the shortest form of the
+   fact. `tool-silence.ts` owns the threshold and the wording. */
+.tool-silence {
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 
 /* THE GROUP HEADER CARRIES A VERDICT RATHER THAN A KIND, and it shares
    `.tool-icon` for the tint classes (`is-ok` / `is-fail` / `is-warn` /
@@ -784,8 +835,6 @@
   text-overflow: ellipsis;
 }
 
-/* Inline file link: clickable chip used when file paths are mentioned in
-   assistant messages. Linkifier wraps path tokens in this element. */
 .inline-file-link {
   display: inline-flex;
   align-items: center;
@@ -807,9 +856,7 @@
      constrains it and the sentence around it carries the reach. That rule cannot
      reach this one because `linkify.ts` emits a `<button>`, so the floor made the
      chip 44px tall on a coarse pointer and any 24px paragraph line holding one
-     painted 44px — exactly the broken leading the exception exists to prevent.
-     Declared here rather than added to that rule's container list, because the chip
-     is also inline inside `.tool-output`, which is not in it. */
+     painted 44px — exactly the broken leading the exception exists to prevent. */
   min-width: 0;
   min-height: 0;
   transition:
@@ -842,20 +889,11 @@
   color: var(--c-accent);
 }
 
-/* Assistant block region — a pure logical grouping (no layout box) so the
- * text bubbles / reasoning / tool groups / subagent blocks flow inside the
- * assistant message wrap exactly as they did before the grouping element
- * existed. Keeps mountPlan's `:scope > .plan-message` query against the wrap
- * correct while blocks live under .assistant-blocks. */
-.assistant-blocks {
-  display: contents;
-}
-
 /* The delegated-work boxes — a subagent's CARD, and the CONTAINER a pipeline puts
  * over its stages. Uncapped and unindented — see .tool-call.
  *
  * THE CARD IS NOT A DISCLOSURE and has no body: the transcript renders NONE of a
- * delegate's output (`messages-blocks.ts` placeBlock drops it, the way it drops a
+ * delegate's output (`messages-blocks.ts` placeEntry drops it, the way it drops a
  * workflow step's), so the card is an identity row that is itself the way to the
  * delegate's own page, a rolling tail of the last 3 lines while it works, and a
  * foot carrying the ledger. The CONTAINER keeps a body, because what it holds is
@@ -887,14 +925,14 @@
 
      An expression rather than a literal because BOTH of its tier terms move on the
      pointer tier: `--btn-h` is the identity row's own floor (36 -> 44), and the ledger
-     row is the BAND `.turn-ledger-summary` declares for itself (29-turns.css,
+     row is the BAND `.turn-footer` declares (29-turns.css,
      `max(--hit-floor, --ctl-h-dense)`: 32 -> 44). The 1px sits on a DIFFERENT element,
      `.subagent-foot`'s own `border-block-start` (below), so a reader auditing that
      rule for it will not find it there; `.subagent-foot` declares no padding at all.
 
      The `--sp-1 * 2` term this carried is GONE with the nested footer's block padding:
-     that band now IS its ledger button's hit box rather than the box plus padding, so
-     the mouse tier is unchanged (32 replaces 24 + 8) and the coarse tier drops 8px.
+     that band declares its own height rather than padding a box, so the mouse tier is
+     unchanged (32 replaces 24 + 8) and the coarse tier drops 8px.
 
      MEASURED over 200 boxes (`subagent-card-metrics.test.ts`), against `auto 4rem`'s
      rendered 66px:
@@ -928,6 +966,11 @@
  * padding rather than a declared tier. */
 .subagent-header {
   display: flex;
+
+  /* `.tool-header`'s one-line exception, same condition: `.subagent-name` is
+     `white-space: nowrap` + `text-overflow: ellipsis` and nothing else in this row
+     holds wrappable text, so the middle is the first line box. The rolling tail is a
+     SIBLING of this header, not a child of it. */
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
@@ -1914,6 +1957,43 @@ a.subagent-header {
   position: relative;
 }
 
+/* THE CAP IS ON THE INNER TEXT ELEMENT, NOT ON THIS BOX, and that split is the
+   whole fix. This bar draws chrome (border, background, padding, radius) and
+   clips a rolling 4-line view of a job's stdout, and those two jobs want
+   different boxes: chrome wants padding, a clip must not have any. One element
+   doing both had TWO compounding errors, measured 2026-09-18 over the assembled
+   bundle with all three engines agreeing.
+
+   (a) The cap added the padding but NOT the border and was a `max-height`
+   against the border box, so it reserved 4 lines and delivered 3.879 (border
+   box 82px, padding box 80px, content box 64px against a 16.5px line box).
+   (b) `overflow: hidden` clips at the PADDING box, so even with a content box
+   holding exactly 4 lines, line 5 painted 8px into the bottom padding band —
+   the mechanism 27-run-card.css records for `.run-step-capture`. Fixing only
+   the arithmetic does not fix the defect.
+
+   What a reader saw, over four source lines where one wraps: a line box cut at
+   0.357 of its height in Chromium, 0.350 in Firefox and 0.339 in WebKit, with
+   up to 142 / 158 / 46 ink pixels per device row at dpr 3. Four SHORT lines read
+   zero ink in all three, which is the negative control — `RollingOutput.append`
+   puts `lines.slice(-4)` in the DOM, so a fifth SOURCE line never exists and the
+   cut needs one of those four to wrap. The visible bar is 2px taller than
+   before (82px to 84px, the two borders the old cap omitted) and its clamped
+   line now ends in an ellipsis, which `-webkit-line-clamp` renders and the hard
+   cut did not.
+
+   `margin-block-end` is `.run-step-capture`'s remedy and is NOT available here:
+   this box has a visible border and background, and a margin would put the
+   space outside both. A transparent block-end border is available (it is what
+   `.uip-tooltip` takes in 04-uip-skin.css) and is the worse shape HERE, because
+   restating the cap in border-box terms means summing every chrome term again —
+   which is error (a), the thing that produced this bug. Splitting the two jobs
+   puts the cap in CONTENT terms with no chrome in the sum at all.
+
+   So this element declares no block-size constraint and does not clip; the
+   inherited `white-space`/`overflow-wrap`/`line-height`/font stay here as their
+   one owner. Consequence to keep: `RollingOutput.append` (modals.ts) must wrap
+   its text in `.rolling-output-text` or nothing is capped. */
 .rolling-output {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -1927,10 +2007,24 @@ a.subagent-header {
   overflow-wrap: anywhere;
   cursor: pointer;
   line-height: 1.5;
-  min-height: calc(4 * 1.5em + 2 * var(--sp-2));
-  max-height: calc(4 * 1.5em + 2 * var(--sp-2));
-  overflow: hidden;
   position: relative;
+}
+
+/* `-webkit-line-clamp` rather than `max-block-size: 4lh`, for the reason the
+   five clean clamp surfaces in this app are clean: it clips at the Nth LINE-BOX
+   boundary rather than at a computed height, so a line the stream raises (an
+   emoji, a CJK run — this is arbitrary upstream text) cannot produce a partial
+   line. The clip is this element's own content edge, since it declares no
+   padding and no border. `min-block-size` still reserves the 4 lines the clamp
+   only bounds, so the bar does not grow as output arrives; `4lh` is one line box
+   of the inherited 1.5 line-height, which is what `calc(4 * 1.5em)` spelled. */
+.rolling-output-text {
+  min-block-size: 4lh;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .rolling-output:hover {
@@ -2259,6 +2353,14 @@ a.subagent-header {
   max-width: 100%;
 }
 
+/* The full width is what breaks the failure text onto its own line inside the
+   wrapping name row, so it starts at the name's inline edge; `anywhere` breaks a
+   path-shaped token that offers no break of its own. */
+.tool-row-error {
+  inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+
 /* Catalog freshness line under the Tools action bar. The error suffix
    marks a failed refresh whose last good catalog still stands. */
 [id="tool-catalog-meta"] {
@@ -2270,26 +2372,20 @@ a.subagent-header {
 }
 
 /* Agent question (kiro-cli v3 _kiro/userInput): asked mid-turn for plan
-   clarifications and spec gates. A .dock-card in the interaction dock
-   (26-dock.css), so there is no [id="user-input-dialog"] shell and no
-   ::backdrop. Options are full-width choice cards, an option's sub-options
-   render as a pre-checked multi-select stage, and a typed answer is always
-   available — that part is styled here. */
+   clarifications and spec gates. A .dock-card in the interaction dock, so there
+   is no [id="user-input-dialog"] shell and no ::backdrop.
 
-.user-input-body {
-  margin-block-end: var(--sp-3);
-}
-
-.user-input-body strong {
-  color: var(--c-accent);
-  font-size: var(--fs-md);
-}
+   ONLY THE OPTION CARDS ARE HERE. The card's own regions — its question, its
+   answer box, its button row — are the DOCK's, shared with the run-input card in
+   26-dock.css, because a reader answering one of them should not have to learn a
+   second layout. What is left in this file is the part the run-input card has no
+   counterpart for: full-width choice cards, and an option's sub-options as a
+   pre-checked multi-select stage. */
 
 .user-input-options {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  margin-block-end: var(--sp-3);
 }
 
 .user-input-option {
@@ -2330,14 +2426,23 @@ a.subagent-header {
   font-weight: var(--fw-medium);
 }
 
+/* THE BADGE WEARS THE CARD'S HUE, not the brand accent. The ask card is yellow
+   because the agent is blocked on it (26-dock.css), so an accent chip inside one was
+   the only element on the card still speaking the pre-dock vocabulary — and it sat
+   directly beside a yellow question and a yellow border. It reads better as well as
+   more consistently: 11.479:1 dark and 6.149:1 light on its own washed fill over the
+   option card, against the accent's 7.062 and 5.237 (`css-contrast.py pair`).
+
+   Its own SHAPE stays: a chip is a chip whatever the hue, and the word is what
+   carries the meaning. */
 .user-input-recommended {
   padding: 0 0.4rem;
   border-radius: var(--r-sm);
   font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: nowrap;
-  color: var(--c-accent);
-  background: color-mix(in srgb, var(--c-accent) 14%, transparent);
+  color: var(--c-yellow);
+  background: color-mix(in srgb, var(--c-yellow) 14%, transparent);
 }
 
 .user-input-option-desc {
@@ -2373,37 +2478,5 @@ a.subagent-header {
   grid-column: 2;
 }
 
-.user-input-freeform {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--sp-2);
-  margin-block-end: var(--sp-3);
-}
-
-.user-input-freeform:empty {
-  display: none;
-}
-
-.user-input-text {
-  flex: 1;
-  min-inline-size: 0;
-  resize: vertical;
-  padding: var(--sp-2);
-  background: var(--c-bg-primary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  color: var(--c-text-primary);
-  font: inherit;
-  font-size: var(--fs-sm);
-}
-
-.user-input-text:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset-field);
-}
-
-.user-input-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-2);
-}
+/* The question head, the answer box and the button row are the SHARED ask card's
+   (`.dock-ask-*`, 26-dock.css, built by `dock-ask.ts`). */

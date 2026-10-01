@@ -1,23 +1,18 @@
 // ---------------------------------------------------------------------------
-// Residency: which BLOCKS a paint may mount, as one contiguous window of turn-block ordinals
-// grown around the reader's own position. Pure and DOM-free; WHICH turns it is grown over is
-// the caller's policy.
+// Residency: which ENTRIES a paint may mount, as one contiguous window of a turn's `seq`
+// space grown around the reader's own position. Pure and DOM-free; WHICH turns it is grown
+// over is the caller's policy.
 // ---------------------------------------------------------------------------
 
-import { parseStepSubtask } from "./step-subtask.js";
-import { isInternalToolTitle, isSubagentInvocation } from "./tool-schema.js";
-import type { Block, Message, ToolCall } from "./types.js";
-import type { Turn } from "./turns.js";
+import { toolResultID } from "./entry-ids.js";
+import { isInternalToolTitle } from "./tool-schema.js";
+import type { Entry } from "./types.js";
+import { payloadOf, type Turn } from "./turns.js";
 
 /** What one paint's WINDOW may mount. TWO budgets, because a tool card is a whole
- *  disclosure where a text block is one row, so whichever runs out first ends the
- *  side that asked.
- *
- *  The tool budget charges one per `tool_use` BLOCK, which is not `turnCost`'s
- *  per-message `tool_calls.length` and can be smaller than it: a collided index
- *  leaves a tool call behind with no block of its own. The window's unit has to be
- *  the block, because the window's unit is the ordinal. */
-export const RESIDENT_BLOCKS = 320;
+ *  disclosure where a text entry is part of a row, so whichever runs out first ends the
+ *  side that asked. */
+export const RESIDENT_ENTRIES = 320;
 export const RESIDENT_TOOL_CALLS = 96;
 
 /** The depth the window guarantees each side of its anchor, asserted as a FLOOR
@@ -25,258 +20,339 @@ export const RESIDENT_TOOL_CALLS = 96;
  *  side: `demandRange`'s half-width, shared by the pin and the walk, and
  *  `demandPin`'s arrival tolerance. One name, because all three are the same
  *  distance and separate constants are what would let them drift apart. */
-export const OVERSCAN_BLOCKS = 24;
+export const OVERSCAN_ENTRIES = 24;
 
-/** A paint budget, and the shape `turnCost` reports one turn's price in. */
+/** A paint budget, and the shape `turnCost` reports one turn's price in. BOTH fields count
+ *  only what a view RENDERS, so either is comparable with the same field of a budget; the
+ *  `seq` SPAN, which includes the ordinals nothing renders at, is `turnSpan`. */
 export interface TurnCost {
-  readonly blocks: number;
+  readonly entries: number;
   readonly toolCalls: number;
 }
 
+/** A turn's `tool_result` entries that carry a workflow id, keyed by their OWN entry id. */
+export type RunResults = ReadonlyMap<string, string>;
+
 const DEFAULT_BUDGET: TurnCost = {
-  blocks: RESIDENT_BLOCKS,
+  entries: RESIDENT_ENTRIES,
   toolCalls: RESIDENT_TOOL_CALLS,
 };
 
-/** A half-open range of TURN-BLOCK ordinals: the plan's unit. */
-export interface TurnRange {
+/** A half-open range of a turn's entry `seq`: the plan's unit and the renderer's.
+ *  One space serves both, because a turn's entries are one flat list. */
+export interface EntryRange {
   readonly from: number;
   readonly to: number;
 }
 
-/** A half-open range of indices into ONE message's `blocks`: the renderer's
- *  unit, and what `renderRange` has always taken. */
-export interface BlockRange {
-  readonly from: number;
-  readonly to: number;
-}
-
-/** Where the reader is, in turn-block ordinals. */
+/** Where the reader is, in one turn's `seq` space. */
 export interface ResidencyAnchor {
   readonly turnID: string;
   readonly at: number;
 }
 
-/** turn id → the ordinals that turn's body may hold. Only turns the window
+/** turn id → the entries that turn's body may hold. Only turns the window
  *  TOUCHES are present. */
-export type ResidencyPlan = ReadonlyMap<string, TurnRange>;
+export type ResidencyPlan = ReadonlyMap<string, EntryRange>;
 
-/** How many ordinals `m` occupies. A blockless message is still one row — the
- *  reconcile unit is the message, so an empty one is a row the paint builds —
- *  and this is the one place that rule is spelled. */
-function messageSpan(m: Message): number {
-  return Math.max(1, (m.blocks ?? []).length);
+/** The entry at `seq`, or undefined for the `turn_open` at 0 and for a `seq` past the
+ *  turn. `TurnState`'s invariant is `entries[i].seq === i` and `Turn.body` is that array
+ *  past the open, so the index is the seq less one. Exported for `turnOrdinalOf`'s reason:
+ *  one decoder of this space, or a second is free to disagree with the one defining it. */
+export function entryAt(t: Turn, seq: number): Entry | undefined {
+  return seq <= 0 ? undefined : t.body[seq - 1];
 }
 
-/** Whether the TRANSCRIPT renders nothing for this block, so it owes neither a budget
- *  slot here nor a pixel in `block-heights.ts`. Two populations, both dropped by
- *  `messages-blocks.ts` `placeBlock`: a WORKFLOW STEP's block, and every block a
- *  DELEGATE produced except the invocation that becomes its card. The tab that owns the
- *  content renders it, out of the store rather than through this module.
+/** How many ordinals `t` occupies: its entries, the `turn_open` at 0 included, because
+ *  `seq` is the space and the header's own entry holds a place in it. */
+export function turnSpan(t: Turn): number {
+  return t.body.length + 1;
+}
+
+/** Whether this view renders anything AT THIS ENTRY'S OWN POSITION. Exported because the
+ *  BUDGET and the PRICE must answer it identically: a spacer pricing entries the window
+ *  charges nothing for is the same defect as the reverse.
  *
- *  Exported because the BUDGET and the PRICE must answer it identically: a spacer
- *  pricing ordinals the window charges nothing for is the same defect as the reverse.
- *  Keyed on the step PARSE, never the `wf:` prefix — a malformed id parses to null and
- *  falls to the delegate arm, which drops it too, because the card is the only thing
- *  `placeBlock` builds for one.
- *
- *  A `tool_use` whose call is not in the store yet counts as dropped, matching
- *  `placeBlock`, which cannot recognise an invocation it cannot resolve. */
-export function isDroppedBlock(block: Block, toolCalls: readonly ToolCall[]): boolean {
-  const subtask = block.agent_subtask_id ?? "";
-  if (subtask === "") {
+ *  `lane` is the VIEW's root, so an entry of any other lane is delegate content this view
+ *  does not draw. `firstPlan` is that lane's `firstPlanSeq`, hoisted by the caller. The
+ *  excluded kinds render elsewhere: `turn_open` as the card header, `turn_close` as the
+ *  footer, a `tool_result` on its call's card, a `turn_bind` and a `reconciled` nowhere —
+ *  the second is a fact about the RECORD, and `turnCost` prices only what this accepts, so
+ *  this is also what keeps it out of the residency budget. */
+export function entryRenders(e: Entry, lane: string, firstPlan: number): boolean {
+  if (e.kind === "steer") {
+    // The one kind whose lane does not decide where it draws: a steer is the READER's
+    // words, so it renders in the parent's flow at its own `seq` whichever lane consumed
+    // it, and never inside the delegate box, where the reader would not find it. The lane
+    // reaches the note as a marker instead (`buildSteerNote`'s `lane`).
+    return lane === "";
+  }
+  if ((e.lane ?? "") !== lane) {
     return false;
   }
-  if (parseStepSubtask(subtask) !== null || block.type !== "tool_use") {
-    return true;
+  switch (e.kind) {
+    case "turn_open":
+    case "turn_close":
+    case "turn_bind":
+    case "tool_result":
+    case "reconciled":
+      return false;
+    case "plan":
+      return firstPlan === e.seq;
+    default:
+      return true;
   }
-  const tc = toolCalls.find((c) => c.id === block.tool_call_id);
-  return tc === undefined || !isSubagentInvocation(tc);
 }
 
-/** Whether the transcript renders ANYTHING for `m` — the message-scoped reading of
- *  `isDroppedBlock`, which is why it lives beside it rather than being spelled again
- *  wherever it is asked. A non-assistant row always renders (an event badge, a steer
- *  note, the system fallback); an assistant one renders its plan card, or any block the
- *  dispatcher does not drop. Measured on 107 chat files: 11 body messages render nothing
- *  by this rule, each an assistant message whose every block is a workflow step, one of
- *  them 603 blocks long. */
-function messageRendersContent(m: Message): boolean {
-  if (m.role !== "assistant") {
-    return true;
+/** The `seq` of the turn's first `plan` entry in `lane`, or -1: the one `plan` that renders,
+ *  every later one folding into its card. Hoisted ONCE per turn per pass and handed to
+ *  `entryRenders`, for `runResults`' reason — a scan per plan entry is the turn's length
+ *  times its plan count, and a long turn legitimately holds several. */
+export function firstPlanSeq(t: Turn, lane: string): number {
+  for (const e of t.body) {
+    if (e.kind === "plan" && (e.lane ?? "") === lane) {
+      return e.seq;
+    }
   }
-  if ((m.plan ?? []).length > 0) {
-    return true;
-  }
-  const calls = m.tool_calls ?? [];
-  return (m.blocks ?? []).some((b) => !isDroppedBlock(b, calls));
+  return -1;
 }
 
-/** The body messages a LATER message of their own turn renders content after, which is
- *  what extends the newest-element rule from message scope to TURN scope: everything in
- *  such a message is superseded, because the whole of it precedes the whole of its
- *  successor in the card.
- *
- *  Derived here rather than at the render, because only the projection knows a message's
- *  neighbours — a `MsgRender` is per message and cannot see past its own blocks, which
- *  is exactly the gap this closes. Measured on the same 107 chats: 44% of turns hold
- *  more than one body message, so a message-scoped verdict is the common shape rather
- *  than an edge. */
-export function supersededMessages(turns: readonly Turn[]): ReadonlySet<string> {
-  const out = new Set<string>();
-  for (const t of turns) {
-    let laterContent = false;
-    for (let i = t.body.length - 1; i >= 0; i -= 1) {
-      const m = t.body[i];
-      if (m === undefined) {
-        continue;
-      }
-      if (laterContent) {
-        out.add(m.id);
-      }
-      laterContent = laterContent || messageRendersContent(m);
+/** The turn's workflow-bearing `tool_result` entries, keyed by their own id so nothing has
+ *  to parse a call id back out of one. Built ONCE per turn per pass and handed to
+ *  `effectiveRunID`: both the budget and the price ask that question per tool call inside
+ *  their own walk over the body, so a scan per call is quadratic in the turn's length. */
+export function runResults(t: Turn): RunResults {
+  const out = new Map<string, string>();
+  for (const e of t.body) {
+    if (e.kind !== "tool_result") {
+      continue;
+    }
+    const runID = payloadOf(e, "tool_result")?.workflow_id ?? "";
+    if (runID !== "") {
+      out.set(e.id, runID);
     }
   }
   return out;
 }
 
-/** run id → the id of the tool call that HOSTS that run's card: the FIRST call in turn
- *  order naming each run, every later one rendering as an ordinary tool card.
+/** A tool call's EFFECTIVE workflow id: its own when the wire carries one, else its
+ *  `tool_result`'s, through the index above. The live third source — the newest
+ *  `tool_progress` for that call — is a store cell rather than an entry, so a run whose
+ *  result has not landed has no owner here and every mention of it draws its own card,
+ *  which is `ownsRunCard`'s own no-owner reading. */
+export function effectiveRunID(e: Entry, results: RunResults): string {
+  const own = payloadOf(e, "tool_call")?.workflow_id ?? "";
+  return own !== "" ? own : (results.get(toolResultID(e.id)) ?? "");
+}
+
+/** run id → the id of the `tool_call` ENTRY that hosts that run's card: the first one in
+ *  turn and `seq` order naming each run, every later mention rendering as a tool card.
  *
- *  Derived here for `supersededMessages`' reason — a `MsgRender` is per message and
- *  cannot see its neighbours, so it cannot tell the launch from a later mention — and
- *  as a per-pass MAP rather than a live registry, because the dispatcher's two gates
- *  run in different passes over the same message: a registry written by the paint
- *  answers "no host yet, I host" to both calls in ONE message, which is the double
- *  bind this exists to prevent.
- *
- *  It mirrors `placeBlock`'s own conditions rather than scanning `tool_calls`, so an
- *  owner is always a call that branch would build a card for: a `tool_use` BLOCK, in
- *  the parent lane (a step's or a delegate's is dropped), whose call is not internal
- *  bookkeeping. Block order, because that is the order the transcript renders in.
- *
- *  Scope is the RESIDENT window, so a run whose launch is paged out has no card at
- *  all — the ratified reading, with `run-bar.ts` carrying a live run and `/history` a
- *  finished one. */
-export function runCardOwners(turns: readonly Turn[]): ReadonlyMap<string, string> {
+ *  Derived per pass rather than kept as a live registry, because the dispatcher's gates run
+ *  in more than one pass over one turn: a registry written by the paint answers "no host
+ *  yet, I host" to two calls of one turn, which is the double bind this exists to prevent.
+ *  Scope is the RESIDENT window, so a run whose every mention is paged out has no card at
+ *  all — `run-bar.ts` carries a live run and `/history` a finished one. */
+export function runCardOwners(turns: readonly Turn[], lane = ""): ReadonlyMap<string, string> {
   const out = new Map<string, string>();
   for (const t of turns) {
-    for (const m of t.body) {
-      // Only the calls that NAME a run, which is 0 or 1 of them on almost every
-      // message, so the block walk below costs one lookup per block.
-      const runByCall = new Map<string, string>();
-      for (const c of m.tool_calls ?? []) {
-        const runID = c.workflow_id ?? "";
-        if (runID !== "" && !isInternalToolTitle(c.title)) {
-          runByCall.set(c.id, runID);
-        }
-      }
-      if (runByCall.size === 0) {
+    const results = runResults(t);
+    for (const e of t.body) {
+      const call = (e.lane ?? "") === lane ? payloadOf(e, "tool_call") : undefined;
+      if (call === undefined || isInternalToolTitle(call.title)) {
         continue;
       }
-      for (const b of m.blocks ?? []) {
-        if (b.type !== "tool_use" || (b.agent_subtask_id ?? "") !== "") {
-          continue;
-        }
-        const callID = b.tool_call_id ?? "";
-        const runID = runByCall.get(callID);
-        if (runID !== undefined && !out.has(runID)) {
-          out.set(runID, callID);
-        }
+      const runID = effectiveRunID(e, results);
+      if (runID !== "" && !out.has(runID)) {
+        out.set(runID, e.id);
       }
     }
   }
   return out;
 }
 
-/** What mounting `t`'s body costs, and the LENGTH of its ordinal span.
- *
- *  The trigger is not counted: it renders into the header, which every turn has
- *  whether or not it is resident. */
-export function turnCost(t: Turn): TurnCost {
-  let blocks = 0;
+/** What mounting `t`'s body costs this view: the entries it draws, and how many of those
+ *  are tool calls. */
+export function turnCost(t: Turn, lane = ""): TurnCost {
+  const firstPlan = firstPlanSeq(t, lane);
+  let entries = 0;
   let toolCalls = 0;
-  for (const m of t.body) {
-    blocks += messageSpan(m);
-    toolCalls += (m.tool_calls ?? []).length;
+  for (const e of t.body) {
+    if (!entryRenders(e, lane, firstPlan)) {
+      continue;
+    }
+    entries++;
+    if (e.kind === "tool_call") {
+      toolCalls++;
+    }
   }
-  return { blocks, toolCalls };
+  return { entries, toolCalls };
 }
 
-/** Decompose a turn range into per-message MESSAGE-LOCAL ranges, in body order.
+/** Whether this view draws NOTHING at any of `t`'s ordinals. The bodyless test, and a
+ *  predicate rather than `turnCost(t).entries === 0` because the question is existence:
+ *  a count answers it by pricing every entry, and the answer is known at the first one.
  *
- *  A message the range does not touch is ABSENT, which is how the renderer knows
- *  not to mount its row. A blockless message it touches is present with an empty
- *  range: that row holds no block of its own. */
-export function sliceTurn(t: Turn, range: TurnRange): ReadonlyMap<string, BlockRange> {
-  const out = new Map<string, BlockRange>();
-  let base = 0;
-  for (const m of t.body) {
-    const span = messageSpan(m);
-    const from = Math.max(range.from, base);
-    const to = Math.min(range.to, base + span);
-    if (from < to) {
-      const blockless = (m.blocks ?? []).length === 0;
-      out.set(m.id, blockless ? { from: 0, to: 0 } : { from: from - base, to: to - base });
+ *  `firstPlanSeq` reads the WHOLE body, which would defeat that, so the lane's first
+ *  `plan` is resolved on arrival instead — in `seq` order it IS that answer. Every other
+ *  kind is `entryRenders`' to decide, so a kind the predicate does not draw stays one
+ *  statement rather than a second list here. */
+export function rendersNothing(t: Turn, lane = ""): boolean {
+  let firstPlan = -1;
+  for (const e of t.body) {
+    if (firstPlan < 0 && e.kind === "plan" && (e.lane ?? "") === lane) {
+      firstPlan = e.seq;
     }
-    base += span;
+    if (entryRenders(e, lane, firstPlan)) {
+      return false;
+    }
   }
-  return out;
+  return true;
 }
 
-/** The turn-block ordinal of `messageID`'s block `blockIndex`, or the message's
- *  FIRST ordinal when the index is absent. Undefined when the message is not in
- *  `t.body`; an index past that message's own span is clamped into it, so the
- *  answer always names an ordinal the message owns.
+/** The `seq` of the entry `entryID`, or the turn's first ordinal when the id is absent.
+ *  Undefined when the id names no entry of this turn.
  *
- *  The inverse of `sliceTurn`, and in this module because a second decoder
- *  elsewhere would be free to disagree with the one that defines the space. */
-export function turnOrdinalOf(t: Turn, messageID: string, blockIndex?: number): number | undefined {
-  let base = 0;
-  for (const m of t.body) {
-    const span = messageSpan(m);
-    if (m.id === messageID) {
-      return base + Math.min(Math.max(blockIndex ?? 0, 0), span - 1);
+ *  In this module because the space is this module's: a second decoder elsewhere would be
+ *  free to disagree with the one that defines it. */
+export function turnOrdinalOf(t: Turn, entryID?: string): number | undefined {
+  if (entryID === undefined || entryID === "") {
+    return 0;
+  }
+  for (const e of t.body) {
+    if (e.id === entryID) {
+      return e.seq;
     }
-    base += span;
   }
   return undefined;
 }
 
-/** The ordinals each turn's body may hold this paint.
+/** `range` clamped into `t`'s span and SNAPPED to whole prose runs.
  *
- *  `turns` is the sequence the window is grown over, newest LAST, ALREADY
- *  FILTERED to the turns that would render open if bodied. `anchor` says where the
- *  reader is; absent, or naming a turn the sequence does not hold, is the live
- *  edge, and one naming a turn that holds NO ordinal seeds at the nearest ordinal
- *  the sequence does. A turn no ordinal reaches is absent from the answer. */
+ *  A run is one `.msg-row` holding one markdown stream (section 8.5), so an edge inside one
+ *  would mount it as two rows with two parsers and a visible seam. `from` moves down to the
+ *  run's first entry and `to` up past its last; the budget still charges per entry, so the
+ *  snap can overspend it by at most one run on each side, which `RESIDENT_ENTRIES` already
+ *  tolerates. */
+export function sliceTurn(
+  t: Turn,
+  range: EntryRange,
+  lane = "",
+  // The lane's `firstPlanSeq`, resolved below only for a caller that holds none: a caller
+  // inside a per-item loop already has it (`firstPlanSeq` states why one is hoisted).
+  firstPlan?: number,
+): EntryRange {
+  const span = turnSpan(t);
+  const from = Math.min(Math.max(range.from, 0), span);
+  const to = Math.min(Math.max(range.to, from), span);
+  if (from >= to) {
+    return { from, to };
+  }
+  const plan = firstPlan ?? firstPlanSeq(t, lane);
+  return { from: runStart(t, from, lane, plan), to: runEnd(t, to - 1, lane, plan) + 1 };
+}
+
+/** The prose run `seq` belongs to, as the `[from, to)` its members span, or null when `seq`
+ *  is not one. The MOUNT's door onto the rule this file's window snap already applies, so an
+ *  edge and a bubble cannot disagree about where a run begins. */
+export function proseRunAt(
+  t: Turn,
+  seq: number,
+  lane: string,
+  firstPlan: number,
+): EntryRange | null {
+  if (!inProseRun(t, seq, lane, firstPlan)) {
+    return null;
+  }
+  return { from: runStart(t, seq, lane, firstPlan), to: runEnd(t, seq, lane, firstPlan) + 1 };
+}
+
+/** Whether `seq` is a `text` entry this view draws — a prose run's member. */
+function inProseRun(t: Turn, seq: number, lane: string, firstPlan: number): boolean {
+  const e = entryAt(t, seq);
+  return e?.kind === "text" && entryRenders(e, lane, firstPlan);
+}
+
+/** The first `seq` of the prose run `seq` sits in, or `seq` when it is not in one. An entry
+ *  that renders nothing does not break a run, so the walk steps over it. */
+function runStart(t: Turn, seq: number, lane: string, firstPlan: number): number {
+  if (!inProseRun(t, seq, lane, firstPlan)) {
+    return seq;
+  }
+  let first = seq;
+  for (let i = seq - 1; i > 0; i--) {
+    const e = entryAt(t, i);
+    if (e === undefined) {
+      break;
+    }
+    if (inProseRun(t, i, lane, firstPlan)) {
+      first = i;
+    } else if (entryRenders(e, lane, firstPlan)) {
+      break;
+    }
+  }
+  return first;
+}
+
+/** The last `seq` of the prose run `seq` sits in, or `seq` when it is not in one. */
+function runEnd(t: Turn, seq: number, lane: string, firstPlan: number): number {
+  if (!inProseRun(t, seq, lane, firstPlan)) {
+    return seq;
+  }
+  let last = seq;
+  const span = turnSpan(t);
+  for (let i = seq + 1; i < span; i++) {
+    const e = entryAt(t, i);
+    if (e === undefined) {
+      break;
+    }
+    if (inProseRun(t, i, lane, firstPlan)) {
+      last = i;
+    } else if (entryRenders(e, lane, firstPlan)) {
+      break;
+    }
+  }
+  return last;
+}
+
+/** The entries each turn's body may hold this paint.
+ *
+ *  `turns` is the sequence the window is grown over, newest LAST, ALREADY FILTERED to the
+ *  turns that would render open if bodied. `anchor` says where the reader is; absent, or
+ *  naming a turn the sequence does not hold, is the live edge, and one naming a turn that
+ *  holds NO entry seeds at the nearest ordinal the sequence does. A turn no entry reaches is
+ *  absent from the answer. */
 export function planResidency(
   turns: readonly Turn[],
   anchor: ResidencyAnchor | undefined,
+  // The VIEW's root, and NO default, for `spacerHeight`'s reason from the other side: this
+  // is the function a view calls, so a silent `""` plans the window over lane `""` while
+  // the spacers price a delegate's. It leads the budget, which only a test states.
+  lane: string,
   budget: TurnCost = DEFAULT_BUDGET,
 ): ResidencyPlan {
-  const plan = new Map<string, TurnRange>();
+  const plan = new Map<string, EntryRange>();
   const bases: number[] = [];
   const spans: number[] = [];
-  // Both charges are properties of the ORDINAL, so neither can come from
-  // `turnCost`: one flat pass mints the sequence and the flags together.
+  // Both charges are properties of the ORDINAL, so neither can come from `turnCost`:
+  // one flat pass mints the sequence and the flags together.
   const isTool: boolean[] = [];
   const isFree: boolean[] = [];
+  // Kept per turn so the final loop hands it to `sliceTurn` instead of re-scanning the body.
+  const firstPlans: number[] = [];
   for (const t of turns) {
     const base = isTool.length;
-    for (const m of t.body) {
-      const blocks = m.blocks ?? [];
-      const calls = m.tool_calls ?? [];
-      const span = messageSpan(m);
-      for (let j = 0; j < span; j++) {
-        const b = blocks[j];
-        const free = b !== undefined && isDroppedBlock(b, calls);
-        isFree.push(free);
-        isTool.push(!free && b?.type === "tool_use");
-      }
+    const span = turnSpan(t);
+    const firstPlan = firstPlanSeq(t, lane);
+    firstPlans.push(firstPlan);
+    for (let seq = 0; seq < span; seq++) {
+      const e = entryAt(t, seq);
+      const free = e === undefined || !entryRenders(e, lane, firstPlan);
+      isFree.push(free);
+      isTool.push(!free && e.kind === "tool_call");
     }
     bases.push(base);
-    spans.push(isTool.length - base);
+    spans.push(span);
   }
   const total = isTool.length;
   if (total === 0) {
@@ -300,7 +376,7 @@ export function planResidency(
   // The budget is SHARED, so a side latched at the sequence end reserves nothing.
   let lo = at;
   let hi = at + 1;
-  let blocks = isFree[at] === true ? 0 : 1;
+  let entries = isFree[at] === true ? 0 : 1;
   let toolCalls = isTool[at] === true ? 1 : 0;
   let headLatched = lo === 0;
   let tailLatched = hi === total;
@@ -309,12 +385,12 @@ export function planResidency(
     if (head ? !headLatched : !tailLatched) {
       const next = head ? lo - 1 : hi;
       const tool = isTool[next] === true ? 1 : 0;
-      // A FREE ordinal is taken unconditionally and latches nothing: the transcript
-      // renders no block for it, so a budget spent on one buys the reader nothing. It
-      // stays an ORDINAL — the span is the renderer's own coordinate system.
+      // A FREE ordinal is taken unconditionally and latches nothing: this view renders
+      // nothing at it, so a budget spent on one buys the reader nothing. It stays an
+      // ORDINAL — the span is the renderer's own coordinate system.
       if (
         isFree[next] !== true &&
-        (blocks + 1 > budget.blocks || toolCalls + tool > budget.toolCalls)
+        (entries + 1 > budget.entries || toolCalls + tool > budget.toolCalls)
       ) {
         if (head) {
           headLatched = true;
@@ -323,7 +399,7 @@ export function planResidency(
         }
       } else {
         if (isFree[next] !== true) {
-          blocks++;
+          entries++;
         }
         toolCalls += tool;
         if (head) {
@@ -343,7 +419,7 @@ export function planResidency(
     const from = Math.max(lo, base);
     const to = Math.min(hi, base + (spans[i] ?? 0));
     if (from < to) {
-      plan.set(t.id, { from: from - base, to: to - base });
+      plan.set(t.id, sliceTurn(t, { from: from - base, to: to - base }, lane, firstPlans[i]));
     }
   }
   return plan;

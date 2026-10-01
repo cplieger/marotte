@@ -65,8 +65,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/push"
 )
 
 // PRPollInterval is the ACTIVE rate: how often the poller looks while it is

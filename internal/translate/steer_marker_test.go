@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
 const ack = "[STEERING steer-abc123: adjusted the approach]"
@@ -177,57 +177,6 @@ func TestStripSteerAcks_ReleasesAnOverlongCandidate(t *testing.T) {
 	}
 }
 
-// FlushSteerCarry settles the turn. The two outcomes are both deliberate: an
-// unclosed marker is machinery and goes away, a short bracket is prose and comes
-// back.
-func TestFlushSteerCarry_DropsMachineryAndKeepsProse(t *testing.T) {
-	tests := []struct {
-		name  string
-		carry string
-		want  string
-	}{
-		{name: "an unclosed marker is dropped", carry: "[STEERING steer-1: was cut off", want: ""},
-		{name: "a bare bracket is prose", carry: "[", want: "["},
-		{name: "a partial of the literal is prose", carry: "[STEER", want: "[STEER"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			buf := buffer.New()
-			buf.SetSteerCarry(tt.carry, "")
-			FlushSteerCarry(buf)
-
-			if got := buf.Content.String(); got != tt.want {
-				t.Errorf("content = %q, want %q", got, tt.want)
-			}
-			// The block array is a second, independent reader of the turn; text
-			// released into one and not the other renders differently from what
-			// gets persisted.
-			var blocks strings.Builder
-			for _, b := range buf.Blocks {
-				blocks.WriteString(b.Text)
-			}
-			if got := blocks.String(); got != tt.want {
-				t.Errorf("blocks = %q, want %q", got, tt.want)
-			}
-			if c, _ := buf.SteerCarry(); c != "" {
-				t.Errorf("carry still %q after flush", c)
-			}
-		})
-	}
-}
-
-func TestFlushSteerCarry_EmptyCarryTouchesNothing(t *testing.T) {
-	buf := buffer.New()
-	buf.Content.WriteString("existing")
-	FlushSteerCarry(buf)
-	if got := buf.Content.String(); got != "existing" {
-		t.Errorf("content = %q, want it untouched", got)
-	}
-	if len(buf.Blocks) != 0 {
-		t.Errorf("flush of an empty carry created %d blocks", len(buf.Blocks))
-	}
-}
-
 // --- The marker's CONTENT, which used to be thrown away ---
 
 // feedAcks is feed's sibling for the extraction half: it accumulates the
@@ -364,7 +313,7 @@ func FuzzStripSteerAcks_AccountsForEveryByte(f *testing.F) {
 // turn grows past 8 KiB, and releasing at the edge rather than past it hands the
 // client a marker that was still one byte inside the budget.
 func TestStripSteerAcks_TheBoundMeasuresTheCandidate(t *testing.T) {
-	atBound := steerAckPrefix + strings.Repeat("x", maxSteerCarry-len(steerAckPrefix))
+	atBound := turnlog.SteerAckPrefix + strings.Repeat("x", maxSteerCarry-len(turnlog.SteerAckPrefix))
 	longReply := strings.Repeat("y", maxSteerCarry)
 	tests := []struct {
 		name      string

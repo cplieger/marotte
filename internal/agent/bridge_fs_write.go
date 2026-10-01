@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/spec"
 )
 
 // respondFSWrite handles fs/write_text_file. Request params:
@@ -77,6 +78,11 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, ms
 	); wErr != nil {
 		in.respondFSError(ctx, chatID, msg, wErr)
 		return
+	}
+	// A dirty bit keyed on the path, not attribution: it touches no ledger, no
+	// turn and no card.
+	if dir, ok := spec.DirOf(rel); ok {
+		in.specs.Mark(dir)
 	}
 	in.respondBridge(ctx, chatID, msg, map[string]any{}, nil)
 }

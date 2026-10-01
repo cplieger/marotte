@@ -1,51 +1,29 @@
 // ---------------------------------------------------------------------------
 // Mid-turn steering SSE handlers.
 //
-// Three events: `steer_queued` (KAS has the message, agent has not read it),
-// `steer_injected` (the model has read it), `steer_cleared` (dropped unread
-// at a turn boundary). The first confirms a dock row; the other two remove
-// one and land a note in the transcript (`steer_marks`,
-// fundamentals/steer-note.ts).
-//
-// `steer_injected` arrives twice for a steer the agent answers: the read
-// frame, then an `ack` off the assistant text stream once it has acted.
-// Both merge onto the same note by id.
+// `steer_queued` says KAS's buffer holds the message and the agent has not read
+// it, and it confirms the row the sending device drew at submit by adopting
+// KAS's own id onto it. What a steer BECOMES is an entry —
+// `entry_appended{steer}` with state `read` or `dropped` — so the dock row
+// leaves inside `appendEntry` and the transcript's record is that entry at its
+// own `seq`.
 //
 // This is not the only writer of `session.steers` — `chat.steer`'s
 // `optimistic` draws the row on submit and `rollback` un-draws it on
 // refusal, reconciled by the derivable id so the optimistic and confirmed
 // rows never duplicate.
 //
-// A steer's own text does not reach the transcript through the message
-// handlers during the live turn (`user_message_chunk` has no live handler,
-// only the session/load replay projection), so the client promotes it into
-// the running turn itself.
-//
-// A fourth event, `agent_notice`, lands here because it arrives on the same
+// A second event, `agent_notice`, lands here because it arrives on the same
 // KAS channel: a workflow step's or subagent's progress line, split out by
 // the server before it reaches the client.
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { recordSteerQueued, promoteSteer, dropSteers, pendingSteerCarry } from "../store.js";
-import { noteBoundaryDrop } from "../steer-resend.js";
+import { recordSteerQueued } from "../store.js";
 import { info, success, error } from "../toast.js";
 
 onSSE("steer_queued", (chatID, p) => {
   recordSteerQueued(chatID, { id: p.steer_id, text: p.text, origin: p.origin });
-});
-
-onSSE("steer_injected", (chatID, p) => {
-  promoteSteer(chatID, p.steer_id, p.text, p.origin, p.ack);
-});
-
-// Named ids only; an id the agent already read is routine and `dropSteers`
-// ignores it. The capture runs BEFORE the drop that empties the dock it reads,
-// and only ARMS — this frame arrives while the turn is still finishing, so the
-// send waits for `turn_ended` (steer-resend.ts).
-onSSE("steer_cleared", (chatID, p) => {
-  noteBoundaryDrop(chatID, pendingSteerCarry(chatID, p.steer_ids));
-  dropSteers(chatID, p.steer_ids);
 });
 
 // ---------------------------------------------------------------------------

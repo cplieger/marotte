@@ -99,31 +99,18 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/reactive/-/reactive-${CPLIEGER_REACTIVE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/reactive --strip-components=1
 
-# Fetch @cplieger/web-terminal-engine TS source (same TS-only pattern). shell.ts
-# imports `render` from it (the reset primitives), and it is the peer the UI
-# package builds on; bundled into app.js by cmd/bundle.
-# 5.2.0 is the floor web-terminal-ui 7.2.2 declares as its peer (^5.2.0).
+# @cplieger/web-terminal-engine is @cplieger/web-terminal-ui's peer; cmd/bundle
+# bundles both into app.js.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=5.2.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.0.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
 
-# Fetch @cplieger/web-terminal-ui TS source (same TS-only pattern). shell.ts
-# imports createTerminal + presetTouch from it; it is the reference touch-first
-# terminal UI built on the engine (a peer dependency). Extracted side by side
-# under static-src/node_modules/@cplieger so resolution finds the engine when
-# compiling the UI's `@cplieger/web-terminal-engine` import. Bundled into
-# app.js by cmd/bundle; its css/ bundle (MANIFEST.touch) is concatenated into
-# style.css by the same tool.
-#
-# 7.2.2 is a FLOOR, not housekeeping: the terminal's cell background is the run
-# elements' `padding-block: 1px` in css/02-terminal.css from that release. The
-# 7.0.7 mechanism was `ascent-override`/`descent-override` on the @font-face
-# rules, which WebKit treats as preview and ignores, so every row boundary shows
-# an unpainted stripe on iOS and a solid column of background renders as dashes.
+# shell.ts imports createTerminal, localScrollbackStorage, presetSingle and
+# mobileToolbar from @cplieger/web-terminal-ui; cmd/bundle bundles it into app.js.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.2
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.0.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
@@ -200,13 +187,13 @@ ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edc
 # covers, because two differently-licensed families share this directory and a
 # bare LICENSE beside five woff2 files names neither.
 # renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
-ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.0
+ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.6
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
-ARG WEB_TERMINAL_GLYPHS_SHA256=cc0c05ae1e83ba573d150c372e401c239f92486237a47eee69e7e08b90eebddf
+ARG WEB_TERMINAL_GLYPHS_SHA256=8f4720fa37eed4cdb3ca070d24fbbce85a5266b63c63e754d78a359509aeb94c
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/LICENSE dest=WebTerminalGlyphs-LICENSE
 ARG WEB_TERMINAL_GLYPHS_LICENSE_SHA256=c95bae1d1ce0235ecccd3560b772ec1efb97f348a79f0fbe0a634f0c2ccefe2c
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/NOTICE dest=WebTerminalGlyphs-NOTICE
-ARG WEB_TERMINAL_GLYPHS_NOTICE_SHA256=fceae1c7790ae9ae77e0dd0e4241c342bde487b2f50a4a09576b779c34c7b2a9
+ARG WEB_TERMINAL_GLYPHS_NOTICE_SHA256=a5ac4badcc25b16fd3faed99e48caa48113a491cef3dbdd79d650243afefb4cb
 
 # `set -e` plus a per-iteration `sha256sum -c` is the whole gate: a for-loop's
 # exit status is only its LAST iteration's, so verifying after the loop would
@@ -299,6 +286,9 @@ RUN /tmp/package/lib/tsc --project static-src/tsconfig.build.json --noEmit && \
 RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X github.com/cplieger/marotte/internal/version.Build=${BUILD_VERSION}" \
     -o /app/marotte .
+
+COPY scripts/collect-licenses.sh scripts/
+RUN sh scripts/collect-licenses.sh --name marotte .
 
 # --- Final stage: minimal runtime ---
 FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
@@ -448,6 +438,7 @@ RUN sed -i 's|^root:x:0:0:root:/root:|root:x:0:0:root:/config/home:|' /etc/passw
 
 # Copy compiled web server from builder
 COPY --from=builder /app /app
+COPY --from=builder /out/usr/share/licenses /usr/share/licenses
 
 # Install artifacts under /opt/marotte/ so they don't clutter / in the
 # file browser. The blacklist in internal/filebrowse/paths.go already

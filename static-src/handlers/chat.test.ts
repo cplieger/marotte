@@ -21,6 +21,11 @@ vi.mock("../tabs.js", () => ({
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
+  // navigate.js's `openSpec` (the spec tab's door) imports these five, and Browser
+  // Mode links for real, so one missing name fails this whole file's import.
+  openTab: undefined,
+  parentChatRef: undefined,
+  setTabParent: undefined,
   activateTab: undefined,
   tabIdFor: undefined,
   getActiveTabId: undefined,
@@ -80,13 +85,12 @@ function makeHeader(over: Partial<ChatHeader> = {}): ChatHeader {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
     created_at: 0,
     updated_at: 0,
-    message_count: 0,
+    turn_count: 0,
     ...over,
   };
 }
@@ -102,12 +106,12 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    messages: [],
-    message_count: 0,
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",

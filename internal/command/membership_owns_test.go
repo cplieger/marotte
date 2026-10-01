@@ -8,8 +8,8 @@ package command
 import (
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func TestCreateChatAndOpen_OpensAnOwnedTab(t *testing.T) {

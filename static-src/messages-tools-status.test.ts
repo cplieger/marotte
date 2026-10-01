@@ -13,34 +13,16 @@
 // the bare-disclosure predicate. Status is therefore applied LAST.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { ToolCall } from "./types.js";
 
-// The signal layer only, so a MOUNTED card is reachable without dragging the chat
-// store in. It hands back the snapshot it was given, so the mount's effect sees
-// `next === lastApplied` and does not re-enter the update path.
-vi.mock("./store-signals.js", () => ({
-  toolCallSigKey: vi.fn((chatID: string, toolID: string) => `${chatID}\u0000${toolID}`),
-  ensureToolCallSig: vi.fn((_chat: string, _id: string, tc: unknown) => ({ value: tc })),
-  clearToolCallSig: vi.fn(),
-  // Present-but-undefined so real-ESM linking succeeds: other modules in this
-  // graph import these names and no path here calls them.
-  blockKey: undefined,
-  blockTextSigs: undefined,
-  blockThinkingSigs: undefined,
-  streamingReasoningSigs: undefined,
-  streamingTextSigs: undefined,
-  toolCallSigs: undefined,
-  ensureStreamingSig: undefined,
-  ensureReasoningSig: undefined,
-  ensureBlockTextSig: undefined,
-  ensureBlockThinkingSig: undefined,
-  peekToolCallSig: undefined,
-  clearStreamingSig: undefined,
-  clearReasoningSig: undefined,
-  clearBlockSigsFor: undefined,
-  clearAllBlockSigs: undefined,
-}));
+// The REAL signal layer. It was mocked to keep the chat store out of the graph, and
+// that premise is gone: `store.ts` is linked here through `messages-tools.js`, so the
+// factory had to name every symbol the whole graph imports — it named fourteen the
+// entry model retired and omitted twelve it added, which is why it failed at
+// COLLECTION. `ensureToolCallSig` seeds its signal with the snapshot it is handed, so
+// the mount's effect reads `next === lastApplied` and does not re-enter the update
+// path, which is the one behaviour the factory existed to fake.
 
 // The real chrome reaches `scroll.ts`, which resolves the transcript scroller at
 // module load and throws on a missing id.
@@ -109,7 +91,13 @@ describe("a terminal frame carrying the failure AND its output", () => {
       frame("st-explain", { status: "failed", output: "exit status 2\n" }),
       "c1",
     );
-    expect(card.querySelector(".tool-explain-btn")).not.toBeNull();
+    const btn = card.querySelector(".tool-explain-btn");
+    expect(btn).not.toBeNull();
+    // The trigger is ICON-ONLY, so its accessible name is the whole of what a
+    // reader has to identify it by — which makes a locator by NAME the honest one
+    // here, and a class-only assertion something a nameless button would satisfy.
+    // `tool-explain-btn.test.ts` owns the rest of that contract and its geometry.
+    expect(card.querySelector('.tool-explain-btn[aria-label="Explain this error"]')).toBe(btn);
     card.remove();
   });
 });
@@ -151,6 +139,10 @@ describe("a terminal frame whose output is blank", () => {
     const card = liveCard("st-blank-explain");
     updateToolCall(card, frame("st-blank-explain", { status: "failed", output: "  \n" }), "c1");
     expect(card.querySelector(".tool-explain-btn")).toBeNull();
+    // Also by NAME, so the gate stays defended in a spelling the trigger's own
+    // class cannot carry: an icon-only control that lost its `aria-label` and kept
+    // its class would satisfy the line above.
+    expect(card.querySelector('[aria-label="Explain this error"]')).toBeNull();
     card.remove();
   });
 });
@@ -271,6 +263,9 @@ describe("a frame carrying a refusal", () => {
       "c1",
     );
     expect(card.querySelector(".tool-explain-btn")).toBeNull();
+    // By NAME too, for the reason the blank-output case states: the class alone is
+    // not what identifies an icon-only control.
+    expect(card.querySelector('[aria-label="Explain this error"]')).toBeNull();
     card.remove();
   });
 

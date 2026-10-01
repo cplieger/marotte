@@ -45,11 +45,10 @@
 /* THE RESERVED 1px IS GEOMETRY NOW RATHER THAN A CHANNEL. It was added so the
    border channel could be a colour change instead of a layout change; with the
    channel gone it is simply part of each surface's box. Measured in Chromium,
-   removing it resizes 9 of the 10 reserving surfaces by 1-2px (`.settings-tab`
+   removing it resizes 9 of the 10 reserving surfaces by 1-2px (`.seg`
    32 -> 30, `.ev-tl-lane` 21 -> 19, `.fb-row` 38 -> 37; only `.tab` is unmoved,
    its 36px floor absorbing it), so taking it out is a look change on those nine
-   and not a cleanup. `.tab`, `.settings-tab` and `.mcp-modal-tab` reserve theirs
-   in their own files. */
+   and not a cleanup. `.tab` and `.seg` reserve theirs in their own files. */
 .pill-model-item,
 .pill-role-item,
 .popup-item,
@@ -105,8 +104,7 @@
    `selector-max-attribute: 2`. It mirrors `:not([id="pointer-mode-btn"])` fifteen
    lines below. */
 .tab.active:not(.dragging),
-.settings-tab.active,
-.mcp-modal-tab.active,
+.seg.active,
 .pill-model-item.active,
 .pill-role-item.active,
 .popup-item.active,
@@ -166,8 +164,7 @@
    somewhere else. On a bare touchscreen the feedback is :active below, which is
    the correct channel there. */
 @media (any-hover: hover) {
-  .settings-tab.active:hover,
-  .mcp-modal-tab.active:hover,
+  .seg.active:hover,
   .pill-model-item.active:hover,
   .pill-role-item.active:hover,
   .popup-item.active:hover,
@@ -206,8 +203,7 @@
   }
 }
 
-.settings-tab.active:active,
-.mcp-modal-tab.active:active,
+.seg.active:active,
 .pill-model-item.active:active,
 .pill-role-item.active:active,
 .popup-item.active:active,

@@ -9,25 +9,17 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/cplieger/marotte/internal/textsearch"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/textsearch"
 )
 
-// Transcript search: the in-chat scan.
-//
-// SERVER-SIDE, because the client's store is a paginated window: a store-only
-// search would cover the resident tail while presenting itself as the whole
-// conversation. It is also what makes progressive collapse acceptable, which
-// takes both halves of the reply: the tally is the COUNT and the hit list is the
-// client's STEP LIST (find-in-chat.ts's `stepOrder`), so a hit inside a
-// collapsed box is reported and reachable.
-//
-// MATCHING is textsearch's; this file owns the segmentation (which spans are
-// searched, in what order), the scoped filters, and what travels beside a hit.
-// This scan has NO INDEX: it runs over one record already in memory, where a
-// linear pass is the whole cost (the cross-chat candidate index is
-// search_index.go's). LEXICAL, not `_kiro/knowledge`, which is workspace-global
-// and file-granular and could not answer "which turn".
+// Transcript search: the in-chat scan over a chat's entries. SERVER-SIDE, because
+// the client's store is a paginated window, and the reply's two halves (the COUNT
+// and the hit list find-in-chat.ts steps through) are what make progressive
+// collapse acceptable. Matching is textsearch's; this file owns the segmentation,
+// the scoped filters and what travels beside a hit. No index: one log already
+// read, where a linear pass is the whole cost (search_index.go is the cross-chat
+// candidate index). Lexical, not `_kiro/knowledge`, which cannot answer "which turn".
 
 // searchExcerptRadius is how much context surrounds a hit in its excerpt.
 //
@@ -44,15 +36,15 @@ const searchExcerptRadius = 60
 // the cap (SearchResult.Matched), so a reader sees the total rather than 200.
 const maxSearchHits = 200
 
-// SegmentKind identifies which span of a message a hit landed in, so the
-// client can pick the right rendered surface before applying the offset.
+// SegmentKind identifies which span of an entry a hit landed in, so the client
+// can pick the right rendered surface before applying the offset.
 type SegmentKind string
 
-// Segment kinds, in RENDERED order. A tool block exposes several SEPARATE
-// segments sharing one block index, so the kind is what disambiguates their
-// offsets — and declaring them in the order the card renders them is what makes
-// a reader's walk through one card follow the card rather than an accident of
-// declaration.
+// Segment kinds, in RENDERED order. A tool call exposes several SEPARATE segments
+// across its tool_call and tool_result entries, so the kind is what disambiguates
+// their offsets — and declaring them in the order the card renders them is what
+// makes a reader's walk through one card follow the card rather than an accident
+// of declaration.
 const (
 	SegmentContent       SegmentKind = "content"
 	SegmentReasoning     SegmentKind = "reasoning"
@@ -62,73 +54,56 @@ const (
 	SegmentToolDenial    SegmentKind = "tool_denial"
 	SegmentToolInput     SegmentKind = "tool_input"
 	SegmentToolOutput    SegmentKind = "tool_output"
-
-	// The three MESSAGE-level kinds. They carry no block index — they are
-	// properties of the message rather than of one of its blocks — and two of
-	// them render OUTSIDE the message row entirely (the attachment pills sit in
-	// the turn HEADER, the failure reason in the card-level notice), which is
-	// why the client resolves those two from the turn rather than from the row.
+	// SegmentSteer is a steer entry's text, the note the transcript renders for it.
+	SegmentSteer SegmentKind = "steer"
+	// The TURN-level kinds: the prompt's text and attachment names on the
+	// turn_open, the plan card, and the failure reason on the turn_close, which
+	// renders in the card's footer.
+	SegmentPrompt      SegmentKind = "prompt"
 	SegmentPlan        SegmentKind = "plan"
 	SegmentAttachment  SegmentKind = "attachment"
 	SegmentTurnFailure SegmentKind = "turn_failure"
-
-	// SegmentMessage is the filter-only kind: a query with filters and no free
-	// text yields one synthetic hit per matching message, locating the message
-	// rather than a span inside it (offset 0, zero segment length, no block).
-	SegmentMessage SegmentKind = "message"
+	// SegmentEntry is the filter-only kind: a query with filters and no free text
+	// yields one synthetic hit per matching entry, locating the entry rather
+	// than a span inside it (offset 0, zero segment length).
+	SegmentEntry SegmentKind = "entry"
 )
 
 // segmentKinds is every declared kind, in emission order. Declared HERE so the
 // exhaustiveness test and the golden's kind loop read ONE list rather than each
-// spelling its own literal — two literals for one vocabulary is how the two
-// drift, and a kind declared with no producer then passes both quietly.
+// spelling its own literal.
 var segmentKinds = []SegmentKind{
 	SegmentContent, SegmentReasoning, SegmentToolTitle, SegmentToolDisclosed,
 	SegmentToolDiff, SegmentToolDenial, SegmentToolInput, SegmentToolOutput,
-	SegmentPlan, SegmentAttachment, SegmentTurnFailure, SegmentMessage,
+	SegmentSteer, SegmentPrompt, SegmentPlan, SegmentAttachment, SegmentTurnFailure,
+	SegmentEntry,
 }
 
 // Hit locates one match. The client fetches only the turns it needs to reveal
 // and highlights locally, so this carries position rather than markup. Position
 // is segment-relative: Offset indexes runes inside the one segment named by
-// SegmentKind + BlockIndex, never a concatenation of the message.
+// SegmentKind on the entry EntryID, never a concatenation of the turn.
 type Hit struct {
-	// BlockIndex is the matched segment's block position in the message's
-	// chronological Blocks array. Nil for messages persisted before blocks
-	// existed and for message-kind hits. First for govet fieldalignment: a
-	// pointer after the strings would extend the GC scan past their len words.
-	BlockIndex *int `json:"block_index,omitempty"`
-	// MessageID is the matched message.
-	MessageID string `json:"message_id"`
-	// TurnMessageID is the matched turn's OPENING message id.
-	//
-	// Carried alongside MessageID because a hit can land on an assistant
-	// message inside a turn while the fold state keys on the turn's opener.
-	// The turn NUMBER cannot substitute — it is session-absolute here and
-	// window-relative in the client's projection.
-	TurnMessageID string `json:"turn_message_id"`
-	Excerpt       string `json:"excerpt"`
-	// Role of the matched message, so a result list can say where a hit came
-	// from without a second lookup.
-	Role marotte.Role `json:"role"`
-	// SegmentKind names the span the hit landed in: content | reasoning |
-	// tool_title | tool_disclosed | tool_diff | tool_denial | tool_input |
-	// tool_output | plan | attachment | turn_failure, or message for a
-	// filter-only hit.
+	// TurnID is the matched entry's turn.
+	TurnID string `json:"turn_id"`
+	// EntryID is the matched entry.
+	EntryID string `json:"entry_id"`
+	Excerpt string `json:"excerpt"`
+	// SegmentKind names the span the hit landed in.
 	SegmentKind SegmentKind `json:"segment_kind"`
-	// AgentSubtaskID is the subtask id of the agent that produced the matched
-	// segment ("" = top-level agent), so a hit inside a delegate's stream can
-	// open that delegate's chain before highlighting.
-	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
-	// Turn is the 1-based session-absolute turn ordinal, matching
-	// projectTurnSummaries so a hit can mark the timeline rail.
+	// Lane is the entry's lane: "" for the chat's own agent, a delegate's uuid
+	// for a hit inside that delegate's stream, so the client can open the
+	// delegate's tab before highlighting.
+	Lane string `json:"lane,omitempty"`
+	// Turn is the 1-based session-absolute turn ordinal, the turn_open's n, so a
+	// hit can mark the timeline rail for a turn the window does not hold.
 	Turn int `json:"turn"`
 	// Offset is the rune index of the match inside its segment, so the client
 	// can highlight the right occurrence rather than the first.
 	Offset int `json:"offset"`
 	// SegmentLen is the segment's rune length: the denominator for a relative
 	// position, carried so the client never re-derives the server's
-	// segmentation. Zero for message-kind hits.
+	// segmentation. Zero for entry-kind hits.
 	SegmentLen int `json:"segment_len"`
 }
 
@@ -140,10 +115,9 @@ type searchQuery struct {
 	text string
 	file string
 	tool string
-	role string
 	// needle is the free text prepared for the scan. The reader's case choice
 	// applies to it ALONE: the scoped filters stay case-insensitive whatever
-	// was asked, because `role:` is an enum and a path is typed from memory.
+	// was asked, because a path is typed from memory.
 	needle textsearch.Needle
 	turn   int
 	// needleRunes is the free text's rune length, which is how long a match is
@@ -151,9 +125,9 @@ type searchQuery struct {
 	needleRunes int
 }
 
-// parseSearchQuery splits `file:` / `tool:` / `role:` / `turn:` prefixes out
-// of the raw query. Unknown prefixes stay in the free text rather than
-// being dropped: a reader typing `http://` means it literally.
+// parseSearchQuery splits `file:` / `tool:` / `turn:` prefixes out of the raw
+// query. Unknown prefixes stay in the free text rather than being dropped: a
+// reader typing `http://` means it literally.
 func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 	q := searchQuery{turn: -1}
 	var text []string
@@ -168,8 +142,6 @@ func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 			q.file = strings.ToLower(val)
 		case "tool":
 			q.tool = strings.ToLower(val)
-		case "role":
-			q.role = strings.ToLower(val)
 		case "turn":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				q.turn = n
@@ -184,6 +156,11 @@ func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 	q.needle = textsearch.NewNeedle(q.text, caseSensitive)
 	q.needleRunes = utf8.RuneCountInString(q.text)
 	return q
+}
+
+// empty reports a query with neither free text nor a filter.
+func (q *searchQuery) empty() bool {
+	return q.text == "" && q.file == "" && q.tool == "" && q.turn < 0
 }
 
 // SearchResult is GET /api/chats/{id}/search's reply: the hits, cut at
@@ -211,143 +188,235 @@ func (sc *hitScan) add(mk func() Hit) {
 	}
 }
 
-// Search scans a chat's messages for a query and reports the hits beside their
-// tally: every message is read whatever the hit list holds, so Scanned is the
-// message count, Matched the occurrence count, and Truncated false, since nothing
-// here can fail to read. Turn numbers come from the same projection the timeline
-// rail draws. caseSensitive governs the FREE TEXT only; both halves of the
-// in-chat search have to agree on it, so the flag travels on the request rather
-// than being a server default either side could get wrong.
-func Search(msgs []marotte.Message, raw string, caseSensitive bool) SearchResult {
-	res, _ := searchChat(msgs, raw, caseSensitive)
+// searchTurn is one turn as the scan sees it: its ordinal, whether the rail
+// draws it, and the tool_call payloads its tool_result entries are read against
+// (the `tool:` and `file:` filters read the call; the result carries the output).
+type searchTurn struct {
+	calls map[string]*searchCall
+	n     int
+	drawn bool
+}
+
+// searchCall is one tool call as the scan reads it: the create payload, and the
+// diff text its settled tool_result carries, so the input segment can drop the
+// leaf the diff already covers (inputLeafInDiff).
+type searchCall struct {
+	call *marotte.EntryToolCall
+	diff string
+}
+
+// Search scans a chat's entries for a query and reports the hits beside their
+// tally: every entry of a drawn turn is read whatever the hit list holds, so
+// Scanned is that entry count, Matched the occurrence count, and Truncated false,
+// since nothing here can fail to read. drawn is the set of turn ids the rail
+// draws; an undrawn turn's segments are skipped, because a hit there would name
+// a turn no card renders. caseSensitive governs the FREE TEXT only; both halves
+// of the in-chat search have to agree on it, so the flag travels on the request
+// rather than being a server default either side could get wrong.
+func Search(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) SearchResult {
+	res, _ := searchEntries(entries, drawn, raw, caseSensitive)
 	return res
 }
 
-// searchChat is Search beside the byte volume of the segments the scan read.
+// searchEntries is Search beside the byte volume of the segments the scan read.
 // Cross-chat ranking divides a chat's occurrence count by that volume, and
 // taking both from one walk is what keeps the numerator and the denominator
-// over the same spans: a message a filter excludes is in neither, a reasoning
-// or tool span the scan searches is in both.
-func searchChat(msgs []marotte.Message, raw string, caseSensitive bool) (res SearchResult, chars int) {
+// over the same spans.
+func searchEntries(entries []marotte.Entry, drawn map[string]struct{}, raw string, caseSensitive bool) (res SearchResult, chars int) {
 	q := parseSearchQuery(raw, caseSensitive)
-	if q.text == "" && q.file == "" && q.tool == "" && q.role == "" && q.turn < 0 {
+	if q.empty() {
 		return SearchResult{Matches: []Hit{}}, 0
 	}
-	turnOf, openerOf := turnIndexByMessage(msgs)
+	turns := indexSearchTurns(entries, drawn)
 	sc := hitScan{hits: make([]Hit, 0, 16)}
-	for i := range msgs {
-		m := &msgs[i]
-		turn := turnOf[m.ID]
-		if !messageMatchesFilters(m, &q, turn) {
+	scanned := 0
+	for i := range entries {
+		e := &entries[i]
+		t := turns[e.Turn]
+		if t == nil || !t.drawn {
 			continue
 		}
-		appendMessageHits(&sc, m, &q, turn, openerOf[m.ID])
+		scanned++
+		segs := entrySegments(e, t)
+		if !entryMatchesFilters(e, t, &q) {
+			continue
+		}
+		appendEntryHits(&sc, e, t.n, &q, segs)
 	}
 	return SearchResult{
 		Matches: sc.hits,
-		Scanned: len(msgs),
+		Scanned: scanned,
 		Matched: sc.matched,
 	}, sc.chars
 }
 
-// turnIndexByMessage maps every message id to its turn's absolute ordinal, via
-// the shared projection so numbering cannot disagree with the rail's.
-func turnIndexByMessage(msgs []marotte.Message) (turns map[string]int, openers map[string]string) {
-	turns = make(map[string]int, len(msgs))
-	openers = make(map[string]string, len(msgs))
-	summaries := projectTurnSummaries(msgs, false)
-	// A summary carries its opening message id; walk the messages in order and
-	// advance the turn whenever the next turn's opener is reached.
-	next := 0
-	current := 0
-	opener := ""
-	for i := range msgs {
-		if next < len(summaries) && msgs[i].ID == summaries[next].ID {
-			current = summaries[next].N
-			opener = summaries[next].ID
-			next++
+// indexSearchTurns reads every turn_open's n and every tool_call's payload, so
+// the per-entry walk can answer a result's filters from its call.
+func indexSearchTurns(entries []marotte.Entry, drawn map[string]struct{}) map[string]*searchTurn {
+	turns := make(map[string]*searchTurn)
+	for i := range entries {
+		e := &entries[i]
+		t := turns[e.Turn]
+		if t == nil {
+			_, isDrawn := drawn[e.Turn]
+			t = newSearchTurn(isDrawn)
+			turns[e.Turn] = t
 		}
-		turns[msgs[i].ID] = current
-		openers[msgs[i].ID] = opener
+		t.observe(e)
 	}
-	return turns, openers
+	return turns
 }
 
-// messageMatchesFilters applies the scoped filters, all of which must hold.
-func messageMatchesFilters(m *marotte.Message, q *searchQuery, turn int) bool {
-	if q.turn >= 0 && turn != q.turn {
+func newSearchTurn(drawn bool) *searchTurn {
+	return &searchTurn{calls: make(map[string]*searchCall), drawn: drawn}
+}
+
+// observe folds one entry into the turn: the ordinal off a turn_open, the create
+// payload off a tool_call, the diff off a tool_result.
+func (t *searchTurn) observe(e *marotte.Entry) {
+	switch e.Kind {
+	case marotte.EntryKindTurnOpen:
+		var open marotte.EntryTurnOpen
+		if json.Unmarshal(e.Payload, &open) == nil {
+			t.n = int(min(open.N, uint64(1<<31-1)))
+		}
+	case marotte.EntryKindToolCall:
+		var call marotte.EntryToolCall
+		if json.Unmarshal(e.Payload, &call) == nil {
+			t.callFor(e.ID).call = &call
+		}
+	case marotte.EntryKindToolResult:
+		var res marotte.EntryToolResult
+		if json.Unmarshal(e.Payload, &res) == nil && len(res.Diffs) > 0 {
+			t.callFor(toolCallIDOfResult(e.ID)).diff = res.Diffs[0].NewText
+		}
+	}
+}
+
+// callFor answers the turn's record for one tool call id, minting it on first
+// sight: the create and the result each fill their half whatever order the log
+// holds them in.
+func (t *searchTurn) callFor(id string) *searchCall {
+	c := t.calls[id]
+	if c == nil {
+		c = &searchCall{}
+		t.calls[id] = c
+	}
+	return c
+}
+
+// entryMatchesFilters applies the scoped filters, all of which must hold. The
+// `tool:` and `file:` filters read a tool_call and its tool_result together, so a
+// hit in a call's output is found by the call's title.
+func entryMatchesFilters(e *marotte.Entry, t *searchTurn, q *searchQuery) bool {
+	if q.turn >= 0 && t.n != q.turn {
 		return false
 	}
-	if q.role != "" && !strings.EqualFold(string(m.Role), q.role) {
+	if q.tool == "" && q.file == "" {
+		return true
+	}
+	call, result := toolPairOf(e, t)
+	if call == nil {
 		return false
 	}
-	if q.file != "" && !messageTouchesFile(m, q.file) {
+	if q.tool != "" && !strings.Contains(strings.ToLower(call.Title), q.tool) &&
+		!strings.Contains(strings.ToLower(string(call.Kind)), q.tool) {
 		return false
 	}
-	if q.tool != "" && !messageUsesTool(m, q.tool) {
+	if q.file != "" && !toolTouchesFile(call, result, q.file) {
 		return false
 	}
 	return true
 }
 
-// messageTouchesFile matches a substring against changed-file paths AND
-// tool locations — a turn that only READ a file never appears in
-// changed_files.
-func messageTouchesFile(m *marotte.Message, want string) bool {
-	for path := range m.ChangedFiles {
-		if strings.Contains(strings.ToLower(path), want) {
+// toolPairOf answers the tool_call payload and, for a tool_result entry, its own
+// decoded payload; nil call for an entry that is neither.
+func toolPairOf(e *marotte.Entry, t *searchTurn) (*marotte.EntryToolCall, *marotte.EntryToolResult) {
+	switch e.Kind {
+	case marotte.EntryKindToolCall:
+		return t.callPayload(e.ID), nil
+	case marotte.EntryKindToolResult:
+		var res marotte.EntryToolResult
+		if json.Unmarshal(e.Payload, &res) != nil {
+			return nil, nil
+		}
+		return t.callPayload(toolCallIDOfResult(e.ID)), &res
+	}
+	return nil, nil
+}
+
+// callPayload is the decoded tool_call payload for one id, nil when the log
+// holds no create for it (a result whose call was truncated away).
+func (t *searchTurn) callPayload(id string) *marotte.EntryToolCall {
+	if c := t.calls[id]; c != nil {
+		return c.call
+	}
+	return nil
+}
+
+// toolCallIDOfResult inverts marotte.ToolResultID.
+func toolCallIDOfResult(resultID string) string {
+	return strings.TrimSuffix(resultID, ":result")
+}
+
+// toolTouchesFile matches a substring against a call's and its result's
+// locations and diff paths — a call that only READ a file has a location and no
+// diff.
+func toolTouchesFile(call *marotte.EntryToolCall, result *marotte.EntryToolResult, want string) bool {
+	for _, loc := range call.Locations {
+		if strings.Contains(strings.ToLower(loc.Path), want) {
 			return true
 		}
 	}
-	for i := range m.ToolCalls {
-		for _, loc := range m.ToolCalls[i].Locations {
-			if strings.Contains(strings.ToLower(loc.Path), want) {
-				return true
-			}
+	if result == nil {
+		return false
+	}
+	for _, loc := range result.Locations {
+		if strings.Contains(strings.ToLower(loc.Path), want) {
+			return true
+		}
+	}
+	for _, d := range result.Diffs {
+		if strings.Contains(strings.ToLower(d.Path), want) {
+			return true
 		}
 	}
 	return false
 }
 
-func messageUsesTool(m *marotte.Message, want string) bool {
-	for i := range m.ToolCalls {
-		tc := &m.ToolCalls[i]
-		if strings.Contains(strings.ToLower(tc.Title), want) ||
-			strings.Contains(strings.ToLower(string(tc.Kind)), want) {
-			return true
-		}
-	}
-	return false
-}
-
-// appendMessageHits adds every match within one message, matching each
-// segment independently — a hit's Offset and SegmentLen are the segment's,
-// so a match can never span two segments.
+// appendEntryHits adds every match within one entry, matching each segment
+// independently — a hit's Offset and SegmentLen are the segment's, so a match
+// can never span two segments. `ordinal` is the turn's own turn_open.N, clamped
+// at :281, and is an ORDINAL rather than a count of anything.
 //
-// A filter-only query still yields one hit per matching message, so a
-// scoped search without free text lists turns rather than finding nothing.
-func appendMessageHits(sc *hitScan, m *marotte.Message, q *searchQuery, turn int, opener string) {
+// A filter-only query still yields one hit per matching entry, so a scoped
+// search without free text lists turns rather than finding nothing.
+func appendEntryHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuery, segs []segment) {
 	if q.text == "" {
 		sc.add(func() Hit {
+			var first string
+			if len(segs) > 0 {
+				first = segs[0].text
+			}
 			return Hit{
-				MessageID:     m.ID,
-				TurnMessageID: opener,
-				Role:          m.Role,
-				Turn:          turn,
-				SegmentKind:   SegmentMessage,
-				Excerpt:       excerptAround([]rune(searchableText(m)), 0, 0),
+				TurnID:      e.Turn,
+				EntryID:     e.ID,
+				Lane:        e.Lane,
+				Turn:        ordinal,
+				SegmentKind: SegmentEntry,
+				Excerpt:     excerptAround([]rune(first), 0, 0),
 			}
 		})
 		return
 	}
-	for _, seg := range messageSegments(m) {
-		sc.chars += len(seg.text)
-		appendSegmentHits(sc, m, q, turn, opener, &seg)
+	for i := range segs {
+		sc.chars += len(segs[i].text)
+		appendSegmentHits(sc, e, ordinal, q, &segs[i])
 	}
 }
 
 // appendSegmentHits counts every occurrence of the query text inside one segment.
-func appendSegmentHits(sc *hitScan, m *marotte.Message, q *searchQuery, turn int, opener string, seg *segment) {
+func appendSegmentHits(sc *hitScan, e *marotte.Entry, ordinal int, q *searchQuery, seg *segment) {
 	var runes []rune
 	for hit := range q.needle.Occurrences(seg.text) {
 		if runes == nil {
@@ -355,218 +424,172 @@ func appendSegmentHits(sc *hitScan, m *marotte.Message, q *searchQuery, turn int
 		}
 		sc.add(func() Hit {
 			return Hit{
-				MessageID:      m.ID,
-				TurnMessageID:  opener,
-				Role:           m.Role,
-				Turn:           turn,
-				SegmentKind:    seg.kind,
-				AgentSubtaskID: seg.subtaskID,
-				BlockIndex:     seg.blockIndex,
-				Offset:         hit.Rune,
-				SegmentLen:     len(runes),
-				Excerpt:        excerptAround(runes, hit.Rune, q.needleRunes),
+				TurnID:      e.Turn,
+				EntryID:     e.ID,
+				Lane:        e.Lane,
+				Turn:        ordinal,
+				SegmentKind: seg.kind,
+				Offset:      hit.Rune,
+				SegmentLen:  len(runes),
+				Excerpt:     excerptAround(runes, hit.Rune, q.needleRunes),
 			}
 		})
 	}
 }
 
-// segment is one searchable span of a message: the unit a hit's offset is
+// segment is one searchable span of an entry: the unit a hit's offset is
 // relative to.
 type segment struct {
-	// blockIndex is the owning block's position in Message.Blocks, nil on the
-	// legacy blockless fallback. Every segment of one tool block shares it; the
-	// kind is what tells their offsets apart.
-	blockIndex *int
-	kind       SegmentKind
-	text       string
-	subtaskID  string
+	kind SegmentKind
+	text string
 }
 
-// messageSegments lists a message's searchable spans in order. Block-bearing
-// messages segment per block — the legacy Content/Reasoning fields mirror the
-// block texts, so reading both would double every hit. Messages persisted
-// before blocks existed fall back to one content segment over the legacy
-// concatenation plus each tool call's own spans (toolSegments). Both shapes end
-// with the same message-level tail (messageTailSegments).
-func messageSegments(m *marotte.Message) []segment {
-	if len(m.Blocks) == 0 {
-		return legacySegments(m)
+// entrySegments lists an entry's searchable spans in rendered order, per 8.9: a
+// text entry is one segment, a tool_call its title and input, a tool_result the
+// disclosed claim, the diff, the denial and the output, a steer its text, a plan
+// its entries, a compaction_failed or safety_blocked its text, a turn_close its
+// failure reason, a turn_open the prompt and its attachment names. An empty span
+// contributes no segment.
+func entrySegments(e *marotte.Entry, t *searchTurn) []segment {
+	switch e.Kind {
+	case marotte.EntryKindText:
+		var p marotte.EntryText
+		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return p.Text }))
+	case marotte.EntryKindThinking:
+		var p marotte.EntryThinking
+		return oneSegment(SegmentReasoning, decodeText(e.Payload, &p, func() string { return p.Text }))
+	case marotte.EntryKindToolCall:
+		return toolCallSegments(t.calls[e.ID])
+	case marotte.EntryKindToolResult:
+		return toolResultPayloadSegments(e.Payload)
+	case marotte.EntryKindSteer:
+		var p marotte.EntrySteer
+		return oneSegment(SegmentSteer, decodeText(e.Payload, &p, func() string { return p.Text }))
+	case marotte.EntryKindPlan:
+		return planSegments(e.Payload)
+	case marotte.EntryKindCompactionFailed:
+		var p marotte.EntryCompactionFailed
+		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return p.Reason }))
+	case marotte.EntryKindSafetyBlocked:
+		var p marotte.EntrySafetyBlocked
+		return oneSegment(SegmentContent, decodeText(e.Payload, &p, func() string { return strings.Join(p.Properties, "\n") }))
+	case marotte.EntryKindTurnClose:
+		var p marotte.EntryTurnClose
+		return oneSegment(SegmentTurnFailure, decodeText(e.Payload, &p, func() string { return p.FailureReason }))
+	case marotte.EntryKindTurnOpen:
+		return turnOpenSegments(e.Payload)
+	case marotte.EntryKindTurnBind, marotte.EntryKindSteerAck, marotte.EntryKindCompaction,
+		marotte.EntryKindModelSwitched, marotte.EntryKindModeSwitched:
+		// A compaction's summary is the model's own account of history already
+		// searchable at its source; a bind and a switch render no text. An ack's text
+		// is the agent's own words at its own position, so it is the one kind here
+		// whose rendered prose the index leaves out.
+		return nil
 	}
-	segs := make([]segment, 0, len(m.Blocks)+2)
-	for i := range m.Blocks {
-		b := &m.Blocks[i]
-		switch b.Type {
-		case marotte.BlockText:
-			segs = append(segs, segment{kind: SegmentContent, text: b.Text, subtaskID: b.AgentSubtaskID, blockIndex: new(i)})
-		case marotte.BlockThinking:
-			segs = append(segs, segment{kind: SegmentReasoning, text: b.Thinking, subtaskID: b.AgentSubtaskID, blockIndex: new(i)})
-		case marotte.BlockToolUse:
-			tc := toolCallByID(m, b.ToolCallID)
-			if tc == nil {
-				continue
-			}
-			segs = append(segs, toolSegments(tc, b.AgentSubtaskID, new(i))...)
-		}
-	}
-	return append(segs, messageTailSegments(m)...)
+	return nil
 }
 
-// legacySegments is the fallback for messages with no block array: the
-// prose and thinking trace as ONE content segment over their concatenation,
-// plus each tool call's own spans (toolSegments) and the shared message-level
-// tail, none of it block-addressed.
-func legacySegments(m *marotte.Message) []segment {
-	text := m.Content
-	if m.Reasoning != "" {
-		text += "\n" + m.Reasoning
+// decodeText decodes payload into p and answers read()'s text, or "" on a payload
+// that does not decode: a search must not fail because one entry is odd.
+func decodeText(payload json.RawMessage, p any, read func() string) string {
+	if json.Unmarshal(payload, p) != nil {
+		return ""
 	}
-	segs := make([]segment, 0, 1+2*len(m.ToolCalls))
-	segs = append(segs, segment{kind: SegmentContent, text: text})
-	for i := range m.ToolCalls {
-		tc := &m.ToolCalls[i]
-		segs = append(segs, toolSegments(tc, tc.AgentSubtaskID, nil)...)
-	}
-	return append(segs, messageTailSegments(m)...)
+	return read()
 }
 
-// messageTailSegments is the MESSAGE-level span set both message shapes share:
-// each attachment's name, each plan entry's content, then the turn failure
-// reason. None carries a block index, because none belongs to a block.
-//
-// Appended AFTER the block (or legacy) segments, which is close enough to
-// rendered order for both shapes to need no per-role branch: a user message
-// renders its text and then its pills, an assistant message renders its blocks,
-// then its plan card, then the turn notice.
-//
-// ATTACHMENT NAME, NOT PATH. attachment-pill.ts renders `att.name` as the pill's
-// text and puts `att.path` in the `title` ATTRIBUTE, which the client's DOM
-// walker cannot mark — so searching the path would mint hits that always land on
-// "not in rendered text". Loss: the directory part is unfindable.
-//
-// Two conditional-surface losses, both stated rather than hidden. Only a turn's
-// TRIGGER attachments are drawn (messages.ts feeds `t.trigger?.attachments` to
-// the header), so a mid-turn STEER's own attachment name is searched with nothing
-// rendering it. And turnFailureText renders no reason for a clean, running or
-// CANCELLED outcome, and lets the last interrupted event message's content win
-// over it — so of the 240 corpus messages carrying a reason, ~17 are silenced
-// outright and ~27 more sit on turns where an event can win. Both land on the
-// honest notice: the hit selects the TURN CARD and says "not in rendered text".
-func messageTailSegments(m *marotte.Message) []segment {
-	segs := make([]segment, 0, len(m.Attachments)+len(m.Plan)+1)
-	for i := range m.Attachments {
-		segs = append(segs, segment{kind: SegmentAttachment, text: m.Attachments[i].Name})
+func toolResultPayloadSegments(payload json.RawMessage) []segment {
+	var res marotte.EntryToolResult
+	if json.Unmarshal(payload, &res) != nil {
+		return nil
 	}
-	for i := range m.Plan {
-		segs = append(segs, segment{kind: SegmentPlan, text: m.Plan[i].Content})
+	return toolResultSegments(&res)
+}
+
+// planSegments is one span per plan entry, in plan order.
+func planSegments(payload json.RawMessage) []segment {
+	var p marotte.EntryPlan
+	if json.Unmarshal(payload, &p) != nil {
+		return nil
 	}
-	if m.TurnFailureReason != "" {
-		segs = append(segs, segment{kind: SegmentTurnFailure, text: m.TurnFailureReason})
+	segs := make([]segment, 0, len(p.Entries))
+	for i := range p.Entries {
+		segs = append(segs, oneSegment(SegmentPlan, p.Entries[i].Content)...)
 	}
 	return segs
 }
 
-// toolSegments is one tool call's searchable spans, all sharing its block index,
-// in the order the CARD renders them: title, the disclosed claim that REPLACES
-// it, the diff preview, the denial block, the input, then the output. An empty
-// span contributes no segment, so a call carrying only a title yields only a
-// title. Stepping a card therefore walks it the way a reader reads it, which is
-// also what pins bestHit's list-position tie-break to a stated order rather than
-// to declaration accident.
-//
-// The disclosed span is Disclosed.DisplayName and nothing else: URI is not
-// rendered and Type is a class name. It closes a live half-defect — disclosedClaim
-// REPLACES the card's title in the display, so a reader searching a skill name
-// could see it on screen and the server could not find it.
-//
-// The denial span is Denial.Resource and nothing else: it is the one field
-// carrying reader-facing text (a command or a path). Capability and the rule's
-// Effect come from a closed vocabulary, and the rule's match patterns are policy
-// text reachable through Settings -> Permissions.
-//
-// The diff span is Diffs[0].NewText and nothing else, on two measurements.
-// NEW TEXT ONLY: 97.4% of old_text's lines are also in new_text, so searching
-// both mints a second hit for one rendered line. The loss is stated rather than
-// hidden — a line an edit REMOVED is not findable here, and a delete whose
-// new_text is empty contributes nothing at all — and its recovery routes are the
-// diff pane's own find and git. DIFFS[0] ONLY: nothing renders or fetches a
-// second diff (the card renders opts.diffs[0], and the fetch fallback's handler
-// renders bulk.diffs[0]), so a hit past the first would be a counted match with
-// no destination; 5 of 7,285 diff-bearing calls fleet-wide carry one.
-//
-// Path is deliberately not searched: it is already reachable through the `file:`
-// filter (messageTouchesFile) and through the title, and searching it would give
-// every diff a hit for a query naming its directory.
-func toolSegments(tc *marotte.ToolCall, subtaskID string, blockIndex *int) []segment {
-	segs := []segment{{kind: SegmentToolTitle, text: tc.Title, subtaskID: subtaskID, blockIndex: blockIndex}}
-	if tc.Disclosed != nil && tc.Disclosed.DisplayName != "" {
-		segs = append(segs, segment{kind: SegmentToolDisclosed, text: tc.Disclosed.DisplayName, subtaskID: subtaskID, blockIndex: blockIndex})
+// oneSegment is a single-span segment list, empty for an empty span.
+func oneSegment(kind SegmentKind, text string) []segment {
+	if text == "" {
+		return nil
 	}
-	newText := ""
-	if len(tc.Diffs) > 0 {
-		newText = tc.Diffs[0].NewText
+	return []segment{{kind: kind, text: text}}
+}
+
+// turnOpenSegments is the prompt's text and each attachment's NAME, not path:
+// attachment-pill.ts renders `att.name` as the pill's text and puts the path in
+// the `title` ATTRIBUTE, which the client's DOM walker cannot mark. Loss: the
+// directory part is unfindable.
+func turnOpenSegments(payload json.RawMessage) []segment {
+	var p marotte.EntryTurnOpen
+	if json.Unmarshal(payload, &p) != nil || p.Prompt == nil {
+		return nil
 	}
-	if newText != "" {
-		segs = append(segs, segment{kind: SegmentToolDiff, text: newText, subtaskID: subtaskID, blockIndex: blockIndex})
-	}
-	// Above the input, because detailsBody builds the denial block BEFORE the
-	// input <pre>.
-	if tc.Denial != nil && tc.Denial.Resource != "" {
-		segs = append(segs, segment{kind: SegmentToolDenial, text: tc.Denial.Resource, subtaskID: subtaskID, blockIndex: blockIndex})
-	}
-	if input := inputLeafText(tc.Input, newText); input != "" {
-		segs = append(segs, segment{kind: SegmentToolInput, text: input, subtaskID: subtaskID, blockIndex: blockIndex})
-	}
-	if tc.Output != "" {
-		segs = append(segs, segment{kind: SegmentToolOutput, text: tc.Output, subtaskID: subtaskID, blockIndex: blockIndex})
+	segs := oneSegment(SegmentPrompt, p.Prompt.Text)
+	for i := range p.Prompt.Attachments {
+		segs = append(segs, oneSegment(SegmentAttachment, p.Prompt.Attachments[i].Name)...)
 	}
 	return segs
 }
 
-// inputLeafDedupeMin is the leaf length at which a leaf occurring verbatim in its
-// own call's new_text stops being searched. Below it a leaf is a path, a pattern
-// or a short command — the members the claim line is built from — and cannot be
-// the write payload. At or above it, 7,281 of the 7,361 calls fleet-wide carrying
-// both an input and diffs hold such a leaf verbatim in that new_text (9.66 MB of
-// 12.2 MB of leaf bytes), so searching both would mint a second hit for one
-// rendered write.
+// toolCallSegments is the CREATE half of a tool call's spans: the title and the
+// input, in the order the card renders them. The disclosed claim, the diff, the
+// denial and the output belong to the settled tool_result, so a hit in them names
+// that entry.
+func toolCallSegments(c *searchCall) []segment {
+	if c == nil || c.call == nil {
+		return nil
+	}
+	segs := oneSegment(SegmentToolTitle, c.call.Title)
+	if input := inputLeafText(c.call.Input, c.diff); input != "" {
+		segs = append(segs, segment{kind: SegmentToolInput, text: input})
+	}
+	return segs
+}
+
+// toolResultSegments is the SETTLED half: the disclosed claim, the diff preview,
+// the denial block, then the output. Each span is the one rendered field
+// (DisplayName, Diffs[0].NewText, Denial.Resource): 97.4% of old_text's lines are
+// also in new_text, so searching both mints a second hit for one rendered line, and
+// Path is reachable through the `file:` filter and the title.
+func toolResultSegments(res *marotte.EntryToolResult) []segment {
+	var segs []segment
+	if res.Disclosed != nil {
+		segs = append(segs, oneSegment(SegmentToolDisclosed, res.Disclosed.DisplayName)...)
+	}
+	if len(res.Diffs) > 0 {
+		segs = append(segs, oneSegment(SegmentToolDiff, res.Diffs[0].NewText)...)
+	}
+	if res.Denial != nil {
+		segs = append(segs, oneSegment(SegmentToolDenial, res.Denial.Resource)...)
+	}
+	return append(segs, oneSegment(SegmentToolOutput, res.Output)...)
+}
+
+// inputLeafDedupeMin is the leaf length at which a leaf occurring verbatim in the
+// diff text handed beside it stops being searched. Below it a leaf is a path, a
+// pattern or a short command and cannot be the write payload; at or above it,
+// 7,281 of 7,361 calls fleet-wide carrying both an input and diffs hold such a
+// leaf verbatim in the new_text.
 const inputLeafDedupeMin = 40
 
-// inputLeafText is ToolCall.Input's string LEAF VALUES, one per line, in DOCUMENT
-// order, minus the leaves diffText already carries (inputLeafInDiff). Each of
-// those three words is load-bearing: a number or a bool is not text a reader
-// searches for; every string at any depth is covered, object members and array
-// elements alike; and KEYS are skipped, because a raw scan matches `command`,
-// `path` and every escape sequence — measured on one real chat, `workflow` occurs
-// 15 times in the raw JSON and 13 times in the leaf values.
-//
-// Document order is what the card prints (JSON.stringify(input, null, 2),
-// tool-card.ts:509), which is why this walks Decoder.Token() rather than round
-// tripping through map[string]json.RawMessage: Go map iteration is randomised, so
-// hit order would change between two requests for one query, moving the client's
-// cursor and making the golden unstable.
-//
-// Malformed bytes and the literal `null` boundInput writes for an input it could
-// neither parse nor shorten (tool_bounds.go:265) both yield "", and therefore no
-// segment, with no error to the caller: a search must not fail because one tool
-// call's input is odd, and a log line per odd input per query is noise nobody can
-// act on. No size or depth cap either — the store bounds the input to
-// persistBudget.inputTotal (32 KiB) and inputMember (8 KiB), and a 32 KiB
-// document bounds this walk's stack with it.
-//
-// COST, per chat per query: a second encoding/json pass over that chat's stored
-// input, plus one strings.Contains per long leaf over its call's own new_text
-// (<=64 KiB). SearchAll multiplies that by the fan-out rather than adding a new
-// one — searchOneChat runs the scan under searchWorkers over every chat its
-// filter admits, each file bounded by fileCap — so fleet-wide the increment is
-// one more pass over roughly 42 MB of stored tool input, against the whole-file
-// unmarshal readChatFile already pays for each of those chats.
-//
-// What a hit here can reach: the rendered <pre class="tool-input"> is built from
-// the PREVIEW's input, which drops a member over previewBudget.inputMember (4
-// KiB) AND drops whole members to fit its inputTotal (16 KiB), while
-// fetchOutputBulk (tool-card.ts:532) replaces the OUTPUT only — so a hit in a
-// member between 4 and 8 KiB, and one in a small member the preview dropped
-// whole, land on the card with "not in rendered text", which is the truth.
+// inputLeafText is a tool call's Input string LEAF VALUES, one per line, in
+// DOCUMENT order, minus the leaves diffText already carries (inputLeafInDiff).
+// Keys are skipped (a raw scan matches `command`, `path` and every escape), and
+// so are numbers and bools. It walks Decoder.Token() rather than a map because
+// document order is what the card prints and map iteration would reorder hits
+// between two requests. Malformed bytes and a literal `null` yield "".
 func inputLeafText(raw json.RawMessage, diffText string) string {
 	if len(raw) == 0 {
 		return ""
@@ -600,8 +623,8 @@ type leafCollector struct {
 }
 
 // take folds one token into the walk: a structural token moves the stack, a
-// member KEY is skipped, and a string VALUE the call's own diff does not already
-// carry becomes a line of its own.
+// member KEY is skipped, and a string VALUE the diff does not already carry
+// becomes a line of its own.
 func (c *leafCollector) take(tok json.Token, diffText string) {
 	if d, ok := tok.(json.Delim); ok {
 		if d == '}' || d == ']' {
@@ -652,42 +675,7 @@ func takeLeafSlot(stack []leafFrame) bool {
 // segment already covers. Length-gated first, on inputLeafDedupeMin's
 // measurement: a short leaf can sit inside a payload without being one.
 func inputLeafInDiff(leaf, diffText string) bool {
-	return len(leaf) >= inputLeafDedupeMin && strings.Contains(diffText, leaf)
-}
-
-// toolCallByID resolves a tool_use block's reference into Message.ToolCalls.
-func toolCallByID(m *marotte.Message, id string) *marotte.ToolCall {
-	for i := range m.ToolCalls {
-		if m.ToolCalls[i].ID == id {
-			return &m.ToolCalls[i]
-		}
-	}
-	return nil
-}
-
-// searchableText is a message's prose, thinking and tool title/output,
-// concatenated. It is NOT the searched surface — matching runs per segment via
-// messageSegments, which covers spans this omits — and survives only as the
-// excerpt source for a filter-only hit, where the excerpt has to open with
-// something a reader recognises rather than be exhaustive.
-func searchableText(m *marotte.Message) string {
-	var b strings.Builder
-	b.Grow(len(m.Content) + len(m.Reasoning) + 64)
-	b.WriteString(m.Content)
-	if m.Reasoning != "" {
-		b.WriteString("\n")
-		b.WriteString(m.Reasoning)
-	}
-	for i := range m.ToolCalls {
-		tc := &m.ToolCalls[i]
-		b.WriteString("\n")
-		b.WriteString(tc.Title)
-		if tc.Output != "" {
-			b.WriteString("\n")
-			b.WriteString(tc.Output)
-		}
-	}
-	return b.String()
+	return diffText != "" && len(leaf) >= inputLeafDedupeMin && strings.Contains(diffText, leaf)
 }
 
 // excerptAround returns the match plus surrounding context, with ellipses where

@@ -31,7 +31,7 @@ import indexHtml from "../static/index.html?raw";
 import { ICON_SEND } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 
-import { allRules, loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
+import { allRules, loadCSS, manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 /** Every control this sweeps. */
 const CONTROLS = "input, textarea, select";
@@ -43,13 +43,7 @@ const RUNGS = ["--fs-xs", "--fs-sm", "--fs-base", "--fs-md", "--fs-lg", "--fs-xl
 const BODY_RUNG = "--fs-md";
 
 /** The rows measured for overflow, all present in the shipped markup. */
-const TIGHT_ROWS = [
-  ".prompt-pills",
-  ".bottom-bar",
-  ".mcp-modal-tabs",
-  ".rule-form",
-  ".settings-tab-bar",
-];
+const TIGHT_ROWS = [".prompt-pills", ".bottom-bar", ".mcp-modal-tabs", ".rule-form", ".seg-bar"];
 
 describe("the declarations, read from source", () => {
   it("declares the 16px text-entry floor, in both tier arms", () => {
@@ -302,6 +296,188 @@ describe("the controls, measured over the shipped markup", () => {
         );
       }
     }
+  });
+
+  // THE OTHER HALF OF THE FLOOR: what the type AROUND a floored field does. The
+  // floor is above the body rung on purpose (the case above), so on a coarse
+  // pointer a field is 16px whatever its own class says — and a label left at
+  // `--fs-xs` then sat 5px under it. Measured across the shipped page before
+  // 01-tokens.css "The FORM type scale": 28 controls read larger than the nearest
+  // string beside them, 17 of them by 5px.
+  //
+  // The consumers are READ off the manifest rather than listed, so a site that
+  // starts reading a rung joins these cases with no edit here, and a site that
+  // stops reading one fails the source case rather than drifting silently.
+  const formTierSelectors = (token: "--fs-form-label" | "--fs-form-peer"): string[] => {
+    const out: string[] = [];
+    for (const { name, css } of manifestSheets()) {
+      if (name === "01-tokens.css") {
+        continue;
+      }
+      for (const rule of allRules(css)) {
+        if (new RegExp(`font-size:\\s*var\\(${token}\\)`).test(rule.body)) {
+          out.push(rule.selector);
+        }
+      }
+    }
+    return out;
+  };
+
+  it("declares both form rungs in every tier arm", () => {
+    const tokens = loadCSS("01-tokens.css");
+    for (const token of ["--fs-form-label", "--fs-form-peer"] as const) {
+      const arms = allRules(tokens).filter((r) => new RegExp(`${token}:`).test(r.body));
+      // Base, the coarse pointer, and the no-JS width fallback — the same three
+      // arms `--fs-item` carries, or a phone that has not resolved a tier keeps
+      // 16px fields over 12px labels.
+      expect(arms.map((r) => r.selector).sort(), `${token} tier arms`).toEqual([
+        ":root",
+        ':root:not([data-pointer="fine"])',
+        ':root[data-pointer="coarse"]',
+      ]);
+      expect(formTierSelectors(token).length, `${token} has consumers`).toBeGreaterThan(0);
+    }
+
+    // The PEER consumers are asserted as a closed set, unlike the label ones. Two
+    // of the three rows are built by JS (`knowledge.ts`, `permissions-ui.ts`), so
+    // the shipped page renders no element for them and the measured case below
+    // cannot reach them — a source-side contract is the only guard available, and
+    // without it dropping one of these reads is invisible in both halves.
+    expect(formTierSelectors("--fs-form-peer").sort()).toEqual([
+      ".filepicker-footer .btn-save",
+      ".knowledge-add-form .btn-small",
+      ".native-rule-effect",
+      ".rule-form .rf-submit",
+    ]);
+  });
+
+  /** Every rendered text-entry control that outsizes the largest string beside it
+   *  by more than one rung, named with the string it beat.
+   *
+   *  THE POPULATION IS DERIVED FROM THE PAGE, never from the list of selectors that
+   *  read the rungs, and that is the whole difference between a guard and a
+   *  tautology: a consumer that STOPS reading a rung drops out of a selector sweep
+   *  and takes its own coverage with it, so the sweep goes green for the one edit it
+   *  exists to catch. Red-checked both ways — pointing `.rf-label` back at
+   *  `--fs-xs` leaves a selector sweep green and fails this. */
+  function overNeighbours(gap: number): string[] {
+    const out: string[] = [];
+    for (const el of document.querySelectorAll<HTMLElement>(CONTROLS)) {
+      if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+        continue;
+      }
+      if (getComputedStyle(el).display === "none") {
+        continue;
+      }
+      const px = Number.parseFloat(getComputedStyle(el).fontSize);
+      // The control's own field wrapper when it has one (`<label class="rf-field">`
+      // holds the label span and the select), else its nearest box.
+      const box = el.closest("label, fieldset, li, tr, div") ?? el.parentElement;
+      if (box === null) {
+        continue;
+      }
+      let worst: { px: number; sel: string } | null = null;
+      for (const n of box.querySelectorAll<HTMLElement>("*")) {
+        if (n === el || n.contains(el) || el.contains(n)) {
+          continue;
+        }
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName)) {
+          continue;
+        }
+        const bears = [...n.childNodes].some(
+          (k) => k.nodeType === Node.TEXT_NODE && (k.textContent ?? "").trim().length > 1,
+        );
+        if (!bears) {
+          continue;
+        }
+        const ns = getComputedStyle(n);
+        if (ns.display === "none" || ns.visibility === "hidden") {
+          continue;
+        }
+        const npx = Number.parseFloat(ns.fontSize);
+        if (worst === null || npx > worst.px) {
+          worst = {
+            px: npx,
+            sel: n.className === "" ? n.tagName.toLowerCase() : `.${n.className}`,
+          };
+        }
+      }
+      if (worst !== null && px - worst.px > gap) {
+        out.push(`#${el.id || "?"} ${String(px)}px over ${worst.sel} ${String(worst.px)}px`);
+      }
+    }
+    return out;
+  }
+
+  it.each([
+    ["a phone with a coarse pointer", 390, 844, "coarse" as const],
+    ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
+    ["a phone with no pointer tier resolved yet", 390, 844, null],
+  ])("outsizes the strings beside it by at most one rung on %s", async (_l, w, h, pointer) => {
+    await mountPage(w, h, pointer);
+    const root = getComputedStyle(document.documentElement);
+    const rem = Number.parseFloat(root.fontSize);
+    const rung = (name: string): number => Number.parseFloat(root.getPropertyValue(name)) * rem;
+
+    // The gap is the RELATION rather than a literal 2, so a retune of the scale
+    // moves the assertion with it: a label is metadata and stays one rung under
+    // the field it names, a control sharing the field's row is equal rank and
+    // matches the floor.
+    expect(rung("--fs-form-peer"), "the peer rung is the iOS floor").toBe(16);
+    expect(rung("--fs-form-label")).toBe(rung("--fs-md"));
+    const oneRung = rung("--fs-form-peer") - rung("--fs-form-label");
+    expect(oneRung).toBeGreaterThan(0);
+
+    expect(document.querySelectorAll(CONTROLS).length).toBeGreaterThan(40);
+    // 28 controls were over this gap before 01-tokens.css "The FORM type scale",
+    // 17 of them by 5px.
+    expect(overNeighbours(oneRung)).toEqual([]);
+  });
+
+  it.each([
+    ["a phone with a coarse pointer", 390, 844, "coarse" as const],
+    ["a WIDE coarse viewport", 1024, 768, "coarse" as const],
+  ])("matches a row-sharing button to the field it sits beside, on %s", async (_l, w, h, p) => {
+    // The PEER half, which the one-rung sweep above deliberately cannot see: a
+    // button one rung under its field is inside that tolerance and is still the
+    // reported defect one rung smaller, so equality is asserted directly. The
+    // containers are NAMED because the peer population is small and closed — a row
+    // holding both a field and a button — and naming them is what makes this
+    // survive a site dropping its token read, which is the mutant that made the
+    // selector sweep hollow.
+    //
+    // Only the containers the SHIPPED markup renders are listed: `.knowledge-add-form`
+    // is built by `knowledge.ts` at runtime, so the measured half cannot reach it and
+    // the source-side closed set above is what guards its token read.
+    await mountPage(w, h, p);
+    const mismatched: string[] = [];
+    for (const sel of [".filepicker-footer", ".rule-form"]) {
+      const rows = [...document.querySelectorAll<HTMLElement>(sel)];
+      expect(rows.length, `${sel} is not in the shipped markup`).toBeGreaterThan(0);
+      for (const row of rows) {
+        const size = (el: Element): number => Number.parseFloat(getComputedStyle(el).fontSize);
+        const fields = [...row.querySelectorAll(CONTROLS)].filter(
+          (el) =>
+            !(el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")),
+        );
+        const buttons = [...row.querySelectorAll("button")];
+        if (fields.length === 0 || buttons.length === 0) {
+          continue;
+        }
+        const field = Math.max(...fields.map(size));
+        for (const b of buttons) {
+          // An ICON-only button carries no label to size, so it is not a peer in
+          // this sense; the ones this rule is about all render text.
+          if ((b.textContent ?? "").trim() === "") {
+            continue;
+          }
+          if (size(b) !== field) {
+            mismatched.push(`${sel} button ${String(size(b))}px vs field ${String(field)}px`);
+          }
+        }
+      }
+    }
+    expect(mismatched).toEqual([]);
   });
 
   it("overflows none of the tight rows at 390px coarse", async () => {

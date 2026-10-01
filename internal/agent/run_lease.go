@@ -9,9 +9,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // launchOrigin is what a launch verb knows about the run it is about to start — the
@@ -131,6 +132,52 @@ func (rs *Runs) releaseLease(ctx context.Context, workflowID string) {
 // lease reads a run's envelope.
 func (rs *Runs) lease(workflowID string) (runlease.Lease, bool) {
 	return rs.leaseStore().Get(workflowID)
+}
+
+// rewindCancelWait bounds how long a rewind waits for a cancelled run's lease to go.
+// KAS stops a run at its next node boundary, so the wait covers a step finishing its
+// tool call, not a step's whole turn. A var so a test drives it in milliseconds.
+var rewindCancelWait = 20 * time.Second
+
+// rewindCancelPoll is how often CancelRun re-reads the lease while it waits.
+const rewindCancelPoll = 50 * time.Millisecond
+
+// LiveRuns filters workflowIDs to the runs still holding a lease, each labelled by its
+// recipe, satisfying command.RunCutter. A run whose lease was released has ended.
+func (rs *Runs) LiveRuns(workflowIDs []string) []command.LiveRunRef {
+	var live []command.LiveRunRef
+	for _, id := range workflowIDs {
+		if l, ok := rs.lease(id); ok {
+			live = append(live, command.LiveRunRef{ID: id, Label: l.Recipe})
+		}
+	}
+	return live
+}
+
+// CancelRun cancels one run on the reader's behalf and waits for its lease to be
+// released, the terminal transition this process observes (the run's own run_complete,
+// or the reconcile a landed cancel runs). command.ErrRunStillLive when the wait runs
+// out with the lease still held; the cancel landed either way.
+func (rs *Runs) CancelRun(ctx context.Context, workflowID string) error {
+	if err := rs.Cancel(ctx, workflowID); err != nil {
+		return err
+	}
+	deadline := time.NewTimer(rewindCancelWait)
+	defer deadline.Stop()
+	tick := time.NewTicker(rewindCancelPoll)
+	defer tick.Stop()
+	for {
+		if _, held := rs.lease(workflowID); !held {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return command.ErrRunStillLive
+		case <-tick.C:
+		}
+	}
 }
 
 // RunChat answers which chat's agent launched a run, satisfying command.RunOwner so

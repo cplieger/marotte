@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,21 +21,19 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// --- /api/files/action (POST: mkdir, touch, delete, rename, copy, move) ---
+// --- /api/files/action (POST: mkdir, touch, delete, rename) ---
 
 type fileAction struct {
 	Action string `json:"action"`
 	Path   string `json:"path"`
-	// `dest` and `name` are optional at the wire level; enforced per-action
-	// in the handlers (resolveCopyMoveDest rejects empty Dest for copy/move,
-	// actionRename rejects empty Name).
-	Dest string `json:"dest"`
+	// `name` is optional at the wire level and enforced per-action in the
+	// handlers: actionRename rejects an empty one.
 	Name string `json:"name"`
 }
 
 // actionFunc is the signature every file-action handler matches. The
-// request context is threaded through so long-running IO (copy) can
-// respect client cancellation; ctx wraps r.Context() at the caller.
+// request context is threaded through so a handler can respect client
+// cancellation; ctx wraps r.Context() at the caller.
 type actionFunc func(ctx context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error
 
 var fileActions = map[string]actionFunc{
@@ -41,8 +41,6 @@ var fileActions = map[string]actionFunc{
 	"touch":  actionTouch,
 	"delete": actionDelete,
 	"rename": actionRename,
-	"copy":   actionCopy,
-	"move":   actionMove,
 }
 
 func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
@@ -100,8 +98,8 @@ func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
 }
 
 func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
-	// Symmetric with actionDelete/actionRename/actionMove destination
-	// guards: a cold-boot mkdir on a sensitive dir must not pre-empt it.
+	// Symmetric with the actionDelete/actionRename destination guards: a
+	// cold-boot mkdir on a sensitive dir must not pre-empt it.
 	if isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to mkdir protected directory")
@@ -227,8 +225,8 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	}
 	dest := filepath.Join(filepath.Dir(l.abs), body.Name)
 	// Route the destination through resolvePath so the allow-list +
-	// real-path checks fire against the rename target the same way
-	// copy/move enforce them via resolveCopyMoveDest.
+	// real-path checks fire against the rename target too, not just the
+	// source.
 	destLoc, err := h.resolvePath(dest)
 	if err != nil {
 		slog.Warn("filebrowse: rename dest rejected",
@@ -268,168 +266,52 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	return nil
 }
 
-func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
-	destLoc, err := resolveCopyMoveDest(w, body, h)
-	if err != nil {
-		return err
-	}
-	// Copy is non-destructive on the source, so only the destination needs
-	// the protected-dir / sensitive-path gate. Cross-mount copies are fine.
-	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
-		slog.Warn("filebrowse: copy blocked on sensitive dest",
-			"from", l.abs, "to", destLoc.abs)
-		httpreply.Forbidden(w, "copy target is protected")
-		return errHandled
-	}
-	n, scErr := streamCopy(ctx, l, destLoc, maxCopySize)
-	if scErr != nil {
-		if errors.Is(scErr, errOversize) {
-			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				httpreply.ErrorJSON("source file too large to copy"))
-			return errHandled
-		}
-		return scErr
-	}
-	slog.Info("filebrowse: copy", "from", l.abs, "to", destLoc.abs, "bytes", n)
-	return nil
-}
+// errNoSpace is returned by the free-space precheck when the bytes about to be
+// written definitively will not fit at the destination.
+var errNoSpace = errors.New("insufficient free space at the destination")
 
-// errOversize is returned by streamCopy when the source exceeds the
-// size cap, either detected via Stat or via the LimitReader tail guard.
-var errOversize = errors.New("source file too large")
-
-// streamCopy streams the file at src into dest atomically via
-// write-to-temp-then-rename, kernel-confined to the destination mount. The
-// copy is capped at sizeCap bytes; exceeding it returns errOversize. The
-// context allows callers to cancel mid-stream.
-//
-// The temp used to be created with os.CreateTemp on the destination's
-// ABSOLUTE parent — an ambient path that could receive the source file's
-// bytes if the parent was replaced by a symlink pointing outside every
-// granted mount after resolvePath accepted it. atomicfile.WriteReaderInRoot
-// stages the temp INSIDE the root, closing that.
-func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error) {
-	in, err := src.m.root.Open(src.rel())
-	if err != nil {
+// availableBytes reports the bytes an unprivileged writer may still consume on
+// the filesystem holding mountRoot. A package-level var so a test can drive the
+// precheck against a tiny value instead of filling a real filesystem.
+var availableBytes = func(mountRoot string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(mountRoot, &st); err != nil {
 		return 0, err
 	}
-	defer func() { _ = in.Close() }()
-
-	// Stat the source so we can reject oversize copies before
-	// allocating the destination and burning IO bandwidth.
-	info, statErr := in.Stat()
-	if statErr != nil {
-		slog.Debug("filebrowse: copy source stat failed, relying on the write cap",
-			"path", src.abs, "error", statErr)
-	} else if info.Size() > sizeCap {
-		return 0, errOversize
+	// Bavail, NOT Bfree: Bfree counts the blocks held back for root, which this
+	// process cannot write into.
+	blocks, bsize := st.Bavail, st.Bsize
+	if bsize <= 0 {
+		return 0, fmt.Errorf("statfs %q: nonsensical block size %d", mountRoot, bsize)
 	}
-
-	// 0o600 preserves the mode the deleted os.CreateTemp produced. WithMaxBytes
-	// REJECTS an over-cap source rather than the old io.LimitReader tail
-	// guard detecting it after the fact.
-	cr := &countingReader{r: &ctxReader{ctx: ctx, r: in}}
-	if _, wErr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
-		atomicfile.WithMode(0o600), atomicfile.WithMaxBytes(sizeCap)); wErr != nil {
-		if errors.Is(wErr, atomicfile.ErrFileTooLarge) {
-			slog.Warn("filebrowse: copy source exceeded cap after stat",
-				"path", src.abs, "copied_bytes", cr.n)
-			return 0, errOversize
-		}
-		return 0, wErr
+	if blocks > uint64(math.MaxInt64)/uint64(bsize) {
+		// A filesystem whose free space overflows an int64 fits anything.
+		return math.MaxInt64, nil
 	}
-	return cr.n, nil
+	return int64(blocks) * bsize, nil
 }
 
-func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
-	// Source-side guards mirror actionRename. Copy is non-destructive so it
-	// skips the source check.
-	if l.isMountPoint() {
-		return refuseMountPoint(w, "move", l)
-	}
-	if isProtectedDir(l.abs) {
-		slog.Warn("filebrowse: move blocked on protected dir", "path", l.abs)
-		httpreply.Forbidden(w, "refusing to move protected directory")
-		return errHandled
-	}
-	destLoc, err := resolveCopyMoveDest(w, body, h)
+// refuseIfCannotFit returns errNoSpace when size definitely exceeds the
+// destination filesystem's free space. ADVISORY and racy: space can vanish
+// between this answer and the write, so the write's own ENOSPC/EDQUOT mapping
+// is authoritative.
+func refuseIfCannotFit(size int64, dest loc) error {
+	// Statfs the destination MOUNT ROOT, not the client-supplied destination
+	// path: the mount root is server-owned so nothing a client sends can steer
+	// it, and it is on the same filesystem as the destination. A nested mount
+	// INSIDE the root is an accepted edge case where the answer can be wrong.
+	avail, err := availableBytes(dest.m.root.Name())
 	if err != nil {
-		return err
+		// A Statfs this process cannot answer must not refuse a write that would
+		// have worked; let the write path be authoritative.
+		slog.Debug("filebrowse: destination free space unknown, leaving it to the write",
+			"dest", dest.abs, "error", err)
+		return nil
 	}
-	// Destination guard mirrors actionRename.
-	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
-		slog.Warn("filebrowse: move blocked on sensitive dest",
-			"from", l.abs, "to", destLoc.abs)
-		httpreply.Forbidden(w, "move target is protected")
-		return errHandled
+	if size > avail {
+		return fmt.Errorf("%w: %d bytes wanted, %d available", errNoSpace, size, avail)
 	}
-	// A rename cannot cross os.Root handles; surface the actionable error.
-	if destLoc.m != l.m {
-		httpreply.BadRequest(w, "cannot move across granted roots; use copy")
-		return errHandled
-	}
-	if err := renameAcrossPinnedParents(l, destLoc); err != nil {
-		return err
-	}
-	slog.Info("filebrowse: move", "from", l.abs, "to", destLoc.abs)
 	return nil
-}
-
-// renameAcrossPinnedParents renames src to dest with BOTH parent directories
-// pinned by atomicfile.OpenParentInRoot, so no ancestor component of either end
-// can redirect the rename at another file inside the mount. actionDelete carries
-// the reasoning for why the mount's os.Root is not enough on its own.
-//
-// renameat(2) rather than os.Root.Rename, because a move's two ends can be in
-// different directories and os.Root.Rename resolves both names inside ONE root:
-// a pinned parent's root is that single directory, so the other end is only
-// reachable through a ".." the root correctly refuses. renameat is the syscall
-// os.Root.Rename itself issues; what changes is that each name is a single final
-// element relative to a descended, identity-confirmed directory rather than a
-// multi-component path re-resolved at operation time. The caller has already
-// established that src and dest share a mount.
-func renameAcrossPinnedParents(src, dest loc) error {
-	srcParent, srcBase, err := atomicfile.OpenParentInRoot(src.m.root, src.rel())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = srcParent.Close() }()
-	destParent, destBase, err := atomicfile.OpenParentInRoot(dest.m.root, dest.rel())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = destParent.Close() }()
-	// The descriptors are what renameat addresses; the pinned roots hold
-	// them open so neither directory can be swapped between the descent
-	// that confirmed its identity and the rename itself.
-	srcDir, err := srcParent.Open(".")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = srcDir.Close() }()
-	destDir, err := destParent.Open(".")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = destDir.Close() }()
-	return syscall.Renameat(int(srcDir.Fd()), srcBase, int(destDir.Fd()), destBase)
-}
-
-// resolveCopyMoveDest validates + resolves the `dest` field common to
-// copy and move. Returns errHandled when it wrote an error response.
-func resolveCopyMoveDest(w http.ResponseWriter, body fileAction, h *Handler) (loc, error) {
-	if body.Dest == "" {
-		httpreply.BadRequest(w, "missing dest")
-		return loc{}, errHandled
-	}
-	destLoc, err := h.resolvePath(body.Dest)
-	if err != nil {
-		slog.Warn("filebrowse: dest path rejected",
-			"dest", body.Dest, "reason", err.Error())
-		httpreply.Forbidden(w, err.Error())
-		return loc{}, errHandled
-	}
-	return destLoc, nil
 }
 
 // ctxReader wraps an io.Reader with a context. Every Read first checks

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/secretstore"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/secretstore"
 )
 
 // probeKey is the key shape KAS actually derives, hash and all
@@ -280,10 +280,10 @@ func TestSecretRequestReportsOnlyUndecodableParams(t *testing.T) {
 // returns the fake it started, so a test can assert what the spawn was handed.
 func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	t.Helper()
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
 		c.Name = "A"

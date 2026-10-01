@@ -256,6 +256,8 @@ interface Openers {
   runRefresh: Mock<TabOpeners["run"]["refresh"]>;
   subagentShow: Mock<TabOpeners["subagent"]["show"]>;
   subagentRefresh: Mock<TabOpeners["subagent"]["refresh"]>;
+  specShow: Mock<TabOpeners["spec"]["show"]>;
+  specRefresh: Mock<TabOpeners["spec"]["refresh"]>;
 }
 
 let openers: Openers;
@@ -272,6 +274,8 @@ function registerOpeners(): void {
     runRefresh: vi.fn<TabOpeners["run"]["refresh"]>(),
     subagentShow: vi.fn<TabOpeners["subagent"]["show"]>(),
     subagentRefresh: vi.fn<TabOpeners["subagent"]["refresh"]>(),
+    specShow: vi.fn<TabOpeners["spec"]["show"]>(),
+    specRefresh: vi.fn<TabOpeners["spec"]["refresh"]>(),
   };
   registerTabOpeners({
     chat: {
@@ -287,6 +291,7 @@ function registerOpeners(): void {
     },
     run: { show: openers.runShow, refresh: openers.runRefresh },
     subagent: { show: openers.subagentShow, refresh: openers.subagentRefresh },
+    spec: { show: openers.specShow, refresh: openers.specRefresh },
   });
 }
 
@@ -1484,6 +1489,10 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
   const ORIGIN_X = 40;
   const ORIGIN_Y = 100;
 
+  // `buttons` is stated because the guard reads it: a held contact is the one thing
+  // a reflow cannot fake. Touch reports 1 while the contact is present (Pointer
+  // Events, the `buttons` table), and 0 once it has lifted, which is what the
+  // release carries.
   function ptr(
     type: "pointerdown" | "pointermove" | "pointerup",
     x: number,
@@ -1494,6 +1503,7 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
       pointerId: 1,
       pointerType,
       isPrimary: true,
+      buttons: type === "pointerup" ? 0 : 1,
       clientX: x,
       clientY: y,
       bubbles: true,
@@ -1553,6 +1563,31 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
     expect.assertions(1);
     const nodes = await renderTabs();
     gesture(nodes[0] as HTMLElement, 0, 0, "mouse");
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  // A keyboard dismissal moves the visual viewport out from under a stationary
+  // pointer, so the same point on the glass reads hundreds of px away in client
+  // coordinates. Read as travel it refuses the activation the reader asked for,
+  // which is the half of the report that reads as the click doing nothing.
+  it("activates the row a click held through a viewport shift released on", async () => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    const vv = {
+      height: 400,
+      offsetTop: 300,
+      addEventListener: (): void => undefined,
+      removeEventListener: (): void => undefined,
+    };
+    vi.stubGlobal("visualViewport", vv);
+    const row = nodes[0] as HTMLElement;
+
+    row.dispatchEvent(ptr("pointerdown", ORIGIN_X, 320, "mouse"));
+    vv.height = 700;
+    vv.offsetTop = 0;
+    row.dispatchEvent(ptr("pointermove", ORIGIN_X, 20, "mouse"));
+    row.dispatchEvent(ptr("pointerup", ORIGIN_X, 20, "mouse"));
+
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
@@ -1628,10 +1663,10 @@ describe("setTabDirty (editor unsaved indicator)", () => {
 // ---------------------------------------------------------------------------
 
 describe("the dot's age", () => {
-  /** Five minutes ago, so `relativeTime` answers a stable `5m ago` rather than
-   *  the `just now` a sub-minute value would give — a case that would also pass
-   *  with the argument dropped, since "just now" is what a missing age looks like
-   *  to nobody. */
+  /** Five minutes ago, so `relativeTime` answers a stable `5 minutes ago` rather
+   *  than the `just now` a sub-minute value would give — a case that would also
+   *  pass with the argument dropped, since "just now" is what a missing age looks
+   *  like to nobody. */
   const FIVE_MIN_AGO = Date.now() - 5 * 60 * 1000;
 
   /** The tooltip and the announced word, which `paintDot` writes from ONE string.
@@ -1652,16 +1687,16 @@ describe("the dot's age", () => {
     const id = chatID("a");
 
     setTabStatus(id, "done", FIVE_MIN_AGO);
-    expect(dotText(id).tooltip, "done").toBe("turn finished · 5m ago");
+    expect(dotText(id).tooltip, "done").toBe("turn finished · 5 minutes ago");
     setTabStatus(id, "failed", FIVE_MIN_AGO);
-    expect(dotText(id).tooltip, "failed").toBe("turn failed · 5m ago");
+    expect(dotText(id).tooltip, "failed").toBe("turn failed · 5 minutes ago");
 
     // The other five describe NOW, so an age there would date a state that is
     // still true. `withAge` is reached only from the two arms above, which is what
     // keeps `NEUTRAL_PHRASE` total by type with no age term in it.
     for (const status of ["working", "waiting", "input", "idle", "dirty"] as const) {
       setTabStatus(id, status, FIVE_MIN_AGO);
-      expect(dotText(id).tooltip, status).not.toMatch(/5m ago/u);
+      expect(dotText(id).tooltip, status).not.toMatch(/5 minutes ago/u);
     }
   });
 
@@ -1687,7 +1722,7 @@ describe("the dot's age", () => {
     await paint();
     const id = chatID("a");
     setTabStatus(id, "done", FIVE_MIN_AGO);
-    expect(dotText(id).tooltip, "before the rebuild").toBe("turn finished · 5m ago");
+    expect(dotText(id).tooltip, "before the rebuild").toBe("turn finished · 5 minutes ago");
 
     // Drop the node and force a render: `renderDOM` finds nothing to reuse, so
     // `createTabEl` builds a fresh row element and has to read the age back off
@@ -1697,7 +1732,7 @@ describe("the dot's age", () => {
     await openChat("b");
     await paint();
 
-    expect(dotText(id).tooltip, "after the rebuild").toBe("turn finished · 5m ago");
+    expect(dotText(id).tooltip, "after the rebuild").toBe("turn finished · 5 minutes ago");
   });
 
   it("does not move the attention surfaces for a since-only change", async () => {
@@ -1753,7 +1788,7 @@ describe("the dot's age", () => {
     // resupplies it a microtask later, so blanking here is half a visible blink.
     setTabStatus(id, "done");
 
-    expect(dotText(id).tooltip).toBe("turn finished · 5m ago");
+    expect(dotText(id).tooltip).toBe("turn finished · 5 minutes ago");
   });
 });
 

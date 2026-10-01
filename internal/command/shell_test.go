@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // TestShellFence verifies the fence is sized one backtick longer than the
@@ -155,7 +155,9 @@ func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T
 // its "was the user message persisted" gate.
 type shellStoreDeps struct {
 	*benchDeps
-	appended  []marotte.Message
+	// finalized is every output handed to FinalizeLocalShellTurn: the shell's one
+	// text entry, rendered.
+	finalized []string
 	mutations int
 }
 
@@ -171,9 +173,8 @@ func (d *shellStoreDeps) Get(context.Context, marotte.ChatID) (*marotte.Chat, bo
 	return &marotte.Chat{}, true
 }
 
-func (d *shellStoreDeps) AppendMessage(_ context.Context, _ marotte.ChatID, m *marotte.Message) error {
-	d.appended = append(d.appended, *m)
-	return nil
+func (d *shellStoreDeps) FinalizeLocalShellTurn(_ context.Context, _ marotte.ChatID, _, output string) {
+	d.finalized = append(d.finalized, output)
 }
 
 // TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand pins the
@@ -209,10 +210,10 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 	if _, err := HandleShellInterception(t.Context(), promptRolesOf(deps), cmd, p); err != nil {
 		t.Fatalf("HandleShellInterception: %v", err)
 	}
-	if len(deps.appended) != 1 {
-		t.Fatalf("appended %d assistant messages, want 1", len(deps.appended))
+	if len(deps.finalized) != 1 {
+		t.Fatalf("the turn was finalized %d times, want once with the rendered output", len(deps.finalized))
 	}
-	body := deps.appended[0].Content
+	body := deps.finalized[0]
 
 	if !strings.Contains(body, "[exit 0]") {
 		tail := body[max(len(body)-120, 0):]
@@ -228,39 +229,31 @@ func TestHandleShellInterception_TruncatedOutputIsStillASuccessfulCommand(t *tes
 	}
 }
 
-// A `!cmd` on a fresh chat names the chat after the command, on the same rule
-// the prompt path uses: only the first message, only while the chat still
-// carries the default name. The ellipsis is appended exactly when the command
-// text was cut, so a name is never marked as truncated when it is complete.
-func TestAppendShellUserMessage_DerivesTheChatNameFromTheCommand(t *testing.T) {
+// A `!cmd` on a still-default-named chat names it after the command, the way a
+// prompt's first message names a chat; a chat that already has a name keeps it.
+func TestNameDefaultChat_DerivesTheChatNameFromTheCommand(t *testing.T) {
 	const eighty = "12345678901234567890123456789012345678901234567890123456789012345678901234567890"
 	cases := []struct {
 		name     string
-		seed     bool
+		named    bool
 		text     string
 		wantName string
 	}{
 		{name: "the command becomes the name", text: "!go test ./...", wantName: "!go test ./..."},
 		{name: "eighty runes is the last length kept whole", text: eighty, wantName: eighty},
 		{name: "longer text is cut and marked", text: eighty + " and then some more", wantName: eighty + "..."},
-		{name: "a chat that already has a name keeps it", seed: true, text: "!go test ./...", wantName: "a chat"},
+		{name: "a chat that already has a name keeps it", named: true, text: "!go test ./...", wantName: "a chat"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
-			if tc.seed {
+			if tc.named {
 				seedEmptyChat(t, store, "c1")
+			} else {
+				seedDefaultNamedChat(t, store, "c1")
 			}
-			deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
-			msg := &marotte.Message{ID: "m-1", Role: marotte.RoleUser, Content: tc.text}
 
-			persisted, err := appendShellUserMessage(t.Context(), deps, deps, "c1", msg, tc.text)
-			if err != nil {
-				t.Fatalf("appendShellUserMessage: %v", err)
-			}
-			if !persisted {
-				t.Fatal("persisted = false, want the message stored")
-			}
+			nameDefaultChat(t.Context(), store, "c1", tc.text)
 
 			c, ok := store.Get(t.Context(), "c1")
 			if !ok {

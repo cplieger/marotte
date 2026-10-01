@@ -6,13 +6,10 @@ package translate
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"log/slog"
-	"strings"
 
-	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
 // knownSafetyStatuses gates translation to the documented GateStatus set, so an unrecognized
@@ -73,27 +70,29 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID marot
 	}
 }
 
-// persistSafetyBlock records an enforce-mode block as a permanent inline event message on the
-// chat, which is the right scope because statusChanged names a tool by NAME rather than by call.
+// persistSafetyBlock records an enforce-mode block as a safety_blocked entry on the
+// chat: inside the open turn, sealing every lane first, else after the newest
+// turn's close. Chat scope is right because statusChanged names a tool by NAME
+// rather than by call.
 func (t *Translator) persistSafetyBlock(ctx context.Context, chatID marotte.ChatID, p v3SafetyStatusChanged) {
-	evt := t.newEventMessage(marotte.EventInfraSafetyBlocked, safetyBlockContent(p))
-	err := t.chats.AppendMessage(durable.Context(ctx), chatID, &evt)
-	if errors.Is(err, chat.ErrTombstoned) {
-		return
-	}
-	if err != nil {
-		slog.Error("safety: append block event", "chat_id", chatID, "error", err)
-	}
+	props := safetyBlockProperties(p)
+	t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindSafetyBlocked, "",
+		marotte.EntrySafetyBlocked{Properties: props},
+		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
+			return turn.SafetyBlocked(ctx, props)
+		})
 }
 
-// safetyBlockContent composes the reason carried on a blocked event message, preferring the
-// violated properties (the WHY) over the gate's detail string. The client prefixes its own
-// "Infrastructure Safety blocked" label around this text.
-func safetyBlockContent(p v3SafetyStatusChanged) string {
+// safetyBlockProperties is what the entry carries: the violated properties (the
+// WHY), or the gate's detail string as the one property when it names none.
+func safetyBlockProperties(p v3SafetyStatusChanged) []string {
 	if len(p.BlockedProperties) > 0 {
-		return strings.Join(p.BlockedProperties, "; ")
+		return p.BlockedProperties
 	}
-	return p.Detail
+	if p.Detail == "" {
+		return nil
+	}
+	return []string{p.Detail}
 }
 
 // HandleSafetyPropertiesChanged translates _kiro/safety/propertiesChanged into a chat-scoped

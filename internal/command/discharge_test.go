@@ -86,6 +86,8 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdCloseTab:            "CmdCloseTab",
 		marotte.CmdReorderTabs:         "CmdReorderTabs",
 		marotte.CmdPinTab:              "CmdPinTab",
+		marotte.CmdReparentTab:         "CmdReparentTab",
+		marotte.CmdApproveSpecPhase:    "CmdApproveSpecPhase",
 	}
 	classified := make(map[string]bool, len(commandDischarges))
 	for value := range commandDischarges {

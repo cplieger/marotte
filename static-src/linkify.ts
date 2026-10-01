@@ -1,18 +1,12 @@
 // ---------------------------------------------------------------------------
-// Inline file-path linkification. Scans text nodes inside rendered bubbles
-// and converts `src/foo.ts:42` mentions into clickable buttons that open
-// the editor at the target line. Skips <code>, <pre>, <a>, <button> so
-// code samples aren't clobbered.
-//
-// TOOL OUTPUT opts out of the <pre> skip (`{ insidePre: true }`), because there
-// the pre is not a code sample — it IS the result list. A grep's `path:line:
-// match` and a stack trace's frame are the most useful links in a transcript,
-// and skipping them left the search tool with nothing to click. The skip stays
-// the default for prose, where a fenced block should be left alone.
+// Inline file-path linkification: `src/foo.ts:42` in rendered PROSE becomes a
+// button that opens the editor at that line. SKIP_TAGS is matched against a text
+// node's immediate parent, not its ancestors, so text wrapped in an element
+// inside a <pre> escapes it — a shape neither prose caller produces. <a>/<button>
+// skip because a control inside a control is broken either way.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { openAtLine } from "./navigate.js";
 import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { FILE_EXTS } from "./file-extensions.js";
@@ -38,24 +32,29 @@ const PATH_TEST_RX = new RegExp(PATH_PATTERN);
 const PATH_EXEC_RX = new RegExp(PATH_PATTERN, "g");
 
 const SKIP_TAGS = new Set(["CODE", "PRE", "A", "BUTTON"]);
-// A and BUTTON still skip: a link inside a link is a broken control either way.
-const SKIP_TAGS_IN_PRE = new Set(["A", "BUTTON"]);
 
-export interface LinkifyOpts {
-  /** Allow linkification inside a <pre>. For tool output, whose pre is the
-   *  result list rather than a code sample. */
-  insidePre?: boolean;
+/** Open handler, injected — the same pattern `initAttachmentPillCallbacks` uses for
+ *  this exact function, and for the same reason: `openAtLine` reaches
+ *  `editor-openers` and `tabs` behind it, and the markdown renderer that calls this
+ *  module is itself reached from `editor-markdown`, so importing it directly closed
+ *  a ring through the editor. Default is a no-op so a link built in a test renders
+ *  without wiring. */
+let _open: (path: string, line?: number) => void = () => {
+  /* not wired */
+};
+
+export function initLinkifyCallbacks(cbs: { open: (path: string, line?: number) => void }): void {
+  _open = cbs.open;
 }
 
-export function linkifyPaths(root: HTMLElement, opts: LinkifyOpts = {}): void {
-  const skip = opts.insidePre === true ? SKIP_TAGS_IN_PRE : SKIP_TAGS;
+export function linkifyPaths(root: HTMLElement): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       const parent = n.parentElement;
       if (parent === null) {
         return NodeFilter.FILTER_REJECT;
       }
-      if (skip.has(parent.tagName)) {
+      if (SKIP_TAGS.has(parent.tagName)) {
         return NodeFilter.FILTER_REJECT;
       }
       return PATH_TEST_RX.test(n.nodeValue ?? "")
@@ -104,7 +103,7 @@ function makeLink(path: string, lineStr: string | undefined): HTMLButtonElement 
   const labelSpan = el("span", undefined, label);
   btn.append(iconSpan, labelSpan);
   btn.addEventListener("click", () => {
-    openAtLine(path, line);
+    _open(path, line);
   });
   return btn as HTMLButtonElement;
 }

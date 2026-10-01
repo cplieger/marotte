@@ -13,6 +13,7 @@ import fc from "fast-check";
 import {
   activeTurnAt,
   buildOffsets,
+  markerSlotFor,
   turnTop,
   type RailGeom,
   type TurnOffsets,
@@ -205,5 +206,24 @@ describe("properties", () => {
         },
       ),
     );
+  });
+});
+
+describe("the marker that carries the mark for an unsampled turn", () => {
+  const shown = [1, 4, 8, 11, 15].map((n) => ({ n }));
+
+  it("answers the marker at or below the turn", () => {
+    // A downsampled rail has a marker for one turn in two or three, so the reading
+    // line spends most of its time in a turn with no marker of its own; the mark then
+    // goes to the last marker the reader has passed.
+    expect(markerSlotFor(shown, 4)).toBe(1);
+    expect(markerSlotFor(shown, 6)).toBe(1);
+    expect(markerSlotFor(shown, 12)).toBe(3);
+    expect(markerSlotFor(shown, 40)).toBe(4);
+  });
+
+  it("answers the first marker for a turn above every marker, and none for an empty set", () => {
+    expect(markerSlotFor(shown, 0)).toBe(0);
+    expect(markerSlotFor([], 7)).toBe(-1);
   });
 });

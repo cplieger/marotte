@@ -78,7 +78,7 @@ describe("buildAssistantBubble", { timeout: testTimeoutFor(REVEAL_BUDGET_MS) }, 
 
   it("keeps the caret until the reveal catches up, then drops it", async () => {
     // The class is the caret and the streaming wash. Text is still appearing for
-    // the reveal's lag after `turn_ended`, so dropping it at end() would leave
+    // the reveal's lag after `turn_closed`, so dropping it at end() would leave
     // prose arriving under a settled turn.
     const b = buildAssistantBubble("", true);
     b.setText("a".repeat(400));

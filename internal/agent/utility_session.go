@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/secretstore"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // utilityRuntime bundles the two halves of the utility subsystem the runtime
@@ -66,6 +66,12 @@ type utilitySessionHooks struct {
 	// this is the session answering GET /api/permissions, so a profile absent from it
 	// leaves the policy view unable to report what that profile grants. nil sends none.
 	presets func(context.Context) []string
+	// ignoreFiles resolves the ignore-file list for this session's StartOpts, so every
+	// session marotte starts resolves it the same way. Unlike presets it changes
+	// nothing this session can report — KAS's ignore evaluators are not rules and do
+	// not appear in _kiro/permissions/list — and this session refuses every fs call
+	// anyway. nil sends none, which for that notification means it is not sent.
+	ignoreFiles func(context.Context) []string
 }
 
 // utilitySession owns the dedicated kiro-cli subprocess + ACP session.
@@ -167,7 +173,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	// The subprocess context is us.shutdownCtx, not a per-request ctx: this call runs
 	// under us.mu, so a session/new that never answers would hold the mutex for the
 	// process lifetime. Safe as the HANDSHAKE ctx too, since Start bounds that itself.
-	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx)}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &marotte.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil, Presets: us.sessionPresets(ctx), IgnoreFiles: us.sessionIgnoreFiles}); err != nil {
 		return err
 	}
 	us.bridge = bridge
@@ -357,6 +363,16 @@ func (us *utilitySession) sessionPresets(ctx context.Context) []string {
 		return nil
 	}
 	return us.hooks.presets(ctx)
+}
+
+// sessionIgnoreFiles resolves this session's ignore-file list, tolerating an
+// unwired hook. Nil returns none, and an empty list withholds the notification
+// entirely rather than sending one that would CLEAR the list.
+func (us *utilitySession) sessionIgnoreFiles(ctx context.Context) []string {
+	if us.hooks.ignoreFiles == nil {
+		return nil
+	}
+	return us.hooks.ignoreFiles(ctx)
 }
 
 // forwardChunk forwards an agent_message_chunk's text to responseCh, ignoring every

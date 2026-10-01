@@ -14,8 +14,22 @@ import type { PageFind } from "./find-registry.js";
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
-vi.mock("./editor-openers.js", () => ({ openFile: vi.fn(), openFileDiff: undefined }));
+// `openFileGitDiff` is navigate.js's, reached through this page's spec-group door;
+// Browser Mode links for real, so a name no case calls still has to be here.
+vi.mock("./editor-openers.js", () => ({
+  openFile: vi.fn(),
+  openFileDiff: undefined,
+  openFileGitDiff: undefined,
+}));
 vi.mock("./tabs.js", () => ({
+  // navigate.js's `openSpec` (the spec tab's door) imports these five, and Browser
+  // Mode links for real, so one missing name fails this whole file's import.
+  activateTab: undefined,
+  openTab: undefined,
+  parentChatRef: undefined,
+  setTabParent: undefined,
+  tabIdFor: undefined,
+  openGitView: undefined,
   setDocsTab: vi.fn(),
   // No onShow argument any more — the tab factory reaches `showDocsTab` through its
   // own lazy import. This suite drives the page directly, so the toggle only has to
@@ -84,12 +98,12 @@ beforeAll(async () => {
         <button type="button" data-docs-tab="hooks"></button>
         <button type="button" data-docs-tab="workflows"></button>
       </nav>
-      <div data-docs-panel="steering" class="list-container docs-panel"></div>
-      <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
-      <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
-      <div data-docs-panel="specs" class="list-container docs-panel hidden"></div>
-      <div data-docs-panel="hooks" class="list-container docs-panel hidden"></div>
-      <div data-docs-panel="workflows" class="list-container docs-panel hidden"></div>
+      <div data-docs-panel="steering" class="docs-panel"></div>
+      <div data-docs-panel="skills" class="docs-panel hidden"></div>
+      <div data-docs-panel="agents" class="docs-panel hidden"></div>
+      <div data-docs-panel="specs" class="docs-panel hidden"></div>
+      <div data-docs-panel="hooks" class="docs-panel hidden"></div>
+      <div data-docs-panel="workflows" class="docs-panel hidden"></div>
     </div>`;
   const { apiGetTyped } = await import("./api-client.js");
   vi.mocked(apiGetTyped).mockImplementation(serveDocsPage() as typeof apiGetTyped);
@@ -133,7 +147,7 @@ function panel(name: string): HTMLElement {
 }
 
 function names(name = "steering"): string[] {
-  return [...panel(name).querySelectorAll(".list-row-name")].map((e) => e.textContent ?? "");
+  return [...panel(name).querySelectorAll(".entry-title")].map((e) => e.textContent ?? "");
 }
 
 /** Type and apply. Enter rather than the debounce: the query is synchronous (the
@@ -553,6 +567,10 @@ describe("the census: every string a row renders is matchable", () => {
     // The letter goes on the one row whose every other string is free of the
     // letter `m`, so the census reaches it through the letter alone rather than
     // through an `.md` in the path.
+    //
+    // The title line paints two badges at most, so the fixture spreads the badge
+    // literals over rows that each carry no more than two: a disabled hook is its
+    // own row rather than a third badge on the warned one.
     const { statusFor } = await import("./git-status-store.js");
     vi.mocked(statusFor).mockImplementation(((_repo: string, rel: string) =>
       rel === "hooks/guard.json" ? "M" : "") as typeof statusFor);
@@ -600,18 +618,35 @@ describe("the census: every string a row renders is matchable", () => {
         action: "echo hi",
         delete_protected: true,
       },
+      {
+        category: "hook",
+        name: "sleepy",
+        path: "workspace/.kiro/hooks/sleepy.json",
+        group: "sleepy.json",
+        trigger: "SessionStart",
+        action: "sleep 1",
+      },
     ]);
     setHooks([
       {
         id: "h-guard",
         name: "guard",
-        enabled: false,
+        enabled: true,
         scope: "workspace",
         file_path: ".kiro/hooks/guard.json",
         trigger: "PreToolUse",
         command: "python3 scripts/scan.py",
         matcher: "fsWrite|executeBash",
         matcher_warning: "missing_tool_matcher",
+      },
+      {
+        id: "h-sleepy",
+        name: "sleepy",
+        enabled: false,
+        scope: "workspace",
+        file_path: ".kiro/hooks/sleepy.json",
+        trigger: "SessionStart",
+        command: "sleep 1",
         disabled_reason: "no such file",
       },
       {
@@ -629,8 +664,8 @@ describe("the census: every string a row renders is matchable", () => {
     for (const tab of ["steering", "skills", "agents", "specs", "hooks"]) {
       forceTab(tab);
       render();
-      for (const row of panel(tab).querySelectorAll<HTMLElement>(".docs-row")) {
-        const name = row.querySelector(".list-row-name")?.textContent ?? "";
+      for (const row of panel(tab).querySelectorAll<HTMLElement>(".entry")) {
+        const name = row.querySelector(".entry-title")?.textContent ?? "";
         for (const text of renderedStrings(row)) {
           seen.add(text);
           type(text);

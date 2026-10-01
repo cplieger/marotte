@@ -1,0 +1,83 @@
+{
+  "input_file": "mixed-m2-unnumbered-parent-swallows-numbered.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L2",
+      "line": 2,
+      "indent": 0,
+      "number": "1",
+      "text": "1 Phase one",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "074bad919f71f30b3a4905e51566a4e7d0ce4ff18b491f46f9fc8bf22510a0fa",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L3",
+      "line": 3,
+      "indent": 0,
+      "number": "",
+      "text": "Phase two prose header",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "e51f4aacb9c597f101677ad7a96e1cd9ea7c1d7d24fb24f3448f8853ebfc323d",
+      "detail": "",
+      "children": [
+        {
+          "id": "L4",
+          "line": 4,
+          "indent": 2,
+          "number": "2.1",
+          "text": "2.1 do a",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "c79b6206282dd514183fb82fafd645c193f261d9e7f6f58dbd08b57c8b9962af",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L5",
+          "line": 5,
+          "indent": 2,
+          "number": "2.2",
+          "text": "2.2 do b",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "ed48e801c88d63375094f2b1e953d973f335a7ad5d693afee5f1612a448c2eae",
+          "detail": "",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "L6",
+      "line": 6,
+      "indent": 0,
+      "number": "2.1.1",
+      "text": "2.1.1 deep child of a swallowed parent",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "914972317a4e7cbaf422eb95dcac4205512e9ad664f88f628f6a9cc7996795b0",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 4,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 4
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

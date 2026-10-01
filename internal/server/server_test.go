@@ -13,10 +13,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/pinstall/v3"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/modeltext"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/pinstall/v3"
 )
 
 func TestSyncPushPreferences(t *testing.T) {

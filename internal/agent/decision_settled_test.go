@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/sse"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/sse"
 )
 
 // settledEvents decodes the decision_settled payloads emitted after sinceID.

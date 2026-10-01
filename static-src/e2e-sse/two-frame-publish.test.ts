@@ -1,8 +1,8 @@
 // The two-frame publish and the stamp it must not carry, against the REAL marotte binary
 // (Part IV item 15). One saved Mutate publishes a header frame (`chat_updated`, stamped
-// `chats`) and then its transcript frames (`message_appended`, or `message_appended` then
+// `chats`) and then its transcript frames (`turn_opened`, or `turn_opened` then
 // `draft_changed`), with the ONE `chat` stamp on the last of them. A client that loses the
-// stream between the frames holds the transcript one message short, and must not hold a
+// stream between the frames holds the transcript one turn short, and must not hold a
 // `chat` version that says otherwise.
 //
 // Each case arms the test binary's close-after hook so the stream dies between the frames,
@@ -58,7 +58,9 @@ interface Client {
 interface ChatRead {
   readonly version: string;
   readonly draft: string;
-  readonly messageIDs: string[];
+  /** The client-minted prompt id of every turn the window holds: a turn's own id is
+   *  server-minted, and `turn_open.prompt.id` is what the command sent. */
+  readonly promptIDs: string[];
 }
 
 function until(predicate: () => boolean, what: string, timeoutMs = 10_000): Promise<void> {
@@ -120,14 +122,16 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     const body = (await res.json()) as {
       subject?: unknown;
       draft?: unknown;
-      messages?: { id: string }[];
+      entries?: { kind?: string; payload?: { prompt?: { id?: string } } }[];
     };
     const stamp = decodeSubjectStamp(body.subject);
     observeStamp(stamp);
     return {
       version: stamp.version,
       draft: typeof body.draft === "string" ? body.draft : "",
-      messageIDs: (body.messages ?? []).map((m) => m.id),
+      promptIDs: (body.entries ?? [])
+        .filter((e) => e.kind === "turn_open")
+        .map((e) => e.payload?.prompt?.id ?? ""),
     };
   }
 
@@ -233,7 +237,7 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     const id = await createChat();
     await until(() => c.frames.some((f) => f.type === "chat_created"), "chat_created");
     const before = await loadChat(id);
-    expect(before.messageIDs).toEqual([]);
+    expect(before.promptIDs).toEqual([]);
     expect(heldVersion(id)).toBe(before.version);
 
     // Frame 5 is the header frame of the publish below; frame 6, the transcript frame, is
@@ -250,7 +254,7 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
 
     const delivered = c.frames.slice(seenBefore).map((f) => f.type);
     expect(delivered).toContain("chat_updated");
-    expect(delivered).not.toContain("message_appended");
+    expect(delivered).not.toContain("turn_opened");
     // The header frame carried `chats`, never `chat`: the held chat version is unmoved.
     expect(heldVersion(id)).toBe(before.version);
 
@@ -263,7 +267,7 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     }
     // And the refetch lands the message the stream lost.
     const after = await loadChat(id);
-    expect(after.messageIDs).toEqual([sent]);
+    expect(after.promptIDs).toEqual([sent]);
     expect(after.version).not.toBe(before.version);
   });
 
@@ -280,7 +284,7 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     expect(before.draft).toBe("typed on B");
     expect(heldVersion(id)).toBe(before.version);
 
-    // Frame 5 is the header, frame 6 `message_appended` (unstamped, because a
+    // Frame 5 is the header, frame 6 `turn_opened` (unstamped, because a
     // `draft_changed` follows for the same Mutate), frame 7 `draft_changed`: the cut.
     await reconnectArmed(c, HOOK_FRAMES + 2);
     const seenBefore = c.frames.length;
@@ -293,10 +297,10 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     await until(() => dropped(c) === dropsBefore + 1, "the armed connection to be cut");
 
     const delivered = c.frames.slice(seenBefore);
-    expect(delivered.map((f) => f.type)).toContain("message_appended");
+    expect(delivered.map((f) => f.type)).toContain("turn_opened");
     expect(delivered.map((f) => f.type)).not.toContain("draft_changed");
-    // The message_appended of a Mutate that also clears the draft carries NO stamp.
-    const appended = delivered.find((f) => f.type === "message_appended");
+    // The turn_opened of a Mutate that also clears the draft carries NO stamp.
+    const appended = delivered.find((f) => f.type === "turn_opened");
     expect(appended?.subject).toBeUndefined();
     expect(heldVersion(id)).toBe(before.version);
 
@@ -309,7 +313,7 @@ describe.skipIf(FIXTURE === undefined || FIXTURE === "")("the two-frame publish"
     // The refetch clears A's composer and lands the message.
     const after = await loadChat(id);
     expect(after.draft).toBe("");
-    expect(after.messageIDs).toEqual([sent]);
+    expect(after.promptIDs).toEqual([sent]);
     expect(after.version).not.toBe(before.version);
   });
 });

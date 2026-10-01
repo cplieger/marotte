@@ -1,19 +1,20 @@
 // ---------------------------------------------------------------------------
-// A PERSISTED steer renders through the same primitive a live mark does.
+// A PERSISTED steer renders at the `seq` where it landed, through the one primitive a
+// live one renders through.
 //
-// A steer is a user row carrying `user_kind: "steer"`, so `projectTurns` leaves it
-// in its turn's BODY rather than promoting it to the turn header — and the body
-// renderer's `case "user"` is therefore reachable for the first time. Rendering it
-// as the grey system fallback would make the reader's own mid-turn correction the
-// one message in the transcript with no voice.
+// A steer is a `steer` ENTRY in its turn's body, so there is no live-versus-persisted pair
+// to keep consistent and no promotion: the note IS the entry at its own position. What this
+// suite defends is the note's VOCABULARY over recorded facts — whose words these are, whether
+// the agent read them, why a drop went unread, and whether it acknowledged them — because a
+// note that states the wrong one makes a false claim about the reader's own message.
 //
-// REAL store, REAL renderer, REAL layout (Browser Mode). Harness shape borrowed
-// from messages-steer-note.test.ts: DOM hosts before the imports, the shipped
-// transcript stylesheet, `messages.teardownAll()` per case.
+// REAL store, REAL renderer, REAL layout (Browser Mode). DOM hosts before the imports, the
+// shipped transcript stylesheet, `messages.teardownAll()` per case.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach } from "vitest";
-import type { Message, Session } from "./types.js";
+import type { Entry, Session, TurnState } from "./types.js";
+import { makeSession } from "./__test-helpers__/model.js";
 
 // messages.ts's graph reads the shared DOM registry at module scope, and `byId`
 // throws on a missing element, so every host exists before an import resolves.
@@ -52,6 +53,7 @@ document.head.appendChild(style);
 
 const store = await import("./store.js");
 const messages = await import("./messages.js");
+const { steerAckID } = await import("./entry-ids.js");
 
 messages.mountChatView();
 
@@ -61,39 +63,63 @@ function freshID(prefix: string): string {
 }
 
 function session(id: string, over: Partial<Session> = {}): Session {
+  return { ...makeSession({ id, name: id }), ...over };
+}
+
+/** A sealed entry at `at`. The transcript's own lane is `""`, which an absent one is. */
+function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown, id?: string) {
   return {
-    id,
-    name: id,
-    messages: [],
-    message_count: 0,
-    has_more: false,
-    thinking: false,
-    working_label: "",
-    usage: { context_size: 0 },
-    ...over,
-  } as unknown as Session;
+    id: id ?? `${turnID}-e${String(at)}`,
+    turn: turnID,
+    kind,
+    seq: at,
+    ts: at + 1,
+    payload,
+  } as Entry;
 }
 
-function user(id: string, content: string): Message {
-  return { id, role: "user", ts: 1, content } as Message;
+function turnOpen(turnID: string, text = "go"): Entry {
+  return sealed(turnID, 0, "turn_open", {
+    prompt: { id: `${turnID}-p`, text },
+    source: "prompt",
+    n: 1,
+  });
 }
 
-/** The persisted shape a landed steer takes: `user_kind` plus the delivery state
- *  the note reads. `over` carries the state, and OMITTING it is the legacy /
- *  replay-projected shape — see the "state is not known" case below. */
-function steer(id: string, content: string, over: Partial<Message> = {}): Message {
-  return { id, role: "user", ts: 2, content, user_kind: "steer", ...over } as unknown as Message;
+/** The persisted shape a landed steer takes. `state` is REQUIRED on the wire, so there is no
+ *  unknown-state population to render neutrally — see the dropped oracle at the tail. */
+function steer(
+  turnID: string,
+  at: number,
+  text: string,
+  over: Record<string, unknown> = {},
+): Entry {
+  return sealed(
+    turnID,
+    at,
+    "steer",
+    { text, origin: "user", state: "read", ...over },
+    `steer-${turnID}-${String(at)}`,
+  );
 }
 
-function assistant(id: string, content: string, ts = 3): Message {
-  return {
-    id,
-    role: "assistant",
-    ts,
-    content,
-    blocks: [{ type: "text", text: content }],
-    turn_outcome: "completed",
-  } as unknown as Message;
+/** KAS's acknowledgement of a steer, paired to it by the id the appender mints. */
+function steerAck(turnID: string, at: number, steerEntryID: string): Entry {
+  return sealed(
+    turnID,
+    at,
+    "steer_ack",
+    { steer_id: steerEntryID, text: "" },
+    steerAckID(steerEntryID),
+  );
+}
+
+function reply(turnID: string, at: number, text: string): Entry {
+  return sealed(turnID, at, "text", { text });
+}
+
+function turnClose(turnID: string, at: number): Entry {
+  return sealed(turnID, at, "turn_close", { outcome: "completed" });
 }
 
 /** One microtask: the store's per-chat coalescer flushes, and the flush paints. */
@@ -109,13 +135,23 @@ function viewOf(chatID: string): HTMLElement {
   return el;
 }
 
-/** Mount `msgs` as `chatID`'s whole transcript and paint. */
-async function paint(chatID: string, msgs: Message[]): Promise<HTMLElement> {
-  store.setSessions([session(chatID, { messages: msgs, message_count: msgs.length })]);
+/** Mount `entries` as `chatID`'s whole transcript — one turn, the shape a page GET lands —
+ *  and paint. The window is announced as a REPLAY, which is what a fetched page carries. */
+async function paint(chatID: string, turnID: string, entries: Entry[]): Promise<HTMLElement> {
+  const turns = new Map<string, TurnState>([[turnID, { entries, openEntries: new Map() }]]);
+  store.setSessions([session(chatID, { turns, turn_order: [turnID], turn_count: 1 })]);
   store.setActive(chatID);
   store.bumpMessages(chatID, "load");
   await flushed();
   return viewOf(chatID);
+}
+
+function notes(view: HTMLElement): HTMLElement[] {
+  return [...view.querySelectorAll<HTMLElement>(".steer-note")];
+}
+
+function labelOf(note: HTMLElement | undefined): string | null | undefined {
+  return note?.querySelector(".steer-note-label")?.textContent;
 }
 
 beforeEach(() => {
@@ -126,175 +162,132 @@ beforeEach(() => {
   store.setActive("");
 });
 
-describe("a persisted steer renders as a read steer note", () => {
+describe("a persisted steer the agent read", () => {
   it("mounts .steer-note with data-origin=user, data-state=read and no control", async () => {
     const c = freshID("c-steer");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s`, "use tabs", { steer_state: "read" }),
-      assistant(`${c}-a`, "done"),
+    const t = `${c}-t1`;
+    const view = await paint(c, t, [
+      turnOpen(t),
+      steer(t, 1, "use tabs"),
+      reply(t, 2, "done"),
+      turnClose(t, 3),
     ]);
 
-    const found = [...view.querySelectorAll<HTMLElement>(".steer-note")];
+    const found = notes(view);
     expect(found).toHaveLength(1);
     const note = found[0];
     expect(note?.dataset["origin"]).toBe("user");
     expect(note?.dataset["state"]).toBe("read");
-    // The note carries no control in either state now, and `ack` is omitted
-    // entirely rather than passed as undefined (exactOptionalPropertyTypes is on).
-    expect(note?.querySelector(".steer-note-restore")).toBeNull();
-    expect(note?.querySelector(".steer-note-ack")).toBeNull();
+    expect(labelOf(note)).toBe("Mid-turn message");
     expect(note?.querySelector(".steer-note-text")?.textContent).toBe("use tabs");
+    // The control for the acknowledged case below: without it a note marked acknowledged
+    // unconditionally satisfies that case and nothing here notices.
+    expect(note?.dataset["acknowledged"]).toBeUndefined();
+    // The note holds the reader's words and carries no control in either state: the
+    // acknowledgement is its own entry and a drop's resend is its own turn.
+    expect(note?.querySelector(".steer-note-restore")).toBeNull();
   });
 
-  it("does not render the steer as a grey system row", async () => {
+  it("renders the note rather than a grey system row", async () => {
     const c = freshID("c-steer-not-system");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s`, "use tabs", { steer_state: "read" }),
-      assistant(`${c}-a`, "done"),
+    const t = `${c}-t1`;
+    const view = await paint(c, t, [
+      turnOpen(t),
+      steer(t, 1, "use tabs"),
+      reply(t, 2, "done"),
+      turnClose(t, 3),
     ]);
 
+    expect(notes(view)).toHaveLength(1);
     expect(view.querySelector(".message.system")).toBeNull();
   });
 
   it("carries the origin, so a workflow's report is not titled as the reader's words", async () => {
     const c = freshID("c-steer-origin");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s`, "A workflow you launched completed.", {
-        steer_state: "read",
-        steer_origin: "agent",
-      }),
-      assistant(`${c}-a`, "done"),
+    const t = `${c}-t1`;
+    const view = await paint(c, t, [
+      turnOpen(t),
+      steer(t, 1, "A workflow you launched completed.", { origin: "agent" }),
+      reply(t, 2, "done"),
+      turnClose(t, 3),
     ]);
 
-    const note = view.querySelector<HTMLElement>(".steer-note");
+    const note = notes(view)[0];
     expect(note?.dataset["origin"]).toBe("agent");
-    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Workflow result");
+    expect(labelOf(note)).toBe("Workflow result");
   });
 
-  it("keeps the steer inside the prompt's turn rather than opening one", async () => {
-    const c = freshID("c-steer-one-turn");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s`, "use tabs", { steer_state: "read" }),
-      assistant(`${c}-a`, "done"),
+  // The ORACLE THE ENTRY MODEL RESTORED, and the reason it is worth its own case: under the
+  // message model the persisted note lost the acknowledgement (only the live mark carried
+  // one), so a reload turned an acknowledged correction into a bare one. The ack is its own
+  // entry now, so the note reads it out of the turn's own body.
+  it("marks the note acknowledged when the turn holds its steer_ack", async () => {
+    const c = freshID("c-steer-ack");
+    const t = `${c}-t1`;
+    const s = steer(t, 1, "use tabs");
+    const view = await paint(c, t, [
+      turnOpen(t),
+      s,
+      steerAck(t, 2, s.id),
+      reply(t, 3, "done"),
+      turnClose(t, 4),
     ]);
 
-    expect(view.querySelectorAll(".turn")).toHaveLength(1);
-    // The PROMPT heads the turn; the steer is body content beside the reply.
-    const heads = [...view.querySelectorAll<HTMLElement>(".turn-req-text")].map(
-      (e) => e.textContent,
-    );
-    expect(heads).toEqual(["go"]);
+    const note = notes(view)[0];
+    expect(note?.dataset["acknowledged"]).toBe("true");
+    expect(labelOf(note)).toBe("Mid-turn message · acknowledged");
   });
 });
 
-// The half that matters most, and the reason the state is on the row at all: a
-// correction the agent NEVER READ. Before the row carried a state this rendered
-// identically to a delivered one — a false claim about whether the reader's own
-// message landed, which is worse than the note being absent.
+// The half that matters most, and the reason the state is on the entry at all: a correction
+// the agent NEVER READ. Rendering it identically to a delivered one is a false claim about
+// whether the reader's own message landed, which is worse than the note being absent.
 describe("a persisted UNDELIVERED steer says so", () => {
-  it("mounts .steer-note with data-state=dropped and the not-delivered label", async () => {
+  it("mounts data-state=dropped with the not-read label", async () => {
     const c = freshID("c-steer-dropped");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s`, "actually target main", { steer_state: "dropped" }),
-      assistant(`${c}-a`, "done"),
+    const t = `${c}-t1`;
+    const view = await paint(c, t, [
+      turnOpen(t),
+      steer(t, 1, "actually target main", { state: "dropped" }),
+      reply(t, 2, "done"),
+      turnClose(t, 3),
     ]);
 
-    const found = [...view.querySelectorAll<HTMLElement>(".steer-note")];
-    expect(found).toHaveLength(1);
-    const note = found[0];
+    const note = notes(view)[0];
     expect(note?.dataset["state"]).toBe("dropped");
     expect(note?.dataset["origin"]).toBe("user");
-    expect(note?.querySelector(".steer-note-label")?.textContent).toBe(
-      "Not read — sent as a new turn",
-    );
+    expect(labelOf(note)).toBe("Not read");
     expect(note?.querySelector(".steer-note-text")?.textContent).toBe("actually target main");
   });
 
-  // THE MARK OFFERS NOTHING AND TOUCHES NOTHING. It used to carry "Put it back in
-  // the message box" and fill the composer on the click; the boundary resend sends
-  // an unread message as its own turn now, so the button would ask the reader to do
-  // a job already done — and filling the composer would overwrite whatever they are
-  // typing next.
-  it("offers no control and leaves the message box alone", async () => {
-    const c = freshID("c-steer-restore");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s`, "actually target main", { steer_state: "dropped" }),
-      assistant(`${c}-a`, "done"),
+  // WHY it went unread is a recorded fact and the label states it. A value the note has no
+  // wording for adds no clause, which is what keeps upstream text off this surface.
+  it("states a recorded drop reason and ignores one it has no wording for", async () => {
+    const c = freshID("c-steer-reason");
+    const t = `${c}-t1`;
+    const view = await paint(c, t, [
+      turnOpen(t),
+      steer(t, 1, "restarted under me", { state: "dropped", reason: "restart" }),
+      steer(t, 2, "unknown reason", { state: "dropped", reason: "who knows" }),
+      reply(t, 3, "done"),
+      turnClose(t, 4),
     ]);
 
-    const box = document.getElementById("prompt-input") as HTMLTextAreaElement;
-    box.value = "";
-    const note = view.querySelector<HTMLElement>(".steer-note");
-    expect(note?.querySelector(".steer-note-restore")).toBeNull();
-    expect(note?.querySelectorAll("button")).toHaveLength(1); // the clamp's opener
-    expect(box.value).toBe("");
+    const labels = notes(view).map((n) => labelOf(n));
+    expect(labels).toEqual(["Not read · the session restarted", "Not read"]);
   });
 
   it("reads the two states apart from one transcript", async () => {
     const c = freshID("c-steer-both");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s1`, "use tabs", { steer_state: "read" }),
-      steer(`${c}-s2`, "actually target main", { steer_state: "dropped" }),
-      assistant(`${c}-a`, "done"),
+    const t = `${c}-t1`;
+    const view = await paint(c, t, [
+      turnOpen(t),
+      steer(t, 1, "use tabs"),
+      steer(t, 2, "actually target main", { state: "dropped" }),
+      reply(t, 3, "done"),
+      turnClose(t, 4),
     ]);
 
-    const states = [...view.querySelectorAll<HTMLElement>(".steer-note")].map(
-      (n) => n.dataset["state"],
-    );
-    expect(states).toEqual(["read", "dropped"]);
-  });
-});
-
-// INVARIANT 5: no migration, so a chat file written before the state existed must
-// load. Absent means the state is NOT KNOWN — the whole legacy population plus
-// every row the replay projection writes — and the neutral note is what claims no
-// delivery either way. It must NOT read as not-delivered: that would label a
-// correction the agent may well have acted on as missed.
-describe("a persisted steer whose state is not known", () => {
-  it("renders the neutral note with no not-delivered claim", async () => {
-    const c = freshID("c-steer-legacy");
-    const view = await paint(c, [
-      user(`${c}-u`, "go"),
-      steer(`${c}-s`, "use tabs"),
-      assistant(`${c}-a`, "done"),
-    ]);
-
-    const note = view.querySelector<HTMLElement>(".steer-note");
-    expect(note).not.toBeNull();
-    expect(note?.dataset["state"]).toBe("read");
-    expect(note?.querySelector(".steer-note-label")?.textContent).toBe("Mid-turn message");
-    expect(note?.querySelector(".steer-note-restore")).toBeNull();
-    expect(note?.querySelector(".steer-note-text")?.textContent).toBe("use tabs");
-  });
-});
-
-// A plain user row cannot reach the body renderer at all: `projectTurns` promotes
-// every PROMPT to its turn's header, which is exactly the distinction `case "user"`
-// now branches on. So the reachable form of "a plain user row is not a steer note"
-// is this control — same content, no `user_kind`, and it heads a turn of its own
-// with no note anywhere in the transcript.
-describe("a plain user row is a turn header, not a steer note", () => {
-  it("opens its own turn and renders no steer note", async () => {
-    const c = freshID("c-plain");
-    const view = await paint(c, [
-      user(`${c}-u1`, "go"),
-      assistant(`${c}-a1`, "done", 2),
-      user(`${c}-u2`, "use tabs"),
-      assistant(`${c}-a2`, "done again", 4),
-    ]);
-
-    expect(view.querySelector(".steer-note")).toBeNull();
-    expect(view.querySelectorAll(".turn")).toHaveLength(2);
-    const heads = [...view.querySelectorAll<HTMLElement>(".turn-req-text")].map(
-      (e) => e.textContent,
-    );
-    expect(heads).toEqual(["go", "use tabs"]);
+    expect(notes(view).map((n) => n.dataset["state"])).toEqual(["read", "dropped"]);
   });
 });

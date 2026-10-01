@@ -30,15 +30,27 @@ beforeEach(() => {
 });
 
 describe("saveSteering", () => {
-  it("PUTs to /api/steering with content body", async () => {
+  it("PUTs to /api/steering with content body, carrying the validator as If-Match", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const { saveSteering } = await import("./settings.js");
-    await saveSteering.dispatch({ content: "# My steering" });
+    await saveSteering.dispatch({ content: "# My steering", etag: 'W/"12-34"' });
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/steering");
     expect(opts.method).toBe("PUT");
     expect(JSON.parse(opts.body as string)).toEqual({ content: "# My steering" });
+    expect(new Headers(opts.headers as HeadersInit).get("If-Match")).toBe('W/"12-34"');
+  });
+
+  // A server that answers no ETag gets no If-Match, because on a server that
+  // REQUIRES one an invented value is a permanent 428 against a save that would
+  // otherwise work.
+  it("sends no If-Match when the read answered no validator", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const { saveSteering } = await import("./settings.js");
+    await saveSteering.dispatch({ content: "x", etag: "" });
+    const [, opts] = mockFetch.mock.calls[0]!;
+    expect(new Headers(opts.headers as HeadersInit).has("If-Match")).toBe(false);
   });
 
   it("toasts error on failure", async () => {
@@ -46,12 +58,44 @@ describe("saveSteering", () => {
       new Response(JSON.stringify({ error: "disk full" }), { status: 500 }),
     );
     const { saveSteering } = await import("./settings.js");
-    const r = await saveSteering.dispatch({ content: "x" });
+    const r = await saveSteering.dispatch({ content: "x", etag: "" });
     expect(r).toBeNull();
     expect(toast.error).toHaveBeenCalledWith(
       expect.stringContaining("Couldn't save steering"),
       undefined,
     );
+  });
+
+  // The status is what `settings-steering.ts` branches on: 409 means the file moved
+  // under the box, 428 means this client sent no validator. Both have to survive the
+  // action's normalization to reach it.
+  it("carries the refusal's HTTP status on the normalized error", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "custom.md changed" }), { status: 409 }),
+    );
+    const { saveSteering } = await import("./settings.js");
+    const out = await saveSteering.dispatch({ content: "x", etag: 'W/"1-1"' }).outcome;
+    expect(out.status).toBe("error");
+    expect(out.status === "error" ? out.error.status : 0).toBe(409);
+  });
+
+  // The validator the write produced rides the BODY, because `decode` cannot reach
+  // a response header — a header-only answer forced a GET between keystrokes.
+  it("answers the validator the 200 body carried", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, etag: 'W/"9-9"' }), { status: 200 }),
+    );
+    const { saveSteering } = await import("./settings.js");
+    expect(await saveSteering.dispatch({ content: "x", etag: 'W/"1-1"' })).toBe('W/"9-9"');
+  });
+
+  // "" is the server saying it could not stat the file it just wrote, and an
+  // absent or non-string field is a server older than that contract. Both answer
+  // "no token", which `settings-steering.ts` reads as "keep the one you had".
+  it("answers no token when the body carries none", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const { saveSteering } = await import("./settings.js");
+    expect(await saveSteering.dispatch({ content: "x", etag: 'W/"1-1"' })).toBe("");
   });
 });
 

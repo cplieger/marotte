@@ -74,6 +74,11 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdCloseTab:          dischargeNo,
 	marotte.CmdReorderTabs:       dischargeNo,
 	marotte.CmdPinTab:            dischargeNo,
+	marotte.CmdReparentTab:       dischargeNo,
+	// An approval is a statement ABOUT a document, not an answer to a question the
+	// agent asked: the spec gate's own ask travels on CmdUserInputResponse, so a phase
+	// approved from the spec tab leaves any waiting claim standing.
+	marotte.CmdApproveSpecPhase: dischargeNo,
 }
 
 // ChatStatus is the one thing a command handler needs of the agent's self-declared

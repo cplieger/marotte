@@ -1,0 +1,23 @@
+# Tasks
+
+- [ ] 1 First task
+  - Verify: something
+  - _Requirements: 1.1_
+
+- [x] 2 Last task owns the rest of the file
+  - Verify: the tail
+
+  ## An indented heading still cuts
+  - this line is past the cut
+
+## Notes
+
+Prose after the last task.
+
+- [ ] Unnumbered parent with a heading inside its content
+  prose line
+  ### sub heading
+  past the cut
+  - [ ] child after the heading
+  more parent prose
+#not-a-heading stays

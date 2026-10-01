@@ -1,53 +1,261 @@
-/* Skeleton loading placeholders */
-
+/* THE PLACEHOLDER FILL AND ITS PULSE — one rule for every shape below.
+ *
+ * The pulse is an OPACITY pulse and stays one: `opacity` is a composited
+ * property, so this costs no style recalc and no repaint per frame, which is
+ * what the sibling app's gradient shimmer could not say — subflux migrated its
+ * own shimmer to a `::after` + `transform` form for exactly that cost. Do not
+ * adopt a gradient here.
+ *
+ * `--skeleton-dur` rather than a literal (the rule `spin-period.test.ts` states
+ * for rings), `--ease-standard` rather than a bare `ease-in-out` (the four named
+ * easings are the whole vocabulary), `--c-skeleton` rather than `--c-border`
+ * (a fill and a hairline are different jobs, even where they share a value). */
 .skeleton {
-  background: var(--c-border);
+  background: var(--c-skeleton);
   border-radius: var(--r);
-  animation: vk-skeleton 1.5s ease-in-out infinite;
+  animation: vk-skeleton var(--skeleton-dur) var(--ease-standard) infinite;
 }
 
-.skeleton-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--sp-2);
-  padding: 0 var(--sp-4);
+/* REDUCED MOTION PARKS THE PULSE AT ITS MEAN, and without this arm the
+ * preference makes the app LOUDER.
+ *
+ * 40-a11y.css's global sweep runs every animation once for 0.01ms with no
+ * iteration left, and `vk-skeleton` declares no `animation-fill-mode` — so the
+ * element reverts to its OWN opacity, which `.skeleton` does not declare, which
+ * is the initial value 1. Against an animated ceiling of 0.4 that is 2.5x the
+ * intended strength for the one reader who asked for less. The sweep is correct
+ * and is not touched: the missing declaration belongs here.
+ *
+ * 0.275 is the arithmetic mean of the keyframes' two amplitudes, (0.4 + 0.15) / 2
+ * — the pulse's own average, so a parked placeholder reads at the strength a
+ * moving one averages rather than at either end of it. Not 0.4 (the ceiling: the
+ * loudest instant, and 1.45x the mean) and not 0.15 (the trough: 0.55x, and the
+ * value the pulse spends the least time near).
+ *
+ * EFFECTIVE INK, stated because this arm is the one place a reader's RESTING
+ * rendering is not one of the animated band's two ends: the two alphas multiply,
+ * so `--c-border`'s 16% wash times 0.275 is ~4.4% of `--c-text-primary`, against
+ * the ~16% an un-parked `opacity: 1` gives that reader and the ~6.4%/~2.4% peak
+ * and trough an animated one sees. So this arm takes that reader from the
+ * LOUDEST resting rendering the bar can have to a quieter one — which is the
+ * point, the defect being that the preference made it louder — and 4.4% lands
+ * INSIDE the animated band rather than below its trough, so nobody is being
+ * given less than a moving bar shows. No second channel is owed for the loss of
+ * motion: a skeleton's channels are its GEOMETRY and its fill, and both survive
+ * the sweep untouched.
+ *
+ * REAL specificity, and the arm carries no `!important`: the sweep writes
+ * `animation-*`, never `opacity`, so there is nothing here to beat. What it does
+ * have to beat is the ANIMATION, and it does not have to — an animation outranks
+ * a normal declaration only while it is running, and after 0.01ms it is not.
+ *
+ * `.deep-link-flash` below is the precedent for a component declaring its own
+ * arm; this follows its shape. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    opacity: 0.275;
+  }
 }
 
-.skeleton-avatar {
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--r);
-  flex-shrink: 0;
+/* FORCED COLORS: a drawn box needs an EDGE, because its fill is not its own.
+ *
+ * `.skeleton`'s only paint is a background, and forced-colors mode forces an
+ * author background to `Canvas` — so every bar in the app paints invisibly
+ * against the canvas and the loading state renders as blank space. Measured on
+ * the same construction one file over: 40-a11y.css's caret rule records
+ * "measured white-on-white" for a drawn box with no glyph and no border, which
+ * is exactly this element.
+ *
+ * A 1px `CanvasText` border rather than a `CanvasText` FILL, and rather than
+ * `forced-color-adjust: none`. It says the right thing: a bar outlined against
+ * the canvas reads as a RESERVED SLOT, where a solid CanvasText bar would read
+ * as text that has already arrived. The caret one file over takes the fill, and
+ * it stands in for the INSERTION POINT rather than for content, so it has no
+ * reserved-slot reading to lose. Opting out of the forcing entirely would
+ * override the reader's own palette, which is the one thing this mode exists to
+ * protect.
+ *
+ * The pulse is deliberately left running: forced colours and reduced motion are
+ * independent preferences, so a forced-colours reader has not asked to lose the
+ * ambient loading signal, and `opacity` applies normally here — so §2.2's arm
+ * must not be read as making the bar visible in this mode.
+ *
+ * This arm lives beside the rule it modifies rather than in 40-a11y.css, which
+ * owns the app's other forced-colors block. Both files are position-33-and-34
+ * neighbours in the MANIFEST, so a competing `.skeleton` rule added there would
+ * WIN an equal-specificity tie: `skeleton-forced-colors.test.ts` asserts that
+ * file declares none, and the answer to a collision is a conversation, not a
+ * specificity bump.
+ *
+ * No layout shift: `box-sizing: border-box` is app-wide (02-reset.css), so the
+ * border comes out of the content box and the bar's outer box is unchanged in
+ * either mode. The radius is `.skeleton`'s own and the border traces it. */
+@media (forced-colors: active) {
+  .skeleton {
+    border: 1px solid CanvasText;
+  }
 }
 
-.skeleton-bubble {
-  border-radius: var(--r);
-  padding: var(--sp-3) var(--sp-4);
+/* THE FOUR SHAPES. One base fill above plus the layout classes below; every one
+ * of them wears the real element's class rather than re-declaring its box,
+ * reserves a column rather than dropping it, and sizes a bar in `em` where it
+ * sits in text and `rem` where it sits in chrome. COMPOSITE has no class and no
+ * CSS by definition: it is a painter that calls the other three inside the real
+ * containers it stands in.
+ *
+ * This file sits at position 33 of `css/MANIFEST`, after every feature slice, so
+ * a rule here beats one of equal specificity in any of them. That is a hazard for
+ * any property a feature slice also declares, so a shape facing one says at its
+ * own rule how it avoids it: either the value becomes a custom property, which has
+ * one declaration to win wherever it is written, or the declaration stays in the
+ * slice that owns it. Nothing here restates a number a feature slice already
+ * declares. */
+
+/* TEXT BLOCK — a run of bars standing in for prose or code.
+ *
+ * No `gap`: each bar carries its own symmetric block margin, so the space between
+ * two bars is the text's own LEADING rather than a second number. Margins do not
+ * collapse in a flex column, which is what makes that exact. */
+.skeleton-text {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+}
+
+/* One bar, one line box, in the TEXT's own metrics — `em` and `lh`, never `rem`,
+ * because this sits inside prose whose font-size is the container's. `1lh` is the
+ * bar's own computed line-height, inherited from that container, so a change to
+ * the container's type carries the placeholder with it and no line-height number
+ * is restated here.
+ *
+ * `1lh` needs no `@supports`: Chrome 109, Safari 16.4 and Firefox 120, all three
+ * current engines. 0.7em of ink in the line box is the x-height-ish band a line of
+ * text actually occupies; the remainder is the leading, split symmetrically.
+ *
+ * A bar with NO `.skeleton` class is a deliberate BLANK LINE: it reserves the line
+ * box and paints nothing, which is how a document's shape (a declaration, a blank,
+ * then the body) reads as a document rather than as a block. `.editor-skel-line`
+ * below is where that convention comes from. */
+.skeleton-line-text {
+  block-size: 0.7em;
+  margin-block: calc((1lh - 0.7em) / 2);
+  border-radius: var(--r-sm);
+}
+
+/* ROW LIST — repeated rows wearing the real row's own class.
+ *
+ * `display: contents` is the whole mechanism: the rows become direct items of the
+ * REAL list, so the list's `gap`, its alignment, its `:nth-child` striping and its
+ * column context are the real list's by construction rather than restated here.
+ * The wrap exists only so `paintPlaceholder` has one node to mount and one node to
+ * remove (its teardown is `node.remove()`, which takes the subtree with it).
+ *
+ * `aria-hidden` and `id` are unaffected by `display: contents` — neither is a
+ * rendering property — so a contents wrap still hides its subtree from the
+ * accessibility tree and still resolves by id.
+ *
+ * `pointer-events` is NOT here, and cannot be: a `display: contents` element
+ * generates no box, so the property has nothing to apply to. It goes on the ROW's
+ * own modifier class, in the shared list below. */
+.skeleton-rows {
+  display: contents;
+}
+
+/* INLINE FIELD — one bar holding a single value's width open.
+ *
+ * `inline-size` is the ONE per-site variable, through `--skel-field-w`, and it is a
+ * custom property rather than a per-site `width` for a cascade reason: this file
+ * beats every feature slice at equal specificity, so a `width: 10em` here would
+ * OVERRIDE a `.forge-account-primary-skeleton { width: 12em }` in 17-settings.css
+ * and silently resize that site. A custom property has exactly one declaration to
+ * win, wherever it is written, and the `var()` fallback here is not a declaration
+ * and does not participate in the cascade for it.
+ *
+ * `max-inline-size: 100%` so a value wider than its column shrinks rather than
+ * overflowing it.
+ *
+ * The BOX is in `rem`: this is chrome — a sidebar footer row, a settings row's
+ * identity line — so its height follows the chrome scale rather than whatever type
+ * it happens to sit beside. The WIDTH's fallback is in `em` instead, because that
+ * is the unit both consuming sites hold their own value in, and a `rem` fallback
+ * would resize the one that declares none. */
+.skeleton-field {
+  display: inline-block;
+  inline-size: var(--skel-field-w, 10em);
+  max-inline-size: 100%;
+  block-size: 0.875rem;
+  border-radius: var(--r-sm);
+}
+
+/* A placeholder row is not a target: no hover tint, no text cursor, no press. One
+ * rule for every row-list site, so a new one gets it by wearing the class.
+ *
+ * `pointer-events` is the ONE declaration a `-skel` row modifier makes, and it is
+ * the only property that may move here from a feature slice: no slice contests it.
+ * A row's LAYOUT stays in its own slice — `.docs-skel-row`'s two-bar column shape
+ * is that surface's, and a shared rule here declaring `flex-direction` would beat
+ * it on source order.
+ *
+ * A site joins this list by wearing the class, and it joins in the same change
+ * that removes the declaration from its own slice: two owners of one property is
+ * what this rule exists to end, so half a move is worse than none.
+ *
+ * `.turn-skel` is the whole of the transcript placeholder's own CSS, and this one
+ * property does two jobs there: 29-turns.css gives `cursor: pointer` and a
+ * `--layer-hover` wash to `.turn:not([data-running], [data-no-fold])
+ * > .turn-header`, which a placeholder card matches, and a card transparent to
+ * the pointer can never match `:hover` while its cursor resolves to the
+ * ancestor's. Stamping `data-no-fold` would work too and is declined: that is a
+ * real state attribute the fold pass writes, and a placeholder carrying one is a
+ * lie a future `[data-no-fold]` rule could act on. */
+.fb-row-skel,
+.turn-skel {
+  pointer-events: none;
+}
+
+/* A PLACEHOLDER PROMPT COLUMN HAS TO STATE ITS INLINE EXTENT, because the real one
+ * gets it from its own text and a placeholder has none.
+ *
+ * `.turn-req` is a flex column with `align-items: flex-start` (29-turns.css), so
+ * `.turn-req-text` shrink-wraps to its content — and a run of PERCENTAGE-width bars
+ * has no intrinsic width, so the whole column resolves to zero and every prompt bar
+ * paints nothing. Measured before this rule existed: `inline-size: 0px` on
+ * `.turn-req-text`, with each bar's `block-size` correct at one line box, so the
+ * reserved height was right and the ink was gone. A source read cannot see it, which
+ * is why the rendered case in `skeleton-chat-card.test.ts` pins the bar against the
+ * column rather than against a literal.
+ *
+ * NOT a restated box: nothing declares `align-self` for that element anywhere, so
+ * this adds no second owner, and `.turn-skel` scopes it so no real card is reached.
+ * `stretch` rather than `inline-size: 100%` because the container's `align-items` is
+ * the thing being answered. */
+.turn-skel .turn-req-text {
+  align-self: stretch;
+}
+
+/* THE RESERVED FOLD SLOT TAKES THE HIT FLOOR, because the real control is a BUTTON
+ * and the placeholder is a div wearing its class.
+ *
+ * `.turn-fold-toggle` sizes on `--ctl-h-sm` (29-turns.css), and the app-wide hit
+ * floor (61-mcp-tools.css) lifts it to `--hit-floor` through
+ * `:where(a[href], button, select, summary)` — which a `<div>` matches on none of
+ * its arms. The two tokens are equal on a fine pointer and differ by 0.5rem on a
+ * coarse one, so the reserved slot rendered 8px narrower and shorter than the
+ * control it stands in for on touch ONLY, offsetting the `#N` bar beside it. That
+ * is the one geometry this standard exists to eliminate: wear the real element's
+ * class and match its box.
+ *
+ * PHYSICAL `min-width`/`min-height` to match the floor's own spelling, not the
+ * logical pair — one property per axis, so the two cannot disagree about which
+ * axis they bound. Specificity is (0,2,0) against the floor's zero, so this wins
+ * wherever it applies and the floor still answers for the real button. */
+.turn-skel .turn-fold-toggle {
+  min-width: var(--hit-floor);
+  min-height: var(--hit-floor);
 }
 
 .skeleton-line {
   height: 0.75rem;
   border-radius: var(--r-sm);
-}
-
-.skeleton-msg-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  max-width: var(--content-max-w);
-  margin: 0 auto;
-  width: 100%;
-  padding: var(--sp-4);
-}
-
-/* Matches the real card's box: a tool card carries no indent (see .tool-call in
-   14-tools.css), so neither may its skeleton, or the list shifts on load. */
-.skeleton-tool {
-  height: 2.25rem;
-  border-radius: var(--r);
 }
 
 /* The tab strip's pending rows (index.html #tab-strip-skeleton). Matches a real
@@ -97,11 +305,6 @@
 .fb-skeleton {
   display: flex;
   flex-direction: column;
-}
-
-/* A placeholder row is not a target: no hover tint, no text cursor. */
-.fb-row-skel {
-  pointer-events: none;
 }
 
 .fb-skel-check {

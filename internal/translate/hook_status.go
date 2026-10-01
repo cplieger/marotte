@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -21,21 +20,25 @@ type hookUpdateBlock struct {
 // hookStatusCompleted is the wire status of a hook execution KAS reports as successful.
 const hookStatusCompleted = "completed"
 
-// handleHookUpdate appends a `Hook fired` card to the chat's open turn, the way
-// HandleToolCall appends a real tool call, gated on hooks.showStatus.
-func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID, h *hookUpdateBlock, attr FrameAttribution) {
+// handleHookUpdate appends a `Hook fired` card to the chat's open turn as a
+// tool_call entry in lane "", the way HandleToolCall appends a real tool call,
+// gated on hooks.showStatus. A step's hook update never reaches here: the
+// attribution gate drops it before the hook branch runs.
+func (t *Translator) handleHookUpdate(ctx context.Context, chatID marotte.ChatID, h *hookUpdateBlock) {
 	if !t.hookStatus.IsHookStatusEnabled() {
 		return
 	}
-	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(attr.Step))
-	t.ensureTurnStarted(ctx, chatID, buf)
+	turn := t.turns.TurnFoldTarget(ctx, chatID)
+	if turn == nil {
+		return
+	}
 	call := hookToolCall(h, time.Now().UnixMilli())
-	buf.AppendToolCall(&call)
-	blockIndex, version := buf.AppendToolUseBlock(call.ID, "")
-	frame := marotte.NewEvent(marotte.EventToolCall, chatID,
-		marotte.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex})
-	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
-	t.bus.Broadcast(ctx, frame)
+	entry := marotte.EntryToolCallOf(&call)
+	sealed, err := turn.ToolCall(ctx, "", &entry)
+	t.publishSealed(ctx, chatScope(chatID), sealed)
+	if err != nil {
+		appendFailed(chatScope(chatID), "hook tool_call", err)
+	}
 }
 
 // hookToolCall is the settled tool call one hook_update frame becomes: no input, no

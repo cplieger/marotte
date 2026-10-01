@@ -14,8 +14,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // capturingBus records what a handler broadcast. Its own type rather than a
@@ -249,26 +249,23 @@ func TestComposerCommands_NoBroadcastWhenNothingChanged(t *testing.T) {
 	}
 }
 
-// The send clears the staged list in the same Mutate that appends the user
-// message, exactly as it clears the draft. Belt to the client's own
-// set_attachments([]) braces: a lost POST would otherwise bring three
-// already-sent attachments back on the next open.
-func TestAppendUserMessage_ClearsTheStagedAttachments(t *testing.T) {
+// The send clears the staged list in the same header write that clears the
+// draft. Belt to the client's own set_attachments([]) braces: a lost POST would
+// otherwise bring three already-sent attachments back on the next open. The list
+// is not dropped: it rides the turn_open's prompt (TestPromptEntry_CarriesTheAttachments),
+// which is where a sent turn's header reads its pills from.
+func TestSettleComposerOnPrompt_ClearsTheStagedAttachments(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	if _, err := store.SetAttachments(t.Context(), "c1", []string{"docs/spec.pdf"}); err != nil {
 		t.Fatalf("SetAttachments: %v", err)
 	}
-	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &marotte.PromptCommand{
+	settleComposerOnPrompt(t.Context(), store, &capturingBus{}, "c1", &marotte.PromptCommand{
 		Text:        "have a look",
 		MessageID:   "m-1",
 		Attachments: []marotte.Attachment{{Path: "docs/spec.pdf", Name: "spec.pdf"}},
 	})
-	if err != nil {
-		t.Fatalf("appendUserMessage: %v", err)
-	}
 
 	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
@@ -276,11 +273,6 @@ func TestAppendUserMessage_ClearsTheStagedAttachments(t *testing.T) {
 	}
 	if c.Attachments != nil {
 		t.Errorf("staged attachments = %#v, want cleared by the send", c.Attachments)
-	}
-	// The list moved to the MESSAGE rather than being dropped: that is where a
-	// sent turn's header reads its pills from.
-	if len(c.Messages) != 1 || len(c.Messages[0].Attachments) != 1 {
-		t.Errorf("message attachments = %#v, want the one that was sent", c.Messages)
 	}
 }
 

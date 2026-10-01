@@ -42,7 +42,6 @@ import {
   setLoadMore,
   loadTurnRail,
   pointTurnRail,
-  fadeInTranscript,
   activeTranscriptView,
   transcriptViewFor,
   disposeChatView,
@@ -262,19 +261,15 @@ export function refreshChatView(id: string): void {
   //
   // On a cold transcript the paint is deferred by 150ms, so a cached open never
   // flashes it. min-visible stays 0 — the skeleton shares the messages container.
-  let skeletonPainted = false;
   const skeleton =
-    session.messages.length > 0 || getActiveId() !== id
+    session.turn_order.length > 0 || getActiveId() !== id
       ? null
       : skeletonTiming(() =>
           // Into the ACTIVE VIEW: the view's own column geometry positions the
           // placeholder. The multiplexer fallback covers a fixture with no view.
           paintPlaceholder(
             activeTranscriptView() ?? $.messages,
-            () => {
-              skeletonPainted = true;
-              return chatSkeleton();
-            },
+            chatSkeleton,
             // The transcript container is shared with the load-more furniture and with
             // messages.ts's drop-by-id half, so a placeholder here must not take it over.
             { mount: "append" },
@@ -288,12 +283,6 @@ export function refreshChatView(id: string): void {
     if (!ok) {
       paintChatLoadError("Failed to load messages.", id);
       return;
-    }
-    // loadMessages' own bumpMessages paints synchronously, so the turns are already
-    // in the DOM and no frame has reached the screen between the two — one
-    // transition rather than a flash of both. Only when a skeleton was painted.
-    if (skeletonPainted) {
-      fadeInTranscript();
     }
     // The chat's record is in now, so its stored draft can be adopted. Deliberately
     // loses to a draft the user has started typing since the activation.
@@ -333,11 +322,13 @@ function setupLoadMore(chatID: string): void {
   setLoadMore(
     session.has_more
       ? (): void => {
-          const oldest = session.messages[0];
+          // `turn_order` is FILE order with an older page PREPENDED, so its first
+          // id is the oldest resident turn — the cursor the window pages before.
+          const oldest = session.turn_order[0];
           if (oldest === undefined) {
             return;
           }
-          void loadMessages(chatID, oldest.id).then(() => {
+          void loadMessages(chatID, oldest).then(() => {
             // scroll.ts watches for this removal as the "load complete" signal.
             // Scoped to this chat's view: parked views keep the id resident too.
             transcriptViewFor(chatID)?.querySelector(`[id="load-more-skeleton"]`)?.remove();

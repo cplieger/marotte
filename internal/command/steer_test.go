@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // countingDeps makes the "this handler emits nothing" contract observable; the
@@ -77,12 +77,34 @@ func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 	}
 }
 
+// A resend names the dropped steers it replaces, and CmdSteer is the only path that
+// knows: the ledger must carry them under the id KAS keys the steer's frames by, so
+// the translator's steer entry states the resend.
+func TestCmdSteer_RecordsTheResendsItWasSent(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	host := newBridgeHost(store, &recordingBridge{result: queuedResult("steer-m-2"), sessionID: "sess-1"})
+	ledger := NewSteerLedger()
+	payload, err := json.Marshal(marotte.SteerCommand{Text: "for decision 5 too", MessageID: "m-2", Resends: []string{"steer-m-1"}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	_, err = CmdSteer(t.Context(), host, host, ledger, &marotte.ClientCommand{Type: marotte.CmdSteer, ChatID: "c1", Payload: payload})
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if got, want := ledger.SteerResends("c1", "steer-m-2"), []string{"steer-m-1"}; !slices.Equal(got, want) {
+		t.Errorf("ledger resends for steer-m-2 = %v, want %v", got, want)
+	}
+}
+
 // Nothing running means nothing to steer. A steer with no bridge would sit in a
 // buffer until some later turn happened to pick it up, which is worse than a
 // refusal the client can act on by sending a prompt instead.
 func TestCmdSteer_RefusesWithNoLiveTurn(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	host := newBridgeHost(store, nil)
+	host := idleHost(store, nil, nil)
 
 	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
 

@@ -10,8 +10,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/policyfile"
 )
 
 type fakePolicy struct {

@@ -6,31 +6,33 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// chunkDeltas returns every streamed text delta in a capture, in order, so a
-// test can assert the sentinel still REACHED the user. Ending the turn without
-// showing why would trade a wedge for a silence.
+// chunkDeltas returns every streamed text delta in a capture, in order — the
+// opening text of an entry_opened and each entry_delta after it — so a test can
+// assert the sentinel still REACHED the user. Ending the turn without showing why
+// would trade a wedge for a silence.
 func chunkDeltas(events []marotte.ServerEvent) []string {
 	var out []string
 	for _, e := range events {
-		if e.Type != marotte.EventMessageChunk {
-			continue
-		}
-		if p, ok := e.Payload.(marotte.MessageChunkPayload); ok {
-			out = append(out, p.Delta)
+		switch p := e.Payload.(type) {
+		case marotte.EntryOpenedPayload:
+			if e.Type == marotte.EventEntryOpened && p.Open.Kind == marotte.EntryKindText {
+				out = append(out, p.Open.Text)
+			}
+		case marotte.EntryDeltaPayload:
+			if e.Type == marotte.EventEntryDelta {
+				out = append(out, p.Delta)
+			}
 		}
 	}
 	return out
 }
 
-// feedChunkAs streams one delta with a chosen reasoning flag and an optional
-// `_meta.kiro` block, which is how a workflow-step frame is staged.
-func feedChunkAs(t *testing.T, tr *Translator, chatID marotte.ChatID, text string, isReasoning bool, meta map[string]any) {
+// feedChunkAs streams one delta with a chosen reasoning flag and the attribution
+// the dispatcher derived for it, which is how a workflow-step frame is staged.
+func feedChunkAs(t *testing.T, tr *Translator, chatID marotte.ChatID, text string, isReasoning bool, attr FrameAttribution) {
 	t.Helper()
 	frame := map[string]any{"content": map[string]any{"type": "text", "text": text}}
-	if meta != nil {
-		frame["_meta"] = map[string]any{"kiro": meta}
-	}
-	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, frame), isReasoning)
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, frame), isReasoning, attr)
 }
 
 // TestHandleAssistantChunk_SentinelEndsTheTurn is the headline case.
@@ -45,7 +47,7 @@ func feedChunkAs(t *testing.T, tr *Translator, chatID marotte.ChatID, text strin
 // travels so the transcript's divider can attribute it.
 func TestHandleAssistantChunk_SentinelEndsTheTurn(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	chatID := marotte.ChatID("c1")
 
 	feedChunk(t, tr, chatID, interruptSentinel)
@@ -80,7 +82,7 @@ func TestHandleAssistantChunk_SentinelIsExactMatchOnly(t *testing.T) {
 	cases := map[string]struct {
 		text        string
 		isReasoning bool
-		meta        map[string]any
+		attr        FrameAttribution
 	}{
 		"quoted inside prose": {
 			text: `kiro-cli prints "` + interruptSentinel + `" when its filter trips.`,
@@ -114,18 +116,16 @@ func TestHandleAssistantChunk_SentinelIsExactMatchOnly(t *testing.T) {
 		// parent chat's live turn.
 		"a workflow step frame": {
 			text: interruptSentinel,
-			meta: map[string]any{"workflow": map[string]any{
-				"workflowId": "wf-1", "nodeId": "n-1", "iteration": 1,
-			}},
+			attr: FrameAttribution{Step: true, RunID: "wf-1", NodePath: "wf-1/n-1"},
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			deps, _ := newEventCaptureDeps()
-			tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+			tr := New(rolesOf(deps))
 
-			feedChunkAs(t, tr, "c1", tc.text, tc.isReasoning, tc.meta)
+			feedChunkAs(t, tr, "c1", tc.text, tc.isReasoning, tc.attr)
 
 			if len(deps.turnInterrupts) != 0 {
 				t.Errorf("the turn was ended by %q; only a delta that IS the sentinel may end one",
@@ -146,7 +146,7 @@ func TestHandleAssistantChunk_SentinelToleratesSurroundingWhitespace(t *testing.
 	} {
 		t.Run(name, func(t *testing.T) {
 			deps, _ := newEventCaptureDeps()
-			tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+			tr := New(rolesOf(deps))
 
 			feedChunk(t, tr, "c1", text)
 
@@ -165,7 +165,7 @@ func TestHandleAssistantChunk_SentinelToleratesSurroundingWhitespace(t *testing.
 // latch out of the host on the belief this side deduplicates.
 func TestHandleAssistantChunk_SentinelEndsTheTurnOnce(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 
 	feedChunk(t, tr, "c1", interruptSentinel)
 	feedChunk(t, tr, "c1", interruptSentinel)

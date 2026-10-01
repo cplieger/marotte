@@ -1,0 +1,70 @@
+{
+  "input_file": "attack-6-unclosed-fence.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Before the fence",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "b45930581e3609cb3fb7c534bf7780c8e2d30a6d7500c85a24deb66974e31cc5",
+      "detail": "```markdown",
+      "children": [
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 0,
+          "number": "1.1",
+          "text": "1.1 An example inside a fence",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "40a1a05d66c56c6438ec64d20ed9a1ab524e8cc586e9a33ebb523e29a75e8e48",
+          "detail": "",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "L4",
+      "line": 4,
+      "indent": 0,
+      "number": "2",
+      "text": "2. Everything after an unclosed fence",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "c21c1436260d0be393ccf8457ad39283cbc75f7e7940dd2b3888ccf90dc368cd",
+      "detail": "",
+      "children": []
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "3",
+      "text": "3. ... is invisible",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "f90b707a7a5f15eb2a091fc87d77834ec662de7ee3261e044a4b9b150dffef97",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 3
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

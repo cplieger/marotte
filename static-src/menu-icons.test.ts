@@ -21,6 +21,7 @@ import {
   ICON_REPO,
   ICON_SUBAGENT_INTROSPECT,
   ICON_TAB_AGENT,
+  ICON_TAB_CHAT,
   ICON_EXTERNAL,
   ICON_TAB_DOCS,
   ICON_TAB_FILES,
@@ -86,6 +87,9 @@ const PAIRS: readonly (readonly [
   ["docs tab Agents", 'data-docs-tab="agents"', ICON_TAB_AGENT],
   ["docs tab Specs", 'data-docs-tab="specs"', ICON_TAB_SPEC],
   ["docs tab Workflows", 'data-docs-tab="workflows"', ICON_TAB_RUN],
+  // History's two panes name what a chat tab and a run tab already draw.
+  ["history tab Chats", 'data-history-tab="chats"', ICON_TAB_CHAT],
+  ["history tab Runs", 'data-history-tab="runs"', ICON_TAB_RUN],
   // The PR empty state renders inside the tab whose icon names it.
   ["git tab Pull requests", 'data-git-tab="prs"', ICON_PR_EMPTY],
   // The status card's account row: an <a> rather than a button, and the one thing in
@@ -109,6 +113,7 @@ describe("hand-authored glyphs in static/index.html", () => {
     ["Settings", "data-settings-tab"],
     ["docs", "data-docs-tab"],
     ["git", "data-git-tab"],
+    ["history", "data-history-tab"],
   ] as const) {
     it(`gives every ${bar} tab a distinct glyph`, () => {
       const tabs = [...indexHtml.matchAll(new RegExp(`${attr}="([^"]+)"`, "g"))].map((m) => m[1]);

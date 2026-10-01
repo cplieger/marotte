@@ -6,7 +6,15 @@
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { closeModal, RollingOutput } from "./modals.js";
-import { type Server, type Transport, mcpState, discoverySignalFor } from "./mcp-state.js";
+import {
+  type Server,
+  type Transport,
+  SECRET_MASK,
+  mcpState,
+  autoApproveHonoured,
+  discoverySignalFor,
+} from "./mcp-state.js";
+import { openSetting } from "./settings-highlight.js";
 import {
   type EditablePair,
   renderKeyPairList,
@@ -24,6 +32,7 @@ import {
 import { getToolsStatus } from "./actions/tools.js";
 import { installToolAndWait } from "./tools.js";
 import { bindLoadingState } from "./actions/index.js";
+import { initSegmentedBar } from "./segmented-bar.js";
 import {
   type InstallField,
   initSearchPanel,
@@ -42,10 +51,12 @@ interface EditingContext {
 class EditSession {
   editing: EditingContext = { id: "" };
   disabledToolsList: string[] = [];
+  autoApproveList: string[] = [];
 
   reset(): void {
     this.editing = { id: "" };
     this.disabledToolsList = [];
+    this.autoApproveList = [];
   }
 
   startEdit(id: string): void {
@@ -80,19 +91,39 @@ interface InitArgs {
   server: Server | null;
 }
 
+const MODE_TABS: readonly { readonly id: AddMode; readonly label: string }[] = [
+  { id: "search", label: "Search registry" },
+  { id: "remote", label: "Remote URL" },
+  { id: "npm", label: "npm package" },
+  { id: "raw", label: "Paste JSON" },
+];
+
+/** The bar's active-segment projection, wired once per bar element: the
+ *  controller adds listeners, and the modal opens many times. */
+const paintTabsFor = new WeakMap<HTMLElement, (mode: AddMode) => void>();
+let paintTabs: ((mode: AddMode) => void) | undefined;
+
 export function initModal(args: InitArgs): void {
   const title = byId<HTMLSpanElement>("mcp-modal-title");
   title.textContent = session.editing.id === "" ? "Connect integration" : "Edit integration";
 
-  const tabs = byId<HTMLDivElement>("mcp-modal-tabs");
+  const tabs = byId<HTMLElement>("mcp-modal-tabs");
   tabs.classList.toggle("hidden", session.editing.id !== "");
-  for (const btn of tabs.querySelectorAll<HTMLButtonElement>(".mcp-modal-tab")) {
-    btn.onclick = (): void => {
-      setMode(btn.dataset["mcpMode"] as AddMode, null);
-    };
+  paintTabs = paintTabsFor.get(tabs);
+  if (paintTabs === undefined) {
+    paintTabs = initSegmentedBar(tabs, {
+      attr: "data-mcp-mode",
+      idPrefix: "mcp",
+      tabs: MODE_TABS,
+      onSelect: (mode) => {
+        setMode(mode, null);
+      },
+    });
+    paintTabsFor.set(tabs, paintTabs);
   }
 
-  initDisabledToolsSection(args.server);
+  initToolListSection(SECTION_DISABLED, args.server);
+  initToolListSection(SECTION_AUTO_APPROVE, args.server);
   setMode(args.mode, args.server);
 }
 
@@ -116,25 +147,22 @@ const PANEL_MODES: Readonly<Record<AddMode, (existing: Server | null) => void>> 
 };
 
 // A `data-mcp-mode` attribute marks TWO different things — one panel and one tab
-// button per mode — so every selector over it has to say which. Both of these
-// were written as bare `[data-mcp-mode]` and both were wrong for it: the panel
-// loop below hid the tab BUTTONS (and, since `search` has no button, hid all of
-// them, leaving the bar as an empty 5px strip nothing could reopen), and the npm
-// panel's Node banner prepended itself into the npm tab button, which precedes
-// the panel in the document.
+// button per mode — so a selector over it has to say which. A bare
+// `[data-mcp-mode]` here hid the tab BUTTONS as well as the panels.
 const PANEL_SELECTOR = ".mcp-mode-panel[data-mcp-mode]";
-const TAB_SELECTOR = ".mcp-modal-tab[data-mcp-mode]";
 
 function setMode(mode: AddMode, existing: Server | null): void {
   // HTMLElement, not HTMLDivElement: the remote panel is a <form> (its password
   // field has to sit in one), and this loop only touches classList and dataset.
   for (const panel of document.querySelectorAll<HTMLElement>(PANEL_SELECTOR)) {
-    panel.classList.toggle("hidden", panel.dataset["mcpMode"] !== mode);
+    const panelMode = panel.dataset["mcpMode"] ?? "";
+    panel.classList.toggle("hidden", panelMode !== mode);
+    // The panel half of the pairing the controller's `aria-controls` writes.
+    panel.setAttribute("role", "tabpanel");
+    panel.id = `mcp-panel-${panelMode}`;
+    panel.setAttribute("aria-labelledby", `mcp-tab-${panelMode}`);
   }
-  for (const btn of document.querySelectorAll<HTMLButtonElement>(TAB_SELECTOR)) {
-    btn.classList.toggle("active", btn.dataset["mcpMode"] === mode);
-    btn.setAttribute("aria-selected", String(btn.dataset["mcpMode"] === mode));
-  }
+  paintTabs?.(mode);
 
   PANEL_MODES[mode](existing);
 }
@@ -232,8 +260,12 @@ async function submitServer(
   errEl.replaceChildren();
   clearFieldMarks();
 
+  // Both lists go out on every edit, empty included: the store reads an omitted
+  // list as unchanged, so withholding one is how a save silently re-grants what
+  // the user just removed.
   if (session.editing.id !== "") {
     body.disabled_tools = session.disabledToolsList;
+    body.auto_approve = session.autoApproveList;
   }
 
   const unbind =
@@ -259,6 +291,10 @@ async function submitServer(
   }
   closeModal($.mcpModal);
   mcpState.refetchServers();
+  // A save can change what KAS runs (a new server, a credential the connect
+  // attempt needed), so the row's dot and meta line are stale until the status
+  // is re-read. Both fetches coalesce per microtask.
+  mcpState.refetchStatus();
   return true;
 }
 
@@ -293,6 +329,8 @@ function initNpmPanel(existing: Server | null): void {
   errEl.classList.add("hidden");
   errEl.textContent = "";
 
+  showOtherCommandsNote();
+
   // npx-based MCP servers need the Node runtime, which is opt-in. Probe
   // and, if missing, show an inline install affordance gating the form.
   void gateNpmPanelOnNode();
@@ -319,7 +357,7 @@ function initNpmPanel(existing: Server | null): void {
       {
         transport: "stdio",
         name: name.value.trim(),
-        command: "npx",
+        command: NPX_COMMAND,
         args,
         env: collectKeyPairs(envList),
         prewarm: prewarm.checked,
@@ -331,6 +369,29 @@ function initNpmPanel(existing: Server | null): void {
   };
 }
 
+const CLS_NPM_ALT = "mcp-npm-alt";
+const NPM_PANEL_SELECTOR = '.mcp-mode-panel[data-mcp-mode="npm"]';
+
+/** Name the tab that takes every other stdio command. Paste JSON is the only
+ *  surface that can express a `uvx`, `docker` or bare-binary server, and its own
+ *  hint is on a tab a reader has to already be on to read it. */
+function showOtherCommandsNote(): void {
+  const panel = document.querySelector<HTMLDivElement>(NPM_PANEL_SELECTOR);
+  if (panel?.querySelector("." + CLS_NPM_ALT) !== null) {
+    return;
+  }
+  const note = el(
+    "p",
+    { className: `mcp-mode-hint ${CLS_NPM_ALT}` },
+    "Paste JSON takes a server that runs any other command: ",
+    el("code", {}, "uvx"),
+    ", ",
+    el("code", {}, "docker"),
+    ", or a binary of your own.",
+  );
+  panel.querySelector(".mcp-mode-hint")?.after(note);
+}
+
 // Probe Node availability and, when missing, render an inline banner
 // inside the npm panel that installs the Node runtime on click. The
 // package fields stay usable (the user can fill them in while Node
@@ -338,7 +399,7 @@ function initNpmPanel(existing: Server | null): void {
 // install one-click. After a successful enable the banner removes
 // itself. Mirrors the Sources sub-tab's auto-install-on-intent flow.
 async function gateNpmPanelOnNode(): Promise<void> {
-  const panel = document.querySelector<HTMLDivElement>('.mcp-mode-panel[data-mcp-mode="npm"]');
+  const panel = document.querySelector<HTMLDivElement>(NPM_PANEL_SELECTOR);
   if (panel === null) {
     return;
   }
@@ -421,15 +482,55 @@ function declaredRows(fields: InstallField[]): EditablePair[] {
   }));
 }
 
+const NPX_COMMAND = "npx";
+
+/** `prewarm.NpmPkgSpecRe`, transcribed. A leading `-` fails the first class,
+ *  which is what refuses a flag. */
+const NPM_PKG_SPEC =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[A-Za-z0-9^~><=.+_-][A-Za-z0-9^~><=.+_-]*)?$/;
+
+/** The npm package a stdio server runs through `npx`, or "" when it runs
+ *  something else. `internal/mcp/prewarm`'s ExtractNpxPackage transcribed, so
+ *  the two halves of the app answer this question the same way: the command
+ *  must BE npx, a flag past the package is a refusal, and the spec must match
+ *  NpmPkgSpecRe. Prewarm's own enabled/prewarm gates are policy, not shape,
+ *  and are not part of it. */
 export function extractNpxPackage(s: Server): string {
+  if (s.transport !== "stdio" || (s.command ?? "").trim() !== NPX_COMMAND) {
+    return "";
+  }
   for (const arg of s.args ?? []) {
     const a = arg.trim();
     if (a === "" || a === "-y" || a === "--yes") {
       continue;
     }
-    return a;
+    return NPM_PKG_SPEC.test(a) ? a : "";
   }
   return "";
+}
+
+/** The panel that can EDIT this server without rewriting it. Routing on the
+ *  record's SHAPE rather than on its transport is what keeps a `uvx`, `docker`
+ *  or bare-binary command out of the npm form, which can only express
+ *  `npx -y <pkg>` and saves that whatever it was handed. */
+export function editModeFor(s: Server): AddMode {
+  if (s.transport !== "stdio") {
+    return "remote";
+  }
+  return npmFormFits(s) ? "npm" : "raw";
+}
+
+/** Whether the npm form's save reproduces this record's argv. Narrower than
+ *  extractNpxPackage, which answers what a server INSTALLS and so stops at the
+ *  package: an argument past it (`npx -y mcp-remote <url>`) survives that
+ *  predicate and would be dropped by a save from this form. */
+function npmFormFits(s: Server): boolean {
+  const pkg = extractNpxPackage(s);
+  if (pkg === "") {
+    return false;
+  }
+  const args = (s.args ?? []).map((a) => a.trim()).filter((a) => a !== "");
+  return args.length === 2 && args[0] === "-y" && args[1] === pkg;
 }
 
 // --- Panel: remote (Streamable HTTP or legacy SSE; the transport is
@@ -544,17 +645,17 @@ function fillRemoteForm(
 // an already-configured server is a no-op, fixing the block and pasting again
 // re-lands the entries that were fine at no cost.
 
-function initRawPanel(_existing: Server | null): void {
-  // Editing never reaches this panel — openEditModal routes stdio to the npm
-  // form and remote to the remote form — so there is no edit shape to build and
-  // no PUT path here. It is an add-only surface.
+function initRawPanel(existing: Server | null): void {
+  const editing = session.editing.id !== "" && existing !== null;
   const textarea = byId<HTMLTextAreaElement>("mcp-raw-input");
   const err = byId<HTMLParagraphElement>("mcp-raw-error");
   err.classList.add("hidden");
   err.textContent = "";
-  textarea.value = RAW_TEMPLATE;
+  textarea.value = editing ? storedRecordJSON(existing) : RAW_TEMPLATE;
+  showRawEditNote(editing);
 
   const saveBtn = byId<HTMLButtonElement>("mcp-raw-save");
+  setSaveLabel(saveBtn, editing ? "Save" : "Connect");
   saveBtn.onclick = (): void => {
     err.classList.add("hidden");
     err.textContent = "";
@@ -569,8 +670,77 @@ function initRawPanel(_existing: Server | null): void {
       showPasteError(err, "Paste a JSON object: either an mcpServers block or one server.");
       return;
     }
+    if (editing) {
+      // The server owns validation, so the box's own fields go on the wire as
+      // they are: a second translator here would be paste.go's rules written
+      // twice. `enabled` comes from the record because the row's switch owns
+      // it, and the PUT would otherwise decode an absent field as off.
+      void submitServer(
+        { ...(parsed as Partial<Server>), enabled: existing.enabled },
+        err,
+        saveBtn,
+      );
+      return;
+    }
     void submitPaste(parsed as Record<string, unknown>, err, saveBtn);
   };
+}
+
+/** Fields the modal's other controls own: the store's own three, the row's
+ *  enable switch, and the two chip sections' tool lists. Everything else the
+ *  record carries reaches the box, so a field added to the wire needs no edit
+ *  here. */
+const RAW_EDIT_OMIT = new Set([
+  "id",
+  "created_at",
+  "updated_at",
+  "enabled",
+  "disabled_tools",
+  "auto_approve",
+]);
+
+function storedRecordJSON(s: Server): string {
+  const rec = s as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(rec)) {
+    if (!RAW_EDIT_OMIT.has(key)) {
+      out[key] = rec[key];
+    }
+  }
+  return JSON.stringify(out, null, 2) + "\n";
+}
+
+const CLS_RAW_EDIT = "mcp-raw-edit-note";
+
+/** Say what the box holds while editing: this server's stored record, not a
+ *  README's `mcpServers` block, and saving replaces it. */
+function showRawEditNote(editing: boolean): void {
+  const panel = document.querySelector<HTMLDivElement>('.mcp-mode-panel[data-mcp-mode="raw"]');
+  if (panel === null) {
+    return;
+  }
+  panel.querySelector("." + CLS_RAW_EDIT)?.remove();
+  if (!editing) {
+    return;
+  }
+  const note = el(
+    "p",
+    { className: `mcp-mode-hint ${CLS_RAW_EDIT}` },
+    "This is the server's stored configuration. Saving replaces it. Secrets read ",
+    el("code", {}, SECRET_MASK),
+    "; leave them as they are to keep the stored values.",
+  );
+  panel.querySelector(".mcp-mode-hint")?.after(note);
+}
+
+/** Retitle a save button, whose label is the one text node beside its icon. */
+function setSaveLabel(btn: HTMLButtonElement, label: string): void {
+  for (const node of btn.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== "") {
+      node.textContent = label;
+      return;
+    }
+  }
 }
 
 function showPasteError(err: HTMLParagraphElement, msg: string): void {
@@ -600,6 +770,7 @@ async function submitPaste(
   }
   closeModal($.mcpModal);
   mcpState.refetchServers();
+  mcpState.refetchStatus();
 }
 
 const RAW_TEMPLATE = `{
@@ -615,37 +786,141 @@ const RAW_TEMPLATE = `{
 }
 `;
 
-// --- Disabled tools chip list ---
+// --- Tool-name chip lists ---
 
-function initDisabledToolsSection(server: Server | null): void {
-  const section = byId<HTMLDivElement>("mcp-disabled-tools");
-  const chips = byId<HTMLDivElement>("mcp-disabled-chips");
-  const input = byId<HTMLInputElement>("mcp-disabled-input");
-  const addBtn = byId<HTMLButtonElement>("mcp-disabled-add");
+/** One chip editor over a server's tool names. The deny list and the
+ *  run-without-asking list are the same control over the same vocabulary —
+ *  chips, a typed adder, and the runtime discovery suggestions — so they differ
+ *  only in the field they edit and in what removing a chip restores. */
+interface ToolListSection {
+  readonly sectionID: string;
+  readonly chipsID: string;
+  readonly inputID: string;
+  readonly addID: string;
+  /** A chip's remove tooltip, said as what removal does. */
+  readonly removeTitle: string;
+  /** The suspension surface, present on the ONE list a security profile can
+   *  withhold the effect of. Absent means the list is always in force, which is
+   *  the deny list: blocking a tool is never widened by a profile, so there is
+   *  nothing for a rung to suspend. */
+  readonly suspension?: {
+    readonly noticeID: string;
+    readonly linkID: string;
+    /** Whether this list's EFFECT is in force right now. Supplied by the section
+     *  rather than read inside the renderer, so the config says where its posture
+     *  comes from instead of the renderer hardcoding one list's source. */
+    honoured(): boolean;
+  };
+  /** The list as the record holds it. */
+  stored(server: Server): string[] | undefined;
+  /** The list as the modal is editing it. */
+  read(): string[];
+  write(names: string[]): void;
+}
+
+const SECTION_DISABLED: ToolListSection = {
+  sectionID: "mcp-disabled-tools",
+  chipsID: "mcp-disabled-chips",
+  inputID: "mcp-disabled-input",
+  addID: "mcp-disabled-add",
+  removeTitle: "Unblock",
+  stored: (s) => s.disabled_tools,
+  read: () => session.disabledToolsList,
+  write: (names) => {
+    session.disabledToolsList = names;
+  },
+};
+
+const SECTION_AUTO_APPROVE: ToolListSection = {
+  sectionID: "mcp-auto-approve",
+  chipsID: "mcp-auto-approve-chips",
+  inputID: "mcp-auto-approve-input",
+  addID: "mcp-auto-approve-add",
+  removeTitle: "Ask again",
+  suspension: {
+    noticeID: "mcp-auto-approve-suspended",
+    linkID: "mcp-auto-approve-profile-link",
+    honoured: () => autoApproveHonoured.peek(),
+  },
+  stored: (s) => s.auto_approve,
+  read: () => session.autoApproveList,
+  write: (names) => {
+    session.autoApproveList = names;
+  },
+};
+
+/** Mark a tool list as recorded-but-not-in-force when the security profile in
+ *  force does not honour it.
+ *
+ *  The names stay VISIBLE and stay EDITABLE, and both halves are the point: the
+ *  record is the user's intent and it applies again on a profile that honours it,
+ *  so only the EFFECT is suspended. Dropping the chips, or disabling the adder,
+ *  would reproduce the defect this whole mechanism exists to remove — a grant
+ *  nobody could see — one state over.
+ *
+ *  The posture is read UNTRACKED, and the pre-fetch window that would make that
+ *  wrong is unreachable here: this section renders only when EDITING an existing
+ *  server, and a server row exists only because the same `GET /api/mcp` response
+ *  that carries the posture has already landed. A profile cannot change while
+ *  this modal is open either — its picker is a panel behind it — so there is no
+ *  live change for an effect to follow and none is registered.
+ *
+ *  The link NAVIGATES and nothing else, which is the constraint
+ *  `permission.ts`'s buildPolicyPointer established: the profile is Settings-only,
+ *  so a surface that would benefit from a looser one must never itself be a path
+ *  that loosens it. There is deliberately no control here that changes a profile.
+ *
+ *  It reuses that pointer's two classes rather than restating their look: one
+ *  idiom — a quiet line pointing at the profile picker — should read one way
+ *  wherever it appears, and a second copy of the rules is what drifts. The names
+ *  are the dock's (`approval-*`) because that is where the idiom started;
+ *  renaming them app-wide is out of this change's scope. */
+function applySuspension(cfg: ToolListSection, section: HTMLDivElement): void {
+  const sus = cfg.suspension;
+  if (sus === undefined) {
+    return;
+  }
+  const honoured = sus.honoured();
+  byId<HTMLDivElement>(sus.noticeID).classList.toggle("hidden", honoured);
+  section.toggleAttribute("data-suspended", !honoured);
+  // ASSIGNED, not added: this runs on every modal open, and addEventListener
+  // would stack one listener per open.
+  byId<HTMLButtonElement>(sus.linkID).onclick = (): void => {
+    openSetting("permissions", "security-profile-list");
+  };
+}
+
+function initToolListSection(cfg: ToolListSection, server: Server | null): void {
+  const section = byId<HTMLDivElement>(cfg.sectionID);
+  const chips = byId<HTMLDivElement>(cfg.chipsID);
+  const input = byId<HTMLInputElement>(cfg.inputID);
+  const addBtn = byId<HTMLButtonElement>(cfg.addID);
 
   if (server === null) {
     section.classList.add("hidden");
-    session.disabledToolsList = [];
+    cfg.write([]);
     return;
   }
 
   section.classList.remove("hidden");
-  session.disabledToolsList = [...(server.disabled_tools ?? [])];
+  applySuspension(cfg, section);
+  cfg.write([...(cfg.stored(server) ?? [])]);
   // The tool names come from the RUNTIME status (what the connected server
   // advertises), not from the config record — they are a discovery result, and
   // the config file is KAS's now. Empty until a chat has connected the server,
   // which is the honest state: nothing has told us its tools yet.
   const knownTools = discoverySignalFor(server.name).peek().tools;
-  renderDisabledChips(chips, section, knownTools);
+  renderToolChips(cfg, chips, section, knownTools);
 
   const add = (): void => {
     const name = input.value.trim();
-    if (name === "" || session.disabledToolsList.includes(name)) {
+    if (name === "" || cfg.read().includes(name)) {
       return;
     }
-    session.disabledToolsList.push(name);
+    cfg.write([...cfg.read(), name]);
     input.value = "";
-    renderDisabledChips(chips, section, knownTools);
+    renderToolChips(cfg, chips, section, knownTools);
+    renderToolSuggestions(cfg, section, knownTools, chips);
   };
 
   addBtn.onclick = add;
@@ -657,33 +932,31 @@ function initDisabledToolsSection(server: Server | null): void {
   };
 
   // Render known tools as clickable suggestions below the input.
-  renderToolSuggestions(section, knownTools, chips);
+  renderToolSuggestions(cfg, section, knownTools, chips);
 }
 
 function renderToolSuggestions(
+  cfg: ToolListSection,
   section: HTMLDivElement,
   knownTools: string[],
   chips: HTMLDivElement,
 ): void {
-  let suggestionsEl = section.querySelector(".mcp-tool-suggestions");
-  if (suggestionsEl !== null) {
-    suggestionsEl.remove();
-  }
-  const available = knownTools.filter((t) => !session.disabledToolsList.includes(t));
+  section.querySelector(".mcp-tool-suggestions")?.remove();
+  const available = knownTools.filter((t) => !cfg.read().includes(t));
   if (available.length === 0) {
     return;
   }
 
   const label = el("span", { className: "mcp-tool-suggestions-label" }, "Available:");
-  suggestionsEl = el("div", { className: "mcp-tool-suggestions" }, label);
+  const suggestionsEl = el("div", { className: "mcp-tool-suggestions" }, label);
 
   for (const name of available) {
     const pill = el("button", { type: "button", className: "action-pill mono" }, name);
     pill.addEventListener("click", () => {
-      if (!session.disabledToolsList.includes(name)) {
-        session.disabledToolsList.push(name);
-        renderDisabledChips(chips, section, knownTools);
-        renderToolSuggestions(section, knownTools, chips);
+      if (!cfg.read().includes(name)) {
+        cfg.write([...cfg.read(), name]);
+        renderToolChips(cfg, chips, section, knownTools);
+        renderToolSuggestions(cfg, section, knownTools, chips);
       }
     });
     suggestionsEl.appendChild(pill);
@@ -691,25 +964,24 @@ function renderToolSuggestions(
   section.appendChild(suggestionsEl);
 }
 
-function renderDisabledChips(
+function renderToolChips(
+  cfg: ToolListSection,
   container: HTMLDivElement,
-  section?: HTMLDivElement,
-  knownTools?: string[],
+  section: HTMLDivElement,
+  knownTools: string[],
 ): void {
   container.replaceChildren();
-  for (const name of session.disabledToolsList) {
+  for (const name of cfg.read()) {
     container.appendChild(
       buildChip({
         label: name,
         code: true,
         chipClass: "chip mono",
-        removeTitle: "Unblock",
+        removeTitle: cfg.removeTitle,
         onRemove: () => {
-          session.disabledToolsList = session.disabledToolsList.filter((n) => n !== name);
-          renderDisabledChips(container, section, knownTools);
-          if (section !== undefined && knownTools !== undefined) {
-            renderToolSuggestions(section, knownTools, container);
-          }
+          cfg.write(cfg.read().filter((n) => n !== name));
+          renderToolChips(cfg, container, section, knownTools);
+          renderToolSuggestions(cfg, section, knownTools, container);
         },
       }),
     );

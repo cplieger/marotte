@@ -22,7 +22,7 @@ func FuzzDeriveSubSession(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, sessionID, parentSession string) {
 		deps := &stubDeriveSubDeps{parent: parentSession}
-		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(deps))
 		chatID := marotte.ChatID("fuzz-chat")
 
 		got := tr.deriveSubSession(chatID, sessionID)

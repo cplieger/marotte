@@ -1,165 +1,142 @@
-// ---------------------------------------------------------------------------
-// Event/boundary rendering: build event messages (boundary dividers, system
-// messages).
-//
-// v3 EventKinds are boundary dividers (model_switched, compacted,
-// compaction_failed, infra_safety_blocked, interrupted). `cancelled` is the
-// one invisible marker (an expected user action needs no badge). The v2
-// crew / inbox / agent_switched kinds are gone.
-// ---------------------------------------------------------------------------
+// Event rendering: the boundary rows six entry kinds draw inside a turn's body.
+// `messages.ts` owns this markup and hands it to the dispatcher as `makeEvent`,
+// so the block renderer declares no event vocabulary of its own.
 
-import type { Message, EventKind } from "./types.js";
+import type { KindedEntry, TurnRevertCause } from "./types.js";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
+import { effortLabel } from "./effort.js";
 import { renderMarkdownInto } from "./markdown.js";
+import { labelForMode } from "./roles.js";
 
-// ---------------------------------------------------------------------------
-// Event render strategy (exhaustive over EventKind via satisfies)
-// ---------------------------------------------------------------------------
+type EventEntryKind =
+  | "compaction"
+  | "compaction_failed"
+  | "safety_blocked"
+  | "model_switched"
+  | "mode_switched"
+  | "turn_revert";
 
-type BoundaryKind = "switched" | "compacted" | "failed" | "blocked";
+/** The six entry kinds that render as a boundary row. Every other kind renders as
+ *  itself, outside the body, or not at all — `placeEntry` is what routes them, and this
+ *  union is the one it hands over.
+ *
+ *  DISTRIBUTED over the six, like `AnyEntry` over the seventeen: `KindedEntry` of a union
+ *  kind is ONE object whose payload is the union of the six payloads, which no switch can
+ *  narrow — the correlated-pair loss, and the arms read a field off the wrong payload. */
+export type EventEntry = { [K in EventEntryKind]: KindedEntry<K> }[EventEntryKind];
 
-type EventRenderStrategy =
-  | {
-      kind: "boundary";
-      boundary: BoundaryKind;
-      icon: string;
-      defaultLabel: string;
-      labelFn?: (content: string) => string;
+type BoundaryKind = "switched" | "compacted" | "failed" | "blocked" | "rewound";
+
+/** The words the revert's boundary says, TOTAL over the cause by type: a second
+ *  `TurnRevertCause` cannot compile without wording of its own, which is what stops one
+ *  cause silently rendering another's sentence. */
+const REVERT_LABELS: Record<TurnRevertCause, string> = { rewind: "Rewound to here" };
+
+/** The row one event entry draws. TOTAL over `EventEntry` by type: a seventh event kind
+ *  leaves the function's end reachable and fails the type check, which is what the
+ *  exhaustive strategy map this replaced was for. */
+export function buildEvent(e: EventEntry): HTMLElement {
+  switch (e.kind) {
+    case "model_switched": {
+      return boundary("switched", "\u21bb", switchedLabel(e.payload));
     }
-  | { kind: "skip" };
-
-/** Exhaustive render strategy map — every EventKind must have an entry.
- *  Adding a new EventKind to the generated union produces a compile error
- *  until this map is updated. */
-export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> = {
-  model_switched: {
-    kind: "boundary",
-    boundary: "switched",
-    icon: "\u21bb",
-    defaultLabel: "Context reset",
-    labelFn: (c) => (c ? `Switched to ${c}` : "Context reset"),
-  },
-  compacted: {
-    kind: "boundary",
-    boundary: "compacted",
-    icon: "\u273b",
-    defaultLabel: "Conversation compacted",
-  },
-  compaction_failed: {
-    kind: "boundary",
-    boundary: "failed",
-    icon: "\u26a0",
-    defaultLabel: "Compaction failed",
-    labelFn: (c) => (c ? `Compaction failed: ${c}` : "Compaction failed"),
-  },
-  // Kiro Infrastructure-Safety ENFORCE-mode refusal: KAS blocked an
-  // infra-as-code write/shell tool call upstream (the tool never ran, nothing
-  // was written). A permanent transcript record, distinct from the transient
-  // status banner in handlers/safety.ts. content carries the violated safety
-  // properties; the block is chat-scoped (KAS's toolId is a tool name, not a
-  // tool_call id, so it can't pin a specific tool card).
-  infra_safety_blocked: {
-    kind: "boundary",
-    boundary: "blocked",
-    icon: "\u{1F6E1}",
-    defaultLabel: "Infrastructure Safety blocked a change",
-    labelFn: (c) =>
-      c ? `Infrastructure Safety blocked: ${c}` : "Infrastructure Safety blocked a change",
-  },
-  // A turn that ended without a proper completion event. Two paths reach it,
-  // and NEITHER is a server restart: a prompt RPC that failed with a started
-  // assistant buffer (AbandonInFlightTurn), and an empty-turn recovery that
-  // recreated the session (recoverEmptyTurn). The label used to name a restart
-  // and a `.partial` sidecar recovery; that sidecar is deleted (see
-  // hub/bridge_coord.go) and nothing in the tree detects a restart, so the
-  // string was a claim about a mechanism that no longer exists.
-  //
-  // NO labelFn, and THIS IS THE OWNERSHIP RULE, stated here and at
-  // `turnFailureText` (turns.ts) because it is the only thing keeping the two
-  // surfaces from both speaking: THE CARD-LEVEL `.turn-notice` OWNS THE PROSE
-  // ACCOUNT of why a turn did not end cleanly. A body divider marks the BOUNDARY
-  // and names its KIND; it never repeats that prose.
-  //
-  // The notice wins because it is the surface present in BOTH fold states —
-  // `syncTurnFace` early-returns for an unfolded card, which is why a face-only
-  // reason was unreachable on an open turn, and a broken turn is precisely the
-  // turn that never auto-folds. The divider is inside `.turn-body`, so a folded
-  // card hides it.
-  //
-  // Nothing is lost by dropping the labelFn: `turnFailureText`'s first source
-  // still reads THIS row's `content`, so the server's own sentence still reaches
-  // the reader — once, on the durable surface, instead of twice about 50px apart
-  // (measured on live chat `c-a7f83c9…` turn 1).
-  //
-  // Still red "failed"-styled: a turn cut short reads as a short but complete
-  // answer without a visible boundary.
-  interrupted: {
-    kind: "boundary",
-    boundary: "failed",
-    icon: "\u26a0",
-    defaultLabel: "Turn interrupted",
-  },
-  cancelled: { kind: "skip" },
-  // The outcome marker is a CARRIER, not a divider. It exists because a turn that
-  // emitted nothing has no assistant message to stamp `turn_outcome` on, so the
-  // record needs a row to hold it — and the turn card already renders that outcome
-  // as its own tint, glyph and label. A second visible line saying the same thing
-  // would be the one case where an empty turn is louder than a full one.
-  //
-  // A `skip` is still a MESSAGE: it opens the turn, so the transcript shows a
-  // headerless card with the failure on its footer rather than nothing at all.
-  turn_outcome: { kind: "skip" },
-  // A message a workflow STEP sent into the chat that launched its run, replayed
-  // off the durable copy KAS keeps. It used to come back as a USER bubble, so the
-  // transcript claimed the reader had typed the step's own question.
-  //
-  // The content IS the message, so `labelFn` renders it rather than a fixed
-  // sentence with the text dropped — this is the only durable copy of a question
-  // the interaction dock holds in memory, and a divider reading "A step sent a
-  // message" would lose it a second way. A boundary rather than a bubble because
-  // the author is neither side of the conversation: a step is work this chat
-  // dispatched, and `switched` is the neutral face the other
-  // this-happened-to-your-session markers already use.
-  step_notice: {
-    kind: "boundary",
-    boundary: "switched",
-    icon: "\u{1F4AC}",
-    defaultLabel: "A workflow step sent a message",
-    labelFn: (c) => (c === "" ? "A workflow step sent a message" : `Step: ${c}`),
-  },
-} satisfies Record<EventKind, EventRenderStrategy>;
-
-// ---------------------------------------------------------------------------
-// Build / update
-// ---------------------------------------------------------------------------
-
-export function buildEvent(m: Message): HTMLElement | null {
-  if (m.event_kind !== undefined) {
-    const strategy = EVENT_RENDER_MAP[m.event_kind];
-    if (strategy.kind === "boundary") {
-      const content = m.content ?? "";
-      const label = strategy.labelFn ? strategy.labelFn(content) : strategy.defaultLabel;
-      // Compaction is the one kind whose content is a payload, not a reason.
-      if (m.event_kind === "compacted" && content !== "") {
-        return buildCompactionBreak(strategy.icon, label, content);
-      }
-      return buildBoundaryDivider(strategy.boundary, strategy.icon, label);
+    case "mode_switched": {
+      // The model banner's own component and CSS: one boundary row for both switches,
+      // so a reader learns one shape whichever thing moved.
+      return boundary("switched", "\u21bb", modeSwitchedLabel(e.payload));
     }
-    // "skip" — cancelled produces no visible element
+    case "turn_revert": {
+      // The simple form, never `compactionBreak`: a revert has no summary to disclose,
+      // and the record's own fields say WHICH turns went rather than anything a reader
+      // asked to see. The cut itself is the whole row.
+      return boundary("rewound", "\u21ba", REVERT_LABELS[e.payload.cause]);
+    }
+    case "compaction": {
+      const summary = e.payload.summary;
+      const label = "Conversation compacted";
+      // The one kind whose payload is a body rather than a reason.
+      return summary === ""
+        ? boundary("compacted", "\u273b", label)
+        : compactionBreak("\u273b", label, summary);
+    }
+    case "compaction_failed": {
+      // The reason is the COMPACTION's, not the turn's: `turnFailureText` owns the prose
+      // account of a turn that ended badly and this row never repeats it.
+      const reason = e.payload.reason;
+      return boundary(
+        "failed",
+        "\u26a0",
+        reason === "" ? "Compaction failed" : `Compaction failed: ${reason}`,
+      );
+    }
+    case "safety_blocked": {
+      // KAS blocked an infra-as-code write or shell call upstream in enforce mode: the tool
+      // never ran and nothing was written. The durable record of the transient status the
+      // `handlers/safety.ts` banner shows; the payload names the properties violated, and
+      // the block is chat-scoped because KAS's toolId there is a tool NAME.
+      const props = e.payload.properties.join(", ");
+      return boundary(
+        "blocked",
+        "\u{1F6E1}",
+        props === ""
+          ? "Infrastructure Safety blocked a change"
+          : `Infrastructure Safety blocked: ${props}`,
+      );
+    }
   }
-  return null;
-}
-
-export function updateEvent(_el: HTMLElement, _m: Message): void {
-  // All event types are immutable from the global reconcile's POV.
 }
 
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
 
-function buildBoundaryDivider(kind: BoundaryKind, icon: string, label: string): HTMLElement {
+/** The label a `model_switched` entry draws. ONE entry kind, TWO triggers: a model
+ *  switch carries `from !== to`, and an effort-only change carries `from === to`,
+ *  which is the whole discriminator — see EntryModelSwitched.
+ *
+ *  An empty `to` is the context reset and takes no tier: the effort a session
+ *  reopens on is not what that row is about. */
+function switchedLabel(p: {
+  readonly to: string;
+  readonly from: string;
+  readonly effort?: string;
+}): string {
+  if (p.to === "") {
+    return "Context reset";
+  }
+  // `effortLabel` and never the live catalog: a transcript row records the tier
+  // that was picked then, and the vocabulary may have moved since.
+  const tier = p.effort === undefined || p.effort === "" ? "" : effortLabel({ id: p.effort });
+  if (tier === "") {
+    return `Switched to ${p.to}`;
+  }
+  // "Switched to opus-5" beside a model name that did not move would read as a
+  // model switch, so the effort-only row names the tier instead.
+  return p.from === p.to ? `Reasoning effort: ${tier}` : `Switched to ${p.to} (${tier})`;
+}
+
+/** The label a `mode_switched` entry draws. BOTH endpoints, because a mode id names a
+ *  workflow rather than a version and "Mode: Spec" would not say what changed. An empty
+ *  `from` is a chat whose mode was never recorded, and names the destination alone.
+ *
+ *  `labelForMode` and so the live catalog, per ADDENDUM 16 rule 1: a workspace agent is
+ *  named by its front matter, which no payload carries, and the chain ends at the id
+ *  itself for a mode the catalog does not know. That makes the row name what the
+ *  composer's mode pill named — `vibe` reads "Default" in both places, never "Vibe". */
+function modeSwitchedLabel(p: {
+  readonly from: string;
+  readonly to: string;
+  readonly source: string;
+}): string {
+  const to = labelForMode(p.to);
+  const row = p.from === "" ? `Mode: ${to}` : `Mode: ${labelForMode(p.from)} \u2192 ${to}`;
+  // KAS flips the mode itself at a turn's end (Plan to Execute), and a reader who did
+  // not touch the pill is owed that.
+  return p.source === "agent" ? `${row}, switched by the agent` : row;
+}
+
+function boundary(kind: BoundaryKind, icon: string, label: string): HTMLElement {
   const node = el("div", { className: `boundary boundary-${kind}` });
   node.appendChild(el("span", { className: "boundary-icon" }, icon));
   node.appendChild(el("span", { className: "boundary-label" }, label));
@@ -171,7 +148,7 @@ function buildBoundaryDivider(kind: BoundaryKind, icon: string, label: string): 
  *
  *  The body renders on FIRST OPEN — a summary runs to 16 KB of markdown, and
  *  `::details-content` skips layout and paint but not CONSTRUCTION. */
-function buildCompactionBreak(icon: string, label: string, summary: string): HTMLElement {
+function compactionBreak(icon: string, label: string, summary: string): HTMLElement {
   const root = el("details", { className: "compaction" }) as HTMLDetailsElement;
   // `.message assistant` is the app's markdown-prose skin (editor-markdown.ts).
   const body = el("div", { className: "compaction-body message assistant" });
@@ -182,8 +159,6 @@ function buildCompactionBreak(icon: string, label: string, summary: string): HTM
       // LEADS the row, because it DISCLOSES. One rule across the transcript: a
       // chevron that opens a region below it comes first and rotates, a chevron
       // that navigates sits at the trailing edge and does not — see chevron.ts.
-      // It used to trail here while the reasoning block's led, so the two native
-      // `<details>` in a transcript disagreed with each other.
       chevronEl(),
       el("span", { className: "compaction-icon" }, icon),
       el("span", { className: "compaction-label" }, label),
@@ -199,8 +174,4 @@ function buildCompactionBreak(icon: string, label: string, summary: string): HTM
     renderMarkdownInto(body, summary);
   });
   return root;
-}
-
-export function buildSystemFallback(m: Message): HTMLElement {
-  return el("div", { className: "message system" }, m.content ?? m.event_kind ?? "");
 }

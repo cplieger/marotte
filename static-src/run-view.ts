@@ -1,30 +1,28 @@
 // The WORKFLOW door into `exec-view/`, the shared subpage view: wiring only, folding
 // KAS's `inspect` through `run-exec-source.ts` into that model, and owning the three
 // things only a workflow knows — the status's verbs, what an empty step body means, and
-// where a `run_step` frame renders. It is also the ONLY surface hosting a step
-// transcript. Closing a run tab stops nothing (`owns: false` at every door, no
-// `onClose`); stopping a run is the Cancel VERB.
+// which of the run's own log turns each step renders. It is also the ONLY surface
+// hosting a step transcript. Closing a run tab stops nothing (`owns: false` at every
+// door, no `onClose`); stopping a run is the Cancel VERB.
 
 import { el, effect, touch } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { bindLoadingState } from "./actions/index.js";
-import { hasTab, openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
+import { openRunTab, openTab, parentChatRef, tabIdFor } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks, runPendingAsks } from "./decision-dock.js";
 import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
 import { CONTROL_LABEL, offeredVerbs, refusalSentences, type RunVerb } from "./run-controls.js";
-import { get, isThinking, messagesVersionOf } from "./store.js";
-import { blockTextSigs, blockThinkingSigs } from "./store-signals.js";
+import { get } from "./store.js";
 import { buildExecPage, type ExecPageView } from "./exec-view/page.js";
 import { inFlight, neverRan, settled } from "./exec-view/status.js";
 import { flatten, leaves, type ExecNode } from "./exec-view/model.js";
 import { runToExec } from "./run-exec-source.js";
-import type { RunStepStream } from "./run-step-blocks.js";
-import type { RunChatStepStream, RunStepPaint } from "./run-chat-steps.js";
-import { sliceRunSteps, type RunStepSlice } from "./run-step-slice.js";
+import type { RunStepPaint, RunStepStream } from "./run-chat-steps.js";
 import {
   clearStepTranscripts,
   requestStepTranscript,
+  rereadStepTranscript,
   stepRead,
-  stepSliceFor,
   stepTranscriptVersion,
 } from "./run-step-transcript.js";
 import {
@@ -35,15 +33,17 @@ import {
   runState,
   runChatID,
   runPlan,
+  runTurnHoles,
+  runTurns,
   type RunState,
 } from "./run-store.js";
+import { projectTurn, turnOpenOf, type TurnSource } from "./turns.js";
+import type { TurnState } from "./types.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
-import { parseStepSubtask } from "./step-subtask.js";
-import type { RunStepPayload } from "./types.js";
 
 /** Verb → its action. Separate from run-controls.ts on purpose: that module is
  *  the pure RULE and must stay importable without the actions framework; this is
@@ -155,16 +155,8 @@ export function refreshRun(workflowID: string): void {
   invalidateRun(workflowID);
   // The affordance. `invalidateRunControls` owns the trigger list.
   invalidateRunControls(workflowID);
-  // A chat-parented run's step transcript is a projection of the LAUNCHING chat's
-  // resident window, so `inspect` alone leaves the pane stale. Lazy, like the step
-  // transcript below: a static edge to chat.js puts the whole chat graph in this
-  // module's importers. A no-op for a parentless run.
-  const launching = launchingChatOf(workflowID);
-  if (launching !== "") {
-    void import("./chat.js").then((m) => {
-      m.refreshChatView(launching);
-    });
-  }
+  // NO chat refresh: a step's entries are the RUN's, so a chat's window cannot move
+  // this pane. The step transcript's refresh is the step GET, armed by `armStepRead`.
 }
 
 /** The view's single subscription to the store. Idempotent. */
@@ -176,26 +168,20 @@ function installViewEffect(): void {
   viewEffectInstalled = true;
   effect(() => {
     const id = shownRun;
-    // EVERY change to the launching chat's transcript bumps that chat's version, a
-    // delta included (coalesced per microtask), which is how a chat-parented run's
-    // projected steps arrive. Read BEFORE the early returns so the effect stays
-    // subscribed on the passes that bail; `paint` returns early on an unresolved
-    // fetch, so this cannot live there. An unknown chat has nothing to subscribe to,
-    // and the run's own invalidation re-runs this effect when the pairing arrives.
-    const chat = id === "" ? "" : launchingChatOf(id);
-    if (chat !== "") {
-      touch(messagesVersionOf(chat));
-    }
-    // A resolved on-demand read repaints the page. ONE signal for every step, which
-    // is the inverse of the run store's per-run cells and right for the same reason
-    // reversed: this page shows one node at a time, so a coarse bump costs one
-    // repaint of the page the reader is looking at. Read BEFORE the early return,
-    // with the others, so the effect stays subscribed on the passes that bail.
+    // Every entry of this run's log bumps its own log version, which is how a step's
+    // content arrives. Read BEFORE the early returns so the effect stays subscribed on
+    // the passes that bail; `paint` returns early on an unresolved `inspect`. The RUN's
+    // log rather than the launching chat's version: a chat subscription would repaint
+    // for conversation traffic and miss every step frame.
+    const turns = id === "" ? [] : runTurns(id);
+    // A resolved step GET repaints the page. ONE signal for every step: this page
+    // shows one node at a time, so a coarse bump costs one repaint. It carries the
+    // VERDICT only — the entries that answer adopted arrive on the log version above.
     touch(stepTranscriptVersion);
     if (id === "") {
       return;
     }
-    paint(id, runState(id));
+    paint(id, runState(id), turns);
   });
 }
 
@@ -285,24 +271,17 @@ let focusRequest: { workflowID: string; path: string } | undefined;
 let page: ExecPageView | undefined;
 let pageRun = "";
 
-/** The live step transcript, LAZILY loaded.
+/** The step transcript, LAZILY loaded — ONE stream now, because there is one source.
  *
- *  `run-step-blocks.ts` reaches the real tool card, and that module's graph runs
- *  through the editor openers and the navigator into `chat.ts` — the whole
- *  transcript stack. A run tab that statically imported it would pull all of that to
- *  draw a tree, and it is only ever needed for a run being WATCHED: a review of a
- *  finished run has no live content at all, because a step's working output is
- *  streamed and never stored. The first `run_step` frame is the right moment to pay
- *  for it, and frames arriving during the load are queued rather than dropped so the
- *  beginning of a step's output is not the part that goes missing. */
-let steps: RunStepStream | undefined;
-let stepsLoading = false;
-const pendingSteps: RunStepPayload[] = [];
-
-/** The CHAT-route step transcript, lazily loaded for the same reason: it reaches
- *  `messages-blocks.ts`, and through it the whole transcript stack. */
-let chatSteps: RunChatStepStream | undefined;
-let chatStepsLoading = false;
+ *  `run-chat-steps.ts` reaches the real tool card through `messages-blocks.ts`, and
+ *  that module's graph runs on through the editor openers and the navigator into
+ *  `chat.ts` — the whole transcript stack. A run tab that statically imported it
+ *  would pull all of that in to draw a tree, which is what this lazy edge exists to
+ *  prevent. The first pass with content is the right moment to pay for it, and
+ *  nothing has to be queued across the load: the entries are in the run store, so the
+ *  pass that lands re-reads them rather than replaying a captured map. */
+let stepStream: RunStepStream | undefined;
+let stepStreamLoading = false;
 
 /** The cached "Open the conversation" anchor, per (run, chat).
  *
@@ -324,23 +303,22 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   });
   page = built;
   pageRun = workflowID;
-  // Retargeting drops the previous run's stream with the DOM it wrote into. Its
-  // content is live-only either way, so there is nothing to carry over — and a
-  // stream still holding the old page's hosts would append into detached elements.
-  steps = undefined;
-  stepsLoading = false;
-  pendingSteps.length = 0;
-  // Same reason, and one more: a detached render left registered in
-  // `messages-blocks.ts`'s map would keep this run's disposers alive under the next
-  // run's page.
-  chatSteps?.dispose();
-  chatSteps = undefined;
-  chatStepsLoading = false;
+  // Retargeting drops the previous run's stream with the DOM it wrote into: a stream
+  // holding the old page's hosts would append into detached elements, and a render
+  // left registered in `messages-blocks.ts` would keep its disposers alive under the
+  // next run's page.
+  stepStream?.dispose();
+  stepStream = undefined;
+  stepStreamLoading = false;
   // The on-demand reads go with the page, which is this cache's whole bound: a run
   // tab retargeting or closing is the one moment a step's answer stops being wanted,
   // and there is no other moment it becomes wrong.
   clearStepTranscripts();
   emptyLink = undefined;
+  // Beside them, and for their reason: a stale selection would intersect this run's holes
+  // with another run's path, and a stale answer would swallow the first hole here.
+  shownNode = undefined;
+  holesAnswered = "";
   // Beside the other per-run caches, and for their reason: a retarget must not carry
   // another run's pick into the page it is about to build. A request for the run
   // being retargeted TO survives because the guard only clears one naming ANOTHER
@@ -353,47 +331,108 @@ function mountPage(container: HTMLElement, workflowID: string): ExecPageView {
   return built;
 }
 
-/** Ask KAS for the shown step's transcript, when it is worth asking: the node must host
- *  one, it must be SETTLED (a live KAS session cannot be `session/load`ed), and the
- *  chat-route slice must be empty, or this fetches a second copy of rendered content.
+/** A `TurnSource` over one run's log, so `turns.ts`'s pure projection reads it
+ *  unchanged.
  *
- *  `onShowNode`'s `(path, state)` guard is what makes the settled gate a DEFERRAL:
- *  `select()` pins the selection, so a step clicked while running is read once it
- *  settles, and the transient `unavailable` verdict is re-asked no more often. */
+ *  Built per call from the array `runTurns` hands back rather than held, because that
+ *  array IS the store's order and a cached copy would be a second answer about it. */
+function runSource(turns: readonly [string, TurnState][]): TurnSource {
+  return { turns: new Map(turns), turn_order: turns.map(([id]) => id) };
+}
+
+/** The turns of one node path, in file order.
+ *
+ *  Several is the normal answer for a healed step, not an edge case: a resume after a
+ *  restart, and a heal after the hosting bridge was retired, re-open the same path as
+ *  a NEW turn, so a run's log carries one closed turn per attempt. `turn_open.node_path`
+ *  is the join, and it is the only one available — `TurnState` carries no path of its
+ *  own. */
+function turnsForStep(
+  turns: readonly [string, TurnState][],
+  nodePath: string,
+): [string, TurnState][] {
+  return turns.filter(([, t]) => turnOpenOf(t)?.node_path === nodePath);
+}
+
+/** Whether a step turn may still grow: its OWN `turn_close` is absent.
+ *
+ *  Never the run's status, and that is the whole liveness rule now. A `parallel` node
+ *  holds several open turns in one log, so a step that closed while its siblings carry
+ *  on is finished, and the run reading `running` says nothing about it. */
+function turnIsLive(state: TurnState): boolean {
+  return state.closeAt === undefined;
+}
+
+/** The shown node (`undefined` for a container, which hosts nothing), and the holed
+ *  turns already answered for it — keyed on the path plus those turn ids, so a hole
+ *  arriving after a repair is a new question and a repaint is not a retry loop
+ *  (`rereadStepTranscript` drops a settled verdict, so it must not run per frame). */
+let shownNode: ExecNode | undefined;
+let holesAnswered = "";
+
+/** Ask for the shown step's transcript, on the selection MOVING.
+ *
+ *  TWO conditions here, both keyed on `inspect` reporting the node settled, because that
+ *  is what `onShowNode` can observe: it notifies only when the shown `(path, state)`
+ *  moves, which is the gate that keeps a repaint off the wire.
+ *
+ *   - the store holds NO turn for the path. That is a step which opened and closed
+ *     entirely inside a connection gap, so no frame for it was ever delivered — and it
+ *     is also where a hole recorded for a turn this client never SAW converges, since
+ *     such an id belongs to no `TurnState` and so can be attributed to no node path.
+ *   - it holds a turn with NO `turn_close`. That is a client holding the turn's earlier
+ *     entries which missed its close, and it would otherwise read live for the tab's
+ *     life. The `gone` verdict on that turn's `run_turn` stamp repairs the same thing
+ *     from the digest's side; both read this log, so they cannot disagree and whichever
+ *     lands second changes nothing.
+ *
+ *  A turn WITH a `turn_close` and no hole is settled and is never re-read. The settled
+ *  gate is a DEFERRAL rather than a refusal: `select()` pins the selection, so a step
+ *  clicked while running is read once it settles, and the transient `unavailable`
+ *  verdict is re-asked no more often.
+ *
+ *  A HOLE is armed from the paint side instead (`armShownStepHole`), because it arrives
+ *  while the step is `running` and moves neither the path nor the state. */
 function armStepRead(node: ExecNode | undefined): void {
-  if (node?.transcript !== true || shownRun === "") {
+  shownNode = node?.transcript === true ? node : undefined;
+  if (node?.transcript !== true || shownRun === "" || !settled(node.state)) {
     return;
   }
-  if (!settled(node.state)) {
+  const mine = turnsForStep(runTurns(shownRun), node.path);
+  if (mine.length === 0) {
+    requestStepTranscript(shownRun, node.path);
     return;
   }
-  if (chatSliceHasContent(shownRun, node.path)) {
-    return;
+  if (mine.some(([, t]) => turnIsLive(t))) {
+    rereadStepTranscript(shownRun, node.path);
   }
-  requestStepTranscript(shownRun, node.path);
 }
 
-/** Whether the CHAT route already holds content for this step.
+/** Re-ask for the shown step whose turn the store marked a HOLE, once per hole.
  *
- *  Recomputed rather than read off the last paint, because `armStepRead` fires on a
- *  selection change and the last paint may predate the chat's window arriving. */
-function chatSliceHasContent(workflowID: string, nodePath: string): boolean {
-  const chat = launchingChatOf(workflowID);
-  if (chat === "") {
-    return false;
+ *  The arm the selection cannot carry: a hole arrives while the step is `running`, so the
+ *  shown `(path, state)` never moves and `onShowNode` never fires again — while
+ *  `appendRunEntry` rejects every later entry of that turn, so the reader watches a FROZEN
+ *  live step until it settles or they click away and back. Paint sees it because a hole
+ *  bumps the run's log version, the signal this module's one effect already reads. */
+function armShownStepHole(workflowID: string, turns: readonly [string, TurnState][]): void {
+  const node = shownNode;
+  if (node === undefined) {
+    return;
   }
-  const slice = sliceRunSteps(get(chat)?.messages ?? [], workflowID, isThinking(chat)).get(
-    nodePath,
-  );
-  return slice !== undefined && slice.blocks.length > 0;
-}
-
-/** Whether this client holds the launching chat's message window at all.
- *
- *  `get` is the UNTRACKED reader (`watchSession` is the tracked one), which is what
- *  keeps this render-time call from adding a subscription to the view effect. */
-function chatResident(workflowID: string): boolean {
-  return get(launchingChatOf(workflowID)) !== undefined;
+  const holes = new Set(runTurnHoles(workflowID));
+  const holed = turnsForStep(turns, node.path)
+    .map(([id]) => id)
+    .filter((id) => holes.has(id))
+    .sort();
+  const answered = holed.length === 0 ? "" : join(node.path, ...holed);
+  if (answered === holesAnswered) {
+    return;
+  }
+  holesAnswered = answered;
+  if (holed.length > 0) {
+    rereadStepTranscript(workflowID, node.path);
+  }
 }
 
 /** What a node with a transcript host but nothing in it should say. It is called on
@@ -405,24 +444,21 @@ function chatResident(workflowID: string): boolean {
  *
  *  THREE questions, in this order, and only the last one is about the transcript:
  *
- *   - did the step RUN at all? `pending` and `skipped` have no session on either
- *     route, so no read can change the answer, and `run-exec-source.ts` marks every
- *     leaf hostable whatever its state — so both reach here as ordinary members of
- *     the tree.
- *   - is it still IN FLIGHT? A busy session cannot be `session/load`ed, so the read
- *     cannot serve a live step; the two answers differ on whether the OTHER route
- *     can, which is the one place the launch route is still visible in this note.
+ *   - did the step RUN at all? `pending` and `skipped` opened no turn, so no read can
+ *     change the answer, and `run-exec-source.ts` marks every leaf hostable whatever
+ *     its state — so both reach here as ordinary members of the tree.
+ *   - is it still IN FLIGHT? Then the step's entries are arriving on the run's own log
+ *     and the region fills as they land, so there is one answer for both run
+ *     populations and every device. Nothing here is keyed on where the reader is.
  *   - otherwise the step is SETTLED and every remaining answer is keyed on the READ's
- *     own verdict. That is the structural point of the on-demand read: after it the
- *     only route-dependent thing left on this pane is the DOOR (`stepEmptyAction`),
- *     which needs a launching chat to open.
+ *     own verdict. That is the structural point of the on-demand read: nothing on this
+ *     pane is route-dependent any more, the DOOR (`stepEmptyAction`) included, which
+ *     offers the launching CONVERSATION rather than a second copy of the transcript.
  *
- *  Item 6's two route sentences are GONE rather than reworded, and both had become
- *  false. "A step's working output is streamed while it runs and is never stored"
- *  described the `run_step` channel, not the step's own KAS session, which the
- *  endpoint reads until the reaper takes it — `gone` is what says that honestly. And
- *  "its transcript is there. Nothing from it is loaded here" claimed a route this
- *  module now reads on demand. */
+ *  ONE SOURCE, so no sentence here may name a second one. Both of the route sentences
+ *  this note used to carry were false before the collapse and are unsayable after it: a
+ *  step's entries are the RUN's, in `runs/<workflowId>/entries.jsonl`, and the step GET
+ *  ADOPTS into that same store rather than reading a transcript from anywhere else. */
 function stepEmptyNote(node: ExecNode): string {
   // Ahead of everything else, because a step with no execution behind it is the one
   // case here that no read can change. `.ev-d-state` two rows above already reads
@@ -432,30 +468,23 @@ function stepEmptyNote(node: ExecNode): string {
       ? "This step was skipped, so it produced no output."
       : "This step has not started, so there is nothing to show yet.";
   }
-  // IN FLIGHT is answered here IN FULL, so the verdict arms below are reached only
-  // for a settled step. Two answers, split on whether this client can watch the step
-  // at all: a PARENTLESS run's frames arrive live (`run_step`), and a CHAT-PARENTED
-  // run's do while the launching chat's window is resident — a live step's blocks sit
-  // at that chat's TAIL, the page a window always holds.
-  //
-  // With neither, nothing is arriving and nothing is being fetched either, because
-  // `armStepRead`'s third gate refuses a live step. So that answer states the bound
-  // rather than promising output: the read is armed by the repaint that shows the step
-  // settled (`onShowNode` fires on a state change), and the DOOR beside this note
-  // offers the conversation meanwhile.
+  // IN FLIGHT is answered here IN FULL, so the verdict arms below are reached only for
+  // a settled step. ONE answer, and the collapse is the point: a live step's entries
+  // arrive on the run's own log, for both run populations and on every device. The two
+  // answers this replaced were split on whether the client held the launching chat's
+  // window, a question the run's own log removes rather than answers.
   if (inFlight(node.state)) {
-    return !shownRunChatParented || chatResident(shownRun)
-      ? "Waiting for this step to produce output\u2026"
-      : "This step's transcript cannot be read here until it finishes.";
+    return "Waiting for this step to produce output\u2026";
   }
   switch (stepRead(shownRun, node.path)?.state) {
     case "loading":
       return "Loading this step's transcript\u2026";
     case "ready":
-      // Reached only with the slice empty AND the read holding no blocks, which is
-      // its own fact: the step ran and wrote nothing. Deliberately not "captured
-      // nothing" — `capturedOutput` is a different thing this pane already names two
-      // regions above, and `skipped` already owns "produced no output".
+      // Reached only with the log holding NO entry for this step's turn after a read
+      // the server answered, which is its own fact: the step ran and wrote nothing.
+      // Deliberately not "captured nothing" — `capturedOutput` is a different thing
+      // this pane already names two regions above, and `skipped` already owns "produced
+      // no output".
       return "This step ran without producing a transcript.";
     case "gone":
       return "This step's transcript is no longer stored. What the step CAPTURED is above, when it declared captureOutput.";
@@ -472,38 +501,38 @@ function stepEmptyNote(node: ExecNode): string {
       // exists rather than a state the pane sits in: `repaint` fires `onShowNode` —
       // and so `armStepRead` — AFTER `detail.render` has built this note, and again
       // whenever the shown node's state moves, so a read is in flight or one
-      // instruction away. The chat route reaches the same instant from the other
-      // side, while a step's blocks are inside the lazy `run-chat-steps.js` import,
-      // and `bodyFor` retires the note when they land.
+      // instruction away. A step whose entries the log ALREADY holds reaches the same
+      // instant from the other side, its rows being inside the lazy
+      // `run-chat-steps.js` import, and `bodyFor` retires the note when they land.
       return "Loading this step's transcript\u2026";
   }
 }
 
-/** The affordance beside that note: a door into the launching conversation.
+/** The affordance beside that note: a door into the conversation that LAUNCHED this run.
  *
- *  Rendered ONLY for a chat-parented run whose launching chat is known. It is still
- *  honest beside the `gone` and `unavailable` notes — the chat may hold those blocks
- *  on another device or after a load — and beside the in-flight one it is the remedy
- *  by a route worth stating, since the transcript DRAWS no step content: opening the
- *  chat loads its message window, and the slice this page reads is over that window.
- *  Its own reveal target is `revealRunCard`, whose step rows lead straight back here.
+ *  Rendered for a chat-parented run whose launching chat is known, and its subject is
+ *  that CONVERSATION rather than this step's transcript. Under one log a step's entries
+ *  are never in a chat's window, so this link is not a second route to the region's own
+ *  content and cannot contradict any note beside it: what it offers is the CONTEXT — the
+ *  turn that started the run, and the run's card among it, which is why `revealRunCard`
+ *  is the reveal target and why that card's step rows lead straight back here.
  *  `detail.ts` hides it whenever content is on screen.
  *
- *  Withheld for a step that NEVER RAN, on the note's own premise: this link's subject
- *  is a transcript sitting in the launching chat, and a step with no execution behind
- *  it has none there to reach — so the pane would say the step produced nothing
- *  beside a door to its output.
+ *  So it is offered for a step that NEVER RAN as well. The withholding this replaced was
+ *  justified by the link's old subject, a transcript sitting in the launching chat; a
+ *  conversation exists whatever the step did, and a reader looking at a skipped step is
+ *  exactly one who wants to read why it was skipped.
  *
  *  Built the way `fundamentals/run-card.ts` builds `.run-open`: a real anchor, so
  *  middle-click and copy-link work, with a click handler that lets the app's own
  *  routing own a plain click and steps aside for a modified one.
  *
  *  NO `#turn-{n}` permalink, and the reason CHANGED: `Turn.n` is session-absolute now
- *  (`turns.ts` `TurnWindowBase`), so a computed anchor names the right turn but still
+ *  (`turns.ts` reads it off `turn_open.n`), so a computed anchor names the right turn but still
  *  resolves nowhere — `route-path.ts`'s private `parseHashLine` matches only
  *  `/^#L(\d+)/`. */
 function stepEmptyAction(node: ExecNode): HTMLElement | null {
-  if (node.transcript !== true || !shownRunChatParented || neverRan(node.state)) {
+  if (node.transcript !== true || !shownRunChatParented) {
     return null;
   }
   const workflowID = shownRun;
@@ -545,90 +574,15 @@ function stepEmptyAction(node: ExecNode): HTMLElement | null {
   return link;
 }
 
-/** Whether an open run tab projects `chatID`'s transcript — the eviction sweep's
- *  third exemption, registered by app.ts through `registerEvictionExemption`
- *  (store.ts is a leaf and must not import tabs.ts or run-store.ts, so the
- *  composition root wires it).
- *
- *  It exists because `hasExecutingRunForChat` exempts a chat with a run that is
- *  still EXECUTING only, so opening the sub-tab of a FINISHED — or merely PARKED —
- *  chat-parented run and then working elsewhere would let the sweep take the chat's
- *  messages out from under the slice — state 1 would silently degrade to state 3
- *  while the reader watched.
- *
- *  Answered from the RESIDENT blocks, which is `subagentTabProjectsChat`'s shape and
- *  its reasoning: the run ids reachable from this chat are the ones stamped on its
- *  blocks, and a run tab whose steps are NOT resident does not hold the window — its
- *  pane already renders the nothing-is-loaded note, so eviction changes nothing it
- *  was showing. */
-export function runTabProjectsChat(chatID: string): boolean {
-  const msgs = get(chatID)?.messages ?? [];
-  for (const m of msgs) {
-    for (const b of m.blocks ?? []) {
-      const step = parseStepSubtask(b.agent_subtask_id ?? "");
-      if (step !== null && hasTab("run", step.workflowID)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-/** Apply one `run_step` frame, if it is about the run on screen.
- *
- *  A frame for another run is DROPPED rather than buffered. The event is
- *  workspace-global (a parentless run has no chat to address), so every client sees
- *  every run's steps, and holding the ones for runs this tab is not showing would be
- *  an unbounded buffer for content that is discarded on reload anyway. The cost is
- *  that switching to a run mid-flight starts its transcript from that moment, which
- *  is the same thing that happens when the tab is opened late. */
-export function applyRunStep(payload: RunStepPayload): void {
-  if (payload.workflow_id !== pageRun || page === undefined) {
-    return;
-  }
-  if (steps !== undefined) {
-    steps.apply(payload);
-    return;
-  }
-  pendingSteps.push(payload);
-  if (stepsLoading) {
-    return;
-  }
-  stepsLoading = true;
-  const forRun = pageRun;
-  void import("./run-step-blocks.js")
-    .then(({ createRunStepStream }) => {
-      // The tab may have retargeted during the load. Anything queued belonged to the
-      // run that is gone, so it is discarded with it rather than replayed into
-      // another run's rows.
-      if (pageRun !== forRun || page === undefined) {
-        pendingSteps.length = 0;
-        return;
-      }
-      const view = page;
-      const stream = createRunStepStream((nodePath) => view.bodyFor(nodePath));
-      steps = stream;
-      for (const queued of pendingSteps) {
-        stream.apply(queued);
-      }
-      pendingSteps.length = 0;
-    })
-    .catch(() => {
-      // The step transcript is an enhancement over a page that is already rendering
-      // the plan, the timings and the outputs, so a failed chunk load leaves a
-      // usable tab. Cleared so the next frame retries.
-      pendingSteps.length = 0;
-    })
-    .finally(() => {
-      stepsLoading = false;
-    });
-}
-
 /** Paint the view from a store value. `undefined` means the first fetch has not
  *  resolved, which is the ONLY case that shows a loading row: a refetch driven by an
  *  invalidation must not blank a run the reader is looking at, several times a
  *  minute on a busy one. */
-function paint(workflowID: string, state: RunState | undefined): void {
+function paint(
+  workflowID: string,
+  state: RunState | undefined,
+  turns: readonly [string, TurnState][],
+): void {
   const container = document.getElementById("run-body");
   if (container === null) {
     return;
@@ -678,121 +632,98 @@ function paint(workflowID: string, state: RunState | undefined): void {
   if (focus !== "" && flatten(run.nodes).some((n) => n.path === focus)) {
     focusRequest = undefined;
   }
-  projectStepTranscripts(workflowID, launchingChat, run.nodes);
+  projectStepTranscripts(workflowID, run.nodes, turns);
+  // After the projection, so the repair is asked over the entries this frame rendered.
+  armShownStepHole(workflowID, turns);
 }
 
-/** Project this run's step transcripts into the detail pane, from BOTH routes.
+/** Project this run's step transcripts into the detail pane, from the run's own log.
  *
- *  Per path, the chat slice wins when it has content and the on-demand read fills in
- *  otherwise. That order is the whole preference rule: the chat's blocks are already
- *  in this client's store and already stream, while the read is a settled answer, so
- *  preferring the read would replace live content with a snapshot.
+ *  ONE source, so there is no preference rule left to state: the entries this pane
+ *  renders are the run's, appended to `runs/<workflowId>/entries.jsonl` by the same
+ *  store code that writes a chat's log, for a chat-parented and a parentless run
+ *  alike. What this replaced was a per-step choice between the launching chat's `wf:`
+ *  lane and a settled on-demand read, and neither exists any more: a run's steps are
+ *  not in any chat's log, and the step GET now ADOPTS into this same store rather than
+ *  holding a second copy of the content.
  *
- *  It still performs NO chat fetch. `store-load.ts` `loadMessages` would make the
- *  chat route reachable more often and is declined for its own reason — a run tab
- *  fetching a chat's window makes a SECOND owner of that window (paging,
- *  `liveTurnMessage` bookkeeping, the eviction sweep) — and it never closed the
- *  paged-out case anyway. The on-demand read is what closes it, and it addresses the
- *  STEP rather than the conversation. */
+ *  It performs NO chat fetch and now has nothing to decline: `store-load.ts`
+ *  `loadMessages` used to be the way to make the chat route reachable more often, and
+ *  was refused because a run tab fetching a chat's window makes a SECOND owner of it
+ *  (paging, the eviction sweep). With the route gone the question does not arise. */
 function projectStepTranscripts(
   workflowID: string,
-  launchingChat: string,
   nodes: readonly ExecNode[],
+  turns: readonly [string, TurnState][],
 ): void {
-  const slices =
-    shownRunChatParented && launchingChat !== ""
-      ? sliceRunSteps(get(launchingChat)?.messages ?? [], workflowID, isThinking(launchingChat))
-      : new Map<string, RunStepSlice>();
-  subscribeToDeltas(slices);
-  const paint = leafPaints(workflowID, launchingChat, nodes, slices);
-  if (paint.size === 0) {
+  const paints = leafPaints(nodes, turns);
+  if (paints.size === 0) {
     return;
   }
-  if (chatSteps !== undefined) {
-    chatSteps.apply(paint);
+  if (stepStream !== undefined) {
+    stepStream.apply(paints);
     return;
   }
-  if (chatStepsLoading) {
+  if (stepStreamLoading) {
     return;
   }
-  chatStepsLoading = true;
+  stepStreamLoading = true;
   const forRun = pageRun;
   void import("./run-chat-steps.js")
-    .then(({ createRunChatStepStream }) => {
+    .then(({ createRunStepStream }) => {
       // The tab may have retargeted during the load, in which case this stream would
-      // write into the previous page's detached hosts. `page` rather than the
-      // captured view for the same reason: the current page is the mounted one.
+      // write into the previous page's detached hosts. `page` rather than a captured
+      // view for the same reason: the current page is the mounted one.
       if (pageRun !== forRun || page === undefined) {
         return;
       }
       const host = page;
-      const stream = createRunChatStepStream((nodePath) => host.bodyFor(nodePath), workflowID);
-      chatSteps = stream;
-      // RE-PROJECTED rather than replayed: the chunk load is async, so what either
-      // route holds now may have grown past what was captured before it, and applying
-      // the stale map would leave the tail to the next repaint.
-      const fresh =
-        shownRunChatParented && launchingChat !== ""
-          ? sliceRunSteps(get(launchingChat)?.messages ?? [], workflowID, isThinking(launchingChat))
-          : new Map<string, RunStepSlice>();
-      stream.apply(leafPaints(workflowID, launchingChat, nodes, fresh));
+      const stream = createRunStepStream((nodePath) => host.bodyFor(nodePath));
+      stepStream = stream;
+      // RE-PROJECTED rather than replayed: the load is async, so the log may have
+      // grown past what was captured and the stale map would leave the tail to the next
+      // repaint. Outside the view effect, so `runTurns`' own touch registers nothing.
+      stream.apply(leafPaints(nodes, runTurns(workflowID)));
     })
     .catch(() => {
       // The step transcript is an enhancement over a page already rendering the plan,
       // the timings and the outputs, so a failed chunk load leaves a usable tab.
     })
     .finally(() => {
-      chatStepsLoading = false;
+      stepStreamLoading = false;
     });
 }
 
-/** What to paint for every LEAF of this plan that has content on either route.
+/** What to paint for every LEAF of this plan the log holds a turn for.
  *
- *  A path naming no node is dropped so no orphan host is minted, and a CONTAINER is
- *  out by construction (it carries `transcript !== true` and hosts nothing). Every
- *  leaf WITH content is painted rather than only the selected one, because the hosts
- *  persist for the pane's life and a chat-route transcript cannot be replayed — the
+ *  A turn whose path names no node is dropped so no orphan host is minted, and a
+ *  CONTAINER is out by construction (it carries `transcript !== true` and hosts
+ *  nothing). Every leaf WITH a turn is painted rather than only the selected one,
+ *  because the hosts persist for the pane's life and a step's entries stream — the
  *  same reason `detail.ts` keeps them.
  *
- *  The CHAT slice wins whenever it has blocks: it is live and already in the store,
- *  where the on-demand read is a settled snapshot. A chat slice that is present but
- *  EMPTY loses, which is the case the read exists for — a window that has paged the
- *  run's turn out projects an entry with nothing in it. */
+ *  `live` is each turn's OWN `turn_close` absence, so one node's caret says nothing
+ *  about its siblings': a `parallel` node holds several open turns in one log. */
 function leafPaints(
-  workflowID: string,
-  launchingChat: string,
   nodes: readonly ExecNode[],
-  slices: ReadonlyMap<string, RunStepSlice>,
-): Map<string, RunStepPaint> {
-  const out = new Map<string, RunStepPaint>();
+  turns: readonly [string, TurnState][],
+): Map<string, RunStepPaint[]> {
+  const src = runSource(turns);
+  const out = new Map<string, RunStepPaint[]>();
   for (const node of leaves(nodes)) {
-    const chat = slices.get(node.path);
-    if (chat !== undefined && chat.blocks.length > 0) {
-      out.set(node.path, { slice: chat, source: { kind: "chat", chatID: launchingChat } });
-      continue;
+    const painted: RunStepPaint[] = [];
+    for (const [id, state] of turnsForStep(turns, node.path)) {
+      const turn = projectTurn(src, id);
+      if (turn === undefined) {
+        continue;
+      }
+      painted.push({ turn, live: turnIsLive(state) });
     }
-    const read = stepSliceFor(workflowID, node.path);
-    if (read !== undefined) {
-      out.set(node.path, { slice: read, source: { kind: "kas" } });
+    if (painted.length > 0) {
+      out.set(node.path, painted);
     }
   }
   return out;
-}
-
-/** Subscribe the view effect to the steps' own streaming blocks.
- *
- *  A SAME-TICK trigger, not the only one: `appendChunk` writes the block signal
- *  (effects flush synchronously) and schedules a version bump for the same delta,
- *  which `installViewEffect` reads a microtask later.
- *
- *  `get` rather than `ensure`: `appendChunk`'s full-repaint fallback fires only
- *  while no signal exists, so minting one freezes the TRANSCRIPT's own bubble. */
-function subscribeToDeltas(slices: ReadonlyMap<string, RunStepSlice>): void {
-  for (const slice of slices.values()) {
-    for (const key of slice.sourceKeys) {
-      touch(blockTextSigs.get(key), blockThinkingSigs.get(key));
-    }
-  }
 }
 
 /** The run's control row, rendered from the SERVER's answer and rebuilt only when

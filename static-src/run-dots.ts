@@ -24,8 +24,8 @@
 // that latched `thinking` and re-latched it on every reconnect — so the launching
 // chat read `working` for the whole run and this module's premise was false for
 // exactly the runs it excluded. The turn is now marked as the RUN's on both sides
-// (`marotte.TurnSourceWorkflowStep`, `turn_ended.workflow_step`, and the `wf:` gate
-// in `handlers/messages.ts`), which is what leaves the run's liveness to the dot
+// (`marotte.TurnSourceWorkflowStep` server-side and the `workflow_step` source on
+// the turn's `turn_open` entry), which is what leaves the run's liveness to the dot
 // below and nothing else.
 //
 // The dot element needs no new markup. `createTabEl` builds a `.tab-status-dot`
@@ -104,7 +104,7 @@ function bump(): void {
  *  about it while `/api/runs/live` names only the runs still going.
  *
  *  `tracked` records ASKED rather than answered, so a failed seed leaves that row on
- *  the placeholder until a `transport:gap` refetch or an activation. Keying on the
+ *  the placeholder until a `BUS_RECONCILE` refetch or an activation. Keying on the
  *  answer would re-ask on every tab-set change for a run the server has nothing for:
  *  `fetchRun` collapses "no such run" and "request failed" into one silent no-write. */
 function seedOpenRunTabs(): void {

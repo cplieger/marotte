@@ -3,7 +3,7 @@ package agent
 // The connect handshake's two projections are READ while the state under them is
 // WRITTEN: busyChatIDs takes every lifecycle's mutex under the registry's, and
 // liveRunRows projects the lease store while runs are granted and released.
-// openTurnState joins them because its two reads must share ONE hold. None of the three
+// live and openTurnIDs join them as the GET's registry reads. None of the four
 // is reached from another concurrent test in this package, so without this one the
 // detector has nothing to exercise at any of them and a read moved outside its lock
 // would ship green.
@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/runlease"
 )
 
 // The invariant that holds WITHOUT the detector too, so the test is not merely a
@@ -45,12 +45,9 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 		knownRun[id] = true
 	}
 
-	// One chat holds an OPEN turn for the whole test, so the walk reads a live turn's
-	// facts rather than only the reservation half of the predicate.
-	if rt.coord.StartTurn(t.Context(), chatIDs[0], marotte.TurnSourcePrompt) == 0 {
-		t.Fatal("StartTurn refused the fixture's open turn, so busyChatIDs never reaches " +
-			"openFactsLocked and only the reservation half of the walk is exercised")
-	}
+	// One chat holds an OPEN turn for the whole test, so the walk reads a live turn
+	// rather than only the reservation half of the predicate.
+	rt.stagePromptTurn(t, chatIDs[0])
 
 	store := rt.runs.leaseStore()
 	ctx := t.Context()
@@ -122,7 +119,8 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 					}
 				}
 				for _, id := range chatIDs {
-					_ = rt.coord.turns.openTurnState(id)
+					_ = rt.coord.turns.live(id)
+					_ = rt.coord.turns.openTurnIDs(id)
 				}
 			}
 		})

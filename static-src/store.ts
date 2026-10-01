@@ -1,35 +1,30 @@
-// Client-side session store. Sessions are an ordered keyed collection; MESSAGES are
-// deliberately not, because each session owns a Message[] whose per-block and per-tool
-// streaming signals (store-signals.ts) are finer-grained than a per-message signal.
+// Client-side session store. Sessions are an ordered keyed collection; the TURNS a session
+// holds are not, because a turn's entries carry per-entry and per-lane streaming signals
+// (store-signals.ts) that are finer-grained than a per-chat version signal.
 
 import type {
   Session,
   ChatHeader,
-  Message,
-  Block,
+  Entry,
+  EntryToolCall,
+  EntryToolResult,
+  OpenEntry,
+  ToolProgressPayload,
+  TurnState,
   Usage,
   ToolCall,
-  ToolCallUpdatePayload,
   CodeReference,
-  RefusalInfo,
-  FileChange,
   PendingSteer,
   SteerOrigin,
-  SteerAnchor,
-  SteerMark,
   ToolStatus,
 } from "./types.js";
-// From the generated wire rather than turns.ts, which imports this module: one spelling
-// of the enum, and a type-only import adds no runtime edge.
-import type { TurnOutcome } from "./wire/types.gen.js";
+// From the generated wire rather than turns.ts, for one spelling of the enum.
+import type { RefusalInfo, TurnOutcome } from "./wire/types.gen.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
-// Type-only, so no runtime edge is added in either direction: turns.ts is a pure
-// leaf that reaches nothing here.
-import type { TurnWindowBase } from "./turns.js";
+// turns.ts is a pure leaf that reaches nothing here, so this edge is one-way.
+import { payloadOf } from "./turns.js";
+import { callIDOfToolResult } from "./entry-ids.js";
 import { severityOf } from "./turn-severity.js";
-import { isSubagentInvocation } from "./tool-schema.js";
-import { isStepSubtask, parseStepSubtask } from "./step-subtask.js";
-import { isPadBlock, padBlocks, subtaskField } from "./block-pad.js";
 import {
   signal,
   computed,
@@ -41,14 +36,16 @@ import {
 } from "@cplieger/reactive";
 import { forgetView, viewStale } from "./view-freshness.js";
 import {
-  blockTextSigs,
-  blockThinkingSigs,
-  blockKey,
-  clearBlockSigsFor,
+  bumpLane,
+  clearEntryTextSig,
+  clearTurnSigs,
+  ensureEntryTextSig,
   peekToolCallSig,
   toolCallSigs,
   toolCallSigKey,
+  writeEntryText,
 } from "./store-signals.js";
+import { noteToolActivity } from "./tool-silence.js";
 
 // --- Messages reactivity: PER-CHAT transcript versions ---
 // One version signal per chat, so a background chat's stream cannot repaint the visible
@@ -59,9 +56,9 @@ const messagesVersionSigs = new SignalMap<number>();
 /** What a version bump was FOR — what the renderer may skip.
  *
  *   - `chunk`: text growth of a MOUNTED block; paint refreshes tail bookkeeping only.
- *   - `tool`: an existing tool call's update; keyed update of the owning message.
+ *   - `tool`: an existing tool call's update; keyed update of the owning turn.
  *   - `fact`: a transcript fact flipped; full projection + reconcile.
- *   - `shape`: the message list's structure changed; the full pass.
+ *   - `shape`: the keyed list of turns and entries changed; the full pass.
  *   - `load`: the window was REPLACED by a fetched page; the full pass, plus the one fact
  *     the array cannot state — those rows are a REPLAY, so none of them is an arrival. */
 export type RenderCause = "chunk" | "tool" | "fact" | "shape" | "load";
@@ -77,28 +74,28 @@ const CAUSE_RANK: Record<RenderCause, number> = {
   load: 4,
 };
 
-/** The per-chat cause accumulator. `msgID` survives only while every merged cause is
- *  `tool` for ONE message — the keyed-update address; two messages escalate to shape. */
-const pendingCause = new Map<string, { cause: RenderCause; msgID?: string }>();
+/** The per-chat cause accumulator. `turnID` survives only while every merged cause is
+ *  `tool` for ONE turn — the keyed-update address; two turns escalate to shape. */
+const pendingCause = new Map<string, { cause: RenderCause; turnID?: string }>();
 
 /** The cause the chat's CURRENT version was flushed with. Renderer-only read. */
-const flushedCause = new Map<string, { cause: RenderCause; msgID?: string }>();
+const flushedCause = new Map<string, { cause: RenderCause; turnID?: string }>();
 
-function mergeCause(chatID: string, cause: RenderCause, msgID?: string): void {
+function mergeCause(chatID: string, cause: RenderCause, turnID?: string): void {
   const cur = pendingCause.get(chatID);
   if (cur === undefined) {
-    pendingCause.set(chatID, msgID !== undefined ? { cause, msgID } : { cause });
+    pendingCause.set(chatID, turnID !== undefined ? { cause, turnID } : { cause });
     return;
   }
   if (cause === "tool" && cur.cause === "tool") {
-    // Different messages escalate: one keyed update cannot refresh two turns.
-    if (cur.msgID !== msgID) {
+    // Different turns escalate: one keyed update cannot refresh two of them.
+    if (cur.turnID !== turnID) {
       pendingCause.set(chatID, { cause: "shape" });
     }
     return;
   }
   if (CAUSE_RANK[cause] > CAUSE_RANK[cur.cause]) {
-    pendingCause.set(chatID, msgID !== undefined ? { cause, msgID } : { cause });
+    pendingCause.set(chatID, turnID !== undefined ? { cause, turnID } : { cause });
   }
 }
 
@@ -110,7 +107,7 @@ export function messagesVersionOf(chatID: string): Signal<number> {
 
 /** The cause the current version was bumped for; `paint()` reads it untracked right after
  *  the version. A chat switch or an absent record reads as `shape`, the full pass. */
-export function renderCauseOf(chatID: string): { cause: RenderCause; msgID?: string } {
+export function renderCauseOf(chatID: string): { cause: RenderCause; turnID?: string } {
   return flushedCause.get(chatID) ?? { cause: "shape" };
 }
 
@@ -142,8 +139,8 @@ export function bumpMessages(chatID: string, cause: RenderCause = "shape"): void
 const messagesScheduled = new Set<string>();
 
 /** Coalesce one chat's per-delta bumps into a single repaint per microtask. */
-function scheduleMessages(chatID: string, cause: RenderCause, msgID?: string): void {
-  mergeCause(chatID, cause, msgID);
+function scheduleMessages(chatID: string, cause: RenderCause, turnID?: string): void {
+  mergeCause(chatID, cause, turnID);
   if (messagesScheduled.has(chatID)) {
     return;
   }
@@ -155,39 +152,13 @@ function scheduleMessages(chatID: string, cause: RenderCause, msgID?: string): v
   });
 }
 
-/** The cheap cause for a frame the transcript renders NOTHING for, or `shape`. The
- *  STAMP alone answers it, because `placeBlock` drops every DELEGATED block and
- *  keeps only the card; a dropped block needs no structural work. */
-function droppedFrameCause(subtaskID: string): RenderCause {
-  return subtaskID === "" ? "shape" : "chunk";
-}
-
-/** The cause for a block arriving for the FIRST time, where the two dropped kinds part.
- *  A SUBAGENT's first block SEATS its card and is the only thing that will, so a cheap
- *  cause would leave a delegate with no invocation call no route to its output. A
- *  WORKFLOW STEP stays cheap, seating nothing ever. Once per block, not per delta. */
-function newBlockCause(subtaskID: string): RenderCause {
-  // Keyed on the PARSE, not the `wf:` prefix: a MALFORMED step id does not parse, falls to
-  // the delegate path, and therefore needs its card seated like any other delegate's.
-  if (subtaskID === "" || parseStepSubtask(subtaskID) === null) {
-    return "shape";
-  }
-  return "chunk";
-}
-
-/** The same question for a TOOL CALL. Two arms need the full pass because both can SEAT
- *  a card: a delegate's INVOCATION, and a `wf:` id that does not PARSE, which the
- *  dispatcher treats as a delegate. Kept to those two so a delegate's ordinary member
- *  calls stay cheap — they draw nothing and reach the footer through their own signal. */
-function droppedCallCause(call: ToolCall): RenderCause {
-  const subtask = call.agent_subtask_id ?? "";
-  if (isSubagentInvocation(call)) {
-    return "shape";
-  }
-  if (isStepSubtask(subtask) && parseStepSubtask(subtask) === null) {
-    return "shape";
-  }
-  return droppedFrameCause(subtask);
+/** The cause an entry's arrival earns, from its LANE alone.
+ *
+ *  A laned entry other than the invocation renders at no position of its own, and the
+ *  invocation's `tool_call` is in the ISSUER's lane, so `""` is exactly the set that needs
+ *  a structural pass. */
+function entryCause(lane: string | undefined): RenderCause {
+  return (lane ?? "") === "" ? "shape" : "chunk";
 }
 
 // --- Model context sizes ---
@@ -223,8 +194,6 @@ export const activeSession = computed<Session | undefined>(() => {
   return id === "" ? undefined : sessions.signalFor(id)?.value;
 });
 
-const msgIndex = new Map<string, Map<string, number>>();
-
 // --- Accessors ---
 export function getSessions(): Session[] {
   return sessions.items();
@@ -251,18 +220,32 @@ export function watchSession(id: string): Session | undefined {
   return sessions.signalFor(id)?.value;
 }
 
-/** Whether `chatID`'s transcript already holds `messageID`.
+/** Whether `chatID`'s log already holds a turn this client's prompt opened.
  *
  *  The ACCEPTANCE test for a prompt this client sent: `CmdPrompt` persists and broadcasts
- *  the user row BEFORE the ACP call and nothing rolls that back, so an echo of our own
- *  message id is proof the server took the prompt whatever the POST went on to answer. */
+ *  the turn's `turn_open` BEFORE the ACP call and nothing rolls that back, so an echo of
+ *  our own message id is proof the server took the prompt whatever the POST went on to
+ *  answer.
+ *
+ *  A lookup for a `turn_open.prompt.id`, which is the ONLY place the client addresses a
+ *  prompt by its id — the client-minted message id survives on the log as that field and
+ *  nowhere else. */
 export function hasMessage(chatID: string, messageID: string): boolean {
-  return sessions.get(chatID)?.messages.some((m) => m.id === messageID) ?? false;
+  const s = sessions.get(chatID);
+  if (s === undefined) {
+    return false;
+  }
+  for (const state of s.turns.values()) {
+    const first = state.entries[0];
+    if (first !== undefined && payloadOf(first, "turn_open")?.prompt?.id === messageID) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function setSessions(v: Session[]): void {
   sessions.setAll(v);
-  msgIndex.clear();
 }
 
 export function setActive(id: string): void {
@@ -316,7 +299,7 @@ export function registerEvictionExemption(fn: (chatID: string) => boolean): () =
  *  the active chat, a busy chat, a chat with an EXECUTING run, a parked view, and an open
  *  subagent tab projecting the chat. */
 function evictable(s: Session, now: number): boolean {
-  if (s.messages.length === 0) {
+  if (s.turn_order.length === 0) {
     return false; // nothing resident to reclaim
   }
   if (s.id === activeId.peek()) {
@@ -364,47 +347,46 @@ export function stopEvictionSweep(): void {
   }
 }
 
-/** Whether older messages exist, for a window whose LEFT EDGE the server has not
- *  spoken about: the record's count against what is resident. The spelling this
- *  replaced, `message_count > 0`, read as an answer and was not one.
+/** Whether older turns exist, for a window whose LEFT EDGE the server has not spoken
+ *  about: the record's turn count against what is resident.
  *
- *  Wrong only toward WITHHOLDING a button: a live unpersisted message reads equal,
- *  and a count ratcheted past a rewind's shrink heals on that rewind's refetch. */
-export function derivedHasMore(messageCount: number, residentCount: number): boolean {
-  return messageCount > residentCount;
+ *  Wrong only toward WITHHOLDING a button: a live turn the header has not counted yet
+ *  reads equal, and a count ratcheted past a rewind's shrink heals on that rewind's
+ *  refetch. */
+export function derivedHasMore(turnCount: number, residentCount: number): boolean {
+  return turnCount > residentCount;
 }
 
-/** Drop every per-message streaming signal a chat's resident messages minted. Covers a
- *  chat leaving WHOLE (removal, eviction), where no reconcile ever runs for background
- *  rows; the renderer's disposeMessage covers rows that unmount. */
-function clearMessageSignals(chatID: string, messages: readonly Message[]): void {
-  for (const m of messages) {
-    clearBlockSigsFor(m.id);
-    for (const tc of m.tool_calls ?? []) {
-      toolCallSigs.clear(toolCallSigKey(chatID, tc.id));
+/** Drop every signal a chat's resident turns minted. Covers a chat leaving WHOLE (removal,
+ *  eviction), where no reconcile ever runs for background rows; the renderer's own dispose
+ *  covers rows that unmount. */
+function clearEntrySignals(chatID: string, turns: ReadonlyMap<string, TurnState>): void {
+  for (const [turnID, state] of turns) {
+    clearTurnSigs(turnID);
+    for (const e of state.entries) {
+      const call = payloadOf(e, "tool_call");
+      if (call !== undefined) {
+        toolCallSigs.clear(toolCallSigKey(chatID, call.id));
+      }
     }
   }
 }
 
-/** Evict a chat's message window, keeping the session ROW so header data stays. Everything
- *  keyed by the window goes with it: the msg index, the per-message signals, the snapshot
- *  watermark, and the chat's version signal. `residency: "evicted"` is what the next
+/** Evict a chat's transcript window, keeping the session ROW so header data stays.
+ *  Everything keyed by the window goes with it: the turn map and its order, the per-entry
+ *  signals, and the chat's version signal. `residency: "evicted"` is what the next
  *  activation keys its refetch on. */
 export function evictChatMessages(chatID: string): void {
   const s = get(chatID);
   if (s === undefined) {
     return;
   }
-  clearMessageSignals(chatID, s.messages);
-  s.messages = [];
-  s.has_more = derivedHasMore(s.message_count, 0);
-  // The window base described the window that just went, so it is forgotten with it:
-  // a base held against no messages would number the NEXT page from the old edge.
-  delete s.turn_offset;
-  delete s.turn_segment_closed;
+  clearEntrySignals(chatID, s.turns);
+  clearLiveTurnFacts(chatID);
+  s.turns = new Map();
+  s.turn_order = [];
+  s.has_more = derivedHasMore(s.turn_count, 0);
   s.residency = "evicted";
-  msgIndex.delete(chatID);
-  clearChunkWatermark(chatID);
   messagesScheduled.delete(chatID);
   pendingCause.delete(chatID);
   flushedCause.delete(chatID);
@@ -442,12 +424,12 @@ export function isThinking(id: string): boolean {
 
 /** Whether a chat holds no conversation at all: nothing on the record and nothing resident.
  *
- *  Both halves are load-bearing, which is why this is one predicate. `message_count` is the
- *  server's count and is 0 on a chat it has never heard of, while `messages` is the
+ *  Both halves are load-bearing, which is why this is one predicate. `turn_count` is the
+ *  server's count and is 0 on a chat it has never heard of, while `turn_order` is the
  *  paginated window a `session/load` replay can fill before a header refresh restates the
  *  count. An absent chat is empty, so callers need no second null check. */
 export function isEmptyChat(s: Session | undefined): boolean {
-  return s === undefined || (s.message_count === 0 && s.messages.length === 0);
+  return s === undefined || (s.turn_count === 0 && s.turn_order.length === 0);
 }
 
 export function setThinking(id: string, v: boolean): void {
@@ -461,16 +443,12 @@ export function setThinking(id: string, v: boolean): void {
       thinking: v,
       working_label: v ? s.working_label : "Thinking",
     };
-    // A new turn invalidates every verdict the previous turn left behind: the agent's
-    // declared status and both outcome latches are latched-until-next-turn for the same
-    // reason, so they clear in one place.
+    // A new turn invalidates what the previous one left behind: the agent's declared status,
+    // and the server's last liveness statement, which described the PREVIOUS turn — left
+    // standing, a `turn_open: false` from before this turn started would make `turnLive` fall
+    // back to `thinking` alone.
     if (v) {
       delete next.agent_status;
-      delete next.turn_failed;
-      delete next.turn_done;
-      // The server's last liveness statement joins them: it described the PREVIOUS turn. Left
-      // standing, a `turn_open: false` from before this turn started would make `turnLive` fall
-      // back to `thinking` alone.
       delete next.turn_open;
     }
     return next;
@@ -480,9 +458,8 @@ export function setThinking(id: string, v: boolean): void {
 }
 
 /** Record the server's statement about whether this chat has a turn of its OWN open.
- *  Written from `GET /api/chats/{id}`'s `turn_open` folded with its `turn_workflow_step`
- *  owner marker (newest page only) and by the `turn_ended` handler, which settles only on
- *  a chat-scoped frame; see `types.ts` `Session.turn_open`. */
+ *  Written from the single-chat GET's `live` field (newest page only) and by the handler
+ *  that settles a chat's turn; see `types.ts` `Session.turn_open`. */
 export function setTurnOpen(id: string, open: boolean): void {
   const s = get(id);
   if (s === undefined || s.turn_open === open) {
@@ -501,89 +478,51 @@ function statesNoLiveness(s: Session): boolean {
   return s.provisional === true;
 }
 
-/** Is a turn RUNNING on this chat, as far as anything here can know?
+/** Does this chat hold a resident turn with no `turn_close`?
  *
- *  THE ONE READER of `turn_open`, and the projection's liveness input. No input alone is the
- *  answer: `thinking` is this client's own memory of a stream it watched (false through every
- *  reload) and `turn_open` is the server's last statement (stale once it arrives), so a row
- *  that states neither is read as LIVE — guessing the other way derives a TERMINAL verdict
- *  over a turn the server is still streaming. Not widened to an absent `turn_open`: a header
- *  row states nothing either, and its frames latch it. */
+ *  LIVENESS IS THE LOG, so this reads the append the appender made and nothing this client
+ *  remembers. `closeAt` is written by `appendEntry` at the index the close landed on, which
+ *  is why the question costs one field read per resident turn rather than a scan. */
+function hasOpenTurn(s: Session): boolean {
+  for (const state of s.turns.values()) {
+    if (state.closeAt === undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Is a turn RUNNING on this chat?
+ *
+ *  DERIVED, NEVER LATCHED. A delegate's entries are entries of the parent's own turn, so
+ *  that turn carries no `turn_close` until the whole thing ends and this cannot read
+ *  anything but live for the duration.
+ *
+ *  `thinking` IS NOT AN INPUT: it may never outrank an open turn, so folding it in here
+ *  would put a latch back under the derivation. The two remaining terms are the cases the
+ *  log cannot answer: `turn_open` is the server's own `live` for a chat whose window is not
+ *  resident, and a row that states NEITHER (a boot-snapshot hint) is read as live, because
+ *  guessing the other way derives a TERMINAL verdict over a turn the server is still
+ *  streaming. */
 export function turnLive(s: Session): boolean {
-  return s.thinking || s.turn_open === true || statesNoLiveness(s);
+  return hasOpenTurn(s) || s.turn_open === true || statesNoLiveness(s);
 }
 
-/** The segmentation state at this session's resident window's LEFT EDGE, for
- *  `projectTurns`. THE ONE READER of `turn_offset` / `turn_segment_closed`.
- *
- *  Absent fields fall back to `WHOLE_SESSION`, which numbers the window from 1 —
- *  the behaviour before those fields existed, and reachable only for a chat whose
- *  window has never been fetched (`types.ts` `Session.turn_offset` states why that
- *  guess is admissible). */
-export function turnBaseOf(s: Session): TurnWindowBase {
-  return { offset: s.turn_offset ?? 0, closed: s.turn_segment_closed === true };
-}
-
-/** Latch that this chat's last TURN failed — an outcome `outcomeLatch` grades `failed`.
- *  Cleared by the next `setThinking(id, true)`, so a failure stands until work resumes.
- *  A turn is the ONLY producer; the other callers re-derive the same verdict through
- *  `outcomeLatch` rather than widening it. */
-export function setTurnFailed(id: string): void {
-  const s = get(id);
-  if (s === undefined || s.turn_failed === true) {
-    return; // no-op: don't churn the session signal on a replayed error frame
+/** Which chat's log holds this turn, or "" when no resident window does. The digest's
+ *  `live_turn` subject is keyed by TURN id (one stamp per open turn), so
+ *  the chat it belongs to is this side's to resolve. */
+export function chatHoldingTurn(turnID: string): string {
+  for (const s of sessions.items()) {
+    if (s.turns.has(turnID)) {
+      return s.id;
+    }
   }
-  sessions.update(id, (prev) => ({ ...prev, turn_failed: true }));
-  scheduleMessages(id, "fact"); // feeds the turn-outcome derivation
+  return "";
 }
 
-/** Clear the failure latch without starting a turn. Only the transport-gap reconciler
- *  needs this: after a dropped stream the client cannot tell which of its latched verdicts
- *  still hold. */
-export function clearTurnFailed(id: string): void {
-  if (get(id)?.turn_failed !== true) {
-    return;
-  }
-  sessions.update(id, (prev) => {
-    const next: Session = { ...prev };
-    delete next.turn_failed;
-    return next;
-  });
-  scheduleMessages(id, "fact");
-}
-
-/** Latch that this chat's last turn finished. The mirror of `setTurnFailed`, and it exists
- *  for the same reason: `turn_ended` always arrives, while the agent's own `completed`
- *  status only arrives when the model calls its status tool, so without the latch "this
- *  chat finished" held only for the turns where it did. */
-export function setTurnDone(id: string): void {
-  const s = get(id);
-  if (s === undefined || s.turn_done === true) {
-    return; // no-op: don't churn the session signal on a replayed turn_ended
-  }
-  sessions.update(id, (prev) => ({ ...prev, turn_done: true }));
-  scheduleMessages(id, "fact");
-}
-
-/** Clear the finished latch. ONE caller, the transport-gap reconciler: after a dropped
- *  stream the client can no longer support the claim. The ordinary clear is the next
- *  `setThinking(id, true)`. Opening the chat deliberately does NOT clear it — what keeps a
- *  watched chat out of the title count is the acknowledgement pass in attention.ts. */
-export function clearTurnDone(id: string): void {
-  if (get(id)?.turn_done !== true) {
-    return;
-  }
-  sessions.update(id, (prev) => {
-    const next: Session = { ...prev };
-    delete next.turn_done;
-    return next;
-  });
-  scheduleMessages(id, "fact");
-}
-
-/** Map a persisted turn outcome onto the latch it sets, or "" for one that latches nothing.
- *  ONE table, and all three producers of this verdict call it — the live `turn_ended`
- *  handler, `relatchTurnVerdict`, and `latchFieldsFor` — so they cannot disagree.
+/** Grade a persisted turn outcome for the dot: `done`, `failed`, or "" for one that grades
+ *  neither. `tabStatusFor` is the reader, and the header's `last_turn_outcome` is the one
+ *  field it reads, so the verdict has one source.
  *
  *  THE HOLLOW RING MEANS THE CHAT HAS NOT INITIATED, which decides the floor: a chat that
  *  has run a turn may never paint `idle`, so only a chat with no turn and a record with no
@@ -608,138 +547,19 @@ export function outcomeLatch(outcome: TurnOutcome | undefined): "done" | "failed
   }
 }
 
-/** Apply an outcome-derived latch to a chat. The ONE writer of the pair, so a fourth
- *  producer cannot spell the mapping a fourth way. Exported because `handlers/turn.ts` is
- *  the other producer. */
-export function applyLatch(id: string, latch: "done" | "failed" | ""): void {
-  if (latch === "done") {
-    setTurnDone(id);
-  } else if (latch === "failed") {
-    setTurnFailed(id);
-  }
-}
-
-/** The same mapping expressed as the FIELDS a row being rebuilt spreads, for the two
- *  callers that write a literal rather than a chat: `latchFieldsFor` and the boot
- *  snapshot's provisional row. `outcomeLatch` stays the one table underneath. */
-export function latchFromOutcome(outcome: TurnOutcome | undefined): {
-  turn_done?: true;
-  turn_failed?: true;
-} {
-  switch (outcomeLatch(outcome)) {
-    case "done":
-      return { turn_done: true };
-    case "failed":
-      return { turn_failed: true };
-    default:
-      return {};
-  }
-}
-
-/** The latch fields to spread into a `Session` being rebuilt from a `ChatHeader`. What makes
- *  a chat tab's dot survive a reconnect, since both latches are CLIENT memory. Four rules,
- *  in order: a header that MOVED and carries a verdict of its own wins, because another
- *  device's finished turn is newer than anything this page remembers; then an existing latch
- *  is carried over; then a live turn seeds nothing; otherwise the header's outcome decides.
- *  Built conditionally because under `exactOptionalPropertyTypes` an explicit `undefined`
- *  spread over an existing session would DELETE the latch rule 2 exists to keep. */
-export function latchFieldsFor(
-  existing: Session | undefined,
-  h: ChatHeader,
-): { turn_done?: true; turn_failed?: true } {
-  const incoming = h.last_turn_outcome;
-  // RULE 1: the header MOVED, so it is newer than any latch this page holds — but ONLY
-  // once this page's own turn has ended, ONLY when there is a stored baseline to have
-  // moved FROM, and ONLY when the moved header carries a verdict of its own.
-  //
-  // `thinking` here is a live turn whose `turn_ended` is newer than any header, and
-  // seeding under it would paint a `failed` latch over a streaming reply, because
-  // `tabStatusFor` ranks `turn_failed` ABOVE `thinking`.
-  //
-  // The BASELINE term is what stops an absent stored outcome reading as movement: with
-  // nothing stored, `incoming !== existing.last_turn_outcome` is true for every header,
-  // so a first read could replace a latch a `turn_ended` on this page just took. The
-  // intended case — another device ran a turn — always has a stored baseline, so the term
-  // costs nothing.
-  //
-  // The VERDICT term is the other half, and without it this rule CLEARS a latch that
-  // rule 2 exists to keep: `latchFromOutcome` answers {} for a `running`-severity outcome
-  // and for an ABSENT one, and both of those mean "a turn is in flight" rather than "the
-  // last one un-finished". So an empty answer falls through to the carry.
-  //
-  // Ahead of the carry because rule 2 returns for a chat that already holds a latch, so a
-  // moved header could never be seen behind it. The comparison requires the PRE-UPDATE
-  // session: `upsertHeader` passes `s` (the stored row) rather than `next`, so writing the
-  // new outcome onto `next` before this call is what keeps the rule alive.
-  if (
-    existing !== undefined &&
-    !existing.thinking &&
-    existing.last_turn_outcome !== undefined &&
-    incoming !== existing.last_turn_outcome
-  ) {
-    const moved = latchFromOutcome(incoming);
-    if (moved.turn_done === true || moved.turn_failed === true) {
-      return moved;
-    }
-  }
-  // RULE 2: a live `turn_ended` on this page is newer than a header that has not moved, so
-  // the latch it took is carried. This can ADD a latch or let rule 1 REPLACE one verdict
-  // with another, but nothing here blanks one.
-  if (existing?.turn_failed === true || existing?.turn_done === true) {
-    const carried: { turn_done?: true; turn_failed?: true } = {};
-    if (existing.turn_failed === true) {
-      carried.turn_failed = true;
-    }
-    if (existing.turn_done === true) {
-      carried.turn_done = true;
-    }
-    return carried;
-  }
-  // RULE 3: a live turn seeds nothing, because the header's outcome describes the turn
-  // before the one now running. Not narrowed by the retraction doors — every one of them
-  // clears `thinking` before anything asks this function again.
-  if (existing?.thinking === true) {
-    return {};
-  }
-  return latchFromOutcome(incoming);
-}
-
-/** Re-derive the outcome latches from the PERSISTED record: the newest message carrying a
- *  `turn_outcome` says how this chat's last turn ended.
- *
- *  The latches are client memory, so every page load and every transport gap dropped them,
- *  while the outcome itself is durable. Called after every newest-page message load, which
- *  is the gap door's own heal path, and by both retraction doors in `turn-teardown.ts`.
- *  Refuses to overwrite a live turn (`thinking`) or a latch already set, which is newer than
- *  anything the page carries — every caller clears `thinking` first, so on those doors the
- *  refusal costs nothing. */
-export function relatchTurnVerdict(id: string): void {
-  const s = get(id);
-  if (s === undefined || s.thinking || s.turn_done === true || s.turn_failed === true) {
-    return;
-  }
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const outcome = s.messages[i]?.turn_outcome;
-    if (outcome === undefined) {
-      continue;
-    }
-    applyLatch(id, outcomeLatch(outcome));
-    return;
-  }
-  // No resident message carries an outcome, which is the ordinary state of a chat whose
-  // window was never fetched — exactly the population the connect retraction reaches. The
-  // header's own statement is the fallback rather than nothing.
-  applyLatch(id, outcomeLatch(s.last_turn_outcome));
-}
-
 /** Derive the chat tab's activity-dot state. ONE rule, shared by the store effect and the
- *  turn_ended / error handlers. Order is precedence, and `pendingAsk` is a parameter
- *  because `decision-dock.ts` imports this module.
- *   - `input` outranks `working` because the two COEXIST — a permission ask arrives mid-turn
- *     and `thinking` stays true — so working first would mask every ask.
- *   - `waiting` outranks `done`, which can coexist: the agent declares waiting_on_user and
- *     then the turn ends, setting `turn_done` under a live waiting.
- *   - `idle` MEANS THE CHAT HAS NOT INITIATED, so a chat tab always shows a dot. */
+ *  turn-lifecycle handlers. Order is precedence, and `pendingAsk` is a parameter because
+ *  `decision-dock.ts` imports this module.
+ *
+ *  THE VERDICT HAS ONE SOURCE AND LIVENESS IS THE LOG. `failed` and `done` read the same
+ *  field — `last_turn_outcome`, the header's statement about the newest FINISHED turn — and
+ *  BOTH are gated on liveness, because that field is rewritten only at a `turn_close`: it
+ *  still describes the previous turn for the whole of the next one, so an ungated `failed`
+ *  paints a chat red for the duration of a turn that is running fine. Ahead of the gate the
+ *  order is precedence as stated: `input` (a question outranks activity, and the two COEXIST
+ *  since an ask arrives mid-turn) → `failed` → `working` → `waiting` (a `waiting_on_user`
+ *  status declared during a running turn is the same false verdict in yellow) → `done` →
+ *  `idle`, which MEANS THE CHAT HAS NOT INITIATED, so a chat tab always shows a dot. */
 export type TabDotState = "" | "input" | "failed" | "working" | "waiting" | "done" | "idle";
 
 export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDotState {
@@ -749,19 +569,18 @@ export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDot
   if (pendingAsk) {
     return "input";
   }
-  if (s.turn_failed === true) {
+  const live = turnLive(s);
+  const latch = outcomeLatch(s.last_turn_outcome);
+  if (!live && latch === "failed") {
     return "failed";
   }
-  if (s.thinking) {
+  if (live) {
     return "working";
   }
   if (s.agent_status === "waiting_on_user") {
     return "waiting";
   }
-  if (s.agent_status === "completed" || s.turn_done === true) {
-    return "done";
-  }
-  return "idle";
+  return latch === "done" ? "done" : "idle";
 }
 
 /** The pause classes the dot vocabulary distinguishes. A classified value rather than the
@@ -803,18 +622,56 @@ export function runStatusFor(
   }
 }
 
+/** The status a delegate's surfaces paint, folding in its chat's OWN turn liveness.
+ *
+ *  A DELEGATE THAT DIED RENDERS LIKE ONE THAT WORKS unless something else is read: a
+ *  delegate's whole state is its invocation call's `ToolStatus`, so an invocation whose
+ *  `tool_result` never reached this client reads `in_progress` for the life of the render.
+ *  The second input is the chat's own turn: a turn that ends settles every unsettled call it
+ *  held — `Turn.Close` and `EntryLog.synthesizeCloseLocked` both append
+ *  `tool_result{status: aborted}` — so once the chat holds no live turn the call is folded
+ *  onto THAT status rather than waiting for an entry a dead process will never append.
+ *
+ *  `aborted` rather than `failed` for three reasons: it is the word the server itself
+ *  settles such a call with, so the fold anticipates the record instead of contradicting it;
+ *  the work was not broken, it was never accounted for; and it is one status the three
+ *  surfaces already have words for, so nothing gains a treatment of its own
+ *  (`internal/chat/testdata/delegate_dot.json`'s `stale` row is the cross-language
+ *  statement, `delegate-dot-contract.test.ts` its other reader).
+ *
+ *  NARROW ON PURPOSE: only `in_progress` folds. A `pending` call was dispatched and never
+ *  started, which the close settles the same way — but design-2 §6.2 names the in-flight
+ *  case and a wider fold is a wider claim than the evidence supports. LIVENESS IS NOT
+ *  KNOWLEDGE either: every caller answers `true` for a chat it holds no row for, because a
+ *  terminal verdict over a turn nobody can see is the guess this file refuses everywhere
+ *  else (`turnLive`'s own doc records the same direction). */
+export function delegateStatusFor(status: ToolStatus, turnLive: boolean): ToolStatus {
+  return status === "in_progress" && !turnLive ? "aborted" : status;
+}
+
+/** Does `chatID`'s own turn read live to this client? The TRACKED read of the second input
+ *  above, so an effect that folds it repaints when a `busy_chats` reconcile moves it. */
+export function chatTurnLive(chatID: string): boolean {
+  const s = watchSession(chatID);
+  return s === undefined || turnLive(s);
+}
+
 /** The same dot vocabulary for a SUBAGENT, whose tab is a sub-tab under the chat that
  *  dispatched it. A delegate's whole state is its INVOCATION TOOL CALL's `ToolStatus`, a
  *  generated closed union, so the arms below are exhaustive and need no `default`.
  *
  *  `undefined` means THIS CLIENT HOLDS NO INVOCATION, which is a resident-window fact
  *  rather than anything about the delegate, and is answered FIRST so no arm below has to
- *  consider absence. Nothing maps to `idle`: a delegate someone opened a tab for has run. */
-export function subagentStatusFor(status: ToolStatus | undefined): TabDotState {
+ *  consider absence. Nothing maps to `idle`: a delegate someone opened a tab for has run.
+ *
+ *  `turnLive` is the chat's own liveness, defaulting to the answer that claims nothing: the
+ *  fold above is what a stale spinner needs, and a caller with no session to read must not
+ *  invent one. */
+export function subagentStatusFor(status: ToolStatus | undefined, turnLive = true): TabDotState {
   if (status === undefined) {
     return "";
   }
-  switch (status) {
+  switch (delegateStatusFor(status, turnLive)) {
     case "pending":
     case "in_progress":
       return "working";
@@ -857,13 +714,11 @@ export function setWorkingLabel(id: string, label: string): void {
   scheduleMessages(id, "fact"); // the resume control's fallback label
 }
 
-// --- Mid-turn steers (the dock's waiting rows + the transcript's marks) ---
-// TWO FIELDS, TWO LIFETIMES. `session.steers` is what the agent has NOT read: the bottom
-// dock's rows, whose lifetime is the turn. `session.steer_marks` is what has LEFT the
-// dock, rendered inside the turn transcript at the block it landed on, whose lifetime is
-// the loaded transcript. An entry moves from the first to the second and never back.
-// The client writes INTENT (`recordSteerSent`, un-written by `forgetSteer`) and every
-// other mutator here adopts a server FACT.
+// --- Mid-turn steers (the dock's waiting rows) ---
+// `session.steers` is what the agent has NOT read: the bottom dock's rows, whose lifetime
+// is the turn. A row that has left the dock is a `steer` ENTRY of the turn it landed in,
+// so this field is the dock and nothing else. The client writes INTENT (`recordSteerSent`,
+// un-written by `forgetSteer`) and every other mutator here adopts a server FACT.
 
 /** The steer id KAS will return for a message id. `internal/marotte/commands.go` documents
  *  the convention (`"steer-" + messageID`) and `internal/command/steer_test.go` pins it.
@@ -879,8 +734,8 @@ export function steerCount(id: string): number {
 }
 
 /** The waiting steers a boundary must CARRY, in arrival order. Entries rather than
- *  texts, because the arrow names its lead row by id. `steerIDs` narrows to the ids a
- *  `steer_cleared` frame reports; the order stays the store's own.
+ *  texts, because the arrow names its lead row by id. `steerIDs` narrows to a named set
+ *  the caller already holds; the order stays the store's own.
  *
  *  Both filters stop the resend DUPLICATING a message: a `pending` row's POST is
  *  unresolved and `submit.ts` already converts a refusal into a prompt, and KAS
@@ -900,56 +755,6 @@ export function pendingSteerCarry(
       (e) => e.pending !== true && e.origin === "user" && (named === undefined || named.has(e.id)),
     )
     .map((e) => ({ id: e.id, text: e.text }));
-}
-
-/** The steers that have left the dock, each anchored where it can be DRAWN in the
- *  window that exists NOW.
- *
- *  A READ, never a write: `anchorFor` records where the steer WAS read and stays as
- *  written, so a window that regains the message draws the note where it belongs. It
- *  answers here rather than in the renderer, which sees one message at a time and
- *  cannot tell an ORPHANED anchor from a foreign one. A mark whose OWN id names a
- *  resident message is DROPPED: the persisted row draws that note and survives. */
-export function steerMarks(id: string): readonly SteerMark[] {
-  const s = get(id);
-  const marks = s?.steer_marks;
-  // Most chats hold no marks at all, and this runs once per rendered assistant message
-  // per paint, which is what makes the scan below affordable.
-  if (s === undefined || marks === undefined || marks.length === 0) {
-    return [];
-  }
-  return resolveAnchors(s, marks);
-}
-
-/** Drop every mark the transcript already holds as a durable row, then move every
- *  surviving orphaned anchor to the window's newest ASSISTANT message; returns `marks`
- *  itself when nothing changes. Assistant-only is a correctness bound, because only an
- *  assistant body renders steer notes, so a user or event row would put the anchor
- *  somewhere the renderer never visits. */
-function resolveAnchors(s: Session, marks: readonly SteerMark[]): readonly SteerMark[] {
-  const resident = new Set<string>();
-  let tail: SteerAnchor | undefined;
-  for (const m of s.messages) {
-    resident.add(m.id);
-    // Backwards would exit sooner, but the residency set needs the whole window
-    // anyway, so one forward pass answers both questions. A TRAILING user row
-    // belongs to a later turn that has produced nothing yet, and stepping over it
-    // is exactly what `isTurnReply` does.
-    if (isTurnReply(m)) {
-      tail = { msgID: m.id, blockIndex: (m.blocks ?? []).length };
-    }
-  }
-  // Both ids are KAS's own `steer-` id, so this is an equality test rather than a prefix
-  // parse. Unconditional and BEFORE the early returns: a mark set needing no anchor move
-  // would otherwise skip the drop.
-  const live = marks.some((m) => resident.has(m.id))
-    ? marks.filter((m) => !resident.has(m.id))
-    : marks;
-  if (tail === undefined || live.every((m) => resident.has(m.anchor.msgID))) {
-    return live;
-  }
-  const at = tail;
-  return live.map((m) => (resident.has(m.anchor.msgID) ? m : { ...m, anchor: at }));
 }
 
 /** Record a steer this client has just POSTed, before any server frame. `pending` says the
@@ -995,9 +800,9 @@ export function forgetSteer(id: string, steerID: string): void {
  *  exactly one row per message: the id matches (adopt the text, clear `pending`); no id
  *  match but the OLDEST pending row carries the same text (adopt the server's id, the
  *  fallback if the prefix convention drifts); neither (append it confirmed — another
- *  device, or this one before a reload). Idempotent in all three. `steer_marks` is checked
- *  FIRST because a reconnect replays the queued frame for a steer the agent has since
- *  read, and branch 3 would otherwise put a delivered message back in the dock. */
+ *  device, or this one before a reload). Idempotent in all three. The log is checked FIRST
+ *  because a reconnect replays the queued frame for a steer the agent has since read, and
+ *  branch 3 would otherwise put a delivered message back in the dock. */
 export function recordSteerQueued(
   id: string,
   steer: { id: string; text: string; origin: SteerOrigin },
@@ -1006,7 +811,7 @@ export function recordSteerQueued(
   if (s === undefined || steer.id === "") {
     return;
   }
-  if ((s.steer_marks ?? []).some((m) => m.id === steer.id)) {
+  if (holdsSteerEntry(s, steer.id)) {
     return;
   }
   const existing = s.steers ?? [];
@@ -1022,105 +827,32 @@ export function recordSteerQueued(
   scheduleMessages(id, "fact");
 }
 
-/** Promote a steer the agent has READ out of the dock and into the transcript, anchored at
- *  the block the running turn had reached so the note renders chronologically.
+/** Drop dock rows at a turn boundary. Named ids drop just those; an empty or absent list
+ *  drops the chat's whole set.
  *
- *  TWO FRAMES, one id: KAS's steering channel sends the read frame (text, no ack), the
- *  acknowledgement marker on the text stream sends the ack frame (ack, no text). Each field
- *  is adopted only when its frame carries it, or the second would blank the first's text —
- *  and the second must not re-anchor a placed note. An id never seen is tolerated; an
- *  ack-only frame for an id with no mark and no text is ignored, having nothing to label. */
-export function promoteSteer(
-  id: string,
-  steerID: string,
-  text: string,
-  origin: SteerOrigin,
-  ack?: string,
-): void {
-  const s = get(id);
-  if (s === undefined || steerID === "") {
-    return;
-  }
-  const existing = s.steers ?? [];
-  let at = existing.findIndex((e) => e.id === steerID);
-  if (at < 0 && text !== "") {
-    // The text fallback `recordSteerQueued` uses, for an injected frame that beat the queued one.
-    at = existing.findIndex((e) => e.pending === true && e.text === text);
-  }
-  const rest = at >= 0 ? existing.filter((_, i) => i !== at) : existing;
-  const dockText = at >= 0 ? (existing[at]?.text ?? "") : "";
-  const marks = s.steer_marks ?? [];
-  const mi = marks.findIndex((m) => m.id === steerID);
-  if (mi < 0) {
-    const body = text !== "" ? text : dockText;
-    if (body === "") {
-      return;
-    }
-    const mark: SteerMark = {
-      id: steerID,
-      text: body,
-      origin,
-      ...(ack !== undefined && ack !== "" ? { ack } : {}),
-      anchor: anchorFor(s),
-    };
-    sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: [...marks, mark] }, rest));
-    scheduleMessages(id, "fact"); // a mark renders inside the turn
-    return;
-  }
-  // No `origin` here: it is written once, on the frame that CREATES the mark. The ledger
-  // behind it is TTL'd, so a late second frame can answer `agent` for the user's message.
-  const nextMarks = marks.map((m, i) =>
-    i === mi
-      ? {
-          ...m,
-          ...(text !== "" ? { text } : {}),
-          ...(ack !== undefined && ack !== "" ? { ack } : {}),
-        }
-      : m,
-  );
-  sessions.update(id, (cur) => withSteers({ ...cur, steer_marks: nextMarks }, rest));
-  scheduleMessages(id, "fact");
-}
-
-/** Drop steers at a turn boundary: out of the dock, into the transcript as UNDELIVERED.
- *  Named ids drop just those; an empty or absent list drops the chat's whole set. Each
- *  keeps its text and earns a `dropped` mark; `steer-resend.ts` captures the text from
- *  `pendingSteerCarry` BEFORE this runs.
- *
- *  An id already in `steer_marks` is a no-op: `steer_cleared` routinely names ids the
- *  model already read, and those keep their existing mark rather than gain one
- *  claiming they were missed. */
+ *  ROW REMOVAL AND NOTHING ELSE: the transcript fact is the `steer` ENTRY the server
+ *  appends, so this writes no transcript state of its own. `steer-resend.ts` captures the
+ *  text from `pendingSteerCarry` BEFORE this runs, which is why the ordering at both call
+ *  sites is load-bearing. */
 export function dropSteers(id: string, steerIDs?: readonly string[]): void {
   const s = get(id);
   if (s?.steers === undefined) {
     return;
   }
   const named = steerIDs === undefined || steerIDs.length === 0 ? undefined : new Set(steerIDs);
-  const going = s.steers.filter((e) => named === undefined || named.has(e.id));
-  if (going.length === 0) {
+  const rest = s.steers.filter((e) => named !== undefined && !named.has(e.id));
+  if (rest.length === s.steers.length) {
     return;
   }
-  const goingIDs = new Set(going.map((e) => e.id));
-  const rest = s.steers.filter((e) => !goingIDs.has(e.id));
-  const marks = s.steer_marks ?? [];
-  const held = new Set(marks.map((m) => m.id));
-  const anchor = anchorFor(s);
-  const added = going
-    .filter((e) => !held.has(e.id))
-    // The dock entry's origin, from the queued frame the server stamped: a dropped steer has
-    // no injected frame to read one off.
-    .map((e): SteerMark => ({ id: e.id, text: e.text, origin: e.origin, dropped: true, anchor }));
-  sessions.update(id, (cur) =>
-    withSteers(added.length > 0 ? { ...cur, steer_marks: [...marks, ...added] } : cur, rest),
-  );
-  scheduleMessages(id, "fact"); // dropped marks render in the turn
+  sessions.update(id, (cur) => withSteers(cur, rest));
+  scheduleMessages(id, "fact");
 }
 
 /** Remove every CONFIRMED waiting steer, returning a snapshot to restore from. The
- *  optimistic half of `chat.clear_steers`, and the reason an explicit discard leaves no
- *  transcript row: the entries are gone before `steer_cleared` arrives, so `dropSteers`
- *  finds nothing to promote as "not delivered". A `pending` entry STAYS — it is not in
- *  KAS's buffer yet, so removing it locally would hide a message still on its way.
+ *  optimistic half of `chat.clear_steers`; the transcript's record is the `steer` entry
+ *  the server appends for each cleared id, so nothing here writes one. A `pending` entry
+ *  STAYS — it is not in KAS's buffer yet, so removing it locally would hide a message
+ *  still on its way.
  *  Returns the array as it was, so the rollback restores the exact order. */
 export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
   const s = get(id);
@@ -1137,6 +869,21 @@ export function dropConfirmedSteers(id: string): readonly PendingSteer[] {
   return prev;
 }
 
+/** Mark every row the dock holds NOW as sent across a compaction (types.ts
+ *  `PendingSteer.compacted`). Arrival order is the whole rule: the `compaction` entry
+ *  landing is what says these rows were queued before it, so a row that arrives afterwards
+ *  is never marked and no timestamp is compared. Idempotent — a second compaction over the
+ *  same rows changes nothing. */
+export function markSteersCompacted(id: string): void {
+  const s = get(id);
+  if (s?.steers === undefined || s.steers.every((e) => e.compacted === true)) {
+    return;
+  }
+  const marked = s.steers.map((e) => ({ ...e, compacted: true as const }));
+  sessions.update(id, (cur) => withSteers(cur, marked));
+  scheduleMessages(id, "fact");
+}
+
 /** Put a `dropConfirmedSteers` snapshot back. The rollback half. */
 export function restoreSteers(id: string, prev: readonly PendingSteer[]): void {
   if (prev.length === 0 || get(id) === undefined) {
@@ -1146,7 +893,7 @@ export function restoreSteers(id: string, prev: readonly PendingSteer[]): void {
   scheduleMessages(id, "fact");
 }
 
-/** Forget the dock's contents WITHOUT promoting them. The `transport:gap` path: a gap
+/** Forget the dock's contents WITHOUT promoting them. The `BUS_RECONCILE` path: a gap
  *  means the frames that resolved these steers may be among the ones lost, so promoting
  *  them would assert "the agent never read this" on no evidence. Existing marks stay. */
 export function forgetSteers(id: string): void {
@@ -1158,44 +905,9 @@ export function forgetSteers(id: string): void {
   scheduleMessages(id, "fact");
 }
 
-/** Whether `m` is a message a steer's anchor may NAME: the reply it was read into. A PLAN
- *  row is assistant-role and is not a reply, so one claiming an anchor puts the note
- *  against the plan card. Shared by both readers, because a gate written twice can
- *  disagree, which reads as the anchor moving between rows on its own. */
-function isTurnReply(m: Message): boolean {
-  return m.role === "assistant" && (m.plan ?? []).length === 0;
-}
-
-/** Where a steer read RIGHT NOW belongs: after everything the turn's assistant message has
- *  produced so far. An empty `msgID` means it was read before the turn produced anything;
- *  `rebindPendingAnchors` binds it to the first assistant message that arrives. */
-function anchorFor(s: Session): SteerAnchor {
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = s.messages[i];
-    if (m?.role === "assistant") {
-      return { msgID: m.id, blockIndex: (m.blocks ?? []).length };
-    }
-  }
-  return { msgID: "", blockIndex: 0 };
-}
-
-/** Bind every anchor-less mark to a newly-arrived assistant message. Goes through
- *  `sessions.update` rather than a version bump, because only `sessions.update` re-derives
- *  `activeSession`, which is what the renderers' value-dedup computeds read. */
-function rebindPendingAnchors(chatID: string, msgID: string): void {
-  const marks = get(chatID)?.steer_marks;
-  if (marks?.some((m) => m.anchor.msgID === "") !== true) {
-    return;
-  }
-  const next = marks.map((m) =>
-    m.anchor.msgID === "" ? { ...m, anchor: { msgID, blockIndex: 0 } } : m,
-  );
-  sessions.update(chatID, (cur) => ({ ...cur, steer_marks: next }));
-}
-
 /** Write `steers` onto a session, DELETING the field when the list is empty, so a session
  *  compares equal to one that never had steers: pending-steers.ts's `computed` dedups by
- *  value and an empty array would repaint on every clear. `steer_marks` likewise. */
+ *  value and an empty array would repaint on every clear. */
 function withSteers(s: Session, steers: readonly PendingSteer[]): Session {
   const copy = { ...s };
   if (steers.length === 0) {
@@ -1203,33 +915,7 @@ function withSteers(s: Session, steers: readonly PendingSteer[]): Session {
   } else {
     copy.steers = [...steers];
   }
-  if (copy.steer_marks?.length === 0) {
-    delete copy.steer_marks;
-  }
   return copy;
-}
-
-/** Rebuild the message index for a session. Exported for store-load.ts. */
-export function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
-  const idx = new Map<string, number>();
-  for (let i = 0; i < messages.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    idx.set(messages[i]!.id, i);
-  }
-  msgIndex.set(sessionID, idx);
-}
-
-function getMsgIndex(sessionID: string, messages: Message[]): Map<string, number> {
-  let mi = msgIndex.get(sessionID);
-  if (mi === undefined) {
-    mi = new Map<string, number>();
-    for (let i = 0; i < messages.length; i++) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      mi.set(messages[i]!.id, i);
-    }
-    msgIndex.set(sessionID, mi);
-  }
-  return mi;
 }
 
 // --- SSE-driven mutations ---
@@ -1246,7 +932,7 @@ export function upsertHeader(h: ChatHeader): void {
         // a pick before the first prompt applies locally and rides that prompt, so until then the
         // record genuinely has no model. `Model` is `omitempty` on the wire, which makes "not set"
         // and "cleared" the same frame, and taking it as a clear is what reset the pill to "auto".
-        // Absent means no news — the same rule ingestMessage applies to message content.
+        // Absent means no news.
         model: h.model !== undefined && h.model !== "" ? h.model : s.model,
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
@@ -1257,30 +943,31 @@ export function upsertHeader(h: ChatHeader): void {
         effort_levels: h.effort_levels ?? s.effort_levels ?? [],
         effort_active: h.effort_active ?? s.effort_active ?? "",
         usage: h.usage,
-        message_count: Math.max(s.message_count, h.message_count),
+        // The header owns the count and a header read never shrinks it: a live turn the
+        // appender has not closed yet is not counted, and a rewind's shrink heals on that
+        // rewind's own refetch.
+        turn_count: Math.max(s.turn_count, h.turn_count),
+        // The model badge's ONE input, and a header read is its authority in both
+        // directions: the apply at a turn's close arrives with the field empty, which is
+        // what clears the pending pick on every device.
+        pending_model: h.pending_model ?? "",
       };
       if (h.compaction_watermark !== undefined) {
         next.compaction_watermark = h.compaction_watermark;
       } else {
         delete next.compaction_watermark;
       }
-      // A header read is the AUTHORITY for both fields, so an absent outcome is a CLEAR and
+      // A header read is the AUTHORITY for this field, so an absent outcome is a CLEAR and
       // not "no news" — the OPPOSITE of `model` and `effort_levels` in the same literal,
       // which deliberately fall back to `s`. Hence the explicit delete (`compaction_watermark`'s
       // own shape above): an `exactOptionalPropertyTypes` spread of `undefined` is a type
-      // error, and a conditional spread would carry the stale value forward, which is what
-      // would stop `latchFieldsFor`'s freshness rule observing an outcome that went away.
+      // error, and a conditional spread would carry the stale value forward.
       if (h.last_turn_outcome !== undefined) {
         next.last_turn_outcome = h.last_turn_outcome;
       } else {
         delete next.last_turn_outcome;
       }
       next.updated_at = h.updated_at;
-      // AFTER the spread of `s`, so an already-set latch survives: the helper can only add.
-      // It reads `s` rather than `next`, which is what lets its freshness rule compare the
-      // incoming outcome against the PREVIOUSLY stored one — so neither field above may be
-      // written onto `s`.
-      Object.assign(next, latchFieldsFor(s, h));
       return next;
     });
     return;
@@ -1296,15 +983,14 @@ export function upsertHeader(h: ChatHeader): void {
     effort_levels: h.effort_levels ?? [],
     effort_active: h.effort_active ?? "",
     usage: h.usage,
-    message_count: h.message_count,
-    messages: [],
+    turn_count: h.turn_count,
+    pending_model: h.pending_model ?? "",
+    turns: new Map(),
+    turn_order: [],
     // A header carries no window, so this is the DERIVATION and not an answer.
-    has_more: derivedHasMore(h.message_count, 0),
+    has_more: derivedHasMore(h.turn_count, 0),
     thinking: false,
     working_label: "Thinking",
-    // A chat this client has never seen live: the header's outcome is the ONLY thing that can
-    // tell its dot from a chat that has never run a turn.
-    ...latchFieldsFor(undefined, h),
     // The row is REBUILT from the header rather than spread from `s`, so a conditional spread
     // IS a replace here: nothing carries over because nothing is there.
     ...(h.last_turn_outcome !== undefined && { last_turn_outcome: h.last_turn_outcome }),
@@ -1336,13 +1022,10 @@ export function removeChat(id: string): void {
   // renderer flashes a transient teardown of the new chat's DOM.
   batch(() => {
     sessions.remove(id);
-    msgIndex.delete(id);
-    clearChunkWatermark(id);
-    clearLiveTurnMessage(id);
-    clearAdoptedSnapshots(id);
-    // Every per-message streaming signal the chat's window minted: the renderer's
-    // disposeMessage only reaches rows a reconcile removes, and a background chat's never see one.
-    clearMessageSignals(id, doomed.messages);
+    clearLiveTurnFacts(id);
+    // Every signal the chat's window minted: the renderer's own dispose only reaches rows a
+    // reconcile removes, and a background chat's never see one.
+    clearEntrySignals(id, doomed.turns);
     lastActivity.delete(id);
     // A flush parked on the next microtask must not re-mint the signal cleared here.
     messagesScheduled.delete(id);
@@ -1369,225 +1052,344 @@ export function reinsertSession(session: Session, atIndex?: number): void {
   sessions.setAll(order);
 }
 
-function nonEmptyStr(v: string | undefined): v is string {
-  return v !== undefined && v !== "";
+// --- The entry log: the five operations over `session.turns` ---
+// Position is `seq` and nothing re-anchors, re-indexes or reorders: a value that does not
+// fit is a HOLE, and the repair is the one range read of section 6.4 rather than a local
+// fix-up. COUNTS, never lengths — the server's text is UTF-8 bytes and this side's is a
+// UTF-16 string, so no length is compared across the wire.
+
+/** The range read a hole needs, injected because this module never fetches: `store-load.ts`
+ *  owns the read and this module owns the detection. */
+let repairTurn: ((chatID: string, turnID: string, afterSeq?: number) => void) | undefined;
+
+export function registerTurnRepair(
+  fn: (chatID: string, turnID: string, afterSeq?: number) => void,
+): void {
+  repairTurn = fn;
 }
 
-/** Ensure an assistant message has a `blocks` array so the renderer has ONE path. Legacy
- *  replays (content / reasoning / tool_calls only) get synthesized blocks — thinking, then
- *  text, then a tool_use per tool call. Anything else passes through unchanged. */
-export function normalizeMessage(m: Message): Message {
-  if (m.role !== "assistant" || (m.blocks !== undefined && m.blocks.length > 0)) {
-    return m;
-  }
-  const tools = m.tool_calls ?? [];
-  if (!nonEmptyStr(m.content) && !nonEmptyStr(m.reasoning) && tools.length === 0) {
-    return m; // e.g. a plan-only assistant message — nothing to synthesize
-  }
-  const blocks: Block[] = [];
-  if (nonEmptyStr(m.reasoning)) {
-    blocks.push({ type: "thinking", thinking: m.reasoning });
-  }
-  if (nonEmptyStr(m.content)) {
-    blocks.push({ type: "text", text: m.content });
-  }
-  for (const tc of tools) {
-    blocks.push({ type: "tool_use", tool_call_id: tc.id, ...subtaskField(tc.agent_subtask_id) });
-  }
-  return { ...m, blocks };
+/** The other half of that split, for the reads already OUT: a revert drops turns, and a
+ *  read issued before the frame landed would seat one of them again. The reads in flight
+ *  are `store-load.ts`'s, so the abort is injected exactly as the read is. */
+let abortRevertReads: ((chatID: string, turnIDs: readonly string[]) => void) | undefined;
+
+export function registerRevertReadAbort(
+  fn: (chatID: string, turnIDs: readonly string[]) => void,
+): void {
+  abortRevertReads = fn;
 }
 
-/** Merge a freshly-ingested server message over the existing one: adopt the incoming's
- *  non-empty fields, never clobber non-empty with empty. This is what lets the streamed
- *  assistant message and its final `message_appended` (same id) coexist. */
-function mergeMessage(existing: Message, incoming: Message): Message {
-  const merged: Message = { ...existing };
-  if (nonEmptyStr(incoming.content)) {
-    merged.content = incoming.content;
+/** Record that this chat's window has a gap in it. `residency` is what makes
+ *  `transcriptStale` true, so the next activation refetches instead of trusting a window
+ *  with a known gap, and it is what `applyTurnRange` restores once every repair has landed.
+ *
+ *  Exported because a gap has two detectors: an entry event this module folds, and a PAGE
+ *  whose own walk found a `seq` that is not next (`store-load.ts` `buildPageTurns`). The
+ *  rule about what a gap does to `residency` stays here, at ONE owner. */
+export function markWindowStale(chatID: string): void {
+  const s = get(chatID);
+  if (s?.residency === "loaded") {
+    s.residency = "partial";
   }
-  if (nonEmptyStr(incoming.reasoning)) {
-    merged.reasoning = incoming.reasoning;
-  }
-  if (incoming.blocks !== undefined && incoming.blocks.length > 0) {
-    merged.blocks = incoming.blocks;
-  }
-  if (incoming.tool_calls !== undefined && incoming.tool_calls.length > 0) {
-    merged.tool_calls = incoming.tool_calls;
-  }
-  if (incoming.plan !== undefined && incoming.plan.length > 0) {
-    merged.plan = incoming.plan;
-  }
-  if (incoming.code_references !== undefined && incoming.code_references.length > 0) {
-    merged.code_references = incoming.code_references;
-  }
-  // The allowlist is exhaustive by construction: an unlisted field is silently dropped on
-  // the second ingest of the same id, and a user message with attachments is ingested twice.
-  if (incoming.attachments !== undefined && incoming.attachments.length > 0) {
-    merged.attachments = incoming.attachments;
-  }
-  if (incoming.refusal !== undefined) {
-    merged.refusal = incoming.refusal;
-  }
-  if (incoming.event_kind !== undefined) {
-    merged.event_kind = incoming.event_kind;
-  }
-  if (incoming.ts > 0) {
-    merged.ts = incoming.ts;
-  }
-  return merged;
 }
 
-/** Where a NEW message belongs in the array. A row the server has PERSISTED goes before
- *  the in-flight turn's message, because that is where the chat file has it: the server
- *  writes the file before it broadcasts. A row that OPENS a turn is exempt — a prompt sent
- *  during a live reply genuinely follows it. */
-function insertIndexFor(s: Session, incoming: Message): number {
-  if (incoming.role === "user") {
-    return s.messages.length;
-  }
-  const liveID = liveTurnMessage(s.id);
-  if (liveID === undefined) {
-    return s.messages.length;
-  }
-  const at = msgIndex.get(s.id)?.get(liveID);
-  return at ?? s.messages.length;
+/** Mark the gap and ask for the range read that closes it. `afterSeq` is omitted for a turn
+ *  the store does not hold at all, which asks for the whole turn. */
+function markHole(chatID: string, turnID: string, afterSeq?: number): void {
+  markWindowStale(chatID);
+  repairTurn?.(chatID, turnID, afterSeq);
 }
 
-/** Ingest a server-canonical message; message_created / message_appended /
- *  message_updated all route here. Upsert by id with a merge that never drops a message
- *  and never overwrites non-empty content with empty: absent inserts at `insertIndexFor`
- *  after normalizing, present goes through `mergeMessage`. */
-function ingestMessage(chatID: string, incoming: Message, persisted: boolean): void {
+/** Bump the narrowest pass that can show an entry event, and choose SYNCHRONOUS versus
+ *  microtask off the same lane test: a shape change must be in the DOM in the frame it was
+ *  announced in, while a laned entry's growth may coalesce. */
+function publishEntry(chatID: string, cause: RenderCause): void {
+  if (cause === "shape") {
+    bumpMessages(chatID, cause);
+  } else {
+    scheduleMessages(chatID, cause);
+  }
+}
+
+/** Create the turn a `turn_opened` announced, with its `turn_open` as `entries[0]`, and
+ *  append its id to the chat's turn order. Idempotent by turn id: a replayed frame names a
+ *  turn already held and changes nothing. */
+export function openTurn(chatID: string, entry: Entry): void {
+  const s = get(chatID);
+  if (s === undefined || s.turns.has(entry.turn)) {
+    return;
+  }
+  stampActivity(chatID);
+  noteResidentMutation(s);
+  s.turns.set(entry.turn, { entries: [entry], openEntries: new Map() });
+  s.turn_order.push(entry.turn);
+  // `turn_open.n` IS the session-absolute count of turns, so the newest one restates the
+  // header's `turn_count`; `max` because an older page's turns arrive with lower ordinals.
+  s.turn_count = Math.max(s.turn_count, payloadOf(entry, "turn_open")?.n ?? 0);
+  s.has_more = derivedHasMore(s.turn_count, s.turn_order.length);
+  bumpMessages(chatID, "shape");
+}
+
+/** A held turn's session-absolute ordinal, or `undefined` for a turn whose `turn_open`
+ *  the window does not hold — which the drop below reads as "cannot be placed against the
+ *  cut" and therefore leaves alone. */
+function heldOrdinal(state: TurnState | undefined): number | undefined {
+  const open = state?.entries[0];
+  if (open?.kind !== "turn_open") {
+    return undefined;
+  }
+  return payloadOf(open, "turn_open")?.n;
+}
+
+/** A revert's two writes, both keyed on `from_n`: drop every held turn the window took,
+ *  and write the surviving high-water as the count.
+ *
+ *  THE DROP IS BY ORDINAL, NEVER BY POSITION IN `turn_order`. The store holds the N newest
+ *  turns, so a client can legitimately hold turns 6 and 7 and not the 5 a revert names:
+ *  a position rule finds nothing at or after `from` and drops nothing, leaving two reverted
+ *  turns rendered under a count that agrees with neither. The carrier is kept — it is the
+ *  turn the record LIVES in and is below the cut by construction.
+ *
+ *  THE COUNT IS WRITTEN, not merged. `upsertHeader` merges a header's count as
+ *  `Math.max`, so a SHRINK is discarded there — correct for a header, which can read low
+ *  while a replay is still filling the window, and wrong for a revert, which STATES what
+ *  left. `from_n - 1` is the floor (every reverted turn's `n` is at or above `from_n`,
+ *  every survivor's below it) and the `max` covers the no-survivor case, where the floor
+ *  is 0 while the minted carrier is a real surviving turn numbered 1 that DRAWS. */
+function applyRevert(chatID: string, s: Session, entry: Entry): void {
+  const fromN = payloadOf(entry, "turn_revert")?.from_n;
+  if (fromN === undefined) {
+    return;
+  }
+  const dropped = new Map<string, TurnState>();
+  for (const id of s.turn_order) {
+    if (id === entry.turn) {
+      continue;
+    }
+    const state = s.turns.get(id);
+    const n = heldOrdinal(state);
+    if (state !== undefined && n !== undefined && n >= fromN) {
+      dropped.set(id, state);
+    }
+  }
+  if (dropped.size > 0) {
+    clearEntrySignals(chatID, dropped);
+    for (const id of dropped.keys()) {
+      s.turns.delete(id);
+    }
+    s.turn_order = s.turn_order.filter((id) => !dropped.has(id));
+    // The window's own record of what the revert took, read by the range read's seat as
+    // the abort's belt. Extended rather than replaced: a second rewind's window does not
+    // un-revert the first one's.
+    s.reverted = new Set([...(s.reverted ?? []), ...dropped.keys()]);
+  }
+  // Outside the drop: a page read in flight can carry reverted turns this window never held.
+  abortRevertReads?.(chatID, [...dropped.keys()]);
+  const carrier = heldOrdinal(s.turns.get(entry.turn)) ?? 0;
+  s.turn_count = Math.max(fromN - 1, carrier);
+  s.has_more = derivedHasMore(s.turn_count, s.turn_order.length);
+}
+
+/** Append one sealed entry at the position its `seq` claims.
+ *
+ *  THE SEQ IS THE CHECK: an entry whose `seq` is exactly `entries.length` is appended, an
+ *  entry naming a turn the store does not hold is a hole, and any other `seq` is a hole
+ *  too — except a REDELIVERY, which is provable rather than guessed: a sealed entry is
+ *  immutable, so a `seq` the store already holds under the SAME id is the frame arriving
+ *  twice and is dropped. Without that arm a reconnect's replay would ask for a range read
+ *  per frame. */
+export function appendEntry(chatID: string, entry: Entry): void {
   const s = get(chatID);
   if (s === undefined) {
     return;
   }
-  stampActivity(chatID);
-  const mi = getMsgIndex(chatID, s.messages);
-  const idx = mi.get(incoming.id) ?? -1;
-  if (idx === -1) {
-    noteResidentMutation(s);
-    const at = persisted ? insertIndexFor(s, incoming) : s.messages.length;
-    if (at === s.messages.length) {
-      mi.set(incoming.id, at);
-      s.messages.push(normalizeMessage(incoming));
-    } else {
-      s.messages.splice(at, 0, normalizeMessage(incoming));
-      // Every index at or past the splice point moved, so the map is rebuilt, not patched.
-      rebuildMsgIndex(chatID, s.messages);
+  const state = s.turns.get(entry.turn);
+  if (state === undefined) {
+    if (entry.kind === "turn_revert") {
+      // A `turn_revert` whose CARRIER the store does not hold is NOT a hole. Both of the
+      // handler's writes read `from_n` alone, so neither needs the carrier, and the
+      // carrier arrives with the next window read — where a hole here would fire a range
+      // read for a turn the client is about to page in anyway.
+      applyRevert(chatID, s, entry);
+      publishEntry(chatID, "shape");
+      return;
     }
-    s.message_count = Math.max(s.message_count, s.messages.length);
-    bumpMessages(chatID);
-    if (isTurnReply(incoming)) {
-      // The first moment there is an id to anchor a steer read before this turn produced
-      // anything. `isTurnReply` is what skips a PLAN row, which is assistant-role too.
-      rebindPendingAnchors(chatID, incoming.id);
-    }
+    markHole(chatID, entry.turn);
     return;
   }
-  const existing = s.messages[idx];
-  if (existing !== undefined) {
-    s.messages[idx] = mergeMessage(existing, normalizeMessage(incoming));
+  if (entry.seq !== state.entries.length) {
+    if (state.entries[entry.seq]?.id === entry.id) {
+      return;
+    }
+    markHole(chatID, entry.turn, state.entries.length - 1);
+    return;
   }
-  bumpMessages(chatID);
-}
-
-/** message_appended → merge path, and the PERSIST echo: an id arriving here is no
- *  longer the client's only copy, so it stops being the in-flight turn and its adopted
- *  snapshot is spent. Both clears live HERE rather than in the shared merge path, which
- *  `message_created` and `message_updated` also route through carrying partial messages —
- *  and `store-load.ts` adoptLiveTurn calls that merge right after recording the snapshot,
- *  so a clear inside it would erase the record in the same tick.
- *
- *  Clearing the whole RECORD rather than the marker alone is what keeps the base honest:
- *  `mergeMessage` adopts a non-empty incoming `blocks` wholesale, so this is the one door
- *  a full array whose indices are already absolute comes through. */
-export function appendMessage(chatID: string, msg: Message): void {
-  if (liveTurnMessage(chatID) === msg.id) {
-    clearLiveTurnMessage(chatID);
+  stampActivity(chatID);
+  noteResidentMutation(s);
+  state.entries.push(entry);
+  if (entry.kind === "turn_close") {
+    // The one cached lookup: `closeOf` and `hasOpenTurn` read this rather than scanning.
+    state.closeAt = entry.seq;
   }
-  clearAdoptedSnapshot(chatID, msg.id);
-  ingestMessage(chatID, msg, true);
+  if (entry.kind === "steer") {
+    // The dock row leaves HERE, in the same store update that seats the note, so no render
+    // frame exists in which the steer is in neither place. A `steer` entry's id IS KAS's
+    // steer id, which is the dock row's key.
+    forgetSteerRow(chatID, entry.id);
+  }
+  if (entry.kind === "tool_result") {
+    publishSettledCall(chatID, state, entry);
+  }
+  if (entry.kind === "turn_revert") {
+    // AFTER the push: the record is the carrier's own entry at its own `seq`, and the
+    // drop is what the record MEANS rather than part of seating it.
+    applyRevert(chatID, s, entry);
+  }
+  bumpLane(entry.turn, entry.lane ?? "");
+  publishEntry(chatID, entryCause(entry.lane));
 }
 
-/** message_created / message_updated → merge path. */
-export function upsertMessage(chatID: string, msg: Message): void {
-  ingestMessage(chatID, msg, false);
+/** Publish a `tool_result`'s settled value at the card its `tool_call` mounted. A mounted
+ *  card's ONE refresh channel is its own signal, so without this it keeps painting the
+ *  state the create was built with — the spinner — for the life of the document. The
+ *  pairing is the entry id (`entry-ids.ts`), so there is no join table to consult. */
+function publishSettledCall(chatID: string, state: TurnState, entry: Entry): void {
+  const callID = callIDOfToolResult(entry.id);
+  const result = payloadOf(entry, "tool_result");
+  if (callID === null || result === undefined) {
+    return;
+  }
+  const call = heldToolCall(state, callID);
+  if (call === undefined) {
+    return;
+  }
+  republishToolCall(chatID, entry.turn, settledToolCall(call, result));
 }
 
-/** Stamp the just-ended turn's summary (credits / elapsed / changed files) onto the chat's
- *  last assistant message; the renderer projects it into a keyed `.turn-footer`. Applies to
- *  any chat, so a background turn's footer is present when the user switches to it.
- *
- *  Skipped when a persisted row in the same turn body already carries the outcome: the
- *  assistant message beside such a carrier is a SEGMENT of that turn, and `turnLedger`
- *  sums across the body. */
-export function setTurnSummary(
+/** Remove one dock row without a bump of its own: the caller publishes. */
+function forgetSteerRow(chatID: string, steerID: string): void {
+  const s = get(chatID);
+  if (s?.steers === undefined) {
+    return;
+  }
+  const rest = s.steers.filter((e) => e.id !== steerID);
+  if (rest.length !== s.steers.length) {
+    sessions.update(chatID, (cur) => withSteers(cur, rest));
+  }
+}
+
+/** Whether a resident turn already holds the `steer` entry for this id. What a reconnect
+ *  needs: KAS replays the queued frame for a steer the agent has since READ, and without
+ *  this the dock would take a delivered message back. */
+function holdsSteerEntry(s: Session, steerID: string): boolean {
+  for (const state of s.turns.values()) {
+    for (const e of state.entries) {
+      if (e.kind === "steer" && e.id === steerID) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Store the open entry a lane is coalescing into, with the `n` it arrived with — the
+ *  count of deltas already folded into `open.text`. One open entry per lane, so a second
+ *  open in the same lane replaces the first. Mints the streaming signal, which is what a
+ *  surface that is not the entry's own bubble follows. */
+export function openEntry(chatID: string, open: OpenEntry): void {
+  const s = get(chatID);
+  if (s === undefined) {
+    return;
+  }
+  const state = s.turns.get(open.turn);
+  if (state === undefined) {
+    markHole(chatID, open.turn);
+    return;
+  }
+  const lane = open.lane ?? "";
+  stampActivity(chatID);
+  state.openEntries.set(lane, { ...open, lane });
+  ensureEntryTextSig(open.turn, open.id, open.text);
+  bumpLane(open.turn, lane);
+  publishEntry(chatID, entryCause(lane));
+}
+
+/** Extend a lane's open entry by one delta. `n` is the running count AFTER the delta, so
+ *  the only admissible value is `open.n + 1`; anything else, and any frame naming an entry
+ *  this lane is not coalescing, is the same hole. */
+export function applyDelta(
   chatID: string,
-  data: {
-    credits?: number;
-    elapsedMs?: number;
-    changedFiles?: Record<string, FileChange>;
-    model?: string;
-  },
+  turn: string,
+  entryID: string,
+  lane: string,
+  n: number,
+  delta: string,
 ): void {
   const s = get(chatID);
   if (s === undefined) {
     return;
   }
-  // TRAILING user rows belong to a LATER turn that has produced nothing yet — a prompt
-  // persists its row before it asks for the chat's admission slot — so the walk steps over
-  // them and stops at the user row that OPENS the turn being summarised.
-  let target: Message | undefined;
-  let inBody = false;
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = s.messages[i];
-    if (m === undefined) {
-      continue;
-    }
-    if (m.role === "user") {
-      if (inBody) {
-        break;
-      }
-      continue;
-    }
-    inBody = true;
-    // `target === undefined` is what keeps the veto INSIDE this turn. `projectTurns` closes a
-    // turn on an outcome-bearing row as well as on a user row, so a transcript ending
-    // [.., event(turn_outcome), assistant] has its carrier in the PREVIOUS turn; ungated, that
-    // vetoed the stamp for the new headerless turn.
-    if (m.turn_outcome !== undefined && target === undefined) {
-      return;
-    }
-    if (m.role === "assistant" && target === undefined) {
-      target = m;
-    }
-  }
-  if (target === undefined) {
+  const state = s.turns.get(turn);
+  if (state === undefined) {
+    markHole(chatID, turn);
     return;
   }
-  let changed = false;
-  if (data.credits !== undefined && data.credits > 0) {
-    target.turn_credits = data.credits;
-    changed = true;
+  const open = state.openEntries.get(lane);
+  if (open?.id !== entryID || n !== open.n + 1) {
+    markHole(chatID, turn, state.entries.length - 1);
+    return;
   }
-  if (data.elapsedMs !== undefined && data.elapsedMs > 0) {
-    target.turn_elapsed_ms = data.elapsedMs;
-    changed = true;
+  stampActivity(chatID);
+  const full = open.text + delta;
+  state.openEntries.set(lane, { ...open, text: full, n });
+  // `painted` reports that a signal CELL exists, not that a surface subscribed: `openEntry`
+  // mints one for every live stream. It answers false only for an open tail seated from a
+  // page GET that nothing has mounted, where the full pass is what puts the text on screen.
+  const painted = writeEntryText(turn, entryID, full, delta);
+  bumpLane(turn, lane);
+  publishEntry(chatID, painted ? "chunk" : entryCause(lane));
+}
+
+/** Seal a lane's open entry: build the `Entry` from the open state and hand it to
+ *  `appendEntry`, so the hole check applies to the seal's own `seq`. `n` must equal the
+ *  count this side holds, or the two disagree about how much text the entry carries. */
+export function sealEntry(
+  chatID: string,
+  turn: string,
+  entryID: string,
+  lane: string,
+  seq: number,
+  ts: number,
+  n: number,
+): void {
+  const s = get(chatID);
+  if (s === undefined) {
+    return;
   }
-  if (data.changedFiles !== undefined && Object.keys(data.changedFiles).length > 0) {
-    target.changed_files = data.changedFiles;
-    changed = true;
+  const state = s.turns.get(turn);
+  if (state === undefined) {
+    markHole(chatID, turn);
+    return;
   }
-  // Same non-empty guard as the numbers above: an absent model means the server could not
-  // name one, and stamping "" would make a turn look attributed.
-  if (data.model !== undefined && data.model !== "") {
-    target.turn_model = data.model;
-    changed = true;
+  const open = state.openEntries.get(lane);
+  if (open?.id !== entryID || n !== open.n) {
+    markHole(chatID, turn, state.entries.length - 1);
+    return;
   }
-  if (changed) {
-    bumpMessages(chatID);
-  }
+  state.openEntries.delete(lane);
+  clearEntryTextSig(turn, entryID);
+  const entry: Entry = {
+    id: open.id,
+    turn,
+    lane,
+    kind: open.kind,
+    // `text` and `thinking` carry the same one-field payload, so the kind on the envelope
+    // is what tells them apart.
+    payload: { text: open.text },
+    seq,
+    ts,
+  };
+  appendEntry(chatID, entry);
 }
 
 export function setSupervisedMode(chatID: string, enabled: boolean): void {
@@ -1635,497 +1437,111 @@ export function indexOfSession(id: string): number {
   return sessions.ids.peek().indexOf(id);
 }
 
-/** Per-chat HIGH-WATER MARK of the chunk sequence folded into that chat's in-flight
- *  assistant message: a chunk at or below it is already in the message and must be dropped
- *  rather than re-appended. One in-flight turn per chat, so the map is keyed by chat id.
- *
- *  TWO writers: `setChunkWatermark` below, for a server-sent copy, and `appendChunk`, which
- *  raises it as live chunks land and is what makes this a WATERMARK rather than one
- *  snapshot's seq — so a server copy fetched LATER can be compared against what this client
- *  holds, where `mergeMessage` would let a stale copy shrink a fuller local message. */
-const chunkWatermarks = new Map<string, { messageID: string; seq: number }>();
+/** The live `code_references` replace, per (chat, turn). LIVE-ONLY: the durable value is
+ *  `turn_close.code_references`, so this holds the footnote's answer for a turn that has
+ *  not closed yet and is dropped with the window. The server sends the full deduped list
+ *  each time, so it replaces rather than appends. */
+const liveCodeRefs = new Map<string, Map<string, readonly CodeReference[]>>();
 
-/** Record the chunk seq a server-sent copy of the in-flight turn folded in. Unconditional:
- *  the copy is a statement about what the SERVER sent, and a caller holding a fuller local
- *  message refuses the copy before it gets here (`store-load.ts` adoptLiveTurn). */
-export function setChunkWatermark(chatID: string, messageID: string, seq: number): void {
-  chunkWatermarks.set(chatID, { messageID, seq });
-}
-
-/** Raise the mark for a chunk this client just folded in; never lower it. `seq` is the
- *  server's `buf.chunkSeq++`, monotonic per turn, and SSE delivery is ordered per stream, so
- *  `max` is the right operator. A DIFFERENT message id is a new turn, whose own seq replaces
- *  the stale mark rather than being maxed against it. */
-function raiseChunkWatermark(chatID: string, messageID: string, seq: number): void {
-  const wm = chunkWatermarks.get(chatID);
-  if (wm?.messageID === messageID) {
-    if (seq > wm.seq) {
-      chunkWatermarks.set(chatID, { messageID, seq });
-    }
-    return;
-  }
-  chunkWatermarks.set(chatID, { messageID, seq });
-}
-
-/** The chunk seq already folded into this chat's copy of `messageID`, or undefined when this
- *  client holds no mark for that message. `store-load.ts` reads it to refuse a fetched
- *  `live_turn` that is OLDER than what the live stream has already delivered. */
-export function chunkWatermark(chatID: string, messageID: string): number | undefined {
-  const wm = chunkWatermarks.get(chatID);
-  return wm?.messageID === messageID ? wm.seq : undefined;
-}
-
-/** Drop the mark (turn finished or chat removed). */
-export function clearChunkWatermark(chatID: string): void {
-  chunkWatermarks.delete(chatID);
-}
-
-/** What the transcript GET's `live_turn` handed this client for one message: where the
- *  block array it delivered SITS in the turn's own array, and whether anything above it
- *  was withheld. TWO facts about ONE transfer — they arrive together on that payload and
- *  they are cleared at the same doors — so they are one record rather than two stores
- *  that can drift.
- *
- *  A map per message rather than a flag, because a reconnect can name a different message
- *  than the previous one. */
-export interface AdoptedSnapshot {
-  /** The ABSOLUTE index of `msg.blocks[0]`. The server keeps the TAIL of a capped block
-   *  array and re-indexes it from zero while a live `message_chunk` keeps naming the
-   *  absolute index, so this is what maps one onto the other. */
-  readonly blockBase: number;
-  /** Whether the payload was the TAIL of the turn, so the renderer can SAY so rather
-   *  than read a bounded payload as complete. */
-  readonly truncated: boolean;
-}
-
-const adoptedSnapshots = new Map<string, Map<string, AdoptedSnapshot>>();
-
-/** Record the window a `live_turn` just delivered. The writer calls this BEFORE its own
- *  `upsertMessage`, so the body's first paint already carries both facts.
- *
- *  The empty-key refusal is load-bearing rather than inherited: `store-load.ts`
- *  adoptLiveTurn's path does not test `chatID === ""`, so this is the only place an
- *  empty-keyed record is refused — and one would make `snapshotBlockBase` answerable for a
- *  chat that does not exist. */
-export function noteAdoptedSnapshot(
-  chatID: string,
-  messageID: string,
-  snap: AdoptedSnapshot,
-): void {
-  if (chatID === "" || messageID === "") {
-    return;
-  }
-  const byMsg = adoptedSnapshots.get(chatID);
-  if (byMsg === undefined) {
-    adoptedSnapshots.set(chatID, new Map([[messageID, snap]]));
-    return;
-  }
-  byMsg.set(messageID, snap);
-}
-
-/** The left edge of the block window the store holds for this message: subtract it from a
- *  wire `block_index` to reach the local array position. 0 when nothing was adopted, which
- *  is the right answer for an array the client has held from index 0. */
-export function snapshotBlockBase(chatID: string, messageID: string): number {
-  return adoptedSnapshots.get(chatID)?.get(messageID)?.blockBase ?? 0;
-}
-
-/** Whether the store's copy of this message is the TAIL of a capped snapshot. */
-export function isTruncatedSnapshot(chatID: string, messageID: string): boolean {
-  return adoptedSnapshots.get(chatID)?.get(messageID)?.truncated === true;
-}
-
-/** Drop one id's record: the whole message has arrived, so the window IS the array. */
-export function clearAdoptedSnapshot(chatID: string, messageID: string): void {
-  const byMsg = adoptedSnapshots.get(chatID);
-  if (byMsg === undefined) {
-    return;
-  }
-  byMsg.delete(messageID);
-  if (byMsg.size === 0) {
-    adoptedSnapshots.delete(chatID);
-  }
-}
-
-/** Drop every record for a chat (turn finished, transport gap, or chat removed). */
-export function clearAdoptedSnapshots(chatID: string): void {
-  adoptedSnapshots.delete(chatID);
-}
-
-/** The assistant message a chat's CURRENT turn is streaming into, while the server still
- *  holds it in memory and nowhere else.
- *
- *  `loadMessages` replaces the array with a fetched page, so it has to know WHICH local
- *  message the page is entitled to omit, and POSITION cannot answer that: the agent
- *  persists messages DURING a turn, and each lands after the streaming reply locally while
- *  sitting inside the page, so "keep everything after the newest id the page carries" steps
- *  past the reply and the replace deletes it. One entry per chat, one buffer per chat. */
-const liveTurnMsgIDs = new Map<string, string>();
-
-/** Record the message id a chat's in-flight turn is accumulating into. */
-export function noteLiveTurnMessage(chatID: string, messageID: string): void {
-  if (messageID === "") {
-    return;
-  }
-  liveTurnMsgIDs.set(chatID, messageID);
-}
-
-/** Drop the in-flight marker (turn persisted or finished, or chat removed). */
-export function clearLiveTurnMessage(chatID: string): void {
-  liveTurnMsgIDs.delete(chatID);
-}
-
-/** The id of the chat's unpersisted in-flight assistant message, if any. */
-export function liveTurnMessage(chatID: string): string | undefined {
-  return liveTurnMsgIDs.get(chatID);
-}
-
-/** Whether a mounted text sink exists for this block, which is what the
- *  signal-absent repaint below is FOR. Default true, so a caller that never wires
- *  it — and every test that does not — keeps the schedule unconditional. */
-let mountedBlockProbe: (messageID: string, blockIndex: number) => boolean = () => true;
-
-/** Injected by the block renderer, which is the only module that knows. */
-export function setMountedBlockProbe(fn: (messageID: string, blockIndex: number) => boolean): void {
-  mountedBlockProbe = fn;
-}
-
-export function appendChunk(
-  chatID: string,
-  messageID: string,
-  delta: string,
-  isReasoning: boolean,
-  blockIndex: number,
-  subtaskID: string,
-  seq = 0,
-  refusal?: RefusalInfo,
-): void {
+export function setCodeReferences(chatID: string, turnID: string, refs: CodeReference[]): void {
   const s = get(chatID);
-  if (s === undefined) {
+  if (!s?.turns.has(turnID)) {
     return;
   }
-  // Dedup against whatever the server has already handed this client as a whole copy of
-  // the turn — the transcript GET's `live_turn`.
-  const wm = chunkWatermarks.get(chatID);
-  if (wm?.messageID === messageID && seq > 0 && seq <= wm.seq) {
-    return;
-  }
-  // Past the guard, so this chunk IS being folded in. Raising the mark here is what lets a
-  // copy fetched LATER be told from a stale one: without it the mark describes only the last
-  // copy the server sent, so an intervening live chunk is invisible to that comparison.
-  raiseChunkWatermark(chatID, messageID, seq);
-  stampActivity(chatID);
-  const mi = getMsgIndex(chatID, s.messages);
-  const idx = mi.get(messageID) ?? -1;
-  let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
-  // The wire names the ABSOLUTE block index; the store may hold only a WINDOW of that
-  // array, whose left edge is the base the adopted snapshot reported. Read BEFORE the
-  // mint below, because for a message the store has never seen a below-window index means
-  // there is nothing worth minting: such a carrier gets non-empty `content` and an EMPTY
-  // block array, and that shape opens a headerless turn card whose body renders nothing.
-  // The watermark has already risen, so the chunk is not folded in twice.
-  const blockBase = snapshotBlockBase(chatID, messageID);
-  if (msg === undefined && blockIndex - blockBase < 0) {
-    return;
-  }
-  let isNew = false;
-  if (msg === undefined) {
-    noteResidentMutation(s);
-    msg = { id: messageID, role: "assistant", ts: Date.now(), content: "", blocks: [] };
-    const newIdx = s.messages.length;
-    s.messages.push(msg);
-    s.message_count = Math.max(s.message_count, s.messages.length);
-    mi.set(messageID, newIdx);
-    isNew = true;
-    // A chunk that beat its own message_created. One of the three doors an unpersisted
-    // message comes through, so it marks the turn like the other two — otherwise a refetch in
-    // that window cannot tell this message from one the server deliberately omitted.
-    noteLiveTurnMessage(chatID, messageID);
-  }
-  let refusalStamped = false;
-  if (refusal !== undefined && msg.refusal === undefined) {
-    // Model refusal: the tagged chunk marks the whole turn. Stamped once; forces a full
-    // repaint so the message-level callout mounts, since per-block signals only carry text.
-    msg.refusal = refusal;
-    refusalStamped = true;
-  }
-  if (isReasoning) {
-    msg.reasoning = (msg.reasoning ?? "") + delta;
-  } else {
-    msg.content = (msg.content ?? "") + delta;
-  }
-  // LOCAL from here: every index below this line addresses `msg.blocks`, whose left edge
-  // is the base above — the block array, the per-block signal key, the mounted-text read
-  // and the mounted-block probe alike. A REBIND rather than a second name, because a
-  // second name converts one of those consumers and silently leaves the other four
-  // publishing under the absolute index the renderer never registers.
-  blockIndex -= blockBase;
-  if (blockIndex < 0) {
-    // The chunk addresses a block the server withheld from this window. The watermark has
-    // risen and the flat fields have grown; there is simply no slot to write.
-    return;
-  }
-  // The server guarantees consecutive chunks of the same kind and subtask share a
-  // block_index; a tool_call, a kind switch, or a subtask switch bumps to a new one.
-  msg.blocks ??= [];
-  const blockKind = isReasoning ? "thinking" : "text";
-  let newBlock = false;
-  let padRepaired = false;
-  // Read the slot ONCE, into a const: `blockIndex` is rebound above, and `tsc` narrows an
-  // element access only through an index it can prove never moves — so a second
-  // `msg.blocks[blockIndex]` inside the else arm is `Block | undefined` however the arm was
-  // reached. One read, and the narrowing is the branch's own.
-  const existing = msg.blocks[blockIndex];
-  if (existing === undefined) {
-    padBlocks(msg.blocks, blockIndex, subtaskID);
-    msg.blocks.push({
-      type: blockKind,
-      ...subtaskField(subtaskID),
-      ...(isReasoning ? { thinking: delta } : { text: delta }),
-    });
-    newBlock = true;
-  } else {
-    // A PAD'S KIND IS A GUESS (see padBlocks), so the first real delta for the slot decides
-    // it. Without this the guess stuck and a thinking delta merged into a `text` pad rendered
-    // an empty row with its reasoning dropped outright.
-    if (isPadBlock(existing)) {
-      existing.type = blockKind;
-      // THE SUBTASK IS A GUESS TOO, inherited from whichever frame reached past this
-      // slot, so the real frame's own id REPLACES it — and replacing it with NONE takes
-      // a delete, because `subtaskField` spreads nothing for an absent id and would
-      // leave the guess standing on a block the parent agent wrote.
-      delete existing.agent_subtask_id;
-      Object.assign(existing, subtaskField(subtaskID));
-      padRepaired = true;
-    }
-    if (isReasoning) {
-      existing.thinking = (existing.thinking ?? "") + delta;
-    } else {
-      existing.text = (existing.text ?? "") + delta;
-    }
-  }
-
-  if (isNew) {
-    // A message the store has never seen: the renderer must mount its row. Not exempted for a
-    // step below — a step's first frame really does open a headerless turn card in the
-    // launching chat, and that card has to mount.
-    scheduleMessages(chatID, "shape");
-    return;
-  }
-  // A DELEGATE's blocks are DROPPED by the dispatcher, a subagent's and a workflow step's
-  // alike: nothing to mount, nothing to re-type, so a delta for one needs no structural
-  // pass. Its card's rolling tail reads the store directly (`subagent-tail.ts`).
-  const dropCause = droppedFrameCause(subtaskID);
-  if (refusalStamped) {
-    // Message-level FACT changed: the refusal feeds deriveOutcome and its callout mounts on a
-    // full pass.
-    scheduleMessages(chatID, "fact");
-  }
-  if (newBlock || padRepaired) {
-    // A new block pushed, or a pad's guessed kind corrected: only the full pass mounts or
-    // re-types a block.
-    scheduleMessages(chatID, newBlockCause(subtaskID));
-  }
-  // Fine-grained first — only the block at blockIndex re-renders — then the per-message signal.
-  const blockK = blockKey(messageID, blockIndex);
-  const blockMap = isReasoning ? blockThinkingSigs : blockTextSigs;
-  const blockSig = blockMap.get(blockK);
-  if (blockSig !== undefined) {
-    const fullText = isReasoning
-      ? (msg.blocks[blockIndex]?.thinking ?? "")
-      : (msg.blocks[blockIndex]?.text ?? "");
-    blockSig.value = { full: fullText, delta };
-    // Pure growth of a MOUNTED block: the signal effect painted the text, so this paint
-    // refreshes tail bookkeeping only.
-    scheduleMessages(chatID, "chunk");
-  }
-  // The block-signal-absent fallback, for a MOUNTED block whose liveness was misjudged:
-  // the pass re-reads it through `syncMountedText`. For an unmounted one the pass paints
-  // nothing either, so a parked reader would pay a full pass per delta. Nothing is MEANT to
-  // be drawn for a delegate's block, which is what the cheap cause carries.
-  if (blockSig === undefined && mountedBlockProbe(messageID, blockIndex)) {
-    scheduleMessages(chatID, dropCause);
-  }
+  const byTurn = liveCodeRefs.get(chatID) ?? new Map<string, readonly CodeReference[]>();
+  byTurn.set(turnID, refs);
+  liveCodeRefs.set(chatID, byTurn);
+  scheduleMessages(chatID, "fact");
 }
 
-/** Attach licensed-code attributions to an in-flight assistant message. The server sends
- *  the full deduped list each time, so replace rather than append. A no-op off-window: the
- *  refs persist server-side and render on reload. */
-export function setCodeReferences(chatID: string, messageID: string, refs: CodeReference[]): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  const mi = getMsgIndex(chatID, s.messages);
-  const idx = mi.get(messageID) ?? -1;
-  if (idx === -1) {
-    return;
-  }
-  const msg = s.messages[idx];
-  if (msg === undefined) {
-    return;
-  }
-  msg.code_references = refs;
-  bumpMessages(chatID);
-}
-
-export function upsertToolCall(
+/** The live attributions for a turn, or undefined when none arrived. The renderer prefers
+ *  the turn's own `turn_close.code_references` once it exists. */
+export function codeReferencesFor(
   chatID: string,
-  messageID: string,
-  call: ToolCall,
-  blockIndex: number,
-): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  const mi = getMsgIndex(chatID, s.messages);
-  const idx = mi.get(messageID) ?? -1;
-  let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
-  // The window's left edge, read BEFORE the mint for `appendChunk`'s reason: a message
-  // minted for a withheld block would carry the call and an EMPTY block array, which is
-  // the shape that opens a headerless turn card whose body renders nothing. A later frame
-  // naming a resident block mints it honestly.
-  const blockBase = snapshotBlockBase(chatID, messageID);
-  if (msg === undefined && blockIndex - blockBase < 0) {
-    return;
-  }
-  // LOCAL from here: the store holds a window whose left edge is the base above. No
-  // entry-point return for an existing message — the `tool_calls` push below is keyed by
-  // call id and is independent of block position, so returning at the door would drop a
-  // call whose card has a home. Each block WRITE is guarded instead.
-  blockIndex -= blockBase;
-  if (msg === undefined) {
-    noteResidentMutation(s);
-    // HONOUR `blockIndex` here too: hard-coding the tool_use block at index 0 left a turn
-    // whose first frame was a `tool_call` at index 2 misaligned for the rest of the turn.
-    const blocks: Block[] = [];
-    padBlocks(blocks, blockIndex, call.agent_subtask_id);
-    blocks[blockIndex] = {
-      type: "tool_use",
-      tool_call_id: call.id,
-      ...subtaskField(call.agent_subtask_id),
-    };
-    msg = {
-      id: messageID,
-      role: "assistant",
-      ts: Date.now(),
-      content: "",
-      tool_calls: [call],
-      blocks,
-    };
-    const newIdx = s.messages.length;
-    s.messages.push(msg);
-    s.message_count = Math.max(s.message_count, s.messages.length);
-    mi.set(messageID, newIdx);
-    // A new message: the full pass mounts its row. Synchronous, because an arrival must be in
-    // the DOM before the frame that announced it.
-    bumpMessages(chatID, "shape");
-    return;
-  }
-  msg.tool_calls ??= [];
-  msg.blocks ??= [];
-  // The existing-message arms take the cheap cause for a call the transcript draws nothing
-  // for; the `msg === undefined` arm above deliberately does not. No card is mounted for a
-  // delegate's own call — only for its INVOCATION, which `droppedCallCause` excepts — so
-  // `ensureToolCallSig` is never reached for one and every `tool_call_update` for every
-  // delegated call falls into the signal-absent arm at the foot.
-  const dropCause = droppedCallCause(call);
-  const tcIdx = msg.tool_calls.findIndex((tc) => tc.id === call.id);
-  if (tcIdx === -1) {
-    msg.tool_calls.push(call);
-    // First sighting of this tool call: pin it to the server's block index, REPLACING whatever
-    // pad sits there. A conditional push is false immediately after its own padding above, so
-    // the tool_use block was never written AND `msg.blocks.length` stayed one short of the
-    // server's next index — one hole early in a turn corrupted every call after it. A PAD is
-    // overwritten; a REAL block is not, because replacing a standing text or thinking block
-    // would delete transcript content the server already streamed.
-    //
-    // The guard is the withheld-block case: unguarded, `padBlocks` no-ops and the write
-    // sets a NON-INDEX string property (`blocks["-112"]`) while `length` stays put, so the
-    // array is silently junked. The call itself is still recorded above.
-    if (blockIndex >= 0) {
-      padBlocks(msg.blocks, blockIndex, call.agent_subtask_id);
-      const standing = msg.blocks[blockIndex];
-      if (standing === undefined || isPadBlock(standing)) {
-        msg.blocks[blockIndex] = {
-          type: "tool_use",
-          tool_call_id: call.id,
-          ...subtaskField(call.agent_subtask_id),
-        };
-      }
-    }
-    // `dropCause` decides the pass: a drawn call needs the full one that mounts its card,
-    // a delegate's own needs none.
-    scheduleMessages(chatID, dropCause);
-    return;
-  }
-  const prev = msg.tool_calls[tcIdx];
-  msg.tool_calls[tcIdx] = call;
-  // Late identity attachments are STRUCTURAL, not status updates (the server attaches both
-  // ids on updates when the initial call lacked them): a first `agent_subtask_id` decides
-  // container MEMBERSHIP, which is the BLOCK's field, and the tool fast path never re-homes
-  // a card; a first `workflow_id` is what the block dispatcher keys a run card on.
-  const subtaskAttached =
-    nonEmptyStr(call.agent_subtask_id) && !nonEmptyStr(prev?.agent_subtask_id);
-  if (subtaskAttached) {
-    const blk = msg.blocks.find((b) => b.type === "tool_use" && b.tool_call_id === call.id);
-    if (blk !== undefined) {
-      Object.assign(blk, subtaskField(call.agent_subtask_id));
-    }
-    scheduleMessages(chatID, dropCause);
-  }
-  if (nonEmptyStr(call.workflow_id) && !nonEmptyStr(prev?.workflow_id)) {
-    scheduleMessages(chatID, "fact");
-  }
-  republishToolCall(chatID, messageID, call);
+  turnID: string,
+): readonly CodeReference[] | undefined {
+  return liveCodeRefs.get(chatID)?.get(turnID);
 }
 
-/** Apply a `tool_call_update` DELTA to the held tool call; an absent field means
- *  unchanged.
+/** The live refusal per (chat, turn), stamped from the ONE tagged `entry_sealed` of a turn —
+ *  the frame the refusal branch publishes, since a tagged chunk opens no entry and SEALS the
+ *  lane's open one. LIVE-ONLY for `liveCodeRefs`' reason: the durable value is
+ *  `turn_close.refusal`, so this carries the callout for a turn that has not closed yet and
+ *  the close's own aggregate takes over. Stamped ONCE per turn — the wire sends it at most
+ *  once, and a second stamp would repaint the turn for a fact already on screen. */
+const liveRefusals = new Map<string, Map<string, RefusalInfo>>();
+
+export function setLiveRefusal(chatID: string, turnID: string, refusal: RefusalInfo): void {
+  const s = get(chatID);
+  if (!s?.turns.has(turnID)) {
+    return;
+  }
+  const byTurn = liveRefusals.get(chatID) ?? new Map<string, RefusalInfo>();
+  if (byTurn.has(turnID)) {
+    return;
+  }
+  byTurn.set(turnID, refusal);
+  liveRefusals.set(chatID, byTurn);
+  // `shape`, not `fact`: the callout is an element that has to MOUNT, and the turn's keyed
+  // state is what the reconcile reads to mount it.
+  bumpMessages(chatID, "shape");
+}
+
+/** The live refusal for a turn, or undefined when none arrived. The renderer prefers the
+ *  turn's own `turn_close.refusal` once it exists. */
+export function liveRefusalFor(chatID: string, turnID: string): RefusalInfo | undefined {
+  return liveRefusals.get(chatID)?.get(turnID);
+}
+
+/** Drop a chat's LIVE turn facts — the attributions and the refusal, both of which the
+ *  turn's own `turn_close` carries durably (window evicted, chat removed). */
+export function clearLiveTurnFacts(chatID: string): void {
+  liveCodeRefs.delete(chatID);
+  liveRefusals.delete(chatID);
+}
+
+/** Fold one `tool_progress` frame onto the call a card is showing.
  *
- *  A call this client does not hold is DROPPED, not created: a delta has nothing to
- *  apply to, and the transcript GET's `live_turn` is the channel for a client that missed
- *  the beginning.
- *  `undefined` reports that drop. RETURNS the folded call, so the handler can read a
- *  field off it without walking the message index and the call array again. */
-export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): ToolCall | undefined {
+ *  The frame is LIVE-ONLY and its durable twin is the `tool_result` entry, so this writes
+ *  no entry: it folds onto the SIGNAL cell the card subscribes to, seeded from the
+ *  `tool_call` entry's own payload. A frame for a call this window does not hold reports
+ *  `undefined`, which is the handler's own signal to ask for the turn's range. */
+export function applyToolProgress(
+  chatID: string,
+  turnID: string,
+  p: ToolProgressPayload,
+): ToolCall | undefined {
   const s = get(chatID);
   if (s === undefined) {
     return undefined;
   }
-  const idx = getMsgIndex(chatID, s.messages).get(d.message_id) ?? -1;
-  const msg = idx !== -1 ? s.messages[idx] : undefined;
-  const tcIdx = msg?.tool_calls?.findIndex((tc) => tc.id === d.tool_call_id) ?? -1;
-  if (msg?.tool_calls === undefined || tcIdx === -1) {
+  const state = s.turns.get(turnID);
+  if (state === undefined) {
     return undefined;
   }
-  const prev = msg.tool_calls[tcIdx];
+  const prev = peekToolCallSig(chatID, p.tool_call_id) ?? heldToolCall(state, p.tool_call_id);
   if (prev === undefined) {
     return undefined;
   }
-  const next = foldToolCallDelta(prev, d);
-  msg.tool_calls[tcIdx] = next;
-  // A first `agent_subtask_id` decides container MEMBERSHIP, which is the
-  // BLOCK's field and the tool fast path never re-homes a card — so the block
-  // updates here and the full pass re-homes. Only the delta can say this
-  // happened now, which is what makes it cheaper than the old whole-object
-  // compare against `prev`.
-  if (nonEmptyStr(d.agent_subtask_id) && !nonEmptyStr(prev.agent_subtask_id)) {
-    msg.blocks ??= [];
-    const blk = msg.blocks.find((b) => b.type === "tool_use" && b.tool_call_id === next.id);
-    if (blk !== undefined) {
-      Object.assign(blk, subtaskField(next.agent_subtask_id));
-    }
-    scheduleMessages(chatID, "shape");
-  }
-  // A first `workflow_id` changes `turnRunIDs`, a projection/fold input, so the
-  // fold pass must run.
-  if (nonEmptyStr(d.workflow_id) && !nonEmptyStr(prev.workflow_id)) {
-    scheduleMessages(chatID, "fact");
-  }
-  republishToolCall(chatID, d.message_id, next);
+  const next = foldToolCallDelta(prev, p);
+  republishToolCall(chatID, turnID, next);
+  // The SILENCE marker's one input on this path: the wall clock at which this client
+  // applied a frame for that call. A display value in `elapsed_ms`'s class — no entry
+  // `ts` is read here and nothing about the fold's ORDER depends on it.
+  noteToolActivity(chatID, p.tool_call_id);
   return next;
+}
+
+/** The `tool_call` entry's own payload as a `ToolCall`, for a card whose signal has not
+ *  been minted yet. */
+function heldToolCall(state: TurnState, toolCallID: string): ToolCall | undefined {
+  for (const e of state.entries) {
+    const call = payloadOf(e, "tool_call");
+    if (call?.id === toolCallID) {
+      return call;
+    }
+  }
+  return undefined;
 }
 
 /** Fold one delta onto a held tool call, returning the new value. A fresh object
@@ -2133,8 +1549,8 @@ export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): To
  *
  *  EXPORTED only for the cross-language contract test, which drives this against the
  *  same fixture the Go builder is driven against so the two folds cannot drift.
- *  Every production caller reaches it through `applyToolCallDelta`. */
-export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): ToolCall {
+ *  Every production caller reaches it through `applyToolProgress`. */
+export function foldToolCallDelta(prev: ToolCall, d: ToolProgressPayload): ToolCall {
   // `output_replace` is the only case where accumulated output legitimately shrinks
   // or is rewritten. The flag is read FIRST and is authoritative on its own, because
   // the delta is `omitempty` on the Go side: a replace-to-empty travels as
@@ -2159,7 +1575,6 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): Too
     ...(d.locations !== undefined && { locations: d.locations }),
     ...(d.duration_ms !== undefined && { duration_ms: d.duration_ms }),
     ...(d.terminal_id !== undefined && { terminal_id: d.terminal_id }),
-    ...(d.sub_session_id !== undefined && { sub_session_id: d.sub_session_id }),
     ...(d.agent_subtask_id !== undefined && { agent_subtask_id: d.agent_subtask_id }),
     ...(d.workflow_id !== undefined && { workflow_id: d.workflow_id }),
     ...(d.checkpoint !== undefined && { checkpoint: d.checkpoint }),
@@ -2174,12 +1589,11 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): Too
 /** Publish a FETCHED window's tool calls at the cards already mounted for them.
  *
  *  A mounted tool card has exactly one refresh channel — the per-call signal effect
- *  `messages-tools.ts` installs at mount — and until this existed the SSE path was its
- *  only writer, so a wholesale window replacement (`store-load.ts` `loadMessages`) left
- *  every mounted card showing whatever it was built from. That is what made the boot
- *  snapshot's deliberately-truncated output permanent: the record is a paint-time hint
- *  the server's answer is meant to supersede, and the answer reached the store while the
- *  cards kept the hint.
+ *  `messages-tools.ts` installs at mount — so a wholesale window replacement
+ *  (`store-load.ts`) leaves every mounted card showing whatever it was built from unless
+ *  the fetched value is pushed at it. That is what made the boot snapshot's deliberately
+ *  truncated output permanent: the record is a paint-time hint the server's answer is
+ *  meant to supersede.
  *
  *  Through `republishToolCall` rather than `ensureToolCallSig` on purpose: that is already
  *  the one place a call is published to a card, it picks the repaint cause, and its
@@ -2194,18 +1608,73 @@ export function foldToolCallDelta(prev: ToolCall, d: ToolCallUpdatePayload): Too
  *  repaints on every load — and `applyOutputUpdate` re-windows the output and removes and
  *  re-creates `.tool-output-reveal`, so a reader who expanded a long output with
  *  "Show N more lines" would lose that expansion, and any selection inside the `<pre>`
- *  with it, on every later `loadMessages`. On the boot path, where the card really is
- *  showing the snapshot's truncated copy, the compare misses and nothing changes. */
-export function republishWindowToolCalls(chatID: string, messages: readonly Message[]): void {
-  for (const m of messages) {
-    for (const call of m.tool_calls ?? []) {
-      const shown = peekToolCallSig(chatID, call.id);
-      if (shown !== undefined && paintsTheSame(shown, call)) {
+ *  with it. On the boot path, where the card really is showing the snapshot's truncated
+ *  copy, the compare misses and nothing changes.
+ *
+ *  The DURABLE value of a tool call is its `tool_result` entry, so a settled call is
+ *  published from that rather than from the `tool_call` the turn opened with. */
+export function republishWindowToolCalls(chatID: string, turnIDs: readonly string[]): void {
+  const s = get(chatID);
+  if (s === undefined) {
+    return;
+  }
+  for (const turnID of turnIDs) {
+    const state = s.turns.get(turnID);
+    if (state === undefined) {
+      continue;
+    }
+    const settled = new Map<string, EntryToolResult>();
+    for (const e of state.entries) {
+      const result = payloadOf(e, "tool_result");
+      const callID = result === undefined ? null : callIDOfToolResult(e.id);
+      if (result !== undefined && callID !== null) {
+        settled.set(callID, result);
+      }
+    }
+    for (const e of state.entries) {
+      const call = payloadOf(e, "tool_call");
+      if (call === undefined) {
         continue;
       }
-      republishToolCall(chatID, m.id, call);
+      const next = settledToolCall(call, settled.get(e.id));
+      const shown = peekToolCallSig(chatID, next.id);
+      if (shown !== undefined && paintsTheSame(shown, next)) {
+        continue;
+      }
+      republishToolCall(chatID, turnID, next);
     }
   }
+}
+
+/** A tool call as the card should paint it: the call as created, with its `tool_result`'s
+ *  settled value over the top. The result carries no id of its own — the pairing is the
+ *  entry id (`entry-ids.ts`) — so this is the one place the two halves are joined. */
+export function settledToolCall(
+  call: EntryToolCall,
+  result: EntryToolResult | undefined,
+): ToolCall {
+  if (result === undefined) {
+    return call;
+  }
+  return {
+    ...call,
+    // `status` is required on the result, so it always wins: the initial value on the call
+    // is a starting state rather than a verdict.
+    status: result.status,
+    ...(result.title !== undefined && { title: result.title }),
+    ...(result.kind !== undefined && { kind: result.kind }),
+    ...(result.output !== undefined && { output: result.output }),
+    ...(result.output_spans !== undefined && { output_spans: result.output_spans }),
+    ...(result.diffs !== undefined && { diffs: result.diffs }),
+    ...(result.locations !== undefined && { locations: result.locations }),
+    ...(result.duration_ms !== undefined && { duration_ms: result.duration_ms }),
+    ...(result.terminal_id !== undefined && { terminal_id: result.terminal_id }),
+    ...(result.workflow_id !== undefined && { workflow_id: result.workflow_id }),
+    ...(result.checkpoint !== undefined && { checkpoint: result.checkpoint }),
+    ...(result.disclosed !== undefined && { disclosed: result.disclosed }),
+    ...(result.denial !== undefined && { denial: result.denial }),
+    ...(result.declined === true && { declined: true }),
+  };
 }
 
 /** Whether a mounted card built from `shown` would paint `next` identically: the fields
@@ -2267,19 +1736,19 @@ function sameDiffs(a: ToolCall["diffs"], b: ToolCall["diffs"]): boolean {
 }
 
 /** Push a tool call's new value at whatever is rendering it, and schedule the
- *  narrowest pass that can show it. Shared by the create path and the delta
- *  path so the two cannot disagree about which pass a tool update needs. */
-function republishToolCall(chatID: string, messageID: string, call: ToolCall): void {
+ *  narrowest pass that can show it. Shared by the live progress path and the fetched
+ *  window so the two cannot disagree about which pass a tool update needs. */
+function republishToolCall(chatID: string, turnID: string, call: ToolCall): void {
   const sig = toolCallSigs.get(toolCallSigKey(chatID, call.id));
   if (sig !== undefined) {
     sig.value = call;
     // The card's own effect repaints it; the tool paint refreshes the owning turn's keyed
     // state only — never a projection, never a mount.
-    scheduleMessages(chatID, "tool", messageID);
+    scheduleMessages(chatID, "tool", turnID);
   } else {
     // Signal-absent fallback: nothing is mounted, so the full pass puts the update on
-    // screen — unless nothing is MEANT to be, which is a delegate's own call.
-    scheduleMessages(chatID, droppedCallCause(call));
+    // screen — unless nothing is MEANT to be, which is a laned call.
+    scheduleMessages(chatID, entryCause(call.agent_subtask_id));
   }
 }
 
@@ -2293,7 +1762,6 @@ export function defaultUsage(): Usage {
     context_pct: 0,
     context_size: 0,
     credits: 0,
-    turn_count: 0,
     last_turn_ms: 0,
     has_real_data: false,
   };

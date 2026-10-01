@@ -20,9 +20,10 @@
 // transcript file reference otherwise exists as linkified prose (which requires a
 // `/` and an extension in FILE_EXTS — and FILE_EXTS carries no audio extensions,
 // so audio is not linkified at all) or as a tool card's subject, which is an EDIT
-// subject rather than a presentation. There is no `resource_link` block and no
-// file block on the transcript wire: `marotte.BlockType` is text / tool_use /
-// thinking, full stop. So `![](…)` is the one place the agent CHOSE to present a
+// subject rather than a presentation. There is no resource-link and no file entry
+// on the transcript wire: an entry's kind is one of the fourteen the appender
+// mints, and not one of them presents a file. So `![](…)` is the one place the
+// agent CHOSE to present a
 // file, which is exactly the signal a card should key on.
 // ---------------------------------------------------------------------------
 

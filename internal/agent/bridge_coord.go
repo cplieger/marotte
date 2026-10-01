@@ -9,16 +9,16 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/marotte/internal/buffer"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/settings"
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/translate"
-	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
 )
 
 // BridgeCoordinator owns bridge lifecycle, notification forwarding, model
@@ -58,20 +58,27 @@ type BridgeCoordinator struct {
 	// onTurnClosed fires from the WINNING closer once a turn has finalized; the
 	// agent-terminal registry evicts that turn's retired output. A closure rather
 	// than the collaborator, which is built after this literal. Nil in tests.
-	onTurnClosed func(marotte.ChatID, marotte.TurnEpoch)
+	onTurnClosed func(marotte.ChatID, string)
+	// applyPendingModel is the header's pending_model idle arm, dispatched by every
+	// closer on its own goroutine; it re-reads the idle predicate itself. Nil in tests.
+	applyPendingModel func(context.Context, marotte.ChatID) `wiring:"optional"`
+	// runs is the run registry, for the death closer's run arm: every open step turn
+	// of every run this chat's bridge hosted closes with the chat's turns.
+	runs *runLog `wiring:"optional"`
+	// takeUnreadSteers drains what a dead bridge leaves unread: the steers parked
+	// for a spawning prompt, which KAS never held, and the IDS of the rows KAS had
+	// queued that this process holds no text for — one id per entry, because the
+	// record of that loss is now an empty-text steer entry rather than a header
+	// flag. Nil in tests.
+	takeUnreadSteers func(marotte.ChatID) (parked []command.ParkedSteer, queuedIDs []string) `wiring:"optional"`
 	// secretStorage reports whether the runtime holds a credential store, read at
 	// SPAWN time: a bool captured here runs before NewHub opens the store, so it
 	// would be false for every bridge this process ever starts.
 	secretStorage func() bool `wiring:"optional"`
 	// chatHasLiveRun reports whether a run this chat launched is still on the wire,
-	// which is what stops pushTurnOutcome claiming the work is over while a run the
-	// finished turn started carries on. A CLOSURE rather than a *Runs field: this
-	// type holds no run surface, and reaching one through a closure installed by
-	// newBridgeCoordinator is the pattern onSessionRehydrated already uses, so it
-	// adds no edge for the construction-order guard to police.
-	//
-	// Nil means "nothing outstanding" — the pre-fix behaviour — so a test
-	// constructing this type directly does not start withholding.
+	// so pushTurnOutcome does not claim the work is over while that run carries on.
+	// A closure rather than a *Runs field: this type holds no run surface, the
+	// pattern onSessionRehydrated already uses. Nil means "nothing outstanding".
 	chatHasLiveRun func(marotte.ChatID) bool `wiring:"optional"`
 	// unknownStops records the stop reasons already warned about, so an unmapped
 	// wire value produces one line rather than one per turn.
@@ -116,10 +123,30 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 			defer cancel()
 			h.runs.resumeInterruptedRuns(ctx, chatID)
 		},
-		onTurnClosed: func(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
-			h.agentTerms.CloseTurn(chatID, epoch)
+		onTurnClosed: func(chatID marotte.ChatID, turnID string) {
+			h.agentTerms.CloseTurn(chatID, turnID)
+			// Its own goroutine: a bridge Call has no client-side deadline and a
+			// closer must not wait on one.
+			go func() {
+				ctx, cancel := h.lifecycle.derivedContext()
+				defer cancel()
+				h.runs.clearStaleNotices(ctx, chatID)
+			}()
 		},
-		dischargeWaiting: h.DischargeWaiting,
+		dischargeWaiting:  h.DischargeWaiting,
+		applyPendingModel: h.applyPendingModel,
+		runs:              h.runs.log,
+		takeUnreadSteers: func(chatID marotte.ChatID) ([]command.ParkedSteer, []string) {
+			parked := h.steerLedger.TakeParkedSteers(chatID)
+			waiting := h.bus.steers.TakeForChat(chatID)
+			var queuedIDs []string
+			for _, w := range waiting {
+				if !slices.ContainsFunc(parked, func(p command.ParkedSteer) bool { return p.ID == w.SteerID }) {
+					queuedIDs = append(queuedIDs, w.SteerID)
+				}
+			}
+			return parked, queuedIDs
+		},
 	}
 }
 
@@ -155,7 +182,10 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID marotte.Chat
 		bc.ensureIdentity(ctx)
 	}
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
-		if bc.bridge.mgr.closeIfRetired(chatID, sb) {
+		if reopen, stopped := bc.bridge.mgr.closeIfRetired(chatID, sb); reopen {
+			if stopped {
+				bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
+			}
 			return bc.OpenBridge(ctx, chatID, modelOverride)
 		}
 		bc.repairEffort(ctx, chatID, sb)
@@ -174,13 +204,12 @@ func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID marotte.Chat
 	b, _ := v.(*sharedBridge)
 	// A retire that landed DURING the spawn: the fresh bridge is already stale, so
 	// it is closed and reopened rather than handed back on the previous account.
-	if bc.bridge.mgr.closeIfRetired(chatID, b) {
+	if reopen, stopped := bc.bridge.mgr.closeIfRetired(chatID, b); reopen {
+		if stopped {
+			bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
+		}
 		return bc.OpenBridge(ctx, chatID, modelOverride)
 	}
-	// Wake prompts parked on the admission slot: their answer depends on the
-	// holder's source, and the bridge going live changes it without moving any
-	// registry state.
-	bc.turns.wakeChat(chatID)
 	return b, nil
 }
 
@@ -203,16 +232,25 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID marotte.Cha
 
 	setupErr := func(err error) error {
 		bc.bridge.mgr.removeIfSame(chatID, sb)
-		sb.setState(bridgeIdle)
+		sb.setIdle()
 		return err
 	}
 
-	chat, exists := bc.chatStore.Get(ctx, chatID)
+	rec, exists := bc.chatStore.Get(ctx, chatID)
 	if !exists {
 		return nil, setupErr(fmt.Errorf("chat %s not found", chatID))
 	}
+	// A pick parked while the chat had no bridge lands here rather than at a store-open
+	// scan: the log opens lazily, and this is the last header read before a session
+	// takes its model.
+	if rec.PendingModel != "" {
+		bc.persistModelPick(ctx, chatID, rec.PendingModel)
+		if rec, exists = bc.chatStore.Get(ctx, chatID); !exists {
+			return nil, setupErr(fmt.Errorf("chat %s not found", chatID))
+		}
+	}
 
-	model := chat.Model
+	model := rec.Model
 	if modelOverride != "" && modelOverride != modelAuto {
 		model = modelOverride
 	}
@@ -220,7 +258,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID marotte.Cha
 	// rather than a pick the user just made, and kiro-cli would reject it mid-prompt
 	// on every later turn. An explicit pick is refused loudly, in cmdSwitchModel. An
 	// empty advertised set means unknowable and allows.
-	if !marotte.ModelServed(model, chat.ServedModelIDs) {
+	if !marotte.ModelServed(model, rec.ServedModelIDs) {
 		slog.Warn("withholding a model this account does not serve; using the backend default",
 			"chat_id", chatID, "model", model)
 		model = ""
@@ -236,13 +274,13 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID marotte.Cha
 	// A model OVERRIDE differing from the record is the switch-by-restart path: the
 	// chat's stored tier was chosen under the model being switched AWAY from, so
 	// resolve effort against the target instead.
-	effort := bc.effortFor(ctx, chat)
-	if model != "" && model != chat.Model {
+	effort := bc.effortFor(ctx, rec)
+	if model != "" && model != rec.Model {
 		effort = bc.EffortForSwitch(ctx, model)
 	}
 
-	if chat.ACPSessionID != "" {
-		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, effort, chat.SupervisedMode) {
+	if rec.ACPSessionID != "" {
+		if bc.tryLoadSession(ctx, chatID, sb, rec.ACPSessionID, model, effort, rec.SupervisedMode) {
 			return sb, nil
 		}
 	}
@@ -255,30 +293,25 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID marotte.Cha
 	// session-creation path, so attaching Forward after Start deadlocks every
 	// fresh session.
 	bc.goForward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
+	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: rec.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: rec.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 	// The session door's half of the supervised fail-open: the assert is best-effort
 	// inside Start, so a refusal used to open the chat unsupervised with the record and
 	// every client's checkbox still saying supervised.
-	bc.reportSupervisedNotApplied(ctx, chatID, chat.SupervisedMode, sb.bridge.SupervisedApplied())
-	sb.setState(bridgeIdle)
+	bc.reportSupervisedNotApplied(ctx, chatID, rec.SupervisedMode, sb.bridge.SupervisedApplied())
+	sb.setIdle()
 
 	return sb, nil
 }
 
 // reportSupervisedNotApplied tells the user when the session refused `autopilot: off`,
-// so the chat is running unsupervised and will not ask before writing. A no-op unless
-// the chat asked for supervised mode AND the session did not take it — the bridge's own
-// flag cannot answer that alone, because false also means nobody asked.
-//
-// Modelled on reportModeNotApplied, including its no-automatic-retry reasoning, and it
-// DIVERGES from it in one way worth stating: the mode path resets the record to the
-// session's actual mode, so its request is gone and the next spawn has nothing to
-// re-ask. Here the record keeps the REQUEST, because supervised is the safer intent to
-// remember — so the next spawn WILL re-assert, and this event is a report rather than
-// the only chance to act.
+// so the chat runs unsupervised. A no-op unless the chat asked for supervised mode AND
+// the session did not take it: the bridge's flag alone cannot tell, since false also
+// means nobody asked. Unlike reportModeNotApplied the record KEEPS the request
+// (supervised is the safer intent), so the next spawn re-asserts it and this is a
+// report rather than the only chance to act.
 func (bc *BridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, chatID marotte.ChatID, requested, applied bool) {
 	if !requested || applied {
 		return
@@ -305,13 +338,13 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// exit cleanup cannot evict the replacement. Open the projection first: KAS
 	// starts replaying inside Start below.
 	if bc.replayProjection != nil {
-		bc.replayProjection.OpenReplayProjection(chatID)
+		bc.replayProjection.OpenReplayProjection(ctx, chatID, acpSessionID)
 	}
 	// The attachment is taken HERE, not inside the goroutine: the load's read-loop
 	// position below is only comparable within one attachment. See replay_drain.go.
 	gen := bc.turns.attachForward(chatID)
 	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, sb.bridge, gen) })
-	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
+	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so a partial replay must not
@@ -354,7 +387,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	}); mErr != nil {
 		slog.Error("refresh session metadata", "chat_id", chatID, "error", mErr)
 	}
-	sb.setState(bridgeIdle)
+	sb.setIdle()
 	// Heal the chat's restart-paused runs off the spawn path, so the user's prompt
 	// never waits behind a run-list round trip, and AFTER the state flip, so the
 	// resume's own bridge Call finds an idle bridge.
@@ -365,14 +398,12 @@ func (bc *BridgeCoordinator) tryLoadSession(
 }
 
 // adoptKASTitle names a chat from KAS's own session title, only while the chat has
-// no name of its own and the title passes the same door treatment the focus channel
-// applies. Naming precedence is focus_update title > local first-prompt label > this.
-//
-// The whole treatment runs here, not just the shape rules: a stored title is a string
-// KAS persisted, so it is bounded and sanitized by nothing, and a session titled by a
-// pre-gate build or renamed from the IDE re-offers it on every resume. Every refusal
-// is Warn, where the focus door drops the routine one to Debug — this rung is reached
-// only while a chat is still default-named, so it carries no volume to bury a signal.
+// no name of its own and the title passes the focus channel's door treatment. Naming
+// precedence is focus_update title > local first-prompt label > this. The WHOLE
+// treatment runs here, not just the shape rules: a stored title was bounded and
+// sanitized by nothing, and a pre-gate or IDE-renamed session re-offers it on every
+// resume. Every refusal is Warn (the focus door drops the routine one to Debug):
+// this rung is reached only while a chat is still default-named, so it has no volume.
 func adoptKASTitle(c *marotte.Chat, stored string) {
 	title := translate.SanitizeTitle(stored)
 	if title == "" || c.Name != marotte.DefaultChatName {
@@ -474,66 +505,58 @@ func (rt *Runtime) HasLiveBridge(chatID marotte.ChatID) bool {
 	return rt.bridge.mgr.get(chatID) != nil
 }
 
-// TurnOpenState reports whether a chat has a turn in flight and whose it is. Composition
-// injects it into the chat store (chat.WithTurnOpen) so `GET /api/chats/{id}` can state
-// both facts rather than leave the client to guess them from an absent carrier.
-func (rt *Runtime) TurnOpenState(chatID marotte.ChatID) marotte.TurnOpenState {
-	return rt.coord.turns.openTurnState(chatID)
+// TurnLive reports whether the chat has a turn the reader must treat as running: its
+// own turn, an admitted prompt awaiting its bracket, or a held admission slot.
+// Composition injects it into the chat store (chat.WithLiveTurn) so the GET states
+// `live` rather than inferring it from the log.
+func (rt *Runtime) TurnLive(chatID marotte.ChatID) bool {
+	return rt.coord.turns.live(chatID)
 }
 
-// LiveTurn returns the in-flight turn's accumulated assistant message for chatID, or
-// false when no turn a reader may see is open. Composition injects it into the chat store
-// (chat.WithLiveTurn), which is what gives `GET /api/chats/{id}` the CONTENT to go with
-// the `turn_open` it already states.
-//
-// The ONLY channel for that content: the connect carries `busy_chats` and no turn
-// transcript, so a client that finds a chat busy at connect fetches the page and reads
-// the reply from here.
-//
-// The snapshot is taken with the buffer's own mutex and no lifecycle lock held, which is
-// what lets two clients read one turn independently; neither mutates the buffer.
-func (rt *Runtime) LiveTurn(chatID marotte.ChatID) (marotte.LiveTurn, bool) {
-	facts, open := rt.coord.turns.openTurnFor(chatID)
-	if !open {
-		return marotte.LiveTurn{}, false
+// OpenTurns returns every open turn of the chat with the entries still coalescing
+// in its lanes, for the GET's open_entries and its live_turn stamps
+// (chat.WithOpenTurns). The registry lookup runs under the lifecycle mutex and
+// each accumulator read under its own, so the folder can be extending a lane
+// while this copies it out.
+func (rt *Runtime) OpenTurns(chatID marotte.ChatID) []chat.OpenTurnTail {
+	turns := rt.coord.turns.openTurnIDs(chatID)
+	out := make([]chat.OpenTurnTail, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, chat.OpenTurnTail{ID: t.ID, Entries: t.Log.OpenEntries()})
 	}
-	snap, ok := facts.Buf.SnapshotCapped(liveTurnGETCaps)
-	if !ok {
-		// A turn that has produced nothing yet. `turn_open` still says it is running;
-		// there is simply no carrier to describe, and an empty message would name an id
-		// the client would then treat as its unpersisted live turn.
-		return marotte.LiveTurn{}, false
-	}
-	return marotte.LiveTurn{
-		Message:   snap.Message,
-		ChunkSeq:  snap.ChunkSeq,
-		BlockBase: snap.BlockBase,
-		Truncated: snap.Truncated,
-	}, true
+	return out
 }
 
-// CloseBridge stops a bridge and removes it from the map.
-func (bc *BridgeCoordinator) CloseBridge(chatID marotte.ChatID) {
+// CloseBridge closes every turn the chat's bridge hosted with outcome, then stops
+// the bridge and removes it from the map. The closer runs FIRST, while the record
+// still says which turns are open; a deliberate stop that skipped it would leave
+// them open in the log for the process's life.
+func (bc *BridgeCoordinator) CloseBridge(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
+	bc.closeTurnOnBridgeDeath(ctx, chatID, outcome)
 	bc.bridge.mgr.close(chatID)
 }
 
-// RetireBridges closes idle chat bridges, marks busy chat bridges for their
-// next open, and resets the utility session. Active workflow runs continue.
+// RetireBridges closes idle chat bridges, marks busy chat bridges for their next
+// open, and resets the utility session. A bridge hosting a live run counts as
+// busy (retireChatBridges owns the rule); the ones stopped here close their
+// wire_turn_start turn and their hosted run turns through closeTurnsOnRetire.
 func (bc *BridgeCoordinator) RetireBridges(reason string) {
-	closed, marked := bc.bridge.mgr.retireChatBridges()
+	victims, marked := bc.bridge.mgr.retireChatBridges()
+	for _, chatID := range victims {
+		bc.closeTurnsOnRetire(bc.lifecycle.shutdownCtx, chatID)
+	}
 	bc.retireUtility()
 	slog.Info("identity changed; retiring live chat bridges",
-		"reason", reason, "closed", closed, "marked", marked)
+		"reason", reason, "closed", len(victims), "marked", marked)
 }
 
 // replayProjector is the slice of the Runtime's replay-projection lifecycle the
-// coordinator drives. See agent/load_projection.go for the settle barrier.
+// coordinator drives.
 type replayProjector interface {
-	OpenReplayProjection(marotte.ChatID)
+	OpenReplayProjection(ctx context.Context, chatID marotte.ChatID, sessionID string)
 	MarkReplayLoadedAt(chatID marotte.ChatID, at drainPoint)
 	DiscardReplayProjection(marotte.ChatID)
 	SettleReplayProjection(chatID marotte.ChatID, at drainPoint, force bool)
-	ReplaySettled(chatID marotte.ChatID) <-chan struct{}
 }
 
 // Forward is the ACP notification → domain event translator, run as a
@@ -543,24 +566,14 @@ func (bc *BridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
 	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
 }
 
-// goForward starts a forward loop ON THE GROUP SHUTDOWN WAITS ON — the one spawn
-// door, because a bare `go` here is a goroutine whose effects are part of
-// Shutdown's own contract and were not covered by it.
-//
-// What this loop still owes after its channel closes is `closeTurnOnBridgeDeath`,
-// the ONLY closer for a turn a process exit left open: it appends the interrupted
-// turn's outcome row and broadcasts its `turn_ended`. Untracked, both landed after
-// `runtime shutdown complete` — after `bus.fanout.Shutdown()` had taken the SSE
-// clients down, and racing the process exit for a chat-file write, which leaves the
-// turn with no outcome carrier and so reads back as `unknown` rather than
-// interrupted. Reachable whenever a spawn is in flight as the signal arrives: a
-// bridge registered AFTER `mgr.drain()` is not in the set Shutdown stops, so it
-// dies on the cancelled context and IS a death rather than a teardown.
-//
-// No deadlock, for the reason `NotifyPushSubject` records: Shutdown stops every
-// bridge BEFORE this wait, which closes `NotifCh` and ends the range. A bridge that
-// somehow never closes it costs the ctx budget and is NAMED ("in-flight handlers")
-// instead of being silently overrun.
+// goForward starts a forward loop ON THE GROUP SHUTDOWN WAITS ON, the one spawn door.
+// What the loop still owes after its channel closes is closeTurnOnBridgeDeath, the
+// only closer for a turn a process exit left open; untracked, that turn_close and its
+// turn_closed landed after `runtime shutdown complete`, racing the exit for the
+// append, so the turn read back as unknown. Reachable whenever a spawn is in flight
+// as the signal arrives: a bridge registered after mgr.drain() is not in the set
+// Shutdown stops, so it dies on the cancelled context. No deadlock: Shutdown stops
+// every bridge BEFORE this wait, which closes NotifCh and ends the range.
 func (bc *BridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) {
 	bc.lifecycle.inflight.Go(func() { bc.Forward(chatID, bridge) })
 }
@@ -600,7 +613,7 @@ func (bc *BridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, 
 	if bc.bridge.mgr.removeIfBridge(chatID, bridge) {
 		// The only site that observes every death; readLoop reaps its own paths only.
 		bridge.Stop()
-		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID)
+		bc.closeTurnOnBridgeDeath(bc.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
 		// waiting_on_user claims a person owes the AGENT an answer; the agent is gone.
 		if bc.dischargeWaiting != nil {
 			bc.dischargeWaiting(bc.lifecycle.shutdownCtx, chatID)
@@ -677,14 +690,11 @@ func (bc *BridgeCoordinator) RetractPush(subj marotte.PushSubject) {
 }
 
 // reportNoSubscribers states that a notification went nowhere for want of a
-// subscriber, ONCE per episode of that condition: a permission ask reaches NotifyPush
-// per tool call, so a line per drop would bury the rest of the log. A subscriber
-// arriving re-arms it, so a later unsubscribe is reported again. Without the line, a
-// dead push pipeline and a workspace nobody subscribed from log identically.
-//
-// Both halves of the subject are logged and either is legitimately empty — a chat
-// notification carries no key and a run's carries no chat — so the line still names
-// what was dropped whichever kind it was.
+// subscriber, ONCE per episode: a permission ask reaches NotifyPush per tool call, so
+// a line per drop would bury the log. A subscriber arriving re-arms it. Without the
+// line, a dead push pipeline and a workspace nobody subscribed from log identically.
+// Both halves of the subject are logged because either is legitimately empty (a chat
+// notification carries no key, a run's no chat).
 func (bc *BridgeCoordinator) reportNoSubscribers(kind marotte.PushKind, subj marotte.PushSubject) {
 	if !bc.noSubscribers.CompareAndSwap(false, true) {
 		return
@@ -693,20 +703,14 @@ func (bc *BridgeCoordinator) reportNoSubscribers(kind marotte.PushKind, subj mar
 		"chat_id", subj.ChatID, "subject", subj.Key, "kind", string(kind))
 }
 
-// SettleTurnOnResponse closes the turn named by epoch on the response that
-// settled it — once the folder has consumed everything queued behind that
-// response, and only if the wire's own turn_end did not get there first.
+// SettleTurnOnResponse closes the turn turnID names on the response that settled
+// it — once the folder has consumed everything queued behind that response, and
+// only if the wire's own turn_end did not get there first.
 //
 // seq is the read loop position the response arrived at. Zero skips the wait,
 // which is what the two paths that deliberately reach no bracket want.
-func (bc *BridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, seq uint64, resp *marotte.RPCResponse) {
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptResponse, Resp: resp, Epoch: epoch, Seq: seq})
-}
-
-// TurnOpenedAfter reports whether any turn on the chat opened after epoch — the
-// structural half of the empty-turn gate. See turnRegistry.openedAfter.
-func (bc *BridgeCoordinator) TurnOpenedAfter(chatID marotte.ChatID, epoch marotte.TurnEpoch) bool {
-	return bc.turns.openedAfter(chatID, epoch)
+func (bc *BridgeCoordinator) SettleTurnOnResponse(ctx context.Context, chatID marotte.ChatID, turnID string, seq uint64, resp *marotte.RPCResponse) {
+	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerPromptResponse, Resp: resp, Turn: turnID, Seq: seq})
 }
 
 // defaultAgentFinishedBody is the body for a turn whose agent never declared what
@@ -721,99 +725,25 @@ func agentFinishedBodyFrom(description string) string {
 	return defaultAgentFinishedBody
 }
 
-// persistTurn commits the finalized assistant turn to the chat file.
-//
-// A failed append is survivable through KAS's own log — measured to flush each
-// sub-message as it COMPLETES, so a session/load replay carries the turn and the
-// projection rebuilds it. What neither covers is the final streaming fragment.
-func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) {
-	if err := bc.chatStore.AppendMessage(ctx, chatID, msg); err != nil {
-		slog.Error("persist assistant turn; the replay projection is the fallback",
-			"chat_id", chatID, "error", err)
-	}
-}
-
-// persistDisplacedTurn commits a turn a PROMPT displaced, ahead of the trailing
-// user rows the file already carries.
-//
-// A prompt persists its user row before it asks for admission, and an
-// engine-opened turn holds no reservation, so the prompt that ended this reply is
-// already on disk. A plain append records the reply as FOLLOWING it, which
-// projectTurns reads as a headerless turn below — while the client's array has it
-// above, since the broadcast carries the streamed message's id and merges in place.
-func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID marotte.ChatID, msg *marotte.Message) {
-	if msg.Ts == 0 {
-		msg.Ts = time.Now().UnixMilli()
-	}
-	var inserted bool
-	version, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		at := len(c.Messages)
-		for at > 0 && isPendingPrompt(&c.Messages[at-1]) {
-			at--
-		}
-		c.Messages = slices.Insert(c.Messages, at, *msg)
-		inserted = true
-		return true
-	})
-	if err != nil {
-		slog.Error("persist displaced turn; the replay projection is the fallback",
-			"chat_id", chatID, "error", err)
-		return
-	}
-	if inserted {
-		frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
-		frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
-		bc.broadcast(ctx, frame)
-	}
-}
-
-// isPendingPrompt reports whether m is a user row persistDisplacedTurn should insert
-// ABOVE: a PROMPT awaiting admission.
-//
-// A steer row is a user row too and is deliberately NOT one. That walk skips rows
-// persisted AHEAD of the turn, while a steer row was persisted INSIDE it
-// (translate.persistSteer), so the reply belongs after it — the order the ordinary
-// path produces anyway, since the reply is flushed at turn end and the steer is not.
-func isPendingPrompt(m *marotte.Message) bool {
-	return m.Role == marotte.RoleUser && m.UserKind != marotte.UserKindSteer
-}
-
-// TryFastModelSwitch attempts an in-session model swap via
-// session/set_config_option on the running bridge, then re-applies effort.
-func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID marotte.ChatID, model, effort string) bool {
+// ApplyModelSwitch swaps the model on the chat's live bridge in place through
+// session/set_config_option, then re-applies the level. False when the chat has
+// no bridge or the session refused the swap; a switch never touches a turn, so
+// there is no restart fallback.
+func (bc *BridgeCoordinator) ApplyModelSwitch(ctx context.Context, chatID marotte.ChatID, model, effort string) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
 		return false
-	}
-	// Close an ENGINE-opened turn first, the guard the restart fallback gets from
-	// its own flush: such a turn holds no admission reservation, so nothing refuses
-	// a switch landing inside one, and the model_switched row this path persists is
-	// not turn-terminal, so it would be written into that turn's body.
-	//
-	// Only an engine-opened one. The caller's OWN prompt turn keeps running, and
-	// keeps the model it was dispatched under; the restart fallback discards it
-	// because the bridge goes with it, which is not true here.
-	if displaced, ok := bc.displaceEngineTurn(ctx, chatID); ok {
-		slog.Info("a model switch displaced a live engine-opened turn",
-			"chat_id", chatID, "displaced_epoch", displaced, "model", model)
 	}
 	return bc.applyModelSwitch(ctx, chatID, sb, model, effort)
 }
 
 // applyModelSwitch swaps the model on a bridge the caller ALREADY HOLDS, then
 // re-applies the level.
-//
-// Takes the bridge rather than the chat id because only one of its callers can look
-// it up safely: re-resolving by id on the restart path could answer with a DIFFERENT
-// bridge, so the pick would land on a session the caller never loaded.
 func (bc *BridgeCoordinator) applyModelSwitch(
 	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, model, effort string,
 ) bool {
 	if err := sb.bridge.SetModel(ctx, model); err != nil {
-		slog.Info("model switch: fast path failed, falling back to restart",
+		slog.Info("model switch: the session refused the swap",
 			"chat_id", chatID, "model", model, "error", err)
 		return false
 	}
@@ -838,11 +768,11 @@ func (bc *BridgeCoordinator) applyModelSwitch(
 // At the prompt rather than reactively: a Call from the Forward goroutine would block
 // the drain it waits on. Best-effort and log-only.
 func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID marotte.ChatID, sb *sharedBridge) {
-	chat, ok := bc.chatStore.Get(ctx, chatID)
+	rec, ok := bc.chatStore.Get(ctx, chatID)
 	if !ok {
 		return
 	}
-	level := bc.effortFor(ctx, chat)
+	level := bc.effortFor(ctx, rec)
 	if level == "" {
 		return
 	}
@@ -863,26 +793,24 @@ func (bc *BridgeCoordinator) repairEffort(ctx context.Context, chatID marotte.Ch
 func (bc *BridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdateHandler {
 	return func(ctx context.Context, chatID marotte.ChatID, raw json.RawMessage, attr translate.FrameAttribution) {
 		next(ctx, chatID, raw, attr)
-		// The chat's OWN frame only: a step's session reports the level IT runs at, and
-		// a subagent's frame is attributed too. Both fields are tested, because an empty
-		// SubSessionID alone does not mean the chat owns the frame — a step has one too.
-		if attr.Step || attr.SubSessionID != "" {
+		// The chat's OWN frame only: a step's session reports the level IT runs at.
+		if !attr.ChatOwned() {
 			return
 		}
 		sb := bc.Bridge(chatID)
 		if sb == nil {
 			return
 		}
-		chat, ok := bc.chatStore.Get(ctx, chatID)
+		rec, ok := bc.chatStore.Get(ctx, chatID)
 		if !ok {
 			return
 		}
 		// The frame IS the session reporting its level, and the bridge forwards this
 		// channel unread, so hand the report over before deciding anything: it is what
 		// lets EnsureEffort assert here rather than compare equal against the ask.
-		running := chat.EffortActive
+		running := rec.EffortActive
 		sb.bridge.ObserveEffort(running)
-		want := bc.effortFor(ctx, chat)
+		want := bc.effortFor(ctx, rec)
 		if want == "" || running == "" || want == running {
 			return
 		}
@@ -907,26 +835,21 @@ func (bc *BridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdate
 }
 
 // effortFor resolves the level a chat's next session starts at: the chat's own
-// choice, else the level remembered for its MODEL
-// (settings.KeyLastEffortByModel), else that model's own default from the
-// workspace catalog. Empty means send nothing and let the service apply its own
-// default.
-//
-// A FALLBACK never written onto the chat record — stamping it would pin an unchosen
-// chat to today's value. MODEL-SCOPED at every rung, because an explicit tier is a
-// judgement about one model. Validated here because config.json is user-editable.
-//
-// The catalog rung is what keeps DRIFT repairable: repairEffort and healEffort both
-// return on an empty level, so a chat that has chosen nothing and whose model has no
-// remembered level would otherwise have no level to be corrected against.
-func (bc *BridgeCoordinator) effortFor(ctx context.Context, chat *marotte.Chat) string {
-	if chat.Effort != "" {
-		return chat.Effort
+// choice, else the level remembered for its MODEL (settings.KeyLastEffortByModel),
+// else that model's default from the workspace catalog. Empty means send nothing.
+// A fallback is never written onto the chat record (it would pin an unchosen chat to
+// today's value) and every rung is model-scoped, since a tier is a judgement about
+// one model. The catalog rung keeps drift repairable: repairEffort and healEffort
+// both return on an empty level, so without it an unchosen chat has nothing to be
+// corrected against. Validated here because config.json is user-editable.
+func (bc *BridgeCoordinator) effortFor(ctx context.Context, rec *marotte.Chat) string {
+	if rec.Effort != "" {
+		return rec.Effort
 	}
-	if level := bc.effortSeedFor(ctx, chat.Model); level != "" {
+	if level := bc.effortSeedFor(ctx, rec.Model); level != "" {
 		return level
 	}
-	return bc.catalog.DefaultEffortFor(chat.Model)
+	return bc.catalog.DefaultEffortFor(rec.Model)
 }
 
 // effortSeedFor answers the level remembered for exactly one model: the
@@ -964,27 +887,32 @@ func (bc *BridgeCoordinator) EffortForSwitch(ctx context.Context, model string) 
 	return bc.catalog.DefaultEffortFor(model)
 }
 
-// PersistModelSwitch records the switch event and updates the chat's
-// model + resets usage counters.
-func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID marotte.ChatID, model string, contextSize int) {
-	// Both writes are one record of one switch: an event saying the model changed beside
-	// a record still naming the old one is worse than neither.
+// PersistModelSwitch records a landed switch: the model_switched entry into the
+// chat's open turn (sealing every lane first) or after the newest turn's close,
+// then the header takes the pick, drops the tier chosen under the old model and
+// resets its usage counters. On a detached context: a switch that landed on the
+// session must reach the record even when the caller has gone.
+// It takes the payload rather than its fields: From, To and Effort are three
+// adjacent strings, so a transposed pair would record a model id as a reasoning
+// tier and compile clean.
+func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID marotte.ChatID, sw marotte.EntryModelSwitched, contextSize int) {
 	ctx = durable.Context(ctx)
-	evt := marotte.Message{
-		ID:        newMessageID(),
-		Role:      marotte.RoleEvent,
-		Ts:        time.Now().UnixMilli(),
-		EventKind: marotte.EventModelSwitched,
-		Content:   model,
-	}
-	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
-		slog.Error("switch_model: append event", "chat_id", chatID, "error", err)
+	if log, ok := bc.turns.foldTarget(chatID); ok {
+		sealed, err := log.ModelSwitched(ctx, sw)
+		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+		if err != nil {
+			slog.Error("switch_model: record the switch in the turn", "chat_id", chatID, "error", err)
+		}
+	} else if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+		marotte.EntryKindModelSwitched, "", sw); err != nil {
+		slog.Error("switch_model: record the switch between turns", "chat_id", chatID, "error", err)
 	}
 	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		c.Model = model
+		c.Model = sw.To
+		c.PendingModel = ""
 		// The chosen tier was a judgement about the model being switched AWAY from, so it
 		// does not survive: resolution falls to the model-scoped seed, else the new
 		// model's own default. Switching back re-applies the seed.
@@ -996,256 +924,322 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID maro
 	}
 }
 
-// FlushInFlightTurnOnSwitch discards the chat's turn before a bridge restart,
-// announcing the interruption when a turn was in flight.
-func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID marotte.ChatID) {
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerModelSwitch, AnyOpen: true})
-}
-
-// assistantTurnMessage builds the persisted assistant message from a finished turn's
-// content. Extracted so the interrupted and normal paths cannot drift: every field
-// below is read by the client after a reload, so a second literal would lose one.
+// PersistEffortChange records a reasoning-tier change the reader asked for, as a
+// model_switched entry whose From and To are both the chat's current model — see
+// marotte.EntryModelSwitched for why that is the whole discriminator.
 //
-// It takes the SNAPSHOT rather than the buffer, so every field comes from ONE guarded
-// read rather than eight off the dispatch goroutine.
-func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model string, c marotte.TurnConclusion) marotte.Message {
-	return marotte.Message{
-		ID:           snap.MessageID,
-		KASMessageID: snap.KASMessageID,
-		Role:         marotte.RoleAssistant,
-		Ts:           time.Now().UnixMilli(),
-		Content:      snap.Content,
-		Reasoning:    snap.Reasoning,
-		ToolCalls:    snap.ToolCalls,
-		// Blocks captures the chronological text/tool/thinking emission order; renderers
-		// prefer it over Content+ToolCalls so a turn renders the way it was produced.
-		Blocks: snap.Blocks,
-		// CodeReferences persists the licensed-code attributions so the chip survives
-		// reload (a streamed turn is never re-broadcast as message_appended).
-		CodeReferences: snap.CodeReferences,
-		// Refusal metadata, stamped from the refusal explanation chunk; persisted so the
-		// callout survives reload.
-		Refusal: snap.Refusal,
-		// Turn summary (credits · elapsed · files changed), persisted so the footer
-		// survives reload; omitempty drops the zero cases.
-		TurnCredits:   stats.CreditsDelta,
-		TurnElapsedMs: stats.ElapsedMs,
-		ChangedFiles:  snap.ChangedFiles,
-		// Which model answered, latched when the turn opened: the chat's Model is the
-		// CURRENT one, so a footer derived from it would relabel history on a switch.
-		TurnModel: model,
-		// How the turn ENDED, durably. A live stop reason is broadcast and never stored,
-		// so without these a reload read a failed turn as completed.
-		TurnOutcome:       c.Outcome,
-		TurnStopReasonRaw: c.RawStop,
-		TurnTruncated:     c.Truncated,
-		// WHY it ended badly, beside how: a `failed` close persisted a red mark and an
-		// empty body, and the cause reached the user through a transient toast alone.
-		TurnFailureReason: c.Reason,
+// CmdSetEffort has already persisted the level, so this writes no header field.
+// An empty model writes nothing: a chat with no model has no tier the reader
+// could have meant, and the renderer reads an empty To as `Context reset`.
+func (bc *BridgeCoordinator) PersistEffortChange(ctx context.Context, chatID marotte.ChatID, model string, level marotte.EffortLevel) {
+	if model == "" {
+		return
+	}
+	ctx = durable.Context(ctx)
+	sw := marotte.EntryModelSwitched{From: model, To: model, Effort: string(level)}
+	if log, ok := bc.turns.foldTarget(chatID); ok {
+		sealed, err := log.ModelSwitched(ctx, sw)
+		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+		if err != nil {
+			slog.Error("set_effort: record the change in the turn", "chat_id", chatID, "error", err)
+		}
+		return
+	}
+	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+		marotte.EntryKindModelSwitched, "", sw); err != nil {
+		slog.Error("set_effort: record the change between turns", "chat_id", chatID, "error", err)
 	}
 }
 
-// AbandonInFlightTurn finalizes a turn whose prompt call could not finish it,
-// PERSISTING the partial rather than dropping it: without a call that takes the
-// buffer, the next prompt extended the dead turn's blocks under its message id.
+// PersistModeSwitch records a landed mode switch as a mode_switched entry: into the
+// chat's open turn (sealing every lane first) or after the newest turn's close.
+// CmdSetMode has already persisted CurrentModeID and broadcast mode_changed, so this
+// writes no header field — the entry is the transcript's record of where the mode
+// moved.
 //
-// It waits for no read-loop position — the two failures that reach it settle locally
-// with the bridge still alive, so no bracket is coming.
-//
-// `stop` is the caller's CONCLUSION, and only `interrupted` or `cancelled` is legal here.
-// Anything else is NORMALIZED to `interrupted` with a Warn naming it, because
-// StopReason's zero value resolves to TurnOutcomeUnknown through ConcludeStopReason,
-// which grades `stopped` — so an unset stop would silently report a prompt failure as a
-// turn that merely stopped.
-func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch, stop marotte.StopReason, reason string) {
+// On a detached context, PersistModelSwitch's reason: a switch that landed on the
+// session must reach the record even when the caller has gone.
+func (bc *BridgeCoordinator) PersistModeSwitch(ctx context.Context, chatID marotte.ChatID, sw marotte.EntryModeSwitched) {
+	ctx = durable.Context(ctx)
+	if log, ok := bc.turns.foldTarget(chatID); ok {
+		sealed, err := log.ModeSwitched(ctx, sw)
+		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+		if err != nil {
+			slog.Error("set_mode: record the switch in the turn", "chat_id", chatID, "error", err)
+		}
+		return
+	}
+	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+		marotte.EntryKindModeSwitched, "", sw); err != nil {
+		slog.Error("set_mode: record the switch between turns", "chat_id", chatID, "error", err)
+	}
+}
+
+// persistModelPick records a model choice on a chat with no live bridge: model
+// takes the pick, pending_model clears, no entry, no usage reset. Clears Effort,
+// since a tier picked under the previous model does not carry onto this one.
+func (bc *BridgeCoordinator) persistModelPick(ctx context.Context, chatID marotte.ChatID, model string) {
+	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
+		if !ex {
+			return false
+		}
+		c.Model = model
+		c.PendingModel = ""
+		c.Effort = ""
+		return true
+	}); err != nil {
+		slog.Error("switch_model: persist pick", "chat_id", chatID, "error", err)
+	}
+}
+
+// AbandonInFlightTurn closes a turn whose prompt call could not finish it, through
+// the turn end rule like every other close. It waits for no read-loop position: the
+// failures that reach it settle locally with the bridge still alive, so no bracket
+// is coming. `stop` is the caller's CONCLUSION and only `interrupted` or `cancelled`
+// is legal; anything else is normalized to `interrupted` with a Warn, because an
+// unset stop would grade `unknown` and report a prompt failure as a mere stop.
+func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string) {
 	if stop != marotte.StopReasonInterrupted && stop != marotte.StopReasonCancelled {
 		slog.Warn("a prompt failure named a stop this close cannot conclude, so it concludes interrupted",
-			"chat_id", chatID, "epoch", epoch, "stop", stop)
+			"chat_id", chatID, "turn", turnID, "stop", stop)
 		stop = marotte.StopReasonInterrupted
 	}
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerPromptFailure, Stop: stop, Reason: reason, Epoch: epoch})
+	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerPromptFailure, Stop: stop, Reason: reason, Turn: turnID})
 }
 
-// FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself.
-func (bc *BridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, epoch marotte.TurnEpoch) {
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerLocalShell, Epoch: epoch})
+// FinalizeLocalShellTurn appends a `!cmd` turn's rendered output as its one text
+// entry and closes it: the turn is turn_open, text, turn_close. The append goes
+// through the turn's own accumulator so the entry is announced like any other.
+func (bc *BridgeCoordinator) FinalizeLocalShellTurn(ctx context.Context, chatID marotte.ChatID, turnID, output string) {
+	if t, ok := bc.turns.turnByID(chatID, turnID); ok {
+		sealed, err := t.Log.TextDelta(ctx, "", "", output)
+		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+		if err != nil {
+			slog.Warn("a shell turn's output was not recorded", "chat_id", chatID, "turn", turnID, "error", err)
+		}
+	}
+	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerLocalShell, Turn: turnID})
 }
 
-// WireTurnStart is the engine's own turn_start bracket.
-//
-// It binds the single pending pre-open when there is one, PROVISIONALLY — the
-// bracket cannot tell a prompted turn from an agent-initiated one. Otherwise the
-// previous turn's end never arrived, so that turn closes `unknown` and a
-// wireTurnStart turn opens in its place, holding no prompt slot for admission
-// control to have refused.
+// WireTurnStart is the engine's own turn_start bracket, bound by the three-case
+// bracket rule: it binds the pending prompt turn when one is owed a bracket,
+// closes a bracketed own turn whose turn_end was lost with closerBracketLost
+// first, and opens turn_open{source: wire_turn_start} as own when the chat holds
+// nothing for it. The bind is PROVISIONAL: the bracket cannot tell a prompted turn
+// from an agent-initiated one, and the first content frame carrying agentInitiated
+// revises it (ReviseTurnBinding).
 func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.ChatID) {
-	bound, displaced := bc.turns.bindPending(chatID)
-	if !bound && displaced != 0 {
-		// A pre-open is owed this bracket while another turn is still folding, so
-		// A pre-open is owed this bracket while another turn is still folding, so that
-		// turn's end never arrived. Close it and bind on the retry, not over it.
-		bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, Epoch: displaced})
-		bound, _ = bc.turns.bindPending(chatID)
+	bound, lost := bc.turns.bindPending(ctx, chatID)
+	if !bound && lost != "" {
+		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBracketLost, Turn: lost})
+		bound, _ = bc.turns.bindPending(ctx, chatID)
 	}
 	if bound {
 		return
 	}
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireDisplaced, AnyOpen: true})
-	model, credits := bc.turnOpenFacts(ctx, chatID, marotte.TurnSourceWireTurnStart)
-	bc.turns.openWire(ctx, chatID, marotte.TurnSourceWireTurnStart, model, credits)
+	bc.openWireTurn(ctx, chatID)
 }
 
 // WireTurnEnd is the engine's own turn_end bracket, and the closer whose outcome
-// is the wire's rather than an inference.
-//
-// A turn_end for a chat with NO open turn is a no-op: without that rule a
-// cancel-grace expiry that closed its turn locally would meet the later wire
-// bracket, and the fold-with-no-open-turn rule would manufacture a spurious
-// empty persisted turn out of it. A replayed bracket is filtered upstream, so
-// this is the live path only.
+// is the wire's rather than an inference. A turn_end for a chat with NO own turn
+// is a no-op: a cancel-grace expiry that closed its turn locally meets the later
+// bracket, and manufacturing a turn out of it would make a phantom. A replayed
+// bracket is filtered upstream, so this is the live path only.
 func (bc *BridgeCoordinator) WireTurnEnd(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason, details string) {
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerWireEnd, Stop: stop, Reason: details, AnyOpen: true})
+	bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerWireEnd, Stop: stop, Reason: details, Own: true})
 }
 
-// CloseStepTurn closes a turn a workflow STEP's frames opened on chatID, because the
-// run has reached a terminal state and nothing else will: the bracket path cannot,
-// since the attribution gate drops a step's own turn_end. Idempotent (first-wins).
-//
-// EPOCH-scoped rather than AnyOpen, which is the difference that matters: AnyOpen
-// describes the CHAT, so it would claim the chat's own live prompt turn if the user
-// prompted between the step turn being displaced and the run's end.
-func (bc *BridgeCoordinator) CloseStepTurn(ctx context.Context, chatID marotte.ChatID) {
-	epoch, ok := bc.turns.stepTurnEpoch(chatID)
-	if !ok {
-		return
+// TurnFoldTarget returns the accumulator this chat's own frames fold into,
+// opening a wire_turn_start turn when none is open: a fold with no open turn is a
+// turn marotte did not prompt, and it needs a record like any other. Nil when the
+// open was refused, and the caller drops the frame. Never called with a step
+// frame; a step's content is the run log's.
+func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID marotte.ChatID) *turnlog.Turn {
+	if log, ok := bc.turns.foldTarget(chatID); ok {
+		return log
 	}
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerRunComplete, Epoch: epoch})
-}
-
-// TurnFoldTarget returns the buffer this chat's frames fold into, opening a turn
-// of the caller's stated source when none is open: a fold with no open turn is a
-// turn marotte did not prompt, and it needs a record like any other. The SOURCE
-// comes from the frame, because a step of a chat-parented run folds here and the
-// turn opened for it belongs to the RUN.
-//
-// The CHEAP question comes first: the open facts cost a full chat-file read under
-// the per-chat mutex, per delta. Lock order is lifecycle then chat store, never back.
-func (bc *BridgeCoordinator) TurnFoldTarget(ctx context.Context, chatID marotte.ChatID, source marotte.TurnOpenSource) *buffer.Buffer {
-	if buf, ok := bc.turns.foldTarget(chatID); ok {
-		return buf
-	}
-	model, credits := bc.turnOpenFacts(ctx, chatID, source)
-	t := bc.turns.openWire(ctx, chatID, source, model, credits)
+	t := bc.openWireTurn(ctx, chatID)
 	if t == nil {
-		// ctx died while the chat was finalizing. A throwaway buffer keeps the handler's
-		// shape rather than making every fold site nil-check; the frame is lost anyway.
-		return buffer.New()
+		return nil
 	}
-	return t.Buf
+	return t.Log
 }
 
-// OpenTurnBuffer returns the chat's open turn buffer without opening one —
-// the read TurnFoldTarget's minting makes unavailable to a caller that must
-// stay side-effect-free on a missing turn.
-func (bc *BridgeCoordinator) OpenTurnBuffer(chatID marotte.ChatID) (*buffer.Buffer, bool) {
+// OwnTurn returns the chat's own open turn without opening one, for a frame that
+// may fold into a turn but must never start one.
+func (bc *BridgeCoordinator) OwnTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
 	return bc.turns.foldTarget(chatID)
+}
+
+// PromptTurn returns the chat's prompt-class turn awaiting or holding its bracket,
+// the one a turn_bind joins.
+func (bc *BridgeCoordinator) PromptTurn(chatID marotte.ChatID) (*turnlog.Turn, bool) {
+	return bc.turns.promptTurn(chatID)
+}
+
+// AppendBetweenTurns files a chat's lane-less entry after its newest turn's close.
+func (bc *BridgeCoordinator) AppendBetweenTurns(ctx context.Context, chatID marotte.ChatID, e *marotte.Entry) (*marotte.Entry, error) {
+	return bc.chatStore.AppendBetweenTurns(ctx, chatID, e)
 }
 
 // ReviseTurnBinding acts on a frame that PROVES the open turn is the agent's own
 // rather than the prompt's: `agentInitiated` rides content frames and never the
-// bracket, so this is the only discriminator there is. See turnRegistry.reclassify.
+// bracket, so this is the only discriminator there is. It appends the agent turn's
+// turn_open, records it as own through openLocked directly (slotFreeLocked refuses
+// while own holds the prompt), and drops the prompt's turn back to pending. Entries
+// already sealed into the prompt's turn stay where they are.
 func (bc *BridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID marotte.ChatID) {
-	bc.turns.reclassify(ctx, chatID)
+	var agent *Turn
+	err := bc.turns.withLifecycle(ctx, chatID, func(lc *chatLifecycle) error {
+		pre := lc.revisableLocked()
+		if pre == nil {
+			return nil
+		}
+		opened, err := bc.chatStore.OpenTurn(ctx, chatID, &chat.TurnSpec{Source: marotte.TurnOpenNameWireTurnStart}, nil)
+		if err != nil {
+			return err
+		}
+		model := bc.turnOpenModel(ctx, chatID, marotte.TurnSourceWireTurnStart)
+		log := turnlog.Open(opened.ID, bc.chatStore.Sink(chatID))
+		if model != "" {
+			log.SetModel(model)
+		}
+		agent = lc.openLocked(chatID, opened, marotte.TurnSourceWireTurnStart, model, log)
+		lc.reviseLocked(pre, agent)
+		return nil
+	})
+	if err != nil {
+		slog.Warn("an agent-initiated frame could not open the agent's turn", "chat_id", chatID, "error", err)
+		return
+	}
+	if agent == nil {
+		return
+	}
+	bc.announceTurnOpened(ctx, chatID, agent)
+	if err := bc.chatStore.WriteCounters(ctx, chatID); err != nil {
+		slog.Warn("turn opened but the header's counters did not follow", "chat_id", chatID, "turn", agent.ID, "error", err)
+	}
 }
 
-// SealTurnSegment persists the open turn's content so far as its own assistant
-// message, so a boundary INSIDE a turn — a compaction point — is the sibling
-// message every consumer already reads in array order. The rest of the turn
-// accumulates into a fresh message.
+// closeTurnOnBridgeDeath closes everything the chat's bridge hosted, in three
+// steps: the chat's own and pending turns with outcome, then every open step turn
+// of every run whose host is this chat (the run registry's lock is taken after
+// the chat's are released, never nested, because no frame folds into both logs),
+// then the chat's unread steers, the one divergence a death leaves between the
+// record and KAS's log. It runs for an unexpected exit from the Forward goroutine
+// and for every deliberate stop through CloseBridge; the second claim on a turn
+// the first closed finds it closed and loses.
+func (bc *BridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID marotte.ChatID, outcome marotte.TurnOutcome) {
+	// Detached once for all three steps: a cancelled request must not leave the
+	// hosted runs' turns open or the parked steers unrecorded while the chat's close.
+	ctx = durable.Context(ctx)
+	stop := marotte.StopReasonInterrupted
+	if outcome == marotte.TurnOutcomeCancelled {
+		stop = marotte.StopReasonCancelled
+	}
+	for _, t := range bc.turns.openTurnIDs(chatID) {
+		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBridgeDeath, Stop: stop, Reason: deathInterruptCause, Turn: t.ID})
+	}
+	bc.closeHostedRuns(ctx, chatID, stop)
+	bc.dropUnreadSteers(ctx, chatID)
+}
+
+// closeTurnsOnRetire is the death closer's NARROWER form for the two retire stops,
+// which run inside a prompt's own OpenBridge call while that prompt's turn is
+// already in the registry: it closes own only when its source is wire_turn_start,
+// never pending, and every hosted run turn; the steer step is skipped because an
+// idle bridge's parked rows belong to the unstarted prompt and drain at its
+// StartTurn on the replacement.
+func (bc *BridgeCoordinator) closeTurnsOnRetire(ctx context.Context, chatID marotte.ChatID) {
+	if t, ok := bc.turns.ownTurn(chatID); ok && t.Source == marotte.TurnSourceWireTurnStart {
+		bc.finalizeTurn(ctx, chatID, &turnClose{Closer: closerBridgeDeath, Stop: marotte.StopReasonInterrupted, Reason: deathInterruptCause, Turn: t.ID})
+	}
+	bc.closeHostedRuns(ctx, chatID, marotte.StopReasonInterrupted)
+}
+
+// closeHostedRuns is the death closer's run arm: every open step turn of every run
+// the chat's bridge hosted closes with stop, and each run's sealed entries are
+// announced under the run's scope.
+func (bc *BridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte.ChatID, stop marotte.StopReason) {
+	if bc.runs == nil {
+		return
+	}
+	c := bc.concludeStop(chatID, stop, deathInterruptCause)
+	byRun, err := bc.runs.CloseHost(ctx, chatID, c)
+	for runID, sealed := range byRun {
+		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), "", runID, sealed)
+	}
+	if err != nil {
+		slog.Error("close the step turns a dead bridge hosted", "chat_id", chatID, "error", err)
+	}
+}
+
+// dropUnreadSteers is the death closer's third step: the parked rows KAS never
+// held are written as steer{state: dropped, origin: user} after the chat's
+// turn_close, the waiting projection is cleared, and a row KAS had queued that this
+// process holds no text for is recorded as an EMPTY-TEXT steer entry — one per id.
 //
-// It never OPENS a turn: a chat with none has no point inside a turn to seal at.
-// Declined-and-logged for an unsettled tool call, because an update resolves its
-// call against the CURRENT buffer and splitting freezes that card mid-flight.
-func (bc *BridgeCoordinator) SealTurnSegment(ctx context.Context, chatID marotte.ChatID) bool {
-	buf, ok := bc.turns.foldTarget(chatID)
-	if !ok || buf == nil {
-		return false
+// That entry IS the reconcile signal: an empty text is "KAS persisted words this
+// process never received", which is what the header flag it replaces meant, read
+// from the log by the predicate the next session/load asks.
+func (bc *BridgeCoordinator) dropUnreadSteers(ctx context.Context, chatID marotte.ChatID) {
+	if bc.takeUnreadSteers == nil {
+		return
 	}
-	if !buf.ToolsSettled() {
-		slog.Warn("turn segment not sealed: a tool call is still in flight, so the boundary lands after the turn",
-			"chat_id", chatID)
-		return false
+	parked, queuedIDs := bc.takeUnreadSteers(chatID)
+	for _, p := range parked {
+		bc.recordDroppedSteer(ctx, chatID, p)
 	}
-	// Settle a withheld steering-marker candidate into the segment that produced it,
-	// for settleBuffer's reason: the carry can hold the segment's only final text, so
-	// a content check taken before the flush reads that segment as empty.
-	translate.FlushSteerCarry(buf)
-	snap, _ := buf.SplitSegment()
-	// Content, not Started: a turn whose id was minted before any delta has nothing
-	// to seal, and sealing it puts a blank assistant row above the boundary.
-	if snap.EmittedNothing {
-		return false
-	}
-	msg := segmentMessage(&snap)
-	// The seal's own detach, not persistTurn's: that helper is shared with the
-	// finalize path, so changing its body would change a closer's shutdown
-	// behaviour nobody reviewed.
-	bc.persistTurn(durable.Context(ctx), chatID, &msg)
-	return true
-}
-
-// segmentMessage builds the persisted assistant message for a SEGMENT of a turn:
-// assistantTurnMessage minus every field that describes the whole turn.
-//
-// The turn's credits, elapsed time, changed files, model and outcome belong to the
-// turn rather than to a part of it, and each has exactly one carrier — the turn's
-// closer stamps them on the last message it persists, or on an outcome marker when
-// there is none. A segment claiming any of them would open a second turn for both
-// projections and double the footer's numbers.
-func segmentMessage(snap *buffer.TurnContent) marotte.Message {
-	return marotte.Message{
-		ID:             snap.MessageID,
-		KASMessageID:   snap.KASMessageID,
-		Role:           marotte.RoleAssistant,
-		Ts:             time.Now().UnixMilli(),
-		Content:        snap.Content,
-		Reasoning:      snap.Reasoning,
-		ToolCalls:      snap.ToolCalls,
-		Blocks:         snap.Blocks,
-		CodeReferences: snap.CodeReferences,
-		Refusal:        snap.Refusal,
+	for _, id := range queuedIDs {
+		bc.recordSteer(ctx, chatID, id, &marotte.EntrySteer{
+			Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped,
+			Reason: marotte.SteerReasonRestart,
+		})
 	}
 }
 
-// closeTurnOnBridgeDeath is the third actor: after Forward has exited it closes
-// any turn still open, because nothing else is going to.
-//
-// It fires only on an UNEXPECTED exit, and the discriminator is whether the bridge
-// was still registered when it died: every teardown marotte performs itself
-// removes the bridge from the map first and has its own closer, so a deliberate
-// stop must not also read as a death.
-func (bc *BridgeCoordinator) closeTurnOnBridgeDeath(ctx context.Context, chatID marotte.ChatID) {
-	bc.finalizeTurn(ctx, chatID, turnClose{Closer: closerBridgeDeath, AnyOpen: true})
+// recordDroppedSteer writes steer{state: dropped, origin: user} for a parked steer
+// KAS refused or never received.
+func (bc *BridgeCoordinator) recordDroppedSteer(ctx context.Context, chatID marotte.ChatID, p command.ParkedSteer) {
+	bc.recordSteer(ctx, chatID, p.ID, &marotte.EntrySteer{
+		Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped,
+		Reason: marotte.SteerReasonRestart, Resends: p.Resends,
+	})
 }
 
-const stopReasonCancelled = marotte.StopReasonCancelled
+// recordSteer writes a steer entry this server minted: into the chat's open turn,
+// sealing every lane first, else after the newest turn's close.
+func (bc *BridgeCoordinator) recordSteer(ctx context.Context, chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
+	if log, ok := bc.turns.foldTarget(chatID); ok {
+		sealed, err := log.Steer(ctx, steerID, steer)
+		translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+		if err != nil {
+			slog.Warn("a steer was not recorded in the turn", "chat_id", chatID, "steer", steerID, "error", err)
+		}
+		return
+	}
+	if err := translate.AppendBetweenTurns(ctx, broadcastFunc(bc.broadcast), bc.chatStore, chatID,
+		marotte.EntryKindSteer, steerID, steer); err != nil {
+		slog.Warn("a steer was not recorded between turns", "chat_id", chatID, "steer", steerID, "error", err)
+	}
+}
 
 // InterruptTurn records why kiro-cli abandoned a turn without answering it, and trips
 // that turn's prompt call so the ordinary failure path finalizes it. The cause lands
-// on the TURN, epoch-scoped and first-wins.
+// on the TURN, scoped to that turn id and first-wins.
 //
 // The bridge is left ALIVE and the session untouched: only the tool call was
 // cancelled, so the chat is immediately promptable. No open turn, no bridge, or a
 // cause already claimed is not a failure — a user cancel may have ended the turn.
 func (bc *BridgeCoordinator) InterruptTurn(chatID marotte.ChatID, reason string) {
-	epoch, open := bc.turns.openEpoch(chatID)
+	t, open := bc.turns.ownTurn(chatID)
 	if !open {
 		slog.Debug("interrupt turn: no turn open", "chat_id", chatID, "reason", reason)
 		return
 	}
-	if !bc.turns.interrupt(chatID, epoch, marotte.InterruptCause(reason)) {
+	if !bc.turns.interrupt(chatID, t.ID, marotte.InterruptCause(reason)) {
 		slog.Debug("interrupt turn: another cause already claimed this turn",
-			"chat_id", chatID, "epoch", epoch, "reason", reason)
+			"chat_id", chatID, "turn", t.ID, "reason", reason)
 		return
 	}
 	sb := bc.bridge.mgr.get(chatID)
@@ -1267,7 +1261,7 @@ func extractStopReason(resp *marotte.RPCResponse) marotte.StopReason {
 		StopReason marotte.StopReason `json:"stopReason"`
 	}
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		slog.Debug("turn_ended: parse result", "error", err)
+		slog.Debug("prompt response: parse stopReason", "error", err)
 		return ""
 	}
 	return result.StopReason

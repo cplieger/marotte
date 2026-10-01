@@ -11,8 +11,8 @@ import (
 // _meta.kiro.toolId "fetch_cloud_config", its own TUI never renders it, and the
 // frame arriving before the prompt's turn used to open a wire turn the prompt
 // then displaced — the phantom "Agent-initiated turn". The frame must reach
-// neither the buffer nor the wire, and its follow-up update must be dropped
-// BEFORE TurnFoldTarget can open a turn for it.
+// neither a turn nor the wire, and its follow-up update must be dropped BEFORE
+// the fold target can open a turn for it.
 func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 	cloudConfig := map[string]any{
 		"toolCallId": "cc-1",
@@ -26,20 +26,23 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 
 	t.Run("CallIsDropped", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
-		tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(base))
 		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, cloudConfig), FrameAttribution{})
-		if hasToolCallEvent(events) {
-			t.Error("internal tool call broadcast a tool_call event; want suppressed")
+		if hasEntryAppended(events, marotte.EntryKindToolCall) {
+			t.Error("internal tool call appended a tool_call entry; want suppressed")
 		}
-		if n := len(base.bufStore.GetOrInit(chatID).ToolCalls); n != 0 {
-			t.Errorf("buffered tool calls = %d, want 0 (internal tool must not be buffered)", n)
+		if _, folded := base.lastFold(); folded {
+			t.Error("internal tool call asked for a fold target; want dropped before the turn is reached")
+		}
+		if base.turns.chats[chatID] != nil {
+			t.Error("internal tool call opened the chat's turn; want no turn")
 		}
 	})
 
 	t.Run("UpdateIsDroppedWithoutTouchingTheFoldTarget", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
-		tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(base))
 		chatID := marotte.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, cloudConfig), FrameAttribution{})
 		for range 2 {
@@ -48,22 +51,20 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 				"status":     "completed",
 			}), FrameAttribution{})
 		}
-		for _, e := range *events {
-			if e.Type == marotte.EventToolCallUpdate {
-				t.Error("suppressed internal tool's update was broadcast; want dropped")
-			}
+		if len(*events) != 0 {
+			t.Errorf("suppressed internal tool's update broadcast %d events; want none", len(*events))
 		}
 		// The load-bearing half: the update must not have opened a turn. The fold
-		// target lazily creates a buffer per chat, so an untouched store is the proof
-		// the update asked OpenTurnBuffer rather than TurnFoldTarget.
-		if base.bufStore.Get(chatID) != nil {
-			t.Error("the suppressed update opened a buffer; want dropped, its create was never buffered")
+		// target opens one per chat on first use, so a chat with no turn is the proof
+		// the update read the open turn rather than asking for a fold target.
+		if base.turns.chats[chatID] != nil {
+			t.Error("the suppressed update opened a turn; want dropped, its create was never sealed")
 		}
 	})
 
 	t.Run("OrdinaryOtherKindToolIsShown", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
-		tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
+		tr := New(rolesOf(base))
 		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "ws-1",
 			"title":      "web_search",
@@ -73,7 +74,7 @@ func TestHandleToolCall_InternalToolSuppression(t *testing.T) {
 				"toolId": "web_search",
 			}},
 		}), FrameAttribution{})
-		if !hasToolCallEvent(events) {
+		if !hasEntryAppended(events, marotte.EntryKindToolCall) {
 			t.Error("ordinary kind:other tool call suppressed; only internal toolIds are gated")
 		}
 	})
@@ -88,8 +89,8 @@ func TestHandleToolCallUpdate_UnknownToolCallOpensNoTurn(t *testing.T) {
 		"status":     "completed",
 	}), FrameAttribution{})
 
-	if base.bufStore.Get("c1") != nil {
-		t.Error("unknown tool update opened a turn buffer")
+	if base.turns.chats["c1"] != nil {
+		t.Error("unknown tool update opened a turn")
 	}
 	if len(*events) != 0 {
 		t.Errorf("unknown tool update emitted %d events, want 0", len(*events))

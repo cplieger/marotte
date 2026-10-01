@@ -14,10 +14,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/sse/ssetest"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/sse/ssetest"
 )
 
 // connectFrames runs one cold connect and returns the id-less application frames the
@@ -120,23 +120,24 @@ func TestConnect_StatesTheBusySet(t *testing.T) {
 	}
 }
 
-// A workflow STEP's turn belongs to its run, so it does not name its launching
-// chat busy. This is the stuck-purple population the retraction exists to reach.
+// A workflow STEP's turn belongs to its run's record, so the chat hosting it is
+// not busy. This is the stuck-purple population the retraction exists to reach.
 func TestConnect_TheBusySetExcludesStepTurns(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	rt.bridge.mgr.orInsert("c-step")
 	rt.bridge.mgr.orInsert("c-own")
-	if e := rt.coord.StartTurn(t.Context(), "c-step", marotte.TurnSourceWorkflowStep); e == 0 {
-		t.Fatal("StartTurn refused the step")
+	if _, _, err := rt.runs.log.Open(t.Context(), "wf-1", "wf-1/step", "sess-step", "c-step"); err != nil {
+		t.Fatalf("Open(step turn): %v", err)
 	}
-	if e := rt.coord.StartTurn(t.Context(), "c-own", marotte.TurnSourcePrompt); e == 0 {
-		t.Fatal("StartTurn refused the prompt")
+	if !rt.runs.hostsLiveRun("c-step") {
+		t.Fatal("the fixture's chat hosts no live run, so nothing below measures the exclusion")
 	}
+	rt.stagePromptTurn(t, "c-own")
 
 	busy := busySetOf(connectPayload(t, rt, ""))
 
 	if busy["c-step"] {
-		t.Error("a workflow-step turn names its LAUNCHING chat busy, so the retraction is " +
+		t.Error("a hosted workflow-step turn names its LAUNCHING chat busy, so the retraction is " +
 			"withheld from exactly the population it was designed for")
 	}
 	if !busy["c-own"] {
@@ -336,13 +337,11 @@ func TestConnect_V3EmptySetsAreOneFrameEach(t *testing.T) {
 // a stale waiting_on_user.
 func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T) {
 	rt := newBudgetRuntime(t)
-	rt.bus.chatStatus.Merge("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "pick one"})
-	rt.bus.chatStatus.Merge("c-working", marotte.ChatStatusPayload{Status: "in_progress"})
-	rt.bus.chatStatus.Merge("c-busy", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	rt.bus.chatStatus.MergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser, Description: "pick one"})
+	rt.bus.chatStatus.MergeStamped("c-working", marotte.ChatStatusPayload{Status: "in_progress"})
+	rt.bus.chatStatus.MergeStamped("c-busy", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 	rt.bridge.mgr.orInsert("c-busy")
-	if e := rt.coord.StartTurn(t.Context(), "c-busy", marotte.TurnSourcePrompt); e == 0 {
-		t.Fatal("StartTurn refused")
-	}
+	rt.stagePromptTurn(t, "c-busy")
 
 	frames := connectFrames(t, rt, false)
 
@@ -374,7 +373,7 @@ func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
 	rt.bus.steers.SteerWaiting(ids[1], marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
-	rt.bus.chatStatus.Merge("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
+	rt.bus.chatStatus.MergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 	rt.bus.emit(marotte.ServerEvent{Type: marotte.EventChatUpdated, ChatID: "c1"})
 
 	frames := connectFrames(t, rt, true)

@@ -109,6 +109,18 @@ vi.mock("./dom.js", () => {
       editorMarkdown: make("div"),
       editorImage: make("img"),
     },
+    // This file mocks no `./skeleton.js`, so `paintPlaceholder` is real and marks
+    // its host busy through this module — a factory returning only `$` makes
+    // `setBusy` undefined and the painter throws. `setBusy`'s own body rather than
+    // `importOriginal`, which would reintroduce the element lookups this mock exists
+    // to keep out.
+    setBusy: (el: Element, busy: boolean) => {
+      if (busy) {
+        el.setAttribute("aria-busy", "true");
+      } else {
+        el.removeAttribute("aria-busy");
+      }
+    },
   };
 });
 

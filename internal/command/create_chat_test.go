@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // createReq builds a create_chat envelope. chatID is normally EMPTY — that

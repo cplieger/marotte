@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/slogx/capture"
 )
 
 const (
@@ -43,7 +43,7 @@ func TestClassifyFrame(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
-	tr.RecordStepSession(testStep, "wf_1", "s1")
+	tr.RecordStepSession(testStep, "wf_1", "s1", "s1")
 
 	cases := []struct {
 		name    string
@@ -80,7 +80,7 @@ func TestDeriveSubSession_StepIsNotASubagent(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
-	tr.RecordStepSession(testStep, "wf_1", "s1")
+	tr.RecordStepSession(testStep, "wf_1", "s1", "s1")
 
 	if got := tr.deriveSubSession(testChat, testStep); got != "" {
 		t.Errorf("deriveSubSession(step) = %q, want \"\" (a step is not a subagent)", got)
@@ -101,7 +101,7 @@ func TestForeignSession_DropsBothNonChatOwners(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
-	tr.RecordStepSession(testStep, "wf_1", "s1")
+	tr.RecordStepSession(testStep, "wf_1", "s1", "s1")
 
 	for _, c := range []struct {
 		name    string
@@ -341,8 +341,8 @@ func TestRunComplete_LeavesTheStepSessionsToItsCaller(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
-	tr.RecordStepSession("sess_a", "wf_1", "a")
-	tr.RecordStepSession("sess_b", "wf_1", "b")
+	tr.RecordStepSession("sess_a", "wf_1", "a", "a")
+	tr.RecordStepSession("sess_b", "wf_1", "b", "b")
 
 	tr.HandleRunComplete(t.Context(), testChat,
 		notif("_kiro/workflow/run_complete", map[string]any{"workflowId": "wf_1", "status": "completed"}))
@@ -364,9 +364,9 @@ func TestForgetRunSteps_DropsOneRunsSessions(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
-	tr.RecordStepSession("sess_a", "wf_1", "a")
-	tr.RecordStepSession("sess_b", "wf_1", "b")
-	tr.RecordStepSession("sess_c", "wf_2", "c")
+	tr.RecordStepSession("sess_a", "wf_1", "a", "a")
+	tr.RecordStepSession("sess_b", "wf_1", "b", "b")
+	tr.RecordStepSession("sess_c", "wf_2", "c", "c")
 
 	tr.ForgetRunSteps("wf_1")
 
@@ -384,8 +384,8 @@ func TestRecordStepSession_IgnoresIncompleteRefs(t *testing.T) {
 	t.Parallel()
 	var events []marotte.ServerEvent
 	tr := New(rolesOf(capturing(&events)))
-	tr.RecordStepSession("", "wf_1", "a")
-	tr.RecordStepSession("sess_x", "", "a")
+	tr.RecordStepSession("", "wf_1", "a", "a")
+	tr.RecordStepSession("sess_x", "", "a", "a")
 	if _, ok := tr.steps.lookup("sess_x"); ok {
 		t.Error("recorded a step with no workflow id")
 	}
@@ -400,126 +400,39 @@ func TestStepOf_EmptySessionIsNeverAStep(t *testing.T) {
 	}
 }
 
-// TestWorkflowMeta_SubtaskID pins the per-block attribution key.
-func TestWorkflowMeta_SubtaskID(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		meta *ACPWorkflowMeta
-		want string
-	}{
-		{"nil", nil, ""},
-		{"no workflow id", &ACPWorkflowMeta{NodeID: "a"}, ""},
-		{
-			"nodePath is the key, because it is instance-unique",
-			&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "wait", NodePath: []string{"wf_1", "loop", "iter-0", "wait"}},
-			"wf:wf_1:wf_1/loop/iter-0/wait",
-		},
-		{
-			// Two iterations of ONE step share a nodeId and must not share a
-			// block; nodePath is what separates them.
-			"a second iteration is a different key",
-			&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "wait", NodePath: []string{"wf_1", "loop", "iter-1", "wait"}},
-			"wf:wf_1:wf_1/loop/iter-1/wait",
-		},
-		{
-			"falls back to workflow + node when nodePath is absent",
-			&ACPWorkflowMeta{WorkflowID: "wf_1", NodeID: "build"},
-			"wf:wf_1:build",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			if got := c.meta.SubtaskID(); got != c.want {
-				t.Errorf("SubtaskID() = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
-// TestStepChunk_OpensItsOwnBlock pins the defect that made a step's prose
-// indistinguishable from the launching agent's own.
-//
-// The mechanism: the chunk handlers append through Buffer.AppendTextDelta(text,
-// subtask), which EXTENDS the trailing block when kind and subtask both match. A
-// step's text frame carries an empty agentSubtaskId (KAS stamps that only on tool
-// frames), so empty matched empty and the step's words landed inside the parent's
-// paragraph.
-func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
-	deps, events := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
-	ctx := t.Context()
-	buf := deps.bufStore.GetOrInit(testChat)
-
-	chunk := func(text string, wf map[string]any) json.RawMessage {
-		frame := map[string]any{"content": map[string]any{"type": "text", "text": text}}
-		if wf != nil {
-			frame["_meta"] = map[string]any{"kiro": map[string]any{"workflow": wf}}
-		}
-		raw, err := json.Marshal(frame)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return raw
-	}
-
-	tr.HandleAssistantChunk(ctx, testChat, chunk("parent says ", nil), false)
-	tr.HandleAssistantChunk(ctx, testChat, chunk("step says", map[string]any{
-		"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"},
-	}), false)
-	tr.HandleAssistantChunk(ctx, testChat, chunk(" more", map[string]any{
-		"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"},
-	}), false)
-
-	if len(buf.Blocks) != 2 {
-		t.Fatalf("got %d blocks, want 2 (the parent's and the step's); blocks = %+v", len(buf.Blocks), buf.Blocks)
-	}
-	if buf.Blocks[0].Text != "parent says " || buf.Blocks[0].AgentSubtaskID != "" {
-		t.Errorf("block 0 = %+v, want the parent's unattributed text", buf.Blocks[0])
-	}
-	// The step's two chunks share a key, so they extend ONE block rather than
-	// opening one each — the same run-extension rule, now keyed correctly.
-	if buf.Blocks[1].Text != "step says more" {
-		t.Errorf("block 1 text = %q, want the step's two chunks joined", buf.Blocks[1].Text)
-	}
-	if buf.Blocks[1].AgentSubtaskID != "wf:wf_1:wf_1/build" {
-		t.Errorf("block 1 subtask = %q, want %q", buf.Blocks[1].AgentSubtaskID, "wf:wf_1:wf_1/build")
-	}
-	// The attribution also travels on the wire, so a live renderer groups the
-	// step's deltas without waiting for the turn to persist.
-	last := (*events)[len(*events)-1]
-	p, ok := last.Payload.(marotte.MessageChunkPayload)
-	if !ok {
-		t.Fatalf("last event payload %T, want MessageChunkPayload", last.Payload)
-	}
-	if p.AgentSubtaskID != "wf:wf_1:wf_1/build" {
-		t.Errorf("chunk payload subtask = %q, want the step's key", p.AgentSubtaskID)
-	}
-}
-
-// TestStepChunk_TwoIterationsDoNotShareABlock pins why nodePath rather than
-// nodeId is the key: a repeat's iterations reuse the node id.
-func TestStepChunk_TwoIterationsDoNotShareABlock(t *testing.T) {
+// TestStepChunk_TwoIterationsDoNotShareATurn pins why nodePath rather than nodeId
+// is the key: a repeat's iterations reuse the node id, and each iteration's frames
+// fold into a run turn of their own.
+func TestStepChunk_TwoIterationsDoNotShareATurn(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	ctx := t.Context()
-	buf := deps.bufStore.GetOrInit(testChat)
 
 	for _, iter := range []string{"iter-0", "iter-1"} {
 		raw, err := json.Marshal(map[string]any{
 			"content": map[string]any{"type": "text", "text": "ran " + iter},
-			"_meta": map[string]any{"kiro": map[string]any{"workflow": map[string]any{
-				"workflowId": "wf_1", "nodeId": "step", "nodePath": []string{"wf_1", "loop", iter, "step"},
-			}}},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		tr.HandleAssistantChunk(ctx, testChat, raw, false)
+		tr.HandleAssistantChunk(ctx, testChat, raw, false,
+			FrameAttribution{Step: true, RunID: "wf_1", NodePath: "wf_1/loop/" + iter + "/step"})
 	}
-	if len(buf.Blocks) != 2 {
-		t.Fatalf("got %d blocks, want one per iteration; blocks = %+v", len(buf.Blocks), buf.Blocks)
+	if len(deps.turns.runs) != 2 {
+		t.Fatalf("got %d run turns, want one per iteration", len(deps.turns.runs))
+	}
+	for _, iter := range []string{"iter-0", "iter-1"} {
+		turn := deps.turns.runs[runPathKey("wf_1", "wf_1/loop/"+iter+"/step")]
+		if turn == nil {
+			t.Fatalf("no run turn for %s", iter)
+		}
+		open := turn.OpenEntries()
+		if len(open) != 1 || open[0].Text != "ran "+iter {
+			t.Errorf("%s: open entries = %+v, want the one text 'ran %s'", iter, open, iter)
+		}
+	}
+	if deps.turns.chats[testChat] != nil {
+		t.Error("a step's frames opened the launching chat's own turn; want the run's alone")
 	}
 }
 
@@ -537,12 +450,12 @@ func (s *usageStore) Mutate(_ context.Context, _ marotte.ChatID, fn func(*marott
 
 // TestSessionInfoUpdate_StepMeteringCountsCreditsOnly pins the scoped allowance.
 //
-// The blanket `subSessionID != ""` gate discarded a step's turn_completion, which
-// is the ONLY record of what that step spent — so a run of twenty steps reported
-// no cost at all on the chat that launched and paid for it. Letting it through
-// wholesale is the opposite error: TurnCount and LastTurnMs describe the
-// CONVERSATION, and twenty steps would report a four-message chat as twenty-four
-// turns.
+// A step's turn_completion is the ONLY record of what that step spent, and it is
+// the RUN turn's metering: the run appender takes the credits and the elapsed time
+// for the step's own turn, and the chat that launched and paid for the run is
+// billed the credits as well. Nothing else of it reaches the chat: LastTurnMs
+// describes the CONVERSATION's own last turn, so a step's elapsed time would
+// report that as however long a build step took.
 func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 	t.Parallel()
 	// NO `workflow` block, deliberately: KAS's buildSessionInfoUpdate merges no
@@ -560,23 +473,25 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 		}
 		return raw
 	}
+	const runID, nodePath = "wf_1", "wf_1/build"
 
 	for _, c := range []struct {
-		name          string
-		step          bool
-		wantTurnCount int
-		wantLastMs    float64
+		name         string
+		attr         FrameAttribution
+		wantLastMs   float64
+		wantRunMeter bool
 	}{
-		{"the chat's own turn moves all three", false, 1, 1234},
-		{"a step's turn moves credits only", true, 0, 0},
+		{"the chat's own turn moves both", FrameAttribution{}, 1234, false},
+		{"a step's turn meters the run turn and bills the chat's credits only", FrameAttribution{Step: true, RunID: runID, NodePath: nodePath}, 0, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			store := &usageStore{}
 			deps := newBaseDeps()
 			deps.store = store
+			deps.turns.runTurn(runID, nodePath)
 			tr := New(rolesOf(deps))
-			tr.HandleSessionInfoUpdate(t.Context(), testChat, infoFrame(), FrameAttribution{Step: c.step})
+			tr.HandleSessionInfoUpdate(t.Context(), testChat, infoFrame(), c.attr)
 
 			if store.chat.Usage.Credits != 0.25 {
 				t.Errorf("credits = %v, want 0.25 (real spend is the user's either way)", store.chat.Usage.Credits)
@@ -584,11 +499,24 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 			if !store.chat.Usage.HasRealData {
 				t.Error("HasRealData not set, so the popup would keep showing placeholder zeros")
 			}
-			if store.chat.Usage.TurnCount != c.wantTurnCount {
-				t.Errorf("TurnCount = %d, want %d", store.chat.Usage.TurnCount, c.wantTurnCount)
-			}
 			if store.chat.Usage.LastTurnMs != c.wantLastMs {
 				t.Errorf("LastTurnMs = %v, want %v", store.chat.Usage.LastTurnMs, c.wantLastMs)
+			}
+			var metered []runCall
+			for _, rc := range deps.runCalls {
+				if rc.kind == "meter" {
+					metered = append(metered, rc)
+				}
+			}
+			if !c.wantRunMeter {
+				if len(metered) != 0 {
+					t.Errorf("the chat's own turn metered a run turn: %+v", metered)
+				}
+				return
+			}
+			if len(metered) != 1 || metered[0].runID != runID || metered[0].nodePath != nodePath ||
+				metered[0].credits != 0.25 || metered[0].elapsedMs != 1234 {
+				t.Errorf("run meter calls = %+v, want one for %s/%s with 0.25 credits over 1234 ms", metered, runID, nodePath)
 			}
 		})
 	}
@@ -667,48 +595,54 @@ func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
 	}
 }
 
-// TestStepToolCall_SharesTheStepsBlockKey pins the other half of step
-// attribution: a step's TOOL frames carry KAS's own agentSubtaskId (or none),
-// while its TEXT is keyed by nodePath — without the same override on the tool
-// path, one step's work fragments across two delegated-work boxes.
-func TestStepToolCall_SharesTheStepsBlockKey(t *testing.T) {
+// TestStepToolCall_FoldsIntoTheStepsTurn pins the other half of step attribution:
+// a step's TOOL frames carry KAS's own agentSubtaskId (or none) while its TEXT
+// carries nothing, and both are routed by the dispatcher's attribution — without
+// the same routing on the tool path, one step's work fragments across two turns.
+func TestStepToolCall_FoldsIntoTheStepsTurn(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps))
 	ctx := t.Context()
-	buf := deps.bufStore.GetOrInit(testChat)
+	attr := FrameAttribution{Step: true, RunID: "wf_1", NodePath: "wf_1/build"}
 
-	wf := map[string]any{"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"}}
 	text, err := json.Marshal(map[string]any{
 		"content": map[string]any{"type": "text", "text": "building"},
-		"_meta":   map[string]any{"kiro": map[string]any{"workflow": wf}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr.HandleAssistantChunk(ctx, testChat, text, false)
+	tr.HandleAssistantChunk(ctx, testChat, text, false, attr)
 
 	tool, err := json.Marshal(map[string]any{
 		"toolCallId": "tc-1", "title": "write file", "kind": "edit", "status": "pending",
 		"_meta": map[string]any{"kiro": map[string]any{
-			"workflow":       wf,
 			"agentSubtaskId": "kas-own-subtask-uuid",
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr.HandleToolCall(ctx, testChat, tool, FrameAttribution{})
+	tr.HandleToolCall(ctx, testChat, tool, attr)
 
-	if len(buf.Blocks) != 2 {
-		t.Fatalf("got %d blocks, want 2 (text + tool_use): %+v", len(buf.Blocks), buf.Blocks)
+	if len(deps.turns.runs) != 1 {
+		t.Fatalf("got %d run turns, want 1 (one step, one turn)", len(deps.turns.runs))
 	}
-	want := "wf:wf_1:wf_1/build"
-	if buf.Blocks[0].AgentSubtaskID != want || buf.Blocks[1].AgentSubtaskID != want {
-		t.Errorf("block keys = %q / %q, want both %q (one step, one box)",
-			buf.Blocks[0].AgentSubtaskID, buf.Blocks[1].AgentSubtaskID, want)
+	turn := deps.turns.runs[runPathKey("wf_1", "wf_1/build")]
+	if turn == nil {
+		t.Fatal("no run turn for wf_1/build")
 	}
-	if buf.ToolCalls[0].AgentSubtaskID != want {
-		t.Errorf("tool call subtask = %q, want %q", buf.ToolCalls[0].AgentSubtaskID, want)
+	if open := turn.OpenEntries(); len(open) != 1 || open[0].Text != "building" {
+		t.Errorf("open entries = %+v, want the step's text still coalescing", open)
+	}
+	calls := toolCallsOf(t, deps.runEntries("wf_1", "wf_1/build"))
+	if len(calls) != 1 || calls[0].ID != "tc-1" {
+		t.Fatalf("run turn tool_call entries = %+v, want tc-1", calls)
+	}
+	if calls[0].AgentSubtaskID != "kas-own-subtask-uuid" {
+		t.Errorf("tool call subtask = %q, want KAS's own (the create fixes the lane)", calls[0].AgentSubtaskID)
+	}
+	if deps.turns.chats[testChat] != nil {
+		t.Error("a step's tool call opened the launching chat's own turn; want the run's alone")
 	}
 }
 

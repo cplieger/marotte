@@ -24,6 +24,7 @@ func (rr *runRoutes) register(mux *http.ServeMux) {
 	// Trailing wildcard: a node path contains "/", and percent-encoding it is
 	// refused by canonicalAPIPath, which compares the DECODED path.
 	mux.HandleFunc("GET /api/runs/{id}/steps/{path...}", rr.handleStepTranscript)
+	mux.HandleFunc("GET /api/runs/{id}/turns/{turn}", rr.handleTurnRange)
 	mux.HandleFunc("POST /api/runs", rr.handleLaunch)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", rr.handleCancel)
 	mux.HandleFunc("POST /api/runs/{id}/pause", rr.handlePause)

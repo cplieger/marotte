@@ -1,0 +1,7 @@
+- [ ] 1. Before
+~~~
+an example block
+```
+- [ ] 2. CommonMark: still inside the tilde block
+~~~
+- [ ] 3. CommonMark: the first task after the block

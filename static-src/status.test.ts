@@ -67,7 +67,7 @@ function mountContextBar(): void {
     "ctx-credits",
     "ctx-turns",
     "ctx-last-turn",
-    "ctx-msgs",
+    "ctx-entries",
     "ctx-tools",
     "ctx-metering",
   ]) {

@@ -137,10 +137,18 @@ func (t *Translator) RunProgressHandler(kind marotte.RunProgressKind) func(conte
 			return
 		}
 		node := cmp.Or(p.NodeID, p.LoopID)
-		// The ONE frame that announces a step's session id. Recorded before the broadcast so
-		// a permission ask racing the event still classifies.
-		if kind == marotte.RunProgressNodeStart && p.SessionID != "" {
-			t.steps.record(p.SessionID, p.WorkflowID, node)
+		switch kind {
+		case marotte.RunProgressNodeStart:
+			path := runNodePathOf(&p, node)
+			// The ONE frame that announces a step's session id. Recorded before the
+			// broadcast so a permission ask racing the event still classifies.
+			if p.SessionID != "" {
+				t.steps.record(p.SessionID, p.WorkflowID, node, path)
+			}
+			// The run turn's opening bracket; a path already open is a no-op on the log.
+			t.runs.RunNodeStart(ctx, p.WorkflowID, path, p.SessionID, chatID)
+		case marotte.RunProgressNodeComplete:
+			t.runs.RunNodeComplete(ctx, p.WorkflowID, runNodePathOf(&p, node), p.Status, p.Reason)
 		}
 		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventRunProgress, chatID,
 			runProgress(kind, node, &p, time.Now())))

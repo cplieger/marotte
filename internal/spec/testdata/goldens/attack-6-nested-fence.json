@@ -1,0 +1,43 @@
+{
+  "input_file": "attack-6-nested-fence.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Before",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "c1a1eea14184897ef10e510b36f741cb35d3edb797bb14877288ad72f916d232",
+      "detail": "````markdown\n```go\n// code\n```\n````",
+      "children": []
+    },
+    {
+      "id": "L7",
+      "line": 7,
+      "indent": 0,
+      "number": "2",
+      "text": "2. After",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "8de26eb52997d8410342a93f242945789e5134f17559e61eefb8ce9f8056b129",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 2
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

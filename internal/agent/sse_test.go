@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,11 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/liveness"
+	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/sse"
 	"github.com/cplieger/sse/ssetest"
-	"github.com/cplieger/marotte/internal/liveness"
-	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // The SSE transport (fan-out, replay ring, the hello, Last-Event-ID resume,
@@ -80,7 +81,7 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 }
 
 // TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged pins the frame-cap
-// substitute: a message_appended whose tool outputs sum past sse.MaxFrameBytes is
+// substitute: an entry_appended whose text runs past sse.MaxFrameBytes is
 // refused by the hub, and what enters the ring instead is one subject_changed
 // carrying the refused frame's stamp, with a Warn naming the type and the size. A
 // frame the cap admits publishes intact.
@@ -91,23 +92,20 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	h, _, _ := newTestHub()
 
-	huge := &marotte.Message{ID: "m1", Role: marotte.RoleAssistant}
-	perCall := strings.Repeat("o", maxTurnToolOutputOne)
-	for len(huge.ToolCalls)*maxTurnToolOutputOne < maxTurnToolOutputTotal {
-		huge.ToolCalls = append(huge.ToolCalls, marotte.ToolCall{ID: fmt.Sprintf("tc%d", len(huge.ToolCalls)), Output: perCall})
-	}
-	stamped := marotte.NewEvent(marotte.EventMessageAppended, "c1", huge)
+	stamped := marotte.NewEvent(marotte.EventEntryAppended, "c1", marotte.EntryAppendedPayload{
+		Entry: textEntry(t, "t1", 1, strings.Repeat("o", sse.MaxFrameBytes+1)),
+	})
 	stamped.Subject = &marotte.SubjectStamp{Kind: string(subject.KindChat), Ref: "c1", Version: "7"}
 	h.bus.emit(stamped)
 
-	small := marotte.NewEvent(marotte.EventToolCall, "c1", marotte.ToolCallPayload{
-		MessageID: "m1", ToolCall: marotte.ToolCall{ID: "tc-one", Output: perCall},
+	small := marotte.NewEvent(marotte.EventEntryAppended, "c1", marotte.EntryAppendedPayload{
+		Entry: textEntry(t, "t1", 2, strings.Repeat("o", 64<<10)),
 	})
 	h.bus.emit(small)
 
 	ring := h.bus.fanout.Snapshot()
 	if len(ring) != 2 {
-		t.Fatalf("ring holds %d frames, want 2 (the substitute and the intact tool_call)", len(ring))
+		t.Fatalf("ring holds %d frames, want 2 (the substitute and the intact entry_appended)", len(ring))
 	}
 	var substitute marotte.ServerEvent
 	if err := reencodeBytes(ring[0].Event.Data, &substitute); err != nil {
@@ -119,12 +117,23 @@ func TestEmit_AStampedFrameOverTheCapBecomesSubjectChanged(t *testing.T) {
 	if substitute.Subject == nil || *substitute.Subject != *stamped.Subject {
 		t.Errorf("subject_changed Subject = %+v, want the refused frame's %+v", substitute.Subject, *stamped.Subject)
 	}
-	if !strings.Contains(string(ring[1].Event.Data), `"type":"tool_call"`) {
-		t.Errorf("ring[1] is not the intact tool_call: %.80s", ring[1].Event.Data)
+	if !strings.Contains(string(ring[1].Event.Data), `"type":"entry_appended"`) || !strings.Contains(string(ring[1].Event.Data), `"seq":2`) {
+		t.Errorf("ring[1] is not the intact second entry_appended: %.80s", ring[1].Event.Data)
 	}
-	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "type=message_appended") || !strings.Contains(logs.String(), "bytes=") {
-		t.Errorf("no Warn naming message_appended and the size: %s", logs.String())
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "type=entry_appended") || !strings.Contains(logs.String(), "bytes=") {
+		t.Errorf("no Warn naming entry_appended and the size: %s", logs.String())
 	}
+}
+
+// textEntry is a sealed text entry of the given size in turn t1, the shape of the
+// one frame whose payload can outgrow the ring's cap.
+func textEntry(t *testing.T, turn string, seq uint64, text string) marotte.Entry {
+	t.Helper()
+	payload, err := json.Marshal(marotte.EntryText{Text: text})
+	if err != nil {
+		t.Fatalf("marshal text entry: %v", err)
+	}
+	return marotte.Entry{ID: fmt.Sprintf("%s-%d", turn, seq), Turn: turn, Kind: marotte.EntryKindText, Payload: payload, Seq: seq}
 }
 
 // TestEmit_AnUnstampedFrameOverTheCapIsDroppedWithAnError: with no subject there is
@@ -408,9 +417,7 @@ func TestHandleSSE_ReplaysTheStateAClientCannotDeriveFromTheEventLog(t *testing.
 	h.bus.pendingPerms.Add(9, marotte.NewEvent(marotte.EventPermissionNeeded, "c1",
 		marotte.PermissionNeededPayload{RequestID: 9}))
 	h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
-	if h.coord.StartTurn(t.Context(), "c1", marotte.TurnSourcePrompt) == 0 {
-		t.Fatal("the fixture could not open a turn")
-	}
+	h.stagePromptTurn(t, "c1")
 
 	for _, legacy := range []bool{false, true} {
 		frames := connectFrames(t, h, legacy)
@@ -496,11 +503,11 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs := newFakeChatStore()
+			cs := newTestChatStore()
 			fp := &recordingPush{sends: make(chan string, 1)}
 			h := New(context.Background(), t.TempDir(),
 				func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-			cs.Bus = h
+			cs.wire(h)
 			h.mcpRegistry.SignalReady()
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
@@ -519,22 +526,4 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 			}
 		})
 	}
-}
-
-// openSmallTurn opens a prompt turn on id and gives its buffer a started message
-// with text, the fixture the transcript GET's live_turn is read from.
-func openSmallTurn(tb testing.TB, rt *Runtime, id marotte.ChatID, text string) {
-	tb.Helper()
-	rt.bridge.mgr.orInsert(id)
-	if epoch := rt.coord.StartTurn(tb.Context(), id, marotte.TurnSourcePrompt); epoch == 0 {
-		tb.Fatalf("StartTurn(%q) refused, so the chat is not busy", id)
-	}
-	buf := rt.liveTurnBuffer(id)
-	if buf == nil {
-		tb.Fatalf("no live turn buffer for %q, so there is nothing to fill", id)
-	}
-	if opened, _ := buf.StartTurn("m-" + string(id)); !opened {
-		tb.Fatalf("turn for %q was already started, so the fixture is not the one filling it", id)
-	}
-	buf.AppendTextDelta(text, "")
 }

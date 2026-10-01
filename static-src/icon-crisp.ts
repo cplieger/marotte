@@ -1,7 +1,8 @@
-/** Snaps icon boxes onto the pixel grid so a 1px stroke paints one whole pixel.
- *  Rule, measurement and the rejected alternatives: `marotte-ui.md` "Icon crispness". */
+/** Snaps icon boxes onto the pixel grid so a structural stroke or fill edge paints whole
+ *  device pixels. Rule, measurement and the rejected alternatives: `marotte-ui.md` "Icon crispness". */
 
 const TIERS = ".ic-inline, .ic-ui, .ic-lg, .ic-hero";
+const SHAPES = "path, circle, line, rect, polyline, polygon, ellipse";
 
 /** `s` is the screen offset in force, `t` the local translate that produces it. The two
  *  differ whenever an ancestor rotates the icon, and the rect is measured in screen space. */
@@ -9,21 +10,30 @@ const applied = new WeakMap<SVGSVGElement, { sx: number; sy: number; tx: number;
 
 const frac = (v: number): number => ((v % 1) + 1) % 1;
 
-/** Box phase that puts a multiple-of-3 coordinate on a half pixel. Scale-dependent:
- *  0.5 at `ic-ui`, 0 at `ic-inline`, where such a coordinate already sits on a half. */
-function targetPhase(scale: number): number {
-  return frac(0.5 - frac(3 * scale));
+/** Device phase a multiple-of-3 coordinate wants. A stroke is crisp with its centre on
+ *  frac(deviceWidth / 2): a half pixel when its device width is odd, a boundary when even.
+ *  A fill-only glyph is crisp with its edge on a boundary. The first stroked shape decides;
+ *  a glyph with none is fill-only. `strokeWidth` is CSS px under `non-scaling-stroke`. */
+function wantedDevicePhase(el: SVGSVGElement, dpr: number): number {
+  for (const shape of el.querySelectorAll(SHAPES)) {
+    const cs = getComputedStyle(shape);
+    if (cs.stroke !== "none") {
+      return frac((parseFloat(cs.strokeWidth) * dpr) / 2);
+    }
+  }
+  return 0;
 }
 
-function toPhase(v: number, target: number): number {
-  let delta = target - frac(v);
+/** Smallest CSS translate putting the coordinate 3 units in from `origin` on device `phase`. */
+function toDevicePhase(origin: number, scale: number, phase: number, dpr: number): number {
+  let delta = phase - frac(dpr * (origin + 3 * scale));
   if (delta > 0.5) {
     delta -= 1;
   }
   if (delta <= -0.5) {
     delta += 1;
   }
-  return delta;
+  return delta / dpr;
 }
 
 const q = (v: number): number => Math.round(v * 1000) / 1000;
@@ -32,20 +42,11 @@ const q = (v: number): number => Math.round(v * 1000) / 1000;
  *  `translate` composes inside that rotation, so a screen-space correction written straight
  *  onto the box lands on the wrong axis. Maps a screen delta into the element's own space.
  *
- *  `getScreenCTM` carries the whole ancestor chain; dividing by the viewBox scale leaves the
+ *  `getScreenCTM` carries the whole ancestor chain; dividing by the drawing's scale leaves the
  *  rotation alone, which is ORTHOGONAL for the axis-aligned cases — so the inverse is the
  *  transpose. Anything else answers null: a non-right-angle rotation cannot be crisp at all,
  *  and the box's screen AABB is not its box, so the phase read would be meaningless too. */
-function toLocal(
-  el: SVGSVGElement,
-  scale: number,
-  dx: number,
-  dy: number,
-): [number, number] | null {
-  const m = el.getScreenCTM();
-  if (m === null || scale === 0) {
-    return null;
-  }
+function toLocal(m: DOMMatrix, scale: number, dx: number, dy: number): [number, number] | null {
   const a = m.a / scale;
   const b = m.b / scale;
   const c = m.c / scale;
@@ -74,34 +75,38 @@ export function snapIcons(root: ParentNode = document): number {
   deferred = false;
   // Every rect read before any style write: interleaving forces a layout per icon.
   const work: { el: SVGSVGElement; sx: number; sy: number; tx: number; ty: number }[] = [];
+  const dpr = window.devicePixelRatio;
   for (const el of root.querySelectorAll<SVGSVGElement>(TIERS)) {
     const rect = el.getBoundingClientRect();
-    const side = el.viewBox.baseVal.width;
-    if (!rect.width || !rect.height || !side) {
+    const m = el.getScreenCTM();
+    if (!rect.width || !rect.height || m === null) {
       continue;
     }
-    const scale = rect.width / side;
+    // The DRAWING's scale, not the box's: a flex slot can be wider than the glyph it holds
+    // (`[id="scroll-bottom"] > svg` in the rail form), and `preserveAspectRatio` centres it.
+    const scale = Math.hypot(m.a, m.b);
+    if (scale === 0) {
+      continue;
+    }
     // AN ANCESTOR MID-SCALE IS A WRONG READING, NOT A DIFFERENT ONE, so it is declined
     // and re-asked rather than answered. `.pill-expand-content` opens on
-    // `scale(0.4) -> scale(1)` (15-input.css), and every icon inside it was snapped
-    // during that flight: the rect is the SCALED box, so both the measured phase and
-    // `targetPhase`'s own scale-dependent target come out of a geometry that is about
-    // to change, and the settle pass then corrects the whole set at once — which is
-    // what the user reported as the role menu's icons jumping right every time it
-    // opened. The layout size is unaffected by any transform, so disagreeing with the
-    // painted size is exactly "something is scaling me".
+    // `scale(0.4) -> scale(1)` (15-input.css): an icon snapped during that flight
+    // reads a SCALED rect, so both the measured phase and the scale-dependent target
+    // come out of a geometry about to change, and the settle pass then corrects the
+    // whole set at once. Layout size is unaffected by any transform, so disagreeing
+    // with the painted size is exactly "something is scaling me".
     const layout = parseFloat(getComputedStyle(el).inlineSize);
     if (Math.abs(rect.width - layout) > 0.02) {
       deferred = true;
       continue;
     }
-    const target = targetPhase(scale);
+    const phase = wantedDevicePhase(el, dpr);
     // `rect` includes the offset already applied, so measure the original box. The offset is
     // subtracted in SCREEN space, which is the space the rect is in.
     const prev = applied.get(el) ?? { sx: 0, sy: 0, tx: 0, ty: 0 };
-    const sx = q(toPhase(rect.x - prev.sx, target));
-    const sy = q(toPhase(rect.y - prev.sy, target));
-    const local = toLocal(el, scale, sx, sy);
+    const sx = q(toDevicePhase(rect.x - prev.sx, scale, phase, dpr));
+    const sy = q(toDevicePhase(rect.y - prev.sy, scale, phase, dpr));
+    const local = toLocal(m, scale, sx, sy);
     if (local === null) {
       continue;
     }

@@ -11,8 +11,9 @@
 // WHERE THE DATA COMES FROM, and it is the one place this source is better off than
 // the workflow's. A delegate's blocks live in the chat file stamped with
 // `agent_subtask_id`, so they survive replay and a finished delegate's transcript is
-// readable weeks later. A workflow step's is live-only (`run_step` persists nothing),
-// which is why that adapter's empty note has three cases and this one has two.
+// readable weeks later. A workflow step's entries are the RUN's, in its own log, so
+// that adapter's empty note has to answer for the step-transcript read as well and
+// carries more cases than this one.
 //
 // TWO SHAPES, and the page picks between them by content rather than by a flag:
 //
@@ -35,6 +36,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolCall } from "./types.js";
+import { delegateStatusFor } from "./store.js";
 import { humanName, truncate } from "./strings.js";
 import { subagentLabel, subagentName } from "./roles.js";
 import { inFlight, type ExecState } from "./exec-view/status.js";
@@ -65,12 +67,14 @@ function driverPath(pipelineID: string): string {
   return `pipeline:${pipelineID}`;
 }
 
-/** A delegate's state, from its invocation TOOL CALL's status.
+/** A delegate's state, from its invocation TOOL CALL's status folded against the
+ *  chat's turn liveness, so the page agrees with the dot and the card about a delegate
+ *  whose turn died before its `tool_result` landed.
  *
  *  Not `stateOf` directly: a tool call speaks `ToolStatus` rather than a run
  *  node status, so each adapter maps its own closed vocabulary. */
-function toolState(status: ToolCall["status"] | undefined): ExecState {
-  switch (status) {
+function toolState(status: ToolCall["status"] | undefined, turnLive: boolean): ExecState {
+  switch (status === undefined ? undefined : delegateStatusFor(status, turnLive)) {
     // No invocation resident, so there is no status to report — which is a
     // DIFFERENT fact from `pending`, whose word is "not started". That word is a
     // positive claim about a delegate this adapter knows nothing about, and it is
@@ -171,7 +175,12 @@ function driverInputs(driver: ToolCall | undefined): Record<string, string> | un
 }
 
 /** Fold one delegate into a leaf. */
-function toLeaf(subtaskID: string, stage: string, invocation: ToolCall | undefined): ExecNode {
+function toLeaf(
+  subtaskID: string,
+  stage: string,
+  invocation: ToolCall | undefined,
+  turnLive: boolean,
+): ExecNode {
   const label =
     invocation === undefined
       ? stage === ""
@@ -181,7 +190,7 @@ function toLeaf(subtaskID: string, stage: string, invocation: ToolCall | undefin
   // ONE owner for "what does an absent invocation mean": `toolState`'s own
   // `undefined` arm. The ternary this replaces answered `pending` here while the
   // driver's answered `running` two folds down, so one absence had two readings.
-  const state: ExecState = toolState(invocation?.status);
+  const state: ExecState = toolState(invocation?.status, turnLive);
   const out: ExecNode = {
     path: subagentPath(subtaskID),
     label,
@@ -262,8 +271,15 @@ function rollUp(own: ExecState, kids: readonly ExecNode[]): ExecState {
  *  rather than computed here because the view already holds it: it carries the GROUP
  *  this reads its structure from and a slice per member, which is what the view mounts
  *  into `page.bodyFor` and what it watches for streaming deltas. Computing either here
- *  would walk the same window a second time on every repaint. */
-export function subagentToExec(subtaskID: string, projection: SubagentProjection): ExecRun {
+ *  would walk the same window a second time on every repaint.
+ *
+ *  `turnLive` is the chat's own turn liveness, defaulting to the answer that claims
+ *  nothing, as `subagentStatusFor`'s does. */
+export function subagentToExec(
+  subtaskID: string,
+  projection: SubagentProjection,
+  turnLive = true,
+): ExecRun {
   const group = projection.group;
   // The delegate the TAB names. Present for every non-empty id the projection was
   // asked about, so the fallbacks below are for the empty id alone.
@@ -272,7 +288,7 @@ export function subagentToExec(subtaskID: string, projection: SubagentProjection
 
   // --- the single-delegate shape --------------------------------------------
   if (group.pipeline === "") {
-    const leaf = toLeaf(subtaskID, "", own?.invocation);
+    const leaf = toLeaf(subtaskID, "", own?.invocation, turnLive);
     return {
       id: subtaskID,
       label: leaf.label,
@@ -284,7 +300,7 @@ export function subagentToExec(subtaskID: string, projection: SubagentProjection
   }
 
   // --- the pipeline shape ----------------------------------------------------
-  const stages = group.members.map((m) => toLeaf(m.subtaskID, m.stage, m.invocation));
+  const stages = group.members.map((m) => toLeaf(m.subtaskID, m.stage, m.invocation, turnLive));
   // A stage the transcript has not reached yet is a real node, and showing it is the
   // point of a plan: `orchestrate_subagent` declares its stage list up front, so a
   // pipeline can say "four stages, one running, two not started" from its first frame.
@@ -300,7 +316,7 @@ export function subagentToExec(subtaskID: string, projection: SubagentProjection
       });
     }
   }
-  const driverState = rollUp(toolState(group.driver?.status), stages);
+  const driverState = rollUp(toolState(group.driver?.status, turnLive), stages);
   const root: ExecNode = {
     // No stage COUNT here: the page header's `step N of M` states it, and this row's
     // own children are the list. The transcript's pipeline box carries the count

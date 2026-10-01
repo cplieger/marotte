@@ -23,11 +23,14 @@ import { buildChip } from "./chip.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { editNativeRule, explainPolicy, setSecurityProfile } from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
-import { sigChanged } from "./paint-sig.js";
+import { paintIfChanged, sigChanged } from "./paint-sig.js";
 import { join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
+// `types.js` re-exports the Policy* shapes the panel renders and not this one, which
+// only an explain result carries.
+import type { PolicyRuleCore } from "./wire/types.gen.js";
 
 /** One row of the policy table: a scope's heading, or one rule under it. */
 type PolicyEntry =
@@ -55,6 +58,49 @@ function policyEntryKey(e: PolicyEntry): string {
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { el } from "@cplieger/reactive";
+
+// ---------------------------------------------------------------------------
+// Agent ignore files: the floor, and the entry rule KAS enforces.
+// ---------------------------------------------------------------------------
+
+/** Sent to kiro-cli whatever the user's list holds, so a `.kiroignore` at the
+ *  workspace root is always enforced. Mirrors `settings.AgentIgnoreFloor`; the
+ *  panel renders it as a fixed row the user cannot remove. */
+export const AGENT_IGNORE_FLOOR = ".kiroignore";
+
+/** The reason this entry cannot be ADDED to the list, or null when it can.
+ *
+ *  Every arm but one mirrors `settings.ValidAgentIgnoreEntry`, because an entry
+ *  KAS refuses is one it SKIPS — offering to add one would claim a filter the
+ *  agent never applies. The FLOOR arm is marotte's own and has no server
+ *  counterpart: `.kiroignore` is a perfectly valid entry that is already sent on
+ *  every spawn, so adding it would produce a duplicate row the panel then renders
+ *  twice. It sits directly after the empty check so the message names the reason
+ *  rather than falling through to a rule the floor does not break.
+ *
+ *  The whitespace arm is unreachable from the panel, whose only caller trims
+ *  first; it is here so the rule is the whole rule for any other caller. */
+export function agentIgnoreEntryError(entry: string): string | null {
+  if (entry === "") {
+    return "An entry cannot be empty.";
+  }
+  if (entry === AGENT_IGNORE_FLOOR) {
+    return "Always enforced — it is already in the list.";
+  }
+  if (entry !== entry.trim()) {
+    return "Leading or trailing whitespace.";
+  }
+  if (entry === ".") {
+    return '"." is not a filename.';
+  }
+  if (/[/\\]/.test(entry) || entry.includes("..")) {
+    return "Name a file at the workspace root, not a path.";
+  }
+  if (/[*?[\]{}]/.test(entry)) {
+    return "Put a glob pattern inside an ignore file, not in this list.";
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // PermissionsUIController — encapsulates all module-level state.
@@ -89,27 +135,44 @@ class PermissionsUIController {
   // --- Private: agent ignore files ---
 
   private initAgentIgnoreUI(initial: EffectiveSettings): void {
-    // No `?? []`. That fallback was the live bug this whole change exists for:
-    // the server's default is two patterns (.gitignore, .kiroignore) and the
-    // filter applies them whenever the key is absent, so on any config.json that
-    // existed without the key this row rendered EMPTY while agent reads were
-    // being filtered — and because the row is authoritative on write, the first
-    // add or remove persisted an explicit list that dropped both of them.
+    this.renderIgnoreFloor();
+    // No `?? []`. The row is AUTHORITATIVE on write — an add or a remove sends
+    // whatever it holds — so a fallback silently persists an empty list whenever
+    // the field is missing, discarding entries the server was enforcing. It shipped
+    // once: the default was two patterns applied whenever the key was absent, so
+    // the row rendered empty over a live filter and the first edit dropped both.
+    // An empty default narrows the loss to the user's own entries; the floor is
+    // sent server-side and survives either way, so it cannot be lost here.
     this.ignoreFiles = [...initial.agent_ignore_files];
     this.renderIgnoreChips();
 
     const input = maybeEl<HTMLInputElement>("agent-ignore-input");
-    const addBtn = maybeEl("agent-ignore-add");
+    const addBtn = maybeEl<HTMLButtonElement>("agent-ignore-add");
     if (input === null || addBtn === null) {
       return;
     }
+    // A REJECTED value disables Add and says which rule refused it; an EMPTY one
+    // leaves the button alone, so it is never disabled at rest. The tooltip is
+    // the channel because `disabled` already announces the unavailability, and a
+    // disabled control still receives hover (`marotte-ui.md`).
+    const syncAddState = (): void => {
+      const val = input.value.trim();
+      const reason = val === "" ? null : agentIgnoreEntryError(val);
+      addBtn.disabled = reason !== null;
+      if (reason === null) {
+        addBtn.removeAttribute("data-tooltip");
+      } else {
+        addBtn.setAttribute("data-tooltip", reason);
+      }
+    };
     const submit = (): void => {
       const val = input.value.trim();
-      if (val === "") {
+      if (val === "" || agentIgnoreEntryError(val) !== null) {
         return;
       }
       if (this.ignoreFiles.includes(val)) {
         input.value = "";
+        syncAddState();
         return;
       }
       this.ignoreFiles.push(val);
@@ -118,7 +181,9 @@ class PermissionsUIController {
       // Refocus for repeat entry (adding several files in a row).
       input.focus();
       this.renderIgnoreChips();
+      syncAddState();
     };
+    input.addEventListener("input", syncAddState);
     addBtn.addEventListener("click", submit);
     input.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter") {
@@ -126,6 +191,23 @@ class PermissionsUIController {
         submit();
       }
     });
+  }
+
+  /** The always-enforced floor, above the user's own chips. A fixed row rather
+   *  than a chip: `buildChip` requires an `onRemove` and this entry has none. */
+  private renderIgnoreFloor(): void {
+    const host = maybeEl("agent-ignore-floor");
+    if (host === null) {
+      return;
+    }
+    host.replaceChildren(
+      el(
+        "span",
+        { class: "chip mono chip-fixed" },
+        el("code", { class: "chip-label" }, AGENT_IGNORE_FLOOR),
+        el("span", { class: "chip-note" }, "always enforced"),
+      ),
+    );
   }
 
   private renderIgnoreChips(): void {
@@ -274,7 +356,7 @@ function profileDescription(id: string): string {
     case "guarded":
       return "Reads files in this workspace. Everything else asks. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
     case "read-only":
-      return "Also reads any file on this machine, including outside the workspace, runs read-only commands, and reaches the web. Every change asks. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
+      return "Also reads any file on this machine, runs read-only commands, and reaches the web. That includes files outside this workspace, so an SSH key or a sibling project is readable with no prompt. Every change asks. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
     case "trusted":
       return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
     case "unrestricted":
@@ -284,6 +366,17 @@ function profileDescription(id: string): string {
     default:
       return "";
   }
+}
+
+/** A rule's globs in one vocabulary, shared by the table's rows and the explain box
+ *  so a rule reads the same in both: a match is prefixed, an exclusion negated. */
+function globLabels(r: { readonly match?: string[]; readonly exclude?: string[] }): string[] {
+  return [...(r.match ?? []).map((m) => "+" + m), ...(r.exclude ?? []).map((e) => "\u2212" + e)];
+}
+
+/** One line naming a rule: what it grants, and over which globs. */
+function ruleSummary(r: PolicyRuleCore): string {
+  return [`${r.capability} ${r.effect}`, ...globLabels(r)].join(" ");
 }
 
 function shortSource(src: string): string {
@@ -573,14 +666,9 @@ class NativePolicyController {
     await this.applyProfile(CUSTOM_PROFILE, true);
   }
 
-  /** One writer for both doors. The button is disabled for the round trip so a
-   *  second selection cannot interleave with the file replacement this one is
-   *  performing. */
+  /** One writer for both doors. */
   private async applyProfile(id: string, seed: boolean): Promise<void> {
-    const btn = maybeEl<HTMLButtonElement>("security-profile-customize");
-    if (btn !== null) {
-      btn.disabled = true;
-    }
+    this.setPickerInert(true);
     try {
       const res = await setSecurityProfile.dispatch({ profile: id, seed });
       // Repaint from the server FIRST, so the picker shows what is actually in
@@ -593,28 +681,57 @@ class NativePolicyController {
         this.renderProfileState(this.lastRules);
       }
     } finally {
-      if (btn !== null) {
-        btn.disabled = false;
-      }
+      this.setPickerInert(false);
     }
   }
 
+  /** Make every control that can START a selection inert, radios included, for the
+   *  duration of one write.
+   *
+   *  Two overlapping selections are not bounded by the server: each snapshots both
+   *  writable policy files before writing, so the second's snapshot can hold the
+   *  first's rules and a failure then restores the wrong profile's rules under a
+   *  config.json naming the other one. Re-queried on release rather than captured,
+   *  so a radio the intervening load() mounted is left enabled too. */
+  private setPickerInert(inert: boolean): void {
+    const btn = maybeEl<HTMLButtonElement>("security-profile-customize");
+    if (btn !== null) {
+      btn.disabled = inert;
+    }
+    const host = maybeEl("security-profile-list");
+    if (host === null) {
+      return;
+    }
+    for (const radio of host.querySelectorAll<HTMLInputElement>("input[name='security-profile']")) {
+      radio.disabled = inert;
+    }
+  }
+
+  /** Fill both capability pickers, rebuilding only when the SET moved.
+   *
+   *  `pickerCapabilities` is a union, so the set grows at runtime: a cold no-bridge
+   *  view names only the capabilities the two writable files already use, and the
+   *  live list is wider. Populating once kept that narrow list until a reload. The
+   *  reader's selection is restored, which is what the old idempotence protected. An
+   *  empty answer rebuilds nothing: it says the view could not name a capability,
+   *  not that there are none. */
   private populateCapabilities(caps: string[]): void {
     for (const id of ["native-rule-capability", "native-explain-capability"]) {
       const sel = maybeEl<HTMLSelectElement>(id);
-      // Populate only when empty: idempotent across refetches (so an SSE
-      // reload doesn't reset an in-progress selection) and correct per fresh
-      // DOM in tests.
-      if (sel === null || sel.options.length > 0) {
+      if (sel === null || caps.length === 0) {
         continue;
       }
-      sel.replaceChildren(
-        ...caps.map((c) => {
+      const chosen = sel.value;
+      const painted = paintIfChanged(sel, caps, () =>
+        caps.map((c) => {
           const opt = el("option", { value: c }, c) as HTMLOptionElement;
           opt.value = c; // set the property explicitly so the value is usable everywhere
           return opt;
         }),
       );
+      if (painted && caps.includes(chosen)) {
+        sel.value = chosen;
+      }
     }
   }
 
@@ -691,16 +808,18 @@ class NativePolicyController {
       row.append(el("span", { className: `native-rule-effect eff-${r.effect}` }, r.effect));
     }
     row.append(el("span", { className: "native-rule-cap mono" }, r.capability));
-    const globs = [
-      ...(r.match ?? []).map((m) => "+" + m),
-      ...(r.exclude ?? []).map((e) => "\u2212" + e),
-    ];
+    const globs = globLabels(r);
     if (globs.length > 0) {
       row.append(el("span", { className: "native-rule-globs mono" }, globs.join("  ")));
     }
     const src = el("span", { className: "native-rule-src" }, shortSource(r.source));
     if (r.source !== "") {
-      src.setAttribute("title", r.source);
+      // `data-tooltip` rather than a native `title`: the delegated controller styles
+      // it like every other hover in the app and republishes it as an accessible
+      // description. The path on screen is elided, so the label is the only channel
+      // carrying the whole of it to a reader who cannot hover.
+      src.setAttribute("data-tooltip", r.source);
+      src.setAttribute("aria-label", `Defined in ${r.source}`);
     }
     row.append(src);
     if (this.writable.has(r.scope)) {
@@ -710,7 +829,7 @@ class NativePolicyController {
         iconEl(ICON_CLOSE),
       );
       rm.setAttribute("aria-label", "Remove rule");
-      rm.setAttribute("title", "Remove rule");
+      rm.setAttribute("data-tooltip", "Remove rule");
       rm.addEventListener("click", () => {
         void this.removeRule(r);
       });
@@ -735,7 +854,7 @@ class NativePolicyController {
       sel.append(opt);
     }
     sel.setAttribute("aria-label", `Effect for the ${r.capability} rule`);
-    sel.setAttribute("title", "Change this rule's effect");
+    sel.setAttribute("data-tooltip", "Change this rule's effect");
     sel.addEventListener("change", () => {
       void this.updateEffect(r, sel);
     });
@@ -855,7 +974,15 @@ class NativePolicyController {
       out.textContent = "Could not evaluate — check that a chat session is active.";
       return;
     }
-    const parts = [`Effect: ${res.effect}`];
+    // The control is labelled "why?", so the matched RULE is the answer: a scope
+    // names only the layer that decided, and the kiro layer holds dozens of globs the
+    // reader would then have to find by eye. `is_explicit_ask` separates an ask a
+    // rule states, which no allow may be added over, from the implicit ask that
+    // means nothing matched.
+    const parts = [`Effect: ${res.effect}${res.is_explicit_ask ? " (explicit ask)" : ""}`];
+    if (res.matched_rule !== undefined) {
+      parts.push(`rule: ${ruleSummary(res.matched_rule)}`);
+    }
     if (res.scope !== undefined && res.scope !== "") {
       parts.push(`scope: ${res.scope}`);
     }

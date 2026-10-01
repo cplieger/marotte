@@ -18,8 +18,8 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/webhttp/v3"
 )
 
@@ -43,7 +43,14 @@ type Handler func(ctx context.Context, cmd *marotte.ClientCommand) (any, error)
 type statusError struct {
 	err    error
 	reason string
-	code   int
+	// currentHash is the hash a refused compare-and-swap found instead of the
+	// one that was claimed; empty elsewhere.
+	currentHash string
+	// runs names the live runs a refused rewind's cut would stop; nil elsewhere.
+	// It sits after the string fields so the struct's pointer-bearing prefix
+	// stays at govet fieldalignment's optimum.
+	runs []LiveRunRef
+	code int
 }
 
 func (e *statusError) Error() string { return e.err.Error() }
@@ -60,6 +67,23 @@ func StatusError(code int, err error) error {
 // rather than on error text.
 func StatusErrorReason(code int, reason string, err error) error {
 	return &statusError{code: code, reason: reason, err: err}
+}
+
+// StatusErrorRuns is StatusErrorReason plus the live runs a refused rewind names,
+// so the client's confirmation can say which work the cut stops.
+func StatusErrorRuns(code int, reason string, runs []LiveRunRef, err error) error {
+	return &statusError{code: code, reason: reason, runs: runs, err: err}
+}
+
+// StatusErrorCurrentHash is StatusErrorReason plus the hash a refused
+// compare-and-swap actually found, so the client can tell the document moved
+// from a claim it merely got wrong.
+//
+// It is deliberately NOT a value a client may re-POST unread: the whole point of
+// the swap is that an approval names a version somebody looked at, so the client
+// re-reads the document and the reader approves again.
+func StatusErrorCurrentHash(code int, reason, currentHash string, err error) error {
+	return &statusError{code: code, reason: reason, currentHash: currentHash, err: err}
 }
 
 // statusOf reports the status a handler outcome is answered with: 200 for
@@ -104,6 +128,13 @@ type errorResponse struct {
 	// Reason is the machine-readable refusal class, additive; existing
 	// clients ignore it. See StatusErrorReason.
 	Reason string `json:"reason,omitempty"`
+	// CurrentHash is what a refused compare-and-swap found. See
+	// StatusErrorCurrentHash.
+	CurrentHash string `json:"current_hash,omitempty"`
+	// Runs are the live runs a refused rewind's cut would stop. See
+	// StatusErrorRuns. It sits after the string fields so the struct's
+	// pointer-bearing prefix stays at govet fieldalignment's optimum.
+	Runs []LiveRunRef `json:"runs,omitempty"`
 }
 
 // writeErr writes a JSON error response at the status the handler chose.
@@ -114,6 +145,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	resp := errorResponse{Error: rpcerr.Text(err)}
 	if se, ok := errors.AsType[*statusError](err); ok {
 		resp.Reason = se.reason
+		resp.Runs = se.runs
+		resp.CurrentHash = se.currentHash
 	}
 	webhttp.WriteJSONStatus(w, statusOf(err), resp)
 }

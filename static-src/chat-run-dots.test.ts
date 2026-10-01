@@ -239,6 +239,10 @@ async function resetProjection(): Promise<void> {
     editor: { show: vi.fn(), refresh: vi.fn(), close: vi.fn() },
     run: { show: vi.fn(), refresh: vi.fn() },
     subagent: { show: vi.fn(), refresh: vi.fn() },
+    // `TabOpeners` gained a required `spec` member, so a fixture without one does not
+    // type-check. Inert here: no case opens a spec tab, and closing the member is not
+    // this suite taking a position on the kind.
+    spec: { show: vi.fn(), refresh: vi.fn() },
   });
   resetActionFramework();
   _resetForTest();
@@ -849,7 +853,7 @@ describe("the mark takes space only while a run is live", () => {
 // slot for one reason: so a chat row's title lines up with a settings or files
 // row's. That is now the whole mechanism — the mark costs a quiet row nothing, so
 // the two compensating `.tab-name` indents that used to pay for its reserved box
-// are gone. It is a claim about eight kinds this producer never writes to, which is
+// are gone. It is a claim about nine kinds this producer never writes to, which is
 // why it is measured here rather than reasoned about.
 // ---------------------------------------------------------------------------
 
@@ -872,6 +876,15 @@ describe("a mixed strip keeps one text origin", () => {
       ids.push(await openSubject(kind));
     }
     await paint();
+    // EVERY row settles before ANY of them is read, because `vk-slide-in-x` moves the
+    // whole ROW by -0.75rem and a row rendered later is at an earlier phase of it: the
+    // rows disagree by whatever the frame caught while each one's own leading cluster
+    // is identical (measured: `name.left - row.left` is 37.0px on all six, against a
+    // row origin of -11.626 at 5.19ms and -12 at 0ms of the same 100ms translate). So
+    // an unsettled comparison reads a per-row animation phase as a misaligned title.
+    for (const id of [chat, ...ids]) {
+      await settle(id);
+    }
     const origin = titleLeft(chat);
     for (const [i, id] of ids.entries()) {
       expect(titleLeft(id), `a ${kinds[i]} row's title must share the chat row's origin`).toBe(
@@ -900,6 +913,16 @@ describe("a mixed strip keeps one text origin", () => {
     await openTab({ kind: "run", ref: "wf_1", parent, owns: false });
     await openTab({ kind: "subagent", ref: "c1/task-1", parent, owns: false });
     await paint();
+    // Same rule as the case above: four rows, so four entry animations, and a read
+    // taken across them compares phases rather than origins.
+    for (const id of [
+      parent,
+      tabIdFor("chat", "c2"),
+      tabIdFor("run", "wf_1"),
+      tabIdFor("subagent", "c1/task-1"),
+    ]) {
+      await settle(id);
+    }
     const chatChild = titleLeft(tabIdFor("chat", "c2"));
     expect(titleLeft(tabIdFor("run", "wf_1"))).toBe(chatChild);
     expect(titleLeft(tabIdFor("subagent", "c1/task-1"))).toBe(chatChild);

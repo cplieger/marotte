@@ -34,6 +34,7 @@ const TOOLTIP_CLAUSE: Record<TurnOutcome, string> = {
   refused: "The model declined to continue",
   unknown: "This turn's end could not be read",
   failed: "This turn failed",
+  empty: "The agent ended this turn without answering",
 };
 
 /** The word each outcome contributes to an accessible NAME, hardcoded. */
@@ -45,6 +46,7 @@ const NAME_CLAUSE: Record<TurnOutcome, string> = {
   refused: "refused",
   unknown: "unknown",
   failed: "failed",
+  empty: "empty",
 };
 
 function subject(over: Partial<MarkerSubject> = {}): MarkerSubject {

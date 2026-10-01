@@ -469,9 +469,9 @@ func (p *Parser) scanCSI(b string) (consumed int, newStyle style, changed, incom
 // scanStringTerminated parses an OSC/DCS/SOS/PM/APC string ending in ST or BEL,
 // and returns 0 when it is incomplete.
 //
-// OSC 8 hyperlinks are dropped rather than turned into links: a transcript
-// linkifies paths and URLs itself, so honouring an agent-supplied link target
-// would add an anchor whose href nothing here validated.
+// OSC 8 hyperlinks are dropped rather than turned into links: honouring an
+// agent-supplied link target would add an anchor whose href nothing here
+// validated.
 func scanStringTerminated(b string) int {
 	for i := 2; i < len(b); i++ {
 		if b[i] == 0x07 {

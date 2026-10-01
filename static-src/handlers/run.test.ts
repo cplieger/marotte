@@ -1,12 +1,9 @@
-// ---------------------------------------------------------------------------
-// Tests for the run SSE handlers — the routing, not the surfaces.
-//
-// The contract being pinned is the invalidation model: every event says only
-// "refetch", and which surface refetches depends on the event. Getting that
-// wrong is what an accumulating client does, and it garbles a run — `run_start`
-// re-fires on every resume, and `node_complete` carries neither iteration nor
-// branch, so two passes of one loop cannot be told apart from the events alone.
-// ---------------------------------------------------------------------------
+// Tests for the run SSE handlers — the routing, not the surfaces. The contract pinned is
+// the invalidation model: a lifecycle event says only "refetch", and which surface refetches
+// depends on the event. Getting that wrong is what an accumulating client does, and it
+// garbles a run — `run_start` re-fires on every resume, and `node_complete` carries neither
+// iteration nor branch, so two passes of one loop cannot be told apart from the events
+// alone. A run's own LOG is the exception and is its own describe below.
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
@@ -28,6 +25,14 @@ vi.mock("../run-store.js", () => ({
   // non-empty answer both says the run was launched from a conversation and names
   // it. `""` is the parentless population.
   runChatID: vi.fn(() => "c1"),
+  // A run's own LOG: the five operations the six entry events reach. Present here
+  // because Browser Mode links a mock for real, so a factory missing one name fails
+  // the whole file's collection rather than one case (`testing-ts.md`).
+  openRunTurn: vi.fn(),
+  openRunEntry: vi.fn(),
+  applyRunDelta: vi.fn(),
+  sealRunEntry: vi.fn(),
+  appendRunEntry: vi.fn(),
 }));
 // The single owner of what Send means. Mocked because the deferral's own contract
 // is which CHAT the prompt reaches and what it says, not how a prompt becomes a
@@ -42,12 +47,6 @@ vi.mock("../submit.js", () => ({ submitPrompt: mockSubmitPrompt }));
 // be thinking.
 vi.mock("../store.js", () => ({ isThinking: vi.fn(() => false) }));
 vi.mock("../run-dots.js", () => ({ trackRun: vi.fn() }));
-// The live step transcript, whose own placement rules are run-view's; what this
-// suite pins is which events reach it and with what.
-//
-// There is no OPENER and no CLOSER among the run-view names this file reaches, and
-// that is the contract these cases carry: no run event opens or closes a tab.
-vi.mock("../run-view.js", () => ({ applyRunStep: vi.fn() }));
 vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 // A parked step's question. The DOCK is mocked because its queue, settle-once
 // guard and two hosts are `decision-dock.test.ts`'s subject; what this suite pins
@@ -73,6 +72,8 @@ import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
 import {
+  appendRunEntry,
+  applyRunDelta,
   applyRunProgress,
   invalidateRun,
   invalidateRunControls,
@@ -80,11 +81,13 @@ import {
   noteRunLive,
   noteRunSettled,
   hasLiveRunForChat,
+  openRunEntry,
+  openRunTurn,
   runChatID,
+  sealRunEntry,
 } from "../run-store.js";
 import { isThinking } from "../store.js";
 import { trackRun } from "../run-dots.js";
-import { applyRunStep } from "../run-view.js";
 import { info, success, error } from "../toast.js";
 import {
   pushDecision,
@@ -102,7 +105,6 @@ const noteChat = vi.mocked(noteRunChat);
 const noteLive = vi.mocked(noteRunLive);
 const noteSettled = vi.mocked(noteRunSettled);
 const track = vi.mocked(trackRun);
-const stepFrames = vi.mocked(applyRunStep);
 const toastInfo = vi.mocked(info);
 const toastSuccess = vi.mocked(success);
 const toastError = vi.mocked(error);
@@ -113,6 +115,11 @@ const sweepOrphans = vi.mocked(dropTurnDecisions);
 const chatThinking = vi.mocked(isThinking);
 const siblingRunLive = vi.mocked(hasLiveRunForChat);
 const launchingChat = vi.mocked(runChatID);
+const runTurnOpened = vi.mocked(openRunTurn);
+const runEntryOpened = vi.mocked(openRunEntry);
+const runDelta = vi.mocked(applyRunDelta);
+const runSealed = vi.mocked(sealRunEntry);
+const runAppended = vi.mocked(appendRunEntry);
 const answer = vi.mocked(answerRunInput.dispatch);
 const waive = vi.mocked(continueRunStep.dispatch);
 const notify = vi.mocked(notifyIfHidden);
@@ -139,7 +146,6 @@ beforeEach(() => {
   noteLive.mockClear();
   noteSettled.mockClear();
   track.mockClear();
-  stepFrames.mockClear();
   toastInfo.mockClear();
   toastSuccess.mockClear();
   toastError.mockClear();
@@ -165,24 +171,35 @@ type RunEvent =
   | "run_started"
   | "run_progress"
   | "run_finished"
-  | "run_step"
   | "run_input_needed"
-  | "run_input_settled";
+  | "run_input_settled"
+  | "turn_opened"
+  | "entry_opened"
+  | "entry_delta"
+  | "entry_sealed"
+  | "entry_appended"
+  | "turn_closed";
 
 function send(type: RunEvent, payload: Record<string, unknown>, chatID = "c1"): void {
   dispatch({ type, chat_id: chatID, payload });
 }
 
-// The six run events really are keys of the typed SSE surface, so a rename on
-// the Go side that regenerates the wire types breaks this file rather than
-// silently unsubscribing the handlers.
+// Every event this module subscribes to really is a key of the typed SSE surface, so a
+// rename on the Go side that regenerates the wire types breaks this file rather than
+// silently unsubscribing the handlers. The six entry events are in the list because a
+// run's LOG arrives on them: a step's content is the run's own entries.
 const _keys: readonly (keyof SSEPayloads)[] = [
   "run_started",
   "run_progress",
   "run_finished",
-  "run_step",
   "run_input_needed",
   "run_input_settled",
+  "turn_opened",
+  "entry_opened",
+  "entry_delta",
+  "entry_sealed",
+  "entry_appended",
+  "turn_closed",
 ];
 void _keys;
 
@@ -212,10 +229,9 @@ describe("run SSE handlers", () => {
     expect(invalidateControls).toHaveBeenLastCalledWith("wf_1");
   });
 
-  // A progress frame is APPLIED, and the refetch is what happens only when it
-  // cannot be. That is the whole of B7: a burst of node events used to cost one
-  // `GET /api/runs/{id}` each — a JSON-RPC round trip to KAS for the whole state
-  // tree — and up to five runs do it concurrently.
+  // A progress frame is APPLIED, and the refetch is what happens only when it cannot be:
+  // a burst of node events otherwise costs one `GET /api/runs/{id}` each — a JSON-RPC round
+  // trip to KAS for the whole state tree — with up to five runs doing it concurrently.
   it("applies a progress frame and does NOT refetch when it landed", () => {
     applyProgress.mockReturnValue(true);
     send("run_progress", {
@@ -237,9 +253,9 @@ describe("run SSE handlers", () => {
     expect(invalidate).toHaveBeenCalledWith("wf_1");
   });
 
-  // Every run's tab carries a dot now, agent-launched included, so every event
-  // tracks the run. The origin no longer decides — a chat's own dot cannot cover a
-  // run that outlives its turn.
+  // Every run's tab carries a dot, agent-launched included, so every event tracks the run:
+  // the origin decides nothing, because a chat's own dot cannot cover a run that outlives
+  // its turn.
   it("tracks the run for its dot on every event", () => {
     const order: RunEvent[] = ["run_started", "run_progress", "run_finished"];
     for (const [i, type] of order.entries()) {
@@ -371,23 +387,14 @@ describe("run SSE handlers", () => {
     expect(dropAsks).not.toHaveBeenCalled();
   });
 
-  // ---------------------------------------------------------------------------
-  // The ORPHAN backstop, and the reason `dropRunAsks` above cannot be it.
-  //
-  // Every remover in the dock is keyed on `runID`, and a step's request-shaped ask
-  // reaches the client with `run_id` EMPTY whenever the step-session registry has
-  // not seen its sub-session. Such an ask is filed under the launching chat's id,
-  // so it lights that chat's tab dot, and it is invisible to the run sub-tab's
-  // dock, to `runPendingAsks` and to `dropRunAsks` alike — the sub-tab reads as
-  // answered while the parent stays amber for the life of the page.
-  //
-  // `dropTurnDecisions` is the sweep that CAN name it (it keeps only asks with a
-  // non-empty `runID`), and it had exactly one production caller: `turn_ended` on
-  // the launching chat. A step-driven turn's `turn_end` is dropped by the
-  // attribution gate, so no such frame arrives while the run is going. The missing
-  // piece was a TRIGGER, not a predicate — which is why every case here is about
-  // WHEN the sweep fires and none is about what it removes.
-  // ---------------------------------------------------------------------------
+  // The ORPHAN backstop, and the reason `dropRunAsks` above cannot be it: every remover in
+  // the dock is keyed on `runID`, and a step's request-shaped ask arrives with `run_id`
+  // EMPTY whenever the step-session registry has not seen its sub-session — filed under the
+  // launching chat, lighting that chat's dot, invisible to the run sub-tab's dock.
+  // `dropTurnDecisions` is the sweep that CAN name it and had one production caller,
+  // `turn_closed` on the launching chat, which never fires for a step-driven turn. So the
+  // missing piece was a TRIGGER rather than a predicate, which is why every case here is
+  // about WHEN the sweep fires and none about what it removes.
   describe("a run's terminal frame sweeps the launching chat's orphaned asks", () => {
     it("sweeps when the launching chat is idle and no sibling run is live", () => {
       send("run_finished", { workflow_id: "wf_orphan", status: "completed" }, "c-parent");
@@ -541,40 +548,98 @@ describe("run toasts", () => {
     }
     expect(toasts()).toEqual([]);
   });
+});
 
-  // `run_step` is the one run frame whose PAYLOAD is read rather than used as a
-  // signal to refetch — a step's transcript is not in `inspect` and no endpoint
-  // serves it, so there is nothing to invalidate. Both halves of that are asserted
-  // here, because either one alone would leave the surface wrong: a refetch
-  // instead of a hand-off would show none of the content, and a hand-off plus a
-  // refetch would put a request on the wire for every delta of every step.
-  it("hands a step frame to the view and refetches nothing", () => {
-    send("run_step", {
-      workflow_id: "wf_live",
-      node_path: "seq/coder",
-      kind: "text",
-      delta: "working",
-    });
-    expect(stepFrames).toHaveBeenCalledTimes(1);
-    expect(stepFrames.mock.calls[0]?.[0]?.node_path).toBe("seq/coder");
+// A run's own LOG: the six entry events, scoped to a run. This replaced `run_step`, whose
+// whole shape was a hand-off of ephemeral content because a step's transcript was in no
+// store. A step's entries are the RUN's now, so each event is one call into a run-store
+// operation behind the workflow-id guard — the MIRROR of the chat handler's, so two
+// subscribers over one registration partition every frame between them.
+describe("a run's own log", () => {
+  const RUN = "wf_log";
+  const TURN = "step-turn";
+
+  function entry(kind: string, payload: unknown, seq = 1): Record<string, unknown> {
+    return { id: `e${String(seq)}`, turn: TURN, kind, seq, ts: seq + 1, payload };
+  }
+
+  it("opens the run's turn, never a chat's", () => {
+    const e = entry("turn_open", { source: "wire_turn_start", n: 1 }, 0);
+
+    send("turn_opened", { workflow_id: RUN, entry: e }, "");
+
+    expect(runTurnOpened).toHaveBeenCalledWith(RUN, e);
+  });
+
+  it("opens an entry into the run's log", () => {
+    const open = { turn: TURN, id: "e1", kind: "text", text: "hi", n: 1 };
+
+    send("entry_opened", { workflow_id: RUN, open }, "");
+
+    expect(runEntryOpened).toHaveBeenCalledWith(RUN, open);
+  });
+
+  it("passes a delta's own five values through, lane included", () => {
+    send(
+      "entry_delta",
+      { workflow_id: RUN, turn: TURN, entry_id: "e1", lane: "sub-7", n: 3, delta: "more" },
+      "",
+    );
+
+    expect(runDelta).toHaveBeenCalledWith(RUN, TURN, "e1", "sub-7", 3, "more");
+  });
+
+  it("passes a seal's position and count through", () => {
+    send(
+      "entry_sealed",
+      { workflow_id: RUN, turn: TURN, entry_id: "e1", lane: "sub-7", seq: 4, ts: 99, n: 6 },
+      "",
+    );
+
+    expect(runSealed).toHaveBeenCalledWith(RUN, TURN, "e1", "sub-7", 4, 99, 6);
+  });
+
+  it("appends a born-sealed entry", () => {
+    const e = entry("tool_call", { id: "tc1", title: "Run Command", kind: "execute" });
+
+    send("entry_appended", { workflow_id: RUN, entry: e }, "");
+
+    expect(runAppended).toHaveBeenCalledWith(RUN, e);
+  });
+
+  it("appends a turn_close like any other entry, so settled is read off the log", () => {
+    // A step reads settled from its own `turn_close` rather than from a flag, which is
+    // why this arm is an APPEND and not a status write.
+    const e = entry("turn_close", { outcome: "completed" }, 2);
+
+    send("turn_closed", { workflow_id: RUN, entry: e }, "");
+
+    expect(runAppended).toHaveBeenCalledWith(RUN, e);
+  });
+
+  it("leaves a frame carrying no workflow id to the chat's own handler", () => {
+    // The other half of the partition, and the half that cannot be asserted from the
+    // chat handler's suite: this module has to do NOTHING for a chat's log, or one frame
+    // would land in two stores.
+    send("entry_appended", { entry: entry("text", { text: "x" }) }, "c1");
+    send("turn_opened", { entry: entry("turn_open", { source: "prompt", n: 1 }, 0) }, "c1");
+    send("turn_closed", { entry: entry("turn_close", { outcome: "completed" }, 2) }, "c1");
+
+    for (const op of [runTurnOpened, runEntryOpened, runDelta, runSealed, runAppended]) {
+      expect(op).not.toHaveBeenCalled();
+    }
+    // And nothing about a run moved either: no refetch, no toast, no tracking.
     expect(invalidate).not.toHaveBeenCalled();
     expect(toasts()).toEqual([]);
-    expect(listRefetches).toBe(0);
   });
 });
 
-// ---------------------------------------------------------------------------
-// A parked step's question.
-//
-// The one run event besides `run_step` that carries a payload rather than being
-// an invalidation, and for a sharper reason: KAS parks the run with one fixed
-// `pauseReason` literal and an empty `pauseDetail`, so refetching `inspect` can
-// say a step wants input and can never say what it asked.
-//
-// The whole feature is where the card lands, so the chat id is what these cases
-// are about: it comes off the ENVELOPE, which is the launching chat for an
-// agent-parented run and `run:<workflowId>` for a parentless one.
-// ---------------------------------------------------------------------------
+// A parked step's question: the one run event that carries a payload rather than an
+// invalidation, because KAS parks the run with one fixed `pauseReason` literal and an empty
+// `pauseDetail`, so refetching `inspect` can say a step wants input and never what it asked.
+// The whole feature is where the card lands, so the chat id is what these cases are about:
+// it comes off the ENVELOPE, the launching chat for an agent-parented run and
+// `run:<workflowId>` for a parentless one.
 describe("a step's question", () => {
   interface AskDecision {
     kind: string;
@@ -644,7 +709,7 @@ describe("a step's question", () => {
 
   // The ask is also the moment a client that missed every lifecycle frame learns the
   // run exists, so the inventory has to hear about it — PARKED, because a run waiting
-  // on a person writes nothing and `hasExecutingRunForChat` is an eviction exemption.
+  // on a person writes nothing, so the row's `executing` flag is false.
   it("notes the run live and PARKED, so the eviction exemption keeps answering no", () => {
     ask();
     expect(noteLive).toHaveBeenCalledWith("wf_1", "c1", false);

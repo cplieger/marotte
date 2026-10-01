@@ -1,0 +1,57 @@
+{
+  "input_file": "mixed-m8-tab-indented-unnumbered.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "",
+      "text": "parent",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "e47125968b3b71049fbc4802d1e40a71ea1359decfabacf70b34588037d4ff0c",
+      "detail": "",
+      "children": [
+        {
+          "id": "L2",
+          "line": 2,
+          "indent": 1,
+          "number": "",
+          "text": "tabbed child",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "f562034bf0ee841c3603776d7a65b3d2b74f9b10a7662e432ff7950f7978096b",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 1,
+          "number": "",
+          "text": "tabbed child two",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "ee55f5408a3844bc0782b7eebf45b018d32173c1459053f89d9a00a171d855af",
+          "detail": "",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 2
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

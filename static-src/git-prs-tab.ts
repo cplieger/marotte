@@ -13,7 +13,7 @@
 
 import { apiGet, apiPost } from "./api-client.js";
 import { onSSE } from "./bus.js";
-import { relativeTime } from "./utils-format.js";
+import { relativeTime } from "./relative-time.js";
 import { kindTitle } from "./forge-types.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { confirm as confirmDialog } from "./confirm.js";

@@ -6,17 +6,18 @@ import (
 	"testing"
 )
 
-func TestChatHeader_copies_metadata_without_messages(t *testing.T) {
+func TestChatHeader_copies_metadata(t *testing.T) {
 	c := &Chat{
-		ID:            "c1",
-		Name:          "Hello",
-		Model:         "claude",
-		ACPSessionID:  "acp-1",
-		CurrentModeID: "plan",
-		Usage:         Usage{ContextPct: 50, ContextSize: 200000, HasRealData: true},
-		CreatedAt:     100,
-		UpdatedAt:     200,
-		Messages:      []Message{{ID: "m1"}, {ID: "m2"}},
+		ID:              "c1",
+		Name:            "Hello",
+		Model:           "claude",
+		ACPSessionID:    "acp-1",
+		CurrentModeID:   "plan",
+		Usage:           Usage{ContextPct: 50, ContextSize: 200000, HasRealData: true},
+		CreatedAt:       100,
+		UpdatedAt:       200,
+		TurnCount:       2,
+		LastTurnOutcome: TurnOutcomeCompleted,
 	}
 
 	h := c.Header()
@@ -33,8 +34,8 @@ func TestChatHeader_copies_metadata_without_messages(t *testing.T) {
 	if h.Usage.ContextPct != 50 || h.Usage.ContextSize != 200000 || !h.Usage.HasRealData {
 		t.Errorf("Usage = %+v, want {ContextPct:50 ContextSize:200000 HasRealData:true}", h.Usage)
 	}
-	if h.MessageCount != 2 {
-		t.Errorf("MessageCount = %d, want 2", h.MessageCount)
+	if h.TurnCount != 2 || h.LastTurnOutcome != TurnOutcomeCompleted {
+		t.Errorf("TurnCount/LastTurnOutcome = %d/%q, want 2/completed", h.TurnCount, h.LastTurnOutcome)
 	}
 	if h.CreatedAt != 100 || h.UpdatedAt != 200 {
 		t.Errorf("timestamps: created=%d updated=%d, want 100/200", h.CreatedAt, h.UpdatedAt)
@@ -52,10 +53,10 @@ func TestChatHeader_zero_value_chat_produces_empty_header(t *testing.T) {
 	if h.Name != "" || h.Model != "" || h.ACPSessionID != "" || h.CurrentModeID != "" {
 		t.Errorf("leaked non-zero strings: %+v", h)
 	}
-	if h.MessageCount != 0 {
-		t.Errorf("MessageCount = %d, want 0 for zero-value Chat", h.MessageCount)
+	if h.TurnCount != 0 || h.LastTurnOutcome != "" {
+		t.Errorf("TurnCount/LastTurnOutcome = %d/%q, want 0/\"\" for zero-value Chat", h.TurnCount, h.LastTurnOutcome)
 	}
-	if h.Usage.ContextPct != 0 || h.Usage.Credits != 0 || h.Usage.TurnCount != 0 ||
+	if h.Usage.ContextPct != 0 || h.Usage.Credits != 0 ||
 		h.Usage.LastTurnMs != 0 || h.Usage.HasRealData || len(h.Usage.MeteringItems) != 0 {
 		t.Errorf("Usage = %+v, want zero-value Usage", h.Usage)
 	}
@@ -184,97 +185,6 @@ func TestRecordSession(t *testing.T) {
 	}
 }
 
-// The revert verb only accepts an id the CURRENT session's log holds, so a stamp that
-// outlives the session that minted it names a record no revert can reach while still
-// reading as addressable — the bare `Message "…" not found` toast the original report
-// showed. Sibling of TestRecordSession rather than a column on it: those cases are about
-// the chain and carry no messages.
-func TestRecordSession_DropsStampsMintedUnderTheRetiredSession(t *testing.T) {
-	stamped := func() []Message {
-		return []Message{
-			{ID: "m-1", Role: RoleUser, KASMessageID: "a-rec-1"},
-			{ID: "a-1", Role: RoleAssistant},
-			{ID: "m-2", Role: RoleUser, KASMessageID: "a-rec-2"},
-		}
-	}
-
-	cases := []struct {
-		name       string
-		start      Chat
-		record     string
-		wantStamps []string
-		wantCur    string
-		wantPrior  []string
-	}{
-		{
-			name:       "switching sessions clears every stamp",
-			start:      Chat{ACPSessionID: "sess_a", Messages: stamped()},
-			record:     "sess_b",
-			wantStamps: []string{"", "", ""},
-			wantCur:    "sess_b",
-			wantPrior:  []string{"sess_a"},
-		},
-		{
-			// The detach half of the failed-load pair: the rows are unaddressable the
-			// instant the chat has no session, not only once a fresh one is recorded.
-			name:       "detaching clears them too",
-			start:      Chat{ACPSessionID: "sess_a", Messages: stamped()},
-			record:     "",
-			wantStamps: []string{"", "", ""},
-			wantCur:    "",
-			wantPrior:  []string{"sess_a"},
-		},
-		{
-			// The early return: an idempotent call retires nothing, so it must not write.
-			name:       "recording the current id keeps them",
-			start:      Chat{ACPSessionID: "sess_a", Messages: stamped()},
-			record:     "sess_a",
-			wantStamps: []string{"a-rec-1", "", "a-rec-2"},
-			wantCur:    "sess_a",
-			wantPrior:  nil,
-		},
-		{
-			// The resume_session / fork shape: RecordSession runs on an empty chat.
-			name:      "a chat with no messages keeps its chain",
-			start:     Chat{ACPSessionID: "sess_a"},
-			record:    "sess_b",
-			wantCur:   "sess_b",
-			wantPrior: []string{"sess_a"},
-		},
-		{
-			name:       "rows with no stamp are untouched",
-			start:      Chat{ACPSessionID: "sess_a", Messages: []Message{{ID: "m-1", Role: RoleUser}}},
-			record:     "sess_b",
-			wantStamps: []string{""},
-			wantCur:    "sess_b",
-			wantPrior:  []string{"sess_a"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := tc.start
-			c.RecordSession(tc.record)
-
-			// Index-only range: Message is far past gocritic's rangeValCopy threshold.
-			stamps := make([]string, 0, len(c.Messages))
-			for i := range c.Messages {
-				stamps = append(stamps, c.Messages[i].KASMessageID)
-			}
-			if !slices.Equal(stamps, tc.wantStamps) {
-				t.Errorf("RecordSession(%q) on %q: stamps = %v, want %v",
-					tc.record, tc.start.ACPSessionID, stamps, tc.wantStamps)
-			}
-			if c.ACPSessionID != tc.wantCur {
-				t.Errorf("RecordSession(%q): ACPSessionID = %q, want %q", tc.record, c.ACPSessionID, tc.wantCur)
-			}
-			if !slices.Equal(c.PriorACPSessionIDs, tc.wantPrior) {
-				t.Errorf("RecordSession(%q): PriorACPSessionIDs = %v, want %v",
-					tc.record, c.PriorACPSessionIDs, tc.wantPrior)
-			}
-		})
-	}
-}
-
 // Copy-on-return on BOTH branches: a caller mutating the chain it was handed must not
 // rewrite the chat's retention set.
 func TestSessionChain_ReturnsACopy(t *testing.T) {
@@ -381,68 +291,22 @@ func TestSessionChain(t *testing.T) {
 	}
 }
 
-// The dot state every chat tab shows after a reconnect comes from this field. Three
-// carriers exist: the last assistant message, an EventTurnOutcome marker for a turn that
-// emitted nothing, and rows the agent persists DURING a turn, which land after the carrier
-// with no outcome of their own and must not hide it.
+// TestChatHeader_LastTurnOutcome pins that the header carries the STORED outcome:
+// the closer writes it beside turn_count in the same header rewrite, and Header()
+// copies rather than derives, because the record holds no transcript to derive from.
 func TestChatHeader_LastTurnOutcome(t *testing.T) {
 	cases := []struct {
 		name string
-		msgs []Message
 		want TurnOutcome
 	}{
-		{name: "a chat with no messages has no outcome", msgs: nil, want: ""},
-		{
-			name: "a record written before the field existed reports nothing",
-			msgs: []Message{{ID: "m1", Role: RoleUser}, {ID: "m2", Role: RoleAssistant}},
-			want: "",
-		},
-		{
-			name: "the ordinary successful turn",
-			msgs: []Message{
-				{ID: "m1", Role: RoleUser},
-				{ID: "m2", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
-			},
-			want: TurnOutcomeCompleted,
-		},
-		{
-			name: "the newest outcome wins over an older one",
-			msgs: []Message{
-				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
-				{ID: "m2", Role: RoleAssistant, TurnOutcome: TurnOutcomeFailed},
-			},
-			want: TurnOutcomeFailed,
-		},
-		{
-			name: "an outcome on an event row is found",
-			msgs: []Message{
-				{ID: "m1", Role: RoleUser},
-				{ID: "m2", Role: RoleEvent, EventKind: EventTurnOutcome, TurnOutcome: TurnOutcomeFailed},
-			},
-			want: TurnOutcomeFailed,
-		},
-		{
-			name: "rows persisted after the carrier do not hide it",
-			msgs: []Message{
-				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
-				{ID: "m2", Role: RoleAssistant, Plan: []PlanEntry{{Content: "step"}}},
-				{ID: "m3", Role: RoleEvent, EventKind: EventCompacted},
-			},
-			want: TurnOutcomeCompleted,
-		},
-		{
-			name: "an empty outcome string is not a carrier",
-			msgs: []Message{
-				{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeCompleted},
-				{ID: "m2", Role: RoleAssistant, TurnOutcome: ""},
-			},
-			want: TurnOutcomeCompleted,
-		},
+		{name: "a chat with no closed turn has no outcome", want: ""},
+		{name: "the ordinary successful turn", want: TurnOutcomeCompleted},
+		{name: "a failed turn", want: TurnOutcomeFailed},
+		{name: "an empty turn", want: TurnOutcomeEmpty},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &Chat{ID: "c1", Messages: tc.msgs}
+			c := &Chat{ID: "c1", LastTurnOutcome: tc.want}
 			if got := c.Header().LastTurnOutcome; got != tc.want {
 				t.Errorf("Chat.Header().LastTurnOutcome = %q, want %q", got, tc.want)
 			}
@@ -450,27 +314,16 @@ func TestChatHeader_LastTurnOutcome(t *testing.T) {
 	}
 }
 
-// The derivation is a pure read of the record, so an outcome it dropped or rewrote would
-// paint the wrong tab dot on every device at once. The reachable set comes from the
-// PRODUCER rather than a list beside it, which is what makes the `running` half checkable:
-// only the client can know a turn is in flight, so the no-persisted-`running` guarantee
-// lives in the finalize path and is asked of that path.
+// Every outcome the finalize path can produce is carried through the header
+// unchanged, and none of them is `running`: only the client can know a turn is in
+// flight, so the no-persisted-running guarantee lives in the finalize path and is
+// asked of that path.
 func TestChatHeader_LastTurnOutcomeReportsWhatWasPersisted(t *testing.T) {
-	// The derivation does not filter, so a hand-planted `running` comes back out; keeping
-	// it off the record is the writer's job below.
-	planted := &Chat{ID: "c1", Messages: []Message{
-		{ID: "m1", Role: RoleAssistant, TurnOutcome: TurnOutcomeRunning},
-	}}
-	if got := planted.Header().LastTurnOutcome; got != TurnOutcomeRunning {
-		t.Errorf("LastTurnOutcome = %q, want the derivation to report what the record holds", got)
-	}
-
-	// A member added to the enum and forgotten here narrows coverage, but no assertion can
-	// pass for the wrong reason: each one's subject is what the producer RETURNED.
 	stops := []StopReason{
 		StopReasonEndTurn, StopReasonCancelled, StopReasonInterrupted,
 		StopReasonRefusal, StopReasonUnknown, StopReasonError,
 		StopReasonContentFiltered, StopReasonMaxTokens, StopReasonMaxTurnRequests,
+		StopReasonUnterminated,
 		"", "a reason nobody has shipped yet",
 	}
 	for _, stop := range stops {
@@ -479,7 +332,7 @@ func TestChatHeader_LastTurnOutcomeReportsWhatWasPersisted(t *testing.T) {
 			t.Errorf("ConcludeStopReason(%q) = %q; a finalize must never persist a live-turn outcome", stop, outcome)
 			continue
 		}
-		got := (&Chat{Messages: []Message{{TurnOutcome: outcome}}}).Header().LastTurnOutcome
+		got := (&Chat{LastTurnOutcome: outcome}).Header().LastTurnOutcome
 		if got != outcome {
 			t.Errorf("LastTurnOutcome for %q (from stop %q) = %q, want it carried through", outcome, stop, got)
 		}

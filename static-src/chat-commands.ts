@@ -11,7 +11,7 @@
 //   3. Other failures clear thinking so send-state settles back to "idle"
 //      (transport.ts reports the failure through failure-notice.ts). Nothing
 //      locks the composer — pressing Send again is the retry.
-//   4. Success leaves thinking=true; SSE turn_ended / error will clear it.
+//   4. Success leaves thinking=true; SSE turn_closed / error will clear it.
 //
 // This module is a *leaf* from the dependency-graph standpoint: it imports
 // only store, session-context, and transport. Callers higher in
@@ -51,28 +51,38 @@ export interface SendPromptOpts {
    *  The prompt queue passes the id the prompt was FIRST sent under so
    *  a drained re-send is idempotent server-side (no duplicate bubble). */
   messageID?: string;
+  /** The steer entries whose text this prompt re-sends, in the order they were
+   *  joined into it. Lands on `turn_open.prompt.resends`, so the dropped steer's
+   *  own note can state the resend instead of implying one. */
+  resends?: readonly string[];
 }
+
+/** Every answer `sendPromptTo` gives; a caller's branch over it should be total. */
+export type SendPromptResult = "sent" | "queued" | "starting" | "gone" | "failed";
 
 /** Post a prompt to a chat once. Low-level "send" primitive: it dispatches the
  *  prompt command (which sets thinking optimistically) and reports the
  *  outcome — "sent" on the admission ack, "queued" on a plain 409 (a steerable
  *  turn is in flight), "starting" on 409 reason:"starting" (the admission
- *  holder cannot receive a steer — a post-persist failure), or "failed" on any
- *  other error. It does NOT own what a busy chat means: converting "queued" to
- *  a steer and rendering the "starting" face are submit.ts's job.
+ *  holder cannot receive a steer — a post-persist failure), "gone" on 409
+ *  reason:"chat_not_found" (the chat is tombstoned: nothing to prompt and
+ *  nothing to steer, so it is terminal), or "failed" on any other error. It
+ *  does NOT own what a busy chat means: converting "queued" to a steer and
+ *  rendering the "starting" face are submit.ts's job.
  *  Callers outside submit.ts should use `submitPrompt` (from submit.ts) for
  *  user sends rather than calling this directly. */
 export async function sendPromptTo(
   chatID: string,
   text: string,
   opts: SendPromptOpts = {},
-): Promise<"sent" | "queued" | "starting" | "failed"> {
+): Promise<SendPromptResult> {
   const result = await sendPromptAction.dispatch({
     chatID,
     text,
     messageID: opts.messageID ?? newMessageID(),
     model: opts.model ?? getCurrentModel(),
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
+    ...(opts.resends !== undefined ? { resends: opts.resends } : {}),
   });
   return result ?? "failed";
 }
@@ -82,7 +92,7 @@ export async function sendPromptTo(
  *  so the send button reflects "busy" while the server primes the
  *  new bridge.
  *
- *  switch_model emits no `turn_ended` (no assistant reply), so we
+ *  switch_model emits no `turn_closed` (no assistant reply), so we
  *  clear `thinking` on any non-409 response. 409 is NOT expected —
  *  we queue model switches client-side before they hit the wire (see
  *  model-switcher.ts) — but the defensive unwind is kept in case

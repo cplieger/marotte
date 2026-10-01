@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/pathinside/v2"
 	"golang.org/x/sync/singleflight"
 )
 

@@ -1,28 +1,10 @@
-// THE TURN FOOTER'S BAND IS ITS LEDGER BUTTON'S HIT BOX.
-//
-// The band carries no block padding: `.turn-ledger-summary` declares the height
-// (`max(--hit-floor, --ctl-h-dense)`) and the grid's own `align-items: center` lands
-// that box on both edges, so the target a finger aims at IS the strip rather than a
-// box sitting inside one. Before that, `.turn-footer`'s own
-// `padding: var(--sp-1) var(--sp-3)` put 4px above and below a target that paints
-// nothing — 52px of band under a finger for a 44px target, reported as the button
-// having gaps around it and the footer being too tall on a phone.
-//
-// Four things have to hold together, and each is a separate case below:
-//
-//   1. the band equals the declared height and the target fills it, at both tiers;
-//   2. the `i` still starts on the card's ink gutter, level with the header, even
-//      though the footer no longer carries that gutter — the button does;
-//   3. `.turn-rewind` does NOT go flush, because it is the only footer child with a
-//      RESTING border, and its target still reaches the hit floor past its paint;
-//   4. the trailing gutter EQUALS that leading one, whatever the trailing child is
-//      and on either card that mounts this row — reported as the two insets not
-//      matching, and as the delegate card's `i` not lining up with the turn card's.
-//
-// Measured in real layout because the numbers are what the claim is about. The `…`
-// collapse and Rewind's word both live behind `width <= 40rem`, so the phone case is
-// measured in an IFRAME; the desktop case is measured in the page, whose viewport is
-// pinned at 1280x720.
+// THE FOOTER BAND'S GEOMETRY, in real layout: the band is the ROW's own height with its
+// controls painting their own smaller box centred in it, the `i` starts on the card's
+// ink gutter (which the button carries, not the row), the trailing gutter equals that
+// leading one whatever the trailing child is, Rewind may not go flush because it paints
+// a resting border, and the panel holds its ink one gutter off the CARD. The `…`
+// collapse and Rewind's word live behind `width <= 40rem`, so the phone cases are
+// measured in an IFRAME and the desktop ones in the page (1280x720).
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -45,12 +27,17 @@ interface Mounted {
   /** The header's request text, the ink the footer's has to line up with. */
   headerText: HTMLElement;
   last: HTMLElement;
+  /** The panel the ledger opens, and the two rows of ink the gutter has to hold off
+   *  its four edges. */
+  panel: HTMLElement;
+  title: HTMLElement;
+  lastRow: HTMLElement;
 }
 
 /** A turn card with its header and its footer, as `buildTurnHeader`,
  *  `buildTurnFooter`, `mountTurnActions` and `mountRewind` assemble one: the
- *  ledger button (glyph, mark, text), the fact slot, then whichever trailing
- *  control the case is about. */
+ *  ledger button (glyph, mark, word, fact), then whichever trailing control the
+ *  case is about, then the info panel spanning every column beneath. */
 function mountFooter(doc: Document, trailing: Trailing): Mounted {
   const card = doc.createElement("div");
   card.className = "turn";
@@ -81,15 +68,14 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
   const text = doc.createElement("span");
   text.className = "turn-ledger-text";
   text.textContent = "Failed";
-  ledger.append(info, mark, text);
-
   const fact = doc.createElement("span");
   fact.className = "turn-fact";
   fact.textContent = "12.0s";
+  ledger.append(info, mark, text, fact);
 
-  footer.append(ledger, fact);
+  footer.append(ledger);
 
-  let last: HTMLElement = fact;
+  let last: HTMLElement = ledger;
   if (trailing === "actions") {
     const slot = doc.createElement("span");
     slot.className = "turn-actions-buttons";
@@ -120,6 +106,32 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
     last = btn;
   }
 
+  // `renderInfoPanel`'s shape: one section, its heading, then a list of rows. Present
+  // at rest like the builder's, where it is `display: none` and so occupies no grid
+  // row — every band measurement above is taken with it mounted.
+  const panel = doc.createElement("div");
+  panel.className = "turn-info-panel";
+  const section = doc.createElement("section");
+  section.className = "turn-info-section";
+  const title = doc.createElement("h4");
+  title.className = "turn-info-title";
+  title.textContent = "Timings";
+  const rows = doc.createElement("ul");
+  rows.className = "turn-info-rows";
+  const lastRow = doc.createElement("li");
+  lastRow.className = "turn-info-row";
+  const label = doc.createElement("span");
+  label.className = "turn-info-label";
+  label.textContent = "Wall clock";
+  const value = doc.createElement("span");
+  value.className = "turn-info-value";
+  value.textContent = "12.0s";
+  lastRow.append(label, value);
+  rows.appendChild(lastRow);
+  section.append(title, rows);
+  panel.appendChild(section);
+  footer.appendChild(panel);
+
   card.append(header, footer);
   // Only this helper's PREVIOUS card goes, never `body.replaceChildren`: the phone
   // frame is a child of the page's body, so wiping it detaches the iframe and every
@@ -127,7 +139,7 @@ function mountFooter(doc: Document, trailing: Trailing): Mounted {
   mounted.get(doc)?.remove();
   mounted.set(doc, card);
   doc.body.appendChild(card);
-  return { card, footer, ledger, info, headerText, last };
+  return { card, footer, ledger, info, headerText, last, panel, title, lastRow };
 }
 
 interface MountedDelegate {
@@ -177,13 +189,12 @@ function mountDelegate(doc: Document): MountedDelegate {
   mark.className = "turn-ledger-glyph";
   const text = doc.createElement("span");
   text.className = "turn-ledger-text";
-  ledger.append(info, mark, text);
-
   const fact = doc.createElement("span");
   fact.className = "turn-fact";
   fact.textContent = "42.0s";
+  ledger.append(info, mark, text, fact);
 
-  footer.append(ledger, fact);
+  footer.append(ledger);
   foot.appendChild(footer);
   card.append(header, foot);
 
@@ -273,18 +284,19 @@ afterAll(() => {
   style.remove();
 });
 
-describe("the band is the ledger's hit box", () => {
+describe("the band and the control in it", () => {
   it("is on the tier the complaint was made on", () => {
     expect(phone.defaultView?.innerWidth).toBeLessThanOrEqual(640);
     expect(cs(phone.documentElement).getPropertyValue("--hit-floor").trim()).toBe("2.75rem");
   });
 
-  it("gives a finger a 44px band with the target filling it", () => {
+  it("gives a finger a 44px band with the control filling it", () => {
     const { footer, ledger } = mountFooter(phone, "rewind");
     const floor = token(phone, "--hit-floor");
     expect(floor).toBeCloseTo(44, 0);
-    // The band IS the floor here: --ctl-h-dense is 40 on this tier, so the `max()`
-    // resolves to the target rather than to the dense control height.
+    // Band and control coincide here and there is nothing left to centre: the floor is
+    // 44 against `--ctl-h-dense` 40, so the row's `max()` and the control's own
+    // `max(--ctl-h-sm, --hit-floor)` both resolve to the floor.
     expect(band(footer)).toBeCloseTo(floor, 0);
     expect(ledger.getBoundingClientRect().height).toBeCloseTo(floor, 0);
     const i = insets(footer, ledger);
@@ -292,22 +304,29 @@ describe("the band is the ledger's hit box", () => {
     expect(i.bottom, `bottom ${i.bottom}px`).toBeCloseTo(0, 1);
   });
 
-  it("keeps the mouse tier at the dense control height, target filling it", () => {
-    // The other arm of the `max()`, and the reason it is a `max()`: with a mouse the
-    // floor is 24 and the dense row is 32, so the band must NOT shrink to the target.
+  it("keeps the mouse tier's band at the dense height and CENTRES a smaller control", () => {
+    // The tier the two come apart on, and the defect that named this case: the band must
+    // not shrink to the control and the control must not stretch to the band, or the
+    // toggle's hover and press paint a full-height slab where the buttons at the row's
+    // other end paint a pill. The paint is 61-mcp-tools.css's `--ctl-h-sm` lifted by the
+    // same floor, so the two ends cannot diverge.
     expect(window.innerWidth).toBeGreaterThan(640);
     const { footer, ledger } = mountFooter(document, "rewind");
     const floor = token(document, "--hit-floor");
     const dense = token(document, "--ctl-h-dense");
+    const small = token(document, "--ctl-h-sm");
     expect(floor).toBeCloseTo(24, 0);
     expect(dense).toBeCloseTo(32, 0);
     expect(band(footer)).toBeCloseTo(dense, 0);
     const h = ledger.getBoundingClientRect().height;
-    expect(h).toBeCloseTo(dense, 0);
-    expect(h).toBeGreaterThanOrEqual(floor);
+    expect(h, "the paint is the control box").toBeCloseTo(Math.max(small, floor), 0);
+    expect(h, "which is shorter than the band").toBeLessThan(dense);
+    expect(targetHeight(ledger), "and the target still clears the floor").toBeGreaterThanOrEqual(
+      floor,
+    );
     const i = insets(footer, ledger);
-    expect(i.top, `top ${i.top}px`).toBeCloseTo(0, 1);
-    expect(i.bottom, `bottom ${i.bottom}px`).toBeCloseTo(0, 1);
+    expect(i.top, `top ${i.top}px against bottom ${i.bottom}px`).toBeCloseTo(i.bottom, 1);
+    expect(i.top, "so the wash paints a pill rather than a slab").toBeGreaterThan(1);
   });
 
   it("reaches the band's leading edge while the `i` keeps the card's ink gutter", () => {
@@ -360,10 +379,9 @@ describe("the trailing control", () => {
     }
   });
 
-  it("lets the … trigger fill the band, because it paints nothing at rest", () => {
-    // The other trailing child, and the opposite call: a hover-only wash filling
-    // the row reads as a row-height hover (`.turn-header`, `.ev-row-main`), so it
-    // stays on the floor and needs no inset of its own.
+  it("lets the … trigger take the control box, because it paints nothing at rest", () => {
+    // The other trailing child, and the opposite call: it takes the shared control box
+    // and needs no inset of its own, which on this tier is the band exactly.
     const { footer, last } = mountFooter(phone, "actions");
     const trigger = last.querySelector<HTMLElement>(".turn-action-more");
     expect(trigger).not.toBeNull();
@@ -381,8 +399,8 @@ describe("the trailing control", () => {
     // from the other side — reported as the two insets not matching. Held against
     // the LEADING declaration rather than a literal, and over both trailing
     // children, because a value that only matched for the text case is the shape
-    // being removed. The fact slot is not a trailing child any more — it sits beside
-    // the `i` — so the two controls are the whole population.
+    // being removed. The fact slot is not a trailing child at all — it sits inside the
+    // ledger button — so the two controls are the whole population.
     for (const trailing of ["actions", "rewind"] as const) {
       const { footer, ledger, last } = mountFooter(document, trailing);
       const lead = parseFloat(cs(ledger).paddingInlineStart);
@@ -390,6 +408,66 @@ describe("the trailing control", () => {
       expect(parseFloat(cs(footer).paddingInlineEnd), `${trailing} trailing`).toBeCloseTo(lead, 1);
       expect(insets(footer, last).end, `${trailing} last child`).toBeCloseTo(lead, 1);
     }
+  });
+});
+
+/** The panel SLIDES open: `block-size` and `padding-block` both transition, so a read
+ *  taken in the same task as the flip returns the PRE-transition value — measured, 0px
+ *  of padding against a resolved 12. Wait for the animations the flip starts. */
+async function settle(el: Element): Promise<void> {
+  await new Promise<void>((done) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        done();
+      });
+    });
+  });
+  await Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined)));
+}
+
+describe("the panel the ledger opens", () => {
+  it("holds its ink one gutter off the CARD on all four edges", async () => {
+    // Measured against the CARD, the only reading the panel's asymmetric inset can be
+    // judged by (`.turn-info-panel` in 29-turns.css owns why it is asymmetric), and held
+    // against the ledger's own gutter so one value stays the card's ink gutter.
+    const { card, footer, ledger, info, panel, title, lastRow } = mountFooter(document, "rewind");
+    footer.dataset["info"] = "open";
+    await settle(panel);
+    const gutter = parseFloat(cs(ledger).paddingInlineStart);
+    expect(gutter).toBeGreaterThan(0);
+
+    const p = cs(panel);
+    for (const [edge, value] of Object.entries({
+      top: p.paddingBlockStart,
+      bottom: p.paddingBlockEnd,
+    })) {
+      expect(parseFloat(value), `panel ${edge}`).toBeCloseTo(gutter, 1);
+    }
+
+    // `.turn` declares no padding, so its border box plus `clientLeft` IS the column
+    // every child's ink is measured in.
+    const cardBox = card.getBoundingClientRect();
+    const inner = { left: cardBox.left + card.clientLeft, width: card.clientWidth };
+    const panelBox = panel.getBoundingClientRect();
+    expect(
+      panelBox.left + parseFloat(p.paddingInlineStart) - inner.left,
+      "the panel's ink starts on the card's gutter",
+    ).toBeCloseTo(gutter, 1);
+    expect(
+      inner.left + inner.width - (panelBox.right - parseFloat(p.paddingInlineEnd)),
+      "the panel's ink ends on the card's gutter",
+    ).toBeCloseTo(gutter, 1);
+
+    // Rendered, because the declaration is only half the claim: the panel's first ink
+    // has to land in the card's ink column, and its last row has to clear the bottom.
+    expect(title.getBoundingClientRect().left, "the heading lines up with the `i`").toBeCloseTo(
+      info.getBoundingClientRect().left,
+      1,
+    );
+    expect(
+      panelBox.bottom - lastRow.getBoundingClientRect().bottom,
+      "the last row clears the panel's bottom edge",
+    ).toBeCloseTo(gutter, 1);
   });
 });
 
@@ -408,13 +486,20 @@ describe("the delegate card mounts this row and gets the same gutters", () => {
     );
   });
 
-  it("ends its fact slot on that same gutter, having no trailing control", () => {
-    // The slot spans the flexible track, so on a footer with nothing after it the
-    // slot's box is what ends on the gutter — the row's symmetric insets, measured.
+  it("keeps the row's gutters symmetric, and insets the fact to match the `i`", () => {
+    // With no trailing control there is nothing whose box ends on the trailing gutter:
+    // the fact sits INSIDE the button (29-turns.css), so the flexible track beside it
+    // is the row's slack. The two gutters are still one value, and the button's own
+    // insets are what make its press box symmetric on its content — the `i` and the
+    // fact sit the same distance inside it.
     const { footer, ledger, last } = mountDelegate(document);
     const lead = parseFloat(cs(ledger).paddingInlineStart);
     expect(lead).toBeGreaterThan(0);
     expect(parseFloat(cs(footer).paddingInlineEnd)).toBeCloseTo(lead, 1);
-    expect(insets(footer, last).end).toBeCloseTo(lead, 1);
+    expect(parseFloat(cs(ledger).paddingInlineEnd)).toBeCloseTo(lead, 1);
+    expect(
+      last.getBoundingClientRect().right,
+      "the fact is inset inside the button, not flush with it",
+    ).toBeCloseTo(ledger.getBoundingClientRect().right - lead, 1);
   });
 });

@@ -1,37 +1,37 @@
 // ---------------------------------------------------------------------------
-// The chat-route step transcript's render lifecycle.
+// The run pane's step-transcript render lifecycle.
 //
 // What this module owns is not what a step's body LOOKS like — the transcript's own
-// dispatcher decides that, and `messages-blocks.test.ts` owns it — but four
-// decisions about when to touch it: build once per node path, UPDATE when the blocks
-// merely grew, dispose-and-rebuild when the shape moved, and seal exactly once.
-// Getting any of them wrong costs the reader their scroll position or leaves a
-// finished step under a streaming caret.
+// dispatcher decides that, and `messages-blocks.test.ts` owns it — but four decisions
+// about when to touch it: build once per step TURN, UPDATE when the entries merely
+// grew, dispose-and-rebuild when the shape moved, and seal exactly once. Getting any
+// of them wrong costs the reader their scroll position or leaves a finished step under
+// a streaming caret.
 //
-// So `messages-blocks.js` is mocked with counting spies and the assertions are on
-// the ORDER and the IDENTITY of those calls — the `run-step-blocks.test.ts` pattern,
-// and the same reason: linking the real dispatcher pulls the whole transcript stack
-// in to observe four function calls.
+// So `messages-blocks.js` is mocked with counting spies and the assertions are on the
+// ORDER and the IDENTITY of those calls: linking the real dispatcher pulls the whole
+// transcript stack in to observe four function calls, which is the same reason the
+// module itself must be reached by a lazy `import()`.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import type { Block } from "./types.js";
-import type { RunStepSlice } from "./run-step-slice.js";
+import type { Entry } from "./types.js";
 // TYPE-only, so it is erased and cannot defeat the `vi.mock` hoisting the value
 // import below is deferred for.
-import type { RunStepPaint, RunStepSource } from "./run-chat-steps.js";
+import type { RunStepPaint } from "./run-chat-steps.js";
 
 interface Call {
   fn: "build" | "update" | "finalize" | "dispose";
-  /** The render key the call was made under — a synthetic message id. */
+  /** The render key the call was made under: a step turn's own id. */
   key: string;
-  /** The `agent_subtask_id` the call paired that key with. */
-  subtask: string;
+  /** The LANE the call paired that key with. `""` is the pane's root. */
+  lane: string;
   host?: HTMLElement;
-  blockCount?: number;
+  entryCount?: number;
   live?: boolean;
-  /** The chat id the call was handed. "" for an on-demand read, which is what makes
-   *  a delegate's page link correctly absent — the dispatcher withholds it on "". */
+  /** The chat id the call was handed. Always "" here — a step's entries are the
+   *  RUN's, so a delegate's page link has no destination and the dispatcher
+   *  withholds it on "". */
   chatID?: string;
 }
 
@@ -39,107 +39,86 @@ const m = vi.hoisted(() => ({ calls: [] as unknown[] }));
 
 vi.mock("./messages-blocks.js", () => ({
   buildDetachedBody: vi.fn(
-    (host: HTMLElement, msg: { id: string; blocks?: Block[] }, chatID, subtask, live) => {
+    (host: HTMLElement, turn: { id: string; body?: Entry[] }, chatID, lane, live) => {
       m.calls.push({
         fn: "build",
-        key: msg.id,
-        subtask,
+        key: turn.id,
+        lane,
         chatID,
         host,
-        blockCount: (msg.blocks ?? []).length,
+        entryCount: (turn.body ?? []).length,
         live,
       });
-      // A real build fills the host, so the rebuild case can prove the host was
-      // cleared first rather than appended to.
+      // A real build fills the box, so the rebuild case can prove the box was cleared
+      // first rather than appended to.
       host.appendChild(document.createElement("p"));
     },
   ),
   updateDetachedBody: vi.fn(
-    (host: HTMLElement, msg: { id: string; blocks?: Block[] }, chatID, subtask, live) => {
+    (host: HTMLElement, turn: { id: string; body?: Entry[] }, chatID, lane, live) => {
       m.calls.push({
         fn: "update",
-        key: msg.id,
-        subtask,
+        key: turn.id,
+        lane,
         chatID,
         host,
-        blockCount: (msg.blocks ?? []).length,
+        entryCount: (turn.body ?? []).length,
         live,
       });
     },
   ),
-  finalizeDetachedBody: vi.fn((key: string, subtask: string) => {
-    m.calls.push({ fn: "finalize", key, subtask });
+  finalizeDetachedBody: vi.fn((key: string, lane: string) => {
+    m.calls.push({ fn: "finalize", key, lane });
   }),
-  disposeDetachedBody: vi.fn((key: string, subtask: string) => {
-    m.calls.push({ fn: "dispose", key, subtask });
+  disposeDetachedBody: vi.fn((key: string, lane: string) => {
+    m.calls.push({ fn: "dispose", key, lane });
   }),
 }));
 
-const { createRunChatStepStream } = await import("./run-chat-steps.js");
+const { createRunStepStream } = await import("./run-chat-steps.js");
 
-function slice(blocks: readonly string[], live = true): RunStepSlice {
+/** One sealed entry of a step's turn at the position its own `seq` claims. */
+function entry(turn: string, seq: number, kind: Entry["kind"] = "text"): Entry {
+  return { id: `${turn}-${String(seq)}`, turn, kind, seq, ts: 0, payload: {} };
+}
+
+/** A step turn as the pane paints it. Only the fields this module reads are filled;
+ *  the dispatcher's own view of a turn is `messages-blocks.test.ts`'s subject. */
+function paint(turnID: string, kinds: readonly Entry["kind"][], live = true): RunStepPaint {
+  const body = kinds.map((kind, i) => entry(turnID, i + 1, kind));
   return {
-    blocks: blocks.map((text) => ({ type: "text", text })),
-    toolCalls: [],
-    sourceKeys: blocks.map((_, i) => `m1:${String(i)}`),
+    turn: {
+      id: turnID,
+      n: 1,
+      trigger: undefined,
+      body,
+      openEntries: new Map(),
+      ts: 0,
+      outcome: live ? "running" : "completed",
+      rewindTo: undefined,
+    },
     live,
   };
 }
 
-/** A slice whose block SHAPE differs from a text run of the same length: a
- *  `tool_use` at the head reorders the prefix, which is what a rewind or a refetch
- *  does and what an incremental update cannot represent. */
-function reshaped(): RunStepSlice {
-  return {
-    blocks: [
-      { type: "tool_use", tool_call_id: "t1" },
-      { type: "text", text: "one" },
-    ],
-    toolCalls: [],
-    sourceKeys: ["m1:0", "m1:1"],
-    live: true,
-  };
-}
-
 function harness(): {
-  apply: (slices: Record<string, RunStepSlice>, live?: boolean) => void;
-  applyFrom: (source: RunStepSource, slices: Record<string, RunStepSlice>) => void;
-  /** The stream's own apply, for the one case that needs two sources in ONE call. */
-  applyPaints: (paints: ReadonlyMap<string, RunStepPaint>) => void;
+  apply: (paints: Record<string, readonly RunStepPaint[]>) => void;
   dispose: () => void;
   host: (path: string) => HTMLElement;
   calls: Call[];
 } {
   const hosts = new Map<string, HTMLElement>();
-  const stream = createRunChatStepStream((path) => {
+  const stream = createRunStepStream((path) => {
     let host = hosts.get(path);
     if (host === undefined) {
       host = document.createElement("div");
       hosts.set(path, host);
     }
     return host;
-  }, "wf_1");
-  const from = (source: RunStepSource, slices: Record<string, RunStepSlice>): void => {
-    const paints = new Map<string, RunStepPaint>();
-    for (const [path, sl] of Object.entries(slices)) {
-      paints.set(path, { slice: sl, source });
-    }
-    stream.apply(paints);
-  };
+  });
   return {
-    // Liveness now rides the SLICE, which is what lets one apply carry a live
-    // chat-sourced step beside a settled on-demand read. The old `live` parameter is
-    // kept in the harness so the existing cases read unchanged.
-    apply: (slices, live = true) => {
-      const relive: Record<string, RunStepSlice> = {};
-      for (const [path, sl] of Object.entries(slices)) {
-        relive[path] = { ...sl, live };
-      }
-      from({ kind: "chat", chatID: "c-1" }, relive);
-    },
-    applyFrom: from,
-    applyPaints: (paints) => {
-      stream.apply(paints);
+    apply: (paints) => {
+      stream.apply(new Map(Object.entries(paints)));
     },
     dispose: () => {
       stream.dispose();
@@ -155,8 +134,8 @@ function harness(): {
   };
 }
 
-/** The build calls only. A build is preceded by an unconditional dispose (the
- *  rebuild arm's clear), which is noise in an assertion about what was built. */
+/** The build calls only. A build is preceded by an unconditional dispose (the rebuild
+ *  arm's clear), which is noise in an assertion about what was built. */
 function builds(h: { calls: Call[] }): Call[] {
   return h.calls.filter((c) => c.fn === "build");
 }
@@ -165,206 +144,175 @@ beforeEach(() => {
   m.calls.length = 0;
 });
 
-describe("run chat step stream", () => {
-  // ONE build per node path, and the two ids the four detached calls have to agree
-  // on: `detachedID` composes `${messageID}#${subtask}`, so a mismatch orphans the
-  // render — the build registers under one id and the dispose clears another.
-  it("builds once per path, pairing the render key with the step's own wf: id", () => {
+describe("run step stream", () => {
+  // ONE build per step TURN, under the turn's own id and the pane's ROOT lane. The
+  // four detached calls are keyed by `(turn, lane)`, so a mismatch orphans the render:
+  // the build registers under one key and the dispose clears another.
+  it("builds once per turn, keyed by the turn id and the root lane", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]), "a/verify": slice(["two"]) });
-    expect(builds(h).map((c) => [c.key, c.subtask])).toEqual([
-      ["runstep:c-1:a/coder", "wf:wf_1:a/coder"],
-      ["runstep:c-1:a/verify", "wf:wf_1:a/verify"],
+    h.apply({ "a/coder": [paint("t-coder", ["text"])], "a/verify": [paint("t-verify", ["text"])] });
+    expect(builds(h).map((c) => [c.key, c.lane])).toEqual([
+      ["t-coder", ""],
+      ["t-verify", ""],
     ]);
-    // The render key is NOT the real message id: `messages-blocks.ts` holds one
-    // render map keyed by message id and the transcript already holds an entry for
-    // those messages, so a shared key would have the two surfaces clobber each
-    // other's state and dispose the wrong one.
-    expect(builds(h)[0]?.key).not.toBe("m1");
   });
 
-  it("hands each path the host the consumer supplied for it", () => {
+  // The dispatcher is handed a BOX of this stream's own, inside the host the consumer
+  // supplied — which is what lets one path hold several turns without them rebuilding
+  // over each other.
+  it("builds into a box of its own inside the path's host", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]) });
-    expect(builds(h)[0]?.host).toBe(h.host("a/coder"));
+    h.apply({ "a/coder": [paint("t1", ["text"])] });
+    const box = builds(h)[0]?.host;
+    expect(box).not.toBe(h.host("a/coder"));
+    expect(box?.parentElement).toBe(h.host("a/coder"));
+  });
+
+  // A path can hold SEVERAL turns — a resume after a restart re-opens the same node
+  // path as a new turn — so each renders in its own box under its own key, in the
+  // order the log holds them. Keyed by path instead, the second turn would rebuild
+  // over the first.
+  it("renders several turns of one path in their own boxes, in file order", () => {
+    const h = harness();
+    h.apply({ "a/coder": [paint("t-first", ["text"], false), paint("t-second", ["text"])] });
+    expect(builds(h).map((c) => c.key)).toEqual(["t-first", "t-second"]);
+    expect(builds(h)[0]?.host).not.toBe(builds(h)[1]?.host);
+    expect(builds(h)[0]?.host?.parentElement).toBe(h.host("a/coder"));
+    expect(h.host("a/coder").childElementCount).toBe(2);
   });
 
   // The dispatcher's incremental update appends past a watermark, so it is correct
-  // only while the prefix it mounted is unchanged. A rebuild here would throw away
-  // the reader's place on every streamed chunk.
-  it("updates rather than rebuilds when the blocks merely grew", () => {
+  // only while the prefix it mounted is unchanged. A rebuild here would throw away the
+  // reader's place on every streamed chunk.
+  it("updates rather than rebuilds when the entries merely grew", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]) });
+    h.apply({ "a/coder": [paint("t1", ["text"])] });
     m.calls.length = 0;
-    h.apply({ "a/coder": slice(["one", "two"]) });
+    h.apply({ "a/coder": [paint("t1", ["text", "text"])] });
     expect(h.calls.map((c) => c.fn)).toEqual(["update"]);
-    expect(h.calls[0]?.blockCount).toBe(2);
+    expect(h.calls[0]?.entryCount).toBe(2);
   });
 
-  // ...and the inverse. A shortened or reordered shape is a rewind, a refetch or a
-  // turn restructured underneath, which the append-past-a-watermark update cannot
-  // represent: it would leave the old prefix on screen under the new tail.
-  it("disposes, clears the host and rebuilds when the shape moved", () => {
+  // ...and the inverse. A re-read filling a hole inserts a same-`seq` entry of another
+  // KIND mid-turn, which the append-past-a-watermark update cannot represent: it would
+  // leave the old prefix on screen under the new tail.
+  it("disposes, clears the box and rebuilds when the shape moved", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one", "two"]) });
-    const host = h.host("a/coder");
-    expect(host.childElementCount).toBe(1);
+    h.apply({ "a/coder": [paint("t1", ["text", "text"])] });
+    // The BOX is what the rebuild clears, and the box is what the assertion has to
+    // read: the host holds one box either way, so counting ITS children says nothing
+    // about the clear (measured — that shape stayed green with the clear deleted).
+    const box = builds(h)[0]?.host;
+    expect(box?.childElementCount).toBe(1);
     m.calls.length = 0;
-    h.apply({ "a/coder": reshaped() });
+    h.apply({ "a/coder": [paint("t1", ["tool_call", "text"])] });
     expect(h.calls.map((c) => c.fn)).toEqual(["dispose", "build"]);
-    // The rebuild started from an empty host: exactly one child, the new build's.
-    expect(host.childElementCount).toBe(1);
+    // The rebuild started from an empty box: exactly one child, the new build's, in
+    // the box the first build filled.
+    expect(box?.childElementCount).toBe(1);
+    expect(h.host("a/coder").childElementCount).toBe(1);
   });
 
-  // The FIRST apply cannot update, whatever the shape says: nothing is mounted for
-  // the watermark to extend, and an empty prefix trivially extends anything. The
-  // dispose ahead of it is the rebuild arm's unconditional clear — a no-op for a key
-  // nothing is registered under, and the one call that guarantees no render from an
-  // earlier page instance is left holding this key.
+  // The FIRST apply cannot update, whatever the shape says: nothing is mounted for the
+  // watermark to extend, and an empty prefix trivially extends anything. The dispose
+  // ahead of it is the rebuild arm's unconditional clear — a no-op for a key nothing is
+  // registered under, and the one call that guarantees no render from an earlier page
+  // instance is left holding this key.
   it("builds on the first apply even though an empty shape extends everything", () => {
     const h = harness();
-    h.apply({ "a/coder": slice([]) });
+    h.apply({ "a/coder": [paint("t1", [])] });
     expect(h.calls.map((c) => c.fn)).toEqual(["dispose", "build"]);
   });
 
-  // Every later repaint of a finished run lands here too, so the latch is what
-  // keeps one seal from becoming dozens — each of which re-flushes the markdown
-  // streams and re-collapses the reasoning traces.
+  // Every later repaint of a finished run lands here too, so the latch is what keeps
+  // one seal from becoming dozens — each of which re-flushes the markdown streams and
+  // re-collapses the reasoning traces.
   it("finalizes exactly once across repeated settled applies", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]) }, false);
-    h.apply({ "a/coder": slice(["one", "two"]) }, false);
-    h.apply({ "a/coder": slice(["one", "two"]) }, false);
+    h.apply({ "a/coder": [paint("t1", ["text"], false)] });
+    h.apply({ "a/coder": [paint("t1", ["text", "text"], false)] });
+    h.apply({ "a/coder": [paint("t1", ["text", "text"], false)] });
     expect(h.calls.filter((c) => c.fn === "finalize")).toHaveLength(1);
   });
 
-  it("does not finalize while the launching chat is still live", () => {
+  it("does not finalize a turn that is still open", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]) }, true);
+    h.apply({ "a/coder": [paint("t1", ["text"], true)] });
     expect(h.calls.some((c) => c.fn === "finalize")).toBe(false);
   });
 
-  // A rebuild resets the latch: the render it sealed is gone, so the new one has to
-  // be sealed too or a settled step sits under a caret forever.
+  // A rebuild resets the latch: the render it sealed is gone, so the new one has to be
+  // sealed too or a settled step sits under a caret forever.
   it("re-seals after a rebuild", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one", "two"]) }, false);
+    h.apply({ "a/coder": [paint("t1", ["text", "text"], false)] });
     m.calls.length = 0;
-    h.apply({ "a/coder": reshaped() }, false);
+    h.apply({ "a/coder": [paint("t1", ["tool_call", "text"], false)] });
     expect(h.calls.map((c) => c.fn)).toEqual(["dispose", "build", "finalize"]);
   });
 
-  it("passes the liveness through to the dispatcher", () => {
+  it("passes the turn's own liveness through to the dispatcher", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]) }, false);
+    h.apply({ "a/coder": [paint("t1", ["text"], false)] });
     expect(builds(h)[0]?.live).toBe(false);
   });
 
-  // The tab's retarget: every render this stream registered has to be released, or
-  // the previous run's disposers stay alive under the next run's page.
-  it("disposes every path it holds", () => {
+  // Liveness is per TURN and never the run's status: a `parallel` node holds several
+  // open turns in one log, so a settled step inside a running run is settled — and one
+  // apply carries both.
+  it("carries liveness per turn, so one apply can hold both", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]), "a/verify": slice(["two"]) });
+    h.apply({
+      "a/live": [paint("t-live", ["text"], true)],
+      "a/done": [paint("t-done", ["text"], false)],
+    });
+    expect(builds(h).find((c) => c.key === "t-live")?.live).toBe(true);
+    expect(builds(h).find((c) => c.key === "t-done")?.live).toBe(false);
+    // And only the settled one is sealed.
+    expect(h.calls.filter((c) => c.fn === "finalize").map((c) => c.key)).toEqual(["t-done"]);
+  });
+
+  // The dispatcher uses the chat id for real: it keys tool-call signals by it and
+  // builds a delegate's page link from it. A step's entries are the RUN's, so that link
+  // has no destination and an empty id is what makes it correctly absent.
+  it("hands the dispatcher no chat id", () => {
+    const h = harness();
+    h.apply({ "a/coder": [paint("t1", ["text"])] });
+    expect(builds(h)[0]?.chatID).toBe("");
+  });
+
+  // A turn the log no longer holds — a truncate, or a page whose run re-read shorter —
+  // takes its render with it, or its disposers stay registered under a key nothing ever
+  // disposes and its box sits in the pane.
+  it("releases a turn the next apply no longer names", () => {
+    const h = harness();
+    h.apply({ "a/coder": [paint("t-old", ["text"]), paint("t-new", ["text"])] });
+    const host = h.host("a/coder");
+    m.calls.length = 0;
+    h.apply({ "a/coder": [paint("t-new", ["text"])] });
+    expect(h.calls.filter((c) => c.fn === "dispose").map((c) => c.key)).toEqual(["t-old"]);
+    expect(host.childElementCount).toBe(1);
+  });
+
+  // The tab's retarget: every render this stream registered has to be released, or the
+  // previous run's disposers stay alive under the next run's page.
+  it("disposes every turn it holds", () => {
+    const h = harness();
+    h.apply({ "a/coder": [paint("t-coder", ["text"])], "a/verify": [paint("t-verify", ["text"])] });
     m.calls.length = 0;
     h.dispose();
-    expect(h.calls.map((c) => [c.fn, c.key, c.subtask])).toEqual([
-      ["dispose", "runstep:c-1:a/coder", "wf:wf_1:a/coder"],
-      ["dispose", "runstep:c-1:a/verify", "wf:wf_1:a/verify"],
+    expect(h.calls.map((c) => [c.fn, c.key, c.lane])).toEqual([
+      ["dispose", "t-coder", ""],
+      ["dispose", "t-verify", ""],
     ]);
   });
 
   it("disposes nothing twice", () => {
     const h = harness();
-    h.apply({ "a/coder": slice(["one"]) });
+    h.apply({ "a/coder": [paint("t1", ["text"])] });
     h.dispose();
     m.calls.length = 0;
     h.dispose();
     expect(h.calls).toEqual([]);
-  });
-
-  // The SOURCE FLIP. A chat's window can be evicted while the run tab is open, which
-  // empties the slice and hands the path to the on-demand read; reopening the chat
-  // reverses it. The render key carries the source, so the previous render has to be
-  // disposed and rebuilt — an update would leave it registered under a key nothing
-  // ever disposes, holding its store subscriptions alive under the new one.
-  it("rebuilds when a path changes source, and releases the previous render", () => {
-    const h = harness();
-    h.applyFrom({ kind: "chat", chatID: "c-1" }, { "a/coder": slice(["one"]) });
-    m.calls.length = 0;
-
-    h.applyFrom({ kind: "kas" }, { "a/coder": slice(["one"], false) });
-
-    // The OLD key is disposed and the NEW key is built. An update would show one
-    // "update" call under the old key and no dispose at all.
-    expect(h.calls.map((c) => [c.fn, c.key])).toEqual([
-      ["dispose", "runstep:c-1:a/coder"],
-      ["dispose", "runstep:kas:a/coder"],
-      ["build", "runstep:kas:a/coder"],
-      ["finalize", "runstep:kas:a/coder"],
-    ]);
-  });
-
-  // The other direction, and the one that proves the flip is not one-way: a chat
-  // reopening must take the path back off the read.
-  it("rebuilds when a path returns to the chat route", () => {
-    const h = harness();
-    h.applyFrom({ kind: "kas" }, { "a/coder": slice(["one"], false) });
-    m.calls.length = 0;
-
-    h.applyFrom({ kind: "chat", chatID: "c-1" }, { "a/coder": slice(["one"]) });
-
-    expect(h.calls.filter((c) => c.fn === "build").map((c) => c.key)).toEqual([
-      "runstep:c-1:a/coder",
-    ]);
-    expect(h.calls.some((c) => c.fn === "dispose" && c.key === "runstep:kas:a/coder")).toBe(true);
-  });
-
-  // Growth on ONE source still updates rather than rebuilding, or the flip rule would
-  // have thrown away the incremental path it was added beside.
-  it("still updates on growth within one source", () => {
-    const h = harness();
-    h.applyFrom({ kind: "kas" }, { "a/coder": slice(["one"], false) });
-    m.calls.length = 0;
-    h.applyFrom({ kind: "kas" }, { "a/coder": slice(["one", "two"], false) });
-    expect(h.calls.map((c) => c.fn)).toEqual(["update"]);
-  });
-
-  // The on-demand read has no chat behind it, and the dispatcher uses that id for
-  // real: it keys tool-call signals by it and builds a delegate's page link from it.
-  // An empty id is what makes that link correctly absent.
-  it("hands the dispatcher no chat id for an on-demand read", () => {
-    const h = harness();
-    h.applyFrom({ kind: "kas" }, { "a/coder": slice(["one"], false) });
-    expect(builds(h)[0]?.chatID).toBe("");
-  });
-
-  it("hands the dispatcher the launching chat for a chat-sourced slice", () => {
-    const h = harness();
-    h.applyFrom({ kind: "chat", chatID: "c-7" }, { "a/coder": slice(["one"]) });
-    expect(builds(h)[0]?.chatID).toBe("c-7");
-  });
-
-  // Liveness is per ENTRY now, which is the property a page holding both routes
-  // needs: a chat-sourced step can still be streaming while an on-demand read beside
-  // it is a settled answer.
-  it("carries liveness per entry, so one apply can hold both", () => {
-    const h = harness();
-    const paints = new Map<string, RunStepPaint>([
-      [
-        "a/live",
-        { slice: slice(["streaming"]), source: { kind: "chat", chatID: "c-1" } as RunStepSource },
-      ],
-      ["a/done", { slice: slice(["settled"], false), source: { kind: "kas" } as RunStepSource }],
-    ]);
-    // Applied through the stream's own door, because the harness's helpers set one
-    // source per call and the property under test is two sources in ONE apply.
-    h.applyPaints(paints);
-    const built = h.calls.filter((c) => c.fn === "build");
-    expect(built.find((c) => c.key.endsWith("a/live"))?.live).toBe(true);
-    expect(built.find((c) => c.key.endsWith("a/done"))?.live).toBe(false);
-    // And only the settled one is sealed.
-    expect(h.calls.filter((c) => c.fn === "finalize").map((c) => c.key)).toEqual([
-      "runstep:kas:a/done",
-    ]);
   });
 });

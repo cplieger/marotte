@@ -12,24 +12,30 @@ import type { TextSpan, ToolCall } from "./types.js";
 // sees `next === lastApplied` and does not re-enter applyToolCallUpdate. The real
 // store-signals module would drag the whole chat store in.
 vi.mock("./store-signals.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  blockKey: undefined,
-  blockTextSigs: undefined,
-  blockThinkingSigs: undefined,
-  toolCallSigs: undefined,
-  ensureBlockTextSig: undefined,
-  ensureBlockThinkingSig: undefined,
-  peekToolCallSig: undefined,
-  clearBlockSigsFor: undefined,
-  clearAllBlockSigs: undefined,
+  // The map itself needs its `clear`: the module under test drops a card's signal
+  // by key when the card is released and when every effect is disposed, so an
+  // `undefined` here throws out of the teardown every case runs.
+  toolCallSigs: { clear: vi.fn() },
   // Real key composition: the module under test keys its card registry on the
   // composite, and a key of `undefined` would collapse every entry onto one.
   toolCallSigKey: vi.fn((chatID: string, toolID: string) => `${chatID}\u0000${toolID}`),
   ensureToolCallSig: vi.fn((_chat: string, _id: string, tc: unknown) => ({ value: tc })),
-  clearToolCallSig: vi.fn(),
+  // Present-but-undefined: Browser Mode links for real rather than reading
+  // properties off a namespace object, so a factory that omits a name some module
+  // in this graph imports fails collection, and no path under test calls these.
+  peekToolCallSig: undefined,
+  entryTextSigs: undefined,
+  laneSigs: undefined,
+  entryKey: undefined,
+  laneKey: undefined,
+  ensureEntryTextSig: undefined,
+  entryTextSig: undefined,
+  writeEntryText: undefined,
+  clearEntryTextSig: undefined,
+  laneSig: undefined,
+  bumpLane: undefined,
+  clearTurnSigs: undefined,
+  clearAllEntrySigs: undefined,
 }));
 vi.mock("./tool-group.js", () => ({
   maybeCollapseGroup: vi.fn(),
@@ -67,6 +73,9 @@ vi.mock("./tool-card.js", () => ({
   expandToolDetails: vi.fn(),
   applyOutcome: vi.fn(),
   refreshToolDisclosure: vi.fn(),
+  // Inert, as above: the mount effect calls it per pass and its own behaviour is
+  // pinned in `tool-card-silence.test.ts`.
+  syncSilenceMarker: vi.fn(),
 }));
 
 import {

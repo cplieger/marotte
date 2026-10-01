@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/sse"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/tabs"
-	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/sse"
 )
 
 func held(kind subject.Kind, ref string) sse.Held {
@@ -95,25 +95,73 @@ func TestResolveDigest_ChatWhoseRecordIsGoneAnswersGone(t *testing.T) {
 }
 
 func TestResolveDigest_LiveTurnFollowsTheTurnRegistry(t *testing.T) {
-	h, cs, _ := newTestHub()
-	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, "c1")})
+	h, _, _ := newTestHub()
+	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, "t-never-opened")})
 	if err != nil {
 		t.Fatalf("resolveDigest: %v", err)
 	}
-	if st := stateFor(t, states, subject.KindLiveTurn, "c1"); st.Status != sse.StatusGone {
-		t.Errorf("no open turn: %+v, want gone so the client clears its live buffer", st)
+	if st := stateFor(t, states, subject.KindLiveTurn, "t-never-opened"); st.Status != sse.StatusGone {
+		t.Errorf("no such open turn: %+v, want gone so the client clears its open tail", st)
 	}
 
-	startedTurnOn(t, h, cs, "c1", "reply")
-	buf := h.stageTurnBuffer(t, "c1")
-	buf.AppendTextDelta("more", "")
-	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, "c1")})
+	id, log := h.stagePromptTurn(t, "c1")
+	if _, err := log.TextDelta(t.Context(), "", "say-1", "still coalescing"); err != nil {
+		t.Fatalf("TextDelta: %v", err)
+	}
+	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, id)})
 	if err != nil {
 		t.Fatalf("resolveDigest: %v", err)
 	}
-	st := stateFor(t, states, subject.KindLiveTurn, "c1")
-	if st.Status != sse.StatusCurrent || st.Version != buf.Version() {
-		t.Errorf("open turn: %+v, want current at the buffer's %q", st, buf.Version())
+	if st := stateFor(t, states, subject.KindLiveTurn, id); st.Status != sse.StatusCurrent || st.Version != turnVersion(id, 0) {
+		t.Errorf("open turn with an unsealed delta: %+v, want current at %q (the turn_open is the newest sealed seq)", st, turnVersion(id, 0))
+	}
+
+	// A kind change seals the text, so the newest sealed seq moves to 1.
+	if _, err := log.ThinkingDelta(t.Context(), "", "say-1", "then reasoning"); err != nil {
+		t.Fatalf("ThinkingDelta: %v", err)
+	}
+	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, id)})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+	if st := stateFor(t, states, subject.KindLiveTurn, id); st.Status != sse.StatusCurrent || st.Version != turnVersion(id, 1) {
+		t.Errorf("open turn after a seal: %+v, want current at %q", st, turnVersion(id, 1))
+	}
+
+	endTurn(t, h, "c1", id)
+	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindLiveTurn, id)})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+	if st := stateFor(t, states, subject.KindLiveTurn, id); st.Status != sse.StatusGone {
+		t.Errorf("closed turn: %+v, want gone: the registry no longer holds it", st)
+	}
+}
+
+func TestResolveDigest_RunTurnFollowsTheRunRegistry(t *testing.T) {
+	h := newBudgetRuntime(t)
+	turn, _, err := h.runs.log.Open(t.Context(), "wf-1", "wf-1/step", "sess-step", "c1")
+	if err != nil {
+		t.Fatalf("Open(step turn): %v", err)
+	}
+	ref := "wf-1/" + turn.ID()
+	states, err := h.resolveDigest(t.Context(), []sse.Held{held(subject.KindRunTurn, ref)})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+	if st := stateFor(t, states, subject.KindRunTurn, ref); st.Status != sse.StatusCurrent || st.Version != turnVersion(turn.ID(), 0) {
+		t.Errorf("open step turn: %+v, want current at %q", st, turnVersion(turn.ID(), 0))
+	}
+
+	if _, _, err := h.runs.log.CloseNode(t.Context(), "wf-1", "wf-1/step", "completed", ""); err != nil {
+		t.Fatalf("CloseNode: %v", err)
+	}
+	states, err = h.resolveDigest(t.Context(), []sse.Held{held(subject.KindRunTurn, ref)})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+	if st := stateFor(t, states, subject.KindRunTurn, ref); st.Status != sse.StatusGone {
+		t.Errorf("closed step turn: %+v, want gone", st)
 	}
 }
 

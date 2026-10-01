@@ -1,25 +1,15 @@
-// The turn card's outcome ledger and the INFO PANEL it discloses.
-//
-// The row says ONE thing — how the turn ended — and the panel under it says
-// everything else in labelled rows: timings, the work, the delegates, the cost, the
-// model, and diagnostics on a turn that did not end clean. Every section withholds
-// on absence, which is most of what this file pins: a delegate can fill three of the
-// six and a mid-flight turn fewer, so a section that painted itself on absence would
-// grow empty headings on most cards in a transcript.
-//
-// IT USED TO PIN A COMPOSED STRING. The whole first describe asserted the ledger
-// line as one `·`-separated join (`2 files +6 −2 · 3 cmds · 12 reads · 1.50 cr ·
-// sonnet-4`) and six more cases asserted the trigger's `aria-label` and its
-// disabled/expandable branches. Those are gone with the string and the readout
-// state; what replaced them is the lead word asserted EXACTLY for all seven
-// outcomes, the panel's own rows, and the button's name read through the role query.
+// The turn card's outcome ledger and the INFO PANEL it discloses. The row says ONE
+// thing — how the turn ended — and the panel says everything else in labelled rows.
+// Every section WITHHOLDS on absence, which is most of what this file pins: a delegate
+// can fill three of the six and a mid-flight turn fewer, so a section that painted
+// itself on absence would grow empty headings on most cards in a transcript.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { page } from "vitest/browser";
 
 import { loadCSS, mountAppCSS } from "../__test-helpers__/css-rules.js";
 import type { FooterExtras, TurnSummaryData } from "./turn-footer.js";
 import { projectTurns, turnLedger, type Turn } from "../turns.js";
-import type { Message } from "../types.js";
+import type { Entry, TurnState } from "../types.js";
 
 const openFileGitDiff = vi.fn();
 vi.mock("../editor-openers.js", () => ({
@@ -41,9 +31,9 @@ function line(el: HTMLElement): string {
   return el.querySelector(".turn-ledger-text")?.textContent ?? "";
 }
 
-/** The fact slot beside the `i`: the row's lead fact, `turnFacts(d)[0]`. */
+/** The fact slot inside the trigger: the row's lead fact, `turnFacts(d)[0]`. */
 function factEl(el: HTMLElement): HTMLElement {
-  const f = el.querySelector<HTMLElement>(":scope > .turn-fact");
+  const f = el.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact");
   if (f === null) {
     throw new Error("no .turn-fact");
   }
@@ -98,21 +88,21 @@ function rows(el: HTMLElement): HTMLButtonElement[] {
   return [...el.querySelectorAll<HTMLButtonElement>(".turn-file-row")];
 }
 
-/** The trigger's COMPUTED accessible name, through the role query rather than by
- *  reading an attribute: the name is built from the button's own contents now, so
- *  the only honest assertion is the one the accessibility tree answers.
+/** What the trigger's COMPUTED accessible name CARRIES, asked of the accessibility tree
+ *  rather than of an attribute. SUBSTRINGS, because the fact in that name moves whenever
+ *  the turn's numbers do; what has to hold is that the purpose and the readout are both
+ *  in there.
  *
- *  THE `.sr-only` RULE HAS TO BE MOUNTED FOR THIS, and that is a measurement rather
- *  than a convenience. Name-from-content concatenates a child's text with no
- *  separator when the child is INLINE, so with no stylesheet the name computes as
- *  `CancelledTurn details` — measured in this container's Chromium, both spellings
- *  probed. `40-a11y.css` makes `.sr-only` `position: absolute`, which is a block
- *  box, and Chromium then inserts the space: `Cancelled Turn details`. So the shipped
- *  name depends on the shipped stylesheet, and a CSS-less assertion here would pin a
- *  string no reader ever hears. */
-async function expectName(footer: HTMLElement, name: string): Promise<void> {
+ *  `40-a11y.css` HAS TO BE MOUNTED: name-from-content concatenates an INLINE child's text
+ *  with no separator, and `.sr-only`'s `position: absolute` is what makes Chromium insert
+ *  the space — measured, both spellings probed. */
+async function expectNameCarries(footer: HTMLElement, parts: string[]): Promise<void> {
   document.body.replaceChildren(footer);
-  await expect.element(page.getByRole("button", { name, exact: true })).toBeInTheDocument();
+  for (const part of parts) {
+    await expect
+      .element(page.getByRole("button", { name: part, exact: false }))
+      .toBeInTheDocument();
+  }
 }
 
 const TWO_FILES = {
@@ -121,7 +111,7 @@ const TWO_FILES = {
 };
 
 describe("the ledger row", () => {
-  it("says EXACTLY the outcome's lead word, for all seven outcomes", () => {
+  it("says EXACTLY the outcome's lead word, for all eight outcomes", () => {
     // TOTAL over `TurnOutcome`, and the point of asserting it as an equality rather
     // than a `toContain` is that nothing else may join it: the numbers a reader used
     // to have to parse out of this row are rows in the panel now. `completed` and
@@ -137,6 +127,7 @@ describe("the ledger row", () => {
       ["failed", "Failed"],
       ["refused", "Refused"],
       ["unknown", "Outcome unknown"],
+      ["empty", "Empty"],
     ] as const) {
       const el = buildTurnFooter({
         outcome,
@@ -285,14 +276,18 @@ describe("the turn's facts", () => {
     expect(fact(el)).toBe("2 files +6 \u22122");
   });
 
-  it("is the footer's own child, so the grid can place it beside the button", () => {
-    // `:scope >` is how every one of the footer's own readers addresses its parts,
-    // and the stylesheet places this one by `.turn-footer > .turn-fact`. A sibling
-    // rather than a child of the button, so the fact never reaches the button's
-    // computed name.
-    const el = buildTurnFooter({ elapsedMs: 1000 });
-    expect(el.querySelector(":scope > .turn-fact")).not.toBeNull();
-    expect(el.querySelector(".turn-ledger-summary .turn-fact")).toBeNull();
+  it("sits INSIDE the trigger and JOINS its name", async () => {
+    // One control over the `i`, the outcome word and this label, so one press box covers
+    // all three (29-turns.css) — and the slot carries NO `aria-hidden`, so the name a
+    // screen reader hears is the readout a sighted reader sees. User ruling, 2026-09-15:
+    // an exposed fact does move the name whenever the turn's numbers do, and that is a
+    // test problem rather than a reader's.
+    const el = buildTurnFooter({ elapsedMs: 1000, kindCounts: { execute: 2 } });
+    expect(el.querySelector(":scope > .turn-fact")).toBeNull();
+    const inside = el.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact");
+    expect(inside).not.toBeNull();
+    expect(inside?.hasAttribute("aria-hidden")).toBe(false);
+    await expectNameCarries(el, ["Turn details", fact(el)]);
   });
 });
 
@@ -348,13 +343,11 @@ describe("the trigger", () => {
     expect(summary(el).getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("names the ACTION on a clean turn, where the row itself says nothing", async () => {
+  it("names the PURPOSE and the row's readout on a clean turn", async () => {
     // D3's failure mode, and the reason this case exists beside the cancelled one
     // below: with the `aria-label` removed and no `.sr-only` span, a clean turn's
     // trigger has NO accessible name at all — the text is empty, the caret and the
     // `i` are decorative, and the glyph carries no text.
-    // With a fact painted beside it, so the name proves the slot is outside the
-    // button's content.
     const el = buildTurnFooter({
       outcome: "completed",
       credits: 1,
@@ -363,19 +356,19 @@ describe("the trigger", () => {
     });
     expect(summary(el).hasAttribute("aria-label")).toBe(false);
     expect(fact(el)).toBe("2 files +6 \u22122");
-    await expectName(el, "Turn details");
+    await expectNameCarries(el, ["Turn details", "2 files +6 \u22122"]);
   });
 
   it("still carries the outcome word in the name of a turn that ended badly", async () => {
-    // Why there is no `aria-label`: one would WIN over the button's own text and
-    // hide this word, which is the exact defect `OUTCOME_LEAD` exists to fix.
+    // Why there is no `aria-label`: one would WIN over the button's own text and hide
+    // this word AND the fact, which is the exact defect `OUTCOME_LEAD` exists to fix.
     const el = buildTurnFooter({
       outcome: "cancelled",
       credits: 1,
       changedFiles: TWO_FILES,
       kindCounts: { execute: 2 },
     });
-    await expectName(el, "Cancelled Turn details");
+    await expectNameCarries(el, ["Turn details", "Cancelled", "2 files +6 \u22122"]);
   });
 
   it("carries the `i` glyph that says the row is a door", () => {
@@ -394,17 +387,28 @@ describe("the info panel", () => {
   // Through `turnLedger` because a BARE `{outcome}` DOES open an empty panel — every
   // field is optional, so that call compiles while being a shape nothing builds.
   it("is never empty for a turn built the way production builds one", () => {
-    const msgs = [
-      { id: "u1", role: "user", ts: 1_700_000_000_000, content: "hi" },
+    const entries: Entry[] = [
       {
-        id: "a1",
-        role: "assistant",
-        ts: 1_700_000_000_500,
-        content: "",
-        turn_outcome: "cancelled",
+        id: "t1-e0",
+        turn: "t1",
+        lane: "",
+        kind: "turn_open",
+        seq: 0,
+        ts: 1_700_000_000_000,
+        payload: { prompt: { id: "u1", text: "hi" }, source: "prompt", n: 1 },
       },
-    ] as unknown as Message[];
-    const turn = projectTurns(msgs, false)[0];
+      {
+        id: "t1-e1",
+        turn: "t1",
+        lane: "",
+        kind: "turn_close",
+        seq: 1,
+        ts: 1_700_000_000_500,
+        payload: { outcome: "cancelled" },
+      },
+    ];
+    const state: TurnState = { entries, openEntries: new Map() };
+    const turn = projectTurns({ turns: new Map([["t1", state]]), turn_order: ["t1"] })[0];
     expect(turn).toBeDefined();
     const led = turnLedger(turn as Turn);
     const footer = buildTurnFooter({ ...led, outcome: (turn as Turn).outcome });
@@ -915,12 +919,12 @@ describe("every reason a footer is earned paints something", () => {
 
   /** The two channels the FOOTER itself owns. The leading glyph is not a third one:
    *  it carries no text and is drawn from `data-severity`, and every outcome that
-   *  gets a glyph also gets a word (`OUTCOME_LEAD` is total over the five), so the
+   *  gets a glyph also gets a word (`OUTCOME_LEAD` is total over the six), so the
    *  word already stands for it. */
   function paints(footer: HTMLElement): boolean {
     document.body.replaceChildren(footer);
     return (
-      shows(footer.querySelector<HTMLElement>(":scope > .turn-fact")) ||
+      shows(footer.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-fact")) ||
       shows(footer.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-ledger-text"))
     );
   }

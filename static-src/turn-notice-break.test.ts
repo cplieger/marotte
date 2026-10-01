@@ -1,11 +1,21 @@
-// AN INTERRUPTED TURN'S REASON IS THE FRAMED PROSE UNDER ITS OWN DIVIDER.
+// A BROKEN TURN'S REASON IS THE FRAMED PROSE UNDER THE BODY'S LAST DIVIDER.
 //
-// Two rows say a turn broke, and each owns half of it: the body's `.boundary`
-// divider names the KIND ("Turn interrupted") and the card-level `.turn-notice`
-// carries the server's own PROSE ("ACP bridge exited"). That ownership split is
-// pinned elsewhere (messages-events.ts's `interrupted` entry, `turnFailureText`);
-// what is pinned HERE is the geometry it leaves behind, and the geometry has been
-// reported wrong twice.
+// Two rows can say a turn ended badly, and each owns half of it: a body-ending
+// `.boundary` names the KIND ("Conversation compacted") and the card-level
+// `.turn-notice` carries the server's own PROSE ("ACP bridge exited"). That
+// ownership split is pinned elsewhere (`buildEvent`, `turnFailureText`); what is
+// pinned HERE is the geometry it leaves behind, and the geometry has been reported
+// wrong twice.
+//
+// ONE ORACLE DROPPED OUT LOUD, and it is why the divider below changed kind. This
+// file was written around an `interrupted` EVENT ROW, and there is no such entry
+// kind: `EventEntryKind` is `compaction | compaction_failed | safety_blocked |
+// model_switched`, the string `interrupted` appears nowhere in messages-events.ts,
+// and an interrupted turn is `turn_close.outcome` — which renders as the footer's
+// severity and the notice's own `data-outcome`, both pinned elsewhere. So the
+// divider a body can END with is one of those four, and a `compaction` is the one
+// that can precede a turn breaking (the summary lands, then the bridge dies). The
+// CSS claim is unchanged by the swap, because every kind draws one `.boundary`.
 //
 // FIRST REPORT, the spacing: "then a large gap and then the rror 'ACP bridge
 // exited' with 0 padding vs the footing. please copy what we did for the
@@ -50,7 +60,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import { buildEvent } from "./messages-events.js";
-import type { Message } from "./types.js";
+import type { EventEntry } from "./messages-events.js";
 
 /** `--sp-2`, the compaction head's own inset and the notice's — so it is what
  *  "framed the way the compaction break is framed" measures against. */
@@ -74,7 +84,7 @@ interface Card {
 }
 
 interface CardOpts {
-  /** Whether the body ENDS with the interrupted divider, which is what opens the
+  /** Whether the body ENDS with a divider, which is what opens the
    *  frame. False builds a body whose last row is ordinary prose — the turn whose
    *  reason came from the carrier rather than from an event row, and this file's
    *  differential control. */
@@ -83,14 +93,19 @@ interface CardOpts {
   readonly folded?: boolean;
 }
 
-function interruptedEvent(content: string): Message {
+/** A `compaction` entry with an EMPTY summary, which is what `buildEvent` renders as
+ *  a plain `.boundary` — a non-empty one builds the `<details class="compaction">` the
+ *  reference below uses instead, so the two halves of the first case stay DIFFERENT
+ *  elements and its comparison is not a constant against itself. */
+function compactionDivider(): EventEntry {
   return {
-    id: "m-interrupted",
-    role: "event",
-    content,
-    event_kind: "interrupted",
+    id: "e-compaction",
+    turn: "t1",
+    kind: "compaction",
+    seq: 2,
     ts: 0,
-  } as unknown as Message;
+    payload: { summary: "" },
+  };
 }
 
 function prose(text: string): HTMLElement {
@@ -103,7 +118,7 @@ function prose(text: string): HTMLElement {
   return row;
 }
 
-/** An interrupted turn's card, in `buildTurn`'s own child order: header, body,
+/** A broken turn's card, in `buildTurn`'s own child order: header, body,
  *  then the FACE (folded only), then the card-level notice, then the ledger
  *  footer. The divider comes from the real builder so its classes and label are
  *  the shipped ones; the notice is assembled the way `syncTurnNotice` assembles
@@ -127,10 +142,7 @@ function interruptedCard({ dividerLast = true, folded = false }: CardOpts = {}):
   body.append(prose("Building."));
   let boundary: HTMLElement | null = null;
   if (dividerLast) {
-    boundary = buildEvent(interruptedEvent(REASON));
-    if (boundary === null) {
-      throw new Error("buildEvent produced no divider for an interrupted event");
-    }
+    boundary = buildEvent(compactionDivider());
     // See the header note: the entry animation's backwards fill offsets the rect
     // by 6px. Stopping it changes no layout — the keyframes touch opacity and
     // transform.
@@ -171,15 +183,15 @@ function interruptedCard({ dividerLast = true, folded = false }: CardOpts = {}):
  *  reason is meant to have copied. */
 function compactionBreak(): HTMLElement {
   const node = buildEvent({
-    id: "m-compacted",
-    role: "event",
-    content: "a summary",
-    event_kind: "compacted",
+    id: "e-compacted",
+    turn: "t1",
+    kind: "compaction",
+    seq: 3,
     ts: 0,
-  } as unknown as Message);
-  if (node === null) {
-    throw new Error("buildEvent produced no compaction break");
-  }
+    // NON-empty, so this is the `<details class="compaction">` frame rather than a
+    // second `.boundary`: it is the SKIN the reason is meant to have copied.
+    payload: { summary: "a summary" },
+  });
   document.body.append(node);
   made.push(node);
   return node;
@@ -205,7 +217,7 @@ afterAll(() => {
   }
 });
 
-describe("an interrupted turn's reason", () => {
+describe("a broken turn's reason", () => {
   it("opens its frame with the divider's own rule and draws no second one", () => {
     const { boundary, notice, footer } = interruptedCard();
     if (boundary === null) {

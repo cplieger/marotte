@@ -12,6 +12,9 @@
 // fixture captured that, which is why it covers four outcomes across two real
 // transcripts rather than the two the report described.
 //
+// The fixture is the old message model's spelling of facts the entry model still
+// has, and it is not this suite's to rewrite. `foldChat` below is the translation.
+//
 // What this file asserts is the JOIN. `turn-severity.node.test.ts` pins the table,
 // `turns.node.test.ts` pins the text lookup, `tab-dot.test.ts` pins the dot and
 // `fold-state.test.ts` pins the fold — and none of them can see whether a REAL
@@ -21,12 +24,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 import fixtureRaw from "./testdata/reported-chats.json?raw";
-import { projectTurns, turnFailureText, type Turn } from "./turns.js";
-import { severityOf, defaultFailureReason } from "./turn-severity.js";
+import { projectTurns, turnFailureText, type Turn, type TurnSource } from "./turns.js";
+import { severityOf, defaultFailureReason, TURN_OUTCOME_VALUES } from "./turn-severity.js";
 import { outcomeLatch } from "./store.js";
 import { isTurnOpen, resetFoldState } from "./fold-state.js";
-import type { Message } from "./types.js";
-import type { TurnOutcome } from "./wire/types.gen.js";
+import type { TurnState } from "./types.js";
+import type { Entry, EntryKind, EntryTurnClose, TurnOutcome } from "./wire/types.gen.js";
 
 interface FixtureMessage {
   readonly id: string;
@@ -48,57 +51,175 @@ interface FixtureChat {
 
 const fixture = JSON.parse(fixtureRaw) as Record<string, FixtureChat>;
 
-/** Rehydrate one fixture row into the `Message` the store would hold.
- *
- *  `block_count` and `tool_call_count` become that many blocks and tool calls,
- *  because the fold and face rules read the SHAPE of a turn's body — a turn with 26
- *  blocks and 17 tool calls hides a great deal when folded, and a fixture that
- *  dropped them would make every turn look like a one-line answer. */
-function rehydrate(m: FixtureMessage): Message {
-  const blocks = Array.from({ length: m.block_count ?? 0 }, (_, i) =>
-    i === 0 && m.content !== undefined && m.content !== ""
-      ? { type: "text", text: m.content }
-      : { type: "tool_use", tool_call_id: `tc-${m.id}-${String(i)}` },
-  );
-  const toolCalls = Array.from({ length: m.tool_call_count ?? 0 }, (_, i) => ({
-    id: `tc-${m.id}-${String(i)}`,
-    title: "Work",
-    kind: "other",
-    status: "completed",
-  }));
-  const out: Record<string, unknown> = { id: m.id, role: m.role, ts: m.ts };
-  if (m.content !== undefined) {
-    out["content"] = m.content;
-  }
-  if (m.event_kind !== undefined) {
-    out["event_kind"] = m.event_kind;
-  }
-  if (m.turn_outcome !== undefined) {
-    out["turn_outcome"] = m.turn_outcome;
-  }
-  if (m.turn_stop_reason_raw !== undefined) {
-    out["turn_stop_reason_raw"] = m.turn_stop_reason_raw;
-  }
-  if (m.turn_failure_reason !== undefined) {
-    out["turn_failure_reason"] = m.turn_failure_reason;
-  }
-  if (blocks.length > 0) {
-    out["blocks"] = blocks;
-  }
-  if (toolCalls.length > 0) {
-    out["tool_calls"] = toolCalls;
-  }
-  return out as unknown as Message;
+// --- The fold: recorded rows to the entry log the store would hold -------------------
+
+/** One recorded turn, before its entries are built. `outcome` is the turn's own
+ *  `turn_close.outcome` and NOT a derivation: under the entry model the appender
+ *  writes it, so a turn with no carrier at all is `running` rather than guessed at. */
+interface FoldedTurn {
+  readonly prompt: FixtureMessage;
+  carrier: FixtureMessage | undefined;
+  outcome: TurnOutcome | undefined;
+  stopReason: string;
+  reason: string;
 }
 
-function turnsOf(name: string): Turn[] {
+/** Narrow a recorded outcome to the wire's own vocabulary, throwing on anything else —
+ *  a RUNTIME check where the deleted `rehydrate` cast, so a value the wire cannot send
+ *  fails the fixture here rather than reaching a rule that grades it. */
+function outcomeOf(raw: string, where: string): TurnOutcome {
+  const found = TURN_OUTCOME_VALUES.find((v) => v === raw);
+  if (found === undefined) {
+    throw new Error(`${where}: ${raw} is not a TurnOutcome the wire can send`);
+  }
+  return found;
+}
+
+function entryAt(
+  turnID: string,
+  seq: number,
+  kind: EntryKind,
+  payload: unknown,
+  id: string,
+): Entry {
+  return { id, turn: turnID, kind, seq, ts: seq + 1, payload };
+}
+
+/** Group the recorded rows into turns. FOUR rules, and each is the entry model's own:
+ *
+ *   1. A `user` row OPENS a turn. Only a `turn_open` can, so no other row here does.
+ *   2. An `assistant` row is that turn's BODY and its CLOSE.
+ *   3. An `event` row CARRYING an outcome closes the open turn with an empty body —
+ *      chat 1's failed prompt, which produced no assistant message at all.
+ *   4. An `event` row carrying only PROSE gives it to the turn it describes, as that
+ *      turn's `turn_close.failure_reason`. Chat 2's `interrupted` divider is the case,
+ *      and it is why the boundary oracle below is dropped rather than translated. */
+function groupTurns(chat: FixtureChat): FoldedTurn[] {
+  const out: FoldedTurn[] = [];
+  for (const m of chat.messages) {
+    if (m.role === "user") {
+      out.push({
+        prompt: m,
+        carrier: undefined,
+        outcome: undefined,
+        stopReason: "",
+        reason: m.turn_failure_reason ?? "",
+      });
+      continue;
+    }
+    const cur = out[out.length - 1];
+    if (cur === undefined) {
+      throw new Error(`${chat.chat_id}: ${m.role} row ${m.id} precedes every prompt`);
+    }
+    if (m.role === "assistant") {
+      cur.carrier = m;
+    }
+    if (m.turn_outcome !== undefined) {
+      cur.outcome = outcomeOf(m.turn_outcome, `${chat.chat_id}/${m.id}`);
+      cur.stopReason = m.turn_stop_reason_raw ?? "";
+    }
+    const prose = (m.turn_failure_reason ?? m.content ?? "").trim();
+    if (prose !== "") {
+      cur.reason = prose;
+    }
+  }
+  return out;
+}
+
+/** Build one turn's entries.
+ *
+ *  `block_count` and `tool_call_count` become that many body entries, because the fold
+ *  and face rules read the SHAPE of a turn's body — the deleted `rehydrate`'s own reason,
+ *  and it survives the model change. The first text entry carries the recorded prose and
+ *  the rest are empty, which is what the fixture's redaction left behind. */
+function entriesFor(turnID: string, t: FoldedTurn): { entries: Entry[]; closeAt?: number } {
+  const entries: Entry[] = [
+    entryAt(
+      turnID,
+      0,
+      "turn_open",
+      {
+        source: "prompt",
+        n: Number(turnID.slice(turnID.lastIndexOf("-") + 1)),
+        prompt: { id: t.prompt.id, text: t.prompt.content ?? "" },
+      },
+      `${turnID}-open`,
+    ),
+  ];
+  const carrier = t.carrier;
+  if (carrier !== undefined) {
+    const texts = carrier.block_count ?? 0;
+    for (let i = 0; i < texts; i++) {
+      entries.push(
+        entryAt(
+          turnID,
+          entries.length,
+          "text",
+          { text: i === 0 ? (carrier.content ?? "") : "" },
+          `${carrier.id}-t${String(i)}`,
+        ),
+      );
+    }
+    const calls = carrier.tool_call_count ?? 0;
+    for (let i = 0; i < calls; i++) {
+      const id = `tc-${carrier.id}-${String(i)}`;
+      entries.push(
+        entryAt(
+          turnID,
+          entries.length,
+          "tool_call",
+          { id, title: "Work", kind: "other", status: "completed", ts: carrier.ts },
+          id,
+        ),
+      );
+    }
+  }
+  if (t.outcome === undefined) {
+    return { entries };
+  }
+  const payload: EntryTurnClose = { outcome: t.outcome };
+  if (t.stopReason !== "") {
+    payload.stop_reason_raw = t.stopReason;
+  }
+  if (t.reason !== "") {
+    payload.failure_reason = t.reason;
+  }
+  const closeAt = entries.length;
+  entries.push(entryAt(turnID, closeAt, "turn_close", payload, `${turnID}-close`));
+  return { entries, closeAt };
+}
+
+/** Fold one fixture chat into the `TurnSource` the projection reads.
+ *
+ *  `closeAt` is SET for every settled turn and left absent only for a turn nothing
+ *  closed, because `hasOpenTurn` is a `closeAt === undefined` scan: a fold that
+ *  omitted it would make every turn of both records paint `working`. */
+function foldChat(chat: FixtureChat): TurnSource {
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const [i, t] of groupTurns(chat).entries()) {
+    const turnID = `${chat.chat_id}-turn-${String(i + 1)}`;
+    const built = entriesFor(turnID, t);
+    const state: TurnState = { entries: built.entries, openEntries: new Map() };
+    if (built.closeAt !== undefined) {
+      state.closeAt = built.closeAt;
+    }
+    turns.set(turnID, state);
+    order.push(turnID);
+  }
+  return { turns, turn_order: order };
+}
+
+function chatNamed(name: string): FixtureChat {
   const chat = fixture[name];
   if (chat === undefined) {
     throw new Error(`the fixture has no chat named ${name}`);
   }
-  // `thinking: false` — both records are settled conversations read off disk, which
-  // is the state a reload projects them in and the state both symptoms were seen in.
-  return projectTurns(chat.messages.map(rehydrate), false);
+  return chat;
+}
+
+function turnsOf(name: string): Turn[] {
+  return projectTurns(foldChat(chatNamed(name)));
 }
 
 beforeEach(() => {
@@ -116,9 +237,9 @@ describe("the reported chats project into the turns the report described", () =>
   });
 
   it("reads chat 2 as interrupted, cancelled", () => {
-    // Two turns, not three: the `interrupted` divider stays with the turn it
-    // describes rather than opening one of its own, which is the boundary rule the
-    // shared outcome fixture pins.
+    // Two turns, not three: the `interrupted` event row carries prose for the turn it
+    // follows and opens nothing, which under the entry model is the file's own shape
+    // rather than a boundary rule — only a `turn_open` opens a turn.
     expect(turnsOf("reported-interrupted-hollow-dot").map((t) => t.outcome)).toEqual([
       "interrupted",
       "cancelled",
@@ -142,17 +263,20 @@ describe("symptom 1: every failed turn now SAYS something", () => {
 
   it("gives chat 1 turn 2 a reason, where the only trace is a skipped marker", () => {
     // The second reported turn: an empty turn whose sole persisted row is a
-    // `turn_outcome` event with empty content, which EVENT_RENDER_MAP skips — so
-    // the body rendered literally nothing.
+    // `turn_outcome` event with empty content, which folds to a `turn_open` and a
+    // `turn_close` with NOTHING between them — so the body renders literally nothing
+    // and the notice is the turn's whole account of itself.
     const turn = turnsOf("reported-failed-no-reason")[1];
     expect(turn?.outcome).toBe("failed");
+    expect(turn?.body.filter((e) => e.kind !== "turn_close")).toEqual([]);
     expect(turn === undefined ? "" : turnFailureText(turn)).not.toBe("");
   });
 
   it("keeps chat 2's own upstream sentence rather than replacing it", () => {
-    // The one reason that WAS durable, and the fallback must not outrank it: this
-    // chat's interrupted divider carries KAS's own text, which is more specific
-    // than anything marotte can say.
+    // The one reason that WAS durable, and the fallback must not outrank it. Its
+    // carrier moved with the model — the divider's prose is `turn_close.failure_reason`
+    // now — and what it says is KAS's own text, more specific than anything marotte
+    // can say.
     const turn = turnsOf("reported-interrupted-hollow-dot")[0];
     expect(turn === undefined ? "" : turnFailureText(turn)).toBe(
       "A network error occurred. Please check your connection and try again.",
@@ -266,22 +390,34 @@ describe("the four surfaces agree, per turn, across both records", () => {
 // agree about, which is the only thing this file exists for.
 // ---------------------------------------------------------------------------
 
-describe("a turn NOTHING closed reads unknown and still says something", () => {
-  /** Chat 1's own first turn with its carrier removed — the shape the three server
-   *  sites produce (a prompt refused after its user row landed, a cancel during the
-   *  spawn window, a process death mid-turn): the user message persisted and nothing
-   *  else. Derived from the real record rather than authored, so the ids, roles and
-   *  timestamps are the ones a live chat file carries. */
-  function carrierlessFirstTurn(name: string): Turn {
-    const chat = fixture[name];
-    if (chat === undefined) {
-      throw new Error(`the fixture has no chat named ${name}`);
-    }
+describe("a turn whose end marotte could not read still says something", () => {
+  /** Chat 1's own first turn closed on `outcome` — derived from the real record
+   *  rather than authored, so the ids, roles and timestamps are a live chat file's.
+   *
+   *  UNDER THE ENTRY MODEL THE OUTCOME IS WRITTEN, so the three oracles below are
+   *  statements about `unknown` rather than about a missing carrier. */
+  function firstTurnAs(name: string, outcome: TurnOutcome): Turn {
+    const chat = chatNamed(name);
     const first = chat.messages[0];
     if (first?.role !== "user") {
       throw new Error(`${name} does not open on a user message, so this shape is not derivable`);
     }
-    const turns = projectTurns([rehydrate(first)], false);
+    const src = foldChat({ chat_id: chat.chat_id, messages: [first] });
+    const [turnID] = src.turn_order;
+    const state = turnID === undefined ? undefined : src.turns.get(turnID);
+    if (turnID === undefined || state === undefined) {
+      throw new Error(`the fold produced no turn for ${name}`);
+    }
+    state.closeAt = state.entries.length;
+    state.entries.push({
+      id: `${turnID}-close`,
+      turn: turnID,
+      kind: "turn_close",
+      seq: state.closeAt,
+      ts: first.ts,
+      payload: { outcome } satisfies EntryTurnClose,
+    });
+    const turns = projectTurns(src);
     const turn = turns[0];
     if (turns.length !== 1 || turn === undefined) {
       throw new Error(`projected ${String(turns.length)} turns, want 1`);
@@ -289,14 +425,8 @@ describe("a turn NOTHING closed reads unknown and still says something", () => {
     return turn;
   }
 
-  it("reads unknown rather than completed", () => {
-    // The whole of item 2, on a real record: `completed` reported a turn nobody
-    // closed as one that answered.
-    expect(carrierlessFirstTurn("reported-failed-no-reason").outcome).toBe("unknown");
-  });
-
   it("carries inline text, so the turn is not a mark over an empty body", () => {
-    expect(turnFailureText(carrierlessFirstTurn("reported-failed-no-reason"))).toBe(
+    expect(turnFailureText(firstTurnAs("reported-failed-no-reason", "unknown"))).toBe(
       "The turn ended for a reason marotte could not read.",
     );
   });
@@ -305,14 +435,30 @@ describe("a turn NOTHING closed reads unknown and still says something", () => {
     // `unknown` is graded `stopped`, so it must not paint red — the wire never
     // reported a failure — and must not paint the hollow ring either, because the
     // chat did run a turn.
-    expect(outcomeLatch(carrierlessFirstTurn("reported-failed-no-reason").outcome)).toBe("done");
+    expect(outcomeLatch(firstTurnAs("reported-failed-no-reason", "unknown").outcome)).toBe("done");
   });
 
   it("does not read the same for a turn that DID answer", () => {
     // The carve-out that stops the clause widening: chat 1's real first turn holds an
-    // assistant message, so it keeps its own settled outcome. Without this the case
+    // assistant carrier, so it keeps its own settled outcome. Without this the cases
     // above would pass for a rule that graded every turn `unknown`.
     expect(turnsOf("reported-failed-no-reason")[0]?.outcome).toBe("failed");
+  });
+
+  it("reads RUNNING while nothing has closed it, and grades it as no outcome at all", () => {
+    // The entry model's own answer for the shape the deleted derivation guessed at: a
+    // turn with no `turn_close` is not an outcome, it is a turn still going. So it
+    // says nothing and latches nothing, and `unknown` is what the appender writes once
+    // the turn is closed by something that could not say how it ended.
+    const chat = chatNamed("reported-failed-no-reason");
+    const first = chat.messages[0];
+    if (first === undefined) {
+      throw new Error("the fixture chat is empty");
+    }
+    const [open] = projectTurns(foldChat({ chat_id: chat.chat_id, messages: [first] }));
+    expect(open?.outcome).toBe("running");
+    expect(open === undefined ? "x" : turnFailureText(open)).toBe("");
+    expect(outcomeLatch(open?.outcome)).toBe("");
   });
 });
 
@@ -390,15 +536,3 @@ describe("the fixture is the real record, not a hand-written one", () => {
     ).toContain("network error");
   });
 });
-
-/** Type-only: the fixture's outcome strings must all be real `TurnOutcome`s. A
- *  compile-time assertion rather than a runtime one — if the fixture ever carried a
- *  value the wire cannot send, the casts in `rehydrate` would hide it at runtime
- *  while this line keeps the vocabulary honest. */
-const _outcomeVocabulary: readonly TurnOutcome[] = [
-  "failed",
-  "completed",
-  "interrupted",
-  "cancelled",
-];
-void _outcomeVocabulary;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMcpGovernance } from "./mcp-ui.js";
+import { applyMcpGovernance, type McpGovernanceEls } from "./mcp-ui.js";
 import type { GovernanceStatePayload } from "./types.js";
 
 function govState(over: Partial<GovernanceStatePayload> = {}): GovernanceStatePayload {
@@ -19,56 +19,65 @@ function govState(over: Partial<GovernanceStatePayload> = {}): GovernanceStatePa
   };
 }
 
-function fixtures(): { add: HTMLButtonElement; notice: HTMLParagraphElement } {
-  const add = document.createElement("button");
+function fixtures(): McpGovernanceEls {
   const notice = document.createElement("p");
   notice.hidden = true;
-  return { add, notice };
+  return { add: document.createElement("button"), notice, empty: document.createElement("p") };
+}
+
+function govOff(over: Partial<GovernanceStatePayload> = {}): GovernanceStatePayload {
+  return govState({ features: { ...govState().features, mcp_enabled: false }, ...over });
 }
 
 describe("applyMcpGovernance", () => {
   it("disables the add affordance + shows the notice when MCP is org-disabled", () => {
-    const { add, notice } = fixtures();
-    applyMcpGovernance(
-      govState({ features: { ...govState().features, mcp_enabled: false } }),
-      add,
-      notice,
-    );
-    expect(add.disabled).toBe(true);
-    expect(add.getAttribute("data-tooltip")).toContain("disabled by your organization");
-    expect(notice.hidden).toBe(false);
-    expect(notice.textContent).toContain("disabled by your organization");
+    const els = fixtures();
+    applyMcpGovernance(govOff(), els);
+    expect(els.add.disabled).toBe(true);
+    expect(els.add.getAttribute("data-tooltip")).toContain("disabled by your organization");
+    expect(els.notice.hidden).toBe(false);
+    expect(els.notice.textContent).toContain("disabled by your organization");
   });
 
   it("includes the disabledReason in the notice when present", () => {
-    const { add, notice } = fixtures();
-    applyMcpGovernance(
-      govState({
-        disabled_reason: "Blocked by policy X",
-        features: { ...govState().features, mcp_enabled: false },
-      }),
-      add,
-      notice,
-    );
-    expect(notice.textContent).toContain("Blocked by policy X");
+    const els = fixtures();
+    applyMcpGovernance(govOff({ disabled_reason: "Blocked by policy X" }), els);
+    expect(els.notice.textContent).toContain("Blocked by policy X");
   });
 
   it("leaves the affordance enabled when MCP is allowed", () => {
-    const { add, notice } = fixtures();
-    applyMcpGovernance(govState(), add, notice);
-    expect(add.disabled).toBe(false);
-    expect(notice.hidden).toBe(true);
+    const els = fixtures();
+    applyMcpGovernance(govState(), els);
+    expect(els.add.disabled).toBe(false);
+    expect(els.notice.hidden).toBe(true);
   });
 
   it("stays permissive while the policy is unknown", () => {
-    const { add, notice } = fixtures();
+    const els = fixtures();
     // Known=false → treat as unknown: don't disable even though mcp_enabled is false.
-    applyMcpGovernance(
-      govState({ known: false, features: { ...govState().features, mcp_enabled: false } }),
-      add,
-      notice,
+    applyMcpGovernance(govOff({ known: false }), els);
+    expect(els.add.disabled).toBe(false);
+    expect(els.notice.hidden).toBe(true);
+  });
+
+  // The empty state's call to action names the add button, so it has to follow
+  // the same policy: telling a reader to click a disabled control is the one
+  // instruction the section can give that cannot be followed.
+  it("stops the empty state naming the add button when the gate is off", () => {
+    const els = fixtures();
+    applyMcpGovernance(govOff(), els);
+    expect(els.empty.textContent).not.toContain("Click +");
+    expect(els.empty.textContent).toBe(
+      "No integrations connected, and none can be added while MCP is disabled.",
     );
-    expect(add.disabled).toBe(false);
-    expect(notice.hidden).toBe(true);
+  });
+
+  it("restores the call to action when the gate is on", () => {
+    const els = fixtures();
+    applyMcpGovernance(govOff(), els);
+    applyMcpGovernance(govState(), els);
+    expect(els.empty.textContent).toBe(
+      "No integrations connected yet. Click + to search the official MCP registry or paste a config.",
+    );
   });
 });

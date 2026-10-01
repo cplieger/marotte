@@ -23,6 +23,7 @@ import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { $, byId } from "./dom.js";
 import { guardDuplicateActivation, initSidebarSwipe } from "./platform.js";
+import { initShellViewport } from "./shell-viewport.js";
 import { initPointerTier } from "./pointer-tier.js";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
 import { initPageTitleFit } from "./page-title.js";
@@ -55,6 +56,7 @@ import { showRun, refreshRun } from "./run-view.js";
 import { showSubagent, refreshSubagent } from "./subagent-view.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
+import { initLinkifyCallbacks } from "./linkify.js";
 import { initFileBrowser } from "./files.js";
 import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
@@ -92,8 +94,13 @@ import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
 
+// Registers the failure toast's bus subscription. Explicit rather than inherited
+// through `handlers/turn.js`, which imports `reportFailure` directly: with the
+// transport now reporting over the bus, that import is the only thing loading this
+// module, so dropping it would silence every transport failure with nothing failing.
+import "./failure-notice.js";
 import "./handlers/chat.js";
-import "./handlers/messages.js";
+import "./handlers/entries.js";
 import "./handlers/turn.js";
 import "./handlers/system.js";
 import "./handlers/open-external-url.js";
@@ -170,6 +177,20 @@ function init(): void {
     // No close half for the same reason: a subagent page is a projection of blocks the
     // chat store owns, so it starts nothing and can stop nothing.
     subagent: { show: showSubagent, refresh: refreshSubagent },
+    // Lazily imported: the page module carries the markdown renderer and the task
+    // tree, and a session that never opens a spec tab should not pay for either.
+    spec: {
+      show: (dir) => {
+        void import("./spec-view.js").then((m) => {
+          m.showSpec(dir);
+        });
+      },
+      refresh: (dir) => {
+        void import("./spec-view.js").then((m) => {
+          m.refreshSpec(dir);
+        });
+      },
+    },
   });
 
   setOnEmpty(() => {
@@ -255,6 +276,10 @@ function init(): void {
   // One opener for BOTH pill homes. Injected because attachment-pill.ts is a leaf and
   // one of its consumers is a pure `fundamentals/` view.
   initAttachmentPillCallbacks({ open: openAtLine });
+  // The same opener for an inline path link in rendered prose. Injected for the same
+  // reason one rung out: the markdown renderer reaches linkify, and `editor-markdown`
+  // reaches the renderer, so linkify importing the opener closed a ring.
+  initLinkifyCallbacks({ open: openAtLine });
   initTaskListPill();
   // Through the same dispatcher as Ctrl-F, so the two cannot mean different things. A
   // direct find-in-chat call made this a dead control on /files and /file/{path}.
@@ -304,6 +329,7 @@ function init(): void {
   initTooltips();
   initLoginModal(onLoginSuccess);
   initSidebarSwipe($.chatArea, $.sidebar);
+  initShellViewport();
   initKeyboardShortcuts({
     newChat: () => {
       // DETACHED: closing the sidebar is independent of whether the chat lands, and

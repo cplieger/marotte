@@ -38,15 +38,21 @@ vi.mock("./confirm.js", () => ({ confirm: async () => false }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: noop }));
 vi.mock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
 vi.mock("./run-view.js", () => ({ openRunView: noop }));
+// The dock's queue, which a run row reads for its `input` mark: the real module
+// builds the three ask cards and reaches actions/index.js past the one symbol
+// stubbed above. No run here has an ask.
+vi.mock("./decision-dock.js", () => ({
+  runPendingAsks: () => ({ count: 0, nodes: new Set<string>(), label: "" }),
+}));
 // The transcript's find, which a search row hands its hit to: its graph reaches
 // the block dispatcher and the store, neither of which this suite stages.
 vi.mock("./find-in-chat.js", () => ({ openChatFindAt: noop }));
 vi.mock("./tabs.js", () => ({
-  // The toggle takes no callback now: the tab factory owns the page's loader.
-  // The suite mounts the page itself, so this only has to resolve.
-  toggleHistoryView: () => Promise.resolve(),
   hasTab: () => false,
+  // The pane's route sync: a no-op here, because no tab is open to point.
+  setHistoryTab: noop,
 }));
+vi.mock("./router.js", () => ({ pushRoute: noop }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   skeletonTiming: () => ({ cancel: noop }),
 }));
@@ -55,7 +61,15 @@ vi.mock("./editor-openers.js", () => ({
   openFile: undefined,
   openFileGitDiff: undefined,
 }));
-vi.mock("./navigate.js", () => ({ openChange: noop, openAtLine: noop, openCallDiff: noop }));
+// `openSpec` is here for the LINK, not for a case: a module in this graph imports
+// it, and Browser Mode links for real rather than reading properties off a
+// namespace object, so one missing export fails the whole file.
+vi.mock("./navigate.js", () => ({
+  openChange: noop,
+  openAtLine: noop,
+  openCallDiff: noop,
+  openSpec: noop,
+}));
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: noop,
   preserveReadingPosition: (fn: () => void) => {
@@ -73,9 +87,17 @@ describe("a11y: History row accessible names", () => {
   // word has exactly one home, that control's accessible name, and must not be
   // duplicated as visible text beside the glyph it replaced.
   it("a settled run row names the outcome once, in the accessible name only", async () => {
-    const host = document.createElement("div");
-    host.id = "history-table";
-    document.body.appendChild(host);
+    const view = document.createElement("div");
+    view.id = "history-view";
+    view.innerHTML = `
+      <nav id="history-tab-bar" aria-label="History categories">
+        <button type="button" class="seg" data-history-tab="chats"><span class="seg-label">Chats</span></button>
+        <button type="button" class="seg" data-history-tab="runs"><span class="seg-label">Runs</span></button>
+      </nav>
+      <div data-history-panel="chats"><div id="history-table" class="list-container" role="list"></div></div>
+      <div data-history-panel="runs" class="hidden"><div id="history-runs" class="list-container" role="list"></div></div>`;
+    document.body.appendChild(view);
+    const host = document.getElementById("history-runs")!;
 
     loadHistoryView();
     refreshHistoryView();
@@ -86,16 +108,17 @@ describe("a11y: History row accessible names", () => {
     });
 
     const row = host.querySelector<HTMLElement>('[data-key="r:wf_a11y"]')!;
-    // The row is a plain container; its two controls are siblings.
-    expect(row.getAttribute("role")).toBeNull();
+    // The row is a list item, not a control; its open button and its delete button
+    // are siblings inside it.
+    expect(row.getAttribute("role")).toBe("listitem");
     expect(row.getAttribute("tabindex")).toBeNull();
-    const open = row.querySelector<HTMLElement>("button.history-row-main")!;
+    const open = row.querySelector<HTMLElement>("button.entry-open")!;
     // The name still opens with the action, then states the verdict.
     expect(open.getAttribute("aria-label")).toBe("Open nightly-sweep, failed");
     // The slot carrying the mark is decorative: the name already says the word.
     expect(row.querySelector(".tool-icon")?.getAttribute("aria-hidden")).toBe("true");
     expect(row.textContent).not.toContain("failed");
 
-    document.body.removeChild(host);
+    document.body.removeChild(view);
   });
 });

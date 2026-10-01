@@ -9,16 +9,11 @@
 // renders it as a placeholder + tooltip (see status.ts note). It is ADVISORY: it
 // no longer disables the composer, because kiro-cli compacts on the next turn,
 // so refusing the send told the user about a problem they could do nothing about.
-// There is no module-global previous-thinking flag anymore: it used to detect the
-// active chat's thinking→idle transition to (a) emit a `turn:idle` bus event that
-// drained the model-switch queue and (b) toggle the input disable. Both were
-// active-chat-only and cross-contaminated across chats. (a) now drains from the
-// per-chat `turn_ended` SSE (handlers/turn.ts →
-// model-switcher.drainModelSwitchQueue); (b) is this continuous per-active-chat
-// signal. So no transition state — per-chat or global — is needed here.
+// There is no module-global previous-thinking flag: this is a continuous per-active-chat
+// signal, so no transition state — per-chat or global — is needed here.
 // ---------------------------------------------------------------------------
 
-import type { Session, MeteringItem } from "./types.js";
+import type { Session, MeteringItem, TurnState } from "./types.js";
 import { updateContextBar } from "./status.js";
 import { getActiveId } from "./store.js";
 import { contextFull } from "./prompt-input.js";
@@ -26,6 +21,7 @@ import { effortPillLabel } from "./effort.js";
 import { getCachedModels } from "./picker.js";
 import { getLastEffortFor } from "./session-context.js";
 import { KAS_SUMMARIZATION_PCT, KAS_TRUNCATION_PCT } from "./context-ring.js";
+import { entryRenders } from "./block-window.js";
 
 // The live cutoff, derived from the model's real window: a flat percentage leaves
 // tens of thousands of tokens of slack on a large one. KAS_TRUNCATION_PCT is its
@@ -38,33 +34,75 @@ const CONTEXT_RESERVE_TOKENS = 16_000;
 // than declaring it here) keeps the light send-state → prompt-input import chain
 // free of this module + status.ts.
 
-/** How many of the loaded messages the compaction watermark covers, or
- *  undefined when this window cannot say.
- *
- *  The boundary is found FIRST and only then measured: counting while scanning
- *  makes an unmet condition indistinguishable from a satisfied one, so a
- *  watermark that is not resident — the ordinary state of a paged chat, and
- *  permanent after a rewind — counted every loaded message. 0 is not the answer
- *  for that case either; it keeps meaning the chat has no watermark. */
+/** The `seq` of each lane's first `plan` entry, the one that renders: hoisted per turn for
+ *  `entryRenders` and shared by both counts, so the reachable set has ONE definition.
+ *  block-window.ts's `firstPlanSeq` answers it over a PROJECTED turn's `body` while this
+ *  side holds a store `TurnState`, and the two are meant to agree. */
+function firstPlanByLane(t: TurnState): Map<string, number> {
+  const firstPlan = new Map<string, number>();
+  for (const e of t.entries) {
+    const lane = e.lane ?? "";
+    if (e.kind === "plan" && !firstPlan.has(lane)) {
+      firstPlan.set(lane, e.seq);
+    }
+  }
+  return firstPlan;
+}
+
+/** How many of the REACHABLE entries the compaction watermark covers, or undefined when
+ *  this window cannot say. Counted over `entryRenders`' set, the one `entryCount` reports,
+ *  because status.ts renders the pair as ONE string; the boundary is still looked for over
+ *  every entry, so a watermark on a row nothing draws is found rather than lost. The count
+ *  is kept only when it IS found, which keeps an unmet condition distinguishable from a
+ *  satisfied one: a watermark that is not resident — the ordinary state of a paged chat,
+ *  and permanent after a rewind — discards the scan, and 0 keeps meaning the chat has no
+ *  watermark rather than standing in for that. */
 function summarizedCount(s: Session): number | undefined {
   const watermark = s.compaction_watermark ?? "";
   if (watermark === "") {
     return 0;
   }
-  const idx = s.messages.findIndex((m) => m.id === watermark);
-  return idx < 0 ? undefined : idx + 1;
+  let seen = 0;
+  for (const turnID of s.turn_order) {
+    const t = s.turns.get(turnID);
+    if (t === undefined) {
+      continue;
+    }
+    const firstPlan = firstPlanByLane(t);
+    for (const e of t.entries) {
+      const lane = e.lane ?? "";
+      if (entryRenders(e, lane, firstPlan.get(lane) ?? -1)) {
+        seen++;
+      }
+      if (e.id === watermark) {
+        return seen;
+      }
+    }
+  }
+  return undefined;
 }
 
 export function refreshContextUI(s: Session): void {
   const u = s.usage;
   const metering: MeteringItem[] = u.metering_items ?? [];
-  // Count messages and tool calls for the context breakdown.
-  let msgCount = 0;
+  // Rows the reader can REACH, per entry's own lane: `entryRenders` is the test, delegates included.
+  let entryCount = 0;
   let toolCount = 0;
-  for (const m of s.messages) {
-    msgCount++;
-    if (m.tool_calls !== undefined) {
-      toolCount += m.tool_calls.length;
+  for (const turnID of s.turn_order) {
+    const t = s.turns.get(turnID);
+    if (t === undefined) {
+      continue;
+    }
+    const firstPlan = firstPlanByLane(t);
+    for (const e of t.entries) {
+      const lane = e.lane ?? "";
+      if (!entryRenders(e, lane, firstPlan.get(lane) ?? -1)) {
+        continue;
+      }
+      entryCount++;
+      if (e.kind === "tool_call") {
+        toolCount++;
+      }
     }
   }
   const summarized = summarizedCount(s);
@@ -75,7 +113,7 @@ export function refreshContextUI(s: Session): void {
     contextSize: u.context_size,
     summarizationPct,
     credits: u.credits,
-    turnCount: u.turn_count,
+    turnCount: s.turn_count,
     lastTurnMs: u.last_turn_ms,
     model: s.model,
     // The reasoning tier the chat runs at (effort.ts resolves it, under the
@@ -85,8 +123,11 @@ export function refreshContextUI(s: Session): void {
     // write lands, when the session reports a new currentValue, and when a model
     // switch changes which default applies.
     effort: effortPillLabel(s, getCachedModels(), getLastEffortFor(s.model)),
+    // The header's own field, so a pick made on another device and a pick applied at a
+    // turn's close both reach the badge without a local queue.
+    pendingModel: s.pending_model ?? "",
     metering,
-    msgCount,
+    entryCount,
     toolCount,
     // Withheld rather than sent as a number when the window cannot say. The
     // renderer already prints nothing for an absent count, so "unknowable" and

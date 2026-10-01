@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { join } from "@cplieger/keyenc";
+import { BUS_COMMAND_FAILED, onBus } from "./bus.js";
 import { error as toastError, errorWithAction, type ToastRetry } from "./toast.js";
 import { get } from "./store.js";
 import { activateTab, getActiveTabId, tabIdFor } from "./tabs.js";
@@ -102,6 +103,16 @@ export function reportFailure(
     live.set(chatID, dismiss);
   }
 }
+
+// --- Bus: report a failed command POST without the transport importing this ---
+//
+// The transport cannot call in directly: `raise` below reaches the tab store to
+// name and jump to the affected chat, and the tab store reaches the transport to
+// dispatch its own mutations. `app.ts` imports this module for the side effect, so
+// the subscription is registered whether or not anything imports a name from it.
+onBus(BUS_COMMAND_FAILED, ({ chatID, message }) => {
+  reportFailure(chatID, message);
+});
 
 /** Whether the reader is ALREADY LOOKING at the durable report of this failure, so a
  *  corner overlay would be a second copy of it. Four conjuncts, each a case that must

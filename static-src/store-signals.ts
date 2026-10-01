@@ -11,39 +11,40 @@ import { join } from "@cplieger/keyenc";
 
 // --- Signal registry instances ---
 
-/** One per-block streaming write: the block's accumulated text plus the growth
+/** One per-entry streaming write: the open entry's accumulated text plus the growth
  *  this write carries, so a consumer can append `delta` instead of re-deriving
  *  the tail from an ever-longer `full`.
  *
  *  INVARIANT: the pair is meaningful only under @cplieger/reactive's
  *  synchronous flush contract — a write re-runs every subscribed effect before
- *  the setter returns, so a consumer observes one value per chunk with none
+ *  the setter returns, so a consumer observes one value per delta with none
  *  skipped. A batching layer between writer and effect would coalesce writes
  *  into a value whose `delta` no longer bridges the consumer's text to `full`,
  *  corrupting streamed prose silently. That dependency is why consumers keep a
  *  watermark (`accepted + delta.length === full.length`) and resync from `full`
  *  on any mismatch. */
-export interface BlockSignalValue {
+export interface EntrySignalValue {
   readonly full: string;
   readonly delta: string;
 }
 
-/** Per-(message-id, block-index) streaming text signal. Used by the
- *  block-aware renderer so each text block in a chronological assistant
- *  message subscribes only to its own deltas — chunks for block N
- *  don't trigger re-renders on block N-1. Key format: `${msgID}:${idx}`. */
-export const blockTextSigs = new SignalMap<BlockSignalValue>();
+/** The STREAMING signal, one per OPEN entry, keyed `(turn, entryID)`: `openEntry`
+ *  mints it, `applyDelta` writes it, `sealEntry` retires it. The entry's kind is on
+ *  the entry, so text and thinking share one map — a subscriber addresses the entry
+ *  it mounted and needs no second question about what is in it. */
+export const entryTextSigs = new SignalMap<EntrySignalValue>();
 
-/** Per-(message-id, block-index) streaming thinking signal. Same
- *  rationale as blockTextSigs — chronologically interleaved thinking
- *  blocks each get their own subscription. */
-export const blockThinkingSigs = new SignalMap<BlockSignalValue>();
+/** The COARSE signal, one per `(turn, lane)`, a version bumped on every open, delta,
+ *  seal and laned append in that lane. It is what a surface that is not the entry's
+ *  own bubble subscribes to — the subagent tail, a delegate's detached page — in place
+ *  of the whole chat's transcript version. */
+export const laneSigs = new SignalMap<number>();
 
 /** Per-(chat-id, tool-call-id) signal.
  *
  *  The chat is part of the key because a tool call id is BACKEND-authored and
- *  the wire carries no uniqueness guarantee for it, while `upsertToolCall` runs
- *  for whatever chat a frame arrived on — a background chat's data lands
+ *  the wire carries no uniqueness guarantee for it, while a `tool_progress` frame
+ *  arrives for whatever chat sent it — a background chat's data lands
  *  unconditionally and only the repaint is gated. Keyed on the call id alone, a
  *  collision wrote a background chat's card state into the visible chat's card,
  *  for as long as that card stayed mounted. */
@@ -74,81 +75,111 @@ export function peekToolCallSig(chatID: string, toolID: string): ToolCall | unde
   return toolCallSigs.get(toolCallSigKey(chatID, toolID))?.peek();
 }
 
-/** Key helper for per-(message, block-index) signal maps. */
-export function blockKey(messageID: string, blockIndex: number): string {
-  return `${messageID}:${String(blockIndex)}`;
+/** Key for the streaming signal. Both components are upstream text (an entry id is
+ *  KAS's own record id), so the separator goes through keyenc. */
+export function entryKey(turnID: string, entryID: string): string {
+  return join(turnID, entryID);
 }
 
-/** Keys minted per message across BOTH block-signal maps, so a message's
- *  disposal can clear its signals without enumerating the maps (SignalMap
- *  exposes no key walk). One set serves both maps: text and thinking share the
- *  key format, and clearing a key the other map never held is a no-op. */
-const blockSigKeysByMsg = new Map<string, Set<string>>();
+/** Key for the coarse signal. The empty lane is the log's own agent, which is a
+ *  VALUE rather than an absence, so it keys like any other. */
+export function laneKey(turnID: string, lane: string): string {
+  return join(turnID, lane);
+}
 
-function noteBlockKey(messageID: string, key: string): void {
-  let keys = blockSigKeysByMsg.get(messageID);
+/** Keys minted per turn across both maps, so a turn's disposal can clear its
+ *  signals without enumerating them (SignalMap exposes no key walk). */
+const sigKeysByTurn = new Map<string, { entries: Set<string>; lanes: Set<string> }>();
+
+function keysFor(turnID: string): { entries: Set<string>; lanes: Set<string> } {
+  let keys = sigKeysByTurn.get(turnID);
   if (keys === undefined) {
-    keys = new Set();
-    blockSigKeysByMsg.set(messageID, keys);
+    keys = { entries: new Set(), lanes: new Set() };
+    sigKeysByTurn.set(turnID, keys);
   }
-  keys.add(key);
+  return keys;
 }
 
-export function ensureBlockTextSig(
-  messageID: string,
-  blockIndex: number,
+/** Mint or fetch an open entry's streaming signal. `initial` is the text the entry
+ *  arrived with, which is already on screen, so the pair carries no growth. */
+export function ensureEntryTextSig(
+  turnID: string,
+  entryID: string,
   initial: string,
-): Signal<BlockSignalValue> {
-  const key = blockKey(messageID, blockIndex);
-  noteBlockKey(messageID, key);
-  // A signal minted at mount carries no growth: `initial` is already on screen.
-  return blockTextSigs.ensure(key, { full: initial, delta: "" });
+): Signal<EntrySignalValue> {
+  const key = entryKey(turnID, entryID);
+  keysFor(turnID).entries.add(key);
+  return entryTextSigs.ensure(key, { full: initial, delta: "" });
 }
 
-export function ensureBlockThinkingSig(
-  messageID: string,
-  blockIndex: number,
-  initial: string,
-): Signal<BlockSignalValue> {
-  const key = blockKey(messageID, blockIndex);
-  noteBlockKey(messageID, key);
-  return blockThinkingSigs.ensure(key, { full: initial, delta: "" });
+/** The open entry's streaming signal, or undefined when nothing minted one. */
+export function entryTextSig(
+  turnID: string,
+  entryID: string,
+): Signal<EntrySignalValue> | undefined {
+  return entryTextSigs.get(entryKey(turnID, entryID));
 }
 
-export function clearToolCallSig(chatID: string, toolID: string): void {
-  toolCallSigs.clear(toolCallSigKey(chatID, toolID));
+/** Write one delta into an open entry's signal. Reports whether a cell EXISTS for the entry,
+ *  which is a weaker fact than a subscriber: `openEntry` mints one per live stream and a
+ *  mounted surface mints its own, so false means only that neither has happened yet. */
+export function writeEntryText(
+  turnID: string,
+  entryID: string,
+  full: string,
+  delta: string,
+): boolean {
+  const sig = entryTextSigs.get(entryKey(turnID, entryID));
+  if (sig === undefined) {
+    return false;
+  }
+  sig.value = { full, delta };
+  return true;
 }
 
-/** Drop ONE block's streaming signals, for a range the window dropped. Removes
- *  the key from the per-message set too, so the sweep below does not later
- *  iterate a key nothing holds. */
-export function clearBlockSig(messageID: string, blockIndex: number): void {
-  const key = blockKey(messageID, blockIndex);
-  blockTextSigs.clear(key);
-  blockThinkingSigs.clear(key);
-  blockSigKeysByMsg.get(messageID)?.delete(key);
+/** Retire one entry's streaming signal: the seal is the end of its growth. */
+export function clearEntryTextSig(turnID: string, entryID: string): void {
+  const key = entryKey(turnID, entryID);
+  entryTextSigs.clear(key);
+  sigKeysByTurn.get(turnID)?.entries.delete(key);
 }
 
-/** Drop one message's per-block streaming signals. The per-message half of
- *  `clearAllBlockSigs`: without it a block signal lives until the last chat
- *  closes, one entry per streamed block, for the whole page's life. */
-export function clearBlockSigsFor(messageID: string): void {
-  const keys = blockSigKeysByMsg.get(messageID);
+/** Subscribe to a lane's coarse signal. */
+export function laneSig(turnID: string, lane: string): Signal<number> {
+  const key = laneKey(turnID, lane);
+  keysFor(turnID).lanes.add(key);
+  return laneSigs.ensure(key, 0);
+}
+
+/** Bump a lane's coarse signal. Every open, delta, seal and laned append in the
+ *  lane goes through here, so a lane subscriber needs no entry-id lookup. */
+export function bumpLane(turnID: string, lane: string): void {
+  const key = laneKey(turnID, lane);
+  keysFor(turnID).lanes.add(key);
+  const sig = laneSigs.ensure(key, 0);
+  sig.value = sig.peek() + 1;
+}
+
+/** Drop every signal a turn minted, both maps. Without it a signal lives until the
+ *  last chat closes, one entry per streamed entry, for the whole page's life. */
+export function clearTurnSigs(turnID: string): void {
+  const keys = sigKeysByTurn.get(turnID);
   if (keys === undefined) {
     return;
   }
-  for (const k of keys) {
-    blockTextSigs.clear(k);
-    blockThinkingSigs.clear(k);
+  for (const k of keys.entries) {
+    entryTextSigs.clear(k);
   }
-  blockSigKeysByMsg.delete(messageID);
+  for (const k of keys.lanes) {
+    laneSigs.clear(k);
+  }
+  sigKeysByTurn.delete(turnID);
 }
 
-/** Drop every per-(message, block-index) streaming signal. Called on full
- *  teardown (last chat closed); per-message disposal goes through
- *  `clearBlockSigsFor`. */
-export function clearAllBlockSigs(): void {
-  blockTextSigs.clearAll();
-  blockThinkingSigs.clearAll();
-  blockSigKeysByMsg.clear();
+/** Drop every streaming and lane signal. Called on full teardown (last chat closed);
+ *  per-turn disposal goes through `clearTurnSigs`. */
+export function clearAllEntrySigs(): void {
+  entryTextSigs.clearAll();
+  laneSigs.clearAll();
+  sigKeysByTurn.clear();
 }

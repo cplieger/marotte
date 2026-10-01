@@ -82,21 +82,9 @@ func (in *inbound) respondFSRead(ctx context.Context, chatID marotte.ChatID, msg
 		in.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	// Agent-ignore-files filter: refuse the read when the path matches a user
-	// ignore rule (Settings → Permissions). Writes are NOT blocked (git
-	// semantics: an ignored file stays writable). rel comes from the
-	// confinement, so the filter judges the same string the read is named by.
-	// The stat is confined too and exists only for the isDir hint.
-	if in.ignore != nil {
-		isDir := false
-		if info, statErr := root.Stat(rel); statErr == nil {
-			isDir = info.IsDir()
-		}
-		if in.ignore.Matches(ctx, rel, isDir) {
-			in.respondFSError(ctx, chatID, msg, errIgnored)
-			return
-		}
-	}
+	// No agent-ignore filter here: KAS enforces the list itself, ahead of any
+	// rule. marotte's side is the file LIST it sends at the connection door.
+	//
 	// A confined, bounded read: the size bound is taken from the open
 	// DESCRIPTOR rather than a stat-then-open pathname (which could describe a
 	// different file by the time it opens), a named pipe at the name is

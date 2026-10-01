@@ -18,11 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/marotte/internal/ids"
+	"github.com/cplieger/marotte/internal/chat"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procout"
 	"github.com/cplieger/marotte/internal/sanitize"
-	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
@@ -33,38 +32,19 @@ const ShellOutputCap = 1 * 1024 * 1024
 // future settings overrides can reference the default.
 const ShellTimeout = 30 * time.Second
 
-// appendShellUserMessage persists the user's "!cmd" message and, on the
-// chat's first message, derives an initial chat name from the command text.
-// Returns whether the message was persisted (false when the chat record
-// doesn't exist).
-func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, chatID marotte.ChatID, msg *marotte.Message, text string) (persisted bool, err error) {
-	version, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			c.Name = marotte.DefaultChatName
-		}
-		c.Messages = append(c.Messages, *msg)
-		if c.Name == marotte.DefaultChatName && len(c.Messages) == 1 {
-			name := TruncateRunes(text, 80)
-			if name != text {
-				name += ellipsis
-			}
-			c.Name = name
-		}
-		persisted = true
-		return true
-	})
-	if err != nil || !persisted {
-		return persisted, err
+// shellChatName is the header fallback for a `!cmd` on a chat no record exists
+// for: the command text's first 80 runes, the shell's own naming rule.
+func shellChatName(text string) string {
+	name := TruncateRunes(text, 80)
+	if name != text {
+		name += ellipsis
 	}
-	// After the save, stamped from its return: the frame completes the transcript
-	// projection for this mutation.
-	frame := marotte.NewEvent(marotte.EventMessageAppended, chatID, msg)
-	frame.Subject = marotte.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
-	bus.Broadcast(ctx, frame)
-	return persisted, nil
+	return name
 }
 
-// HandleShellInterception runs a "!" prefixed prompt as a local shell command.
+// HandleShellInterception runs a "!" prefixed prompt as a local shell command:
+// one turn of three entries, the turn_open carrying the command as its prompt,
+// one text entry carrying the output, and the turn_close.
 func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *marotte.ClientCommand, p *marotte.PromptCommand) (any, error) {
 	shellCmd := strings.TrimPrefix(p.Text, "!")
 	shellCmd = strings.TrimSpace(shellCmd)
@@ -75,35 +55,29 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *marot
 	// Admission: the same per-chat reservation a prompt takes, as a try —
 	// never a wait. One mechanism serializes prompts and shells, whatever
 	// state the bridge is in.
-	if !roles.turnOutcome.TryReserveTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
+	if !roles.admission.TryReserveTurn(cmd.ChatID, marotte.TurnSourceLocalShell) {
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}
-	defer roles.turnOutcome.ReleaseTurnReservation(cmd.ChatID)
+	defer roles.admission.ReleaseTurnReservation(cmd.ChatID)
 
 	roles.lifecycle.InflightAdd(1)
 	defer roles.lifecycle.InflightDone()
 
-	// Persist the user message.
-	userMsg := marotte.Message{
-		ID: p.MessageID, Role: marotte.RoleUser, Ts: time.Now().UnixMilli(),
-		Content: p.Text,
-	}
-	persisted, err := appendShellUserMessage(ctx, roles.chats, roles.bus, cmd.ChatID, &userMsg, p.Text)
+	turnID, err := roles.turnOutcome.OpenTurn(ctx, cmd.ChatID, marotte.TurnSourceLocalShell,
+		&marotte.EntryPrompt{ID: p.MessageID, Text: p.Text},
+		func(c *marotte.Chat) { c.Name = shellChatName(p.Text) })
 	if err != nil {
+		if errors.Is(err, chat.ErrTombstoned) {
+			return nil, StatusError(http.StatusConflict, ErrChatNotFound)
+		}
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
-	if !persisted {
-		return nil, StatusError(http.StatusConflict, ErrChatNotFound)
-	}
-
-	// The shell turn opens a turn like any other: without a record its end
-	// would be a broadcast nothing owned. A zero epoch is the source rule
-	// refusing while an agent turn is open.
-	epoch := roles.turnOutcome.StartTurn(ctx, cmd.ChatID, marotte.TurnSourceLocalShell)
-	if epoch == 0 {
+	defer roles.turnOutcome.ReleaseTurn(cmd.ChatID, turnID)
+	nameDefaultChat(ctx, roles.chats, cmd.ChatID, p.Text)
+	if !roles.turnOutcome.StartTurn(ctx, cmd.ChatID, turnID) {
+		roles.turnOutcome.AbandonInFlightTurn(ctx, cmd.ChatID, turnID, marotte.StopReasonCancelled, "")
 		return nil, StatusError(http.StatusConflict, errBusy)
 	}
-	defer roles.turnOutcome.ReleaseTurn(cmd.ChatID, epoch)
 
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))
 	start := time.Now()
@@ -137,22 +111,22 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *marot
 		"timed_out", timedOut,
 		"truncated", capped.Truncated())
 
-	content := renderShellResult(output, runErr, timedOut)
-	msgID := ids.NewMessageID()
-	assistantMsg := marotte.Message{
-		ID: msgID, Role: marotte.RoleAssistant, Ts: time.Now().UnixMilli(),
-		Content: content,
-	}
-	// AppendMessage broadcasts the message_appended itself, stamped from the save;
-	// a second broadcast here would be a frame with no version source.
-	appendErr := roles.chats.AppendMessage(ctx, cmd.ChatID, &assistantMsg)
-	if appendErr != nil {
-		slog.Error("shell interception: persist output", "chat_id", cmd.ChatID, keyError, appendErr)
-	}
-	if _, stillExists := roles.chats.Get(ctx, cmd.ChatID); stillExists {
-		roles.turnOutcome.FinalizeLocalShellTurn(ctx, cmd.ChatID, epoch)
-	}
+	roles.turnOutcome.FinalizeLocalShellTurn(ctx, cmd.ChatID, turnID, renderShellResult(output, runErr, timedOut))
 	return responseOK, nil
+}
+
+// nameDefaultChat gives a still-default-named chat the command's own name, the
+// header write settleComposerOnPrompt does for a prompt.
+func nameDefaultChat(ctx context.Context, chats ChatStore, chatID marotte.ChatID, text string) {
+	if _, err := chats.Mutate(ctx, chatID, func(c *marotte.Chat, exists bool) bool {
+		if !exists || c.Name != marotte.DefaultChatName {
+			return false
+		}
+		c.Name = shellChatName(text)
+		return true
+	}); err != nil {
+		slog.Warn("shell interception: name chat", "chat_id", chatID, keyError, err)
+	}
 }
 
 // renderShellResult wraps sanitized command output in a Markdown code

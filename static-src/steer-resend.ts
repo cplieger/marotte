@@ -1,33 +1,7 @@
-// ---------------------------------------------------------------------------
-// Carrying an unread steer into the next turn.
-//
-// A steer the agent never read used to be lost at the turn boundary: KAS drains
-// its steering buffer at every boundary, so the message left the dock, landed in
-// the transcript as a `dropped` mark, and the reader had to click it back into the
-// composer and press Send. This module sends it for them.
-//
-// ONE MECHANISM, ONE FIRING POINT, ONE TEXT PRODUCER. The boundary is the only thing
-// that reads a steer's text, so both boundary origins are covered with no gesture
-// code: a manual stop emits `steering_cleared`, and `turn_ended` follows either way.
-//
-// The dock's send-now arrow therefore arms an ORDER, not a message. Arming text at
-// click time dropped a steer confirmed between the click and the boundary; reading at
-// the boundary makes "every user-origin steer the dock drops is carried" true by
-// construction, and `fundamentals/steer-note.ts` states that invariant in its label.
-//
-// IT FIRES ON THE CHAT'S OWN SETTLED `turn_ended` FRAME AND NOWHERE ELSE.
-// Not on `steer_cleared`, which arrives while the turn is still finishing, and not
-// after the cancel POST resolves: `cancelTurn`'s optimistic write clears `thinking`
-// locally while the turn is still open server-side, so an earlier send would take a
-// 409 and `submit.ts` would convert it back into a STEER — putting the message
-// straight into the buffer the boundary just drained.
-//
-// IT CANNOT LOOP, STRUCTURALLY. A turn opened by a resend ends with an empty
-// waiting set, so the capture arms nothing and nothing further fires. The only way
-// a resent turn produces another is the reader typing a new steer into it, which is
-// the feature working. No counter and no flag for that; the counter below bounds
-// something else — how many times ONE armed text may be re-offered after a refusal.
-// ---------------------------------------------------------------------------
+// Carrying an unread steer into the next turn: KAS drains its steering buffer at every
+// turn boundary, so a steer the agent never read has left it, and this module re-sends
+// that text as a new turn rather than leaving the reader to retype it. It cannot loop —
+// a turn a resend opened ends with an empty waiting set, so nothing arms again.
 
 import { clearSteers } from "./actions/chat.js";
 import { sendPromptTo } from "./chat-commands.js";
@@ -51,7 +25,16 @@ const MAX_ATTEMPTS = 2;
  *  because the reader did not press Send for this one. */
 const REFUSED_FACE = "Couldn't send your unread message — it's back in the message box";
 
-const armed = new Map<string, string>();
+/** One boundary's batch: the text the resend sends, and the entries it re-sends.
+ *  The ids travel because the server's ledger, the merge's union rule and the note's
+ *  own `resent?` flag all read them, so a carry that kept only the words left the
+ *  record unable to say that these words had been offered before. */
+interface Armed {
+  readonly text: string;
+  readonly ids: readonly string[];
+}
+
+const armed = new Map<string, Armed>();
 const attempts = new Map<string, number>();
 const leadFirst = new Map<string, string>();
 
@@ -79,12 +62,15 @@ export function noteBoundaryDrop(
   if (chatID === "" || armed.has(chatID)) {
     return;
   }
-  const text = join(leadPreferred(chatID, entries).map((e) => e.text));
+  // One filtered set feeds both halves, so a row whose words are carried is a row
+  // whose id is carried and the order is the order the reader sees.
+  const carried = leadPreferred(chatID, entries).filter((e) => e.text !== "");
+  const text = join(carried.map((e) => e.text));
   if (text === "") {
     return;
   }
   leadFirst.delete(chatID);
-  armed.set(chatID, text);
+  armed.set(chatID, { text, ids: carried.map((e) => e.id) });
 }
 
 /** Drop everything for this chat without sending: the chat is gone. */
@@ -113,43 +99,48 @@ function leadPreferred(
 }
 
 /** Send whatever is armed for this chat as a new turn. Safe to call when nothing is
- *  armed — it runs on every settled `turn_ended` of every chat. */
+ *  armed — it runs on every `turn_closed` that settles a chat, which is the only door:
+ *  not the `steer{dropped}` entry a KAS clear writes while the turn is still finishing,
+ *  and not the cancel POST's own resolution, where `cancelTurn`'s optimistic `thinking`
+ *  clear makes an earlier send take a 409 that `submit.ts` converts back into a STEER —
+ *  into the buffer this boundary just drained. */
 export function runArmedResend(chatID: string): void {
-  const text = armed.get(chatID);
-  if (text === undefined) {
+  const batch = armed.get(chatID);
+  if (batch === undefined) {
     return;
   }
   armed.delete(chatID);
-  void send(chatID, text);
+  void send(chatID, batch);
 }
 
-async function send(chatID: string, text: string): Promise<void> {
-  // Belt and braces, and it closes one real race: a steer POST confirmed just before
-  // this boundary can still be sitting in KAS's buffer, in which case it would be
-  // injected into the very turn the resend opens — the reader's message twice. One
-  // idempotent dispatch; `CmdSteerClear` answers success for a chat with no bridge,
-  // and KAS answers success against an empty buffer. Ahead of the prompt by SCOPE
-  // rather than by an await: both actions hold `chat:<id>`, which is FIFO.
+async function send(chatID: string, batch: Armed): Promise<void> {
+  const { text, ids } = batch;
+  // A steer POST confirmed just before this boundary can still be in KAS's buffer, and
+  // would be injected into the very turn this opens — the reader's message twice. Ahead
+  // of the prompt by SCOPE rather than an await: both actions hold `chat:<id>`, FIFO.
   void clearSteers.dispatch({ chatID });
   // `sendPromptTo`, never `submitPrompt`: that one takes the composer's staged
-  // attachments, and this message is not the one the reader is composing. A steer's
-  // text already carries any `Attached file:` lines folded in at steer time.
-  const outcome = await sendPromptTo(chatID, text, { messageID: newMessageID() });
+  // attachments, and a steer's text already carries its own `Attached file:` lines.
+  // `resends` names the entries these words came from, so the turn this opens records
+  // the resend rather than reading as an unrelated message the reader typed twice.
+  const outcome = await sendPromptTo(chatID, text, {
+    messageID: newMessageID(),
+    ...(ids.length > 0 ? { resends: ids } : {}),
+  });
   if (outcome === "sent") {
     attempts.delete(chatID);
     return;
   }
   const spent = (attempts.get(chatID) ?? 0) + 1;
-  // "queued" and "starting" both mean the chat is busy again — a turn started
-  // underneath the boundary, or the admission slot is held by a spawn. Re-arm and let
-  // the next settled boundary carry it; "failed" is a real refusal and stops here.
-  if (outcome !== "failed" && spent < MAX_ATTEMPTS) {
+  // "queued" and "starting" both mean the chat is busy again, so the next settled
+  // boundary carries it. "failed" is a real refusal and "gone" a tombstoned chat with
+  // no later boundary, so both stop here.
+  if (outcome !== "failed" && outcome !== "gone" && spent < MAX_ATTEMPTS) {
     attempts.set(chatID, spent);
-    // Yields like the boundary producer, so a capture that armed since the refusal
-    // outranks the retry. The joined text is re-armed as-is: same batch, already
-    // ordered.
+    // Yields like the boundary producer, so a capture made since the refusal outranks
+    // this retry. Re-armed as-is: same batch, already ordered.
     if (!armed.has(chatID)) {
-      armed.set(chatID, text);
+      armed.set(chatID, batch);
     }
     return;
   }

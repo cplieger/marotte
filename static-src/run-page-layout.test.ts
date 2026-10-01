@@ -61,6 +61,7 @@ describe("the run page claims its height", () => {
     '[id="history-view"]',
     '[id="run-view"]',
     '[id="subagent-view"]',
+    '[id="spec-view"]',
     '[id="docs-view"]',
   ];
 
@@ -172,10 +173,19 @@ describe("the run page claims its height", () => {
   // by measurement. The CAP is what this case owns; the COUNT inside it belongs to
   // `clamp-line-count.test.ts`, which holds it against `RESULT_CLAMP` in
   // `exec-view/page.ts` — so moving the clamp is one edit rather than three.
+  //
+  // The cap is the FALLBACK of a `var()` because no fixed cap can land on a line
+  // boundary over a markdown bubble's block children (each carries its own metrics
+  // and margins), so `clamp-text.ts`'s `snapToLine` measures the rendered lines and
+  // writes `--clamp-h`. Asserted in that shape rather than as a bare length: the
+  // authored count still has to be there, and a cap that stopped reading the
+  // property would leave the snap inert with nothing else failing.
   it("gives the clamped report exactly one overflow, beside its cap", () => {
     const css = loadCSS("31-exec-view.css");
     expect(overflowDecls(css, ".ev-r-text[data-clamped]")).toEqual(["overflow: hidden"]);
-    expect(decls(css, ".ev-r-text[data-clamped]")).toMatch(/max-block-size:\s*\d+lh/);
+    expect(decls(css, ".ev-r-text[data-clamped]")).toMatch(
+      /max-block-size:\s*var\(--clamp-h,\s*\d+lh\)/,
+    );
   });
 
   // ONE OWNER for the two clamp openers on this page. Asserted as MEMBERSHIP of the

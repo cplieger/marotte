@@ -1,296 +1,62 @@
 package translate
 
-// The per-step turn cap (D56b). The counter lives here because a step's tool
-// frames pass through this package and `_meta.kiro.workflow` is what identifies
-// them; the enforcement is the host's, so these tests assert what the host is
-// TOLD rather than what it does about it.
+// A step's frames pass through this package and their attribution is what identifies
+// them; the run's idle window is the host's, so these tests assert what the host is
+// TOLD rather than what it does about it. There is deliberately no per-step tool-call
+// cap: a count measures work, not runaway.
 
 import (
 	"slices"
-	"strconv"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// stepToolFrame builds one workflow-step tool_call frame. nodePath is what makes
-// a step instance unique, so it is a parameter rather than derived from nodeID: a
-// repeat node's second iteration shares the node id and must not share a count.
-func stepToolFrame(id, workflowID, nodeID string, nodePath []string) map[string]any {
-	return map[string]any{
-		"toolCallId": id,
-		"title":      "Read a file",
-		"kind":       "read",
-		"status":     "pending",
-		"_meta": map[string]any{"kiro": map[string]any{
-			"workflow": map[string]any{
-				"workflowId": workflowID,
-				"nodeId":     nodeID,
-				"nodePath":   nodePath,
-				"type":       "step",
-			},
-		}},
-	}
-}
-
-// TestStepTurnCap_ReportsOnceAtTheCap: once matters more than the threshold. A cancel is
-// decided at a node boundary, so a runaway step keeps emitting frames while it travels, and
-// a `>=` comparison would have the host issue a cancel per frame for a run already stopping.
-func TestStepTurnCap_ReportsOnceAtTheCap(t *testing.T) {
+// TestReportStepProgress_EveryStepFrameNamesTheRun pins the ruling that replaced the
+// per-step tool-call cap: a productive step is bounded by the run's idle window and the
+// backstop alone, so three hundred consecutive frames tell the host three hundred times
+// that the run is working, each naming the run. RunBoundsAccess carries no stop verb, so
+// a cancel is unrepresentable here; what a count could still do is stop REPORTING.
+func TestReportStepProgress_EveryStepFrameNamesTheRun(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := marotte.ChatID("c1")
-	path := []string{"wf", "step-a"}
+	tr := New(rolesOf(deps))
+	attr := FrameAttribution{SessionID: "sess_step", RunID: "wf_1", NodePath: "wf/step-a", Step: true}
 
-	for i := range StepTurnCap + 5 {
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
+	for range 300 {
+		tr.ReportStepProgress(attr)
 	}
 
-	if len(deps.stepCapBreaches) != 1 {
-		t.Fatalf("breaches reported = %d, want exactly 1", len(deps.stepCapBreaches))
+	if len(deps.runProgress) != 300 {
+		t.Errorf("progress reports = %d, want one per frame, the 201st included", len(deps.runProgress))
 	}
-	got := deps.stepCapBreaches[0]
-	if got.workflowID != "wf_1" || got.nodeID != "step-a" {
-		t.Errorf("breach named run %q node %q, want wf_1 / step-a", got.workflowID, got.nodeID)
-	}
-	if got.turns != StepTurnCap {
-		t.Errorf("breach reported %d turns, want the cap %d", got.turns, StepTurnCap)
+	if got := slices.Compact(slices.Clone(deps.runProgress)); !slices.Equal(got, []string{"wf_1"}) {
+		t.Errorf("progress named %v, want the run wf_1 alone", got)
 	}
 }
 
-// TestStepTurnCap_StaysSilentBelowTheCap: the cap must not fire for ordinary
-// work, and 199 tool calls in one step is ordinary work.
-func TestStepTurnCap_StaysSilentBelowTheCap(t *testing.T) {
-	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-
-	for i := range StepTurnCap - 1 {
-		tr.HandleToolCall(t.Context(), marotte.ChatID("c1"),
-			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", []string{"wf", "step-a"})), FrameAttribution{})
+// TestReportStepProgress_OnlyAStepFrameIsProgress: the chat's own frames and a SUBAGENT's
+// name no run whose window could be refilled. A subagent's frames are the dangerous half:
+// they arrive on a chat that may well have a live run, and crediting them would keep a
+// genuinely wedged run alive on a different agent's work. A step the registry could not
+// place has no run to credit either.
+func TestReportStepProgress_OnlyAStepFrameIsProgress(t *testing.T) {
+	tests := []struct {
+		name string
+		attr FrameAttribution
+	}{
+		{name: "the_chats_own_frame", attr: FrameAttribution{SessionID: "sess_chat"}},
+		{name: "a_subagents_frame", attr: FrameAttribution{SubSessionID: "sub-1", SessionID: "sub-1"}},
+		{name: "a_step_with_no_run", attr: FrameAttribution{SessionID: "sess_step", Step: true}},
 	}
-	if len(deps.stepCapBreaches) != 0 {
-		t.Errorf("a step one call short of the cap reported %d breaches", len(deps.stepCapBreaches))
-	}
-}
-
-// TestStepTurnCap_CountsPerStepInstance pins the key: two iterations of one repeat node
-// share a NodeID and are separate work, so a counter keyed on the node id would cap a
-// two-iteration loop at half its allowance. Two steps of one run must not pool either.
-func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
-	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := marotte.ChatID("c1")
-
-	half := StepTurnCap / 2
-	for i := range half {
-		// Same run, same node id, DIFFERENT iteration.
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "loop-step", []string{"wf", "loop", "iter-0", "loop-step"})), FrameAttribution{})
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_1", "loop-step", []string{"wf", "loop", "iter-1", "loop-step"})), FrameAttribution{})
-		// Same run, a different step entirely.
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("c-"+strconv.Itoa(i), "wf_1", "other", []string{"wf", "other"})), FrameAttribution{})
-	}
-
-	if len(deps.stepCapBreaches) != 0 {
-		t.Errorf("three separate step instances at %d calls each tripped the cap %d times",
-			half, len(deps.stepCapBreaches))
-	}
-}
-
-// TestRunProgress_EveryStepToolCallReportsProgress is the tool-call half of the idle
-// window's progress signal on the CHAT-parented path. Per FRAME, not per breach: every call
-// is evidence, and a threshold would let a healthy run's window expire between thresholds.
-func TestRunProgress_EveryStepToolCallReportsProgress(t *testing.T) {
-	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := marotte.ChatID("c1")
-	path := []string{"wf", "step-a"}
-
-	for i := range 3 {
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
-	}
-
-	if want := []string{"wf_1", "wf_1", "wf_1"}; !slices.Equal(deps.runProgress, want) {
-		t.Errorf("progress reported = %v, want %v: one report per step tool call, naming the run",
-			deps.runProgress, want)
-	}
-}
-
-// TestRunProgress_ADroppedCardStillRefillsTheWindow pins the report's placement above
-// the card drop. Whether a card reaches the transcript is a rendering decision and says
-// nothing about whether KAS is producing frames; reported under it, a display decision
-// cancels a working run whose step's frames are internal bookkeeping.
-func TestRunProgress_ADroppedCardStillRefillsTheWindow(t *testing.T) {
-	base, _ := newEventCaptureDeps()
-	tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
-
-	frame := stepToolFrame("cloud-1", "wf_1", "step-a", []string{"wf", "step-a"})
-	meta := frame["_meta"].(map[string]any)["kiro"].(map[string]any)
-	meta["toolId"] = "fetch_cloud_config"
-
-	tr.HandleToolCall(t.Context(), marotte.ChatID("c1"), mustJSON(t, frame), FrameAttribution{})
-
-	if want := []string{"wf_1"}; !slices.Equal(base.runProgress, want) {
-		t.Errorf("progress reported = %v, want %v: a rendering guard must not decide "+
-			"whether a run's idle window is refilled",
-			base.runProgress, want)
-	}
-	// The card itself still goes, because that half IS the guard's job.
-	if n := len(base.bufStore.GetOrInit(marotte.ChatID("c1")).ToolCalls); n != 0 {
-		t.Errorf("buffered tool calls = %d, want 0: the internal-tool card is still dropped", n)
-	}
-}
-
-// TestRunProgress_IgnoresANonStepToolCall: an ordinary chat tool call and a
-// SUBAGENT's carry no workflow block, so neither names a run whose window could be
-// refilled. A subagent's calls are the dangerous half — they arrive on a chat that
-// may well have a live run, and crediting them would keep a genuinely wedged run
-// alive on a different agent's work.
-func TestRunProgress_IgnoresANonStepToolCall(t *testing.T) {
-	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-
-	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
-		"toolCallId": "tc-1",
-		"title":      "Read a file",
-		"kind":       "read",
-		"status":     "pending",
-		"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "sub-1"}},
-	}), FrameAttribution{})
-
-	if len(deps.runProgress) != 0 {
-		t.Errorf("a subagent's tool call reported progress for %v", deps.runProgress)
-	}
-}
-
-// TestStepTurnCap_IgnoresANonStepToolCall: an ordinary chat tool call and a
-// SUBAGENT's carry no workflow block, so neither may consume a step's allowance
-// or trip a cap for a run that does not exist.
-func TestStepTurnCap_IgnoresANonStepToolCall(t *testing.T) {
-	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := marotte.ChatID("c1")
-
-	for i := range StepTurnCap + 5 {
-		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
-			"toolCallId": "tc-" + strconv.Itoa(i),
-			"title":      "Read a file",
-			"kind":       "read",
-			"status":     "pending",
-			"_meta":      map[string]any{"kiro": map[string]any{"agentSubtaskId": "sub-1"}},
-		}), FrameAttribution{})
-	}
-	if len(deps.stepCapBreaches) != 0 {
-		t.Errorf("a subagent's tool calls reported %d step breaches", len(deps.stepCapBreaches))
-	}
-}
-
-// TestStepTurnCap_CountsPerRunNotPerNodePath is the collision the turn key's workflow-id
-// half prevents: a node path is unique only WITHIN a run, so two concurrent workflows on
-// the same path pooled their counts — cancelling one run at half its allowance while the
-// other stepped over the cap unbounded. Interleaved, because that is what two live runs do.
-func TestStepTurnCap_CountsPerRunNotPerNodePath(t *testing.T) {
-	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := marotte.ChatID("c1")
-	// One shared path. Two DIFFERENT runs — an agent-launched run reaches KAS
-	// directly, so the single-run-per-recipe rule does not keep these apart.
-	path := []string{"wf", "step-a"}
-
-	for i := range StepTurnCap {
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_2", "step-a", path)), FrameAttribution{})
-	}
-
-	// Each run reached the cap on its own, so each reports exactly once — and
-	// crucially neither reported before its own 200th call.
-	if len(deps.stepCapBreaches) != 2 {
-		t.Fatalf("breaches = %d, want one per run", len(deps.stepCapBreaches))
-	}
-	seen := map[string]int{}
-	for _, b := range deps.stepCapBreaches {
-		seen[b.workflowID]++
-		if b.turns != StepTurnCap {
-			t.Errorf("run %s reported %d turns, want the cap %d", b.workflowID, b.turns, StepTurnCap)
-		}
-	}
-	if seen["wf_1"] != 1 || seen["wf_2"] != 1 {
-		t.Errorf("breaches per run = %v, want one each", seen)
-	}
-}
-
-// TestStepTurnCap_HalfTheCapEachDoesNotTripEitherRun is the same collision read
-// from the other side, and it is the one that fails LOUDLY on a shared counter: two
-// runs at 100 calls apiece sum to the cap, so a key that omits the run cancels a
-// run whose step is only half way through its allowance.
-func TestStepTurnCap_HalfTheCapEachDoesNotTripEitherRun(t *testing.T) {
-	deps, _ := newEventCaptureDeps()
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
-	chatID := marotte.ChatID("c1")
-	path := []string{"wf", "step-a"}
-
-	for i := range StepTurnCap / 2 {
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("a-"+strconv.Itoa(i), "wf_1", "step-a", path)), FrameAttribution{})
-		tr.HandleToolCall(t.Context(), chatID,
-			mustJSON(t, stepToolFrame("b-"+strconv.Itoa(i), "wf_2", "step-a", path)), FrameAttribution{})
-	}
-	if len(deps.stepCapBreaches) != 0 {
-		t.Errorf("two runs at half the cap each reported %d breaches", len(deps.stepCapBreaches))
-	}
-}
-
-// TestStepTurnCap_ForgettingOneRunLeavesTheSiblings: `run_complete` for one run
-// drops its counts, and a bare node-path key made that reach into a concurrent
-// run's — resetting a sibling step's allowance mid-flight.
-func TestStepTurnCap_ForgettingOneRunLeavesTheSiblings(t *testing.T) {
-	t.Parallel()
-	reg := newStepRegistry()
-
-	reg.countTurn("wf_1", "wf:step-a")
-	reg.countTurn("wf_2", "wf:step-a")
-	reg.countTurn("wf_2", "wf:step-a")
-
-	reg.forgetRun("wf_1")
-
-	if got := reg.countTurn("wf_2", "wf:step-a"); got != 3 {
-		t.Errorf("the sibling run's count resumed at %d, want 3; forgetting one run reset another", got)
-	}
-	if got := reg.countTurn("wf_1", "wf:step-a"); got != 1 {
-		t.Errorf("the forgotten run's count resumed at %d, want 1", got)
-	}
-}
-
-// TestStepTurnCap_ForgetsATerminatedRunsCounts pins the bound on the counter's
-// own growth: run_complete is the hook, the same frame that drops the run's
-// session mappings, because no later frame for that run can arrive.
-func TestStepTurnCap_ForgetsATerminatedRunsCounts(t *testing.T) {
-	t.Parallel()
-	reg := newStepRegistry()
-
-	if got := reg.countTurn("wf_1", "wf:a"); got != 1 {
-		t.Errorf("first turn counted as %d, want 1", got)
-	}
-	if got := reg.countTurn("wf_1", "wf:a"); got != 2 {
-		t.Errorf("second turn counted as %d, want 2", got)
-	}
-	reg.forgetRun("wf_1")
-	if got := reg.countTurn("wf_1", "wf:a"); got != 1 {
-		t.Errorf("after forgetRun the count resumed at %d; the counts leaked past the run", got)
-	}
-	// A missing identity is not the first turn of a real step: answering 1 here
-	// would let an unidentifiable frame accumulate toward somebody's cap.
-	if got := reg.countTurn("", "wf:a"); got != 0 {
-		t.Errorf("countTurn with no run id = %d, want 0", got)
-	}
-	if got := reg.countTurn("wf_1", ""); got != 0 {
-		t.Errorf("countTurn with no step key = %d, want 0", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, _ := newEventCaptureDeps()
+			tr := New(rolesOf(deps))
+			tr.ReportStepProgress(tc.attr)
+			if len(deps.runProgress) != 0 {
+				t.Errorf("ReportStepProgress(%+v) reported progress for %v, want none", tc.attr, deps.runProgress)
+			}
+		})
 	}
 }
 
@@ -312,7 +78,7 @@ func TestStepRef_AttributesAnAskToItsRun(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, events := newEventCaptureDeps()
 			tr := New(rolesOf(deps))
-			tr.RecordStepSession("sess_step", "wf_1", "build")
+			tr.RecordStepSession("sess_step", "wf_1", "build", "build")
 
 			id := int64(7)
 			tr.HandlePermissionRequest(t.Context(), "c1", &marotte.RPCResponse{

@@ -38,6 +38,17 @@ vi.mock("./dom.js", () => ({
     }
     return el;
   },
+  // Same real-ESM-linking reason as `byId` above: `skeleton.ts` in this graph
+  // imports the name, so an absent export fails the whole FILE at collection.
+  // `setBusy`'s own body rather than `undefined`, because the editor's open path
+  // reaches an admitted `paintPlaceholder`, which marks its host busy through it.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 // highlight() escapes its input by construction and emits only <span> wrappers;
 // the identity stub keeps the raw-source assertion about what the editor SHOWS

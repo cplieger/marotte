@@ -1,20 +1,11 @@
 // ---------------------------------------------------------------------------
-// Model switcher: the pill button + expandable model list + queued-switch
-// logic. The pill expands inline to show available models; selecting one
-// routes through requestModelSwitch which handles all four paths (local,
-// empty chat, idle, mid-turn queue).
+// Model switcher: the pill button plus its expandable model list. The pill
+// expands inline to show the served models; selecting one routes through
+// requestModelSwitch, whose three paths are no session, an empty chat, and a
+// chat with history.
 // ---------------------------------------------------------------------------
 
-import {
-  activeSession,
-  get,
-  getActive,
-  getActiveId,
-  isEmptyChat,
-  isThinking,
-  setEffort,
-  setModel,
-} from "./store.js";
+import { activeSession, get, getActive, isEmptyChat, setEffort, setModel } from "./store.js";
 import { $, setBusy } from "./dom.js";
 import { humanName, rateLabel } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
@@ -91,14 +82,7 @@ const setEffortAction = transportAction<{ chatID: string; level: string }, { pre
 /** Model-aware effort gating lives in effort.ts (`modelHasEffort`), because the
  *  pill needs the same verdict: a model with no tiers has no tier to name. */
 
-type QueueState =
-  | { status: "idle" }
-  | { status: "queued"; modelID: string; chatID: string }
-  | { status: "switching"; modelID: string };
-
 class ModelSwitchController {
-  private queueState: QueueState = { status: "idle" };
-
   init(): void {
     // The pill's glyph, from icons.ts rather than an inline literal in
     // index.html. Prepended (not appended) because the label follows it, and
@@ -122,10 +106,6 @@ class ModelSwitchController {
     // renderCondensedList() calls refresh() after each reconcile instead.
     this.modelNav = rovingFocus(expandContent, ".pill-model-item");
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
-    // The queued mid-turn model switch drains from the per-chat `turn_ended`
-    // SSE (handlers/turn.ts → drainModelSwitchQueue), NOT the active-only
-    // `turn:idle` bus event — so a switch queued on a background chat is no
-    // longer stranded until that chat happens to become the active tab.
   }
 
   private renderCondensedList(): void {
@@ -430,11 +410,9 @@ class ModelSwitchController {
       this.fire(session.id, modelID);
       return;
     }
-    const switchInFlight = this.queueState.status === "switching";
-    if (isThinking(session.id) || switchInFlight) {
-      this.enqueue(modelID);
-      return;
-    }
+    // Mid-turn included: the pick is written to the header as `pending_model` and the
+    // server applies it at the running turn's own close, so there is nothing to hold here
+    // and no turn is flushed, discarded or cancelled by a switch.
     this.fire(session.id, modelID);
   }
 
@@ -443,52 +421,7 @@ class ModelSwitchController {
   }
 
   private fire(chatID: string, modelID: string): void {
-    this.queueState = { status: "switching", modelID };
-    void switchModel.dispatch(
-      { chatID, model: modelID },
-      {
-        onSettled: () => {
-          if (this.queueState.status === "switching" && this.queueState.modelID === modelID) {
-            this.queueState = { status: "idle" };
-          }
-        },
-      },
-    );
-  }
-
-  private enqueue(modelID: string): void {
-    const chatID = getActiveId();
-    this.queueState = { status: "queued", modelID, chatID };
-    $.switchModelBtn.classList.add("pending");
-    $.switchModelBtn.setAttribute(
-      "data-tooltip",
-      `Switch to ${humanName(modelID)} after current turn`,
-    );
-  }
-
-  /** Drain a queued mid-turn model switch for the chat whose turn just ended.
-   *  Called from the per-chat `turn_ended` SSE (handlers/turn.ts) and from the
-   *  reconnect-gap recovery (handlers/system.ts), so a background chat's queued
-   *  switch fires when ITS turn ends rather than waiting to become active. */
-  drainForChat(chatID: string): void {
-    this.drainQueue(chatID);
-  }
-
-  private drainQueue(idleChatID: string): void {
-    if (this.queueState.status !== "queued") {
-      return;
-    }
-    if (this.queueState.chatID !== idleChatID) {
-      return;
-    }
-    const { modelID, chatID } = this.queueState;
-    this.queueState = { status: "idle" };
-    $.switchModelBtn.classList.remove("pending");
-    $.switchModelBtn.setAttribute("data-tooltip", "Switch model");
-    if (chatID === "") {
-      return;
-    }
-    this.fire(chatID, modelID);
+    void switchModel.dispatch({ chatID, model: modelID });
   }
 }
 
@@ -496,14 +429,6 @@ const controller = new ModelSwitchController();
 
 export function initModelSwitcher(): void {
   controller.init();
-}
-
-/** Drain any queued mid-turn model switch for `chatID`. Called by the
- *  `turn_ended` SSE handler (and the reconnect-gap recovery) so a switch
- *  queued while a background chat was thinking still fires when that chat's
- *  turn ends — model-switcher.ts stays the queue owner. */
-export function drainModelSwitchQueue(chatID: string): void {
-  controller.drainForChat(chatID);
 }
 
 function applyLocalModel(modelID: string): void {

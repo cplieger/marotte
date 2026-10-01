@@ -3,14 +3,13 @@
 // Gated on `clientCapabilities.fs._meta.kiro.<name> === true`; undeclared,
 // KAS serves the verb itself via a bare `NodeFileSystem`. So declaring one
 // does not GRANT a capability the agent lacked — it puts a capability it
-// already had behind `resolveInsideWorkDir`. Declaring `read_directory` is
-// what lets the agent-ignore list reach a LISTING, closing the discovery
-// vector an unfiltered listing would otherwise open.
+// already had behind `resolveInsideWorkDir`, which is the whole reason to
+// declare it.
 //
-// marotte is the confined EXECUTOR; KAS is the REVIEWER: resolve, filter,
-// execute, no staging or attribution. KAS checkpoints before it unlinks and
-// restores a rejected delete via an ordinary `fs/write_text_file`; a second
-// gate here would intercept that restore.
+// marotte is the confined EXECUTOR; KAS is the REVIEWER: resolve, execute,
+// no staging or attribution. KAS checkpoints before it unlinks and restores
+// a rejected delete via an ordinary `fs/write_text_file`; a second gate here
+// would intercept that restore.
 //
 // Read and write stay undeclared: the `fs/{read,write}_text_file` rung is
 // where every write guardrail lives, and this rung would bypass it.
@@ -23,11 +22,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path"
 	"syscall"
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/spec"
 )
 
 // File-type strings KAS's own NodeFileSystem returns, and therefore the only
@@ -128,14 +127,6 @@ func (in *inbound) kiroFSPath(msg *marotte.RPCResponse) (root *os.Root, rel stri
 }
 
 // respondKiroFSStat answers `_kiro/fs/stat` with `{type, size}`.
-//
-// Deliberately NOT filtered through the agent-ignore list, unlike
-// read_directory. Filtering it would make KAS's derived `exists()` (a stat in a
-// try/catch) report false for a file that is really there — and because a WRITE
-// is not ignore-filtered (git semantics: an ignored file stays writable), the
-// agent's next move on a false "absent" is to CREATE it, clobbering the very
-// file the user asked to keep out of the way. An honest stat is the safer answer;
-// the listing is where the discovery vector actually is.
 func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
@@ -157,12 +148,7 @@ func (in *inbound) respondKiroFSStat(ctx context.Context, chatID marotte.ChatID,
 	in.respondBridge(ctx, chatID, msg, body, nil)
 }
 
-// respondKiroFSReadDirectory answers `_kiro/fs/read_directory` with `{entries}`,
-// FILTERED through the agent-ignore list.
-//
-// The filter is the whole reason this verb is worth declaring. Without it the
-// listing is the discovery vector for exactly the files the read filter refuses
-// to open, which §15.8 names as confined-but-unfiltered.
+// respondKiroFSReadDirectory answers `_kiro/fs/read_directory` with `{entries}`.
 //
 // A missing directory answers with an empty list rather than an error, matching
 // KAS's NodeFileSystem (it swallows ENOENT and returns []). Diverging would make
@@ -183,7 +169,7 @@ func (in *inbound) respondKiroFSReadDirectory(ctx context.Context, chatID marott
 		return
 	}
 	in.respondBridge(ctx, chatID, msg, kiroReadDirBody{
-		Entries: in.filterDirEntries(ctx, chatID, rel, dirEntries),
+		Entries: dirEntriesToWire(dirEntries),
 	}, nil)
 }
 
@@ -204,16 +190,14 @@ func readDirInRoot(root *os.Root, rel string) ([]os.DirEntry, error) {
 	return f.ReadDir(-1)
 }
 
-// filterDirEntries maps os.DirEntry values onto the wire shape, dropping any
-// entry the agent-ignore list matches. dirRel is the listed directory's
-// workspace-relative name ("." for the workspace root itself).
+// dirEntriesToWire maps os.DirEntry values onto the wire shape.
 //
-// There is no fail-open branch left. The old one skipped the filter — and kept
-// the entry — when filepath.Rel failed on the absolute path, which put the
-// discovery vector this filter exists to close behind an error nobody could
-// trigger deliberately but nobody had ruled out either. Joining onto the
-// already-relative dirRel cannot fail, so the case is gone rather than handled.
-func (in *inbound) filterDirEntries(ctx context.Context, _ marotte.ChatID, dirRel string, dirEntries []os.DirEntry) []kiroDirEntry {
+// Every entry travels. KAS applies the agent-ignore list itself, and its
+// evaluators do not reach a listing's ENTRIES — only the directory the listing
+// names — so a matching filename can still appear here while its contents stay
+// unreadable. The panel copy says so, because it is the one thing a reader would
+// otherwise assume the list covers.
+func dirEntriesToWire(dirEntries []os.DirEntry) []kiroDirEntry {
 	out := make([]kiroDirEntry, 0, len(dirEntries))
 	for _, e := range dirEntries {
 		entryType := fsTypeFile
@@ -224,11 +208,6 @@ func (in *inbound) filterDirEntries(ctx context.Context, _ marotte.ChatID, dirRe
 			// File.ReadDir does not follow symlinks, matching node's
 			// withFileTypes, so unlike stat this branch is live.
 			entryType = fsTypeSymlink
-		}
-		// path.Join, not filepath.Join: the matcher documents slash-separated
-		// paths and dirRel already is one (workspace.RelPath normalises it).
-		if in.ignore != nil && in.ignore.Matches(ctx, path.Join(dirRel, e.Name()), e.IsDir()) {
-			continue
 		}
 		out = append(out, kiroDirEntry{Name: e.Name(), Type: entryType})
 	}
@@ -241,9 +220,8 @@ func (in *inbound) filterDirEntries(ctx context.Context, _ marotte.ChatID, dirRe
 // replaces (so the change stays a confinement rather than a behaviour
 // change). The one refusal is the workspace root itself, unrecoverable.
 //
-// NOT ignore-filtered (a delete is write-class, and writes follow git
-// semantics), and NOT gated (KAS checkpoints before the unlink and reviews
-// after it — see the file header).
+// NOT gated (KAS checkpoints before the unlink and reviews after it — see the
+// file header).
 func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	root, rel, err := in.kiroFSPath(msg)
 	if err != nil {
@@ -297,6 +275,9 @@ func (in *inbound) respondKiroFSDelete(ctx context.Context, chatID marotte.ChatI
 		return
 	}
 	slog.Info("agent deleted a path", "chat_id", chatID, "dir", info.IsDir())
+	if specDir, ok := spec.DirOf(rel); ok {
+		in.specs.Mark(specDir)
+	}
 	// KAS's isFSDeleteCapabilityResponse accepts any object, and it THROWS a
 	// non-empty `message` field as an error — so the success answer must be an
 	// empty object, never one carrying a status string.

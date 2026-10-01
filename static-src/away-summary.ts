@@ -3,11 +3,12 @@
 // AND the agent consumed >5K tokens, show a "Welcome back" toast
 // summarizing what happened.
 //
-// v1 uses heuristic summaries (message/tool counts). v2 could use
+// v1 uses heuristic summaries (reply/tool counts). v2 could use
 // CheapestModel for AI-generated recaps.
 // ---------------------------------------------------------------------------
 
 import { getActive } from "./store.js";
+import { payloadOf } from "./turns.js";
 import { showToast } from "./toast.js";
 
 const AWAY_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
@@ -16,7 +17,7 @@ const TOKEN_THRESHOLD = 5_000;
 class AwaySummaryController {
   private lastHiddenAt = Date.now();
   private lastContextPct = 0;
-  private lastMsgCount = 0;
+  private lastTurnCount = 0;
   private lastChatId = "";
 
   init(): void {
@@ -36,7 +37,7 @@ class AwaySummaryController {
     if (s !== undefined) {
       this.lastChatId = s.id;
       this.lastContextPct = s.usage.context_pct;
-      this.lastMsgCount = s.messages.length;
+      this.lastTurnCount = s.turn_order.length;
     }
   }
 
@@ -56,8 +57,8 @@ class AwaySummaryController {
       return;
     }
 
-    // Detect compaction: message array shrank while away.
-    if (s.messages.length < this.lastMsgCount) {
+    // Detect compaction: the resident turn window shrank while away.
+    if (s.turn_order.length < this.lastTurnCount) {
       this.snapshotState();
       return;
     }
@@ -69,35 +70,51 @@ class AwaySummaryController {
       return;
     }
 
-    const newMsgs = s.messages.length - this.lastMsgCount;
-    if (newMsgs <= 0) {
+    const newTurns = s.turn_order.length - this.lastTurnCount;
+    if (newTurns <= 0) {
       return;
     }
 
-    let assistantMsgs = 0;
+    let replies = 0;
     let toolCalls = 0;
     const changedPaths = new Set<string>();
 
-    for (let i = this.lastMsgCount; i < s.messages.length; i++) {
-      const m = s.messages[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-      if (m.role === "assistant") {
-        assistantMsgs++;
-        if (m.tool_calls !== undefined) {
-          for (const tc of m.tool_calls) {
-            toolCalls++;
-            if (tc.diffs !== undefined) {
-              for (const d of tc.diffs) {
-                changedPaths.add(d.path);
-              }
-            }
+    for (let i = this.lastTurnCount; i < s.turn_order.length; i++) {
+      const turnID = s.turn_order[i];
+      const t = turnID === undefined ? undefined : s.turns.get(turnID);
+      if (t === undefined) {
+        continue;
+      }
+      let spoke = false;
+      for (const e of t.entries) {
+        if (e.kind === "text") {
+          // A REPLY is this agent speaking, so it is the owning lane's alone: a
+          // delegate's prose is read on its own page. Its tool calls and the
+          // paths they changed are counted below, over every lane — for a toast
+          // whose subject is what happened while the reader was away, work a
+          // delegate did is the news.
+          if ((e.lane ?? "") === "") {
+            spoke = true;
           }
+          continue;
         }
+        const call = payloadOf(e, "tool_call");
+        if (call === undefined) {
+          continue;
+        }
+        toolCalls++;
+        for (const d of call.diffs ?? []) {
+          changedPaths.add(d.path);
+        }
+      }
+      if (spoke) {
+        replies++;
       }
     }
 
     const parts: string[] = [];
-    if (assistantMsgs > 0) {
-      parts.push(`${String(assistantMsgs)} response${assistantMsgs > 1 ? "s" : ""}`);
+    if (replies > 0) {
+      parts.push(`${String(replies)} response${replies > 1 ? "s" : ""}`);
     }
     if (toolCalls > 0) {
       parts.push(`${String(toolCalls)} tool call${toolCalls > 1 ? "s" : ""}`);

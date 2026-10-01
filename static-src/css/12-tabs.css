@@ -2,7 +2,9 @@
    one feature's data. Inherited from the original rewind-child skin — the visual
    was right, only its key was wrong. */
 .tab.tab-child {
-  margin-inline-start: 1rem;
+  /* One step per generation: tabs.ts writes --tab-depth from the parent chain,
+     so a grandchild steps in past its parent rather than sitting level with it. */
+  margin-inline-start: calc(var(--tab-depth, 1) * 1rem);
 }
 
 /* The nesting marker. It was `content: "↳ "` on `.tab-name::before`, and being a
@@ -608,21 +610,16 @@
    run is live that row's title sits one gap plus one mark right of its neighbours'.
    That divergence is legible, because the thing that caused it is on screen and the
    reader watched it happen; the permanent gap was not. */
-/* THE LOOK, and it is SHARED by the two elements that carry this mark: a chat row's
-   fold mark and the composer band's live-run glyph (`.run-bar-glyph`, 26-dock.css).
-   One rule rather than a copy over there, because the copy is what drifts: that
-   glyph was a CIRCULAR ring with a spinning conic arc and a `?` for `input`, in
-   `--c-accent`/`--c-blue`/`--c-yellow`, so one run could be a square breathing ring
-   in the strip and a spinning circle in the composer at the same moment. This block
-   is the one owner of the silhouette, the bands, the halo, the inks and the beat; a
-   third surface joins by adding its selector here, and if a FOURTH arrives the
-   extraction this file declined while there was one consumer is the next step.
-
-   The layout half does NOT travel — a tab row's tuck and spawn are the rule below,
-   and the bar's own slot arithmetic stays in 26-dock.css — so what is shared is
-   exactly the treatment a reader has to recognise. */
+/* THE LOOK, SHARED by the three elements that carry this mark: a chat row's fold
+   mark, the composer band's live-run glyph (`.run-bar-glyph`, 26-dock.css) and a
+   History run row's lead (`.entry-mark`, history.ts). One rule rather than a copy,
+   because a copy drifts and one run then reads two ways at once; this block is the
+   one owner of the silhouette, the bands, the halo, the inks and the beat, and a
+   further surface joins by adding its selector here. The layout half does NOT
+   travel — each host's slot arithmetic stays in its own slice. */
 .tab-run-dot,
-.run-bar-glyph {
+.run-bar-glyph,
+.entry-mark {
   /* RESTATED here rather than inherited from the reset's universal rule, because
      every band width below is arithmetic against it: --dot-size has to be the
      painted DIAMETER and not the diameter plus two bands, or a 3px band paints a
@@ -728,7 +725,8 @@
    starts breathing mid-cycle is in step with every other
    beat because the delay comes off one global origin. */
 .tab-run-dot[data-status="working"],
-.run-bar-glyph[data-status="working"] {
+.run-bar-glyph[data-status="working"],
+.entry-mark[data-status="working"] {
   border-width: var(--run-band);
 
   /* `position: relative` only, for the overlay's containing block. No
@@ -773,6 +771,7 @@
    Read `inset: -2px` as "fill the mark", not as "overhang it". */
 .tab-run-dot[data-status="working"]::before,
 .run-bar-glyph[data-status="working"]::before,
+.entry-mark[data-status="working"]::before,
 .tab[data-kind="run"] .tab-status-dot[data-status="working"]::before {
   content: "";
   position: absolute;
@@ -827,7 +826,8 @@
    re-point a state with one line and what lets a test read a state's whole
    treatment from a single body. */
 .tab-run-dot[data-status="waiting"],
-.run-bar-glyph[data-status="waiting"] {
+.run-bar-glyph[data-status="waiting"],
+.entry-mark[data-status="waiting"] {
   border-width: 1px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
 
@@ -835,7 +835,8 @@
 }
 
 .tab-run-dot[data-status="input"],
-.run-bar-glyph[data-status="input"] {
+.run-bar-glyph[data-status="input"],
+.entry-mark[data-status="input"] {
   border-width: 2px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
 
@@ -903,7 +904,8 @@
      hole is bounded on the other side too: closing it further would read as the
      solid disc this mark must never be. */
   .tab-run-dot[data-status="working"],
-  .run-bar-glyph[data-status="working"] {
+  .run-bar-glyph[data-status="working"],
+  .entry-mark[data-status="working"] {
     border-width: 3px;
   }
 
@@ -914,6 +916,7 @@
      which would otherwise paint a permanent bright band over the donut. */
   .tab-run-dot[data-status="working"]::before,
   .run-bar-glyph[data-status="working"]::before,
+  .entry-mark[data-status="working"]::before,
   .tab[data-kind="run"] .tab-status-dot[data-status="working"]::before {
     content: none;
   }

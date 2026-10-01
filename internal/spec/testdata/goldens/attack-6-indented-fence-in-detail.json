@@ -1,0 +1,43 @@
+{
+  "input_file": "attack-6-indented-fence-in-detail.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "1",
+      "text": "1. Task with a fenced snippet in its detail",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "cc0f7520bcfbdf4aba7fe77f8f73c3b0348490abb30250382bbfdcb135aaae85",
+      "detail": "  ```json\n  {\"a\": 1}\n  ```",
+      "children": []
+    },
+    {
+      "id": "L5",
+      "line": 5,
+      "indent": 0,
+      "number": "2",
+      "text": "2. Next task",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "fcb3fab3897c91db7bf45fe4d16374e1814c9fc4e83581cf21ce23d19bc8aea3",
+      "detail": "",
+      "children": []
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 2
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

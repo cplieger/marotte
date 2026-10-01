@@ -133,14 +133,14 @@ func TestRetireBridges_ClosesIdleChatBridges(t *testing.T) {
 }
 
 func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	var made []*fakeBridge
 	h := New(t.Context(), "/tmp/retire-busy", func() ACPBridge {
 		br := newFakeBridge()
 		made = append(made, br)
 		return br
 	}, cs)
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 	first, err := h.coord.OpenBridge(t.Context(), "c1", "")

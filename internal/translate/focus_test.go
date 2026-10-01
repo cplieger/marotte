@@ -2,11 +2,29 @@ package translate
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
+
+// promptStore is an InMemoryChatStore whose PromptTexts answers staged texts, the
+// prompt-class user rows an entry log would hold; the records are the store's own.
+type promptStore struct {
+	*testsupport.InMemoryChatStore
+	prompts map[marotte.ChatID][]string
+}
+
+func (s *promptStore) PromptTexts(_ context.Context, id marotte.ChatID) ([]string, error) {
+	return s.prompts[id], nil
+}
+
+// withPrompts hands deps the store wrapped so chatID's prompts read as texts.
+func withPrompts(deps *baseDeps, store *testsupport.InMemoryChatStore, chatID marotte.ChatID, texts ...string) {
+	deps.store = &promptStore{InMemoryChatStore: store, prompts: map[marotte.ChatID][]string{chatID: texts}}
+}
 
 // focusFrame builds a session_info_update raw payload carrying a
 // focus_update block, the shape probe-verified on the live 2.12.1 wire.
@@ -148,12 +166,7 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-					c.Messages = append(c.Messages, marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: tc.userMsg})
-					return true
-				}); err != nil {
-					t.Fatal(err)
-				}
+				withPrompts(deps, store, "c1", tc.userMsg)
 			}
 			tr := New(rolesOf(deps))
 
@@ -177,10 +190,7 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 // derivation can produce — an agent that echoes the prompt exactly is authoring a
 // (bad) title, and this filter's job is only to recognise KAS's own output.
 func TestTitleIsPromptDerived(t *testing.T) {
-	chat := &marotte.Chat{Messages: []marotte.Message{
-		{Role: marotte.RoleUser, Content: "  padded prompt text  "},
-		{Role: marotte.RoleAssistant, Content: "assistant text"},
-	}}
+	prompts := []string{"  padded prompt text  "}
 	cases := []struct {
 		name  string
 		title string
@@ -188,7 +198,6 @@ func TestTitleIsPromptDerived(t *testing.T) {
 	}{
 		{"trims user message before compare", "Padded prompt text", true},
 		{"the prompt's own lowercase opening is not KAS's derivation", "padded prompt text", false},
-		{"assistant text never matches", "Assistant text", false},
 		{"prefix of the derivation is NOT derived", "Padded prompt", false},
 		// A truncated derivation is the door's business: it refuses every
 		// "..."-suffixed title, so a prefix comparison here could only be a second
@@ -198,7 +207,7 @@ func TestTitleIsPromptDerived(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := titleIsPromptDerived(tc.title, chat); got != tc.want {
+			if got := titleIsPromptDerived(tc.title, prompts); got != tc.want {
 				t.Errorf("titleIsPromptDerived(%q) = %v, want %v", tc.title, got, tc.want)
 			}
 		})
@@ -306,12 +315,7 @@ func TestKASDerivedTitle_MirrorsUpstream(t *testing.T) {
 // an EMPTY one). Refusing the answer means the chat keeps the name it had.
 func TestHandleSessionInfoUpdate_FocusRefusesRefusalShapedTitle(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-		c.Messages = append(c.Messages, marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: "test"})
-		return true
-	}); err != nil {
-		t.Fatal(err)
-	}
+	withPrompts(deps, store, "c1", "test")
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
@@ -363,13 +367,7 @@ func TestHandleSessionInfoUpdate_FocusOnAContentFreeConversation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if _, err := store.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
-					c.Messages = append(c.Messages,
-						marotte.Message{ID: "m1", Role: marotte.RoleUser, Content: tc.userMsg})
-					return true
-				}); err != nil {
-					t.Fatal(err)
-				}
+				withPrompts(deps, store, "c1", tc.userMsg)
 			}
 			tr := New(rolesOf(deps))
 

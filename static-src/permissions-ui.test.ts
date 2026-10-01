@@ -4,6 +4,7 @@
 // keyed-reconcile behaviour of renderIgnoreChips: add/remove must touch
 // only the changed chip and preserve untouched node identity.
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import indexHtml from "../static/index.html?raw";
 import type { EffectiveSettings } from "./persist.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 
@@ -31,7 +32,7 @@ vi.mock("./actions/permissions.js", () => ({
   setSecurityProfile: { dispatch: vi.fn() },
 }));
 
-import { initPermissionsUI } from "./permissions-ui.js";
+import { initPermissionsUI, agentIgnoreEntryError, AGENT_IGNORE_FLOOR } from "./permissions-ui.js";
 import { byId } from "./dom.js";
 
 // --- DOM fixture helpers -----------------------------------------------------
@@ -128,7 +129,7 @@ describe("renderIgnoreChips — keyed reconcile", () => {
     initWith([]);
 
     const pathInput = byId<HTMLInputElement>("agent-ignore-input");
-    pathInput.value = ".kiroignore";
+    pathInput.value = ".dockerignore";
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await flush();
 
@@ -147,7 +148,7 @@ describe("renderIgnoreChips — keyed reconcile", () => {
 
     // Add a third entry; the keyed reconcile must reuse the existing
     // .gitignore node rather than rebuilding the whole row.
-    byId<HTMLInputElement>("agent-ignore-input").value = ".kiroignore";
+    byId<HTMLInputElement>("agent-ignore-input").value = ".dockerignore";
     byId<HTMLButtonElement>("agent-ignore-add").click();
     await flush();
 
@@ -155,13 +156,13 @@ describe("renderIgnoreChips — keyed reconcile", () => {
     const gitignoreAfter = ignoreChips().find((c) => chipLabel(c) === ".gitignore");
     expect(gitignoreAfter).toBe(gitignore);
 
-    // Remove .kiroignore via its remove button -> only that chip goes.
-    const kiro = ignoreChips().find((c) => chipLabel(c) === ".kiroignore");
-    kiro?.querySelector<HTMLButtonElement>(".chip-remove")?.click();
+    // Remove .dockerignore via its remove button -> only that chip goes.
+    const added = ignoreChips().find((c) => chipLabel(c) === ".dockerignore");
+    added?.querySelector<HTMLButtonElement>(".chip-remove")?.click();
     await flush();
 
     expect(ignoreChips()).toHaveLength(2);
-    expect(ignoreChips().some((c) => chipLabel(c) === ".kiroignore")).toBe(false);
+    expect(ignoreChips().some((c) => chipLabel(c) === ".dockerignore")).toBe(false);
     expect(ignoreChips().find((c) => chipLabel(c) === ".gitignore")).toBe(gitignore);
   });
 
@@ -196,6 +197,161 @@ describe("renderIgnoreChips — keyed reconcile", () => {
 
     expect(ignoreChips()).toHaveLength(1);
     expect(mocks.patchSettings).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The copy under these two controls, read out of the shipped markup rather than a
+// fixture, because the copy IS the deliverable: both hints make a claim about a
+// SECURITY boundary, and an over-broad one leaves an operator with a wrong model of
+// what they achieved, which is the same class of harm as an under-enforced one.
+// ---------------------------------------------------------------------------
+
+/** The section holding one save-status slot, out of the shipped index.html. */
+function sectionFor(saveStatusKey: string): Element {
+  const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+  const section = doc
+    .querySelector(`[data-save-status="${saveStatusKey}"]`)
+    ?.closest(".page-section");
+  if (!section) {
+    throw new Error(`no section carrying data-save-status="${saveStatusKey}"`);
+  }
+  return section;
+}
+
+function textOf(el: Element | null | undefined): string {
+  return (el?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+describe("the agent-ignore hint", () => {
+  const hint = (): string =>
+    textOf(sectionFor("agent_ignore_files").querySelector(".section-hint"));
+
+  // The list is now pushed over ACP and kiro-cli enforces it, so the copy has to name
+  // the enforcer: a reader who was told the filter is client-side would draw the wrong
+  // conclusion about which tools it reaches, and a reader told nothing would assume
+  // marotte still filters. The old claim ("never sends it to kiro-cli") is the exact
+  // sentence that went false, so it is asserted absent, not merely unasserted.
+  it("names kiro-cli as the enforcer", () => {
+    expect(hint()).toContain("kiro-cli");
+    expect(hint()).toContain("enforcing");
+    expect(hint()).not.toContain("never sends it to kiro-cli");
+  });
+
+  // "the agent cannot read files matching these patterns" was over-broad in the one
+  // direction that matters on a security tab. It is still over-broad: KAS applies the
+  // list to its file AND search tools, which is wider than marotte's two fs handlers
+  // ever were but still not everything the agent can reach.
+  it("states which tools the list reaches", () => {
+    expect(hint()).toContain("file");
+    expect(hint()).toContain("search");
+    expect(hint()).not.toContain("cannot read");
+  });
+
+  // Checked ahead of the Active policy, so no allow rule above can re-open a listed
+  // file. Worth stating on the tab that owns both controls.
+  it("places the check ahead of the Active policy", () => {
+    expect(hint()).toContain("Active policy");
+    expect(hint()).toContain("override");
+  });
+
+  // The floor is sent on every spawn whatever the user's list holds, which is why the
+  // panel renders it as a row they cannot remove. Same fact, in words.
+  it("says the floor is always honoured", () => {
+    expect(hint()).toContain(".kiroignore");
+    expect(hint()).toContain("always honoured");
+  });
+
+  it("names the shell as a reader the list does not reach", () => {
+    expect(hint()).toContain("shell command");
+    expect(hint()).toContain("transcript");
+  });
+
+  // A matched name still appears in a directory listing — KAS filters the read, not
+  // the enumeration. An operator who reads "unreadable" and then sees the name in a
+  // listing needs to have been told, or they conclude the setting is not working.
+  it("states the listing limit", () => {
+    expect(hint()).toContain("directory listing");
+    expect(hint()).toContain("unreadable");
+  });
+
+  // Writes are NOT blanket-allowed any more, so the old carve-out sentence is asserted
+  // absent. What replaced it is the pair KAS actually implements: the ignore file
+  // itself is write-denied by a kiro-scope rule, and a write to any other listed file
+  // is an ASK. Neither is a promise about writes to a path a listed file MATCHES —
+  // that mapping is deliberately unclaimed.
+  //
+  // Each clause is bound to its own subject. Asserting the two phrases separately
+  // passes for copy that swaps them ("cannot rewrite any file you list here; editing
+  // .kiroignore asks you first"), which inverts the deny and the ask.
+  it("states the write semantics without the old carve-out", () => {
+    expect(hint()).toMatch(/cannot rewrite \.kiroignore/);
+    expect(hint()).toMatch(/any other file[^.]*asks you first/);
+    expect(hint()).not.toContain("writes are still allowed");
+  });
+
+  // The knowledge index is built by a separate KAS path this list was never shown to
+  // reach. Copy that promised it would be a claim nobody measured.
+  it("promises nothing about the knowledge index", () => {
+    expect(hint()).not.toContain("knowledge");
+    expect(hint()).not.toContain("index");
+  });
+
+  // The same over-broad claim, one element down: the empty state offered .gitignore
+  // as keeping every gitignored path "off-limits to reads".
+  it("scopes the empty state's suggestion the same way", () => {
+    const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+    const empty = textOf(doc.querySelector("#agent-ignore-empty-hint"));
+    expect(empty).toContain("away from the file tools");
+    expect(empty).not.toContain("off-limits");
+  });
+});
+
+describe("agentIgnoreEntryError", () => {
+  // The FLOOR arm is marotte's own and has no server counterpart, so nothing in
+  // internal/settings can fail if it goes: .kiroignore is a perfectly valid entry that
+  // is already sent on every spawn, and accepting it produces a duplicate row the
+  // panel then renders twice. Measured unpinned — deleting the arm left the rest of
+  // this file green — which is what earns it a case of its own.
+  it("refuses the floor, because it is already in the list", () => {
+    expect(agentIgnoreEntryError(AGENT_IGNORE_FLOOR)).not.toBeNull();
+  });
+
+  // The control: an ordinary basename the floor arm must not swallow.
+  it("accepts an ordinary ignore-file name", () => {
+    expect(agentIgnoreEntryError(".dockerignore")).toBeNull();
+  });
+});
+
+describe("the supervised-mode hint", () => {
+  const section = (): Element => sectionFor("supervised_default");
+  const lead = (): string => textOf(section().querySelector(":scope > .section-hint"));
+
+  // It was 214 words in one paragraph, which is where a reader stops: the two facts
+  // they need FIRST — this is per-new-chat, and the changes are on disk while you
+  // review — sat at the end and in the middle. Every clause is load-bearing, so the
+  // mechanics moved behind a disclosure rather than being deleted.
+  it("leads with the scope and the on-disk hazard", () => {
+    expect(lead()).toContain("default for");
+    expect(lead()).toContain("new");
+    expect(lead()).toContain("chat-actions menu");
+    expect(lead()).toContain("on disk");
+    expect(lead()).toContain("test runner");
+  });
+
+  it("keeps the lead short enough to be read", () => {
+    expect(lead().split(" ").length).toBeLessThan(100);
+  });
+
+  // The review mechanics are still reachable, one disclosure away, in the same shape
+  // the explain box two sections up already uses.
+  it("puts the review mechanics behind a disclosure", () => {
+    const details = section().querySelector("details");
+    expect(details).not.toBeNull();
+    const body = textOf(details?.querySelector(".section-hint"));
+    expect(body).toContain("one review card");
+    expect(body).toContain("Every file starts ticked");
+    expect(lead()).not.toContain("review card");
   });
 });
 

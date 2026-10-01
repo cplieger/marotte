@@ -14,8 +14,10 @@
 // `max(min-height, contain-intrinsic-size + padding-block + border-block)`, which is a
 // function of the CSS alone — so the fixtures below need the class list their real
 // builder gives them and nothing more, and every case names which term moved when it
-// fails. The one entry with no reserve to shadow, `thinking`, is the exception and is
-// measured as a REAL height off a real sealed trace.
+// fails. TWO entries have no reserve to shadow — `thinking` and `steerNote` — and both
+// are measured as REAL heights off their real builders, with the OPPOSITE premise: that
+// the element is never skipped, so a rule that ever gave one `content-visibility: auto`
+// fails here rather than making the estimate a shadow of a number nobody wrote.
 //
 // THE INSTRUMENT IS THE PER-ELEMENT RECT OF THE LAST INSTANCE, which is the one place
 // that read is legitimate. `files-row-metrics.test.ts` records the instrument fact
@@ -54,11 +56,18 @@
 //   - build the container OPEN -> the two pipeline cases red at 163px against 71 and
 //     219 against 99, which is the opposite probe proving the reading can see a stage
 //     card's contribution at all
+//   - `planCard` 70 -> 71 on the FINE tier alone -> that tier's plan case red at 70
+//     against 71, the coarse one and the other 18 green, which is what says the entry
+//     is pinned per tier rather than by one shared literal
+//   - `steerNote` 62 -> 66 on the fine tier -> that case alone red, the note measuring
+//     62.19px, so the pixel of slack below is the font's and nothing wider
+//   - force `content-visibility: auto` onto `.steer-note` -> BOTH steer cases red on
+//     the premise rather than on the number, the mirror of the reserve cases' probe
 //
 // Follows `tool-box-height.test.ts` for reading box facts off the assembled stylesheet
 // and `css-rules.ts` for assembling it through `?raw` rather than the gitignored bundle.
 //
-// 16 cases: 8 per tier, through one shared `tierCases(name, enter)` helper invoked from
+// 20 cases: 10 per tier, through one shared `tierCases(name, enter)` helper invoked from
 // both tier describes, so neither tier can be pinned while the other is forgotten.
 // ---------------------------------------------------------------------------
 
@@ -72,10 +81,12 @@ import { page } from "vitest/browser";
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
-import { BLOCK_ESTIMATE_PX, ROW_GAP_PX, type BlockEstimates } from "./block-heights.js";
+import { ENTRY_ESTIMATE_PX, ROW_GAP_PX, type EntryEstimates } from "./block-heights.js";
 import { buildSubagentCard, buildSubagentContainer } from "./fundamentals/subagent-block.js";
 import { buildRunCard } from "./fundamentals/run-card.js";
 import { buildReasoning } from "./fundamentals/reasoning.js";
+import { buildSteerNote } from "./fundamentals/steer-note.js";
+import { planElement } from "./messages-plan.js";
 
 /** Enough instances that the last one is far past the scrollport whatever the box
  *  resolves to: the smallest reserve here is 38px, so 120 of them is 4,560px against a
@@ -208,6 +219,26 @@ function pipelineBox(stages: number): (i: number) => HTMLElement {
   };
 }
 
+/** A plan card, from its real builder. ONE entry, because the reserve's own comment
+ *  says the fallback counts one entry row ("a plan always has at least one entry under
+ *  it") — so a card with none would be the one shape the declared value is not about. */
+function planCard(i: number): HTMLElement {
+  return planElement([{ content: `step ${String(i)}`, priority: "medium", status: "pending" }]);
+}
+
+/** A one-line steer note, from its real builder: the OTHER fixture whose contents
+ *  matter, because `.steer-note` declares no reserve either and the estimate is a
+ *  measured height. One line and no clause on the label — `read`, user origin, no
+ *  reason, no resend, unacknowledged — which is the shape the table's comment prices
+ *  ("a one-line note, head + one text line + padding") and the least the note can be. */
+function steerNote(i: number): HTMLElement {
+  return buildSteerNote({
+    text: `keep going ${String(i)}`,
+    origin: "user",
+    dropped: false,
+  });
+}
+
 /** A SEALED reasoning trace, from its real builder: the one fixture whose contents
  *  matter, because there is no reserve here and the value is the element's real
  *  collapsed height. */
@@ -262,7 +293,7 @@ async function read(build: (i: number) => HTMLElement): Promise<Reading> {
   const wrap = document.createElement("div");
   wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
   const list = document.createElement("div");
-  list.className = "msg-wrap";
+  list.className = "turn-body";
   for (let i = 0; i < INSTANCES; i++) {
     list.appendChild(build(i));
   }
@@ -333,7 +364,7 @@ async function readTotals(build: (i: number) => HTMLElement): Promise<Totals> {
   const wrap = document.createElement("div");
   wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
   const list = document.createElement("div");
-  list.className = "msg-wrap";
+  list.className = "turn-body";
   for (let i = 0; i < INSTANCES; i++) {
     list.appendChild(build(i));
   }
@@ -348,7 +379,7 @@ async function readTotals(build: (i: number) => HTMLElement): Promise<Totals> {
   const bodyCS = body === null ? null : getComputedStyle(body);
 
   const probeStyle = document.createElement("style");
-  probeStyle.textContent = `.msg-wrap .subagent-block { contain-intrinsic-size: auto ${String(PROBE_PX)}px }`;
+  probeStyle.textContent = `.turn-body .subagent-block { contain-intrinsic-size: auto ${String(PROBE_PX)}px }`;
   document.head.appendChild(probeStyle);
   await frame();
   const probed = list.scrollHeight;
@@ -366,9 +397,17 @@ async function readTotals(build: (i: number) => HTMLElement): Promise<Totals> {
     "boxes are being skipped, and the estimate is what their height is made of",
   ).toBeGreaterThan(PREMISE_FLOOR);
 
+  const pad = (() => {
+    const cs = getComputedStyle(list);
+    return Number.parseFloat(cs.paddingBlockStart) + Number.parseFloat(cs.paddingBlockEnd);
+  })();
+
   return {
-    // `.msg-wrap` puts one gap BETWEEN instances, so N boxes carry N-1 of them.
-    perBox: (rendered - (INSTANCES - 1) * ROW_GAP_PX) / INSTANCES,
+    // `.turn-body` puts one gap BETWEEN instances, so N boxes carry N-1 of them, and
+    // its own block PADDING is in `scrollHeight` while no box's height includes it —
+    // so it comes out for the same reason the gaps do. Read off the container rather
+    // than stated: it is `--sp-3` today and the arithmetic must not pin that.
+    perBox: (rendered - (INSTANCES - 1) * ROW_GAP_PX - pad) / INSTANCES,
     drift: skipped - rendered,
     bodyTerms: {
       contentVisibility: bodyCS?.contentVisibility ?? "(no body)",
@@ -397,7 +436,7 @@ function tier(name: "fine" | "coarse"): void {
 
 /** The cases every tier runs, so neither tier can be pinned and the other forgotten. */
 function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
-  const est = (): BlockEstimates => BLOCK_ESTIMATE_PX[name];
+  const est = (): EntryEstimates => ENTRY_ESTIMATE_PX[name];
 
   it(
     "prices `text` and `row` at what .msg-row reserves",
@@ -450,6 +489,19 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
     async () => {
       await enter();
       expectShadows(await read(subagentCard), est().subagentCard, "subagentCard");
+    },
+    LOADED_BUDGET_MS,
+  );
+
+  it(
+    "prices `planCard` at .plan-message's reserve plus its padding and border",
+    async () => {
+      await enter();
+      // The one reserve here whose declared value states the CONTENT height alone, so
+      // the box model adds the block padding on top — which is what the rule's own
+      // comment records having got wrong once (90px claimed against a real 70). The
+      // entry is tier-INVARIANT, and running it at both tiers is what says so.
+      expectShadows(await read(planCard), est().planCard, "planCard");
     },
     LOADED_BUDGET_MS,
   );
@@ -522,24 +574,61 @@ function tierCases(name: "fine" | "coarse", enter: () => Promise<void>): void {
   );
 
   it(
-    "puts ROW_GAP_PX on both levels the module claims it serves",
+    "prices `steerNote` at a one-line note's REAL height, there being no reserve",
     async () => {
       await enter();
-      // The module's own comment says "one value for both levels", which is itself an
-      // assertion nothing held. Read off a mounted instance of each, because `--sp-3`
-      // reads back as a token rather than a length.
-      const wrap = document.createElement("div");
-      wrap.className = "msg-wrap";
-      wrap.appendChild(marker());
+      const r = await read(steerNote);
+      // `thinking`'s premise, and the same reason it is the legitimate one: `.steer-note`
+      // declares no `content-visibility`, so nothing is skipped, there is no reserve to
+      // shadow, and both instances report their real box. A rule that ever gave the note
+      // `auto` would fail here rather than silently making the estimate a shadow of a
+      // number nobody wrote.
+      expect(
+        {
+          contentVisibility: r.terms.contentVisibility,
+          reserve: r.terms.containIntrinsicBlockSize,
+          bothReal: r.box === r.realBox,
+        },
+        "a steer note is never skipped, so its price is a measured height",
+      ).toEqual({ contentVisibility: "visible", reserve: "none", bothReal: true });
+      // TIER-DEPENDENT, and the table says which term moves: the head's floor is
+      // `--btn-h` (36 -> 44) while the text line and the body's padding do not tier. So
+      // the two tiers differ by exactly the floor's own step, and running the case at
+      // both is what holds that — a single-tier case would pass against one number
+      // whatever the other did. `FONT_SLACK_PX` for `thinking`'s reason: one of the
+      // terms is a rendered line box, so the machine's font stack owns its last pixel.
+      expect(
+        Math.abs(r.box - est().steerNote),
+        `steerNote: a one-line note measured ${String(r.box)}px against an estimate of ${String(est().steerNote)}px`,
+      ).toBeLessThanOrEqual(FONT_SLACK_PX);
+    },
+    LOADED_BUDGET_MS,
+  );
+
+  it(
+    "puts ROW_GAP_PX on the gapped level and none on the spacer's own parent",
+    async () => {
+      await enter();
+      // `spacerHeight` adds ROW_GAP_PX once MORE than the boxes it replaces carried,
+      // on the premise that a spacer sits under `.turn`, which supplies no gap of its
+      // own. Both halves are assertions about the stylesheet, so both are read off a
+      // mounted instance — `--sp-3` reads back as a token rather than a length.
+      const turn = document.createElement("div");
+      turn.className = "turn";
       const body = document.createElement("div");
       body.className = "turn-body";
       body.appendChild(marker());
-      host.replaceChildren(wrap, body);
+      turn.appendChild(body);
+      host.replaceChildren(turn);
       await frame();
-      expect({
-        msgWrap: Number.parseFloat(getComputedStyle(wrap).rowGap),
-        turnBody: Number.parseFloat(getComputedStyle(body).rowGap),
-      }).toEqual({ msgWrap: ROW_GAP_PX, turnBody: ROW_GAP_PX });
+      const gapOf = (el: HTMLElement): number => {
+        const raw = getComputedStyle(el).rowGap;
+        return raw === "normal" ? 0 : Number.parseFloat(raw);
+      };
+      expect({ turnBody: gapOf(body), turn: gapOf(turn) }).toEqual({
+        turnBody: ROW_GAP_PX,
+        turn: 0,
+      });
     },
     LOADED_BUDGET_MS,
   );

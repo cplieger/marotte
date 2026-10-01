@@ -8,7 +8,7 @@
 // That is the whole decision, and it replaced a client-side prompt queue.
 //
 // WHY THE QUEUE IS GONE. It buffered the text on the session and drained it on
-// `turn_ended`, so a correction was delivered only after the work it was
+// `turn_closed`, so a correction was delivered only after the work it was
 // correcting had finished — the one moment it could no longer help. Its escape
 // hatch was a per-chip "send now" that CANCELLED the running turn to get ahead
 // of it, discarding everything since the last durable step. Both existed because
@@ -43,6 +43,14 @@ import { restoreFailedSend } from "./composer-state.js";
 
 export type SubmitResult = "sent" | "steered" | "failed";
 
+/** What a caller can say about a send beyond its words. */
+export interface SubmitOpts {
+  /** The steer entries whose text this send re-sends. Both verbs carry it: a send the
+   *  409 path converts into a steer names the same entries the prompt would have, so
+   *  the record does not state a resend on the idle path alone. */
+  resends?: readonly string[];
+}
+
 /** The send-error face for a 409 reason:"starting" refusal. Holder-neutral on
  *  purpose: the admission slot may be held by a cold spawn, a shell command or a
  *  workflow step, and for a shell holder nothing is "starting" — the honest claim is
@@ -50,15 +58,18 @@ export type SubmitResult = "sent" | "steered" | "failed";
  *  is the retry and is also what clears it. */
 const STARTING_FACE = "The chat is busy right now — send again to retry";
 
+/** The 409 reason:"chat_not_found" face: the chat was deleted underneath the send. */
+const GONE_FACE = "This chat no longer exists, so the message was not sent";
+
 /** The last failed attempt, so a retry of the SAME text on the SAME chat reuses
  *  its message id.
  *
- *  Required, not tidy: `appendUserMessage` persists the user row BEFORE the ACP
- *  call and nothing rolls it back (`AbandonInFlightTurn` deliberately keeps the
- *  partial), so a retry under a fresh id appends a second identical user row and
- *  hands KAS a second messageId. Reusing the id makes the retry idempotent
- *  server-side — `hasMessageID` no-ops the append — which is the same reason the
- *  retired prompt queue re-sent under the id it first used.
+ *  Required, not tidy: the id is what `hasMessage` reads to tell a send the
+ *  server TOOK from one it refused — the turn's `turn_open` carries it as
+ *  `prompt.id` and nothing rolls that back — so a retry under a fresh id reads
+ *  as refused and hands the text back a second time. The reuse costs the server
+ *  nothing: admission is the dedupe, so a re-send while the first is still
+ *  running meets Busy and becomes a steer.
  *
  *  One slot is enough: there is one composer, so only the most recent failure can
  *  be sitting in it. A different chat or edited text is a different message and
@@ -94,14 +105,18 @@ function messageIDFor(chatID: string, text: string): string {
  * error through send-state, and the retry travels under the failed attempt's own
  * message id so it lands on the user row that attempt already persisted.
  */
-export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
+export async function submitPrompt(
+  chatID: string,
+  text: string,
+  opts: SubmitOpts = {},
+): Promise<SubmitResult> {
   if (chatID === "" || text === "") {
     return "failed";
   }
   // A new attempt IS the retry, so a previous "no agent behind this chat" verdict
   // goes now rather than outliving the thing it described: the send that follows
   // is what respawns the bridge. Without this the signal is sticky for the life of
-  // the chat (nothing on the failure path emits the turn_ended that clears it) and
+  // the chat (nothing on the failure path emits the turn_closed that clears it) and
   // every later send inherits a stale alert face.
   //
   // Failure TOASTS are deliberately left alone: they report what happened rather
@@ -122,10 +137,12 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   const attachGen = attachmentGeneration(chatID);
   const messageID = messageIDFor(chatID, text);
 
+  const resends = opts.resends ?? [];
+
   if (isThinking(chatID)) {
-    return steer(chatID, text, messageID, attachments, attachGen, CONVERT_BUDGET);
+    return steer(chatID, text, messageID, attachments, attachGen, resends, CONVERT_BUDGET);
   }
-  return prompt(chatID, text, messageID, attachments, attachGen, CONVERT_BUDGET);
+  return prompt(chatID, text, messageID, attachments, attachGen, resends, CONVERT_BUDGET);
 }
 
 /** How many prompt⇄steer conversions one submit may make. Two allows the honest
@@ -140,34 +157,43 @@ async function prompt(
   messageID: string,
   attachments: readonly unknown[],
   attachGen: number,
+  resends: readonly string[],
   convertBudget: number,
 ): Promise<SubmitResult> {
   const result = await sendPromptTo(chatID, text, {
     messageID,
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(resends.length > 0 ? { resends } : {}),
   });
   if (result === "queued") {
     // Plain 409: a steerable turn started underneath us. Steer into it. The
     // conversion is gated on the ABSENCE of the "starting" reason — that
     // refusal's holder cannot receive a steer and takes the branch below.
     if (convertBudget > 0) {
-      return steer(chatID, text, messageID, attachments, attachGen, convertBudget - 1);
+      return steer(chatID, text, messageID, attachments, attachGen, resends, convertBudget - 1);
     }
     recordFailure(chatID, text, messageID, attachments, attachGen);
     reportSendRefused(STARTING_FACE);
     return "failed";
   }
   if (result === "starting") {
-    // 409 reason:"starting": the admission slot is held by a cold spawn, a
-    // shell command or a workflow step, so neither a turn nor a steer can land
-    // right now. A
-    // POST-PERSIST failure class: the user row is already persisted and
-    // rendered (persist precedes reservation server-side), so recordFailure's
-    // hasMessage gate keeps the text out of the composer while still
-    // remembering the id — a re-send of the same text travels under it and the
-    // server dedupes the append.
+    // 409 reason:"starting": the admission slot is held by a cold spawn, a shell command
+    // or a workflow step, so neither a turn nor a steer can land right now. The branch
+    // keeps its shape and is no longer a POST-PERSIST class: the turn is opened AFTER the
+    // admission slot is acquired, so this refusal appended nothing and there is no row for
+    // the text to be sitting in — `recordFailure` hands it back to the composer like every
+    // other pre-persist failure, its `hasMessage` gate answering false because no
+    // `turn_open` carries this id.
     recordFailure(chatID, text, messageID, attachments, attachGen);
     reportSendRefused(STARTING_FACE);
+    return "failed";
+  }
+  if (result === "gone") {
+    // 409 reason:"chat_not_found": the chat is tombstoned, so there is no record to prompt
+    // and no turn to steer into. Terminal for this send, and it must not fall through to
+    // "sent": the text goes back to the composer and the face says what happened.
+    recordFailure(chatID, text, messageID, attachments, attachGen);
+    reportSendRefused(GONE_FACE);
     return "failed";
   }
   if (result === "failed") {
@@ -197,19 +223,21 @@ async function steer(
   messageID: string,
   attachments: readonly unknown[],
   attachGen: number,
+  resends: readonly string[],
   convertBudget: number,
 ): Promise<SubmitResult> {
   const outcome = await steerChat.dispatch({
     chatID,
     text: withAttachmentPaths(text, attachments),
     messageID,
+    ...(resends.length > 0 ? { resends } : {}),
   }).outcome;
   if (outcome.status === "success") {
     lastFailed = undefined;
     return "steered";
   }
   if (outcome.status === "error" && outcome.error.code === "no_turn" && convertBudget > 0) {
-    return prompt(chatID, text, messageID, attachments, attachGen, convertBudget - 1);
+    return prompt(chatID, text, messageID, attachments, attachGen, resends, convertBudget - 1);
   }
   recordFailure(chatID, text, messageID, attachments, attachGen);
   if (outcome.status === "error") {

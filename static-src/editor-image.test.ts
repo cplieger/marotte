@@ -44,7 +44,21 @@ const { surfaces, apiGet, tabs } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("./dom.js", () => ({ $: surfaces }));
+vi.mock("./dom.js", () => ({
+  $: surfaces,
+  // `skeleton.ts` in this graph imports the name, and Browser Mode links for real
+  // rather than reading properties off a namespace object — so an absent export
+  // fails the whole FILE at collection. `setBusy`'s own body rather than
+  // `undefined`, because the editor's open path reaches an admitted
+  // `paintPlaceholder` and a placeholder marks its host busy through this name.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
+}));
 vi.mock("./highlight.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading

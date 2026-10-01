@@ -25,9 +25,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/runesafe/v2"
-	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // unattendedApprovalBudget is how long a scheduled run's permission request

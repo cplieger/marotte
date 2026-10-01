@@ -1,0 +1,71 @@
+{
+  "input_file": "attack-7-tab-vs-spaces.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [
+    {
+      "id": "L1",
+      "line": 1,
+      "indent": 0,
+      "number": "",
+      "text": "Root",
+      "status": "pending",
+      "queued": false,
+      "optional": false,
+      "hash": "44cb005ee2e65d9cc817b0a083579369fb6c24a4be728cb43fd9d4c3ca7f4c2e",
+      "detail": "",
+      "children": [
+        {
+          "id": "L2",
+          "line": 2,
+          "indent": 4,
+          "number": "",
+          "text": "Four-space child",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "68cfa079362e33cb9c73d40b40f5fd8db2917e021373f8c48d7a006186f060e3",
+          "detail": "",
+          "children": []
+        },
+        {
+          "id": "L3",
+          "line": 3,
+          "indent": 1,
+          "number": "",
+          "text": "Tab child (four columns => SAME depth, not nested)",
+          "status": "pending",
+          "queued": false,
+          "optional": false,
+          "hash": "89ae28a2288c10ae012c5992fbc483fa93532552f25ddfd77ca605646d679037",
+          "detail": "",
+          "children": [
+            {
+              "id": "L4",
+              "line": 4,
+              "indent": 2,
+              "number": "",
+              "text": "Two-space child",
+              "status": "pending",
+              "queued": false,
+              "optional": false,
+              "hash": "f54969a349b31eac717551a79178328952ebac872bc9c6a22d442cb67581efe3",
+              "detail": "",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "progress": {
+    "pending": 2,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 2
+  },
+  "unreadable_lines": 0,
+  "truncated": null
+}

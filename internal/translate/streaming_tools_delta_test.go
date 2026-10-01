@@ -26,7 +26,7 @@ func TestToolCallDelta_SendsEachOutputChunkOnce(t *testing.T) {
 
 	deltas := toolCallDeltas(t, events)
 	if len(deltas) != 3 {
-		t.Fatalf("got %d tool_call_update frames, want 3", len(deltas))
+		t.Fatalf("got %d tool_progress frames, want 3", len(deltas))
 	}
 	// parseToolUpdateContent appends a newline per content block, so each frame's
 	// delta is its own chunk plus one.
@@ -68,7 +68,7 @@ func TestToolCallDelta_SendsEachDiffOnce(t *testing.T) {
 
 	deltas := toolCallDeltas(t, events)
 	if len(deltas) != 2 {
-		t.Fatalf("got %d tool_call_update frames, want 2", len(deltas))
+		t.Fatalf("got %d tool_progress frames, want 2", len(deltas))
 	}
 	for i, want := range []string{"a.go", "b.go"} {
 		if len(deltas[i].DiffsAppended) != 1 || deltas[i].DiffsAppended[0].Path != want {
@@ -85,21 +85,23 @@ func TestToolCallDelta_SendsEachDiffOnce(t *testing.T) {
 // TestToolCallDelta_NeverCarriesTheInput is 1.49 MiB of the measured total. An
 // update cannot change the input, so it has no field for it.
 func TestToolCallDelta_NeverCarriesTheInput(t *testing.T) {
-	fields := reflect.VisibleFields(reflect.TypeFor[marotte.ToolCallUpdatePayload]())
+	fields := reflect.VisibleFields(reflect.TypeFor[marotte.ToolProgressPayload]())
 	for _, f := range fields {
 		if f.Name == "Input" {
-			t.Error("ToolCallUpdatePayload has an Input field; an update never changes it")
+			t.Error("ToolProgressPayload has an Input field; an update never changes it")
 		}
 	}
 }
 
-// TestToolCallDelta_ReplacesWhenTheTerminalOutputWins is the one rule a
-// pure-append wire cannot express.
+// TestToolCallDelta_TheTerminalOutputWinsOnTheResult is the one rule a
+// pure-append wire cannot express, and the reason the settled call travels as its
+// own entry rather than as a last delta.
 //
 // At completion adoptTerminalOutput takes the terminal's full stream over the ACP
-// fragments already on the card, which legitimately shortens or rewrites them. A
-// client that could only append would render the fragments plus the full stream.
-func TestToolCallDelta_ReplacesWhenTheTerminalOutputWins(t *testing.T) {
+// fragments already on the card, which legitimately shortens or rewrites them. The
+// tool_result carries the WHOLE settled output, so a client replaces rather than
+// appends, and the completing frame is never a tool_progress.
+func TestToolCallDelta_TheTerminalOutputWinsOnTheResult(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	const termID = "term-1"
 	deps.terminals[termID] = termRendered{text: "the terminal's whole stream\n"}
@@ -120,52 +122,47 @@ func TestToolCallDelta_ReplacesWhenTheTerminalOutputWins(t *testing.T) {
 		},
 	}), FrameAttribution{})
 
-	deltas := toolCallDeltas(t, events)
-	last := deltas[len(deltas)-1]
-	if !last.OutputReplace {
-		t.Fatalf("the completing frame did not set output_replace: %+v — the fragment would survive under it",
-			last)
+	if deltas := toolCallDeltas(t, events); len(deltas) != 1 || deltas[0].OutputDelta != "a fragment\n" {
+		t.Fatalf("tool_progress frames = %+v, want the fragment's alone; the completion is a tool_result", deltas)
 	}
-	if last.OutputDelta != "the terminal's whole stream\n" {
-		t.Errorf("output_delta = %q, want the terminal's whole stream", last.OutputDelta)
+	results := toolResultsOf(t, deps.chatEntries(chatID))
+	if len(results) != 1 {
+		t.Fatalf("tool_result entries = %d, want 1", len(results))
+	}
+	if results[0].Output != "the terminal's whole stream\n" || results[0].TerminalID != termID {
+		t.Errorf("tool_result = {output %q, terminal %q}, want the terminal's stream alone under %q",
+			results[0].Output, results[0].TerminalID, termID)
 	}
 	got, _ := lastToolCallUpdate(t, deps, events)
 	if got.Output != "the terminal's whole stream\n" {
-		t.Errorf("folded output = %q, want the terminal's stream alone", got.Output)
+		t.Errorf("folded output = %q, want the terminal's stream alone — the fragment would survive under it", got.Output)
 	}
 }
 
 // TestToolCallDelta_AnUnchangedFieldIsAbsent is what makes "absent means
-// unchanged" safe for the client to rely on.
+// unchanged" safe for the client to rely on: a non-terminal frame that changes
+// only the status carries the status and the two addresses, nothing else.
 func TestToolCallDelta_AnUnchangedFieldIsAbsent(t *testing.T) {
-	tr, _, _, events, chatID := primeToolCall(t)
+	tr, _, deps, events, chatID := primeToolCall(t)
 
-	// A frame that changes only the status: KAS sends title and kind nullish on
-	// most updates, and the create already set both.
+	// KAS sends title and kind nullish on most updates, and the create already set
+	// both.
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
-		"status":     "completed",
+		"status":     "in_progress",
 	}), FrameAttribution{})
 
 	deltas := toolCallDeltas(t, events)
 	if len(deltas) != 1 {
-		t.Fatalf("got %d tool_call_update frames, want 1", len(deltas))
+		t.Fatalf("got %d tool_progress frames, want 1", len(deltas))
 	}
-	got := deltas[0]
-	// DurationMs is normalised out, and that is not a loosening: the completion
-	// fold COMPUTES it from wall clock (buf.ComputeDuration), so it is a field the
-	// fold changed and the frame is right to carry it. Asserting 0 asserted that
-	// the create and the completion landed in the same millisecond, which is true
-	// about 39 runs in 40 and made this test flaky from the day it was written.
-	// Whether a duration reaches the wire is TestToolCallDelta_SendsTheDuration's.
-	got.DurationMs = 0
-	want := marotte.ToolCallUpdatePayload{
-		MessageID:  "tc-mid",
+	want := marotte.ToolProgressPayload{
+		Turn:       deps.turns.chats[chatID].ID(),
 		ToolCallID: "tc-1",
-		Status:     marotte.ToolCompleted,
+		Status:     marotte.ToolInProgress,
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("a status-only frame = %+v,\nwant exactly %+v", got, want)
+	if !reflect.DeepEqual(deltas[0], want) {
+		t.Errorf("a status-only frame = %+v,\nwant exactly %+v", deltas[0], want)
 	}
 }
 
@@ -178,14 +175,14 @@ func TestToolCallDelta_SendsTheDuration(t *testing.T) {
 	after.Status = marotte.ToolCompleted
 	after.DurationMs = 1234
 
-	d := toolCallDelta("m1", &before, &after)
+	d := toolProgress("t1", &before, &after)
 	if d.DurationMs != 1234 {
 		t.Errorf("duration_ms = %d, want 1234 — a completed card shows it", d.DurationMs)
 	}
 	// And a frame that did not change it sends nothing, which is what stops every
 	// later frame for one call re-stating it.
 	after.DurationMs = before.DurationMs
-	if d2 := toolCallDelta("m1", &before, &after); d2.DurationMs != 0 {
+	if d2 := toolProgress("t1", &before, &after); d2.DurationMs != 0 {
 		t.Errorf("duration_ms = %d on an unchanged duration, want 0", d2.DurationMs)
 	}
 }
@@ -218,17 +215,17 @@ func TestOutputDelta(t *testing.T) {
 	}
 }
 
-// toolCallDeltas returns every tool_call_update payload in events, in order.
-func toolCallDeltas(t *testing.T, events *[]marotte.ServerEvent) []marotte.ToolCallUpdatePayload {
+// toolCallDeltas returns every tool_progress payload in events, in order.
+func toolCallDeltas(t *testing.T, events *[]marotte.ServerEvent) []marotte.ToolProgressPayload {
 	t.Helper()
-	var out []marotte.ToolCallUpdatePayload
+	var out []marotte.ToolProgressPayload
 	for _, e := range *events {
-		if e.Type != marotte.EventToolCallUpdate {
+		if e.Type != marotte.EventToolProgress {
 			continue
 		}
-		p, ok := e.Payload.(marotte.ToolCallUpdatePayload)
+		p, ok := e.Payload.(marotte.ToolProgressPayload)
 		if !ok {
-			t.Fatalf("tool_call_update payload type = %T, want marotte.ToolCallUpdatePayload", e.Payload)
+			t.Fatalf("tool_progress payload type = %T, want marotte.ToolProgressPayload", e.Payload)
 		}
 		out = append(out, p)
 	}

@@ -1,206 +1,229 @@
 // ---------------------------------------------------------------------------
-// Tests for subagent-tail.ts — the delegate card's last few lines, projected out
-// of the chat's messages.
+// The delegate card's last few lines, derived from its LANE.
 //
-// The projection is a pure function over `Message[]`, so these cases are DATA and
-// touch no DOM at all: what they pin is which lines a card would show and which
-// blocks its subscription has to watch. The old tail was a MutationObserver over
-// the card's rendered body, and its equivalent cases had to build real bubbles,
-// tool cards and reasoning traces to say anything.
+// The transcript renders none of a delegate's own entries, so the tail is the only
+// thing on a running card that says which delegate is progressing. What these cases
+// pin is which lines it would show, that the OPEN entry is the lane's real tail, and
+// that ONE delta repaints ONE card.
 //
-// The binding's cases at the foot are the reactive half, driven through the real
-// store: the whole point of deriving the tail per delegate is that ONE delta
-// repaints ONE tail.
+// The binding half runs against the real store rather than a fake source, because its
+// subject is the two dependencies it takes and a fake would let either one go.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { subagentTail, bindSubagentTail, TAIL_LINES } from "./subagent-tail.js";
-import { appendChunk, setSessions, setActive } from "./store.js";
-import type { Block, Message, Session, ToolCall } from "./types.js";
-
-const SUB = "u-1";
-
-function msg(id: string, blocks: Block[], tools: ToolCall[] = []): Message {
-  return { id, role: "assistant", ts: 1, content: "", blocks, tool_calls: tools };
-}
-
-function text(t: string, subtask?: string): Block {
-  return { type: "text", text: t, ...(subtask === undefined ? {} : { agent_subtask_id: subtask }) };
-}
-
-function thinking(t: string, subtask?: string): Block {
-  return {
-    type: "thinking",
-    thinking: t,
-    ...(subtask === undefined ? {} : { agent_subtask_id: subtask }),
-  };
-}
-
-function toolUse(id: string, subtask?: string): Block {
-  return {
-    type: "tool_use",
-    tool_call_id: id,
-    ...(subtask === undefined ? {} : { agent_subtask_id: subtask }),
-  };
-}
-
-function call(id: string, title: string, subtask: string): ToolCall {
-  return { id, title, kind: "other", status: "completed", ts: 0, agent_subtask_id: subtask };
-}
-
-/** The delegate's own invocation call, whose title names the card and not the tail. */
-function invocation(id: string, subtask: string): ToolCall {
-  return {
-    id,
-    title: "Sub-agent: introspect",
-    kind: "other",
-    status: "in_progress",
-    ts: 0,
-    agent_subtask_id: subtask,
-  };
-}
-
-describe("subagentTail", () => {
-  it("takes the LAST lines of a block, not its first", () => {
-    const t = subagentTail([msg("m1", [text("one\ntwo\nthree\nfour\nfive", SUB)])], SUB);
-    expect(t.lines).toEqual(["three", "four", "five"]);
-  });
-
-  it("caps at TAIL_LINES by default and honours an explicit want", () => {
-    const blocks = [text("a\nb\nc\nd", SUB)];
-    expect(subagentTail([msg("m1", blocks)], SUB).lines).toHaveLength(TAIL_LINES);
-    expect(subagentTail([msg("m1", blocks)], SUB, 1).lines).toEqual(["d"]);
-    expect(subagentTail([msg("m1", blocks)], SUB, 0).lines).toEqual([]);
-  });
-
-  it("keeps one line per BLOCK, so two blocks never glue into one", () => {
-    // The defect the DOM walk had twice: a body's `textContent` carries no
-    // separator between rendered blocks, so the last three lines collapsed into one
-    // line of glued words that the card then clipped at its own width.
-    const t = subagentTail([msg("m1", [text("first", SUB), text("second", SUB)])], SUB);
-    expect(t.lines).toEqual(["first", "second"]);
-  });
-
-  it("reads a thinking block's trace as well as a text block's prose", () => {
-    const t = subagentTail(
-      [msg("m1", [thinking("I need to check the build first.", SUB), text("Checking.", SUB)])],
-      SUB,
-    );
-    expect(t.lines).toEqual(["I need to check the build first.", "Checking."]);
-  });
-
-  it("collapses whitespace runs and drops blank lines", () => {
-    const t = subagentTail([msg("m1", [text("  spaced   out  \n\n\n   \nlast\n", SUB)])], SUB);
-    expect(t.lines).toEqual(["spaced out", "last"]);
-  });
-
-  it("ignores the parent stream and every OTHER delegate", () => {
-    const t = subagentTail(
-      [msg("m1", [text("parent prose"), text("mine", SUB), text("theirs", "u-2")])],
-      SUB,
-    );
-    expect(t.lines).toEqual(["mine"]);
-  });
-
-  it("answers nothing for an empty subtask id", () => {
-    // "" is the parent stream's own stamp, so a tail for it would be the whole
-    // conversation's last lines under a delegate's name.
-    expect(subagentTail([msg("m1", [text("parent prose")])], "").lines).toEqual([]);
-  });
-
-  it("takes a tool call's TITLE as its line, and never the invocation's", () => {
-    // A delegate that is running commands has no prose to show, and a frozen tail is
-    // the one thing this region must not be. The invocation is excluded because the
-    // card's own header already names it.
-    const t = subagentTail(
-      [
-        msg(
-          "m1",
-          [toolUse("inv", SUB), text("looking", SUB), toolUse("t1", SUB)],
-          [invocation("inv", SUB), call("t1", "Grep Search", SUB)],
-        ),
-      ],
-      SUB,
-    );
-    expect(t.lines).toEqual(["looking", "Grep Search"]);
-  });
-
-  it("skips a tool block whose call has not arrived yet", () => {
-    // Out-of-order SSE: the block is in the array before its call is, and there is
-    // no honest line to show for it.
-    const t = subagentTail([msg("m1", [text("mine", SUB), toolUse("t-late", SUB)])], SUB);
-    expect(t.lines).toEqual(["mine"]);
-  });
-
-  it("spans two messages, because a mid-turn model switch splits a turn", () => {
-    const t = subagentTail(
-      [msg("m1", [text("one\ntwo", SUB)]), msg("m2", [text("three", SUB)])],
-      SUB,
-    );
-    expect(t.lines).toEqual(["one", "two", "three"]);
-  });
-
-  it("names the blocks it read, and only those", () => {
-    // The subscription set. A block ABOVE the ones the walk took cannot reach the
-    // tail — three later lines already fill it — so subscribing to it would repaint
-    // this card for growth nobody can see.
-    const t = subagentTail([msg("m1", [text("old\nlines\nhere", SUB), text("a\nb\nc", SUB)])], SUB);
-    expect(t.lines).toEqual(["a", "b", "c"]);
-    expect(t.sources).toEqual([
-      { messageID: "m1", blockIndex: 1, thinking: false, full: "a\nb\nc" },
-    ]);
-  });
-
-  it("subscribes to a still-EMPTY trailing block, which is the streaming one", () => {
-    // It contributes no line yet and is exactly the block the next delta lands in.
-    const t = subagentTail([msg("m1", [text("done", SUB), text("", SUB)])], SUB);
-    expect(t.lines).toEqual(["done"]);
-    expect(t.sources.map((s) => s.blockIndex)).toEqual([0, 1]);
-  });
-
-  it("marks a thinking source as thinking, so the caller watches the right signal", () => {
-    const t = subagentTail([msg("m1", [thinking("hmm", SUB)])], SUB);
-    expect(t.sources).toEqual([{ messageID: "m1", blockIndex: 0, thinking: true, full: "hmm" }]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The binding, over the real store.
-// ---------------------------------------------------------------------------
+import { makeToolCall } from "./__test-helpers__/model.js";
+import {
+  appendEntry,
+  applyDelta,
+  defaultUsage,
+  openEntry,
+  openTurn,
+  sealEntry,
+  setActive,
+  setSessions,
+} from "./store.js";
+import { clearAllEntrySigs } from "./store-signals.js";
+import type { Session } from "./types.js";
+import type { Entry, EntryToolCall } from "./wire/types.gen.js";
 
 const CHAT = "c-tail";
+const SUB = "u-1";
+const OTHER = "u-2";
+const TURN = "t1";
 
-function session(messages: Message[]): Session {
+function makeSession(chatID: string): Session {
   return {
-    id: CHAT,
+    id: chatID,
     name: "tail",
     model: "",
     acp_session_id: "",
     current_mode_id: "",
-    usage: {
-      context_pct: 0,
-      context_size: 0,
-      credits: 0,
-      turn_count: 0,
-      last_turn_ms: 0,
-      has_real_data: false,
-    },
-    message_count: messages.length,
-    messages,
+    supervised_mode: false,
+    usage: defaultUsage(),
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
-    thinking: true,
+    thinking: false,
     working_label: "Thinking",
-  } as Session;
+  };
 }
 
-describe("bindSubagentTail", () => {
+/** The `turn_open` of `turnID`, which is always `seq` 0. */
+function turnOpen(turnID: string): Entry {
+  return {
+    id: `${turnID}-open`,
+    turn: turnID,
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "prompt", n: 1, prompt: { id: `m-${turnID}`, text: "delegate this" } },
+  };
+}
+
+/** A sealed entry at `seq`. `lane` absent is the chat's own lane. */
+function sealed(seq: number, kind: Entry["kind"], payload: unknown, lane?: string): Entry {
+  const base: Entry = {
+    id: `${TURN}-e${String(seq)}`,
+    turn: TURN,
+    kind,
+    seq,
+    ts: seq + 1,
+    payload,
+  };
+  return lane === undefined ? base : Object.assign(base, { lane });
+}
+
+function text(seq: number, body: string, lane?: string): Entry {
+  return sealed(seq, "text", { text: body }, lane);
+}
+
+function thinking(seq: number, body: string, lane?: string): Entry {
+  return sealed(seq, "thinking", { text: body }, lane);
+}
+
+function call(title: string, opts: { readonly subtask?: string } = {}): EntryToolCall {
+  return makeToolCall({
+    id: `tc-${title}`,
+    title,
+    kind: "other",
+    status: "completed",
+    ...(opts.subtask === undefined ? {} : { agent_subtask_id: opts.subtask }),
+  });
+}
+
+function toolCall(seq: number, c: EntryToolCall, lane?: string): Entry {
+  const base: Entry = { id: c.id, turn: TURN, kind: "tool_call", seq, ts: seq + 1, payload: c };
+  return lane === undefined ? base : Object.assign(base, { lane });
+}
+
+/** Seed ONE turn holding `entries` after its `turn_open`, through the store's own
+ *  operations: a fixture assembled by hand could hold a `seq` the store refuses. */
+function seed(entries: readonly Entry[]): void {
+  setSessions([makeSession(CHAT)]);
+  setActive(CHAT);
+  openTurn(CHAT, turnOpen(TURN));
+  for (const e of entries) {
+    appendEntry(CHAT, e);
+  }
+}
+
+/** The lane's open entry, seated with `n` deltas already folded in. */
+function open(lane: string, body: string, id = `${TURN}-live-${lane}`): void {
+  openEntry(CHAT, { turn: TURN, id, lane, kind: "text", text: body, n: 1 });
+}
+
+describe("subagentTail reads the lane", () => {
   beforeEach(() => {
-    setSessions([]);
-    setActive("");
+    clearAllEntrySigs();
+  });
+
+  it("takes the LAST lines of an entry, not its first", () => {
+    seed([text(1, "one\ntwo\nthree\nfour\nfive", SUB)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["three", "four", "five"]);
+  });
+
+  it("caps at TAIL_LINES by default and honours an explicit want", () => {
+    seed([text(1, "a\nb\nc\nd", SUB)]);
+    expect(subagentTail(CHAT, SUB)).toHaveLength(TAIL_LINES);
+    expect(subagentTail(CHAT, SUB, 1)).toEqual(["d"]);
+    expect(subagentTail(CHAT, SUB, 0)).toEqual([]);
+  });
+
+  // The defect the DOM walk had twice: a body's `textContent` carries no separator
+  // between rendered blocks, so the last three lines collapsed into one line of glued
+  // words the card then clipped at its own width.
+  it("keeps one line per ENTRY, so two entries never glue into one", () => {
+    seed([text(1, "first", SUB), text(2, "second", SUB)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["first", "second"]);
+  });
+
+  it("reads a thinking entry's trace as well as a text entry's prose", () => {
+    seed([thinking(1, "I need to check the build first.", SUB), text(2, "Checking.", SUB)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["I need to check the build first.", "Checking."]);
+  });
+
+  it("collapses whitespace runs and drops blank lines", () => {
+    seed([text(1, "  spaced   out  \n\n\n   \nlast\n", SUB)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["spaced out", "last"]);
+  });
+
+  // Every lane predicate is relative to the lane asked about: the chat's own entries are
+  // lane "" and a sibling's are the sibling's, and either leaking puts one agent's work
+  // under another's name.
+  it("ignores the chat's own lane and every OTHER delegate's", () => {
+    seed([text(1, "parent prose"), text(2, "mine", SUB), text(3, "theirs", OTHER)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["mine"]);
+    expect(subagentTail(CHAT, OTHER)).toEqual(["theirs"]);
+  });
+
+  // "" is the chat's own lane, so a tail for it would be the conversation's last lines
+  // under a delegate's name.
+  it("answers nothing for the empty subtask id, and for a chat it does not hold", () => {
+    seed([text(1, "parent prose")]);
+    expect(subagentTail(CHAT, "")).toEqual([]);
+    expect(subagentTail("c-nobody", SUB)).toEqual([]);
+  });
+
+  // A delegate running commands has no prose to show, and a frozen tail is the one thing
+  // this region must not be. Its own invocation is excluded because the card's header
+  // already names it — and that call sits in the ISSUER's lane, so it is only reachable
+  // here at all for a delegate that dispatched another.
+  it("takes a tool call's TITLE as its line, and never an invocation's", () => {
+    seed([
+      text(1, "looking", SUB),
+      toolCall(2, call("Grep Search"), SUB),
+      toolCall(3, call("Sub-agent: introspect", { subtask: "u-3" }), SUB),
+    ]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["looking", "Grep Search"]);
+  });
+
+  // Engine bookkeeping the transcript renders nowhere may not surface here either, which
+  // is the one exclusion a card cannot make for itself.
+  it("contributes no line for an internal title", () => {
+    seed([text(1, "mine", SUB), toolCall(2, call("Fetching your cloud config"), SUB)]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["mine"]);
+  });
+
+  // The open entry IS the lane's tail: it carries no `seq` and no position, so it is read
+  // separately and last. A tail that ignored it would freeze at the last sealed line for
+  // as long as the delegate keeps writing, which is every live card.
+  it("reads the open entry as the lane's tail, after the sealed ones", () => {
+    seed([text(1, "sealed one", SUB), text(2, "sealed two", SUB)]);
+    open(SUB, "arriving now");
+    expect(subagentTail(CHAT, SUB)).toEqual(["sealed one", "sealed two", "arriving now"]);
+  });
+
+  // The open entry is read with the whole budget, so its own lines are what `want` has to
+  // bound: a lane whose live tail is longer than the card must still show its last lines.
+  it("bounds the open entry's own lines by `want`", () => {
+    seed([text(1, "sealed", SUB)]);
+    open(SUB, "p\nq\nr\ns");
+    expect(subagentTail(CHAT, SUB)).toEqual(["q", "r", "s"]);
+  });
+
+  it("reads an open entry that is the lane's only content", () => {
+    seed([text(1, "parent prose")]);
+    open(SUB, "first words");
+    expect(subagentTail(CHAT, SUB)).toEqual(["first words"]);
+  });
+
+  it("reads the open entry of the asked-about lane alone", () => {
+    seed([text(1, "parent prose")]);
+    open(SUB, "mine");
+    open(OTHER, "theirs");
+    expect(subagentTail(CHAT, SUB)).toEqual(["mine"]);
+  });
+});
+
+describe("bindSubagentTail repaints one card", () => {
+  beforeEach(() => {
+    clearAllEntrySigs();
   });
 
   it("paints the delegate's current tail on install", () => {
-    setSessions([session([msg("m1", [text("first line", SUB)])])]);
+    seed([text(1, "first line", SUB)]);
     const paint = vi.fn();
     const stop = bindSubagentTail(CHAT, SUB, paint);
     expect(paint).toHaveBeenCalledTimes(1);
@@ -208,19 +231,20 @@ describe("bindSubagentTail", () => {
     stop();
   });
 
-  it("repaints ONE delegate's tail for that delegate's own delta", () => {
-    // The whole reason the tail is derived per delegate. The sibling's walk re-runs
-    // — a new block is a fact no per-block signal can carry — but its lines are
-    // unchanged, so its card is not touched.
-    setSessions([session([msg("m1", [text("mine", SUB), text("theirs", "u-2")])])]);
+  // The narrow channel is `laneSig(turn, lane)`, so a sibling's delta must not reach this
+  // card. The sibling's own walk re-runs, and its lines are unchanged.
+  it("repaints for its own delegate's delta and not for a sibling's", () => {
+    seed([text(1, "parent prose")]);
+    open(SUB, "mine");
+    open(OTHER, "theirs");
     const mine = vi.fn();
     const theirs = vi.fn();
     const stopMine = bindSubagentTail(CHAT, SUB, mine);
-    const stopTheirs = bindSubagentTail(CHAT, "u-2", theirs);
+    const stopTheirs = bindSubagentTail(CHAT, OTHER, theirs);
     mine.mockClear();
     theirs.mockClear();
 
-    appendChunk(CHAT, "m1", " and more", false, 0, SUB);
+    applyDelta(CHAT, TURN, `${TURN}-live-${SUB}`, SUB, 2, " and more");
 
     expect(mine).toHaveBeenCalledTimes(1);
     expect(mine.mock.calls[0]?.[0]).toEqual(["mine and more"]);
@@ -229,32 +253,52 @@ describe("bindSubagentTail", () => {
     stopTheirs();
   });
 
-  it("picks up a NEW block of its delegate's, on the store's own tick", async () => {
-    // The case the per-block signals cannot answer on their own: nothing has read
-    // block 1 yet, so no signal for it exists to fire. The chat's transcript
-    // version carries it instead, and that bump is COALESCED per microtask
-    // (`scheduleMessages`), which is why this one awaits and the delta case above
-    // does not — a per-block write lands in its own tick.
-    setSessions([session([msg("m1", [text("one", SUB)])])]);
+  // The state at a card's CREATION: the card is built from the invocation, which sits in
+  // the issuer's lane, so this delegate's own lane does not exist yet and there is no lane
+  // signal to subscribe to. The chat's transcript version is what carries the first entry,
+  // and it is coalesced per microtask, which is why this case awaits.
+  it("picks up the lane's FIRST entry, which no lane signal can announce", async () => {
+    seed([text(1, "parent prose")]);
+    const paint = vi.fn();
+    const stop = bindSubagentTail(CHAT, SUB, paint);
+    expect(paint.mock.calls[0]?.[0]).toEqual([]);
+    paint.mockClear();
+
+    appendEntry(CHAT, text(2, "first words", SUB));
+    await Promise.resolve();
+
+    expect(paint).toHaveBeenCalledTimes(1);
+    expect(paint.mock.calls[0]?.[0]).toEqual(["first words"]);
+    stop();
+  });
+
+  // A seal moves the same words from the open entry into a sealed one, so the tail is
+  // unchanged and the card must not be repainted for it.
+  it("does not repaint when the lines are unchanged", async () => {
+    seed([text(1, "parent prose")]);
+    open(SUB, "settled words");
     const paint = vi.fn();
     const stop = bindSubagentTail(CHAT, SUB, paint);
     paint.mockClear();
 
-    appendChunk(CHAT, "m1", "two", false, 1, SUB);
+    sealEntry(CHAT, TURN, `${TURN}-live-${SUB}`, SUB, 2, 9, 1);
     await Promise.resolve();
 
-    expect(paint).toHaveBeenCalledTimes(1);
-    expect(paint.mock.calls[0]?.[0]).toEqual(["one", "two"]);
+    expect(subagentTail(CHAT, SUB)).toEqual(["settled words"]);
+    expect(paint).not.toHaveBeenCalled();
     stop();
   });
 
-  it("stops painting once disposed", () => {
-    setSessions([session([msg("m1", [text("one", SUB)])])]);
+  it("stops painting once disposed", async () => {
+    seed([text(1, "parent prose")]);
+    open(SUB, "mine");
     const paint = vi.fn();
     bindSubagentTail(CHAT, SUB, paint)();
     paint.mockClear();
 
-    appendChunk(CHAT, "m1", " more", false, 0, SUB);
+    applyDelta(CHAT, TURN, `${TURN}-live-${SUB}`, SUB, 2, " more");
+    appendEntry(CHAT, text(2, "later", SUB));
+    await Promise.resolve();
 
     expect(paint).not.toHaveBeenCalled();
   });

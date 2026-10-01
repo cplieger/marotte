@@ -26,7 +26,6 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -45,11 +44,10 @@ type v3CodeReference struct {
 }
 
 // HandleCodeReferences accumulates the turn's licensed-code attributions onto
-// the in-flight assistant buffer and broadcasts a code_references SSE so the
-// client attaches an attribution chip to that turn. The references are also
-// persisted onto the finalized assistant message at turn end (bridge_coord.go)
-// so the chip survives reload — the streamed assistant turn is never
-// re-broadcast as message_appended.
+// the open turn and broadcasts a code_references SSE so the client attaches an
+// attribution footnote to that turn. The aggregate rides that turn's
+// turn_close, so the footnote survives a reload without this frame being
+// persisted as such.
 func (t *Translator) HandleCodeReferences(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	p, ok := unmarshalParams[v3CodeReferences](msg, "code_references")
 	if !ok {
@@ -79,21 +77,17 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID marotte.Ch
 	if len(refs) == 0 {
 		return
 	}
-	// A step's copy is already dropped above, so this frame is the chat's own.
-	buf := t.buffers.TurnFoldTarget(ctx, chatID, marotte.TurnSourceWireTurnStart)
-	// Only attach to an in-flight turn. References fire mid-completion (the
-	// model must generate the licensed code first), so by the time one
-	// arrives the assistant buffer is Started with a message id. Dropping a
-	// reference that somehow precedes the turn avoids contaminating the next
-	// turn's message via the reused buffer.
-	if !buf.Started || buf.MessageID == "" {
+	// A step's copy is already dropped above, so this frame is the chat's own. Only
+	// an OPEN turn takes them: references fire mid-completion (the model must
+	// generate the licensed code first), and a frame with no turn to join is dropped
+	// rather than opening one for it.
+	turn, ok := t.turns.OwnTurn(chatID)
+	if !ok {
 		return
 	}
-	all, version := buf.AppendCodeReferences(refs)
-	frame := marotte.NewEvent(marotte.EventCodeReferences, chatID, marotte.CodeReferencesPayload{
-		MessageID:  buf.MessageID,
-		References: all,
-	})
-	frame.Subject = marotte.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
-	t.bus.Broadcast(ctx, frame)
+	turn.AddCodeReferences(refs...)
+	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventCodeReferences, chatID, marotte.CodeReferencesPayload{
+		Turn:       turn.ID(),
+		References: turn.CodeReferences(),
+	}))
 }

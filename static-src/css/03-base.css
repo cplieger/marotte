@@ -252,6 +252,14 @@
   animation-delay: 0.3s;
 }
 
+/* The placeholder pulse, for `.skeleton` in 30-utilities.css. BOTH ends are
+ * declared, so a stopped clock leaves the element at its OWN opacity rather
+ * than at a resting amplitude — which is why `.skeleton` carries a
+ * reduced-motion arm and `vk-dot-beat` below needs none. Reshaping this onto
+ * that dot's implicit-`from`/`to` form parks at the same value and is declined
+ * on discoverability: it puts a reduced-motion decision in a declaration whose
+ * own rule never uses it, where the media arm says `prefers-reduced-motion`
+ * where the decision is. */
 @keyframes vk-skeleton {
   0%,
   100% {
@@ -279,9 +287,8 @@
  * up; the reading, the arithmetic and what is left animating are in
  * `marotte-ui.md` "Entry motion is a GPU budget".
  *
- * `data-chat-entry` itself STAYS: `messages.ts` `fadeInTranscript` reuses it as
- * the marker for a skeleton hand-off, and the streamed text keeps its own
- * per-chunk and per-block fades, which are small elements. */
+ * What is left animating is the streamed text's own per-chunk and per-block
+ * fades, which are small elements. */
 
 /* ==========================================================================
    THE DOT BEAT — one keyframe set, created per dot and only while it beats.

@@ -24,6 +24,7 @@ import { showToast } from "./toast.js";
 import { ICON_EDIT_UI, ICON_TRASH_UI, ICON_PLUS_UI, ICON_REFRESH, ICON_SPINNER } from "./icons.js";
 import {
   type Server,
+  type KeyPair,
   type RuntimeStatus,
   type RuntimeState,
   type Origin,
@@ -41,8 +42,8 @@ import {
   setPrewarm,
   configuredServers,
 } from "./mcp-state.js";
-import { type AddMode, setEditing, initModal, cleanupModal } from "./mcp-panels.js";
-import { extractNpxPackage } from "./mcp-panels.js";
+import { setEditing, initModal, cleanupModal } from "./mcp-panels.js";
+import { editModeFor, extractNpxPackage } from "./mcp-panels.js";
 import {
   toggleServer,
   deleteServer,
@@ -114,11 +115,7 @@ function buildSectionScaffold(): void {
     hidden: true,
   }) as HTMLParagraphElement;
 
-  emptyMsg = el(
-    "p",
-    { className: "mcp-empty" },
-    "No integrations connected yet. Click + to search the official MCP registry or paste a config.",
-  ) as HTMLParagraphElement;
+  emptyMsg = el("p", { className: "mcp-empty" }, EMPTY_DEFAULT) as HTMLParagraphElement;
   sectionBody = el("div", { className: "mcp-server-list" }) as HTMLDivElement;
   // Read-only rows for servers the agent reported that this page does not
   // configure. A separate container, not extra entries in the configured
@@ -140,40 +137,51 @@ function buildSectionScaffold(): void {
   bindForeignList();
 }
 
-// applyGovernance reflects the org/account MCP policy into the section's held
-// add button + notice element. Thin wrapper over the pure applyMcpGovernance so
-// the DOM effect is unit-testable without initMCP's network side effects.
+// The section's held elements are the only thing this adds to the pure
+// applyMcpGovernance, which is what makes that one testable without initMCP's
+// network side effects.
 function applyGovernance(g: GovernanceStatePayload): void {
-  if (addBtn !== null && govDisabledMsg !== null) {
-    applyMcpGovernance(g, addBtn, govDisabledMsg);
+  if (addBtn !== null && govDisabledMsg !== null && emptyMsg !== null) {
+    applyMcpGovernance(g, { add: addBtn, notice: govDisabledMsg, empty: emptyMsg });
   }
 }
 
-/** Apply the MCP governance policy to a given add-button + notice element: when
- *  governance is KNOWN and mcp_enabled is false, the add-server affordance is
- *  disabled and the notice (with disabledReason when present) is shown. An
- *  unknown policy leaves the affordance enabled (permissive default). Exported
- *  for focused testing. */
-export function applyMcpGovernance(
-  g: GovernanceStatePayload,
-  add: HTMLButtonElement,
-  notice: HTMLElement,
-): void {
+/** The three elements the MCP policy decides: the add affordance, the notice
+ *  that says why it is off, and the empty state, whose call to action names
+ *  that same affordance. Named rather than positional because all three are
+ *  paragraphs-or-buttons and a swap would be silent. */
+export interface McpGovernanceEls {
+  add: HTMLButtonElement;
+  notice: HTMLElement;
+  empty: HTMLElement;
+}
+
+/** Apply the MCP governance policy: when governance is KNOWN and mcp_enabled is
+ *  false, the add-server affordance is disabled, the notice (with
+ *  disabledReason when present) is shown, and the empty state stops telling a
+ *  reader to click a button that cannot be clicked. An unknown policy leaves
+ *  the affordance enabled (permissive default). Exported for focused testing. */
+export function applyMcpGovernance(g: GovernanceStatePayload, els: McpGovernanceEls): void {
   const disabled = g.known && !g.features.mcp_enabled;
-  add.disabled = disabled;
-  add.setAttribute(
+  els.add.disabled = disabled;
+  els.add.setAttribute(
     "data-tooltip",
     disabled ? "MCP is disabled by your organization" : "Connect integration",
   );
-  notice.hidden = !disabled;
+  els.notice.hidden = !disabled;
   if (disabled) {
     const reason = (g.disabled_reason ?? "").trim();
-    notice.textContent =
+    els.notice.textContent =
       reason !== ""
         ? `MCP integrations are disabled by your organization: ${reason}`
         : "MCP integrations are disabled by your organization.";
   }
+  els.empty.textContent = disabled ? EMPTY_GOV_OFF : EMPTY_DEFAULT;
 }
+
+const EMPTY_DEFAULT =
+  "No integrations connected yet. Click + to search the official MCP registry or paste a config.";
+const EMPTY_GOV_OFF = "No integrations connected, and none can be added while MCP is disabled.";
 
 // --- Reactive server list ---
 
@@ -331,6 +339,11 @@ function mountRow(s: Server, id: string): HTMLElement {
         silent: true,
         onSuccess: () => {
           mcpState.refetchServers();
+          // Enabling or disabling a server changes what KAS runs, so the dot and
+          // the meta line are stale until the status is re-read. The two fetches
+          // are independent and each coalesces per microtask, so asking for both
+          // costs one extra request rather than one per mutation.
+          mcpState.refetchStatus();
         },
       },
     );
@@ -512,15 +525,66 @@ function applyStatusDot(dot: HTMLSpanElement, s: Server, st: RuntimeStatus): voi
   }
 }
 
-function renderMeta(s: Server, st: RuntimeStatus): string {
+/** Count the key-pair rows that would actually be sent: `collectKeyPairs` skips
+ *  a row whose trimmed name is empty, and the editor seeds one blank row for an
+ *  empty list, so a bare count would report a credential nobody entered. */
+function namedPairs(pairs: readonly KeyPair[] | undefined): number {
+  return (pairs ?? []).filter((p) => p.name.trim() !== "").length;
+}
+
+/** What credentials this server carries, for the row that would otherwise look
+ *  identical whether the reader had supplied one or not.
+ *
+ *  Presence is knowable from the masked record: `internal/mcp`'s export
+ *  preserves each pair's NAME and the slice LENGTH, masks a set
+ *  `oauth_client_secret` to the sentinel, and does not mask
+ *  `oauth_client_id` at all — so no wire change is needed to say this. It
+ *  reports what the RECORD holds rather than what the transport can use, so a
+ *  hand-edited mcp.json carrying both cannot hide half of it. */
+export function credentialSummary(s: Server): string {
+  const parts: string[] = [];
+  const env = namedPairs(s.env);
+  if (env > 0) {
+    parts.push(env === 1 ? "1 environment variable" : `${env} environment variables`);
+  }
+  const headers = namedPairs(s.headers);
+  if (headers > 0) {
+    parts.push(headers === 1 ? "1 header" : `${headers} headers`);
+  }
+  if ((s.oauth_client_id ?? "") !== "" || (s.oauth_client_secret ?? "") !== "") {
+    parts.push("OAuth client configured");
+  }
+  return parts.length === 0 ? "no credentials" : parts.join(", ");
+}
+
+/** The state phrase for a row whose status the reader must act on. `connected`
+ *  and `idle` get none: the dot already says so, and a phrase on every row would
+ *  push the credential summary and the source out of the ellipsised track. */
+function statePhrase(st: RuntimeStatus): string {
+  if (st.state === "failed") {
+    return st.error === "" ? "Failed to start" : `Failed to start — ${st.error}`;
+  }
+  if (st.state === "needs_auth") {
+    return "Waiting for sign-in";
+  }
+  return "";
+}
+
+/** The row's meta line: state phrase, then credentials, then the source.
+ *
+ *  Credentials lead the source because the line ellipsises and a command or URL
+ *  is the long segment, so a tail-clipped source would take the credential fact
+ *  with it. The server NAME is on its own line, so `source` is not the identity
+ *  anchor this order costs.
+ *
+ *  Exported for its test, like `renderForeignMeta`: the ORDER is the half of this
+ *  that a `credentialSummary` test cannot reach. */
+export function renderMeta(s: Server, st: RuntimeStatus): string {
   if (!s.enabled) {
     return "Disabled";
   }
   const source = s.transport === "stdio" ? (s.command ?? "") : (s.url ?? "");
-  if (isFailedWithError(st)) {
-    return `${source} — ${st.error}`;
-  }
-  return source;
+  return [statePhrase(st), credentialSummary(s), source].filter((p) => p !== "").join(" · ");
 }
 
 /** Add/update/remove the prewarm badge after the name. Returns the badge (or
@@ -687,6 +751,7 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
         {
           onSuccess: () => {
             mcpState.refetchServers();
+            mcpState.refetchStatus();
           },
         },
       );
@@ -962,8 +1027,7 @@ async function openEditModal(id: string): Promise<void> {
     return;
   }
   setEditing({ id });
-  const mode: AddMode = s.transport === "stdio" ? "npm" : "remote";
-  initModal({ mode, server: s });
+  initModal({ mode: editModeFor(s), server: s });
   openModal($.mcpModal);
 }
 
@@ -983,6 +1047,7 @@ export function initMCP(): void {
   // row effects re-render reactively (no explicit re-render call needed).
   onSSE("mcp_config_changed", () => {
     mcpState.refetchServers();
+    mcpState.refetchStatus();
   });
   onSSE("mcp_connected", (_chat, p) => {
     mcpState.setStatusFromEvent(p.server, { name: p.server, state: "connected" });

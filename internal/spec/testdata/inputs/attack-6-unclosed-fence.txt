@@ -1,0 +1,5 @@
+- [ ] 1. Before the fence
+```markdown
+- [ ] 1.1 An example inside a fence
+- [ ] 2. Everything after an unclosed fence
+- [ ] 3. ... is invisible

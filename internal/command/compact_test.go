@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 func compactReq(chatID marotte.ChatID) *marotte.ClientCommand {

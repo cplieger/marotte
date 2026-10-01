@@ -25,7 +25,7 @@ import {
   setCatalogPhase,
   refreshPickerIfVisible,
 } from "./picker.js";
-import type { Session, Message, ModelInfo } from "./types.js";
+import type { Entry, Session, TurnState, ModelInfo } from "./types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -39,12 +39,12 @@ function makeSession(overrides: Partial<Session> = {}): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: 0,
-    messages: [],
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -52,8 +52,19 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function userMessage(text: string): Message {
-  return { id: "m-1", role: "user", content: text, ts: 0 } as Message;
+/** One resident turn, the way a window that holds a conversation carries it: the
+ *  `turn_open` as `entries[0]` plus the prompt the reader sent. */
+function residentTurn(text: string): Pick<Session, "turns" | "turn_order" | "turn_count"> {
+  const open: Entry = {
+    id: "t1-open",
+    turn: "t1",
+    kind: "turn_open",
+    seq: 0,
+    ts: 1,
+    payload: { source: "prompt", n: 1, prompt: { id: "m-1", text } },
+  };
+  const state: TurnState = { entries: [open], openEntries: new Map() };
+  return { turns: new Map([["t1", state]]), turn_order: ["t1"], turn_count: 1 };
 }
 
 function hidden(): boolean {
@@ -115,23 +126,25 @@ describe("model picker visibility", () => {
     expect(hidden()).toBe(false);
   });
 
-  // The overlay must not sit over a conversation. `message_count` is the
-  // server's count and `messages` the paginated window; either one being
+  // The overlay must not sit over a conversation. `turn_count` is the header's
+  // session-wide count and `turn_order` the paginated window; either one being
   // non-empty means there is something to read underneath.
-  it("hides once the chat holds a message", () => {
-    setSessions([makeSession({ messages: [userMessage("hello")] })]);
+  it("hides once the chat holds a turn", () => {
+    setSessions([makeSession(residentTurn("hello"))]);
     setActive("chat-1");
     expect(hidden()).toBe(true);
   });
 
-  it("hides for a chat the server already counts messages for", () => {
-    setSessions([makeSession({ message_count: 4 })]);
+  // The header's count with no resident window at all, which is what an older
+  // page of a long conversation looks like before its window is fetched.
+  it("hides for a chat the server already counts turns for", () => {
+    setSessions([makeSession({ turn_count: 4 })]);
     setActive("chat-1");
     expect(hidden()).toBe(true);
   });
 
   // THE REGRESSION. A send sets `thinking` synchronously, well before the
-  // server's message_appended echo arrives, so this is what closes the overlay
+  // server's turn_opened echo arrives, so this is what closes the overlay
   // for a sender that never calls a hide function: the goal row, the tangent
   // row, and anything added later.
   it("hides as soon as a turn starts, before any message lands", () => {
@@ -142,8 +155,8 @@ describe("model picker visibility", () => {
   // A failed send leaves the server idle and the chat promptable, and by then
   // the user message is persisted — so the picker must not come back and cover
   // the transcript when thinking clears.
-  it("stays hidden when a turn ends on a chat that now has a message", () => {
-    setSessions([makeSession({ messages: [userMessage("/goal do the thing")] })]);
+  it("stays hidden when a turn ends on a chat that now has a turn", () => {
+    setSessions([makeSession(residentTurn("/goal do the thing"))]);
     setActive("chat-1");
     setThinking("chat-1", true);
     setThinking("chat-1", false);

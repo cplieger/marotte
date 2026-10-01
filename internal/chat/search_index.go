@@ -3,26 +3,20 @@ package chat
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 
-	"github.com/cplieger/marotte/internal/textsearch"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/textsearch"
 )
 
-// The cross-chat candidate index: one Bloom filter per chat over the rune
-// trigrams of what the per-chat scan searches (the messageSegments spans plus
-// the title, each through textsearch.Fold), so a query reads only the chats that
-// can hold it. It PRUNES and never decides: a Bloom filter has no false
-// negatives, so a chat holding the folded query holds every trigram and is
-// always read, an admitted chat is scanned exactly as an unindexed one, and a
-// saturated filter admits everything, which is the unindexed behaviour.
-//
-// In memory only, never persisted: a persisted index is a second store to keep
-// in step with the chat files, and the directory listing is this store's one
-// index. The store is those files' single writer, so writeChat and Remove drop a
-// chat's entry under the per-chat lock they already hold and the next query
-// rebuilds it from the read it makes anyway; nothing is built at boot, because a
-// corpus read for a feature the session may never use is the wrong default.
-// Memory is chats x filterBytes.
+// The cross-chat candidate index: one Bloom filter per chat over the rune trigrams
+// of what the per-chat scan searches (the entrySegments spans of every turn plus
+// the title, through textsearch.Fold). It PRUNES and never decides: a Bloom
+// filter has no false negatives, so a chat holding the query is always read and
+// scanned exactly as an unindexed one, and a saturated filter admits everything.
+// In memory only: the first query to read a chat builds its filter from that read,
+// every append EXTENDS it under the per-chat lock, and a rewind's truncate, a merge
+// rewrite, a header write (the title is indexed) and Remove DROP it to be rebuilt.
 
 const (
 	// filterBytes is one chat's filter, and so the index's cost per chat.
@@ -35,24 +29,46 @@ const (
 	trigramRunes = 3
 )
 
-// chatFilter is one chat's Bloom filter. Complete before it enters the index and
-// never mutated after, so a lookup hands out a pointer read without any lock.
+// chatFilter is one chat's Bloom filter. It is complete when it enters the index
+// and grows by every append after, so a lookup hands out a pointer the appender is
+// still writing to; a query reads it outside the chat's lock. Every bit is set by
+// an atomic OR and read by an atomic load, so the two never race, and a filter
+// only ever gains bits: a query that reads a word before the append's OR sees the
+// log as it was before that append, which is the answer a scan taken before the
+// append would give.
 type chatFilter struct {
 	words [filterWords]uint64
 }
 
-// buildChatFilter indexes one decoded chat: its title and every span the scan
-// reads, folded as the scan folds them. A trigram never straddles two spans,
-// because a hit never does.
-func buildChatFilter(c *marotte.Chat) *chatFilter {
+// buildChatFilter indexes one chat: its title and every span of every turn,
+// folded as the scan folds them. The scan skips an undrawn turn, but drawn is a
+// bit the appender flips, and a filter built while a turn was undrawn outlives
+// the append that draws it; indexing every turn is what keeps the filter a
+// superset of the scan whatever the bit does after the build. A trigram never
+// straddles two spans, because a hit never does.
+func buildChatFilter(name string, entries []marotte.Entry) *chatFilter {
 	f := new(chatFilter)
-	f.addText(c.Name)
-	for i := range c.Messages {
-		for _, seg := range messageSegments(&c.Messages[i]) {
+	f.addText(name)
+	turns := indexSearchTurns(entries, nil)
+	for i := range entries {
+		for _, seg := range entrySegments(&entries[i], turns[entries[i].Turn]) {
 			f.addText(seg.text)
 		}
 	}
 	return f
+}
+
+// addEntry records one appended entry's segments. The entry is read into a turn of
+// its own, so a tool_call's input is indexed whole: the tool_result whose diff drops
+// a leaf from that input at query time has not landed yet, and a filter may hold
+// more than the scan reads, never less. An undrawn turn's entry is indexed too;
+// the scan skips it, at the cost of one read that finds nothing.
+func (f *chatFilter) addEntry(e *marotte.Entry) {
+	t := newSearchTurn(false)
+	t.observe(e)
+	for _, seg := range entrySegments(e, t) {
+		f.addText(seg.text)
+	}
 }
 
 // addText records every rune trigram of one folded span.
@@ -73,7 +89,7 @@ func (f *chatFilter) add(key uint64) {
 	h1, h2 := splitHash(key)
 	for i := range uint64(filterHashes) {
 		pos := (h1 + i*h2) & (filterBits - 1)
-		f.words[pos>>6] |= 1 << (pos & 63)
+		atomic.OrUint64(&f.words[pos>>6], 1<<(pos&63))
 	}
 }
 
@@ -85,7 +101,7 @@ func (f *chatFilter) holdsAll(keys []uint64) bool {
 		h1, h2 := splitHash(key)
 		for i := range uint64(filterHashes) {
 			pos := (h1 + i*h2) & (filterBits - 1)
-			if f.words[pos>>6]&(1<<(pos&63)) == 0 {
+			if atomic.LoadUint64(&f.words[pos>>6])&(1<<(pos&63)) == 0 {
 				return false
 			}
 		}
@@ -162,4 +178,15 @@ func (x *searchIndex) drop(id marotte.ChatID) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	delete(x.filters, id)
+}
+
+// extend folds one appended entry into the chat's filter, when it holds one. A
+// chat with no filter is left without: only a full read of the log can build a
+// complete one, so an append never creates a filter, and the next query does. The
+// caller holds the chat's lock, which is what orders the extension against the
+// query-side build and against the neighbouring appends.
+func (x *searchIndex) extend(id marotte.ChatID, e *marotte.Entry) {
+	if f, ok := x.lookup(id); ok {
+		f.addEntry(e)
+	}
 }

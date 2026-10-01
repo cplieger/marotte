@@ -373,7 +373,7 @@ describe("PRs tab cache bypass", () => {
 });
 
 describe("the PR filter", () => {
-  const DAY_MS = 86_400_000;
+  const HOUR_MS = 3_600_000;
 
   /** One full refresh over the three repos, answered with the given PR lists. */
   async function paintGroups(
@@ -430,7 +430,7 @@ describe("the PR filter", () => {
         title: "Tighten the upload policy",
         draft: true,
         author: "renovate-bot",
-        updated_at: Date.now() - 3 * DAY_MS,
+        updated_at: Date.now() - 3 * HOUR_MS,
         source_branch: "feat/upload-policy",
         check_status: "failing",
         checks_total: 5,
@@ -489,7 +489,7 @@ describe("the PR filter", () => {
       "3 failing",
       "checks running",
       "auto-merge",
-      "by @renovate-bot · 3d ago · feat/upload-policy → main",
+      "by @renovate-bot · 3 hours ago · feat/upload-policy → main",
       "Merge when green",
       "Re-run",
       "Reopen",
@@ -510,7 +510,7 @@ describe("the PR filter", () => {
     expect(shownNumbers()).toEqual(["#11"]);
     applyFilter("→ dev");
     expect(shownNumbers()).toEqual(["#11"]);
-    applyFilter("3d ago");
+    applyFilter("3 hours ago");
     expect(shownNumbers()).toEqual(["#1234"]);
     applyFilter("1235");
     expect(shownNumbers()).toEqual(["#1235"]);

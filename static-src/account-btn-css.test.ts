@@ -5,16 +5,18 @@
 // rather than an 8px disc, which was the app's smallest target. This file pins the
 // three claims that restructure rests on, at every pointer tier:
 //
-//   THE BOX fills the footer's content band, and the mechanism is
-//   `align-self: stretch` against `.sidebar-footer`'s `min-height`, NOT the app-wide
-//   hit floor — the floor is a backstop the button is only reachable by because its
-//   chrome is stripped by named declarations rather than `all: unset` (that shorthand
-//   resets `min-*` at the declaring selector's own specificity, which is what made
-//   `.status-dot` invisible to the floor for a year).
+//   THE BOX IS THE LOGOUT BUTTON'S, height and radius alike, centred in the band
+//   rather than filling it. Measured against the REAL sibling at every tier, never
+//   against `--footer-ctl-h`'s arithmetic: restating a derivation proves only that
+//   it is self-consistent.
 //
-//   NOTHING MOVED, verified against numbers READ OFF A REAL BUILD BEFORE the change
-//   rather than against the arithmetic in `.account-btn`'s comment. A test that
-//   encodes the derivation proves only that the derivation is self-consistent.
+//   THE HIT FLOOR is what the box clears, not what sizes it, and it is reachable
+//   only because chrome is stripped by named declarations rather than `all: unset`
+//   (that shorthand resets `min-*` at the declaring selector's own specificity,
+//   which is what made `.status-dot` invisible to the floor for a year).
+//
+//   NOTHING MOVED ON THE INLINE AXIS, verified against numbers READ OFF A REAL BUILD
+//   BEFORE the merge rather than against any arithmetic.
 //
 //   THE HOVER is `.icon-btn`'s VALUE by user instruction — the footer's two controls
 //   are a pair and must answer the pointer alike — but GATED on `any-hover`, which
@@ -95,6 +97,13 @@ function mountFooter(email = "someone@example.invalid"): Footer {
   logout.type = "button";
   logout.id = "logout-btn";
   logout.className = "icon-btn";
+  // The glyph is load-bearing: `.icon-btn` declares no height, so an empty one is
+  // the bare hit floor (24px fine) where production is glyph plus padding (32px),
+  // and every height comparison below would measure a box the app never renders.
+  const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  glyph.setAttribute("class", "ic-ui");
+  glyph.setAttribute("viewBox", "0 0 24 24");
+  logout.appendChild(glyph);
   actions.appendChild(logout);
 
   footer.append(anchor, actions);
@@ -125,7 +134,29 @@ const TIERS: readonly (readonly [name: string, apply: () => void])[] = [
 ];
 
 describe("the merged control's box", () => {
-  it.each(TIERS)("fills the footer's content band at the %s tier", (_name, apply) => {
+  it.each(TIERS)("is the logout button's height at the %s tier", (name, apply) => {
+    // An equality against the sibling, so it holds whatever the tokens resolve to. A
+    // pinned 32/44 here would be the derivation restated.
+    apply();
+    const { btn, logout } = mountFooter();
+    const b = btn.getBoundingClientRect().height;
+    const l = logout.getBoundingClientRect().height;
+    expect(b, `${name}: trigger ${b}px against the logout button's ${l}px`).toBeCloseTo(l, 0);
+  });
+
+  it.each(TIERS)("takes the logout button's corner radius at the %s tier", (name, apply) => {
+    // Both read `--r` today, so this is a divergence test rather than a restatement
+    // of either rule.
+    apply();
+    const { btn, logout } = mountFooter();
+    const r = getComputedStyle(btn).borderTopLeftRadius;
+    expect(r, `${name}: trigger ${r}`).toBe(getComputedStyle(logout).borderTopLeftRadius);
+    expect(parseFloat(r), "and it is a real corner, not a square").toBeGreaterThan(0);
+  });
+
+  it.each(TIERS)("is centred in the band rather than filling it at the %s tier", (name, apply) => {
+    // One property, two halves: shorter than the content band, with equal slack above
+    // and below. Without the second, any height passes.
     apply();
     const { footer, btn } = mountFooter();
     const f = footer.getBoundingClientRect();
@@ -134,28 +165,28 @@ describe("the merged control's box", () => {
     expect(getComputedStyle(footer).paddingBlockStart, "the footer has no block padding").toBe(
       "0px",
     );
-    expect(b.height).toBeCloseTo(f.height - border, 0);
-    expect(b.top).toBeCloseTo(f.top + border, 0);
+    const band = f.height - border;
+    expect(b.height, `${name}: trigger ${b.height}px in a ${band}px band`).toBeLessThan(band);
+    expect(b.top - (f.top + border), `${name}: slack above against below`).toBeCloseTo(
+      f.bottom - b.bottom,
+      0,
+    );
   });
 
-  it.each(TIERS)("answers a hit on all four edges at the %s tier", (name, apply) => {
+  it.each(TIERS)("answers a hit on all four of its own edges at the %s tier", (name, apply) => {
     // A real `elementFromPoint`, never a style read: only a hit test sees a clip, an
     // overlapping sibling or a zero-width box. Each probe off the CORNERS, because
-    // `border-radius` is honoured by hit testing.
-    //
-    // The VERTICAL probes are the FOOTER's band edges rather than the button's, which
-    // is the claim: a control filling only its content height answers inside itself
-    // at every self-relative probe and tells us nothing.
+    // `border-radius` is honoured by hit testing. The band above and below this pill
+    // belongs to the footer, so the case above is what stops "its own edges" passing
+    // for a box of any height.
     apply();
-    const { footer, btn } = mountFooter();
-    const f = footer.getBoundingClientRect();
+    const { btn } = mountFooter();
     const b = btn.getBoundingClientRect();
-    const border = parseFloat(getComputedStyle(footer).borderTopWidth);
     const midX = b.left + b.width / 2;
-    const midY = f.top + border + (f.height - border) / 2;
+    const midY = b.top + b.height / 2;
     for (const [edge, x, y] of [
-      ["top", midX, f.top + border + 1],
-      ["bottom", midX, f.bottom - 1],
+      ["top", midX, b.top + 1],
+      ["bottom", midX, b.bottom - 1],
       ["leading", b.left + 1, midY],
       ["trailing", b.right - 1, midY],
     ] as const) {
@@ -168,16 +199,25 @@ describe("the merged control's box", () => {
     }
   });
 
-  it("clears 44px on a coarse pointer while the band stays 52px", () => {
-    // What `min-height` on the band is FOR: the floor lifts the footer's OTHER
-    // control to 44px and the band has to hold it without growing, so the trigger
-    // stretching into that band clears the coarse floor by construction rather than
-    // by declaring a height.
+  it.each(TIERS)("clears the app-wide hit floor at the %s tier", (name, apply) => {
+    // `.account-btn`'s (0,1,0) `min-block-size` outranks the floor's zero-specificity
+    // rule, so the floor holds by VALUE (`--footer-ctl-h` is a `max()` over it) rather
+    // than by cascade. Read off the page, so one case covers every tier that moves it.
+    apply();
+    const { btn } = mountFooter();
+    const floor = tokenPx("--hit-floor");
+    expect(floor, "the tier declares a floor").toBeGreaterThan(0);
+    const h = btn.getBoundingClientRect().height;
+    expect(h, `${name}: ${h}px against a ${floor}px floor`).toBeGreaterThanOrEqual(floor);
+  });
+
+  it("keeps the band at 52px while the coarse floor lifts both controls to 44", () => {
+    // What `min-height` on the band is FOR: it holds two 44px controls without growing.
     document.documentElement.dataset["pointer"] = "coarse";
     const { footer, btn, logout } = mountFooter();
     expect(logout.getBoundingClientRect().height, "the floor applies").toBeCloseTo(44, 0);
+    expect(btn.getBoundingClientRect().height).toBeCloseTo(44, 0);
     expect(footer.getBoundingClientRect().height).toBeCloseTo(52, 0);
-    expect(btn.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
   });
 
   it.each(TIERS)("renders the mark at --dot-size at the %s tier", (_name, apply) => {
@@ -317,7 +357,14 @@ describe("the state channels, read out of the sheet", () => {
     // Naming the declarations keeps the floor reachable as a backstop.
     const btnBody = ruleContaining(shell, ".account-btn", "top").body;
     expect(btnBody, "all: unset would make the floor unreachable").not.toMatch(/all:\s*unset/u);
-    expect(btnBody, "the stretch is the mechanism").toMatch(/align-self:\s*stretch/u);
+    // Both sides, because a stretch left standing beside the `min-block-size` wins the
+    // cross axis and silently restores the full-band fill.
+    expect(btnBody, "the box reads the footer's control height").toMatch(
+      /min-block-size:\s*var\(--footer-ctl-h\)/u,
+    );
+    expect(btnBody, "and nothing stretches it back into the band").not.toMatch(
+      /align-self:\s*stretch/u,
+    );
     // `min-width: 0` opts out of the floor's INLINE axis deliberately (the box is the
     // band's whole width, so a 44px inline floor describes nothing) while nothing
     // opts out of the block axis.

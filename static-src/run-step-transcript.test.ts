@@ -1,20 +1,23 @@
 // The on-demand step-transcript reader: which URL it asks for, when it declines to
-// ask, how it GRADES a failure, and what it hands the render lifecycle.
+// ask, how it GRADES a failure, and what it commits to the run store.
 //
-// `api-client.js` is mocked and everything else is real, including the GENERATED
-// decoder — which is the point of asking for a typed read: a reply the decoder
-// rejects must reach the caller as the transient verdict rather than as content.
+// `api-client.js` is mocked and everything else is real, `run-store.js` included —
+// the adoption is the behaviour, so the assertions read the run's own log back rather
+// than a mock's calls. The GENERATED decoder is real too, which is the point of asking
+// for a typed read: a reply the decoder rejects must reach the caller as the transient
+// verdict rather than as content.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Block, Message, RunStepTranscript } from "./types.js";
+import type { Entry, OpenEntry, RunStepTranscript } from "./types.js";
 
 const apiGetTypedOrError = vi.fn<(url: string, decode: unknown) => Promise<unknown>>();
 
 vi.mock("./api-client.js", () => ({
   apiGetTypedOrError: (url: string, decode: unknown) => apiGetTypedOrError(url, decode),
-  // Present-but-inert so real-ESM linking succeeds whatever else this graph reaches.
-  // No case here calls them.
+  // Present-but-inert so real-ESM linking succeeds whatever else this graph reaches
+  // (`run-store.js` imports two of these). No case here calls them.
   apiGet: vi.fn(),
+  apiGetOrError: vi.fn(),
   apiGetTyped: vi.fn(),
   apiPost: vi.fn(),
   apiDelete: vi.fn(),
@@ -23,10 +26,11 @@ vi.mock("./api-client.js", () => ({
 const {
   clearStepTranscripts,
   requestStepTranscript,
+  rereadStepTranscript,
   stepRead,
-  stepSliceFor,
   stepTranscriptVersion,
 } = await import("./run-step-transcript.js");
+const { appendRunEntry, runTurnHoles, runTurns } = await import("./run-store.js");
 
 /** The envelope `apiGetTypedOrError` answers with, structurally — `ApiResult` is
  *  private to `api-client.ts` and the consumer destructures rather than naming it. */
@@ -40,10 +44,13 @@ interface Envelope {
 /** A 2xx envelope carrying a decoded reply in the shape the endpoint answers with. */
 function ok(over: Partial<RunStepTranscript> = {}): Envelope {
   const body: RunStepTranscript = {
-    messages: [],
     workflow_id: "wf_1",
     node_path: "wf_1/a",
     state: "ready",
+    source: "log",
+    entries: [],
+    open_entries: [],
+    subject: [],
     ...over,
   };
   return { ok: true, status: 200, data: body, error: "" };
@@ -56,9 +63,32 @@ function fail(status: number): Envelope {
   return { ok: false, status, data: null, error: "refused" };
 }
 
-/** One assistant message carrying `blocks`. */
-function assistant(blocks: Block[], id = "m1"): Message {
-  return { id, role: "assistant", ts: 0, content: "", blocks };
+/** The `turn_open` that opens a step's turn: `seq` 0 by definition. */
+function turnOpen(turn: string, nodePath: string): Entry {
+  return {
+    id: `${turn}-open`,
+    turn,
+    kind: "turn_open",
+    seq: 0,
+    ts: 0,
+    payload: { source: "workflow_step", node_path: nodePath, n: 1 },
+  };
+}
+
+/** One sealed `text` entry at the position its own `seq` claims. */
+function text(turn: string, seq: number, body: string): Entry {
+  return { id: `${turn}-${String(seq)}`, turn, kind: "text", seq, ts: 0, payload: { text: body } };
+}
+
+/** A lane's open tail, which never reaches the log and has no `seq`. */
+function tail(turn: string, body: string): OpenEntry {
+  return { turn, id: `${turn}-tail`, kind: "text", text: body, n: 1 };
+}
+
+/** The entries of one turn of a run's log, by id, in file order. */
+function entryIDs(workflowID: string, turnID: string): string[] {
+  const found = runTurns(workflowID).find(([id]) => id === turnID);
+  return (found?.[1].entries ?? []).map((e) => e.id);
 }
 
 /** Ask, then wait for the answer that was queued for this call. */
@@ -150,11 +180,11 @@ describe("run-step-transcript: when it asks", () => {
     expect(apiGetTypedOrError).not.toHaveBeenCalled();
   });
 
-  it("keys reads per step, so one step's answer is not another's", async () => {
-    await ask("wf_1", "wf_1/a", ok({ messages: [assistant([{ type: "text", text: "A" }])] }));
-    await ask("wf_1", "wf_1/b", ok({ messages: [assistant([{ type: "text", text: "B" }])] }));
-    expect(stepSliceFor("wf_1", "wf_1/a")?.blocks[0]).toMatchObject({ text: "A" });
-    expect(stepSliceFor("wf_1", "wf_1/b")?.blocks[0]).toMatchObject({ text: "B" });
+  it("keys reads per step, so one step's verdict is not another's", async () => {
+    await ask("wf_1", "wf_1/a", ok({ state: "ready" }));
+    await ask("wf_1", "wf_1/b", ok({ state: "gone" }));
+    expect(stepRead("wf_1", "wf_1/a")?.state).toBe("ready");
+    expect(stepRead("wf_1", "wf_1/b")?.state).toBe("gone");
   });
 
   // A 5xx is the server failing to answer, which is transient by definition, so it
@@ -234,167 +264,100 @@ describe("run-step-transcript: the version signal", () => {
   });
 });
 
-describe("run-step-transcript: the projection", () => {
-  // The non-assistant rows carry real blocks and a real tool call, or this case
-  // asserts nothing: with empty ones it passes whether or not `role` is read.
-  it("keeps only assistant rows", async () => {
+// The answer's CONTENT goes into the run store through the same operations the live
+// frames use, so the pane has one place to read from and a re-read cannot disagree
+// with a stream. Each case uses its own run id, because a run's log is durable state
+// that no verdict clear touches.
+describe("run-step-transcript: adopting the answer into the run store", () => {
+  it("commits the answer's entries under their own turn, in file order", async () => {
+    const entries = [turnOpen("t1", "wf/a"), text("t1", 1, "one"), text("t1", 2, "two")];
+    await ask("wf_adopt", "wf/a", ok({ entries }));
+    expect(entryIDs("wf_adopt", "t1")).toEqual(["t1-open", "t1-1", "t1-2"]);
+    expect(runTurnHoles("wf_adopt")).toEqual([]);
+  });
+
+  // Seated BEFORE the sealed entries, an open tail lands on a turn the answer has not
+  // created yet, which the store records as a hole rather than a tail.
+  it("seats an open tail on the turn the same answer created", async () => {
     await ask(
-      "wf_1",
-      "wf_1/a",
-      ok({
-        messages: [
-          {
-            id: "u1",
-            role: "user",
-            ts: 0,
-            content: "the instruction",
-            blocks: [{ type: "text", text: "the instruction" }],
-          },
-          assistant([{ type: "text", text: "the answer" }]),
-          {
-            id: "e1",
-            role: "event",
-            ts: 0,
-            content: "",
-            blocks: [{ type: "text", text: "cancelled" }],
-            tool_calls: [{ id: "t9", title: "Read", kind: "read", status: "completed", ts: 0 }],
-          },
-        ],
-      }),
+      "wf_tail",
+      "wf/a",
+      ok({ entries: [turnOpen("t1", "wf/a")], open_entries: [tail("t1", "still writing")] }),
     );
-    const slice = stepSliceFor("wf_1", "wf_1/a");
-    expect(slice?.blocks).toEqual([{ type: "text", text: "the answer" }]);
-    expect(slice?.toolCalls).toEqual([]);
+    const found = runTurns("wf_tail").find(([id]) => id === "t1");
+    expect(found?.[1].openEntries.get("")?.text).toBe("still writing");
+    expect(runTurnHoles("wf_tail")).toEqual([]);
   });
 
-  it("flattens several assistant messages in order", async () => {
-    await ask(
-      "wf_1",
-      "wf_1/a",
-      ok({
-        messages: [
-          assistant([{ type: "text", text: "one" }], "m1"),
-          assistant([{ type: "text", text: "two" }], "m2"),
-        ],
-      }),
-    );
-    expect(stepSliceFor("wf_1", "wf_1/a")?.blocks.map((b) => b.text)).toEqual(["one", "two"]);
+  // The repair is a HOLE FILL rather than a rewrite: the prefix the store already
+  // holds is recognised as a redelivery and skipped, and the append resumes at the
+  // gap. Without that, a second read would mark a hole at `seq` 0 and the step would
+  // never settle.
+  it("recognises the prefix it already holds and resumes at the gap", async () => {
+    const first = [turnOpen("t1", "wf/a"), text("t1", 1, "one")];
+    await ask("wf_again", "wf/a", ok({ entries: first }));
+    apiGetTypedOrError.mockResolvedValueOnce(ok({ entries: [...first, text("t1", 2, "two")] }));
+    rereadStepTranscript("wf_again", "wf/a");
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(entryIDs("wf_again", "t1")).toEqual(["t1-open", "t1-1", "t1-2"]);
+    expect(runTurnHoles("wf_again")).toEqual([]);
   });
 
-  it("carries the tool calls, or a tool_use block renders blank", async () => {
-    const msg = assistant([{ type: "tool_use", tool_call_id: "t1" }]);
-    await ask(
-      "wf_1",
-      "wf_1/a",
-      ok({
-        messages: [
-          {
-            ...msg,
-            tool_calls: [{ id: "t1", title: "Read", kind: "read", status: "completed", ts: 0 }],
-          },
-        ],
-      }),
-    );
-    expect(stepSliceFor("wf_1", "wf_1/a")?.toolCalls.map((t) => t.id)).toEqual(["t1"]);
+  it("clears the hole its answer repairs", async () => {
+    // An entry for a turn the store never opened is exactly the gap this GET exists
+    // to close.
+    appendRunEntry("wf_hole", text("t1", 3, "orphan"));
+    expect(runTurnHoles("wf_hole")).toEqual(["t1"]);
+    await ask("wf_hole", "wf/a", ok({ entries: [turnOpen("t1", "wf/a"), text("t1", 1, "one")] }));
+    expect(runTurnHoles("wf_hole")).toEqual([]);
   });
 
-  // THE rule that differs from `run-step-slice.ts`, which clears every id. Here the
-  // blocks come from the step's OWN session, which can hold a DELEGATE too:
-  // `containerFor` routes by this field, so clearing a delegate's uuid would collapse
-  // its box into the step's prose while leaving a `wf:` id would build a nested run
-  // card inside the run page.
-  it("clears a wf: id and KEEPS a delegate's uuid", async () => {
-    await ask(
-      "wf_1",
-      "wf_1/a",
-      ok({
-        messages: [
-          assistant([
-            { type: "text", text: "the step's own prose", agent_subtask_id: "wf:wf_1:wf_1/a" },
-            {
-              type: "text",
-              text: "a delegate's prose",
-              agent_subtask_id: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
-            },
-          ]),
-        ],
-      }),
-    );
-    const blocks = stepSliceFor("wf_1", "wf_1/a")?.blocks ?? [];
-    expect(blocks[0]).not.toHaveProperty("agent_subtask_id");
-    expect(blocks[1]?.agent_subtask_id).toBe("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
-  });
-
-  // A malformed `wf:` id parses to null and is KEPT, which is the same fall-through
-  // the transcript takes: the renderer draws it as a delegate box rather than losing
-  // the block.
-  it("keeps a malformed wf: id rather than losing the block", async () => {
-    await ask(
-      "wf_1",
-      "wf_1/a",
-      ok({
-        messages: [
-          assistant([{ type: "text", text: "x", agent_subtask_id: "wf:no-second-colon" }]),
-        ],
-      }),
-    );
-    const blocks = stepSliceFor("wf_1", "wf_1/a")?.blocks ?? [];
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0]?.agent_subtask_id).toBe("wf:no-second-colon");
-  });
-
-  it("does not mutate the blocks it was handed", async () => {
-    const block: Block = { type: "text", text: "x", agent_subtask_id: "wf:wf_1:wf_1/a" };
-    await ask("wf_1", "wf_1/a", ok({ messages: [assistant([block])] }));
-    expect(block.agent_subtask_id).toBe("wf:wf_1:wf_1/a");
-  });
-
-  // `sourceKeys` empty and `live` false are facts rather than gaps: these blocks are
-  // not in the message store, so they have no per-block streaming signals, and the
-  // answer is a settled read rather than a stream — a caret over it would claim
-  // content is still arriving.
-  it("reports no source keys and no liveness", async () => {
-    await ask("wf_1", "wf_1/a", ok({ messages: [assistant([{ type: "text", text: "x" }])] }));
-    const slice = stepSliceFor("wf_1", "wf_1/a");
-    expect(slice?.sourceKeys).toEqual([]);
-    expect(slice?.live).toBe(false);
+  // A `ready` answer carrying nothing is its own fact — the step ran and wrote
+  // nothing — and the pane's note is keyed on the verdict, so the verdict is what
+  // this module records.
+  it("records `ready` for an answer that carries no entries", async () => {
+    await ask("wf_empty", "wf/a", ok({ state: "ready", entries: [] }));
+    expect(stepRead("wf_empty", "wf/a")?.state).toBe("ready");
+    expect(runTurns("wf_empty")).toEqual([]);
   });
 });
 
-describe("run-step-transcript: what stepSliceFor withholds", () => {
-  it("withholds a step nobody asked about", () => {
-    expect(stepSliceFor("wf_1", "wf_1/a")).toBeUndefined();
-  });
-
-  it("withholds a loading, gone or unavailable read", async () => {
-    for (const state of ["gone", "unavailable"] as const) {
-      clearStepTranscripts();
-      await ask("wf_1", "wf_1/a", ok({ state }));
-      expect(stepSliceFor("wf_1", "wf_1/a")).toBeUndefined();
-    }
-    clearStepTranscripts();
-    apiGetTypedOrError.mockResolvedValueOnce(ok());
+describe("run-step-transcript: the re-read door", () => {
+  // A hole and a lost `turn_close` are both repaired by the same whole-turn answer,
+  // and a settled verdict would otherwise swallow the ask forever.
+  it("re-asks a step whose settled verdict this client has found wanting", async () => {
+    await ask("wf_1", "wf_1/a", ok({ state: "ready" }));
     requestStepTranscript("wf_1", "wf_1/a");
-    expect(stepSliceFor("wf_1", "wf_1/a")).toBeUndefined();
+    expect(apiGetTypedOrError).toHaveBeenCalledTimes(1);
+    apiGetTypedOrError.mockResolvedValueOnce(ok());
+    rereadStepTranscript("wf_1", "wf_1/a");
+    expect(apiGetTypedOrError).toHaveBeenCalledTimes(2);
   });
 
-  // A `ready` read with no blocks is its own fact — the step ran and wrote nothing —
-  // and the NOTE says so. Handing the render lifecycle an empty slice would build an
-  // empty body and hide that note behind it.
-  it("withholds a ready read that carries no blocks", async () => {
-    await ask("wf_1", "wf_1/a", ok({ state: "ready", messages: [] }));
-    expect(stepRead("wf_1", "wf_1/a")?.state).toBe("ready");
-    expect(stepSliceFor("wf_1", "wf_1/a")).toBeUndefined();
+  it("declines a re-read while a request is outstanding", () => {
+    apiGetTypedOrError.mockResolvedValue(ok());
+    requestStepTranscript("wf_1", "wf_1/a");
+    rereadStepTranscript("wf_1", "wf_1/a");
+    expect(apiGetTypedOrError).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("run-step-transcript: the bound", () => {
-  it("clearStepTranscripts empties the cache", async () => {
-    await ask("wf_1", "wf_1/a", ok({ messages: [assistant([{ type: "text", text: "x" }])] }));
+  it("clearStepTranscripts empties the verdict cache", async () => {
+    await ask("wf_1", "wf_1/a", ok());
     expect(stepRead("wf_1", "wf_1/a")).toBeDefined();
     clearStepTranscripts();
     expect(stepRead("wf_1", "wf_1/a")).toBeUndefined();
-    expect(stepSliceFor("wf_1", "wf_1/a")).toBeUndefined();
+  });
+
+  // The verdicts are this module's; the entries are the RUN's record, held under the
+  // run's own eviction rules, and a page retarget says nothing about them.
+  it("keeps the run's turns when the verdicts are cleared", async () => {
+    await ask("wf_keep", "wf/a", ok({ entries: [turnOpen("t1", "wf/a")] }));
+    clearStepTranscripts();
+    expect(entryIDs("wf_keep", "t1")).toEqual(["t1-open"]);
   });
 
   // The in-flight set goes with it, or a read outstanding across a retarget would

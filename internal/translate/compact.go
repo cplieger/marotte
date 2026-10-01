@@ -8,40 +8,47 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/marotte/internal/chat"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/turnlog"
+	"github.com/cplieger/runesafe/v2"
 )
 
-// handleCompactionCompleted persists the compacted-summary event and records the
-// watermark. KAS self-reorients, so no context-recovery prompt is injected.
-//
-// The turn is SEALED first, because a compaction point is a position INSIDE the
-// open turn's block stream: the seal puts the event between the two segments,
-// and the segment's message_appended must reach the bus before the event's.
+// handleCompactionCompleted appends the compaction entry and records its id as the
+// header's watermark. KAS self-reorients, so no context-recovery prompt is
+// injected. Inside a turn the entry seals every lane first and sits at the
+// position the compaction happened; between turns it joins the newest turn after
+// its close.
 func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marotte.ChatID, summaryPtr *string) {
 	summary := ""
 	if summaryPtr != nil {
 		summary = *summaryPtr
 	}
-	// A watermark naming an event the same shutdown refused would be worse than
+	// A watermark naming an entry the same shutdown refused would be worse than
 	// neither, so every effect below rides one detached context.
 	ctx = durable.Context(ctx)
-	t.turns.SealTurnSegment(ctx, chatID)
-	evt := t.newEventMessage(marotte.EventCompacted, summary)
-	err := t.chats.AppendMessage(ctx, chatID, &evt)
-	if errors.Is(err, chat.ErrTombstoned) {
+	empties, err := t.chats.EmptyCompactions(ctx, chatID)
+	if errors.Is(err, chat.ErrTombstoned) || errors.Is(err, chat.ErrChatNotFound) {
 		return
 	}
 	if err != nil {
-		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
+		slog.Error("compaction: count", "chat_id", chatID, "error", err)
+		return
+	}
+	id := marotte.CompactionEntryID([]byte(summary), empties+1)
+	// A refused append means the chat is gone, so the watermark could only be refused too.
+	if !t.appendLaneless(ctx, chatID, marotte.EntryKindCompaction, id, marotte.EntryCompaction{Summary: summary},
+		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
+			return turn.Compaction(ctx, summary, empties+1)
+		}) {
+		return
 	}
 	_, err = t.chats.Mutate(ctx, chatID, func(c *marotte.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		c.CompactionWatermark = evt.ID
+		c.CompactionWatermark = id
 		return true
 	})
 	if errors.Is(err, chat.ErrTombstoned) {
@@ -54,20 +61,20 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID marot
 
 const maxCompactionDetailBytes = 200
 
-// handleCompactionFailed persists a compaction-failed event and broadcasts
-// a typed error to the client.
+// handleCompactionFailed appends a compaction_failed entry and broadcasts a typed
+// error to the client.
 func (t *Translator) handleCompactionFailed(ctx context.Context, chatID marotte.ChatID, errMsg string) {
 	detail := cmp.Or(errMsg, "compaction failed")
 	detail = runesafe.SanitizeSingleLineBounded(detail, maxCompactionDetailBytes)
-	evt := t.newEventMessage(marotte.EventCompactFailed, detail)
-	err := t.chats.AppendMessage(durable.Context(ctx), chatID, &evt)
-	if errors.Is(err, chat.ErrTombstoned) {
+	// A refused append means the chat is gone: no banner for a chat nobody holds.
+	if !t.appendLaneless(durable.Context(ctx), chatID, marotte.EntryKindCompactionFailed,
+		"", marotte.EntryCompactionFailed{Reason: detail},
+		func(ctx context.Context, turn *turnlog.Turn) ([]turnlog.Sealed, error) {
+			return turn.CompactionFailed(ctx, detail)
+		}) {
 		return
 	}
-	if err != nil {
-		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
-	}
-	// Turn-scoped: deriveTurnOutcome grades a turn holding this event as failed.
+	// Turn-scoped: the turn holding this entry grades as failed.
 	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventError, chatID, marotte.ErrorPayload{
 		Code: marotte.ErrCodeCompactionFailed, Message: detail, TurnScoped: true,
 	}))

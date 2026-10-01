@@ -1,25 +1,14 @@
 // ---------------------------------------------------------------------------
 // The Kiro configuration browser: one page over everything in `.kiro/`.
 //
-// Replaces two surfaces with one — the deleted spec board (whose toolbar slot
-// this took) and the "Steering docs, skills & agents" list that was buried in
-// Settings → Instructions.
-//
-// It is SUB-TABBED, one tab per category, not one table. The categories are not
-// one kind of thing: a steering doc's most useful fact is its inclusion mode, an
-// agent's is its model, a spec has no front-matter at all and is identified by
-// its feature directory, and a hook is JSON with a trigger. A single column spec
-// would be fighting the data — and the sub-tabs also dissolve the caps question
-// (per-tab, not one budget) and the scope question (each tab names its own
-// source, so a file no tab claims simply gets no row).
-//
-// The tab bar reuses the Settings idiom verbatim (pill bar at every width,
-// icons before labels with measured icon-only fallback, deep-linkable,
-// roving focus), so mobile is solved on arrival rather than being a second
-// tab vocabulary.
-//
-// Row click opens the document in the file editor; the server row already
-// carries the path, so there is no resolution step here.
+// SUB-TABBED, one tab per category, not one table: the categories are not one
+// kind of thing (a steering doc's most useful fact is its inclusion mode, an
+// agent's its model, a spec has no front-matter and is identified by its feature
+// directory, a hook is JSON with a trigger), and each tab names its own source,
+// so a file no tab claims simply gets no row. The bar is the shared segmented
+// switcher and the rows the shared `.entry` family on the three-line tier
+// (11-page-lists.css). A row opens its document in the file editor; the server
+// row already carries the path.
 // ---------------------------------------------------------------------------
 
 import { apiGetTyped, type Decoder } from "./api-client.js";
@@ -39,10 +28,14 @@ import { deleteDoc } from "./actions/docs.js";
 import { onGitStatusChange, statusFor } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { openFile } from "./editor-openers.js";
+import { openSpec } from "./navigate.js";
+import { specDirOf } from "./spec-path.js";
+import { relToWorkspace } from "./workspace.js";
 import { reconcile } from "./reconcile.js";
 import { join as joinKey } from "@cplieger/keyenc";
-import { paintIfChanged } from "./paint-sig.js";
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { paintIfChanged, sigChanged } from "./paint-sig.js";
+import { entryRow, entryList, entrySkeleton } from "./entry-row.js";
+import type { EntryRowSpec, EntrySub } from "./entry-row.js";
 import { signal, subscribe } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { paintPlaceholder } from "./skeleton.js";
@@ -50,7 +43,7 @@ import { pushRoute } from "./router.js";
 import type { DocsTab } from "./route-path.js";
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { setDocsTab as setTabRoute } from "./tabs.js";
-import { fitTabBar } from "./tab-bar-fit.js";
+import { initSegmentedBar } from "./segmented-bar.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
@@ -75,23 +68,11 @@ type HookScope = "workspace" | "global";
 
 // ---------------------------------------------------------------------------
 // Hooks: the one tab that is not a pure projection of /api/workspace/kiro-docs.
-//
-// A hook has STATE the file scan cannot see — enabled, and the reason KAS
-// disabled it — so the tab joins the scan's rows against GET /api/hooks. It also
-// has rows the scan cannot see AT ALL: `kiroRoots()` enumerates the workspace's
-// `.kiro` trees and nothing else, while a GLOBAL hook lives under the container
-// HOME, so those rows exist only on the hooks endpoint and are synthesized here.
-//
-// THE JOIN KEY IS (path, name), not path. `hookRows` in kiro_docs.go expands one
-// v1 envelope into one row PER HOOK, all sharing a Path, which is why the tab's
-// reconcile key was already `d:${path}:${name}`. Keying the join on path alone
-// would apply one hook's toggle to every hook in its file.
-//
-// THE TWO PATH SHAPES ARE DIFFERENT and have to be normalized. `hookInfo.FilePath`
-// is workDir-relative (`.kiro/hooks/x.json`); `kiroDoc.Path` carries the work
-// directory without its leading slash (`workspace/.kiro/hooks/x.json`) because
-// that is the spelling the editor and the delete action take. So the join
-// normalizes both to the `.kiro/...` tail rather than trusting either.
+// A hook has STATE the file scan cannot see (enabled, and why KAS disabled it), so
+// the tab joins the scan's rows against GET /api/hooks; a GLOBAL hook lives under
+// the container HOME, outside `kiroRoots()`, so its row exists only on that
+// endpoint and is synthesized here. The join key is (scope, path, name), because
+// `hookRows` in kiro_docs.go expands one file into one row PER HOOK (`hookKey`).
 // ---------------------------------------------------------------------------
 
 /** A hook's live state, from GET /api/hooks. Narrowed to what the tab needs:
@@ -185,18 +166,13 @@ function hookPathKey(path: string): string {
   return idx < 0 ? "" : path.slice(idx);
 }
 
-/** The join key: (scope, normalized path, name).
- *
- *  keyenc rather than a template literal: a hook NAME is arbitrary text from a
- *  JSON file, so a separator inside one could otherwise forge another hook's key
- *  and hand it the wrong toggle.
- *
- *  SCOPE leads, because the path normalization above deliberately discards the one
- *  thing that told the two scopes apart — `~/.kiro/hooks/x.json` and
- *  `workspace/.kiro/hooks/x.json` share a tail. Without it the two collide, and
+/** The join key: (scope, normalized path, name). keyenc rather than a template
+ *  literal: a hook NAME is arbitrary text from a JSON file, so a separator inside
+ *  one could forge another hook's key and hand it the wrong toggle. SCOPE leads
+ *  because `hookPathKey` discards the one thing that told the two scopes apart
+ *  (`~/.kiro/hooks/x.json` and `workspace/.kiro/hooks/x.json` share a tail), and
  *  the collision is not symmetric: the endpoint loads workspace then global, so
- *  the global hook wins the key and the workspace row inherits its id and its
- *  gates. */
+ *  the global hook would win the key and the workspace row inherit its gates. */
 function hookKey(scope: HookScope, path: string, name: string): string {
   return joinKey(scope, hookPathKey(path), name);
 }
@@ -374,27 +350,13 @@ function initDocsView(): void {
   }
   inited = true;
   const bar = $.docsTabBar;
-
-  bar.setAttribute("role", "tablist");
   bar.setAttribute("aria-label", "Kiro document categories");
-
-  for (const tab of DOCS_TABS) {
-    const btn = bar.querySelector<HTMLButtonElement>(`[data-docs-tab="${tab}"]`);
-    if (btn === null) {
-      continue;
-    }
-    btn.setAttribute("role", "tab");
-    btn.id = `docs-tab-${tab}`;
-    btn.setAttribute("aria-label", TAB_LABELS[tab]);
-    btn.setAttribute("aria-controls", `docs-panel-${tab}`);
-    btn.addEventListener("click", () => {
-      selectTab(tab);
-    });
-  }
-  // Drop every label only when one cannot fit; six labels need icon-only
-  // mode on a phone.
-  fitTabBar(bar);
-  rovingFocus(bar, "[data-docs-tab]", { orientation: "horizontal" });
+  const paintBar = initSegmentedBar(bar, {
+    attr: "data-docs-tab",
+    idPrefix: "docs",
+    tabs: DOCS_TABS.map((id) => ({ id, label: TAB_LABELS[id] })),
+    onSelect: selectTab,
+  });
   // Hand Ctrl-F this page's entry point. Through the LEAF registry, not the
   // dispatcher: importing find-dispatch here would drag find-in-chat and
   // scroll.ts's self-initialising singleton into this lazily-loaded page.
@@ -415,7 +377,7 @@ function initDocsView(): void {
   });
 
   subscribe(activeTab, (tab) => {
-    syncTabChrome(tab);
+    syncTabChrome(tab, paintBar);
     renderActive();
   });
 
@@ -478,14 +440,8 @@ function selectTab(tab: DocsTab): void {
   activeTab.value = tab;
 }
 
-function syncTabChrome(tab: DocsTab): void {
-  const bar = $.docsTabBar;
-  for (const t of DOCS_TABS) {
-    const btn = bar.querySelector<HTMLButtonElement>(`[data-docs-tab="${t}"]`);
-    btn?.classList.toggle("active", t === tab);
-    btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
-    btn?.setAttribute("tabindex", t === tab ? "0" : "-1");
-  }
+function syncTabChrome(tab: DocsTab, paint: (tab: DocsTab) => void): void {
+  paint(tab);
   swapViews(() => {
     let active: HTMLElement | null = null;
     for (const panel of document.querySelectorAll<HTMLDivElement>("[data-docs-panel]")) {
@@ -616,15 +572,18 @@ const docsFilter: SearchPopup = createSearchPopup<null>({
 
 // --- Rendering ---
 
-/** A rendered entry: either a group separator or a document row. Specs and
- *  hooks nest under a group; the flat categories emit rows only. */
-type Entry = { kind: "group"; label: string } | { kind: "doc"; doc: KiroDoc };
+/** A group of rows under one label: a spec's feature directory, a hook's file.
+ *  The flat categories render as one unlabelled section. */
+interface Section {
+  readonly key: string;
+  readonly label: string;
+  readonly docs: KiroDoc[];
+}
 
 /** Every string a row shows a reader, in ONE list: name, badge labels with the
  *  literals included (`override` is what a reader hunting overrides types), the
- *  matcher, the git letter, the subtitle, and the data a badge carries in its
- *  tooltip (the fileMatch pattern, the tool names, a disabled reason); the path
- *  and group ride along as the strings the page renders beside the row. The
+ *  matcher, the git letter, the subtitle lines, and the data a badge carries in
+ *  its tooltip (the fileMatch pattern, the tool names, a disabled reason). The
  *  filter's haystack and the repaint signature both read it, so a rendered string
  *  is never unreachable and never stale; the census in docs-filter.test.ts types
  *  every rendered string back into the box. */
@@ -644,7 +603,7 @@ function rowText(doc: KiroDoc, hook: HookState | undefined): string[] {
     tools.length === 0 ? "" : toolCountLabel(tools.length),
     tools.join(", "),
     doc.trigger ?? "",
-    doc.action ?? "",
+    hookAction(doc, hook),
     hook?.matcher ?? "",
     hook !== undefined && isGlobalHook(hook) ? GLOBAL_LABEL : "",
     reason === "" ? "" : DISABLED_LABEL,
@@ -694,7 +653,6 @@ function renderActive(): void {
     );
     return;
   }
-  const flat = groupEntries(rows);
 
   // Drop any non-keyed placeholder (skeleton / empty state) before reconcile.
   for (const child of [...container.children]) {
@@ -702,29 +660,108 @@ function renderActive(): void {
       child.remove();
     }
   }
-  reconcile(container, flat, {
-    key: (e: Entry) => (e.kind === "group" ? `g:${e.label}` : `d:${e.doc.path}:${e.doc.name}`),
-    mount: (e: Entry) => (e.kind === "group" ? groupRow(e.label) : docRow(e.doc)),
+  reconcile(container, sectionsFor(rows), {
+    key: (s: Section) => s.key,
+    mount: (s: Section) => {
+      const node = el(
+        "div",
+        { className: "docs-section" },
+        s.label === ""
+          ? null
+          : el("div", { className: "entry-section-label" }, s.label, specDoor(s)),
+        entryList(),
+      );
+      fillSection(node, s);
+      return node;
+    },
+    update: fillSection,
+  });
+}
+
+/** Reconcile a section's rows into its own container. Nested inside the panel's
+ *  reconcile, which is safe because `reconcile` reads only the children carrying
+ *  its key attribute — a section's label is invisible to it. */
+function fillSection(node: HTMLElement, s: Section): void {
+  const list = node.querySelector<HTMLElement>(".list-container");
+  if (list === null) {
+    return;
+  }
+  reconcile(list, s.docs, {
+    key: rowKey,
+    mount: buildRow,
     update: updateRow,
   });
 }
 
-/** Repaint a kept row when what it renders changed.
- *
- *  Required by the hook toggle, and it was already missing for everything else.
- *  `reconcile` LEAVES a keyed row alone without this, and a row's key is its path
- *  plus its name — neither of which moves when a hook is enabled, a steering doc's
- *  inclusion mode is edited, or the git poll changes a letter. So every repaint
- *  after the first was a no-op for content, and the toggle would have shown the
- *  state it was mounted with forever however many times the server was refetched.
- *
- *  Rebuilds the row's CHILDREN rather than replacing the row, so reconcile keeps
- *  tracking the node it placed. */
-function updateRow(row: HTMLElement, e: Entry): void {
-  if (e.kind === "group") {
-    return;
+/** Cut the rows at every group boundary. The server already returns each category
+ *  in its intended order (specs sorted requirements → design → tasks → lexical),
+ *  so this only has to notice where the label changes; "." is its marker for a
+ *  document directly in the category root. The key carries the section's ORDINAL
+ *  among same-labelled sections, so two unlabelled runs cannot share one. */
+function sectionsFor(rows: KiroDoc[]): Section[] {
+  const out: Section[] = [];
+  const seen = new Map<string, number>();
+  for (const doc of rows) {
+    const group = doc.group ?? "";
+    const label = group === "." ? "" : group;
+    const last = out.at(-1);
+    if (last?.label === label) {
+      last.docs.push(doc);
+      continue;
+    }
+    const n: number = seen.get(label) ?? 0;
+    seen.set(label, n + 1);
+    out.push({ key: joinKey("g", label, String(n)), label, docs: [doc] });
   }
-  paintIfChanged(row, rowSig(e.doc), () => rowParts(e.doc));
+  return out;
+}
+
+/** A spec group's door onto its tab, parentless: the page's Run controls become a
+ *  picker over the open chats. Null for any other section. */
+function specDoor(s: Section): HTMLElement | null {
+  const first = s.docs[0];
+  if (first?.category !== "specs") {
+    return null;
+  }
+  const dir = specDirOf(relToWorkspace("/" + first.path));
+  if (dir === null) {
+    return null;
+  }
+  const btn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small docs-open-spec",
+      "data-spec-dir": dir,
+      "data-tooltip": `Open ${s.label} as a spec tab`,
+    },
+    "Open spec",
+  );
+  btn.addEventListener("click", () => {
+    void openSpec(dir);
+  });
+  return btn;
+}
+
+/** The row's identity for the reconcile and for the builder's `data-key`. Path
+ *  AND name, because one hook file expands to one row per hook. */
+function rowKey(doc: KiroDoc): string {
+  return joinKey("d", doc.path, doc.name);
+}
+
+function buildRow(doc: KiroDoc): HTMLElement {
+  const row = entryRow(rowSpec(doc));
+  sigChanged(row, rowSig(doc));
+  return row;
+}
+
+/** Repaint a kept row when what it renders changed. `reconcile` leaves a kept row's
+ *  content alone, and a row's key is its path plus its name — neither of which moves
+ *  when a hook is enabled, an inclusion mode is edited or the git poll changes a
+ *  letter — so the repaint has to come from here. Rebuilds the row's CHILDREN
+ *  rather than replacing the row, so reconcile keeps tracking the node it placed. */
+function updateRow(row: HTMLElement, doc: KiroDoc): void {
+  paintIfChanged(row, rowSig(doc), () => [...entryRow(rowSpec(doc)).childNodes]);
 }
 
 /** Everything a row renders, as signature PARTS: `rowText` plus the state the
@@ -752,18 +789,12 @@ function hookRows(): KiroDoc[] {
   const scanned = docs.filter((d) => d.category === TAB_CATEGORY.hooks);
   const globals: KiroDoc[] = [];
   for (const h of hooks.values()) {
-    // GLOBAL only, and that is the WHOLE test. A workspace hook the scan did not
+    // GLOBAL only, and that is the WHOLE test: a workspace hook the scan did not
     // report means the two surfaces disagree about the workspace, and synthesizing
     // it would build a row carrying the hooks endpoint's workDir-RELATIVE path —
-    // which neither openFile nor the delete action accepts — while rowGates,
-    // seeing a workspace hook, would hand it both. A missing row is a better
-    // answer than a row with two controls that fail.
-    //
-    // There is no already-claimed check beside it, and adding one back is the bug:
-    // the scan's only reach is the workspace (`kiroRoots()`), so no scanned row can
-    // ever BE this global hook, and the check that used to sit here compared
-    // scope-blind keys — so a workspace hook with the same relative path and name
-    // suppressed the global row entirely.
+    // which neither openFile nor the delete action accepts — while rowGates would
+    // hand it both. No already-claimed check either: the scan's only reach is the
+    // workspace (`kiroRoots()`), so no scanned row can ever BE this global hook.
     if (!isGlobalHook(h)) {
       continue;
     }
@@ -772,16 +803,10 @@ function hookRows(): KiroDoc[] {
   return [...scanned, ...globals];
 }
 
-/** A row for a hook the docs scan never saw.
- *
- *  Its `path` is the hook's DISPLAY path (`~/.kiro/hooks/x.json`) and is not a
- *  path any endpoint accepts — which is exactly right, because the row it builds
- *  offers neither open nor delete. It is here to key the reconcile and to carry
- *  the file name into the group label.
- *
- *  Non-global hooks are never synthesized: one outside the scan's reach that is
- *  NOT global means the two surfaces disagree about the workspace, and inventing a
- *  row would paper over that with a row whose affordances would then be wrong. */
+/** A row for a global hook the docs scan never saw. Its `path` is the hook's
+ *  DISPLAY path (`~/.kiro/hooks/x.json`), which no endpoint accepts — correct,
+ *  because the row offers neither open nor delete; it is here to key the reconcile
+ *  and to carry the file name into the group label. */
 function synthesizedHookDoc(h: HookState): KiroDoc {
   const path = h.file_path ?? "";
   const out: KiroDoc = {
@@ -814,32 +839,37 @@ function hookFor(doc: KiroDoc): HookState | undefined {
   return hooks.get(hookKey(rowScope(doc), doc.path, doc.name));
 }
 
-/** Insert a separator whenever the group changes. The server already returns
- *  each category in its intended order (specs sorted requirements → design →
- *  tasks → lexical), so this only has to notice the boundaries. */
-function groupEntries(rows: KiroDoc[]): Entry[] {
-  const flat: Entry[] = [];
-  let current: string | null = null;
-  for (const doc of rows) {
-    const group = doc.group ?? "";
-    // "." is the server's marker for "directly in the category root".
-    const label = group === "." ? "" : group;
-    if (label !== "" && label !== current) {
-      flat.push({ kind: "group", label });
-      current = label;
-    }
-    flat.push({ kind: "doc", doc });
-  }
-  return flat;
+/** One row, from the shared builder, which owns the row's shape and its height;
+ *  this fills the slots a category has a fact for. */
+function rowSpec(doc: KiroDoc): EntryRowSpec {
+  const hook = hookFor(doc);
+  const gates = rowGates(doc, hook);
+  const letter = gitLetter(doc, gates);
+  return {
+    key: rowKey(doc),
+    title: doc.name,
+    mark: letter === "" ? undefined : gitLetterChip(letter),
+    badges: badgesFor(doc, hook, gates),
+    sub: subFor(doc, hook),
+    actions: rowActions(doc, hook, gates),
+    // INERT when the row is not openable: without the button there is no role, no
+    // tabindex and no listener, so assistive tech announces no control and a
+    // keyboard user lands on none.
+    open: gates.openable
+      ? {
+          name: doc.name,
+          onOpen: () => {
+            openFile(doc.path);
+          },
+        }
+      : undefined,
+  };
 }
 
-function groupRow(label: string): HTMLElement {
-  return el("div", { className: "list-group-label" }, label);
-}
-
-/** The per-category metadata cell. Each category shows the fact that answers
- *  the question its page gets asked. */
-function metaFor(doc: KiroDoc): HTMLElement[] {
+/** The title-line badges, most important first: the builder keeps two and drops
+ *  the rest, so the order here is what decides which fact survives a crowded row.
+ *  Every label stays in `rowText` whether or not it is painted. */
+function badgesFor(doc: KiroDoc, hook: HookState | undefined, gates: RowGates): HTMLElement[] {
   const out: HTMLElement[] = [];
   switch (doc.category) {
     case "steering":
@@ -883,30 +913,65 @@ function metaFor(doc: KiroDoc): HTMLElement[] {
       if (doc.trigger !== undefined && doc.trigger !== "") {
         out.push(el("span", { className: "docs-badge docs-badge-trigger" }, doc.trigger));
       }
-      // The matcher beside its trigger, because the pair is one fact: a trigger
-      // says WHEN and its matcher says WHICH, and the row was showing only half.
-      // Rendered as code, since it is a regex the reader may need to compare
-      // against a tool name or a path character for character.
-      const matcher = hookFor(doc)?.matcher ?? "";
-      if (matcher !== "") {
-        const badge = el("code", { className: "docs-badge docs-badge-matcher" }, matcher);
-        badge.setAttribute("data-tooltip", `Matcher: ${matcher}`);
-        out.push(badge);
+      if (hook !== undefined) {
+        out.push(...hookBadges(hook));
       }
       break;
     }
     default:
       break;
   }
+  if (gates.explainDelete) {
+    // The delete is withheld and SAID, because an absent control with no reason
+    // reads as a bug: this row is an alias, and deleting it would remove the file
+    // it points at — which is listed under its own name on this same page.
+    const badge = el("span", { className: "docs-badge docs-badge-link" }, LINK_LABEL);
+    badge.setAttribute(
+      "data-tooltip",
+      "A symlink. Editing it writes the file it points to; deleting it would remove that file, so delete is disabled here",
+    );
+    out.push(badge);
+  }
   return out;
 }
 
-/** The secondary line: a description, or a hook's action preview. */
-function subtitleFor(doc: KiroDoc): string {
-  if (doc.category === "hook") {
-    return doc.action ?? "";
+/** The two-line region: a description where a kind has one, a pair of facts where
+ *  it has two instead. A spec's second line is its group, a hook's first line the
+ *  regex KAS tests the trigger's subject against — mono, because both are read
+ *  character for character. */
+function subFor(doc: KiroDoc, hook: HookState | undefined): EntrySub {
+  switch (doc.category) {
+    case "spec": {
+      const group = doc.group ?? "";
+      return {
+        kind: "lines",
+        lines: [{ text: doc.path, mono: true }, { text: group === "." ? "" : group }],
+      };
+    }
+    case "hook":
+      return {
+        kind: "lines",
+        lines: [
+          { text: hook?.matcher ?? "", mono: true },
+          { text: hookAction(doc, hook), mono: true },
+        ],
+      };
+    default:
+      return { kind: "clamp", text: doc.description ?? "" };
   }
-  return doc.description ?? "";
+}
+
+/** A hook's command or prompt. The scan sets `action` from the command only, so a
+ *  scanned askAgent hook's row reads its prompt off the joined state. */
+function hookAction(doc: KiroDoc, hook: HookState | undefined): string {
+  return doc.action ?? hook?.command ?? hook?.prompt ?? "";
+}
+
+function gitLetterChip(letter: string): HTMLElement {
+  const chip = el("span", { className: "docs-git-letter" }, letter);
+  chip.setAttribute("data-tooltip", describeStatus(letter));
+  chip.setAttribute("aria-label", `Git status: ${describeStatus(letter)}`);
+  return chip;
 }
 
 /** Split a document path into (repo, repo-relative path) for the git lookup.
@@ -933,34 +998,14 @@ function splitRepoPath(path: string): { repo: string; rel: string } {
   return { repo: parent, rel: afterKiro };
 }
 
-/** What a row may do. THREE provenance gates, resolved into one answer here so
- *  they cannot disagree at the two places that render.
- *
- *  They are three questions, not three levels of one:
- *
- *  - `reachable` — can the file surface reach this path at all? A GLOBAL hook's
- *    file lives under the container HOME, which `internal/filebrowse` deny-lists
- *    as a sensitive path (the whole `/config/home` tree is blocked, and its
- *    `~`-prefixed display path would not even resolve first). Nothing there is
- *    openable, editable or deletable.
- *  - `read_only` — the file is not WRITABLE. Reading it is still legitimate, so
- *    this withholds the controls and keeps the activation surface.
- *  - `delete_protected` — the row is a symlink, so deleting it would unlink the
- *    file it points at, which is listed under its own name on this same page.
- *    Editing through a link is what following one means, so the pencil stays.
- *
- *  THE RESOLUTION THAT MATTERS is `openable`. The first two gates used to touch
- *  only the control slot, while `docRow` built the activation surface
- *  unconditionally — so a row could hide its pencil and its delete and then open
- *  an editable file on click, which is the same incoherence the read_only /
- *  delete_protected split was made to end. An unreachable row's surface is INERT:
- *  no role, no tabindex, no listeners. Not a disabled button, because a button
- *  that cannot act still announces itself as one.
- *
- *  The enable toggle is orthogonal to all three and survives every one of them: it
- *  goes through POST /api/hooks/{id}/enabled and KAS writes the file, so it never
- *  touches marotte's file surface. A global hook is exactly the row that proves
- *  this — untouchable through the editor, and still switchable. */
+/** What a row may do, resolved ONCE from three independent gates. A GLOBAL hook's
+ *  file is under the container HOME, which `internal/filebrowse` deny-lists, so
+ *  nothing there opens, edits or deletes. `read_only`: reading is legitimate, so
+ *  the body stays a door and the controls go. `delete_protected`: the row is a
+ *  symlink, so deleting it would unlink the file it points at. The enable toggle
+ *  is outside all three: it goes through POST /api/hooks and KAS writes the file.
+ *  An unopenable row's body is INERT rather than a disabled button, because a
+ *  button that cannot act still announces itself as one. */
 interface RowGates {
   openable: boolean;
   editable: boolean;
@@ -976,9 +1021,8 @@ function rowGates(doc: KiroDoc, hook: HookState | undefined): RowGates {
     return { openable: false, editable: false, deletable: false, explainDelete: false };
   }
   if (doc.read_only === true) {
-    // Neither control, and no claim either. The badge that used to sit here said
-    // "read-only" while the activation surface opened a file the editor could
-    // save; a row states what it can back up or it states nothing.
+    // Neither control, and no claim either: a row states what it can back up or
+    // it states nothing.
     return { openable: true, editable: false, deletable: false, explainDelete: false };
   }
   if (doc.delete_protected === true) {
@@ -1007,59 +1051,50 @@ async function deleteRow(doc: KiroDoc): Promise<void> {
   loadDocs();
 }
 
-/** The row's trailing control slot.
- *
- *  The whole row used to BE the button, with a decorative pencil inside it. A
- *  delete control cannot live in that shape: it would nest an interactive
- *  element inside a `<button>`, which is invalid HTML and gets flattened by
- *  assistive tech — the same defect `pill-expand.ts` documents. So the
- *  activation surface and the controls are SIBLINGS, which is the shape the pill
- *  work already established here. */
-function rowControls(doc: KiroDoc, hook: HookState | undefined, gates: RowGates): HTMLElement {
-  const slot = el("span", { className: "docs-row-controls" });
-  // The toggle comes FIRST in the DOM and reads last in the row, and it is added
-  // before every gate below because none of them govern it.
+/** The row's actions: the hook's toggle first, then Edit, then Delete. Siblings
+ *  of the open control rather than children of it, because a `<button>` cannot
+ *  hold another. */
+function rowActions(doc: KiroDoc, hook: HookState | undefined, gates: RowGates): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  // Added before every gate below because none of them govern it.
   if (hook !== undefined) {
-    slot.appendChild(hookToggle(hook));
+    out.push(hookToggle(hook));
   }
   if (gates.editable) {
-    slot.appendChild(
-      // Decorative: the activation surface beside it is the open control.
-      el("span", { className: "list-row-btn", "aria-hidden": "true" }, iconEl(ICON_EDIT)),
+    out.push(
+      el(
+        "button",
+        {
+          type: "button",
+          className: "icon-btn docs-edit",
+          "aria-label": `Edit ${doc.name}`,
+          "data-tooltip": "Edit",
+          onclick: () => {
+            openFile(doc.path);
+          },
+        },
+        iconEl(ICON_EDIT),
+      ),
     );
   }
-  if (gates.explainDelete) {
-    // Editable, so the pencil above stays. The delete is withheld and SAID,
-    // because an absent control with no reason reads as a bug: this row is an
-    // alias, and deleting it would remove the file it points at — which is listed
-    // under its own name on this same page.
-    const badge = el("span", { className: "docs-badge docs-badge-link" }, LINK_LABEL);
-    badge.setAttribute(
-      "data-tooltip",
-      "A symlink. Editing it writes the file it points to; deleting it would remove that file, so delete is disabled here",
+  if (gates.deletable) {
+    out.push(
+      el(
+        "button",
+        {
+          type: "button",
+          className: "icon-btn entry-delete",
+          "aria-label": `Delete ${doc.name}`,
+          "data-tooltip": "Delete",
+          onclick: () => {
+            void deleteRow(doc);
+          },
+        },
+        iconEl(ICON_TRASH),
+      ),
     );
-    slot.appendChild(badge);
-    return slot;
   }
-  if (!gates.deletable) {
-    return slot;
-  }
-  const del = el("button", {
-    type: "button",
-    className: "icon-btn docs-row-delete",
-    "aria-label": `Delete ${doc.name}`,
-  }) as HTMLButtonElement;
-  del.setAttribute("data-tooltip", "Delete");
-  del.appendChild(iconEl(ICON_TRASH));
-  del.addEventListener("click", (e: MouseEvent) => {
-    // The activation surface is a sibling, not an ancestor, so this cannot
-    // bubble into an open — but the row is a flex container users click on, and
-    // stopping here keeps the two controls independent whatever the layout does.
-    e.stopPropagation();
-    void deleteRow(doc);
-  });
-  slot.appendChild(del);
-  return slot;
+  return out;
 }
 
 /** The enable switch. Its checked state is the SERVER's — the row repaints from a
@@ -1083,82 +1118,8 @@ function hookToggle(h: HookState): HTMLElement {
   return label;
 }
 
-function docRow(doc: KiroDoc): HTMLElement {
-  const row = el("div", { className: "list-row docs-row", "data-path": doc.path });
-  // The same call `updateRow` makes: a fresh row carries no signature, so it paints.
-  paintIfChanged(row, rowSig(doc), () => rowParts(doc));
-  return row;
-}
-
-/** A row's two children: the activation surface and the control slot. Shared by
- *  the mount and the repaint so the two cannot build different rows. */
-function rowParts(doc: KiroDoc): HTMLElement[] {
-  const hook = hookFor(doc);
-  const gates = rowGates(doc, hook);
-  const name = el("span", { className: "list-row-name" }, doc.name);
-  const children: HTMLElement[] = [name];
-
-  const letter = gitLetter(doc, gates);
-  if (letter !== "") {
-    const badge = el("span", { className: "docs-git-letter" }, letter);
-    badge.setAttribute("data-tooltip", describeStatus(letter));
-    badge.setAttribute("aria-label", `Git status: ${describeStatus(letter)}`);
-    children.push(badge);
-  }
-
-  const meta = el("span", { className: "list-row-meta docs-row-meta" }, ...metaFor(doc));
-  if (hook !== undefined) {
-    for (const badge of hookBadges(hook)) {
-      meta.appendChild(badge);
-    }
-  }
-
-  // The badges are their own line UNDER the title, not the tail of the title
-  // line. On the title line they competed with the name for the same row of
-  // pixels and had to be pushed to the far edge to stay legible, which is what
-  // made them read as floating; a line of their own puts them where a reader
-  // scans DOWN a column of pills instead of across.
-  //
-  // Appended only when a document HAS one — an empty span still consumes the
-  // surface's row gap, and the Skills tab is mostly documents with no inclusion
-  // mode declared, so it would show a blank line after every title.
-  const sub = subtitleFor(doc);
-  const surfaceChildren: HTMLElement[] = [el("div", { className: "docs-row-top" }, ...children)];
-  if (meta.children.length > 0) {
-    surfaceChildren.push(meta);
-  }
-  if (sub !== "") {
-    surfaceChildren.push(el("div", { className: "docs-row-sub" }, sub));
-  }
-  // The activation surface: everything that identifies the document.
-  //
-  // INERT when the row is not openable, rather than styled-as-disabled: without
-  // the role, the tabindex and the listeners it is a div, so assistive tech does
-  // not announce a control and a keyboard user does not land on one. A row whose
-  // controls are withheld and whose surface still opened a file was the whole
-  // defect the gate resolution above exists to prevent.
-  const surface = el("div", { className: "docs-row-surface" }, ...surfaceChildren);
-  if (gates.openable) {
-    surface.setAttribute("role", "button");
-    surface.setAttribute("tabindex", "0");
-    surface.setAttribute("aria-label", `Open ${doc.name}`);
-    const open = (): void => {
-      openFile(doc.path);
-    };
-    surface.addEventListener("click", open);
-    surface.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        open();
-      }
-    });
-  }
-
-  return [surface, rowControls(doc, hook, gates)];
-}
-
-/** The badges only a joined hook can carry: its scope, and the reason KAS
- *  disabled it.
+/** The badges only a joined hook can carry, in the order the two-badge cap
+ *  keeps them: its scope, a matcher defect, and the reason KAS disabled it.
  *
  *  The Global badge does double duty and that is deliberate — it names the scope
  *  AND carries the file path its row cannot open, so an unreachable row still
@@ -1173,34 +1134,27 @@ function hookBadges(h: HookState): HTMLElement[] {
     );
     out.push(badge);
   }
-  const reason = h.disabled_reason ?? "";
-  if (reason !== "") {
-    const badge = el("span", { className: "docs-badge docs-badge-disabled" }, DISABLED_LABEL);
-    badge.setAttribute("data-tooltip", reason);
-    out.push(badge);
-  }
   const warn = MATCHER_WARNINGS[h.matcher_warning ?? ""];
   if (warn !== undefined) {
     const badge = el("span", { className: "docs-badge docs-badge-warn" }, warn.label);
     badge.setAttribute("data-tooltip", warn.detail);
     out.push(badge);
   }
+  const reason = h.disabled_reason ?? "";
+  if (reason !== "") {
+    const badge = el("span", { className: "docs-badge docs-badge-disabled" }, DISABLED_LABEL);
+    badge.setAttribute("data-tooltip", reason);
+    out.push(badge);
+  }
   return out;
 }
 
-/** The two matcher defects the server reports, and the copy for each.
- *
- *  A LOOKUP rather than a branch on the string, so an unrecognised value renders
- *  NOTHING instead of an empty badge: the field is a server-side enum, and a
- *  marotte build older than the server that added a third value should stay quiet
- *  rather than paint a blank chip.
- *
- *  Both are warnings and neither is an error, which is why one badge style covers
- *  them. `every tool` is a legitimate choice the reader may have made on purpose —
- *  the badge exists because upstream keeps that finding in its own log, so without
- *  it a hook that fires on every tool call looks identical to one that is scoped.
- *  `no effect` cannot be created through marotte at all (the create form refuses
- *  it), so a row carrying it is a hand-written or copied-in file. */
+/** The two matcher defects the server reports, and the copy for each. A LOOKUP
+ *  rather than a branch on the string, so an unrecognised value renders NOTHING
+ *  instead of an empty badge: the field is a server-side enum, and a marotte build
+ *  older than the server that added a third value should stay quiet. Both are
+ *  warnings, not errors, so one badge style covers them: `every tool` may be a
+ *  deliberate choice, and `no effect` cannot be created through marotte at all. */
 const MATCHER_WARNINGS: Record<string, { label: string; detail: string }> = {
   missing_tool_matcher: {
     label: "every tool",
@@ -1238,18 +1192,12 @@ function gitLetter(doc: KiroDoc, gates: RowGates): string {
   return repo === "" ? "" : statusFor(repo, rel);
 }
 
-/** A skeleton matching the real row shape. */
+/** Placeholder rows on the list's own tier, so the swap to real rows moves nothing. */
 function showSkeleton(): () => void {
   return paintPlaceholder(panelFor(activeTab.peek()), () => {
-    const wrap = el("div", { className: "docs-skeleton", "aria-hidden": "true" });
-    for (const w of ["62%", "48%", "70%", "55%"]) {
-      const row = el("div", { className: "list-row docs-skel-row" });
-      const bar = el("div", { className: "skeleton docs-skel-name" });
-      bar.style.width = w;
-      row.appendChild(bar);
-      wrap.appendChild(row);
-    }
-    return wrap;
+    const list = entryList();
+    list.append(...entrySkeleton(4));
+    return list;
   });
 }
 
@@ -1278,7 +1226,7 @@ export function _splitRepoPathForTest(path: string): { repo: string; rel: string
 
 /** @internal Test seam for one rendered row. */
 export function _renderRowForTest(doc: KiroDoc): HTMLElement {
-  return docRow(doc);
+  return buildRow(doc);
 }
 
 /** @internal Test seam: repaint the active panel from the seeded state, without

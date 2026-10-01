@@ -34,6 +34,8 @@ func TestTabKind_ValidAndSingletonAgreeOnEveryMember(t *testing.T) {
 		{desc: "files, one tab per folder the browser was opened at", kind: marotte.TabKindFiles, wantValid: true},
 		{desc: "history", kind: marotte.TabKindHistory, wantValid: true, wantSingleton: true},
 		{desc: "docs", kind: marotte.TabKindDocs, wantValid: true, wantSingleton: true},
+		{desc: "subagent, one tab per delegate execution", kind: marotte.TabKindSubagent, wantValid: true},
+		{desc: "spec, one tab per spec directory", kind: marotte.TabKindSpec, wantValid: true},
 		{desc: "plan, deleted from the client on 2026-08-25 and deliberately absent here", kind: "plan"},
 		{desc: "the empty kind, which is what a payload with no kind field decodes to", kind: ""},
 		{desc: "a kind from some other vocabulary", kind: "vibe"},
@@ -51,16 +53,17 @@ func TestTabKind_ValidAndSingletonAgreeOnEveryMember(t *testing.T) {
 	}
 }
 
-// TestTabKind_TheSetIsExactlyEight is the guard on the set's SIZE, which the table
-// above cannot give: a ninth member added to the map and forgotten there would
-// leave every existing case passing. Nine kinds is a cross-language change (the
+// TestTabKind_TheSetIsExactlyTen is the guard on the set's SIZE, which the table
+// above cannot give: an eleventh member added to the map and forgotten there would
+// leave every existing case passing. A new kind is a cross-language change (the
 // client's TabKind union, its icon table and its per-kind factory), so it should
 // fail here first.
-func TestTabKind_TheSetIsExactlyEight(t *testing.T) {
+func TestTabKind_TheSetIsExactlyTen(t *testing.T) {
 	all := []marotte.TabKind{
 		marotte.TabKindChat, marotte.TabKindEditor, marotte.TabKindRun,
-		marotte.TabKindSettings, marotte.TabKindGit, marotte.TabKindFiles,
-		marotte.TabKindHistory, marotte.TabKindDocs,
+		marotte.TabKindSubagent, marotte.TabKindSettings, marotte.TabKindGit,
+		marotte.TabKindFiles, marotte.TabKindHistory, marotte.TabKindDocs,
+		marotte.TabKindSpec,
 	}
 	valid := 0
 	seen := make([]string, 0, len(all))
@@ -74,7 +77,7 @@ func TestTabKind_TheSetIsExactlyEight(t *testing.T) {
 		t.Errorf("%d of the %d declared kinds are Valid, want all of them", valid, len(all))
 	}
 	slices.Sort(seen)
-	want := []string{"chat", "docs", "editor", "files", "git", "history", "run", "settings"}
+	want := []string{"chat", "docs", "editor", "files", "git", "history", "run", "settings", "spec", "subagent"}
 	if !slices.Equal(seen, want) {
 		t.Errorf("the declared kinds are %v, want %v; a change here is a change to the client's TabKind union", seen, want)
 	}

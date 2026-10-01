@@ -1,0 +1,16 @@
+{
+  "input_file": "attack2-ordered-marker-disagrees.txt",
+  "crlf": false,
+  "kas_version": "2.21.4",
+  "slice_sha256": "3b4de6efa772db2752bfd6404b2920fdbab3fae76d4aae8f75021679251186c1",
+  "tasks": [],
+  "progress": {
+    "pending": 0,
+    "in_progress": 0,
+    "completed": 0,
+    "queued": 0,
+    "total": 0
+  },
+  "unreadable_lines": 2,
+  "truncated": null
+}

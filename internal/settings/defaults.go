@@ -1,11 +1,10 @@
 // Centralized defaults and the known-keys validation set for
-// marotte-managed `<configDir>/config.json`. The HTTP GET handler
-// emits Default() when the file is missing; PATCH/PUT
-// handlers call WarnUnknownKeys to surface typos and CLI/UI drift
-// without rejecting forward-compatible keys (per AUTH/SET design
-// discussion in the rewrite-analysis docs: a `knownKeys` warning
-// is the right level — full struct validation is too rigid for a
-// preference file that gains keys per release).
+// marotte-managed `<configDir>/config.json`. The GET handler serves
+// EffectiveDefaults resolved underneath the stored document; the PATCH
+// handler calls WarnUnknownKeys to surface typos and CLI/UI drift
+// without rejecting forward-compatible keys, because full struct
+// validation is too rigid for a preference file that gains keys per
+// release.
 
 package settings
 
@@ -16,12 +15,11 @@ import "log/slog"
 const (
 	KeyAgentIgnoreFiles = "agent_ignore_files"
 
-	// KeyChatRetentionDays is NOT in ServerManagedKeys, so handleSettingsWrite's
-	// PUT branch DROPS it when a body omits it — which would silently reset a
-	// deliberate "keep forever" or "delete on close" to the 7-day default. Dormant
-	// only because nothing PUTs this document (both client PUT actions target
-	// /api/steering and /api/kiro-settings; /api/settings is PATCH-only). Add it
-	// there before wiring any PUT to this document.
+	// KeyChatRetentionDays encodes three states rather than a count: -1 keeps every
+	// chat, 0 deletes one at its close, N keeps it N days. So a key silently dropped
+	// from the document does not fall back to a smaller number, it falls back to the
+	// 7-day default — which is why /api/settings merges a PATCH against the file and
+	// has no full-document replace to omit a key from.
 	KeyChatRetentionDays = "chat_retention_days"
 
 	KeyDebugLogs            = "debug_logs"
@@ -213,30 +211,15 @@ const (
 // number and the client has nothing to fall back to.
 const DefaultChatRetentionDays = 7
 
-// DefaultAgentIgnoreFiles is the seeded default for the agent_ignore_files
-// setting: the ignore-file basenames the agent read filter (internal/ignore,
-// wired into the fs/read_text_file A→C path) applies, each resolved against
-// the workspace root. A fresh install — no config.json, or a config.json that
-// predates the key — uses this list so gitignored secrets (.env.dec, anything
-// under a gitignored secrets/ dir) are refused from agent reads out of the box
-// instead of the filter being opt-in.
+// DefaultAgentIgnoreFiles is the seeded default for agent_ignore_files, and it
+// is EMPTY. kiro-cli's own TUI, the Kiro IDE and Kiro Crew all leave a workspace
+// ignore file unapplied, so a seeded list made marotte the one Kiro client whose
+// agent could not read the local work files. AgentIgnoreFloor is sent regardless.
 //
-// The names track the Kiro IDE's recognized ignore-file set (its context
-// walker keys on .gitignore/.continueignore/.kiroignore/.cursorignore). We
-// seed the two relevant to this stack — .gitignore (the universal exclude
-// file) and .kiroignore (Kiro's own) — and skip the competitor-tool files.
-// This is deliberately MORE protective than the IDE's own out-of-box behavior:
-// the IDE's kiroAgent.agentIgnoreFiles setting is undeclared and read as
-// `get("agentIgnoreFiles") ?? []`, so the IDE filters agent reads only through
-// the always-on user-global ~/.kiro/settings/kiroignore + git global excludes,
-// not workspace .gitignore. Turning the workspace filter ON by default is the
-// settled marotte decision.
-//
-// Returns a fresh slice so callers can resolve/append without mutating the
-// shared default. An explicit [] in config.json is honoured as an opt-out
-// (see internal/ignore).
+// Empty and non-nil: the wire field carries no omitempty, so nil would marshal
+// as null and the client's string[] cannot hold one.
 func DefaultAgentIgnoreFiles() []string {
-	return []string{".gitignore", ".kiroignore"}
+	return []string{}
 }
 
 // There is no Default() any more. It returned a map of five keys and had exactly
@@ -315,7 +298,7 @@ var KnownKeys = map[string]struct{}{
 // for callers that want to surface them in HTTP responses or
 // telemetry; the slice is sorted-stable nil when every key is known.
 // source identifies the call site for log correlation (e.g. "PATCH
-// /api/settings", "PUT /api/settings").
+// /api/settings").
 func WarnUnknownKeys(keys []string, source string) []string {
 	var unknown []string
 	for _, k := range keys {
@@ -329,27 +312,4 @@ func WarnUnknownKeys(keys []string, source string) []string {
 			"keys", unknown)
 	}
 	return unknown
-}
-
-// ServerManagedKeys are settings keys owned by flows other than a full-file
-// PUT of the settings object: agent_ignore_files, written by the
-// Settings→Permissions UI via PATCH, plus theme and fb_path, which arrived here
-// when internal/uistate's whole-document arrangement was retired and are
-// likewise PATCH-only (the theme toggle and the file browser's navigation). A
-// PUT whose body omits one must not silently wipe it, so handleSettingsWrite
-// carries any omitted managed key over from the existing file. Kept beside
-// KnownKeys so the managed-key set stays in the settings domain and references
-// the same key constants (no drift).
-//
-// The theme is the member where a wipe would be VISIBLE — a reader would see the
-// wrong colour on the next load — which is the same reason it is the one value
-// the uistate deletion carries across at all.
-//
-// KeyLastEffortByModel is a member because CmdSetEffort writes it: the seed is
-// recorded by the command that sets a chat's level, so no PUT body carries it and
-// a replace would drop every model's remembered tier. The retired global
-// model_effort was NOT a member, which was right for it — the client wrote that
-// one through a PATCH.
-func ServerManagedKeys() []string {
-	return []string{KeyAgentIgnoreFiles, KeyTheme, KeyFBPath, KeyLastEffortByModel}
 }

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/marotte/internal/testsupport"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/testsupport"
 )
 
 // promptJoin is a LifecycleAccess whose in-flight count a test can join on:

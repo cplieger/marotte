@@ -27,7 +27,7 @@
 // Keyed on the tab, not the view. The tab store already knows which tab is
 // active and what kind it is (getActiveTabKind), so reading it here is reading
 // the answer rather than inferring it from which view element happens to be
-// unhidden. It reads the TabSpec's kind rather than the route's, because an
+// unhidden. It reads the TabViewSpec's kind rather than the route's, because an
 // editor tab's kind is "editor" while its route's is "file" — a binding keyed on
 // the route would be a second vocabulary for one question.
 //
@@ -97,6 +97,7 @@ const DESTINATION: Readonly<Record<TabKind, FindDestination>> = {
   git: "page",
   run: "none",
   subagent: "none",
+  spec: "none",
   settings: "none",
 };
 

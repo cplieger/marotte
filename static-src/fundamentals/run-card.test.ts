@@ -65,8 +65,17 @@ function iconMarkup(root: HTMLElement): string[] {
   return [...root.querySelectorAll<HTMLElement>(".run-step-glyph svg")].map((e) => e.outerHTML);
 }
 
+/** The word the head says for this state. Its `aria-label` is where the head states
+ *  it: the row itself shows the run's name and its step counter, and the visible word
+ *  is the FOOT's (see `ledger`), which is the whole reason the head stopped carrying
+ *  a `.run-state` span of its own. */
 function statusWord(root: HTMLElement): string {
-  return root.querySelector(".run-state")?.textContent ?? "";
+  const label = root.querySelector(".run-head")?.getAttribute("aria-label") ?? "";
+  return label.slice(label.lastIndexOf(", ") + 2);
+}
+
+function ledger(root: HTMLElement): string {
+  return root.querySelector(".run-ledger")?.textContent ?? "";
 }
 
 function alertText(root: HTMLElement): string {
@@ -92,6 +101,23 @@ describe("the deleted pip row", () => {
       "run-body",
       "run-foot",
     ]);
+  });
+});
+
+describe("the head against the foot", () => {
+  it("renders the run's word and its elapsed in the foot alone", () => {
+    const c = card();
+    c.render(runOf("running", step("a", "running")));
+    // The head is the identity row: its name and its step counter, and nothing the
+    // foot below it already says. Absent from the DOM rather than hidden, because a
+    // span kept for one CSS rule is a span that comes back.
+    expect(c.root.querySelector(".run-state")).toBeNull();
+    expect(c.root.querySelector(".run-clock")).toBeNull();
+    expect(c.root.querySelector(".run-head-meta")).toBeNull();
+    expect(
+      [...(c.root.querySelector(".run-head")?.children ?? [])].map((e) => e.className),
+    ).toEqual(["run-toggle", "run-icon", "run-name", "run-count"]);
+    expect(ledger(c.root)).toContain("running");
   });
 });
 

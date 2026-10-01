@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,23 @@ import (
 	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/marotte"
 )
+
+// opensOf decodes every turn_open in entries, in file order.
+func opensOf(t *testing.T, entries []marotte.Entry) []marotte.EntryTurnOpen {
+	t.Helper()
+	var out []marotte.EntryTurnOpen
+	for i := range entries {
+		if entries[i].Kind != marotte.EntryKindTurnOpen {
+			continue
+		}
+		var o marotte.EntryTurnOpen
+		if err := json.Unmarshal(entries[i].Payload, &o); err != nil {
+			t.Fatalf("decode turn_open %q: %v", entries[i].ID, err)
+		}
+		out = append(out, o)
+	}
+	return out
+}
 
 func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
@@ -30,20 +48,21 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	// The user message, the name and the draft clear are all persisted BEFORE
-	// the ack, so these reads race nothing.
+	// The turn_open carrying the prompt, the name and the draft clear are all
+	// persisted BEFORE the ack, so these reads race nothing.
 	c, ok := cs.Get(t.Context(), "c-test-1")
 	if !ok {
 		t.Fatal("chat not created")
 	}
-	if len(c.Messages) < 1 {
-		t.Fatalf("user message not persisted: %+v", c.Messages)
+	opens := opensOf(t, logOf(t, cs, "c-test-1"))
+	if len(opens) < 1 {
+		t.Fatal("the prompt's turn_open was not persisted")
 	}
-	if c.Messages[0].Role != marotte.RoleUser || c.Messages[0].Content != "hello" {
-		t.Errorf("first message mismatch: %+v", c.Messages[0])
+	if opens[0].Source != marotte.TurnOpenNamePrompt || opens[0].Prompt == nil {
+		t.Fatalf("first turn_open = %+v, want a prompt turn carrying its prompt", opens[0])
 	}
-	if c.Messages[0].ID != "m-1" {
-		t.Errorf("message id mismatch: %q", c.Messages[0].ID)
+	if opens[0].Prompt.ID != "m-1" || opens[0].Prompt.Text != "hello" {
+		t.Errorf("prompt = %+v, want {ID m-1, Text hello}", *opens[0].Prompt)
 	}
 	if c.Name != "hello" {
 		t.Errorf("auto-rename failed: name = %q, want 'hello'", c.Name)
@@ -57,7 +76,7 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 // waitForSessionID polls until the chat carries an ACP session id, failing
 // closed with a diagnostic: the prompt acks before its turn spawns the bridge,
 // so session metadata lands asynchronously.
-func waitForSessionID(t *testing.T, cs *fakeChatStore, chatID marotte.ChatID) {
+func waitForSessionID(t *testing.T, cs *testChatStore, chatID marotte.ChatID) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -533,24 +552,33 @@ func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	c, ok := cs.Get(t.Context(), "c-sh")
-	if !ok {
+	if _, ok := cs.Get(t.Context(), "c-sh"); !ok {
 		t.Fatal("chat not created by shell interception")
 	}
-	if len(c.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2 (user + assistant)", len(c.Messages))
+	// One turn of three entries: turn_open{local_shell, prompt}, the fenced
+	// output as text, turn_close.
+	entries := logOf(t, cs, "c-sh")
+	kinds := make([]marotte.EntryKind, 0, len(entries))
+	for i := range entries {
+		kinds = append(kinds, entries[i].Kind)
 	}
-	if c.Messages[0].Role != marotte.RoleUser || c.Messages[0].Content != "!printf hi" {
-		t.Errorf("user msg = %+v", c.Messages[0])
+	want := []marotte.EntryKind{marotte.EntryKindTurnOpen, marotte.EntryKindText, marotte.EntryKindTurnClose}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("log kinds = %v, want %v", kinds, want)
 	}
-	if c.Messages[1].Role != marotte.RoleAssistant {
-		t.Errorf("assistant msg role = %q", c.Messages[1].Role)
+	open := opensOf(t, entries)[0]
+	if open.Source != marotte.TurnOpenNameLocalShell || open.Prompt == nil || open.Prompt.Text != "!printf hi" {
+		t.Errorf("turn_open = %+v, want a local_shell turn carrying the command", open)
 	}
-	if !strings.Contains(c.Messages[1].Content, "```") {
-		t.Errorf("assistant msg missing code fence: %q", c.Messages[1].Content)
+	output := textsOf(t, entries)[0]
+	if !strings.Contains(output, "```") {
+		t.Errorf("shell output missing code fence: %q", output)
 	}
-	if !strings.Contains(c.Messages[1].Content, "hi") {
-		t.Errorf("assistant msg missing command output: %q", c.Messages[1].Content)
+	if !strings.Contains(output, "hi") {
+		t.Errorf("shell output missing the command's output: %q", output)
+	}
+	if closes := closesOf(t, entries); closes[0].Outcome != marotte.TurnOutcomeCompleted {
+		t.Errorf("turn_close outcome = %q, want %q", closes[0].Outcome, marotte.TurnOutcomeCompleted)
 	}
 }
 
@@ -580,15 +608,14 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	c, _ := cs.Get(t.Context(), "c-fail")
-	if len(c.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(c.Messages))
+	texts := textsOf(t, logOf(t, cs, "c-fail"))
+	if len(texts) != 1 {
+		t.Fatalf("text entries = %d, want the one fenced output", len(texts))
 	}
-	// The assistant bubble should carry a non-trivial body (more
-	// than the empty "```\n\n```" wrapper) so err.Error() is surfaced.
-	if len(c.Messages[1].Content) < 10 {
-		t.Errorf("assistant content too short, error not surfaced: %q",
-			c.Messages[1].Content)
+	// The body carries more than the empty "```\n\n```" wrapper, so err.Error()
+	// is surfaced.
+	if len(texts[0]) < 10 {
+		t.Errorf("shell output too short, error not surfaced: %q", texts[0])
 	}
 }
 

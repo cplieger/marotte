@@ -65,12 +65,12 @@ function makeSession(id: string): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: 0,
-    messages: [],
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     turn_open: false,
@@ -98,7 +98,7 @@ describe("chatSettled", () => {
     expect(chatSettled("c1")).toBe(false);
   });
 
-  // The case the whole predicate exists for. `hasExecutingRunForChat` answers no here
+  // The case the whole predicate exists for. A parked run's `executing` is false here
   // (it is the store-eviction question), so a predicate reading that instead would
   // report a chat waiting on a person as finished.
   it("is false while a run this chat launched is PARKED", () => {
@@ -112,7 +112,7 @@ describe("chatSettled", () => {
   });
 
   it("is false while the chat's own turn is live", () => {
-    store.setThinking("c1", true);
+    store.setTurnOpen("c1", true);
     expect(chatSettled("c1")).toBe(false);
   });
 
@@ -161,7 +161,7 @@ describe("chatOutstanding names the reason", () => {
     runStore.noteRunLive("wf-a", "c1", true);
     runStore.noteRunLive("wf-b", "c1", false);
     setPending("c1", true);
-    store.setThinking("c1", true);
+    store.setTurnOpen("c1", true);
 
     expect(chatOutstanding("c1")).toEqual({ turn: true, runs: 2, asks: true });
   });
@@ -213,9 +213,9 @@ describe("every term is a tracked read", () => {
 
   it("re-runs when the chat's own turn state moves", () => {
     const w = watch("c1");
-    store.setThinking("c1", true);
+    store.setTurnOpen("c1", true);
     expect(w.settled.at(-1)).toBe(false);
-    store.setThinking("c1", false);
+    store.setTurnOpen("c1", false);
     expect(w.settled.at(-1)).toBe(true);
     w.dispose();
   });

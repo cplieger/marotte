@@ -2,6 +2,7 @@ package translate
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -16,15 +17,43 @@ func (nopChatRecords) Mutate(context.Context, marotte.ChatID, func(*marotte.Chat
 	return "", nil
 }
 
-func (nopChatRecords) AppendMessage(context.Context, marotte.ChatID, *marotte.Message) error {
-	return nil
+func (nopChatRecords) PromptTexts(context.Context, marotte.ChatID) ([]string, error) {
+	return nil, nil
 }
 
-func (nopChatRecords) UpsertTurnPlan(context.Context, marotte.ChatID, *marotte.Message) error {
-	return nil
-}
+func (nopChatRecords) EmptyCompactions(context.Context, marotte.ChatID) (int, error) { return 0, nil }
 
 var _ ChatRecords = nopChatRecords{}
+
+// recStore is a ChatRecords whose every call answers err, counting the header
+// writes, so a test can stage a chat the store refuses (deleted, or a disk fault)
+// and observe how each write site reports it.
+type recStore struct {
+	nopChatRecords
+	err         error
+	mutateCalls int
+}
+
+func (s *recStore) Mutate(_ context.Context, _ marotte.ChatID, fn func(*marotte.Chat, bool) bool) (string, error) {
+	s.mutateCalls++
+	if s.err != nil {
+		return "", s.err
+	}
+	if fn != nil {
+		_ = fn(&marotte.Chat{}, true)
+	}
+	return strconv.Itoa(s.mutateCalls), nil
+}
+
+func (s *recStore) PromptTexts(context.Context, marotte.ChatID) ([]string, error) {
+	return nil, s.err
+}
+
+func (s *recStore) EmptyCompactions(context.Context, marotte.ChatID) (int, error) {
+	return 0, s.err
+}
+
+var _ ChatRecords = (*recStore)(nil)
 
 // nopMCPRecorder is a no-op MCPRecorder for the handler benchmarks, which drive frames
 // whose MCP side effects they do not assert on.
@@ -60,10 +89,11 @@ type hostDouble interface {
 	TurnMetering
 	ChatRecords
 	Responder
-	BufferAccess
+	TurnAccess
+	RunAppender
 	TurnBoundary
 	RecordFromDiffs(chatID marotte.ChatID, diffs []marotte.ToolDiff, turn int, kind string)
-	SteerOrigin(chatID marotte.ChatID, steerID string) marotte.SteerOrigin
+	SentSteers
 	SteerBuffer
 	MCPRecorder() MCPRecorder
 	SetGovernance(state marotte.GovernanceStatePayload)
@@ -76,8 +106,9 @@ func rolesOf(d hostDouble) *Roles {
 	return &Roles{
 		Bus:           d,
 		Chats:         d,
-		Buffers:       d,
 		Turns:         d,
+		Runs:          d,
+		Bracket:       d,
 		Lines:         d,
 		Steers:        d,
 		SteerBuffer:   d,

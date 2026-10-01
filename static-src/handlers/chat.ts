@@ -14,8 +14,7 @@ import { replaceRoute } from "../router.js";
 
 // Defensive `=== undefined` guards: the wire decoder marks payloads
 // non-nullable but the test suite (and a malformed frame at runtime)
-// can hand us undefined. See handlers/messages.ts for the full
-// rationale.
+// can hand us undefined, so the lint reads every check as dead.
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
 
 // There is no adoptHeader wrapper any more: the chat id is the server's from

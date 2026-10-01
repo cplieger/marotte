@@ -16,7 +16,7 @@ import (
 func hubOnLifetime(t *testing.T) (*Runtime, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
-	h := New(ctx, "/tmp/work", func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(ctx, "/tmp/work", func() ACPBridge { return newFakeBridge() }, newTestChatStore())
 	return h, cancel
 }
 
@@ -39,7 +39,7 @@ func TestTurnContext_SurvivesRequestCancel(t *testing.T) {
 
 	select {
 	case <-turnCtx.Done():
-		t.Fatal("turn context cancelled by request disconnect: the bridge Call would abort before turn_ended")
+		t.Fatal("turn context cancelled by request disconnect: the bridge Call would abort before turn_closed")
 	case <-time.After(50 * time.Millisecond):
 	}
 	if err := turnCtx.Err(); err != nil {

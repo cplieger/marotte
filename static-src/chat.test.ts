@@ -24,13 +24,12 @@ const { setModeDispatch, forkDispatch, createDispatch, submitPromptMock, message
         context_pct: 0,
         context_size: 0,
         credits: 0,
-        turn_count: 0,
         last_turn_ms: 0,
         has_real_data: false,
       },
       created_at: 0,
       updated_at: 0,
-      message_count: 0,
+      turn_count: 0,
     });
     // The widened creating reply: the chat, the tab the coordinator opened for
     // it, and the version that open committed. The fork's subject carries the
@@ -86,24 +85,23 @@ vi.mock("./store.js", () => ({
   upsertHeader: vi.fn(),
   // The real predicate, transcribed: the model-picker branch keys on it, so a
   // stub returning a constant would send every fixture down one arm.
-  isEmptyChat: (s: { message_count: number; messages: unknown[] } | undefined) =>
-    s === undefined || (s.message_count === 0 && s.messages.length === 0),
+  isEmptyChat: (s: { turn_count: number; turn_order: unknown[] } | undefined) =>
+    s === undefined || (s.turn_count === 0 && s.turn_order.length === 0),
   contextSizeFor: vi.fn(() => 0),
   defaultUsage: vi.fn(() => ({
     context_pct: 0,
     context_size: 0,
     credits: 0,
-    turn_count: 0,
     last_turn_ms: 0,
     has_real_data: false,
   })),
   activeSession: { value: undefined },
   removeChat: vi.fn(),
-  // The dot's seed at tab creation, plus the clear chat.ts no longer calls. The
-  // mock keeps `clearTurnDone` so the absence assertion below has something to
-  // assert against; the module is mocked wholesale, so both are inert here.
+  // The dot's seed at tab creation. `clearTurnDone` went with the store field it
+  // cleared: the finished-turn mark is the header's `last_turn_outcome` now, which a
+  // header read REPLACES, so there is no clear for a caller to skip and no absence
+  // for a case to assert.
   tabStatusFor: vi.fn(() => ""),
-  clearTurnDone: vi.fn(),
   // The activation refetch gate. Defaults TRUE — refetch, the shape every case
   // outside the gate describe was written against; the gate describe drives
   // both verdicts explicitly. The predicate's own truth table (residency ×
@@ -164,7 +162,6 @@ vi.mock("./messages.js", () => ({
   // future test does exercise that path.
   loadTurnRail: vi.fn(),
   pointTurnRail: vi.fn(),
-  fadeInTranscript: vi.fn(),
   // The multiplexer's surface: activation mounts transcript furniture into the
   // active view (null here — the mock has no view, so callers fall back to
   // $.messages), and a tab close disposes the chat's view.
@@ -194,6 +191,18 @@ vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock }));
 // below, which is what that element is here to witness.
 vi.mock("./dom.js", () => ({
   $: { messages: messagesEl, promptInput: { focus: () => undefined } },
+  // `paintPlaceholder` is REAL here (the ./skeleton.js mock spreads the original
+  // through), and it marks its host busy through this module — so a factory that
+  // returns only `$` makes `setBusy` undefined and the painter throws. The fake is
+  // `setBusy`'s own body rather than `importOriginal`: this module is mocked to keep
+  // its element lookups out, and spreading it back in reintroduces them.
+  setBusy: (el: Element, busy: boolean) => {
+    if (busy) {
+      el.setAttribute("aria-busy", "true");
+    } else {
+      el.removeAttribute("aria-busy");
+    }
+  },
 }));
 vi.mock("./retention.js", () => ({ isRetentionEnabled: vi.fn(() => false) }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_ACTIVATE_CHAT: "activate-chat" }));
@@ -235,16 +244,10 @@ import {
 } from "./tabs.js";
 import { addAttachment } from "./attachments.js";
 import { dropDecisions } from "./decision-dock.js";
-import { get, watchSession, removeChat, setActive, upsertHeader, clearTurnDone } from "./store.js";
+import { get, watchSession, removeChat, setActive, upsertHeader } from "./store.js";
 import { transcriptStale } from "./store.js";
 import { loadList, loadMessages, confirmChatExists } from "./store-load.js";
-import {
-  loadTurnRail,
-  pointTurnRail,
-  fadeInTranscript,
-  setLoadMore,
-  disposeChatView,
-} from "./messages.js";
+import { loadTurnRail, pointTurnRail, setLoadMore, disposeChatView } from "./messages.js";
 import { seedComposerState } from "./composer-state.js";
 import { info } from "./toast.js";
 import { isRetentionEnabled } from "./retention.js";
@@ -322,13 +325,12 @@ describe("createSession is async, and what that means for its callers", () => {
           context_pct: 0,
           context_size: 0,
           credits: 0,
-          turn_count: 0,
           last_turn_ms: 0,
           has_real_data: false,
         },
         created_at: 0,
         updated_at: 0,
-        message_count: 0,
+        turn_count: 0,
       },
       subject: {
         id: "tb_late",
@@ -428,15 +430,15 @@ describe("attaching several paths at once", () => {
 // the server: the exact case server-side drafts exist for.
 // ---------------------------------------------------------------------------
 
-describe("the draft of a chat with no messages", () => {
-  /** A persisted zero-message chat. `model` is empty so the context-size branch
+describe("the draft of a chat with no turns", () => {
+  /** A persisted zero-turn chat. `model` is empty so the context-size branch
    *  above it (which calls setModel) stays out of the way. */
   function emptyChat(): never {
     return {
       id: "c-empty",
       model: "",
-      message_count: 0,
-      messages: [],
+      turn_count: 0,
+      turn_order: [],
       usage: { context_size: 0 },
     } as never;
   }
@@ -497,19 +499,19 @@ describe("the draft of a chat with no messages", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The timeline rail on a chat with no messages. The rail is a module singleton,
+// The timeline rail on a chat with no turns. The rail is a module singleton,
 // so activation has to hand it the chat it is activating; only the loaded branch
 // used to, which left a brand-new chat wearing the previous chat's timeline —
 // markers over a conversation the reader had not spoken in yet.
 // ---------------------------------------------------------------------------
 
-describe("the timeline rail of a chat with no messages", () => {
+describe("the timeline rail of a chat with no turns", () => {
   function emptyChat(): never {
     return {
       id: "c-empty",
       model: "",
-      message_count: 0,
-      messages: [],
+      turn_count: 0,
+      turn_order: [],
       usage: { context_size: 0 },
     } as never;
   }
@@ -540,7 +542,7 @@ describe("the timeline rail of a chat with no messages", () => {
     expect(pointTurnRail).toHaveBeenCalledWith("c-empty");
   });
 
-  it("is not fetched, because a chat with no messages has no turns", async () => {
+  it("is not fetched, because a chat with no resident turns has none to mark", async () => {
     vi.mocked(get).mockReturnValue(emptyChat());
     await activate();
     expect(loadTurnRail).not.toHaveBeenCalled();
@@ -557,12 +559,14 @@ describe("the timeline rail of a chat with no messages", () => {
 // ---------------------------------------------------------------------------
 
 describe("the scroller on a chat switch", () => {
-  function chat(messages: unknown[]): never {
+  /** A chat holding `turnIDs` resident turns. `turn_order` is the only transcript
+   *  field the activation reads, so the fixture states it and nothing it does not. */
+  function chat(turnIDs: string[]): never {
     return {
       id: "c-1",
       model: "",
-      message_count: messages.length,
-      messages,
+      turn_count: turnIDs.length,
+      turn_order: turnIDs,
       usage: { context_size: 0 },
     } as never;
   }
@@ -595,7 +599,7 @@ describe("the scroller on a chat switch", () => {
     // The loaded branch used to re-key the view furniture only after its own
     // load resolved, so between the switch and the response the reader saw the
     // previous chat's timeline over this chat's transcript.
-    vi.mocked(get).mockReturnValue(chat([{ id: "m1", role: "user" }]));
+    vi.mocked(get).mockReturnValue(chat(["t1"]));
     await activate();
     expect(pointTurnRail).toHaveBeenCalledWith("c-1");
     expect(loadMessages).toHaveBeenCalledWith("c-1");
@@ -624,12 +628,12 @@ describe("the scroller on a chat switch", () => {
 // ---------------------------------------------------------------------------
 
 describe("the transcript's loading skeleton", () => {
-  function chat(messages: unknown[]): never {
+  function chat(turnIDs: string[]): never {
     return {
       id: "c-1",
       model: "",
-      message_count: Math.max(messages.length, 1),
-      messages,
+      turn_count: Math.max(turnIDs.length, 1),
+      turn_order: turnIDs,
       usage: { context_size: 0 },
     } as never;
   }
@@ -645,43 +649,17 @@ describe("the transcript's loading skeleton", () => {
   }
 
   it("is not armed for a chat whose transcript is already in the store", async () => {
-    vi.mocked(get).mockReturnValue(chat([{ id: "m1", role: "user" }]));
+    vi.mocked(get).mockReturnValue(chat(["t1"]));
     await activate();
     expect(skeletonTiming).not.toHaveBeenCalled();
   });
 
   it("is armed for a chat with history the store has not fetched yet", async () => {
-    // message_count says the conversation exists, messages says nothing of it is
-    // here — the one state a placeholder is for.
+    // `turn_count` says the conversation exists, `turn_order` says nothing of it is
+    // resident — the one state a placeholder is for.
     vi.mocked(get).mockReturnValue(chat([]));
     await activate();
     expect(skeletonTiming).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not fade the transcript in when no skeleton was painted", async () => {
-    // The fade exists to cover the swap OUT of a skeleton. A load that settles
-    // inside the show delay paints none, and fading then would put a flicker on
-    // an open that is instant today.
-    vi.mocked(get).mockReturnValue(chat([]));
-    await activate();
-    await vi.waitFor(() => {
-      expect(seedComposerState).toHaveBeenCalledWith("c-1");
-    });
-    expect(fadeInTranscript).not.toHaveBeenCalled();
-  });
-
-  it("fades the transcript in when a skeleton was painted", async () => {
-    // Drive the show callback the way the 150ms timer would, so the swap this
-    // covers is the real one rather than a flag set by the test.
-    vi.mocked(skeletonTiming).mockImplementationOnce((show) => {
-      show();
-      return { commit: vi.fn(), cancel: vi.fn() };
-    });
-    vi.mocked(get).mockReturnValue(chat([]));
-    await activate();
-    await vi.waitFor(() => {
-      expect(fadeInTranscript).toHaveBeenCalledTimes(1);
-    });
   });
 });
 
@@ -695,7 +673,7 @@ describe("closeChatTab is the one client-local teardown", () => {
   // survives as History's delete and is never dispatched from a close.
 
   it("cleans up locally with retention ENABLED, and dispatches nothing", () => {
-    vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
+    vi.mocked(get).mockReturnValue({ turn_count: 3 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(true);
     closeChatTab("c-closed");
     expect(removeChat).toHaveBeenCalledWith("c-closed");
@@ -714,46 +692,28 @@ describe("closeChatTab is the one client-local teardown", () => {
     // 0 = ephemeral: the record is gone by design — deleted INSIDE the server's
     // close operation, exactly once, wherever the gesture happened. A second
     // delete from here would race the one that already ran.
-    vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
+    vi.mocked(get).mockReturnValue({ turn_count: 3 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(false);
     closeChatTab("c-ephemeral");
     expect(removeChat).toHaveBeenCalledWith("c-ephemeral");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });
 
-  it("removes a zero-message chat like any other", () => {
-    // The old message_count === 0 skip predated the coordinator writing the
-    // record before its tab; the server deletes zero-message chats like any
+  it("removes a zero-turn chat like any other", () => {
+    // The old zero-count skip predated the coordinator writing the
+    // record before its tab; the server deletes zero-turn chats like any
     // other now, and the client has no branch to mirror.
-    vi.mocked(get).mockReturnValue({ message_count: 0 } as never);
+    vi.mocked(get).mockReturnValue({ turn_count: 0 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(false);
     closeChatTab("c-empty");
     expect(removeChat).toHaveBeenCalledWith("c-empty");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });
 
-  // The chat's unanswered asks go with the tab. Closing cancels the turn and the
-  // chat's runs server-side, so nothing left here is live — and because the dock's
-  // queue is keyed by chat id, a queue left behind was RESURRECTED by reopening
-  // the same id: the card came back and the tab dot said the chat needed a
-  // decision that no longer existed.
-  // A `done` dot is NOT settled by opening the chat, and this pins the absence.
-  // Until 2026-08 activation cleared it, because the mark meant "finished while you
-  // were away" — paired with a latch that skipped the watched chat, which together
-  // made the dot fall back to hollow `idle` at the exact moment a turn completed in
-  // front of the reader. The mark now means "the last turn finished" and stands
-  // until the next one, matching web-terminal-kiro's engine-side latch. What keeps a
-  // read chat out of the title count is attention.ts's acknowledgement pass, which
-  // does not touch the store.
-  it("does not settle the finished-turn mark when the chat is activated", () => {
-    activateChatView("c-open");
-    expect(clearTurnDone).not.toHaveBeenCalled();
-  });
-
   it("drops the chat's unanswered asks on close, in every retention mode", () => {
     for (const retention of [true, false]) {
       vi.clearAllMocks();
-      vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
+      vi.mocked(get).mockReturnValue({ turn_count: 3 } as never);
       vi.mocked(isRetentionEnabled).mockReturnValue(retention);
       closeChatTab("c-closed");
       expect(dropDecisions).toHaveBeenCalledWith("c-closed");
@@ -921,8 +881,8 @@ describe("a superseded activation paints no failure", () => {
     return {
       id: "c-loaded",
       model: "",
-      message_count: 3,
-      messages: [{ id: "m1" }],
+      turn_count: 3,
+      turn_order: ["t1"],
       usage: { context_size: 0 },
       has_more: false,
     } as never;
@@ -972,8 +932,8 @@ describe("a tab whose chat this device's store does not hold", () => {
     return {
       id: "c-missing",
       model: "",
-      message_count: 3,
-      messages: [{ id: "m1" }],
+      turn_count: 3,
+      turn_order: ["t1"],
       usage: { context_size: 0 },
       has_more: false,
     } as never;
@@ -1046,8 +1006,8 @@ describe("restore: opening a closed conversation from History", () => {
       id: "c-closed",
       name: "Yesterday's work",
       model: "",
-      message_count: 12,
-      messages: [],
+      turn_count: 12,
+      turn_order: [],
       usage: { context_size: 0 },
       has_more: true,
     } as never;
@@ -1167,8 +1127,8 @@ describe("activateChatView routes on the staleness verdict", () => {
       id,
       name: "seeded",
       model: "",
-      messages: [{ id: "m1", role: "user", ts: 1 }],
-      message_count: 1,
+      turn_order: ["t1"],
+      turn_count: 1,
       has_more: false,
       usage: { context_size: 1 },
       draft: "",
@@ -1180,8 +1140,8 @@ describe("activateChatView routes on the staleness verdict", () => {
       id,
       name: "seeded",
       model: "",
-      messages: [],
-      message_count: 0,
+      turn_order: [],
+      turn_count: 0,
       has_more: false,
       usage: { context_size: 1 },
       draft: "",
@@ -1204,10 +1164,7 @@ describe("activateChatView routes on the staleness verdict", () => {
   });
 
   // The "Load older messages" button's ONE producer, and its only input is
-  // `session.has_more` — which used to carry a client GUESS (`message_count > 0`)
-  // wearing a server answer's name, so a chat holding every message it has still
-  // got a button, and one click (an empty page, then `has_more = d.has_more`) made
-  // it go away. `store-load.ts` now derives the value; this is the other half of
+  // `session.has_more`, which `store-load.ts` derives. This is the other half of
   // that pair: what the derived value does at the seam.
   //
   // The ARGUMENTS rather than a rendered element, because `./scroll.js` is mocked
@@ -1231,8 +1188,8 @@ describe("activateChatView routes on the staleness verdict", () => {
       id: "c-paged",
       name: "seeded",
       model: "",
-      messages: [{ id: "m1", role: "user", ts: 1 }],
-      message_count: 40,
+      turn_order: ["t1"],
+      turn_count: 40,
       has_more: true,
       usage: { context_size: 1 },
       draft: "",
@@ -1332,8 +1289,8 @@ describe("activateChatView routes on the staleness verdict", () => {
       id: "c-bg",
       name: "seeded",
       model: "",
-      messages: [],
-      message_count: 4,
+      turn_order: [],
+      turn_count: 4,
       has_more: false,
       usage: { context_size: 1 },
       draft: "",
@@ -1360,8 +1317,8 @@ describe("the placeholder's own refusal, against the real container", () => {
       id,
       name: "seeded",
       model: "",
-      messages: [],
-      message_count: 6,
+      turn_order: [],
+      turn_count: 6,
       has_more: false,
       usage: { context_size: 1 },
       draft: "",
@@ -1429,8 +1386,8 @@ describe("every direct caller of activateChatView still fetches", () => {
       id,
       name: "seeded",
       model: "",
-      messages: [{ id: "m1", role: "user", ts: 1 }],
-      message_count: 1,
+      turn_order: ["t1"],
+      turn_count: 1,
       has_more: false,
       usage: { context_size: 1 },
       draft: "",

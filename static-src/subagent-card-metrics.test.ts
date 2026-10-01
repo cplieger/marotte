@@ -132,8 +132,8 @@ function collapsedContainer(i: number): HTMLElement {
 
 type Build = (i: number) => HTMLElement;
 
-/** The production nesting: a fixed-height scroller holding the `.msg-wrap` block
- *  container a turn's boxes live in. `.msg-wrap` is a flex column with a gap, and
+/** The production nesting: a fixed-height scroller holding the `.turn-body` block
+ *  container a turn's boxes live in. `.turn-body` is a flex column with a gap, and
  *  the gap is the same in all three readings, so it cancels out of the drift while
  *  staying faithful to what the transcript lays out. */
 function mountList(build: Build): { wrap: HTMLElement; list: HTMLElement } {
@@ -141,7 +141,7 @@ function mountList(build: Build): { wrap: HTMLElement; list: HTMLElement } {
   wrap.style.cssText = `height:${String(WRAP_H)}px;overflow-y:auto;`;
 
   const list = document.createElement("div");
-  list.className = "msg-wrap";
+  list.className = "turn-body";
   for (let i = 0; i < CARDS; i++) {
     list.appendChild(build(i));
   }

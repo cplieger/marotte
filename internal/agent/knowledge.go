@@ -141,6 +141,26 @@ func (st *Settings) resolveKnowledgePath(p string) string {
 	return filepath.Join(st.lifecycle.workDir, p)
 }
 
+// knowledgeNameUnaddressable reports why a name could never be addressed by
+// the per-base routes, or "" when it can. Both of them take ONE path segment,
+// and canonicalAPIPath 400s a request whose decoded path is not the path
+// ServeMux would route it as, so "." and ".." are unreachable however they are
+// encoded. A name holding "/" IS reachable as %2F (measured on go1.27.1: Go
+// unescapes per segment, so the name arrives whole), but only while the client
+// encodes it, no proxy decodes it, and the decoded form stays canonical — two
+// of those three are outside marotte, so the name is refused instead.
+func knowledgeNameUnaddressable(name string) string {
+	switch {
+	case name == "." || name == "..":
+		return `a knowledge base cannot be named "." or "..": the request path would not be canonical, so no route can address it`
+	case strings.ContainsRune(name, '/'):
+		return `a knowledge base name cannot contain "/": the routes that address one take a single path segment`
+	case strings.TrimSpace(name) != name:
+		return "a knowledge base name cannot begin or end with whitespace: the routes that address one trim it, so the trimmed name would match nothing"
+	}
+	return ""
+}
+
 // cleanKnowledgeMsg trims a KAS message for surfacing as an HTTP error,
 // falling back to a generic sentinel when empty.
 func cleanKnowledgeMsg(s string) string {
@@ -152,6 +172,31 @@ func cleanKnowledgeMsg(s string) string {
 }
 
 // --- HTTP handlers (registered by registerKnowledgeRoutes) ---
+
+// handleKnowledge dispatches the collection: GET lists, POST adds. Anything
+// else answers 405 with an Allow header naming the two, which is what a
+// per-method route pattern cannot do — ServeMux hands a refused method to the
+// /api/ fallback, whose 404 sends the caller looking for a route that is
+// registered and healthy and carries no Allow.
+func (st *Settings) handleKnowledge(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		st.handleKnowledgeList(w, r)
+	case http.MethodPost:
+		st.handleKnowledgeAdd(w, r)
+	default:
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+// handleKnowledgeOne dispatches one base by name: DELETE removes it.
+func (st *Settings) handleKnowledgeOne(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		httpreply.MethodNotAllowed(w, http.MethodDelete)
+		return
+	}
+	st.handleKnowledgeRemove(w, r)
+}
 
 // handleKnowledgeList: GET /api/knowledge → the global store's contexts +
 // in-flight indexing operations. The client polls this while any entry is
@@ -188,6 +233,12 @@ func (st *Settings) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		name = filepath.Base(abs)
+	}
+	// After the default, because a derived name is as unaddressable as a
+	// supplied one and a stored row nothing can remove is worse than a refusal.
+	if reason := knowledgeNameUnaddressable(name); reason != "" {
+		httpreply.BadRequest(w, reason)
+		return
 	}
 	res, err := st.knowledgeMutate(r.Context(), map[string]any{
 		keySubcommand: "add",
@@ -228,6 +279,64 @@ func (st *Settings) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request
 	webhttp.Ok(w)
 }
 
+// handleKnowledgeReindex: POST /api/knowledge/{name}/reindex → re-index a
+// settled base from the directory it was added from. ASYNC like add, so the
+// client polls the list for progress.
+//
+// The name is resolved to a path HERE because KAS's `update` requires `path`
+// and matches it against sourcePath exactly — unlike `remove`, which accepts a
+// name. Resolving in the client would leak that keying onto the wire and lose
+// the 404 for a name nothing holds.
+func (st *Settings) handleKnowledgeReindex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		httpreply.BadRequest(w, "name required")
+		return
+	}
+	path, err := st.knowledgeSourcePath(r.Context(), name)
+	if err != nil {
+		writeKnowledgeErr(w, err)
+		return
+	}
+	if path == "" {
+		httpreply.NotFound(w, "no indexed knowledge base under that name")
+		return
+	}
+	res, err := st.knowledgeMutate(r.Context(), map[string]any{
+		keySubcommand: "update",
+		"path":        path,
+	})
+	if err != nil {
+		writeKnowledgeErr(w, err)
+		return
+	}
+	if !res.Success {
+		httpreply.NotFound(w, cleanKnowledgeMsg(res.Message))
+		return
+	}
+	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
+}
+
+// knowledgeSourcePath answers the source path of the settled base carrying
+// name, or "" when none does. An in-flight entry is skipped: its path is the one
+// already being indexed, and re-indexing it would race that add.
+func (st *Settings) knowledgeSourcePath(ctx context.Context, name string) (string, error) {
+	ctxs, err := st.knowledgeShow(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range ctxs {
+		if c.Name == name && !c.Indexing && c.Path != "" {
+			return c.Path, nil
+		}
+	}
+	return "", nil
+}
+
 // knowledgeMutate issues a mutating subcommand (add/remove/…) and parses the
 // {success, message} reply.
 func (st *Settings) knowledgeMutate(ctx context.Context, params map[string]any) (*kasKnowledgeResult, error) {
@@ -246,9 +355,12 @@ func writeKnowledgeErr(w http.ResponseWriter, err error) {
 	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }
 
-// registerKnowledgeRoutes wires the knowledge-base management endpoints.
+// registerKnowledgeRoutes wires the knowledge-base management endpoints. The
+// patterns carry no method on purpose: each handler dispatches on r.Method so a
+// refused one answers 405 + Allow, where a per-method pattern leaves it to the
+// /api/ fallback's 404.
 func (st *Settings) registerKnowledgeRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/knowledge", st.handleKnowledgeList)
-	mux.HandleFunc("POST /api/knowledge", st.handleKnowledgeAdd)
-	mux.HandleFunc("DELETE /api/knowledge/{name}", st.handleKnowledgeRemove)
+	mux.HandleFunc("/api/knowledge", st.handleKnowledge)
+	mux.HandleFunc("/api/knowledge/{name}", st.handleKnowledgeOne)
+	mux.HandleFunc("/api/knowledge/{name}/reindex", st.handleKnowledgeReindex)
 }

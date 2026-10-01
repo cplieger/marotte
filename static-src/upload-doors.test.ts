@@ -129,9 +129,11 @@ describe("the file browser's drop door", () => {
     expect(toastError).toHaveBeenCalledOnce();
   });
 
+  // Sized from the const rather than a literal, so raising the cap cannot turn
+  // this into a batch that fits and stop exercising the total.
   it("refuses the file that would take the request over the total", async () => {
-    const thirty = 30 * 1024 * 1024;
-    await dropInBrowser([sized("a.bin", thirty), sized("b.bin", thirty)]);
+    const each = Math.floor(MAX_UPLOAD_TOTAL_BYTES * 0.6);
+    await dropInBrowser([sized("a.bin", each), sized("b.bin", each)]);
     expect(names(lastArgs()?.files)).toEqual(["a.bin"]);
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("b.bin"));
   });

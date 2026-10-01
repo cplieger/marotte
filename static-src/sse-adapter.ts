@@ -28,11 +28,17 @@ import {
 
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
-import { invalidateCachedRuns, rebuildLiveRuns } from "./run-store.js";
+import {
+  invalidateCachedRuns,
+  peekRunState,
+  rebuildLiveRuns,
+  runTurnHeldSeq,
+} from "./run-store.js";
+import { requestRunTurnRange } from "./run-turn-range.js";
 import { setSSEStatus } from "./send-state.js";
 import { fetchCatalog } from "./session-catalog.js";
-import { get } from "./store.js";
-import { loadList, loadMessages } from "./store-load.js";
+import { chatHoldingTurn, get } from "./store.js";
+import { loadList, loadMessages, requestTurnRange } from "./store-load.js";
 import { adoptSubscriptionTag, persistedTag } from "./sse-tag.js";
 import { observeStamp, setObserveSink, versionMap } from "./subject-versions.js";
 import { listTabs } from "./tabs-sync.js";
@@ -118,7 +124,7 @@ function onLifecycle(ev: LifecycleEvent): void {
 /** Hold every incoming frame until the chat store is populated, then release them in
  *  arrival order. The connect hook's two snapshots are sent once per connection, so a
  *  frame an empty store drops has no second chance — and ORDER is load-bearing, because
- *  a `message_chunk` released before the `message_created` it extends is orphaned.
+ *  an `entry_delta` released before the `entry_opened` it extends is refused as a hole.
  *  INSIDE `onFrame` rather than the library's hold, which is for revalidation, and rather
  *  than starting the stream after hydration: a fresh hello has no replay, so frames
  *  published between the `GET /api/chats` response and the stream open would be lost. */
@@ -163,9 +169,19 @@ export function markHydrated(): void {
 /** The library's `onFrame`: decode, then apply now or hold. A throw here rejects the
  *  frame — the library advances the cursor past it and schedules `revalidate("hello")`,
  *  whose digest names whatever the dropped frame would have moved, because its stamp
- *  was never observed. */
+ *  was never observed.
+ *
+ *  A frame that will not decode is SALVAGED before the throw: the turn it named is asked
+ *  for over the range read, which is the same hole path a missing `seq` takes. Here rather
+ *  than in a handler because a handler never sees an undecodable frame. */
 function applyFrame(frame: Frame): void {
-  const evt = decodeEnvelope(JSON.parse(frame.data));
+  let evt: ServerEvent;
+  try {
+    evt = decodeEnvelope(JSON.parse(frame.data));
+  } catch (e) {
+    salvageUndecodable(frame.data, e);
+    throw e;
+  }
   if (!hydrated) {
     pending.push(evt);
     if (pending.length >= MAX_PENDING_FRAMES) {
@@ -200,12 +216,119 @@ function deliver(evt: ServerEvent): void {
  *  resident, because a frame for a chat with no window was applied to nothing, and
  *  recording its version would make the digest report `changed` for — and the action
  *  refetch — a transcript nobody is looking at, refilling what the eviction sweep
- *  bounded. */
+ *  bounded. A run's step turn is held while the run store holds that run's state. */
 function projectionHeld(stamp: SubjectStamp): boolean {
-  if (stamp.kind !== "chat" && stamp.kind !== "live_turn") {
-    return true;
+  switch (stamp.kind) {
+    case "chat":
+      return get(stamp.ref)?.residency === "loaded";
+    case "live_turn": {
+      const chatID = chatHoldingTurn(stamp.ref);
+      return chatID !== "" && get(chatID)?.residency === "loaded";
+    }
+    case "run_turn":
+      return peekRunState(runTurnWorkflow(stamp.ref)) !== undefined;
+    default:
+      return true;
   }
-  return get(stamp.ref)?.residency === "loaded";
+}
+
+/** The newest `seq` this client holds for a turn, which is what a `live_turn` repair asks
+ *  past. `entries[i].seq === i` is the store's invariant, so the length answers it; a turn
+ *  held with no entries answers `undefined`, which asks for the whole turn. */
+function newestHeldSeq(chatID: string, turnID: string): number | undefined {
+  const held = get(chatID)?.turns.get(turnID);
+  return held === undefined || held.entries.length === 0 ? undefined : held.entries.length - 1;
+}
+
+/** The workflow id half of a `run_turn` ref, which the server spells `<workflowID>/<turn>`
+ *  (`internal/subject`). A ref with no separator names no run and answers "". */
+function runTurnWorkflow(ref: string): string {
+  const at = ref.indexOf("/");
+  return at < 0 ? "" : ref.slice(0, at);
+}
+
+/** The turn id half of the same ref, split on the FIRST separator: a workflow id carries none
+ *  and a turn id is what follows, whatever it holds. A ref with no separator answers "". */
+function runTurnID(ref: string): string {
+  const at = ref.indexOf("/");
+  return at < 0 ? "" : ref.slice(at + 1);
+}
+
+/** The turn a frame names, read off the RAW payload because nothing decoded. Three
+ *  spellings, one per event shape: `turn` on a delta, a seal and the two live replaces,
+ *  `entry.turn` on the three entry-bearing events, `open.turn` on `entry_opened`. */
+function rawTurnID(payload: unknown): string {
+  if (typeof payload !== "object" || payload === null) {
+    return "";
+  }
+  const o = payload as Record<string, unknown>;
+  const direct = o["turn"];
+  if (typeof direct === "string") {
+    return direct;
+  }
+  for (const key of ["entry", "open"]) {
+    const sub = o[key];
+    if (typeof sub === "object" && sub !== null) {
+      const turn = (sub as Record<string, unknown>)["turn"];
+      if (typeof turn === "string") {
+        return turn;
+      }
+    }
+  }
+  return "";
+}
+
+/** The workflow id an entry frame carries, read off the RAW payload because nothing decoded.
+ *  It sits beside `turn` on every run-scoped entry frame, which is the same field
+ *  `handlers/entries.ts` routes on, and is absent on a chat's. */
+function rawWorkflowID(payload: unknown): string {
+  if (typeof payload !== "object" || payload === null) {
+    return "";
+  }
+  const id = (payload as Record<string, unknown>)["workflow_id"];
+  return typeof id === "string" ? id : "";
+}
+
+/** Ask for the turn an undecodable frame named, on whichever log holds it: a chat's frame
+ *  carries a chat id and a run's carries an empty one plus its own `workflow_id`, and each has
+ *  a range read of its own. A frame naming no turn at all is warned about and dropped. */
+function salvageUndecodable(data: string, err: unknown): void {
+  let type: string;
+  let chatID: string;
+  let turnID: string;
+  let workflowID: string;
+  try {
+    const o = JSON.parse(data) as Record<string, unknown>;
+    type = typeof o["type"] === "string" ? o["type"] : "";
+    chatID = typeof o["chat_id"] === "string" ? o["chat_id"] : "";
+    turnID = rawTurnID(o["payload"]);
+    workflowID = rawWorkflowID(o["payload"]);
+  } catch {
+    console.warn("sse: frame is not JSON, dropped");
+    return;
+  }
+  // The decoder's message names the field that refused, which is the half of the
+  // warn a reader can act on.
+  const why = err instanceof Error ? err.message : String(err);
+  if (turnID === "") {
+    console.warn(`sse: ${type} did not decode (${why}), it named no turn to re-read`);
+    return;
+  }
+  if (chatID !== "") {
+    console.warn(`sse: ${type} did not decode (${why}), asking for turn ${turnID} of ${chatID}`);
+    requestTurnRange(chatID, turnID);
+    return;
+  }
+  // A run's frame: the whole turn, because a frame that did not decode says nothing about
+  // what this client already holds and the run's read answers a held prefix as redeliveries.
+  if (workflowID !== "") {
+    console.warn(
+      `sse: ${type} did not decode (${why}), asking for turn ${turnID} of run ${workflowID}`,
+    );
+    requestRunTurnRange(workflowID, turnID);
+    return;
+  }
+  console.warn(`sse: ${type} did not decode (${why}), turn ${turnID} named no chat and no run`);
 }
 
 // --- Revalidation ---
@@ -233,8 +356,34 @@ function runStampAction(
     case "tabs":
       return listTabs(signal).then(() => false);
     case "chat":
-    case "live_turn":
       return loadMessages(stamp.ref, undefined, signal).then(() => false);
+    case "live_turn": {
+      // The ref is a TURN id, so the repair is that turn's range read rather than the whole
+      // window: a turn whose version moved is one this client holds entries for, and the
+      // read asks for the entries past the newest `seq` it has. Asking for the WHOLE turn
+      // instead offers the seat an entry at a position the store already holds, which it
+      // refuses.
+      const chatID = chatHoldingTurn(stamp.ref);
+      if (chatID !== "") {
+        requestTurnRange(chatID, stamp.ref, newestHeldSeq(chatID, stamp.ref));
+      }
+      return Promise.resolve(false);
+    }
+    case "run_turn": {
+      // A step's turn moved or closed, and the repair is that turn's range read — the twin of
+      // the `live_turn` arm above over the run's own log, asking past the newest `seq` this
+      // client holds. A `gone` verdict runs the same read, which is what brings in the tail
+      // and the `turn_close` for a turn that closed while this client was away; the store
+      // drops the stamp when that `turn_close` lands. The run's own state is NOT re-read
+      // here: the stamp certifies the turn's entries, and a node whose status moved has its
+      // own `run_progress` frame.
+      const workflowID = runTurnWorkflow(stamp.ref);
+      const turnID = runTurnID(stamp.ref);
+      if (workflowID !== "" && turnID !== "") {
+        requestRunTurnRange(workflowID, turnID, runTurnHeldSeq(workflowID, turnID));
+      }
+      return Promise.resolve(false);
+    }
     case "runs":
       // The tree state a `run_progress` applies has no subject of its own, so the
       // lease set moving is the one signal that the trees may have moved too.
@@ -270,8 +419,9 @@ async function applyVerdict(
   const work: Promise<boolean>[] = [];
   const fetched = new Set<string>();
   const refetch = (kind: string, ref: string): void => {
-    // `chat` and `live_turn` share one GET, and a subject named twice earns one.
-    const key = `${kind === "live_turn" ? "chat" : kind}\0${ref}`;
+    // BY KIND: a `chat` is a window GET and a `live_turn` is one turn's range read, so the
+    // two no longer collapse onto each other. A subject named twice still earns one.
+    const key = `${kind}\0${ref}`;
     if (fetched.has(key)) {
       return;
     }
@@ -288,9 +438,13 @@ async function applyVerdict(
       // would have run, through the same door.
       onMsg({ type: "chat_deleted", chat_id: "", payload: { id: entry.ref } });
     } else if (entry.kind === "live_turn") {
-      // No turn is live for the chat any more. The transcript GET's `turn_open: false`
-      // is what settles the client's live-turn markers, so it is the action here too.
-      refetch("chat", entry.ref);
+      // That turn is no longer open. The range read is what brings its `turn_close` in,
+      // which is the entry every settled surface reads; the ref is the turn id.
+      refetch("live_turn", entry.ref);
+    } else if (entry.kind === "run_turn") {
+      // A step's turn closed while this client was away, which is what stops it reading as
+      // live for the tab's life: the stamp is forgotten above and the run is re-read.
+      refetch("run_turn", entry.ref);
     }
   }
   // Every GET first; the hello the caller may run cancels nothing that is still in

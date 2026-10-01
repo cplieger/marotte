@@ -11,11 +11,11 @@ import (
 // TestACPArgsReachChatBridges pins the delivery path: WithACPArgs → the
 // coordinator → StartOpts.ExtraArgs on a chat spawn.
 func TestACPArgsReachChatBridges(t *testing.T) {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	want := []string{"-v"}
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs(want))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -40,10 +40,10 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 // exactly the kind of thing a later refactor would "simplify" by threading the
 // args through once.
 func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs([]string{"--effort", "max"}))
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 
 	u := h.utility.get()
@@ -64,10 +64,10 @@ func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 // TestACPArgsUnsetIsEmpty covers the default: no env var, no args, and nothing
 // appended to any spawn.
 func TestACPArgsUnsetIsEmpty(t *testing.T) {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	br := newFakeBridge()
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
-	cs.Bus = h
+	cs.wire(h)
 	h.mcpRegistry.SignalReady()
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 

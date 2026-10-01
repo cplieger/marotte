@@ -8,123 +8,99 @@
 // layout rule then keys on — `nodes.length` and whether any node has children — since
 // getting those wrong is what puts a tree pane of one row on screen or hides a
 // pipeline's structure entirely.
-//
-// The stage/driver join is pinned here too. It is read off the tool-call ID's shape
-// (`invoke_subagent_<driver>_stage_<name>`) rather than off any wire field, so it is
-// exactly the kind of parse that breaks silently: a pipeline whose join fails renders
-// as an unrelated single delegate, which looks like a working page.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
 import { subagentToExec, subagentPath } from "./subagent-exec-source.js";
-import { sliceSubagentGroup, pipelineOf, stageName, groupOf } from "./subagent-slice.js";
-import type { Message, ToolCall } from "./types.js";
+import { sliceSubagentGroup } from "./subagent-slice.js";
+import type { TurnSource } from "./turns.js";
+import type { TurnState } from "./types.js";
+import type { Entry, EntryToolCall } from "./wire/types.gen.js";
+import { makeToolCall } from "./__test-helpers__/model.js";
 
 /** An invocation tool call. `id` carries the pipeline join when stage-shaped. */
-function invocation(id: string, subtask: string, extra: Partial<ToolCall> = {}): ToolCall {
-  return {
+function invocation(
+  id: string,
+  subtask: string,
+  extra: Partial<EntryToolCall> = {},
+): EntryToolCall {
+  return makeToolCall({
     id,
     title: "Sub-agent: context-gatherer",
-    status: "completed",
     kind: "other",
-    ts: 0,
     agent_subtask_id: subtask,
     input: { name: "context-gatherer" },
     ...extra,
-  } as unknown as ToolCall;
+  });
 }
 
-function driver(id: string, extra: Partial<ToolCall> = {}): ToolCall {
-  return {
+function driver(id: string, extra: Partial<EntryToolCall> = {}): EntryToolCall {
+  return makeToolCall({
     id,
     title: "Orchestrate Sub-agent",
     status: "in_progress",
     kind: "other",
-    ts: 0,
     ...extra,
-  } as unknown as ToolCall;
+  });
 }
 
-/** One assistant message holding the given calls, plus a text block per subtask so
- *  the slice has something to project. */
-function msg(calls: ToolCall[], texts: [string, string][] = []): Message {
-  return {
-    id: "m1",
-    role: "assistant",
-    ts: 0,
-    content: "",
-    tool_calls: calls,
-    blocks: [
-      ...calls.map((c) => ({
-        type: "tool_use",
-        tool_call_id: c.id,
-        ...(c.agent_subtask_id === undefined ? {} : { agent_subtask_id: c.agent_subtask_id }),
-      })),
-      ...texts.map(([subtask, text]) => ({ type: "text", text, agent_subtask_id: subtask })),
-    ],
-  } as unknown as Message;
-}
-
-function exec(messages: Message[], subtask: string, live = false) {
-  return subagentToExec(subtask, sliceSubagentGroup(messages, subtask, live));
-}
-
-describe("the stage/driver join", () => {
-  it("reads a driver id out of a stage-shaped tool-call id", () => {
-    expect(pipelineOf("invoke_subagent_orc_42_stage_review")).toBe("orc_42");
-    expect(stageName("invoke_subagent_orc_42_stage_review")).toBe("review");
-  });
-
-  // A driver id is machine-minted and a stage NAME is author-supplied, so the
-  // separator can only appear on the RIGHT and the first occurrence is the seam.
-  // Splitting on the last one hands back a driver that does not exist, and the stage
-  // then renders as a flat sibling of its own pipeline. Measured on the live volume:
-  // every driver half is a `toolu_bdrk_*` id, and stage names carry underscores freely.
-  it("keeps the driver id whole when a stage name contains the separator", () => {
-    expect(pipelineOf("invoke_subagent_orc_1_stage_run_stage_two")).toBe("orc_1");
-    expect(stageName("invoke_subagent_orc_1_stage_run_stage_two")).toBe("run_stage_two");
-  });
-
-  it("reports no pipeline for a plain invocation id", () => {
-    expect(pipelineOf("tooluse_abc")).toBe("");
-    expect(stageName("tooluse_abc")).toBe("");
-  });
-
-  // Both halves empty rather than a partial answer: an id that is prefixed but carries
-  // no name on one side names no pipeline, and treating it as one would put a delegate
-  // under a driver that does not exist.
-  it("refuses a truncated stage id", () => {
-    expect(pipelineOf("invoke_subagent__stage_x")).toBe("");
-    expect(pipelineOf("invoke_subagent_orc_stage_")).toBe("");
-  });
-
-  it("finds every sibling stage of the pipeline a delegate belongs to", () => {
-    const messages = [
-      msg([
-        driver("orc_1"),
-        invocation("invoke_subagent_orc_1_stage_a", "sub_a"),
-        invocation("invoke_subagent_orc_1_stage_b", "sub_b"),
-        // A different pipeline's stage, and a plain delegate. Neither is a sibling.
-        invocation("invoke_subagent_orc_2_stage_a", "sub_c"),
-        invocation("tooluse_plain", "sub_d"),
-      ]),
-    ];
-    const group = groupOf(messages, "sub_b");
-    expect(group.pipeline).toBe("orc_1");
-    expect(group.driver?.id).toBe("orc_1");
-    expect(group.members.map((m) => m.subtaskID)).toEqual(["sub_a", "sub_b"]);
-    expect(group.members.map((m) => m.stage)).toEqual(["a", "b"]);
-  });
-
-  it("reports no group for a delegate that is not a stage", () => {
-    const messages = [msg([invocation("tooluse_plain", "sub_d")])];
-    expect(groupOf(messages, "sub_d")).toEqual({
-      pipeline: "",
-      driver: undefined,
-      members: [],
+/** ONE TURN's entries: its `turn_open`, then the calls as `tool_call` entries in the
+ *  ISSUER's lane (which is where an invocation lives, design 3.4), then one `text` entry
+ *  per `[lane, body]` pair so each delegate's lane has something to project.
+ *
+ *  Every case here is one turn, because a delegate never spans two: a mid-turn model
+ *  switch appends a `model_switched` entry rather than closing the turn (design 4.2). */
+function msg(calls: EntryToolCall[], texts: [string, string][] = [], turnID = "t1"): Entry[] {
+  const entries: Entry[] = [
+    {
+      id: `${turnID}-open`,
+      turn: turnID,
+      kind: "turn_open",
+      seq: 0,
+      ts: 1,
+      payload: { source: "prompt", n: 1, prompt: { id: "m1", text: "delegate this" } },
+    },
+  ];
+  for (const c of calls) {
+    entries.push({
+      id: c.id,
+      turn: turnID,
+      kind: "tool_call",
+      seq: entries.length,
+      ts: entries.length + 1,
+      payload: c,
     });
-  });
-});
+  }
+  for (const [lane, body] of texts) {
+    entries.push({
+      id: `${turnID}-e${String(entries.length)}`,
+      turn: turnID,
+      kind: "text",
+      seq: entries.length,
+      ts: entries.length + 1,
+      lane,
+      payload: { text: body },
+    });
+  }
+  return entries;
+}
+
+/** The `TurnSource` the projection reads: the session satisfies it, so a fixture is one
+ *  turn map plus its order. */
+function source(turns: readonly Entry[][]): TurnSource {
+  const map = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const entries of turns) {
+    const turnID = entries[0]?.turn ?? "t1";
+    map.set(turnID, { entries: [...entries], openEntries: new Map() });
+    order.push(turnID);
+  }
+  return { turns: map, turn_order: order };
+}
+
+function exec(turns: readonly Entry[][], subtask: string, live = false) {
+  return subagentToExec(subtask, sliceSubagentGroup(source(turns), subtask, live));
+}
 
 describe("the single-delegate shape", () => {
   // The page's layout rule is `nodes.length > 1 || any node has children`, so these two
@@ -371,7 +347,7 @@ describe("the pipeline shape", () => {
     for (const bad of [undefined, null, "text", 42, { stages: "nope" }, { stages: [1, null] }]) {
       const odd = [
         msg([
-          driver("orc_1", { input: bad } as Partial<ToolCall>),
+          driver("orc_1", { input: bad } as Partial<EntryToolCall>),
           invocation("invoke_subagent_orc_1_stage_a", "sub_a"),
           invocation("invoke_subagent_orc_1_stage_b", "sub_b"),
         ]),

@@ -65,11 +65,11 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	// Reproduces the pre-fix deadlock: an in-flight Call that can only
 	// return when the bridge is Stop'd. Shutdown must Stop first,
 	// otherwise inflight.Wait blocks forever.
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	hb := newHangingBridge()
 	factory := func() ACPBridge { return hb }
 	h := New(t.Context(), "/tmp/work", factory, cs)
-	cs.Bus = h
+	cs.wire(h)
 
 	_, _ = cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -117,7 +117,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 // interfaces they impersonate. Breaks the build, not just the test suite,
 // if the interfaces drift.
 func TestInterfaceSatisfaction(_ *testing.T) {
-	var _ chatRecords = (*fakeChatStore)(nil)
+	var _ chatRecords = (*testChatStore)(nil)
 	var _ ACPBridge = (*fakeBridge)(nil)
 }
 
@@ -167,11 +167,11 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 		<-release
 		return nil, false
 	}
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	h := New(context.Background(), t.TempDir(),
 		func() ACPBridge { return newFakeBridge() }, cs,
 		WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs))
-	cs.Bus = h
+	cs.wire(h)
 
 	select {
 	case <-entered:
@@ -206,12 +206,12 @@ func TestShutdown_WaitsForARunningSweep(t *testing.T) {
 func TestSweepSessionsLoop_WaitsForTheListenerToBind(t *testing.T) {
 	newGatedHub := func(t *testing.T, gate <-chan struct{}, refs func(context.Context) (map[string]struct{}, bool)) *Runtime {
 		t.Helper()
-		cs := newFakeChatStore()
+		cs := newTestChatStore()
 		h := New(context.Background(), t.TempDir(),
 			func() ACPBridge { return newFakeBridge() }, cs,
 			WithSessionReaper(kirosession.New(t.TempDir(), testReaperWorkDir), refs),
 			WithSessionSweepGate(gate))
-		cs.Bus = h
+		cs.wire(h)
 		return h
 	}
 	// Non-empty and complete, so the sweep reaches Reaper.Sweep rather than
@@ -354,11 +354,11 @@ func (b *lifetimeWatchingBridge) Stop() {
 // still reached that closer, on a bare goroutine holding a dead context.
 // close(lifecycle.done) stays at step 0: the tickers select on it.
 func TestShutdown_CancelsTheLifetimeAfterDrainingBridges(t *testing.T) {
-	cs := newFakeChatStore()
+	cs := newTestChatStore()
 	watcher := &lifetimeWatchingBridge{fakeBridge: newFakeBridge()}
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return watcher }, cs)
 	watcher.lifetime = h.lifecycle.shutdownCtx
-	cs.Bus = h
+	cs.wire(h)
 
 	sb := &sharedBridge{bridge: watcher}
 	h.bridge.mgr.mu.Lock()

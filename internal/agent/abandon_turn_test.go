@@ -8,208 +8,119 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// dividerIn returns the last interrupted-event message in a chat, or nil.
-// A helper that cannot fail, so it takes no *testing.T and marks no t.Helper().
-func dividerIn(chat *marotte.Chat) *marotte.Message {
-	var last *marotte.Message
-	for i := range chat.Messages {
-		if m := &chat.Messages[i]; m.Role == marotte.RoleEvent && m.EventKind == marotte.EventInterrupted {
-			last = m
-		}
+// closeOf returns the chat's one turn_close, failing when the log holds none or more
+// than one: the prompt-failure closer runs once per turn, and two closes are two
+// footers for one turn.
+func closeOf(t *testing.T, cs *testChatStore, chatID marotte.ChatID) marotte.EntryTurnClose {
+	t.Helper()
+	closes := closesOf(t, logOf(t, cs, chatID))
+	if len(closes) != 1 {
+		t.Fatalf("turn_close count = %d, want exactly 1", len(closes))
 	}
-	return last
+	return closes[0]
 }
 
-// TestAbandonInFlightTurn_ReleasesTheBuffer pins the mechanism behind the
-// two-turns-in-one-message defect.
-//
-// CmdPrompt's error arm returned without any call that takes the assistant
-// buffer, so a failed turn left the buffer in place with Started == true. The
-// next prompt's ensureTurnStarted then saw a started buffer, skipped
-// message_created, and appended the new turn's deltas to the dead turn's blocks
-// under the dead turn's message id. The visible result was a single assistant
-// message containing two replies, the second one rendered under the first one's
-// turn header, and no way for the user to tell which was which.
-//
-// The assertion is on the buffer being GONE afterwards, because that is the
-// state the next turn reads. Asserting on the persisted message instead would
-// pass even if the buffer were left behind.
-func TestAbandonInFlightTurn_ReleasesTheBuffer(t *testing.T) {
-	h, _ := hubForFSTest(t, t.TempDir())
-	ctx := t.Context()
-
-	// Start a turn the way streaming does, then abandon it.
-	epoch, buf := h.stagePromptTurn(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("half an answer")
-
-	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, "the pipe died")
-
-	if h.liveTurnBuffer("c1") != nil {
-		t.Error("the assistant buffer survived AbandonInFlightTurn; the next turn " +
-			"would extend this dead turn's blocks under its message id")
-	}
-}
-
-// TestAbandonInFlightTurn_PersistsThePartial is the direction half of the fix,
-// and it is the reason this is a new method rather than a call to the existing
-// FlushInFlightTurnOnSwitch.
-//
-// Both are "a turn ended badly, release the buffer", and they must resolve the
-// partial in OPPOSITE directions. A model switch discards it: the user asked for
-// a different answer, so the abandoned one is moot. A failed prompt keeps it:
-// the user watched that text stream in, and invariant 1 says the client never
-// displays what the server has not persisted. Dropping it here would make the
-// transcript diverge on reload, which is the vanishing-message class this
-// codebase has already paid for once.
-func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
-	h, _ := hubForFSTest(t, t.TempDir())
+// TestAbandonInFlightTurn_SealsThePartial pins the direction of the close, and it is
+// the reason this is a closer of its own rather than a discard: a failed prompt KEEPS
+// what streamed. The user watched that text arrive, and invariant 1 says the client
+// never displays what the server has not persisted, so the lane's open entry is
+// sealed into the log ahead of the turn_close rather than dropped. Dropping it would
+// make the transcript diverge on reload, the vanishing-message class this codebase has
+// already paid for once.
+func TestAbandonInFlightTurn_SealsThePartial(t *testing.T) {
+	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
 	const partial = "the model got this far before the pipe died"
-	epoch, buf := h.stagePromptTurn(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString(partial)
+	id, _ := streamingPromptTurn(t, h, "c1", partial)
 
 	logs := captureLogs(t)
-	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, "the pipe died")
+	h.AbandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, "the pipe died")
 
-	chat, ok := h.chatStore.Get(ctx, "c1")
-	if !ok {
-		t.Fatal("chat record vanished")
+	entries := logOf(t, cs, "c1")
+	if texts := textsOf(t, entries); len(texts) != 1 || texts[0] != partial {
+		t.Errorf("sealed texts = %q, want the partial the client already showed", texts)
 	}
-
-	var sawPartial bool
-	for i := range chat.Messages {
-		if m := &chat.Messages[i]; m.Role == marotte.RoleAssistant && m.Content == partial {
-			sawPartial = true
-		}
+	c := closeOf(t, cs, "c1")
+	if c.Outcome != marotte.TurnOutcomeInterrupted {
+		t.Errorf("outcome = %q, want interrupted: the transcript shows a truncated reply "+
+			"with nothing saying why it stops", c.Outcome)
 	}
-	if !sawPartial {
-		t.Errorf("the partial assistant text was not persisted; the client showed it "+
-			"and a reload would lose it. messages=%d", len(chat.Messages))
+	if h.liveTurn("c1") != nil {
+		t.Error("the turn is still open after AbandonInFlightTurn; the next prompt's frames " +
+			"would fold into this dead turn")
 	}
-	if dividerIn(chat) == nil {
-		t.Error("no interrupted event message; the transcript shows a truncated reply " +
-			"with nothing saying why it stops")
-	}
-	// The divider landed, so nothing reports otherwise. An error line on the
-	// ORDINARY abandon means the badge was lost, and one that fires whenever the
-	// append succeeded says that for every failed turn a user ever has.
-	const persistFailed = "persist interrupted event"
-	if out := logs.String(); strings.Contains(out, `"msg":"`+persistFailed+`"`) {
-		t.Errorf("a successful append reported %q: %s", persistFailed, out)
+	if out := logs.String(); strings.Contains(out, `"level":"ERROR"`) {
+		t.Errorf("an ordinary abandon logged an error: %s", out)
 	}
 }
 
-// TestAbandonInFlightTurn_MarksATurnThatNeverStarted is the case the user
-// actually hits, and it INVERTS what this file used to assert.
-//
-// The old rule was that no buffer means no-op, on the reasoning that a stray
-// badge would be noise in "every transcript that ever saw a transient error".
-// That was wrong in the one direction that matters: a 429 or a capacity refusal
-// answers BEFORE the first chunk, so there is no buffer, so the turn appended
-// nothing at all — and turns.ts deriveOutcome, which reads persisted messages
-// only, then classified it `completed` and hasTurnSummary suppressed its footer.
-// A rate-limited turn was pixel-identical to a clean short answer, and the whole
-// account of the failure lived in a hover tooltip that a reload discarded.
-//
-// The badge is not noise. It is the only durable record that the turn failed.
-func TestAbandonInFlightTurn_MarksATurnThatNeverStarted(t *testing.T) {
-	h, _ := hubForFSTest(t, t.TempDir())
+// TestAbandonInFlightTurn_ClosesATurnThatNeverStreamed is the case the user actually
+// hits: a 429 or a capacity refusal answers BEFORE the first chunk, so the turn holds
+// only its turn_open. The close still lands, carrying the outcome and the reason, or
+// the rail derives `completed` for a rate-limited turn and it renders pixel-identical
+// to a clean short answer. Nothing else is written: an empty text entry would render
+// as a blank reply bubble under the prompt.
+func TestAbandonInFlightTurn_ClosesATurnThatNeverStreamed(t *testing.T) {
+	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
-	// The prompt pre-opens its turn before the call that drives it, so a refusal
-	// answering before the first chunk still has a turn to close. The closer no
-	// longer opens one itself — every fold opens one and every prompt pre-opens its
-	// own, so a terminal step never finds an idle chat with content to account for.
 	const reason = "Too many requests, please wait before trying again."
-	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
-	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, reason)
+	id, _ := h.stagePromptTurn(t, "c1")
+	h.AbandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, reason)
 
-	chat, ok := h.chatStore.Get(ctx, "c1")
-	if !ok {
-		t.Fatal("chat record missing")
+	entries := logOf(t, cs, "c1")
+	if texts := textsOf(t, entries); len(texts) != 0 {
+		t.Errorf("an unstreamed turn sealed text %q; the turn_close is the whole record", texts)
 	}
-	divider := dividerIn(chat)
-	if divider == nil {
-		t.Fatal("AbandonInFlightTurn(ctx, c1, <throttle>) appended no interrupted event " +
-			"with no buffer in flight; the turn renders as a clean short answer")
+	c := closeOf(t, cs, "c1")
+	if c.Outcome != marotte.TurnOutcomeInterrupted {
+		t.Errorf("outcome = %q, want interrupted", c.Outcome)
 	}
-	if divider.Content != reason {
-		t.Errorf("divider content = %q, want %q", divider.Content, reason)
-	}
-	// No assistant message: there was nothing to persist, and an empty one would
-	// render as a blank reply bubble under the request.
-	for i := range chat.Messages {
-		if m := &chat.Messages[i]; m.Role == marotte.RoleAssistant {
-			t.Errorf("an unstarted turn persisted an assistant message %q; the divider is "+
-				"the whole record", m.Content)
-		}
+	if c.FailureReason != reason {
+		t.Errorf("failure_reason = %q, want %q", c.FailureReason, reason)
 	}
 }
 
-// TestAbandonInFlightTurn_CarriesTheCallersReason is the ordinary failed prompt,
-// and it is the other inversion.
-//
-// This used to assert the divider stayed EMPTY here, because "a failed prompt
-// already sends its reason as an error frame". The frame is real but ephemeral:
-// it reaches one client surface, for the active chat, until the next reload. So
-// the reason the server had all along never survived to the transcript, and the
-// user was left with the generic "Turn interrupted" label.
+// TestAbandonInFlightTurn_CarriesTheCallersReason is the ordinary failed prompt. The
+// error frame that also carries the reason is ephemeral — one client surface, for the
+// active chat, until the next reload — so the turn_close is where the reason survives.
 func TestAbandonInFlightTurn_CarriesTheCallersReason(t *testing.T) {
-	h, _ := hubForFSTest(t, t.TempDir())
+	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
 	const reason = "The model is at capacity. (request req-9)"
-	epoch, buf := h.stagePromptTurn(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("half an answer")
+	id, _ := streamingPromptTurn(t, h, "c1", "half an answer")
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, reason)
+	h.AbandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, reason)
 
-	chat, ok := h.chatStore.Get(ctx, "c1")
-	if !ok {
-		t.Fatal("chat record vanished")
-	}
-	divider := dividerIn(chat)
-	if divider == nil {
-		t.Fatal("no interrupted event message")
-	}
-	if divider.Content != reason {
-		t.Errorf("divider content = %q, want %q — without it the transcript cannot say "+
-			"why the turn stopped once the error frame is gone", divider.Content, reason)
+	if got := closeOf(t, cs, "c1").FailureReason; got != reason {
+		t.Errorf("failure_reason = %q, want %q — without it the transcript cannot say "+
+			"why the turn stopped once the error frame is gone", got, reason)
 	}
 }
 
-// TestAbandonInFlightTurn_StashedReasonBeatsTheCallers closes the loop on the
-// tool-interruption fix, and pins the PRECEDENCE between the two writers.
-//
-// InterruptTurn stashes the cause when kiro-cli's tool-use security filter stops
-// a turn. The prompt Call then fails as a consequence of that stop, so the
-// caller's reason describes the fallout rather than the cause. The specific one
-// has to win, or a security-filter stop reads as whatever RPC error it produced.
+// TestAbandonInFlightTurn_StashedReasonBeatsTheCallers pins the PRECEDENCE between the
+// two writers. InterruptTurn stashes the cause when kiro-cli's tool-use security filter
+// stops a turn; the prompt Call then fails as a consequence of that stop, so the
+// caller's reason describes the fallout rather than the cause. The specific one has to
+// win, or a security-filter stop reads as whatever RPC error it produced.
 func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
-	h, _ := hubForFSTest(t, t.TempDir())
+	h, cs, _ := newTestHub()
 	ctx := t.Context()
 
 	const stashed = "Stopped by kiro-cli's tool-use security filter"
 	const callers = "The turn was cancelled before the agent answered."
 
-	// Stage a turn the way streaming does, then interrupt it the way the sentinel
-	// detector does — through the coordinator, so the wiring is exercised rather
-	// than the bridge's method in isolation. The turn record is what the cause
-	// lands on now, so the fixture opens one: a chat with no turn open has nothing
-	// to interrupt, which is the benign race InterruptTurn declines.
-	epoch, buf := h.stagePromptTurn(t, "c1")
-	buf.Started = true
-	buf.MessageID = newMessageID()
-	buf.Content.WriteString("about to call a tool")
+	// Interrupt through the coordinator, so the wiring is exercised rather than the
+	// bridge's method in isolation. The cause lands on the open turn, which is why the
+	// fixture opens one first.
+	id, _ := streamingPromptTurn(t, h, "c1", "about to call a tool")
 
+	// A spawned bridge is starting until its Start returns; this test holds no real
+	// process, so it moves it to idle the way spawnBridge does at Start's return.
 	sb, _ := h.bridge.mgr.orInsert("c1")
+	sb.setIdle()
 	if !sb.tryAcquireForPrompt() {
 		t.Fatal("fresh bridge must be acquirable")
 	}
@@ -219,61 +130,45 @@ func TestAbandonInFlightTurn_StashedReasonBeatsTheCallers(t *testing.T) {
 
 	h.coord.InterruptTurn("c1", stashed)
 
-	// The prompt context must be dead, or the blocked Call never returns and the
-	// chat answers 409 busy to every later Send.
+	// The prompt context must be dead, or the blocked Call never returns and the chat
+	// answers 409 busy to every later Send.
 	select {
 	case <-pctx.Done():
 	default:
 		t.Error("InterruptTurn left the prompt context live")
 	}
 
-	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, callers)
+	h.AbandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, callers)
 
-	chat, ok := h.chatStore.Get(ctx, "c1")
-	if !ok {
-		t.Fatal("chat record vanished")
-	}
-	divider := dividerIn(chat)
-	if divider == nil {
-		t.Fatal("no interrupted event message")
-	}
-	if divider.Content != stashed {
-		t.Errorf("divider content = %q, want the stashed %q — the caller's %q describes "+
-			"the RPC failure the filter caused, not the stop itself",
-			divider.Content, stashed, callers)
+	if got := closeOf(t, cs, "c1").FailureReason; got != stashed {
+		t.Errorf("failure_reason = %q, want the stashed %q — the caller's %q describes "+
+			"the RPC failure the filter caused, not the stop itself", got, stashed, callers)
 	}
 }
 
-// TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted is the OTHER half of the
-// unstarted branch, and the half that was missing.
-//
-// The branch above persists the divider so a reload reads the turn as
-// interrupted. It returned before broadcasting anything, so the LIVE client was
-// told nothing at all — and it has no second door: `endsTurn` is deleted and the
-// error handler deliberately touches no turn state, so the server's turn_ended is
-// the only thing that clears `thinking`, restores Send, drops the transient
-// banner, clears the snapshot watermark and refreshes the rail.
-//
-// This is the commonest failure path there is (a throttle, an auth expiry, a
-// capacity refusal, a bridge that dies before the first chunk), so the wedge it
-// left was a spinning composer on an idle server until the tab was reloaded.
-func TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted(t *testing.T) {
-	h, _ := hubForFSTest(t, t.TempDir())
+// TestAbandonInFlightTurn_AnnouncesATurnThatNeverStreamed is the LIVE half of the
+// unstreamed branch. The turn_closed broadcast is the only thing that clears
+// `thinking`, restores Send and refreshes the rail — the error handler deliberately
+// touches no turn state — so a throttle, an auth expiry or a bridge dying before the
+// first chunk left a spinning composer on an idle server until the tab was reloaded.
+func TestAbandonInFlightTurn_AnnouncesATurnThatNeverStreamed(t *testing.T) {
+	h, _, _ := newTestHub()
 	ctx := t.Context()
 
-	epoch := h.StartTurn(ctx, "c1", marotte.TurnSourcePrompt)
+	id, _ := h.stagePromptTurn(t, "c1")
 	before := h.bus.fanout.Position().Head
-	h.AbandonInFlightTurn(ctx, "c1", epoch, marotte.StopReasonInterrupted, "Too many requests, please wait before trying again.")
+	h.AbandonInFlightTurn(ctx, "c1", id, marotte.StopReasonInterrupted, "Too many requests, please wait before trying again.")
 
-	ends := payloadsOfType[marotte.TurnEndedPayload](t, bufferedSince(h, before), marotte.EventTurnEnded)
+	ends := payloadsOfType[marotte.TurnClosedPayload](t, bufferedSince(h, before), marotte.EventTurnClosed)
 	if len(ends) != 1 {
-		t.Fatalf("turn_ended count = %d, want exactly 1: a turn that produced nothing "+
-			"still ended, and the client clears its own state on nothing else", len(ends))
+		t.Fatalf("turn_closed count = %d, want exactly 1: a turn that produced nothing "+
+			"still closed, and the client clears its own state on nothing else", len(ends))
 	}
-	if ends[0].Outcome != marotte.TurnOutcomeInterrupted {
-		t.Errorf("outcome = %q, want %q", ends[0].Outcome, marotte.TurnOutcomeInterrupted)
+	closes := closesOf(t, []marotte.Entry{ends[0].Entry})
+	if closes[0].Outcome != marotte.TurnOutcomeInterrupted {
+		t.Errorf("outcome = %q, want %q", closes[0].Outcome, marotte.TurnOutcomeInterrupted)
 	}
-	if ends[0].StopReason != marotte.StopReasonInterrupted {
-		t.Errorf("stop reason = %q, want %q", ends[0].StopReason, marotte.StopReasonInterrupted)
+	if closes[0].StopReasonRaw != string(marotte.StopReasonInterrupted) {
+		t.Errorf("stop_reason_raw = %q, want %q", closes[0].StopReasonRaw, marotte.StopReasonInterrupted)
 	}
 }

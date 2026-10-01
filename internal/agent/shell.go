@@ -1,5 +1,5 @@
 // Shell subsystem: a single global PTY session with server-side VT parsing
-// over a WebSocket at /api/shell/ws (github.com/cplieger/web-terminal-engine/v5).
+// over a WebSocket at /api/shell/ws (github.com/cplieger/web-terminal-engine/v6).
 //
 // Client control messages are JSON prefixed with 0x00 (e.g. resize); the
 // prefix distinguishes them from raw input, since no valid terminal input
@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/web-terminal-engine/v5/terminal"
+	"github.com/cplieger/web-terminal-engine/v6/terminal"
 	"github.com/cplieger/webhttp/v3"
 )
 

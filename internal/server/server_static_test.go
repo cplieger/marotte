@@ -314,11 +314,18 @@ func TestAssetCachePolicy(t *testing.T) {
 		"":                  revalidateAsset,
 		"index.html":        noStoreHTML,
 		"docs/index.html":   noStoreHTML,
-		// The faces and the licence files beside them, all under one prefix.
-		"vendor/fonts/WebTerminalGlyphs.woff2":    fontAsset,
-		"vendor/fonts/MonaspaceNeonNF-Bold.woff2": fontAsset,
-		"vendor/fonts/WebTerminalGlyphs-LICENSE":  fontAsset,
-		"vendor/fonts/MonaspaceNeonNF-LICENSE":    fontAsset,
+		// A stamped face is immutable for a year; the un-stamped cases are the
+		// load-bearing half, pinning that a dropped fingerprint step costs a
+		// revalidation round trip rather than serving a stale face.
+		"vendor/fonts/WebTerminalGlyphs.a1b2c3d4.woff2":    immutableAsset,
+		"vendor/fonts/MonaspaceNeonNF-Bold.0123abcd.woff2": immutableAsset,
+		"vendor/fonts/WebTerminalGlyphs.woff2":             revalidateAsset,
+		"vendor/fonts/MonaspaceNeonNF-Bold.woff2":          revalidateAsset,
+		"vendor/fonts/WebTerminalGlyphs-LICENSE":           revalidateAsset,
+		"vendor/fonts/MonaspaceNeonNF-LICENSE":             revalidateAsset,
+		"vendor/fonts/mono.a1b2c3d.woff2":                  revalidateAsset,
+		"vendor/fonts/mono.a1b2c3g4.woff2":                 revalidateAsset,
+		"vendor/fonts/mono.A1B2C3D4.woff2":                 revalidateAsset,
 		// The trailing slash in the prefix is what keeps a sibling directory out,
 		// and .html outranks the prefix so a page under it is never cached.
 		"vendor/fonts-list.json":       revalidateAsset,

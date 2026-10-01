@@ -32,7 +32,7 @@ afterAll(() => {
 function mountBoxes(): { group: HTMLElement; card: HTMLElement } {
   host?.remove();
   host = document.createElement("div");
-  host.className = "msg-wrap";
+  host.className = "turn-body";
   host.style.inlineSize = "760px";
   document.body.appendChild(host);
 

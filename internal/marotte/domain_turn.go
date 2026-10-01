@@ -2,19 +2,14 @@ package marotte
 
 import "errors"
 
-// ErrNoSuchTurn is what awaiting an epoch the chat has no record of reports. A
+// ErrNoSuchTurn is what awaiting a turn the chat has no record of reports. A
 // caller holding that turn's completion handle can never receive it: the record is
 // retained until the handle is released.
 var ErrNoSuchTurn = errors.New("no such turn")
 
-// TurnEpoch identifies one turn within its chat. Minted under the chat's lifecycle
-// mutex and monotonic per chat, so a closer armed for turn N cannot touch turn
-// N+1. Zero is never minted and means no turn.
-type TurnEpoch uint64
-
 // InterruptCause names why a turn was interrupted, in the words the transcript's
 // divider renders. Empty means an ordinary end. Lives on the TURN, first-wins
-// and epoch-scoped.
+// and scoped to the turn.
 type InterruptCause string
 
 // TurnResult is what a finalized turn reports. Immutable once the turn's
@@ -22,7 +17,9 @@ type InterruptCause string
 type TurnResult struct {
 	Interrupt InterruptCause
 	Stop      StopReason
-	Epoch     TurnEpoch
+	// Turn is the id of the turn this result belongs to: the turn_open entry's id,
+	// which is every handle on a turn under the log.
+	Turn string
 	// EmittedNothing is whether the turn produced content, measured AFTER the
 	// steering filter's withheld text settled back in: a turn whose only text sits
 	// in that carry reads as empty to any earlier measurement.
@@ -48,11 +45,11 @@ const (
 	// TurnSourceEmptyRetry is the empty-turn recovery's second session/prompt: its
 	// own turn, so the retry's reply does not extend a closed turn's.
 	TurnSourceEmptyRetry
-	// TurnSourceWorkflowStep is a turn opened only because a workflow STEP's frames
-	// arrived on this chat's connection: it is the RUN's turn, not this chat's. The
-	// step's own turn_end is dropped by the attribution gate, so nothing closes such
-	// a turn through the bracket path — agent.Runs.observeComplete does, at the
-	// run's terminal transition.
+	// TurnSourceWorkflowStep names a workflow STEP's turn, which belongs to the
+	// RUN's log rather than to any chat: no production path opens a chat turn with
+	// it, and runLog.Open writes TurnOpenNameWorkflowStep on the run's own turns
+	// directly. The member serves Name() and the source predicates; closeRun ends
+	// those turns at the run's terminal transition.
 	TurnSourceWorkflowStep
 	// turnSourceCount bounds the enum and is not a source: a member added above it
 	// fails TestTurnSourcePredicates's completeness check.
@@ -87,26 +84,6 @@ func (s TurnOpenSource) UserAnswered() bool {
 	}
 }
 
-// ClientVisibleTurn reports whether a RESERVATION held by this source is a turn in
-// flight from a CLIENT's point of view: the user row is already persisted and
-// broadcast, the client has already latched `thinking`, and the Turn record is one
-// StartTurn away. Its own predicate for UserAnswered's reason — this one answers a
-// liveness READ, and widening PromptClass for it would move the admission refusal arm
-// with it.
-//
-// A shell turn IS one: command/shell.go reserves through TryReserveTurn and holds that
-// reservation across the chat-file write that persists and broadcasts the `!cmd` user
-// row, all before StartTurn mints the record. A wire-started turn holds no reservation
-// at all.
-func (s TurnOpenSource) ClientVisibleTurn() bool {
-	switch s {
-	case TurnSourcePrompt, TurnSourceEmptyRetry, TurnSourceLocalShell:
-		return true
-	default:
-		return false
-	}
-}
-
 // Acknowledgeable reports whether a wire turn_start may bind to this source. Only
 // a source that sent a session/prompt qualifies: a localShell turn has no bracket
 // coming and a wireTurnStart turn was created BY one. A binding is revisable, so
@@ -114,20 +91,6 @@ func (s TurnOpenSource) ClientVisibleTurn() bool {
 func (s TurnOpenSource) Acknowledgeable() bool {
 	switch s {
 	case TurnSourcePrompt, TurnSourceEmptyRetry:
-		return true
-	default:
-		return false
-	}
-}
-
-// EngineOpened reports whether the ENGINE opened this turn rather than marotte: a
-// bracket or a fold arriving with nothing pending. Such a turn holds no admission
-// reservation, so a prompt meeting one must DISPLACE it — closing it first, or
-// content already broadcast to every client is lost. A predicate rather than a
-// member list, so the displacement rule needs no widening for the next member.
-func (s TurnOpenSource) EngineOpened() bool {
-	switch s {
-	case TurnSourceWireTurnStart, TurnSourceWorkflowStep:
 		return true
 	default:
 		return false

@@ -13,13 +13,23 @@
 // Both halves are pinned here: the markup covers all four modes, and the runtime
 // leaves the four buttons visible whichever mode is active.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import indexHtml from "../static/index.html?raw";
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 // The panels' own initialisers reach modules with real network + signal wiring;
 // this file is about which elements carry `hidden`, so they are stubbed out.
 vi.mock("./actions/tools.js", () => ({ getToolsStatus: { dispatch: async () => null } }));
 vi.mock("./tools.js", () => ({ installToolAndWait: async () => ({ ok: true }) }));
+// Replaced WHOLE, matching the sibling suites that mock this module: the
+// suspended auto-approve list's profile pointer imports `openSetting`, whose real
+// body reads `location.search` at module load and pulls in the tab projection, so
+// the panels' graph now reaches it. No case here navigates.
+vi.mock("./settings-highlight.js", () => ({
+  openSetting: (): void => {
+    /* noop */
+  },
+}));
 
 function modalMarkup(): HTMLElement {
   const start = indexHtml.indexOf('<div id="mcp-modal"');
@@ -39,7 +49,7 @@ describe("MCP add-integration tab bar (static/index.html)", () => {
     const bar = host.querySelector<HTMLElement>("#mcp-modal-tabs");
     expect(bar, "#mcp-modal-tabs must exist").not.toBeNull();
 
-    const tabbed = Array.from(bar?.querySelectorAll<HTMLElement>(".mcp-modal-tab") ?? []).map(
+    const tabbed = Array.from(bar?.querySelectorAll<HTMLElement>(".seg") ?? []).map(
       (b) => b.dataset["mcpMode"],
     );
     const panelled = Array.from(host.querySelectorAll<HTMLElement>(".mcp-mode-panel")).map(
@@ -54,7 +64,7 @@ describe("MCP add-integration tab bar (static/index.html)", () => {
 
   it("marks exactly one tab selected, and it is the mode the modal opens on", () => {
     const bar = modalMarkup().querySelector<HTMLElement>("#mcp-modal-tabs");
-    const selected = Array.from(bar?.querySelectorAll<HTMLElement>(".mcp-modal-tab") ?? []).filter(
+    const selected = Array.from(bar?.querySelectorAll<HTMLElement>(".seg") ?? []).filter(
       (b) => b.getAttribute("aria-selected") === "true",
     );
     expect(selected).toHaveLength(1);
@@ -72,7 +82,7 @@ describe("switching mode hides panels only", () => {
       initModal({ mode, server: null });
 
       const hiddenTabs = Array.from(
-        document.querySelectorAll<HTMLElement>(".mcp-modal-tab"),
+        document.querySelectorAll<HTMLElement>("#mcp-modal-tabs .seg"),
       ).filter((b) => b.classList.contains("hidden"));
       expect(
         hiddenTabs.map((b) => b.dataset["mcpMode"]),
@@ -87,13 +97,69 @@ describe("switching mode hides panels only", () => {
         `mode=${mode}`,
       ).toEqual([mode]);
 
-      const active = Array.from(document.querySelectorAll<HTMLElement>(".mcp-modal-tab")).filter(
-        (b) => b.classList.contains("active"),
-      );
+      const active = Array.from(
+        document.querySelectorAll<HTMLElement>("#mcp-modal-tabs .seg"),
+      ).filter((b) => b.classList.contains("active"));
       expect(
         active.map((b) => b.dataset["mcpMode"]),
         `mode=${mode}`,
       ).toEqual([mode]);
     }
+  });
+
+  it("pairs every tab with its panel through the shared controller's ids", async () => {
+    document.body.replaceChildren(...Array.from(modalMarkup().childNodes));
+    const { setEditing, initModal } = await import("./mcp-panels.js");
+    setEditing({ id: "" });
+    initModal({ mode: "remote", server: null });
+
+    for (const mode of MODES) {
+      const tab = document.querySelector<HTMLElement>(
+        `#mcp-modal-tabs .seg[data-mcp-mode="${mode}"]`,
+      );
+      const panel = document.querySelector<HTMLElement>(`.mcp-mode-panel[data-mcp-mode="${mode}"]`);
+      expect(tab?.getAttribute("role"), mode).toBe("tab");
+      expect(tab?.getAttribute("aria-controls"), mode).toBe(panel?.id);
+      expect(panel?.getAttribute("role"), mode).toBe("tabpanel");
+      expect(panel?.getAttribute("aria-labelledby"), mode).toBe(tab?.id);
+      expect(tab?.getAttribute("aria-selected"), mode).toBe(String(mode === "remote"));
+      expect(tab?.getAttribute("tabindex"), mode).toBe(mode === "remote" ? "0" : "-1");
+    }
+  });
+});
+
+describe("the bar keeps its labels on a phone", () => {
+  // The segments carry no icon, so the shared bar's icon-only fit would leave
+  // four EMPTY buttons if a label ever truncated; the modal's own wrap basis
+  // (60-mcp.css) is what stops that, and this measures it at the phone preset's
+  // card width rather than trusting the arithmetic.
+  let style: HTMLStyleElement;
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+  afterAll(() => {
+    style.remove();
+    document.body.replaceChildren();
+  });
+
+  it("wraps to two rows of two rather than ellipsising", () => {
+    document.body.replaceChildren(...Array.from(modalMarkup().childNodes));
+    const card = document.querySelector<HTMLElement>("#mcp-modal");
+    const bar = document.querySelector<HTMLElement>("#mcp-modal-tabs");
+    if (card === null || bar === null) {
+      throw new Error("#mcp-modal or #mcp-modal-tabs missing");
+    }
+    card.classList.remove("hidden");
+    // The card is `min(36rem, 92vw)`: on a 320px phone that is 294px, and the
+    // dialog's own inset leaves the bar about this much.
+    card.style.width = "270px";
+
+    const segs = [...bar.querySelectorAll<HTMLElement>(".seg")];
+    expect(segs).toHaveLength(4);
+    const truncated = segs.filter((s) => s.scrollWidth > s.clientWidth);
+    expect(truncated.map((s) => s.textContent)).toEqual([]);
+    const tops = new Set(segs.map((s) => s.getBoundingClientRect().top));
+    expect(tops.size, "two rows").toBe(2);
+    expect(bar.scrollWidth - bar.clientWidth, "the bar itself does not overflow").toBe(0);
   });
 });

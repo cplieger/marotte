@@ -1,0 +1,7 @@
+- [ ] 1. Before
+````markdown
+```go
+- [ ] 1.1 this line is inside a fenced block per CommonMark
+```
+````
+- [ ] 2. After

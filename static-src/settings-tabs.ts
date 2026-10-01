@@ -1,23 +1,16 @@
 // ---------------------------------------------------------------------------
-// Settings tab bar: observable store of which tab panel inside Settings
-// is active, plus DOM sync for the horizontal pill bar. Every segment shows
-// an icon before its label; tab-bar-fit.ts hides all labels if one truncates.
+// Settings tab bar: an observable store of which panel is active, plus the DOM
+// sync. Architecture mirrors tabs.ts: one state primitive, subscribers that
+// reflect state in the DOM and the URL; setSettingsTab() also pushes the URL so
+// deep-linking and Back work.
 //
-// Architecture mirrors tabs.ts: one state primitive, subscribers that
-// reflect state in the DOM and the URL. Any module that wants to jump
-// to a specific tab calls setSettingsTab() — which also pushes the
-// matching URL so deep-linking and back-button work.
+// The bar's chrome (roles, ids, aria-controls, roving focus, the icon-only fit,
+// the active projection) is segmented-bar.ts's. What is here is what is about
+// SETTINGS: the route kind, the panel swap, the subtitle, the per-tab loaders.
 //
-// Panel layout contract:
-//   <div id="settings-view">
-//     <header class="settings-header">...title + tab-bar...</header>
-//     <div data-settings-panel="general">...</div>
-//     <div data-settings-panel="tools">...</div>
-//     <div data-settings-panel="permissions">...</div>
-//     <div data-settings-panel="instructions">...</div>
-//   </div>
-//
-// Exactly one panel is visible at a time; the rest get .hidden.
+// Panel layout: <div id="settings-view"> holds <header class="page-header"> with
+// the bar, then one <div data-settings-panel="<tab>"> per tab; exactly one panel
+// is visible and the rest get .hidden.
 // ---------------------------------------------------------------------------
 
 import { signal, subscribe } from "@cplieger/reactive";
@@ -26,8 +19,7 @@ import { swapViews } from "./view-swap.js";
 import type { SettingsTab } from "./route-path.js";
 import { pushRoute } from "./router.js";
 import { getActiveTabRoute, setSettingsTab as setTabRoute } from "./tabs.js";
-import { fitTabBar } from "./tab-bar-fit.js";
-import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
+import { initSegmentedBar } from "./segmented-bar.js";
 import { setPageSubtitle } from "./page-title.js";
 
 export const TABS: readonly SettingsTab[] = [
@@ -105,40 +97,18 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
     }
   }
   const bar = $.settingsTabBar;
-
-  bar.setAttribute("role", "tablist");
   bar.setAttribute("aria-label", "Settings sections");
 
-  // The pill buttons are declared statically in the HTML; here we just
-  // attach click handlers and mark the initial one active.
-  for (const tab of TABS) {
-    const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${tab}"]`);
-    if (btn === null) {
-      continue;
-    }
-    btn.setAttribute("role", "tab");
-    btn.id = `settings-tab-${tab}`;
-    btn.setAttribute("aria-label", TAB_LABELS[tab]);
-    btn.setAttribute("aria-controls", `settings-panel-${tab}`);
-    btn.addEventListener("click", () => {
-      setSettingsTab(tab);
-    });
-  }
-
-  // Drop every label only when one cannot fit.
-  fitTabBar(bar);
-
-  // Arrow key navigation for the tab bar.
-  rovingFocus(bar, "[data-settings-tab]", { orientation: "horizontal" });
+  const paint = initSegmentedBar(bar, {
+    attr: "data-settings-tab",
+    idPrefix: "settings",
+    tabs: TABS.map((id) => ({ id, label: TAB_LABELS[id] })),
+    onSelect: setSettingsTab,
+  });
 
   // Sync pill + panel visibility on every tab change.
   onTabChange((tab) => {
-    for (const t of TABS) {
-      const btn = bar.querySelector<HTMLButtonElement>(`[data-settings-tab="${t}"]`);
-      btn?.classList.toggle("active", t === tab);
-      btn?.setAttribute("aria-selected", t === tab ? "true" : "false");
-      btn?.setAttribute("tabindex", t === tab ? "0" : "-1");
-    }
+    paint(tab);
     const swap = (): HTMLElement | null => {
       let active: HTMLElement | null = null;
       for (const panel of document.querySelectorAll<HTMLDivElement>("[data-settings-panel]")) {

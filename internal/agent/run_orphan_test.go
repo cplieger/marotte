@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // kasRuns builds a workflow/list reply, DEFAULTING `workflowName` to the row's `name`.

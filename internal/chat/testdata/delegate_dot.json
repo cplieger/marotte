@@ -1,0 +1,236 @@
+{
+  "_comment": [
+    "The delegate DOT contract: every ToolStatus a producer can stamp on a delegate's",
+    "invocation call, and what each of the three client surfaces says about it.",
+    "",
+    "Regenerate:  UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestDelegateDotContract",
+    "Re-run the other reader:  npx vitest --run delegate-dot-contract",
+    "",
+    "`rows` is SCANNED from the producers, never listed: the scan classifies every",
+    "reference to a ToolStatus constant under internal/ by its POSITION, counts every",
+    "position but a comparison as a producer, and requires the producible set to be the",
+    "whole declared enum. `sites` is the scan's own evidence, so a new producer or a new",
+    "enum member moves this golden and the fixture has to be read before it is",
+    "regenerated.",
+    "",
+    "The words are the SERVER's statement of the client's contract; `terminal` is derived",
+    "from marotte.ToolStatus.Terminal(), the predicate the close paths settle calls by.",
+    "",
+    "`stale` is the one row a status alone cannot answer: an invocation the log still reads",
+    "as in flight inside a chat holding no live turn of its own. The close settles such a",
+    "call as aborted (Turn.Close, synthesizeCloseLocked), so the client folds it there the",
+    "moment its chat's liveness says the turn is over and every surface says what it already",
+    "says for that status — `folds_to` is what makes the claim checkable from both sides.",
+    "",
+    "ONE wire value reaches THREE announced words, deliberately (.kiro/steering/",
+    "marotte.md 'A delegate has THREE terminal states'): aborted is the wire's spelling, a",
+    "card says 'cancelled' and the page says 'stopped'. The row surface's own word is",
+    "tool-card.ts's outcomeWord, which is unexported and is therefore not a compared",
+    "column here; the card and the page are."
+  ],
+  "statuses": [
+    "aborted",
+    "completed",
+    "failed",
+    "in_progress",
+    "pending"
+  ],
+  "rows": [
+    {
+      "status": "aborted",
+      "dot": "done",
+      "card_word": "cancelled",
+      "page_state": "warn",
+      "page_word": "stopped",
+      "terminal": true,
+      "sites": [
+        "internal/chat/entrylog.go:1086",
+        "internal/translate/projection_entries.go:668",
+        "internal/translate/wire_enums.go:40",
+        "internal/turnlog/turnlog.go:548"
+      ]
+    },
+    {
+      "status": "completed",
+      "dot": "done",
+      "card_word": "succeeded",
+      "page_state": "ok",
+      "page_word": "succeeded",
+      "terminal": true,
+      "sites": [
+        "internal/translate/hook_status.go:64",
+        "internal/translate/wire_enums.go:38"
+      ]
+    },
+    {
+      "status": "failed",
+      "dot": "failed",
+      "card_word": "failed",
+      "page_state": "fail",
+      "page_word": "failed",
+      "terminal": true,
+      "sites": [
+        "internal/translate/hook_status.go:66",
+        "internal/translate/wire_enums.go:39"
+      ]
+    },
+    {
+      "status": "in_progress",
+      "dot": "working",
+      "card_word": "running",
+      "page_state": "running",
+      "page_word": "running",
+      "terminal": false,
+      "sites": [
+        "internal/translate/wire_enums.go:37",
+        "internal/translate/wire_enums.go:72"
+      ]
+    },
+    {
+      "status": "pending",
+      "dot": "working",
+      "card_word": "running",
+      "page_state": "pending",
+      "page_word": "not started",
+      "terminal": false,
+      "sites": [
+        "internal/translate/wire_enums.go:36",
+        "internal/translate/wire_enums.go:89"
+      ]
+    }
+  ],
+  "stale": [
+    {
+      "status": "in_progress",
+      "turn_live": false,
+      "folds_to": "aborted",
+      "dot": "done",
+      "card_word": "cancelled",
+      "page_state": "warn",
+      "page_word": "stopped"
+    }
+  ],
+  "sites": [
+    {
+      "site": "internal/agent/entry_merge.go:975",
+      "form": "compare",
+      "status": "aborted"
+    },
+    {
+      "site": "internal/chat/entrylog.go:1086",
+      "form": "status_field",
+      "status": "aborted"
+    },
+    {
+      "site": "internal/translate/hook_status.go:64",
+      "form": "return",
+      "status": "completed"
+    },
+    {
+      "site": "internal/translate/hook_status.go:66",
+      "form": "return",
+      "status": "failed"
+    },
+    {
+      "site": "internal/translate/projection_entries.go:668",
+      "form": "status_field",
+      "status": "aborted"
+    },
+    {
+      "site": "internal/translate/streaming_tools.go:416",
+      "form": "compare",
+      "status": "completed"
+    },
+    {
+      "site": "internal/translate/streaming_tools.go:446",
+      "form": "compare",
+      "status": "failed"
+    },
+    {
+      "site": "internal/translate/streaming_tools.go:464",
+      "form": "compare",
+      "status": "completed"
+    },
+    {
+      "site": "internal/translate/streaming_tools.go:464",
+      "form": "compare",
+      "status": "failed"
+    },
+    {
+      "site": "internal/translate/streaming_tools.go:490",
+      "form": "compare",
+      "status": "completed"
+    },
+    {
+      "site": "internal/translate/streaming_tools.go:62",
+      "form": "compare",
+      "status": "pending"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:36",
+      "form": "map_key",
+      "status": "pending"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:37",
+      "form": "map_key",
+      "status": "in_progress"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:38",
+      "form": "map_key",
+      "status": "completed"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:39",
+      "form": "map_key",
+      "status": "failed"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:40",
+      "form": "map_key",
+      "status": "aborted"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:72",
+      "form": "return",
+      "status": "in_progress"
+    },
+    {
+      "site": "internal/translate/wire_enums.go:89",
+      "form": "status_assign",
+      "status": "pending"
+    },
+    {
+      "site": "internal/turnlog/turnlog.go:548",
+      "form": "status_field",
+      "status": "aborted"
+    }
+  ],
+  "readers": [
+    {
+      "column": "dot",
+      "reader": "store.ts subagentStatusFor"
+    },
+    {
+      "column": "card_word",
+      "reader": "fundamentals/subagent-block.ts stateWord, through buildSubagentCard"
+    },
+    {
+      "column": "page_state",
+      "reader": "subagent-exec-source.ts toolState, through subagentToExec"
+    },
+    {
+      "column": "page_word",
+      "reader": "exec-view/status.ts STATE_WORD"
+    },
+    {
+      "column": "terminal",
+      "reader": "tool-schema.ts isToolDone and isToolActive"
+    },
+    {
+      "column": "stale.folds_to",
+      "reader": "store.ts delegateStatusFor"
+    }
+  ]
+}

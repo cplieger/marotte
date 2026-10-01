@@ -14,16 +14,33 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/marotte/internal/settings"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/settings"
 )
 
-// CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint
-// machinery, then truncates marotte's record to match. The truncation is not
-// redundant: mergeProjection preserves anything newer than a replay's last
-// message, because an absent tail is normally a durability gap, and a revert is
-// the one case where it is intended. Mid-turn is KAS's refusal, forwarded.
-func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *marotte.ClientCommand) (any, error) {
+// reasonRunsInCut is the 409 refusal class for a cut holding a live run's launch
+// that the reader has not confirmed; the envelope names the runs.
+const reasonRunsInCut = "runs_in_cut"
+
+// errRewindRunsInCut is the refusal's prose; the runs ride beside it.
+var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this conversation launched — confirm to stop them and rewind")
+
+// CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint machinery,
+// then appends the turn_revert that records it. The record is not redundant: the merge
+// keeps a record turn the replay lacks (an absent tail is normally a durability gap),
+// and the appended revert is itself what refuses a projection built from the
+// pre-revert replay at its swap. Refused while the chat's
+// registry holds a turn or a reservation, KAS's own mid-turn rule applied before the
+// round trip; a live run the cut launched is stopRunsInCut's question, asked first.
+func CmdRewindChat(
+	ctx context.Context,
+	bridges BridgeAccess,
+	chats ChatStore,
+	admission TurnAdmission,
+	runs RunCutter,
+	bus Broadcaster,
+	cmd *marotte.ClientCommand,
+) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -36,54 +53,94 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 	if !ok {
 		return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 	}
-	idx := userMessageIndex(chat.Messages, p.MessageID)
-	if idx < 0 {
+	if _, held := admission.AdmissionHolderSource(cmd.ChatID); held {
+		return nil, StatusError(http.StatusConflict, errRewindTurnOpen)
+	}
+	target, found, err := chats.RewindTarget(ctx, cmd.ChatID, p.MessageID)
+	if err != nil {
+		slog.Error("rewind: resolve target", "chat", cmd.ChatID, keyError, err)
+		return nil, StatusError(http.StatusInternalServerError, err)
+	}
+	if !found {
 		return nil, StatusError(http.StatusBadRequest, errRewindTargetNotFound)
 	}
-	target := &chat.Messages[idx]
+	if refused := stopRunsInCut(ctx, runs, cmd.ChatID, target.LaunchedRuns, p.Confirmed); refused != nil {
+		return nil, refused
+	}
 
 	bridge, err := resumeForRevert(ctx, bridges, cmd.ChatID, chat.ACPSessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	result, status, err := revertToMessage(ctx, bridge, target.AgentSideID())
+	result, status, err := revertToMessage(ctx, bridge, cmp.Or(target.KASMessageID, p.MessageID))
 	if err != nil {
 		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status,
 			"kas_id_known", target.KASMessageID != "", keyError, err)
-		return nil, StatusError(status, explainRevertRefusal(target, err))
+		return nil, StatusError(status, explainRevertRefusal(target.KASMessageID, err))
 	}
 
-	// Cut at idx, not idx+1: the addressed message is discarded with its
-	// successors (KAS slices from the target inclusive), so the prompt at
-	// that turn is gone and has to be retyped.
-	if _, mErr := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		if idx >= len(c.Messages) {
-			return false
-		}
-		c.Messages = c.Messages[:idx]
-		return true
-	}); mErr != nil {
-		slog.Error("rewind: truncate record", "chat", cmd.ChatID, keyError, mErr)
-		return nil, StatusError(http.StatusInternalServerError, mErr)
+	// Record the cut AT the turn: KAS slices from the addressed prompt inclusive, so
+	// the prompt at that turn is reverted with everything after it and has to be
+	// retyped. The record is appended, never a cut, so a failed revert loses nothing
+	// and a second record can answer a revert that failed after this one landed.
+	record, opened, err := chats.Revert(ctx, cmd.ChatID, target.Turn, target.KASMessageID)
+	if err != nil {
+		slog.Error("rewind: record the revert", "chat", cmd.ChatID, "turn", target.Turn, keyError, err)
+		return nil, StatusError(http.StatusInternalServerError, err)
 	}
+	// The carrier goes out FIRST when the log minted one: the record names it as its
+	// turn, and a client that meets the record first answers a turn it does not hold
+	// as a hole.
+	if opened != nil {
+		bus.Broadcast(ctx, marotte.NewEvent(marotte.EventTurnOpened, cmd.ChatID,
+			marotte.TurnOpenedPayload{Entry: *opened}))
+	}
+	bus.Broadcast(ctx, marotte.NewEvent(marotte.EventEntryAppended, cmd.ChatID,
+		marotte.EntryAppendedPayload{Entry: *record}))
 
 	slog.Info("chat rewound",
-		"chat", cmd.ChatID, "message", p.MessageID,
-		"dropped_messages", len(chat.Messages)-idx,
+		"chat", cmd.ChatID, "message", p.MessageID, "turn", target.Turn,
+		"carrier", record.Turn, "carrier_minted", opened != nil,
 		"restored_files", len(result.AffectedFiles), "total_files", result.TotalFiles)
 	return responseWith(map[string]any{
 		"restored_files": result.AffectedFiles,
 	}), nil
 }
 
-// resumeForRevert hands back a bridge whose session is the one the target message
-// lives in and whose replay has already been adopted — the two conditions under
-// which truncating is safe. `want` is read BEFORE the resume, because a failed
-// session/load falls through to session/new and retires that id.
+// stopRunsInCut is the rewind-versus-live-run rule: a run whose launch lies inside
+// the cut is being un-said, so an unconfirmed rewind answers 409 naming those runs
+// and reverts nothing, and a confirmed one cancels each and waits for it to stop
+// BEFORE the revert, so no step appends into the range being cut. A run launched
+// before the cut is neither named nor touched. A run still live when its wait runs
+// out is logged and the rewind goes on: the cancel landed, and a step's entries are
+// the run's own log, never this chat's.
+func stopRunsInCut(ctx context.Context, runs RunCutter, chatID marotte.ChatID, launched []string, confirmed bool) error {
+	live := runs.LiveRuns(launched)
+	if len(live) == 0 {
+		return nil
+	}
+	if !confirmed {
+		return StatusErrorRuns(http.StatusConflict, reasonRunsInCut, live, errRewindRunsInCut)
+	}
+	for _, run := range live {
+		switch err := runs.CancelRun(ctx, run.ID); {
+		case err == nil:
+			slog.Info("rewind: stopped a run the cut launched", "chat", chatID, "workflow_id", run.ID, "label", run.Label)
+		case errors.Is(err, ErrRunStillLive):
+			slog.Warn("rewind: a run the cut launched was told to stop but is still live", "chat", chatID, "workflow_id", run.ID)
+		default:
+			slog.Warn("rewind: cancel of a run the cut launched failed", "chat", chatID, "workflow_id", run.ID, keyError, err)
+			return StatusError(http.StatusBadGateway, fmt.Errorf("stopping run %s failed: %w", run.ID, err))
+		}
+	}
+	return nil
+}
+
+// resumeForRevert hands back a bridge whose session is the one the target turn
+// lives in. `want` is read BEFORE the resume, because a failed session/load falls
+// through to session/new and retires that id. No replay barrier: a swap landing
+// after the revert is refused by the record the revert appended.
 func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID marotte.ChatID, want string) (Bridge, error) {
 	if want == "" {
 		return nil, StatusError(http.StatusConflict, errRewindNoSession)
@@ -104,17 +161,6 @@ func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID marotte.C
 		slog.Warn("rewind: original session not resumed",
 			"chat", chatID, "want", want, "got", bridge.SessionID())
 		return nil, StatusError(http.StatusConflict, errRewindSessionNotResumed)
-	}
-
-	// A resume replays into a projection swapped in on the Forward goroutine, and the
-	// merge PRESERVES a record row newer than the replay's newest — so a swap landing
-	// after the truncation hands every reverted turn straight back. Refuse rather than cut.
-	if err := bridges.AwaitReplayAdopted(ctx, chatID); err != nil {
-		slog.Warn("rewind: replay not adopted, refusing to truncate",
-			"chat", chatID, keyError, err)
-		// One refusal for both causes: the other is the caller's own context, and
-		// a caller that walked away reads nothing anyway.
-		return nil, StatusError(http.StatusServiceUnavailable, errRewindReplayPending)
 	}
 	return bridge, nil
 }
@@ -152,45 +198,30 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 // explainRevertRefusal adds marotte's own account of an unaddressable turn to a refusal
 // KAS could not have explained. It keys on the fallback having been taken rather than on
 // the reason, because the reply carries no code and KAS's prose is not marotte's to
-// match — so on a legacy row the sentence is appended whatever the refusal was, mid-turn
-// included, where it names something that is not the cause. No test pins that case.
-// It APPENDS rather than replaces, so a more specific reason survives. Exact in the other
-// direction: Chat.RecordSession drops a stamp at a retirement, so an empty field is every
-// row marotte holds no reachable id for rather than only the ones predating the stamp.
-func explainRevertRefusal(m *marotte.Message, err error) error {
-	if m.KASMessageID != "" {
+// match — so on a turn with no bind the sentence is appended whatever the refusal was,
+// mid-turn included, where it names something that is not the cause. It APPENDS rather
+// than replaces, so a more specific reason survives.
+func explainRevertRefusal(kasMessageID string, err error) error {
+	if kasMessageID != "" {
 		return err
 	}
 	return fmt.Errorf("%w — %w", err, errRewindNoAgentID)
-}
-
-// userMessageIndex locates the revert target, returning -1 when absent. User-only
-// because KAS requires it: the verb refuses an id naming any other record type.
-func userMessageIndex(messages []marotte.Message, id string) int {
-	for i := range messages {
-		if messages[i].ID == id && messages[i].Role == marotte.RoleUser {
-			return i
-		}
-	}
-	return -1
 }
 
 // CmdSetEffort sets the chat's reasoning-effort level. On v3 effort is a session
 // config option, so a running session is switched in place; the level is then
 // persisted on the chat and applied to later sessions through StartOpts.Effort.
 // Per-chat, so two chats can disagree and a model switch discards nothing. A
-// bridgeless chat is not a 409, and auto-create mirrors CmdSetMode.
-//
-// It also records the level as the SEED a new chat on this model opens with. That
-// write is last because it must not outlive a refusal: the session's answer and
-// the chat's own record come first, and only a level this chat actually took is
-// remembered as a preference.
+// bridgeless chat is not a 409, and auto-create mirrors CmdSetMode. It also records
+// the level as the SEED a new chat on this model opens with, LAST, because the seed
+// must not outlive a refusal: only a level this chat actually took is remembered.
 func CmdSetEffort(
 	ctx context.Context,
 	bridges BridgeAccess,
 	chats ChatStore,
 	bus Broadcaster,
 	ws Workspace,
+	recorder EffortRecorder,
 	cmd *marotte.ClientCommand,
 ) (any, error) {
 	if err := requireChatID(cmd); err != nil {
@@ -213,24 +244,34 @@ func CmdSetEffort(
 	}
 
 	// The model comes off the record rather than the payload, which carries none.
-	var model string
+	var (
+		model   string
+		changed bool
+	)
 	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *marotte.Chat, exists bool) bool {
 		model = c.Model
 		if !exists {
 			c.Name = marotte.DefaultChatName
 			c.Effort = string(p.Level)
+			changed = true
 			return true
 		}
 		if c.Effort == string(p.Level) {
 			return false
 		}
 		c.Effort = string(p.Level)
+		changed = true
 		return true
 	}); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
+	// Only a tier this chat did not already hold leaves a record: a repeat click
+	// changed nothing, and a refusal never reaches here.
+	if changed {
+		recorder.PersistEffortChange(ctx, cmd.ChatID, model, p.Level)
+	}
 	recordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
 	return responseWith(map[string]any{"level": p.Level}), nil
 }

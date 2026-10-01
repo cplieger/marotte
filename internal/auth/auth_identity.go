@@ -203,6 +203,18 @@ func (h *Handler) readIdentity(ctx context.Context) WhoamiResponse {
 	return info
 }
 
+// cliMissing reports whether err is an ENOENT naming the CLI itself. A bare
+// fs.ErrNotExist test is too wide: os/exec opens os.DevNull for a nil Cmd.Stdin,
+// so a container whose /dev/null is gone fails Start with fs.ErrNotExist for a
+// binary that is present and executing.
+func cliMissing(err error, cliPath string) bool {
+	var pe *fs.PathError
+	if !errors.As(err, &pe) {
+		return false
+	}
+	return errors.Is(pe, fs.ErrNotExist) && pe.Path == cliPath
+}
+
 // identityReadFailure classifies a failed identity read, logs it, and returns
 // the `unavailable` arm carrying the matching reason.
 func (h *Handler) identityReadFailure(
@@ -215,10 +227,11 @@ func (h *Handler) identityReadFailure(
 		attrs = append(attrs, stderrAttr(stderr)...)
 		slog.Warn("whoami: kiro-cli timed out", attrs...)
 		return unavailableIdentity(reasonTimedOut)
-	case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, exec.ErrNotFound), cliMissing(err, h.cliPath()):
 		// Warn, not Error: a fresh volume has no kiro-cli until the install
 		// manager finishes, and the timer asks once a minute.
-		slog.Warn("whoami: kiro-cli binary not found", "cli_path", h.cliPath())
+		slog.Warn("whoami: kiro-cli binary not found",
+			"cli_path", h.cliPath(), "error", err)
 		return unavailableIdentity(reasonCLIMissing)
 	default:
 		// Full details server-side; the client gets the arm, never raw CLI output.

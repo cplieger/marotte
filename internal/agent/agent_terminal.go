@@ -19,10 +19,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/marotte/internal/ansitext"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/sanitize"
 	"github.com/cplieger/marotte/internal/systembin"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // keySignal is the wire key for a terminating signal in an ACP terminal
@@ -70,9 +70,15 @@ type agentTerminal struct {
 	ansi   *ansitext.Parser
 	chatID marotte.ChatID
 	signal string
-	// epoch is the turn that spawned this terminal, so an interrupt can kill the
-	// turn's own processes without touching an earlier turn's background command.
-	epoch    marotte.TurnEpoch
+	// turn is the id of the turn that spawned this terminal, so an interrupt can
+	// kill the turn's own processes without touching an earlier turn's background
+	// command.
+	turn string
+	// session is the ACP session the create named, so the run bounds can ask whether
+	// one of a run's OWN steps is waiting on a command rather than whether the
+	// carrier chat is. Empty when the request carried none, which answers false
+	// everywhere: no evidence of work, so the bound applies.
+	session  string
 	exitCode int
 	mu       sync.Mutex
 }
@@ -191,9 +197,9 @@ type agentTerminals struct {
 	// output outlives the terminal, since KAS releases it within milliseconds of
 	// creating it. Bounded by the turn, each record holding at most one 64 KiB ring.
 	retired map[string]retiredOutput
-	// currentEpoch reads which turn a chat's activity belongs to right now, so a
+	// currentTurn reads which turn a chat's activity belongs to right now, so a
 	// terminal is stamped with the lifecycle's identity, not a parallel count.
-	currentEpoch func(marotte.ChatID) (marotte.TurnEpoch, bool)
+	currentTurn func(marotte.ChatID) (string, bool)
 	// broadcast publishes a terminal's lifecycle and output frames.
 	broadcast func(context.Context, marotte.ServerEvent)
 	// bridges answers the ACP request a terminal operation arrived on.
@@ -212,23 +218,23 @@ type agentTerminals struct {
 type retiredOutput struct {
 	raw    string
 	chatID marotte.ChatID
-	// epoch is the turn that spawned the terminal, or zero when the chat had no
-	// turn open at the time. A zero is evicted by the chat's NEXT turn close.
-	epoch marotte.TurnEpoch
+	// turn is the id of the turn that spawned the terminal, or empty when the chat
+	// had no turn open at the time. An empty one is evicted by any turn close.
+	turn string
 }
 
 func newAgentTerminals(bridges *bridgeManager, lc *lifetime,
 	broadcast func(context.Context, marotte.ServerEvent),
-	currentEpoch func(marotte.ChatID) (marotte.TurnEpoch, bool),
+	currentTurn func(marotte.ChatID) (string, bool),
 ) *agentTerminals {
 	return &agentTerminals{
-		terms:        make(map[string]*agentTerminal),
-		byChatID:     make(map[marotte.ChatID][]string),
-		retired:      make(map[string]retiredOutput),
-		bridges:      bridges,
-		lifecycle:    lc,
-		broadcast:    broadcast,
-		currentEpoch: currentEpoch,
+		terms:       make(map[string]*agentTerminal),
+		byChatID:    make(map[marotte.ChatID][]string),
+		retired:     make(map[string]retiredOutput),
+		bridges:     bridges,
+		lifecycle:   lc,
+		broadcast:   broadcast,
+		currentTurn: currentTurn,
 	}
 }
 
@@ -239,7 +245,7 @@ func (at *agentTerminals) retire(id string, term *agentTerminal) {
 	if term == nil || term.output == nil {
 		return
 	}
-	at.retired[id] = retiredOutput{raw: term.rawOutput(), chatID: term.chatID, epoch: term.epoch}
+	at.retired[id] = retiredOutput{raw: term.rawOutput(), chatID: term.chatID, turn: term.turn}
 }
 
 // peekRetired returns a retired terminal's raw output WITHOUT consuming the record.
@@ -263,36 +269,71 @@ func (at *agentTerminals) peekRetired(id string) (string, bool) {
 // Called by the winning closer, so a turn the wire started is attributed too —
 // otherwise its terminals stay attached to a turn that already ended, letting a
 // later cancel kill them. A turn ends only after every tool call has settled, so a
-// record still here has had its chance. Epochs are monotonic per chat, so `<=` also
-// collects one left behind by an earlier turn that never closed.
-func (at *agentTerminals) CloseTurn(chatID marotte.ChatID, epoch marotte.TurnEpoch) {
+// record still here has had its chance. Eviction is by EQUALITY on the turn id;
+// a record with no turn belongs to whichever close comes next.
+func (at *agentTerminals) CloseTurn(chatID marotte.ChatID, turnID string) {
 	at.mu.Lock()
 	for id, rec := range at.retired {
-		if rec.chatID == chatID && rec.epoch <= epoch {
+		if rec.chatID == chatID && (rec.turn == turnID || rec.turn == "") {
 			delete(at.retired, id)
 		}
 	}
 	at.mu.Unlock()
 }
 
-// turnEpochOf reads which turn a chat's activity belongs to right now, or zero
-// when the chat is idle. Nil-safe: a registry built without the reader attributes
+// turnOf reads which turn a chat's activity belongs to right now, or empty when
+// the chat is idle. Nil-safe: a registry built without the reader attributes
 // nothing, the honest answer for a runtime with no turn lifecycle either.
-func (at *agentTerminals) turnEpochOf(chatID marotte.ChatID) marotte.TurnEpoch {
-	if at.currentEpoch == nil {
-		return 0
+func (at *agentTerminals) turnOf(chatID marotte.ChatID) string {
+	if at.currentTurn == nil {
+		return ""
 	}
-	epoch, _ := at.currentEpoch(chatID)
-	return epoch
+	turn, _ := at.currentTurn(chatID)
+	return turn
+}
+
+// LiveTerminalForSession reports whether the chat holds a terminal whose process is
+// still running and whose create named one of these sessions. A released terminal is
+// gone from terms and an exited one has closed done, so neither counts.
+//
+// The session narrowing is what the question is FOR: a run's own steps and the rest
+// of the carrier chat's work share a chat and not a session, so a chat-wide answer
+// reports a run as working because something else on that chat is.
+//
+// A terminal with no recorded session is never a member, so an empty set and a
+// session-less terminal both answer false — the direction an absent registry takes
+// too: false means no evidence of work, so the bound applies rather than being
+// silently lifted.
+func (at *agentTerminals) LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool {
+	if len(sessions) == 0 {
+		return false
+	}
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	for _, id := range at.byChatID[chatID] {
+		term, ok := at.terms[id]
+		if !ok {
+			continue
+		}
+		if _, named := sessions[term.session]; !named {
+			continue
+		}
+		select {
+		case <-term.done:
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // KillForTurn kills the terminals the chat's CURRENT turn created and leaves every
 // other chat process alone, so it does not also kill a background command an
-// earlier turn started. An idle chat kills nothing, and epoch zero is never this
-// turn's to kill.
+// earlier turn started. An idle chat kills nothing, and a terminal with no turn is
+// never this turn's to kill.
 func (at *agentTerminals) KillForTurn(chatID marotte.ChatID) {
-	cur := at.turnEpochOf(chatID)
-	if cur == 0 {
+	cur := at.turnOf(chatID)
+	if cur == "" {
 		return
 	}
 	at.mu.Lock()
@@ -304,7 +345,7 @@ func (at *agentTerminals) KillForTurn(chatID marotte.ChatID) {
 		if !ok {
 			continue
 		}
-		if term.epoch != cur {
+		if term.turn != cur {
 			kept = append(kept, id)
 			continue
 		}
@@ -516,6 +557,13 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	var params struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
+		// SessionID is ACP's own field on CreateTerminalRequest, and it is the only
+		// link on this frame that names which WORKFLOW STEP asked: a run's step
+		// session is what the run log records on the step's turn_open, while the turn
+		// this handler reads below is the CHAT registry's. An absent one decodes to
+		// the zero value rather than failing the parse, so a request from a build
+		// that omits it still creates its terminal — bounded rather than immortal.
+		SessionID string `json:"sessionId"`
 		// Args is a POINTER so an explicitly empty array stays distinguishable from an
 		// omitted field: `{"command":"prog","args":[]}` asks to exec `prog` with no
 		// arguments, which is not the same statement as omitting args.
@@ -611,7 +659,7 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	// Which turn owns this terminal, read BEFORE at.mu is taken: the reader reaches
 	// the turn lifecycle's own mutex, and taking that under at.mu would give this
 	// type two lock orders.
-	epoch := at.turnEpochOf(chatID)
+	turn := at.turnOf(chatID)
 
 	// Register the terminal in the maps and broadcast terminal_created
 	// BEFORE starting the pump/exit goroutines. emit() assigns monotonic
@@ -622,7 +670,8 @@ func (at *agentTerminals) respondCreate(ctx context.Context, chatID marotte.Chat
 	// leave the tab stuck "running". Registering + broadcasting first
 	// guarantees terminal_created is ordered ahead of any output/exit event.
 	at.mu.Lock()
-	term.epoch = epoch
+	term.turn = turn
+	term.session = params.SessionID
 	at.terms[termID] = term
 	at.byChatID[chatID] = append(at.byChatID[chatID], termID)
 	at.mu.Unlock()

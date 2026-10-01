@@ -29,10 +29,10 @@ func TestReadHeadersParallel_CancelledScanIsNotComplete(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	headers, complete := readHeadersParallel(ctx, []chatEntry{
-		{id: "a", path: s.dir + "/a" + chatFileSuffix},
-		{id: "b", path: s.dir + "/b" + chatFileSuffix},
-		{id: "c", path: s.dir + "/c" + chatFileSuffix},
-	}, s.fileCap)
+		{id: "a", path: s.dir + "/a"},
+		{id: "b", path: s.dir + "/b"},
+		{id: "c", path: s.dir + "/c"},
+	})
 
 	if complete {
 		t.Errorf("complete = true after a cancelled scan that returned %d of 3 headers; "+

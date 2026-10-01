@@ -135,7 +135,7 @@ export function setPageTitle(title: string, kind = ""): void {
  *
  *  For a view whose section a segmented bar already names, this is the FALLBACK name:
  *  12-chat.css suppresses it while that bar shows its own labels and reveals it when the
- *  bar drops them, reading `.tab-bar-icons` directly. */
+ *  bar drops them, reading `.seg-bar-named` directly. */
 export function setPageSubtitle(kind: string, subtitle: string): void {
   subtitles.set(kind, subtitle);
   if (kind !== shownKind) {

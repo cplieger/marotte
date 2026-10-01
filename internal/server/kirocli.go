@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/webhttp/v3"
 )
 

@@ -10,6 +10,7 @@ const (
 	methodV3MCPGetPrompt         = "_kiro/mcp/getPrompt"                     // C→A request: resolve a prompt; {serverName, promptName, arguments} → {messages[]}
 	methodV3MCPGetResource       = "_kiro/mcp/getResource"                   // C→A request: read a resource; {serverName, uri} → {contents[]}
 	methodV3SessionsChanged      = "_kiro/sessions/changed"                  // session inventory diff (no client consumer on v3)
+	methodV3SpecPhaseCheckpoint  = "_kiro/spec/phaseCheckpoint"              // A→C notification: {sessionId, featureName, phase, artifactPath} per accepted in-process spec-document write (spec_checkpoint.go)
 	methodV3RateLimit            = "_kiro/error/rate_limit"                  // {sessionId, message}
 	methodV3CustomAgentNotFound  = "_kiro/customAgent/not_found"             // {sessionId, requestedAgent, fallbackAgent}
 	methodV3CustomAgentConfigErr = "_kiro/customAgent/config_error"          // {sessionId, path, error}

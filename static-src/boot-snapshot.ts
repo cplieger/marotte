@@ -13,61 +13,40 @@ import {
   get,
   getActiveId,
   getSessions,
-  latchFromOutcome,
   messagesVersionOf,
-  normalizeMessage,
   setSessions,
-  turnBaseOf,
   watchActiveId,
 } from "./store.js";
 import { openTabSubjects, paintProvisionalTabs, tabSetVersion } from "./tabs.js";
 import { TURN_OUTCOME_VALUES } from "./turn-severity.js";
-import { projectTurns, type Turn, type TurnWindowBase } from "./turns.js";
-import type { Message, Session, TabSubject, ToolCall, Usage } from "./types.js";
-import { asObject, decodeArray, reqBool, reqNum, reqStr } from "./validators.js";
-import { decodeMessage, decodeTabSubject, decodeUsage } from "./wire/decoders.gen.js";
-import type { TurnOutcome } from "./wire/types.gen.js";
+import type { Session, TabSubject, TurnState, Usage } from "./types.js";
+import { asObject, decodeArray, reqNum, reqStr } from "./validators.js";
+import { decodeEntry, decodeTabSubject, decodeUsage } from "./wire/decoders.gen.js";
+import type { Entry, EntryToolCall, EntryToolResult, TurnOutcome } from "./wire/types.gen.js";
 
 /** How many of the active chat's newest TURNS are carried. Turns because half a
  *  turn renders as a card with no header. */
 const SNAPSHOT_TURNS = 3;
 
-/** Hard cap on the messages those turns may contribute: one turn can hold hundreds
- *  of tool rows, so the turn bound alone is not a bound. */
-const SNAPSHOT_MAX_MESSAGES = 40;
+/** Hard cap on the entries those turns may contribute: one turn can hold hundreds of
+ *  tool rows, so the turn bound alone is not a bound. */
+const SNAPSHOT_MAX_ENTRIES = 80;
 
-/** THE BOUND THAT ACTUALLY BINDS, and this comment used to read "Bytes need no third
- *  rule — this is a subset of the server's byte-bounded window". That was false, and
- *  MEASURED false on the live instance (2026-09-10): the record was **1,778,339 bytes
- *  over SEVEN messages**, one message alone 1,006,210 — 207 tool calls, of which
- *  `output` was 463,839 bytes and `output_spans` most of the remainder. A count bound
- *  cannot see that, because the thing that grows is inside a message rather than the
- *  number of them.
- *
- *  What it cost, and why it is a reload rather than a slow write: this record is
- *  structured-cloned into IndexedDB on every quiet gap in the transcript and read plus
- *  JSON-parsed before the FIRST FRAME of every boot. Measured on desktop Chromium at
- *  1.78 MB: 5.5ms clone, 10.4ms write, 6ms parse. On WebKit, IndexedDB is owned by the
- *  NETWORK process (`NetworkStorageManager`), which also owns the page's sockets — so
- *  the cost lands in the one process whose death takes the event stream with it and
- *  reloads the document, which is the ordering the server measured (the SSE dies
- *  14-110ms BEFORE each document load). The owner reported the phone running hot and
- *  eating battery, and the reload interval SHORTENING as the conversation grew
- *  (~90s -> ~60s -> ~43s), which is this record's size curve.
- *
- *  96 KiB because the job is one plausible frame while the network answers, and the
- *  server's answer replaces the whole window within a few hundred ms. */
+/** THE BOUND THAT ACTUALLY BINDS: a count bound cannot see what grows INSIDE a message.
+ *  Measured on the live instance (2026-09-10) at **1,778,339 bytes over SEVEN messages**, one of
+ *  them 1,006,210 over 207 tool calls. Its cost is a RELOAD rather than a slow write: the record
+ *  is read and JSON-parsed before the FIRST FRAME of every boot, and on WebKit IndexedDB is owned
+ *  by the NETWORK process that also owns the page's sockets — so the cost lands in the process
+ *  whose death takes the event stream with it and reloads the document, at an interval that
+ *  shortened as the conversation grew (~90s -> ~43s). 96 KiB, because the job is one plausible
+ *  frame while the network answers. */
 const SNAPSHOT_MAX_BYTES = 96 * 1024;
 
-/** A first frame paints NEITHER of these, so neither is carried at size.
- *
- *  A tool card's `.tool-details` is born CLOSED, so its output is not on the frame this
- *  record exists to draw. Truncated rather than dropped: `tool-card.ts` decides whether
- *  a card has anything to reveal from the output being non-blank, so dropping it would
- *  withdraw the disclosure for the ~300ms before the real payload lands and pop the
- *  chevron in. `output_spans` styles only those bytes, so it goes entirely. `input` is
- *  trimmed rather than dropped because `.tool-subtitle` renders `input.command` on the
- *  visible claim line. */
+/** A tool card's `.tool-details` is born CLOSED, so its output is not on the frame this record
+ *  draws. Truncated rather than dropped: `tool-card.ts` decides whether a card has anything to
+ *  reveal from the output being non-blank, so dropping it would withdraw the disclosure until
+ *  the real payload lands. `output_spans` styles only those bytes, so it goes entirely; `input`
+ *  is trimmed because `.tool-subtitle` renders `input.command` on the visible claim line. */
 const SNAPSHOT_MAX_TOOL_OUTPUT = 256;
 const SNAPSHOT_MAX_TOOL_INPUT = 256;
 
@@ -90,7 +69,7 @@ interface SnapshotChat {
   readonly name: string;
   readonly model: string;
   readonly current_mode_id: string;
-  readonly message_count: number;
+  readonly turn_count: number;
   readonly usage: Usage;
   /** How this chat's newest finished turn ended, and when the chat last moved —
    *  what a resumed row paints its tab dot and that dot's age from. OPTIONAL on
@@ -101,14 +80,12 @@ interface SnapshotChat {
   readonly updated_at?: number;
 }
 
-/** The transcript window a resume paints, and the segmentation state it is numbered
- *  from. ONE value because the two are only meaningful together: an offset with no
- *  messages numbers a window that is not there, and messages with no offset number
- *  themselves from 1. */
+/** The transcript window a resume paints: the active chat's newest entries in FILE order, whole
+ *  turns, `turn_open` first. No segmentation state travels beside them, because a card's ordinal
+ *  is its own `turn_open.n` and a window therefore numbers itself. */
 interface SnapshotWindow {
   readonly chat_id: string;
-  readonly messages: readonly Message[];
-  readonly base: TurnWindowBase;
+  readonly entries: readonly Entry[];
 }
 
 /** What one screen was showing. No active tab: `device-view.ts` persists that per
@@ -128,14 +105,10 @@ export async function readBootSnapshot(): Promise<BootSnapshot | null> {
   return decodeSnapshot(await readRecord());
 }
 
-/** Forget what this screen was showing, and stop capturing.
- *
- *  Both sign-out doors reach it and `boot.ts` owns both. It does NOT un-paint the
- *  current frame — those rows are the ones this device already had on screen — so
- *  what it buys is that the NEXT boot paints nothing.
- *
- *  Every writer stops, the `pagehide` listener included: a page transition after
- *  this would otherwise re-write the record it just deleted. */
+/** Forget what this screen was showing, and stop capturing. It does NOT un-paint the current
+ *  frame — those rows are the ones this device already had on screen — so what it buys is that
+ *  the NEXT boot paints nothing. Every writer stops, the `pagehide` listener included: a page
+ *  transition after this would otherwise re-write the record it just deleted. */
 export async function clearBootSnapshot(): Promise<void> {
   clearTimeout(pending);
   pending = undefined;
@@ -148,12 +121,10 @@ export async function clearBootSnapshot(): Promise<void> {
 
 /** Paint a snapshot, and report whether it painted anything.
  *
- *  ORDERED: the chat rows go in first because a chat tab's label is read from the
- *  store while its row is built (`tab-materialize.ts` `chatName`).
- *
- *  `setSessions` REPLACES the store, so this may only run BEFORE the boot's own chat
- *  list lands; `boot.ts`'s `restoreWorkspace` owns that ordering. The transport holds
- *  every SSE frame until `markHydrated`, so there is no other writer to lose to. */
+ *  ORDERED: the chat rows go in first because a chat tab's label is read from the store while its
+ *  row is built (`tab-materialize.ts` `chatName`). `setSessions` REPLACES the store, so this may
+ *  only run BEFORE the boot's own chat list lands; `boot.ts`'s `restoreWorkspace` owns that
+ *  ordering, and the transport holds every SSE frame until `markHydrated`. */
 export function paintBootSnapshot(snap: BootSnapshot | null): boolean {
   if (snap === null || snap.tabs.length === 0) {
     return false;
@@ -166,16 +137,17 @@ export function paintBootSnapshot(snap: BootSnapshot | null): boolean {
   return true;
 }
 
-/** A chat row and, for the chat the snapshot carried one for, its window — the ONE
- *  door onto a provisional session's messages, so a row holding them holds a base too.
+/** A chat row and, for the chat the snapshot carried one for, its window.
  *
- *  `residency` is left unset deliberately: `transcriptStale` then reads true, so the
- *  activation this paint enables refetches the window rather than trusting a hint —
- *  which is what makes the server's answer overwrite this and not the reverse.
- *  `provisional` covers the rows that answer does not name; its rule is at `types.ts`
- *  `Session.provisional`. */
+ *  `residency` is left unset deliberately: `transcriptStale` then reads true, so the activation
+ *  this paint enables refetches the window rather than trusting a hint — which is what makes the
+ *  server's answer overwrite this and not the reverse. `provisional` covers the rows that answer
+ *  does not name; its rule is at `types.ts` `Session.provisional`. */
 function toProvisionalSession(c: SnapshotChat, win: SnapshotWindow | undefined): Session {
-  const messages = win === undefined ? [] : win.messages.map(normalizeMessage);
+  const window =
+    win === undefined
+      ? { turns: new Map<string, TurnState>(), order: [] }
+      : turnsFromEntries(win.entries);
   return {
     id: c.id,
     name: c.name,
@@ -183,31 +155,21 @@ function toProvisionalSession(c: SnapshotChat, win: SnapshotWindow | undefined):
     acp_session_id: "",
     current_mode_id: c.current_mode_id,
     usage: c.usage,
-    messages,
-    message_count: c.message_count,
+    turns: window.turns,
+    turn_order: window.order,
+    turn_count: c.turn_count,
     // Through the shared derivation, so one rule answers this for every row built
     // without a window — and the count it reads is the REAL resident count, because
     // the row and its window are built by this one call.
-    has_more: derivedHasMore(c.message_count, messages.length),
-    // TOGETHER or not at all, matching `store-load.ts` `adoptTurnBase`: a row with no
-    // window states no base, so `turnBaseOf` numbers nothing from an edge that is not
-    // there.
-    ...(win !== undefined && {
-      turn_offset: win.base.offset,
-      turn_segment_closed: win.base.closed,
-    }),
+    has_more: derivedHasMore(c.turn_count, window.order.length),
     thinking: false,
     working_label: "Thinking",
     provisional: true,
-    // CONDITIONAL, both of them: under `exactOptionalPropertyTypes` an explicit
-    // `undefined` is a value rather than an omission, and `latchFieldsFor`'s rule 2
-    // reads a stored outcome to decide whether a latch is fresh.
+    // CONDITIONAL, both of them: under `exactOptionalPropertyTypes` an explicit `undefined`
+    // is a value rather than an omission, and the outcome is what tells this row's dot from
+    // a chat that has never run a turn.
     ...(c.last_turn_outcome !== undefined && { last_turn_outcome: c.last_turn_outcome }),
     ...(c.updated_at !== undefined && { updated_at: c.updated_at }),
-    // The dot the finished turn earned, from the same table every other producer
-    // reads, so a resumed row paints what the strip painted before the reload rather
-    // than the hollow ring that means nothing has happened here.
-    ...latchFromOutcome(c.last_turn_outcome),
   };
 }
 
@@ -280,143 +242,140 @@ function projectChat(s: Session): SnapshotChat {
     name: s.name,
     model: s.model,
     current_mode_id: s.current_mode_id,
-    message_count: s.message_count,
+    turn_count: s.turn_count,
     usage: s.usage,
     ...(s.last_turn_outcome !== undefined && { last_turn_outcome: s.last_turn_outcome }),
     ...(s.updated_at !== undefined && { updated_at: s.updated_at }),
   };
 }
 
-/** The active chat's newest turns, flattened back to messages and capped, WITH the
- *  base they are numbered from.
+/** The active chat's newest turns as ENTRIES, in file order, capped.
  *
- *  `projectTurns` is the app's own segmentation, so this cuts on the boundary the
- *  transcript renders and there is no second turn rule to drift from it. BOTH bounds
- *  cut there: walking newest-first is what makes the message cap drop whole turns
- *  instead of slicing the flattened tail, which would keep a body whose trigger is
- *  gone — the headerless card SNAPSHOT_TURNS exists to prevent. */
+ *  Reads the store's own resident window rather than re-deriving one, newest-first, which is what
+ *  makes the entry cap drop WHOLE turns instead of cutting the flattened tail — a body whose
+ *  `turn_open` is gone is the headerless card `SNAPSHOT_TURNS` exists to prevent. Open tails are
+ *  not carried: an `OpenEntry` has no `seq`, and this record's job is one settled frame. */
 function newestWindow(chatID: string): SnapshotWindow | null {
   const s = get(chatID);
   if (s === undefined) {
     return null;
   }
-  // The window's OWN base, and both halves of this module need it for different
-  // reasons. The WRITE path below reads a turn's messages and never its `n`, so the
-  // cut would be identical without one. The READ path renders it: `paintBootSnapshot`
-  // hands this window to `toProvisionalSession`, whose session the transcript projects
-  // through `turnBaseOf` — so an absent base numbers a partial tail from #1 and every
-  // card's number, and its `turnAnchorID`, moves when the activation refetch lands.
-  const turns = projectTurns(s.messages, false, turnBaseOf(s)).slice(-SNAPSHOT_TURNS);
-  const out: Message[] = [];
+  const ids = s.turn_order.slice(-SNAPSHOT_TURNS);
+  const out: Entry[] = [];
   let bytes = 0;
-  let first: Turn | undefined;
-  for (let i = turns.length - 1; i >= 0; i--) {
-    const t = turns[i];
-    if (t === undefined) {
+  for (let i = ids.length - 1; i >= 0; i--) {
+    const id = ids[i];
+    const state = id === undefined ? undefined : s.turns.get(id);
+    if (state === undefined) {
       continue;
     }
-    const trigger = t.trigger;
-    const flat = (trigger === undefined ? t.body : [trigger, ...t.body]).map(lighten);
-    const cost = flat.reduce((n, m) => n + sizeOf(m), 0);
-    if (out.length + flat.length <= SNAPSHOT_MAX_MESSAGES && bytes + cost <= SNAPSHOT_MAX_BYTES) {
-      out.unshift(...flat);
+    const whole = state.entries.map(lighten);
+    const cost = whole.reduce((n, e) => n + sizeOf(e), 0);
+    if (out.length + whole.length <= SNAPSHOT_MAX_ENTRIES && bytes + cost <= SNAPSHOT_MAX_BYTES) {
+      out.unshift(...whole);
       bytes += cost;
-      first = t;
       continue;
     }
     if (out.length === 0) {
-      // The newest turn alone over budget is the case both caps exist for, and dropping
-      // it would resume with no transcript. Trimmed from its OLD end, trigger first, so
-      // what survives is a card that still has its own header.
-      out.push(...admitTail(trigger === undefined ? undefined : lighten(trigger), t.body));
-      first = t;
+      // The newest turn alone over budget is the case both caps exist for, and dropping it
+      // would resume with no transcript. Trimmed to a contiguous PREFIX from `turn_open`
+      // rather than to its newest end, because `TurnState`'s invariant is
+      // `entries[i].seq === i`: a tail cannot be seated at all, where a prefix is a card
+      // with its own header and a short body, and the activation's own refetch fills it.
+      out.push(...admitPrefix(state.entries));
     }
     break;
   }
-  if (first === undefined || out.length === 0) {
+  if (out.length === 0) {
     return null;
   }
-  return {
-    chat_id: chatID,
-    messages: out,
-    // `closed: false` is forced, not chosen: every cut above is at a turn boundary, so
-    // the first carried message force-opens through `projectTurns`' `open === undefined`
-    // and both arms of its `closed` update then compute what the parent scan computed.
-    // `true` would let a step or event row inside the over-budget fragment open a turn
-    // the parent never opened, since `opensHeaderlessTurn` is monotone in `prevClosed`.
-    base: { offset: first.n - 1, closed: false },
-  };
+  return { chat_id: chatID, entries: out };
 }
 
-/** What one message costs the record, in the currency the budget is stated in. The
- *  store holds a structured clone rather than JSON, so this is a proxy — and it is the
- *  same proxy the 1,778,339-byte measurement above was taken with, which is what makes
- *  the number and the bound comparable. */
-function sizeOf(m: Message): number {
-  return JSON.stringify(m).length;
+/** What one entry costs the record, in the currency the budget is stated in. The store
+ *  holds a structured clone rather than JSON, so this is a proxy — and it is the same
+ *  proxy the 1,778,339-byte measurement above was taken with, which is what makes the
+ *  number and the bound comparable. */
+function sizeOf(e: Entry): number {
+  return JSON.stringify(e).length;
 }
 
-/** The newest turn's trigger plus as much of its body as both bounds allow, taken from
- *  the NEWEST end so the reader resumes where they were. Its own function because the
- *  two-bound walk is the part a `slice` cannot express. */
-function admitTail(trigger: Message | undefined, body: readonly Message[]): Message[] {
-  const head = trigger === undefined ? [] : [trigger];
-  let bytes = head.reduce((n, m) => n + sizeOf(m), 0);
-  const tail: Message[] = [];
-  for (let i = body.length - 1; i >= 0; i--) {
-    const m = body[i];
-    if (m === undefined) {
-      continue;
-    }
-    const light = lighten(m);
+/** As much of one turn as both bounds allow, from its `turn_open` forward and stopping at
+ *  the first entry that does not fit. Its own function because the two-bound walk is the
+ *  part a `slice` cannot express. */
+function admitPrefix(entries: readonly Entry[]): Entry[] {
+  const out: Entry[] = [];
+  let bytes = 0;
+  for (const e of entries) {
+    const light = lighten(e);
     const cost = sizeOf(light);
-    if (
-      head.length + tail.length + 1 > SNAPSHOT_MAX_MESSAGES ||
-      bytes + cost > SNAPSHOT_MAX_BYTES
-    ) {
+    if (out.length + 1 > SNAPSHOT_MAX_ENTRIES || bytes + cost > SNAPSHOT_MAX_BYTES) {
       break;
     }
-    tail.unshift(light);
+    out.push(light);
     bytes += cost;
   }
-  return [...head, ...tail];
+  return out;
 }
 
-/** One message with the fields a first frame does not paint cut down to size. Every tool
- *  call it holds is carried, trimmed rather than dropped.
+/** The turns a persisted window describes, grouped in FILE order.
  *
- *  Returns the message ITSELF when it carries no tool calls, so the ordinary prose row
- *  allocates nothing — and the tool calls are where the bytes measurably are (686,630
- *  of one message's 1,006,210).
- *
- *  Nothing here shortens the call ARRAY, so a message is carried whole or it is not
- *  carried: both admission paths price this lightened copy through `sizeOf` and refuse it
- *  against the record's own budgets, which is the only thing that can turn one away. A
- *  turn whose calls do not fit therefore paints its trigger alone, or nothing, and that is
- *  the intended answer rather than a shortfall — the block INDEX is a contract with the
- *  render layer, and a record holding a message's blocks without the calls they name is a
- *  record of something that did not happen. A message's mounted state is keyed on that
- *  index (`MsgRender`'s `window`, `blockEls` and `blockText`, and the `data-block-index` a
- *  search hit resolves through); `renderRange` widens that window over the whole range it
- *  walked whether or not a card mounted; and the state SURVIVES the activation's own window
- *  replacement, because `messages.ts` `bodyRowSpec` keys a body row on the message id, so
- *  the fetched message is UPDATED rather than rebuilt — `rebuildMessageBody`'s one caller
- *  is unparking a message that was streaming at park. So a first frame that is silently
- *  wrong and never self-heals is worse than no first frame, and no first frame is a shape
- *  this app already ships: `boot.ts` gates the pre-network paint on the boot mode, so a
- *  REDUCED boot draws none and the tab set's own activation fetches the window instead. */
-function lighten(m: Message): Message {
-  const calls = m.tool_calls;
-  if (calls === undefined || calls.length === 0) {
-    return m;
+ *  A turn whose entries are not `seq`-contiguous from 0 is DROPPED rather than seated:
+ *  that is `TurnState`'s invariant, this record is a hint nothing repairs, and the store's
+ *  own hole path is for a page that has a turn to re-read. */
+function turnsFromEntries(entries: readonly Entry[]): {
+  turns: Map<string, TurnState>;
+  order: string[];
+} {
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const e of entries) {
+    const held = turns.get(e.turn);
+    if (held === undefined) {
+      if (e.seq !== 0) {
+        continue;
+      }
+      turns.set(e.turn, { entries: [e], openEntries: new Map() });
+      order.push(e.turn);
+      continue;
+    }
+    if (e.seq !== held.entries.length) {
+      continue;
+    }
+    held.entries.push(e);
+    if (e.kind === "turn_close") {
+      held.closeAt = e.seq;
+    }
   }
-  return { ...m, tool_calls: calls.map(lightenCall) };
+  return { turns, order };
 }
 
-function lightenCall(c: ToolCall): ToolCall {
-  const out: ToolCall = { ...c };
-  // Styles the output bytes this drops, so it has nothing left to style. Measured as
-  // most of the 137,710 bytes the per-call remainder came to over 207 calls.
+/** One entry with the fields a first frame does not paint cut down to size. A tool entry is
+ *  carried trimmed; an entry of any other kind is returned ITSELF, so the ordinary prose row
+ *  allocates nothing.
+ *
+ *  Nothing here DROPS an entry, so what a turn contributes is decided by the admission paths
+ *  alone (`newestWindow`, `admitPrefix`), each pricing this lightened copy through `sizeOf`
+ *  against the record's own budgets. A turn that does not fit paints its trigger alone, or
+ *  nothing, rather than a body whose `seq` run has a hole in it. */
+function lighten(e: Entry): Entry {
+  if (e.kind !== "tool_call" && e.kind !== "tool_result") {
+    return e;
+  }
+  return { ...e, payload: lightenToolPayload(e.payload) };
+}
+
+/** The two payloads that carry a tool's output, trimmed. ONE function for both because the
+ *  three fields it touches are the same three on each — `tool_result` carrying no `input`
+ *  simply has nothing there to trim. These payloads are where the bytes measurably are:
+ *  686,630 of the 1,006,210 one message came to in the record `SNAPSHOT_MAX_BYTES` measures. */
+function lightenToolPayload(v: unknown): unknown {
+  if (typeof v !== "object" || v === null) {
+    return v;
+  }
+  const out = { ...(v as EntryToolCall & EntryToolResult) };
+  // Styles the output bytes this drops, so it has nothing left to style. Measured as most
+  // of the 137,710 bytes the per-call remainder came to over 207 calls.
   delete out.output_spans;
   if (out.output !== undefined && out.output.length > SNAPSHOT_MAX_TOOL_OUTPUT) {
     out.output = out.output.slice(0, SNAPSHOT_MAX_TOOL_OUTPUT);
@@ -469,30 +428,25 @@ function decodeSnapshot(v: unknown): BootSnapshot | null {
   }
 }
 
+/** STRICT, unlike the window decoder on the network path: one undecodable entry there
+ *  costs that entry and the range read fills the gap, while here a dropped entry would
+ *  leave a `seq` hole in a hint nothing repairs — this record is not a page and has no
+ *  turn to re-read. So a refused entry takes the whole record, which is the rule
+ *  `decodeSnapshot` already applies to every other field. */
 function decodeSnapshotWindow(v: unknown): SnapshotWindow {
   const o = asObject(v, "$.boot_snapshot.window");
-  const base = asObject(o["base"], "$.boot_snapshot.window.base");
   return {
     chat_id: reqStr(o, "chat_id", "$.boot_snapshot.window"),
-    messages: decodeArray(o["messages"], decodeMessage, "$.boot_snapshot.window.messages"),
-    // REQUIRED, both halves: `store-load.ts` `adoptTurnBase` has to FORGET a
-    // half-present base, and there is nothing here yet to forget — so a window whose
-    // base is half-present is a half-valid hint, and the record goes.
-    base: {
-      offset: reqNum(base, "offset", "$.boot_snapshot.window.base"),
-      closed: reqBool(base, "closed", "$.boot_snapshot.window.base"),
-    },
+    entries: decodeArray(o["entries"], decodeEntry, "$.boot_snapshot.window.entries"),
   };
 }
 
-/** The optional twin of `validators.ts` `reqOneOf`, mirroring that file's own
- *  `req*`/`opt*` pairing — anything the vocabulary does not name, a wrong type
- *  included, reads as ABSENT rather than throwing, so a member the union gains later
- *  costs this record nothing.
+/** The optional twin of `validators.ts` `reqOneOf`, mirroring that file's own `req*`/`opt*`
+ *  pairing — anything the vocabulary does not name, a wrong type included, reads as ABSENT
+ *  rather than throwing, so a member the union gains later costs this record nothing.
  *
- *  It lives HERE rather than beside `reqOneOf` because `validators.ts` is
- *  library-owned generated output: `go run ./cmd/wire-codegen` rewrites the whole
- *  file on every run, so an addition there is deleted by the next generator run. */
+ *  It lives HERE because `validators.ts` is generated output: `go run ./cmd/wire-codegen`
+ *  rewrites the whole file, so an addition there is deleted by the next generator run. */
 function optOneOf<T extends string>(
   o: Record<string, unknown>,
   key: string,
@@ -505,13 +459,9 @@ function optOneOf<T extends string>(
 /** The same tolerance for the timestamp beside it: anything that is not a finite
  *  number reads as ABSENT rather than throwing.
  *
- *  Its twin is `validators.ts` `optNum`, which REFUSES a wrong type and takes the
- *  whole record with it — right for a wire payload, wrong for this one. Both fields
- *  of this pair are declared optional on the same ground (a paint-time hint that
- *  rejects itself over a field the strip can do without is worse than a row with no
- *  dot), so one of them being strict was an asymmetry rather than a decision. The
- *  value is spent as epoch millis by `relativeTime`, so the failure it prevents is
- *  an age of NaN on the dot's tooltip. */
+ *  Its twin is `validators.ts` `optNum`, which REFUSES a wrong type and takes the whole record
+ *  with it — right for a wire payload, wrong for this one. The value is spent as epoch millis by
+ *  `relativeTime`, so the failure it prevents is an age of NaN on the dot's tooltip. */
 function optFiniteNum(o: Record<string, unknown>, key: string): number | undefined {
   const v = o[key];
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -526,7 +476,7 @@ function decodeSnapshotChat(v: unknown): SnapshotChat {
     name: reqStr(o, "name", "$.boot_snapshot.chat"),
     model: reqStr(o, "model", "$.boot_snapshot.chat"),
     current_mode_id: reqStr(o, "current_mode_id", "$.boot_snapshot.chat"),
-    message_count: reqNum(o, "message_count", "$.boot_snapshot.chat"),
+    turn_count: reqNum(o, "turn_count", "$.boot_snapshot.chat"),
     usage: decodeUsage(o["usage"]),
     ...(outcome !== undefined && { last_turn_outcome: outcome }),
     ...(updatedAt !== undefined && { updated_at: updatedAt }),

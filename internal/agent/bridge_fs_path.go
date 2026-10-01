@@ -29,7 +29,6 @@ const fsWriteCap = 4 << 20
 // Sentinel errors for routine fs handler rejections. These are expected
 // outcomes (not bugs) and are logged at Debug rather than Warn.
 var (
-	errIgnored        = errors.New("path is in agent ignore list")
 	errCapExceeded    = errors.New("file exceeds byte cap")
 	errRejectedByUser = errors.New("change rejected by user")
 )
@@ -62,9 +61,6 @@ func (lt *lifetime) resolveInsideWorkDir(p string) (string, error) {
 // delete path descends component by component instead
 // (atomicfile.OpenParentInRoot), because that is the one place the race is
 // unrecoverable.
-//
-// rel is also what the agent-ignore filter matches on, so the gate's input
-// is the same string the operation is named by.
 func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 	if lt.workRoot == nil {
 		return nil, "", errNoWorkRoot
@@ -82,9 +78,9 @@ func (lt *lifetime) confineInWorkDir(p string) (*os.Root, string, error) {
 
 // respondFSError writes a JSON-RPC error response for an fs request and
 // logs the failure. The log level is classified by error type so routine
-// policy rejections (ignore-list denial, cap-exceeded) stay at Debug and
-// don't trip operator alert dashboards that key off Warn+. Real OS /
-// parse failures remain at Warn for triage.
+// rejections (cap-exceeded) stay at Debug and don't trip operator alert
+// dashboards that key off Warn+. Real OS / parse failures remain at Warn
+// for triage.
 func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, msg *marotte.RPCResponse, err error) {
 	safe := logsafe.Field(err.Error())
 	if fsErrorIsRoutine(err) {
@@ -97,13 +93,11 @@ func (in *inbound) respondFSError(ctx context.Context, chatID marotte.ChatID, ms
 
 // fsErrorIsRoutine reports whether err is an expected policy denial or
 // input validation failure rather than an actionable OS / parse error.
-// Matched by substring; the error surfaces are small and stable.
 func fsErrorIsRoutine(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, errIgnored) ||
-		errors.Is(err, errCapExceeded) ||
+	return errors.Is(err, errCapExceeded) ||
 		errors.Is(err, errRejectedByUser)
 }
 

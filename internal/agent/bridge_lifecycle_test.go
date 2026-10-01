@@ -55,7 +55,7 @@ func TestCloseBridge_RemovesAndStops(t *testing.T) {
 	}
 	fb := sb.bridge.(*fakeBridge)
 
-	h.coord.CloseBridge("c1")
+	h.coord.CloseBridge(t.Context(), "c1", marotte.TurnOutcomeCancelled)
 
 	if h.coord.Bridge("c1") != nil {
 		t.Error("bridge still in map after closeBridge")

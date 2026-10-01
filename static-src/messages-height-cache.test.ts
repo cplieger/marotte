@@ -1,11 +1,10 @@
 // When the transcript FORGETS what it measured.
 //
-// `block-heights.ts` is the one per-message store an unmount deliberately keeps:
-// its numbers are what price the spacers standing in for ordinals nobody has
-// mounted, so dropping them at the unmount would defeat the cache. That leaves the
-// view's dispose as the moment they stop standing for anything, and until 2026-09
-// `forgetHeights` had no production caller at all — every measurement a session ever
-// took outlived its chat.
+// `block-heights.ts` is the one per-TURN store an unmount deliberately keeps: its numbers
+// are what price the spacers standing in for entries nobody has mounted, so dropping them
+// at the unmount would defeat the cache. That leaves the view's dispose as the moment they
+// stop standing for anything, and `disposeChatView` reaches it through the chat's own
+// `turn_order` — which is the key space, since a height is keyed `(turnID, seq)`.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 for (const id of [
@@ -30,88 +29,84 @@ vi.mock("./actions/messages.js", () => ({
 vi.mock("./api-client.js", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("./api-client.js")),
   apiGet: vi.fn(() => Promise.resolve(null)),
+  apiGetOrError: vi.fn(() => Promise.resolve({ ok: false, status: 0 })),
 }));
 
 const { mountChatView, disposeChatView } = await import("./messages.js");
 const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { recordRowHeight, spacerHeight } = await import("./block-heights.js");
+const { projectTurns } = await import("./turns.js");
 const { resetFoldState } = await import("./fold-state.js");
-const { resetTurnRail } = await import("./turn-rail.js");
 
+import { makeSession } from "./__test-helpers__/model.js";
 import type { Turn } from "./turns.js";
-import type { Message } from "./types.js";
+import type { Entry, TurnState } from "./types.js";
 
-/** What an unmeasured text block costs, and `.turn-body`'s flex gap. */
-const TEXT_PX = 48;
-const GAP_PX = 12;
+const CHAT = "c-height";
+const TURN = "t1";
 
-/** Eight text blocks in one row: the COLD price of the turn below. */
-const COLD_PX = 8 * TEXT_PX + 7 * GAP_PX;
+/** The whole turn's cold price: eight `text` entries in one lane are ONE prose run, so the
+ *  spacer stands for one row (`ENTRY_ESTIMATE_PX.text`, 48 at both tiers) plus the boundary
+ *  gap `.turn-body` no longer supplies (`ROW_GAP_PX`, 12). */
+const COLD_PX = 60;
 
-/** A height no estimate can produce, so a read that returns it can only have come
- *  from the cache. */
+/** A height no estimate can produce, so a read answering it can only have come from the
+ *  cache — plus that same boundary gap. */
 const MEASURED_PX = 999;
+const MEASURED_TOTAL_PX = 1011;
 
-function reply(): Message {
-  return {
-    id: "a1",
-    role: "assistant",
-    ts: 2,
-    content: "",
-    blocks: Array.from({ length: 8 }, (_, b) => ({ type: "text", text: `chunk ${String(b)}` })),
-  } as unknown as Message;
+/** The run the eight text entries form: `seq` 1 through 8, so `sliceTurn` answers
+ *  `{from: 1, to: 9}` and that is the range a row records against. */
+const RUN = { from: 1, to: 9 } as const;
+
+function sealed(at: number, kind: Entry["kind"], payload: unknown): Entry {
+  return { id: `${TURN}-e${String(at)}`, turn: TURN, kind, seq: at, ts: at + 1, payload } as Entry;
 }
 
-/** The projection `spacerHeight` takes, built by hand: this suite is about the
- *  cache's lifetime, not about what the renderer projects. */
-function turn(): Turn {
-  return {
-    id: "u1",
-    n: 1,
-    trigger: undefined,
-    body: [reply()],
-    ts: 1,
-    outcome: "completed",
-    rewindTo: undefined,
-  };
+/** One turn: a prompt, eight sealed text entries, a close. */
+function entries(): Entry[] {
+  return [
+    sealed(0, "turn_open", { prompt: { id: `${TURN}-p`, text: "go" }, source: "prompt", n: 1 }),
+    ...Array.from({ length: 8 }, (_, i) => sealed(i + 1, "text", { text: `chunk ${String(i)}` })),
+    sealed(9, "turn_close", { outcome: "completed" }),
+  ];
 }
 
-/** The whole turn, priced: nothing mounted, so the tail spacer stands in for all
- *  eight ordinals. */
-function wholeTurn(): number {
-  return spacerHeight(turn(), { from: 0, to: 0 }, "tail");
-}
-
-function activate(chatID: string): void {
+function activate(): void {
+  const turns = new Map<string, TurnState>([
+    [TURN, { entries: entries(), openEntries: new Map() }],
+  ]);
   setSessions([
-    {
-      id: chatID,
-      name: "c",
-      model: "",
-      acp_session_id: "",
-      current_mode_id: "",
-      supervised_mode: false,
-      effort: "",
-      effort_levels: [],
-      effort_active: "",
-      usage: { context_size: 0 },
-      message_count: 2,
-      messages: [{ id: "u1", role: "user", ts: 1, content: "prompt" }, reply()],
-      has_more: false,
-      thinking: false,
-      working_label: "Thinking",
-    },
-  ] as never);
-  setActive(chatID);
-  bumpMessages(chatID);
+    { ...makeSession({ id: CHAT, name: CHAT }), turns, turn_order: [TURN], turn_count: 1 },
+  ]);
+  setActive(CHAT);
+  bumpMessages(CHAT, "load");
+}
+
+/** The projection `spacerHeight` prices, taken from production rather than hand-built, so a
+ *  reshape of `Turn` cannot leave this suite pricing a shape the renderer never sees. */
+function turn(): Turn {
+  const built = projectTurns({
+    turns: new Map<string, TurnState>([[TURN, { entries: entries(), openEntries: new Map() }]]),
+    turn_order: [TURN],
+  });
+  const t = built[0];
+  if (t === undefined) {
+    throw new Error("the projection produced no turn");
+  }
+  return t;
+}
+
+/** The whole turn, priced: nothing mounted, so the tail spacer stands for every entry. */
+function wholeTurn(): number {
+  return spacerHeight(turn(), { from: 0, to: 0 }, "tail", "");
 }
 
 beforeEach(() => {
   mountChatView();
   localStorage.clear();
   resetFoldState();
-  resetTurnRail();
-  setSessions([] as never);
+  setSessions([]);
   setActive("");
 });
 
@@ -119,21 +114,22 @@ describe("the measurement cache over a view's life", () => {
   it("answers from the measurement while the view lives", () => {
     // The control. Without it the case below passes for the wrong reason: a
     // `spacerHeight` that never consulted the cache also returns the estimate.
-    activate("c-height-1");
-    recordRowHeight("a1", { from: 0, to: 8 }, MEASURED_PX);
-    expect(wholeTurn()).toBe(MEASURED_PX);
-    bumpMessages("c-height-1", "shape");
-    expect(wholeTurn()).toBe(MEASURED_PX);
+    activate();
+    expect(wholeTurn()).toBe(COLD_PX);
+    recordRowHeight(TURN, RUN, MEASURED_PX);
+    expect(wholeTurn()).toBe(MEASURED_TOTAL_PX);
+    bumpMessages(CHAT, "shape");
+    expect(wholeTurn()).toBe(MEASURED_TOTAL_PX);
   });
 
-  it("forgets the chat's measurements when its view is disposed", () => {
-    activate("c-height-2");
-    recordRowHeight("a1", { from: 0, to: 8 }, MEASURED_PX);
-    expect(wholeTurn()).toBe(MEASURED_PX);
+  it("forgets the turn's measurements when the chat's view is disposed", () => {
+    activate();
+    recordRowHeight(TURN, RUN, MEASURED_PX);
+    expect(wholeTurn()).toBe(MEASURED_TOTAL_PX);
 
-    // Tab close, LRU eviction and teardown all run this. The DOM those numbers
-    // described is gone, so they price nothing that exists.
-    disposeChatView("c-height-2");
+    // Tab close, LRU eviction and teardown all run this, and the chat's `turn_order` is
+    // what it forgets by — so the record has to still be in the store when it runs.
+    disposeChatView(CHAT);
     expect(wholeTurn()).toBe(COLD_PX);
   });
 });

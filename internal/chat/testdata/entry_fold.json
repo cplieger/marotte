@@ -1,0 +1,403 @@
+{
+  "_comment": [
+    "The FOLD contract: which entries render at their own position, over one real entry",
+    "log holding two interleaved turns. Ids and timestamps are normalised at write time —",
+    "a turn id is server-minted and ts is the appender's wall clock, so neither can be in",
+    "a byte-pinned golden.",
+    "",
+    "`renders` is the EXPORT's answer, derived by calling the production writer",
+    "(export_md.go turnRender.writeEntry) per entry and recording whether it emitted",
+    "bytes. TestEntryFoldContract (Go) asserts the log marshals to exactly these bytes,",
+    "and entry-fold-contract.node.test.ts (TypeScript) asserts block-window.ts's",
+    "entryRenders agrees on every row marked `compared`.",
+    "",
+    "TWO DECLARED EDGES, each carried as `compared: false` with its reason:",
+    "  turn_open, turn_close — the export renders both in the flow (heading plus prompt,",
+    "    and the footer) while the client renders them at CARD level, as the header band",
+    "    and the footer beside .turn-body. A scope difference, not a disagreement.",
+    "",
+    "The turn_revert row is the record of a rewind, and it sits in the newest SURVIVING",
+    "turn rather than in the turn it names: a revert takes every turn from its target to",
+    "the newest in file order, so the range it states is gone from this log's own view",
+    "while the boundary row renders inside a turn that stayed. It renders on BOTH sides",
+    "(the export writes a rule plus \"Rewound to here\"; the client draws the boundary",
+    "row), and because it renders it BREAKS a prose run — block-window.node.test.ts pins",
+    "that half over a synthetic turn, which is the shape this log cannot produce (a",
+    "record always lands at the file's tail, never between two text entries).",
+    "",
+    "Every tool_result here is PAIRED with a tool_call in its own turn, deliberately:",
+    "writeUnpairedResult RENDERS a result whose call the turn does not hold, while the",
+    "client refuses every tool_result unconditionally, so a fixture carrying one would pin",
+    "agreement where the two sides diverge. The unpaired case is outside this fixture.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestEntryFoldContract",
+    "then re-run the TS half: npx vitest --run entry-fold-contract (from static-src/)."
+  ],
+  "entries": [
+    {
+      "id": "t-1",
+      "turn": "t-1",
+      "kind": "turn_open",
+      "payload": {
+        "prompt": {
+          "id": "m-where does the retry backoff live",
+          "text": "where does the retry backoff live"
+        },
+        "source": "prompt",
+        "n": 1
+      },
+      "seq": 0,
+      "ts": 0
+    },
+    {
+      "id": "bind-1",
+      "turn": "t-1",
+      "kind": "turn_bind",
+      "payload": {
+        "kas_message_id": "kas-1",
+        "session_id": "sess-1"
+      },
+      "seq": 1,
+      "ts": 0
+    },
+    {
+      "id": "th-1",
+      "turn": "t-1",
+      "kind": "thinking",
+      "payload": {
+        "text": "The retry helper is in fetch.go."
+      },
+      "seq": 2,
+      "ts": 0
+    },
+    {
+      "id": "a-1",
+      "turn": "t-1",
+      "kind": "text",
+      "payload": {
+        "text": "It lives in **fetch.go**."
+      },
+      "seq": 3,
+      "ts": 0
+    },
+    {
+      "id": "t-2",
+      "turn": "t-2",
+      "kind": "turn_open",
+      "payload": {
+        "source": "event",
+        "n": 2
+      },
+      "seq": 0,
+      "ts": 0
+    },
+    {
+      "id": "tc-1",
+      "turn": "t-1",
+      "kind": "tool_call",
+      "payload": {
+        "id": "tc-1",
+        "title": "Read fetch.go",
+        "kind": "read",
+        "status": "",
+        "ts": 0
+      },
+      "seq": 4,
+      "ts": 0
+    },
+    {
+      "id": "a-2",
+      "turn": "t-2",
+      "kind": "text",
+      "payload": {
+        "text": "The workflow step finished."
+      },
+      "seq": 1,
+      "ts": 0
+    },
+    {
+      "id": "tc-1:result",
+      "turn": "t-1",
+      "kind": "tool_result",
+      "payload": {
+        "status": "completed",
+        "output": "func retry(ctx) error"
+      },
+      "seq": 5,
+      "ts": 0
+    },
+    {
+      "id": "plan-1",
+      "turn": "t-1",
+      "kind": "plan",
+      "payload": {
+        "entries": [
+          {
+            "content": "Read the retry path",
+            "priority": "",
+            "status": "completed"
+          }
+        ]
+      },
+      "seq": 6,
+      "ts": 0
+    },
+    {
+      "id": "tc-2",
+      "turn": "t-2",
+      "kind": "tool_call",
+      "payload": {
+        "id": "tc-2",
+        "title": "Run Command",
+        "kind": "execute",
+        "status": "",
+        "ts": 0
+      },
+      "seq": 2,
+      "ts": 0
+    },
+    {
+      "id": "s-1",
+      "turn": "t-1",
+      "kind": "steer",
+      "payload": {
+        "text": "also cap the retry count",
+        "origin": "user",
+        "state": "read"
+      },
+      "seq": 7,
+      "ts": 0
+    },
+    {
+      "id": "s-1:ack",
+      "turn": "t-1",
+      "kind": "steer_ack",
+      "payload": {
+        "steer_id": "s-1",
+        "text": "reading your note"
+      },
+      "seq": 8,
+      "ts": 0
+    },
+    {
+      "id": "tc-2:result",
+      "turn": "t-2",
+      "kind": "tool_result",
+      "payload": {
+        "status": "completed",
+        "output": "ok"
+      },
+      "seq": 3,
+      "ts": 0
+    },
+    {
+      "id": "plan-2",
+      "turn": "t-1",
+      "kind": "plan",
+      "payload": {
+        "entries": [
+          {
+            "content": "Read the retry path",
+            "priority": "",
+            "status": "completed"
+          },
+          {
+            "content": "Cap the retry count",
+            "priority": "",
+            "status": "in_progress"
+          }
+        ]
+      },
+      "seq": 9,
+      "ts": 0
+    },
+    {
+      "id": "cmp-1",
+      "turn": "t-1",
+      "kind": "compaction",
+      "payload": {
+        "summary": "The retry work so far."
+      },
+      "seq": 10,
+      "ts": 0
+    },
+    {
+      "id": "t-2:close",
+      "turn": "t-2",
+      "kind": "turn_close",
+      "payload": {
+        "outcome": "completed"
+      },
+      "seq": 4,
+      "ts": 0
+    },
+    {
+      "id": "t-1:close",
+      "turn": "t-1",
+      "kind": "turn_close",
+      "payload": {
+        "outcome": "completed"
+      },
+      "seq": 11,
+      "ts": 0
+    },
+    {
+      "id": "t-3:revert",
+      "turn": "t-2",
+      "kind": "turn_revert",
+      "payload": {
+        "from": "t-3",
+        "through": "t-3",
+        "kas_message_id": "kas-revert",
+        "cause": "rewind",
+        "from_n": 3
+      },
+      "seq": 5,
+      "ts": 0
+    }
+  ],
+  "turns": [
+    {
+      "turn": "t-1",
+      "n": 1,
+      "entries": [
+        {
+          "id": "t-1",
+          "seq": 0,
+          "kind": "turn_open",
+          "renders": true,
+          "compared": false,
+          "edge": "card-level on the client: the header band, not a body row"
+        },
+        {
+          "id": "bind-1",
+          "seq": 1,
+          "kind": "turn_bind",
+          "renders": false,
+          "compared": true
+        },
+        {
+          "id": "th-1",
+          "seq": 2,
+          "kind": "thinking",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "a-1",
+          "seq": 3,
+          "kind": "text",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "tc-1",
+          "seq": 4,
+          "kind": "tool_call",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "tc-1:result",
+          "seq": 5,
+          "kind": "tool_result",
+          "renders": false,
+          "compared": true
+        },
+        {
+          "id": "plan-1",
+          "seq": 6,
+          "kind": "plan",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "s-1",
+          "seq": 7,
+          "kind": "steer",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "s-1:ack",
+          "seq": 8,
+          "kind": "steer_ack",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "plan-2",
+          "seq": 9,
+          "kind": "plan",
+          "renders": false,
+          "compared": true
+        },
+        {
+          "id": "cmp-1",
+          "seq": 10,
+          "kind": "compaction",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "t-1:close",
+          "seq": 11,
+          "kind": "turn_close",
+          "renders": true,
+          "compared": false,
+          "edge": "card-level on the client: the footer, a sibling of .turn-body"
+        }
+      ]
+    },
+    {
+      "turn": "t-2",
+      "n": 2,
+      "entries": [
+        {
+          "id": "t-2",
+          "seq": 0,
+          "kind": "turn_open",
+          "renders": true,
+          "compared": false,
+          "edge": "card-level on the client: the header band, not a body row"
+        },
+        {
+          "id": "a-2",
+          "seq": 1,
+          "kind": "text",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "tc-2",
+          "seq": 2,
+          "kind": "tool_call",
+          "renders": true,
+          "compared": true
+        },
+        {
+          "id": "tc-2:result",
+          "seq": 3,
+          "kind": "tool_result",
+          "renders": false,
+          "compared": true
+        },
+        {
+          "id": "t-2:close",
+          "seq": 4,
+          "kind": "turn_close",
+          "renders": true,
+          "compared": false,
+          "edge": "card-level on the client: the footer, a sibling of .turn-body"
+        },
+        {
+          "id": "t-3:revert",
+          "seq": 5,
+          "kind": "turn_revert",
+          "renders": true,
+          "compared": true
+        }
+      ]
+    }
+  ]
+}

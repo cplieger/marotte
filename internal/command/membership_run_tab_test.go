@@ -9,9 +9,9 @@ package command
 import (
 	"testing"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/marotte/internal/testsupport"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // fakeRunOwner answers which chat launched a run, as *agent.Runs does off the

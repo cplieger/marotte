@@ -139,7 +139,7 @@ func TestSessionNotifyAsk_ResolvesTheNodeFromTheStepRegistry(t *testing.T) {
 	tr := New(rolesOf(newBaseDeps()))
 	// node_start is the only frame that announces a step's session, and the
 	// registry is what a frame with no workflow marker is resolved through.
-	tr.RecordStepSession(testStep, "wf_1", "review")
+	tr.RecordStepSession(testStep, "wf_1", "review", "review")
 
 	got, ok := tr.SessionNotifyAsk(notifyFrame(notifyParams{
 		severity:   "warning",

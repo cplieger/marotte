@@ -18,7 +18,7 @@
 // staleness risk. The growth a tool call's content does — `adoptTerminalOutput`
 // replacing the ACP fragments with the terminal's full stream — happens on the
 // terminal status frame, in the live buffer, and the buffer is flushed to the
-// chat file at `turn_ended`. `HasFull` has exactly one writer server-side
+// chat file at `turn_closed`. `HasFull` has exactly one writer server-side
 // (`previewToolCall`, reached only from the `GET /api/chats/{id}` read of
 // PERSISTED messages) and the live SSE frames never set it, so a card can only
 // ask for a bulk once its content is final. So there is no invalidation here and

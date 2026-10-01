@@ -6,8 +6,8 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/runesafe/v2"
 )
 
 // A DECISION SURFACE is a payload a human reads to make an approval choice:

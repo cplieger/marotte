@@ -23,6 +23,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 import { FRAME_BUDGET_MS } from "./__test-helpers__/frame-budget.js";
+import { makeSession } from "./__test-helpers__/model.js";
 
 // The catalog and the seed are the staged inputs. Mutable module state rather
 // than per-test factories, because the real modules are read through a live
@@ -89,7 +90,7 @@ document.body.innerHTML = `
   <span id="ctx-credits"></span>
   <span id="ctx-turns"></span>
   <span id="ctx-last-turn"></span>
-  <span id="ctx-msgs"></span>
+  <span id="ctx-entries"></span>
   <span id="ctx-tools"></span>
   <span id="ctx-metering"></span>`;
 
@@ -131,25 +132,26 @@ function model(id: string, dflt?: string, hasEffort = true): ModelInfo {
 }
 
 function session(id: string, over: Partial<Session> = {}): Session {
+  // The factory's EMPTY transcript is the shape the store holds one in:
+  // `refreshContextUI` walks `turn_order` for the counts beside the ring, so a row
+  // without it throws inside the effect and every case here reads the previous paint.
   return {
-    id,
-    name: id,
-    model: "claude-opus-5",
-    messages: [],
-    message_count: 0,
-    has_more: false,
-    effort: "",
-    effort_levels: fiveTiers(),
-    available_models: [],
-    usage: {
-      context_pct: 0,
-      context_size: 200_000,
-      credits: 0,
-      turn_count: 0,
-      last_turn_ms: 0,
-    },
+    ...makeSession({
+      id,
+      name: id,
+      model: "claude-opus-5",
+      effort: "",
+      effort_levels: fiveTiers(),
+      usage: {
+        context_pct: 0,
+        context_size: 200_000,
+        credits: 0,
+        last_turn_ms: 0,
+        has_real_data: false,
+      },
+    }),
     ...over,
-  } as unknown as Session;
+  };
 }
 
 /** Mount one chat as the active one. */

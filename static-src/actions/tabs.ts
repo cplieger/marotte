@@ -228,6 +228,44 @@ export const pinTabCommand = defineAction<PinTabArgs, boolean>({
   error: "Couldn't pin that tab",
 });
 
+export interface ReparentTabArgs {
+  id: string;
+  parent: string;
+  opID: string;
+}
+
+/** Hang an open tab under an open chat tab. No dedupe, for the pin's reason: two
+ *  moves in a row must both land. The reply carries the subject as it now reads,
+ *  because an unchanged parent commits nothing and emits no frame to adopt from. */
+export const reparentTabCommand = defineAction<ReparentTabArgs, TabSubject>({
+  name: "tabs.reparent",
+  networkMode: "always",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  run: async ({ id, parent, opID }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "reparent_tab",
+        payload: { id, parent, op_id: opID },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      throw sendFailure(r, "move that tab");
+    }
+    const body = asObject(r.body);
+    if (body === null || !("subject" in body)) {
+      throw sendFailure(r, "move that tab");
+    }
+    return decodeTabSubject(body["subject"]);
+  },
+  error: "Couldn't move that tab",
+});
+
 // --- Shared reply handling ---
 
 function asObject(body: unknown): Record<string, unknown> | null {

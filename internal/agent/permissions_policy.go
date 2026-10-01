@@ -40,6 +40,9 @@ func (rt *Runtime) buildUtility() *utilityRuntime {
 			presets: func(ctx context.Context) []string {
 				return securityPresets(ctx, rt.lifecycle.configDir)
 			},
+			ignoreFiles: func(ctx context.Context) []string {
+				return spawnIgnoreFiles(ctx, rt.lifecycle.configDir)
+			},
 		},
 		rt.secrets,
 		true, // enableHooks

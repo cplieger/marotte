@@ -199,8 +199,20 @@
      below give up their height first, so in the ordinary case this box does not
      scroll at all. Both axes are spelled, because a `visible` sibling axis
      computes to `auto` and `overflow-y` alone would make every card a horizontal
-     scroller too. */
-  max-block-size: min(55dvh, 30rem);
+     scroller too.
+
+     THE CEILING FOLLOWS THE VISUAL VIEWPORT, BECAUSE THE LAYOUT VIEWPORT DOES NOT
+     SEE THE KEYBOARD. The viewport meta carries no `interactive-widget`, so a
+     raised soft keyboard shrinks the VISUAL viewport and leaves `dvh` and `svh`
+     exactly where they were — and this bar is anchored to the layout viewport's
+     bottom, so a card sized against `dvh` can put its own Send row below the band
+     the reader can see. `--dock-viewport-h` is `visualViewport.height` in px,
+     published by `dock-ask.ts` (`pill-expand.ts`'s precedent: an authored cap plus
+     a `visualViewport`-derived shrink). The fraction is unchanged and so is the
+     `30rem` cap — only the basis moves — and the absent-property fallback is
+     byte-identically today's `55dvh`, which is what a browser with no
+     `visualViewport` at all still gets. */
+  max-block-size: min(calc(0.55 * var(--dock-viewport-h, 100dvh)), 30rem);
   overflow: hidden auto;
 }
 
@@ -220,44 +232,49 @@
    Shrink is proportional to content, so a card carrying a long question AND a long
    option list squeezes the question's region hardest; nothing is lost by that,
    because the region is a scroller and the question inside it is pinned (see
-   `.run-input-question` below). Measured with 10 options at 390px: the question's
+   `.dock-ask-question` below). Measured with 10 options at 390px: the question's
    region 26px scrolling over its four pinned lines, the options 212, the answer box
    and Skip untouched. */
-.dock-card
-  > :where(
-    .approval-body,
-    .elicitation-body,
-    .run-input-body,
-    .user-input-body,
-    .user-input-options
-  ) {
+.dock-card > :where(.approval-body, .elicitation-body, .dock-ask-body, .user-input-options) {
   max-block-size: 14rem;
   overflow: hidden auto;
 }
 
-/* A CONTROL ROW MAY NOT BE WHAT GIVES, and one member needs saying: a `textarea` is
-   a scroll container, so its own automatic minimum is 0 and it would be the first
-   thing to vanish under pressure. Reachable rather than hypothetical — a phone on
-   its long edge puts the ceiling at ~214px against ~308px of content, which is the
-   one shape where these rows are asked to shrink at all. */
+/* A CONTROL ROW MAY NOT BE WHAT GIVES. Reachable rather than hypothetical — a phone
+   on its long edge puts the ceiling at ~214px against ~308px of content, which is the
+   one shape where these rows are asked to shrink at all.
+
+   `.dock-ask-editor` LEFT this list and is the card's one flexible member now (see
+   its own rule below). It was here because a `textarea` is a scroll container, so its
+   automatic minimum is 0 and it would have been the first thing to vanish; what
+   replaces `flex: none` is a real FLOOR at the caller's opening rows, which is the
+   same guarantee without also freezing the box at three rows for a nine-line answer.
+   The button row keeps `flex: none`, because it is what may never move. */
 .dock-card
-  > :where(
-    .approval-actions,
-    .elicitation-actions,
-    .elicitation-fields,
-    .run-input-editor,
-    .run-input-actions,
-    .user-input-freeform,
-    .user-input-actions
-  ) {
+  > :where(.approval-actions, .elicitation-actions, .elicitation-fields, .dock-ask-actions) {
   flex: none;
 }
 
-/* A tool permission is a yellow "your turn" ask; an approval and a question
-   are accent. Yellow is reserved for the one that blocks the agent on a
-   decision it cannot make itself. */
+/* YELLOW MEANS THE AGENT IS BLOCKED ON A DECISION IT CANNOT MAKE ITSELF, and
+   every kind of ask that reaches this dock now is one — a tool permission, a turn
+   approval, a parked workflow step's question, and the agent's own structured
+   question. So the accent face on `.dock-card` is the DEFAULT for a card that is
+   not asking, and nothing in the dock takes it today.
+
+   The run-input and user-input cards joined this set for the same reason the
+   permission ask is in it: the work stops until somebody answers, and the only
+   thing separating them is how much work — one tool call, a whole run, or the
+   turn. Reusing the existing `data-kind` vocabulary rather than a hue per kind:
+   the shape is already the ask shape, and one more colour would be one more thing
+   to learn.
+
+   `.dock-elicitation` is deliberately NOT here: an MCP server asking for form
+   input is a tool's own request for data rather than a decision the agent is
+   waiting on, so it keeps the accent face. */
 .dock-permission,
-.dock-approval {
+.dock-approval,
+.dock-run-input,
+.dock-user-input {
   border-color: var(--c-yellow);
 }
 
@@ -266,18 +283,9 @@
   color: var(--c-yellow);
 }
 
-/* A parked workflow step's question takes the YELLOW face too, and for the same
-   reason the permission ask does: it blocks work on a decision the agent cannot
-   make itself, and here the work is a whole run rather than one tool call. Reusing
-   the existing `data-kind` vocabulary rather than a fifth colour — the shape is
-   already the ask shape, and one more hue would be one more thing to learn. */
-.dock-run-input {
-  border-color: var(--c-yellow);
-}
-
-.dock-run-input .run-input-body strong {
+.dock-run-input .dock-ask-body strong,
+.dock-user-input .dock-ask-body strong {
   color: var(--c-yellow);
-  font-size: var(--fs-md);
 }
 
 .dock-depth {
@@ -288,28 +296,50 @@
 }
 
 /* ==========================================================================
-   The run-input card's own regions: heading + who is asking + the answer box.
+   THE ANSWER-CARD REGIONS, shared by the run-input and user-input cards:
+   heading, who is asking, the answer box, the button row.
 
-   Spacing comes from `.dock-card`'s own flex gap rather than per-region margins,
-   which is the one difference from the user-input card's skin in 14-tools.css:
-   that one predates the dock (it was a <dialog>) and still carries
-   `margin-block-end` on every block, so its regions and the card's gap both
-   contribute.
+   ONE VERTICAL RHYTHM, and it is `.dock-card`'s own flex gap — no region carries
+   a margin. The user-input card used to (it predates the dock, where it was a
+   <dialog>) and its regions and the card's gap both contributed, so measured on
+   an 800px card its question sat 40px above its answer box against this card's
+   8px, with 20px of that spent by a zero-height empty options region. A region
+   with nothing in it collapses instead (`:empty` below), so an absent region
+   costs no gap at all.
    ========================================================================== */
 
-.run-input-body {
+/* A column, so the opener sits UNDER the question rather than trailing it inline.
+   Deliberately no `align-items`: a `-webkit-box` with no width constraint sizes to
+   max-content, and a clamp with nothing to wrap against clamps nothing. */
+.dock-ask-body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
+
+  /* THE QUESTION GIVES EVERYTHING ABOVE TWO LINES, and this is the floor that stops
+     it giving all of it. The shared region rule above makes this a scroller, so its
+     automatic minimum is 0 and under pressure the whole question could vanish while
+     the answer box below kept its content height. Two lines is enough to say a
+     question is there; the rest is one scroll away, which is what a scroller means.
+     `lh` measures this region's own line box, so the floor moves with the type
+     scale rather than with a number kept in step with it. */
+  min-block-size: 2lh;
+}
+
+/* The head's own typography. Its INK is the card's face and lives with the other
+   yellow rules above, because that is a statement about the ask's state rather
+   than about this region. */
+.dock-ask-body strong {
+  font-size: var(--fs-md);
 }
 
 /* FOUR lines behind the attribute the opener toggles, the same count and the same
    reason as `.steer-text` below: this is a region of the bar, and the bar grows
    UPWARD into the transcript. Not an ellipsis that cuts — the text is clipped by
-   overflow, so the whole question stays in the DOM and `.run-input-more` is what
+   overflow, so the whole question stays in the DOM and `.dock-ask-more` is what
    opens it. The clamp is the refinement rather than the guarantee: the card's own
    ceiling is what keeps the answer row reachable when a reader opens this. */
-.run-input-question[data-clamped] {
+.dock-ask-question[data-clamped] {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   line-clamp: 4;
@@ -325,10 +355,9 @@
    own automatic minimum size is 0 and the squeeze lands HERE — clipping three of
    the four lines with no scrollbar, because the element absorbed the overflow
    instead of its region. Measured on a phone in landscape: the question rendered
-   21px, one line, and `.run-input-body` reported nothing to scroll. Pinned, the
+   21px, one line, and `.dock-ask-body` reported nothing to scroll. Pinned, the
    region overflows and scrolls instead, which is the box that is meant to. */
-.run-input-question,
-.user-input-question {
+.dock-ask-question {
   flex: none;
   overflow-wrap: anywhere;
 }
@@ -347,14 +376,53 @@
   color: var(--c-text-secondary);
 }
 
-.run-input-editor {
-  display: flex;
+/* THE ANSWER BOX GETS ITS ROW TO ITSELF, and no button shares it. The user-input
+   card used to put Send here beside the textarea, which cost the box 62px of its
+   width and split the card's two controls across two right-aligned rows — Send
+   above Skip, each on its own line, with nothing telling a reader why one button
+   belonged to the box and the other to the card. Deliberately no `align-items`
+   either: with one child there is nothing to align, and `flex-end` was what pinned
+   Send to the bottom edge of a three-row textarea. */
+/* THE ROW HAS NO BOX OF ITS OWN, so the answer box is a flex item of the CARD and its
+   own floor is the card's reservation. `display: contents` rather than a flex row, and
+   the reason is measured: a real row is a flex CONTAINER, so its automatic minimum size
+   is its content's min-content height — and with `field-sizing: content` on the box
+   that IS the answer's full height, so the row could not shrink at all. Rendered at
+   390x844 with a nine-line answer: the row held 354px, the card scrolled, and Send sat
+   21.8px below the card's own bottom edge, which is the defect the reservation exists
+   to prevent. A textarea is a scroll container, so as the item itself its automatic
+   minimum is 0 and `min-block-size` below is the real floor.
+
+   Kept as an element rather than dropped, because the two callers build it and
+   `:empty` below is what collapses an unused one. */
+.dock-ask-editor {
+  display: contents;
 }
 
-.run-input-text {
-  flex: 1;
+/* THE CARD'S ONE FLEXIBLE MEMBER, and the ceiling nobody authored. The reader named the
+   tension: a box that grows without a reservation pushes Send off screen, which is
+   worse than a small box because the answer then cannot be committed at all. So the
+   ORDER decides it rather than a magic length — the action row is reserved and
+   unshrinkable, the question region gives everything above two lines, and this box
+   takes what is left and then scrolls internally. */
+.dock-ask-text {
+  flex: 0 1 auto;
   min-inline-size: 0;
-  resize: vertical;
+
+  /* THE BOX GROWS TO ITS ANSWER, to the bounded ceiling the row above derives.
+     `--ask-rows` is the caller's OPENING height, written beside the `rows` attribute
+     by `askEditor` — the one owner — and this is the floor it becomes: rows of line
+     box plus the padding and border this box carries, because `box-sizing` is
+     `border-box`. Absent, three rows, which is the free-form caller's own opening. */
+  field-sizing: content;
+  min-block-size: calc(var(--ask-rows, 3) * 1lh + 2 * var(--sp-2) + 2px);
+
+  /* A DRAGGED HEIGHT WOULD DEFEAT THE RESERVATION ABOVE: an explicit height beats
+     content sizing, so a reader who pulled the grabber down could push Send out of
+     the card the flex order exists to keep it in. Same call `#prompt-input` makes for
+     the same reason (15-input.css) — a box that already tracks what is typed has
+     nothing left for a grabber to do. */
+  resize: none;
   padding: var(--sp-2);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
@@ -364,49 +432,41 @@
   font-size: var(--fs-sm);
 }
 
-.run-input-text:focus-visible {
+.dock-ask-text:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset-field);
 }
 
-/* Wraps rather than overflowing: "Continue without answering" is a long label
-   and the dock is as narrow as the composer on a phone. */
-.run-input-actions {
+/* ONE right-aligned row per card, holding every button it has. Wraps rather than
+   overflowing: "Continue without answering" is a long label, the user-input card's
+   sub-option stage carries three buttons (Confirm, Back, Skip), and the dock is as
+   narrow as the composer on a phone. */
+.dock-ask-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--sp-2);
 }
 
-/* ==========================================================================
-   The user-input card's question, and only that. The rest of its skin is in
-   14-tools.css, where it predates the dock — this is here because the clamp and
-   its opener are the DOCK's rule (the bar grows upward), shared with the
-   run-input card above and with the steer row below.
-   ========================================================================== */
+/* A REGION WITH NOTHING IN IT COSTS NO GAP. The user-input card builds both
+   unconditionally, so a stage switch is a `replaceChildren` in place rather than a
+   re-parent: a free-form question leaves the options region empty, and the
+   sub-option stage empties the answer box. Without this each one still charges the
+   card's own `gap` — 8px of nothing, plus a second 8px from the next child.
 
-/* A column so the opener sits UNDER the question rather than trailing it inline,
-   matching `.run-input-body`. Deliberately no `align-items`: a `-webkit-box` with
-   no width constraint sizes to max-content, and a clamp with nothing to wrap
-   against clamps nothing. */
-.user-input-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-
-.user-input-question[data-clamped] {
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+   Scoped to the two regions that are genuinely built empty, never `.dock-card > *`:
+   an empty region on a card that does NOT expect one is a bug the reader should see
+   as a gap rather than one this rule hides. */
+.user-input-options:empty,
+.dock-ask-editor:empty {
+  display: none;
 }
 
 /* An option's own description is NOT clamped, and cannot be with this mechanism:
    `.user-input-option` IS the button, the description is inside it, and a button
    inside a button is invalid HTML that axe reports as nested-interactive. The
-   options region scrolls instead. */
+   options region scrolls instead. Its skin is in 14-tools.css — the option cards
+   are the one part of this card the run-input card has no counterpart for. */
 
 /* --- Turn approval: the per-action file list --- */
 
@@ -448,10 +508,16 @@
   text-decoration-color: var(--c-red);
 }
 
+/* The checked fill wears the CARD's hue, like every other mark on an ask card: the
+   turn-approval card is yellow, and a checked box says "this file is kept", which is
+   the ask's own subject rather than a brand affordance. It clears WCAG 1.4.11's 3:1
+   for a graphical object by more than the accent did — 11.696:1 dark and 6.278:1
+   light against the card fill, against 6.541 and 5.456 (`css-contrast.py pair`) —
+   and the UA picks the glyph's own contrasting ink either way. */
 .dock-file-check {
   inline-size: 1rem;
   block-size: 1rem;
-  accent-color: var(--c-accent);
+  accent-color: var(--c-yellow);
 }
 
 .dock-file-paths {
@@ -494,14 +560,7 @@
      (four clamped lines, the step line and the opener measure 140px at 390px), or
      the resting card carries a scrollbar for 11px of overflow — a scroll affordance
      for content the clamp has already folded away. */
-  .dock-card
-    > :where(
-      .approval-body,
-      .elicitation-body,
-      .run-input-body,
-      .user-input-body,
-      .user-input-options
-    ) {
+  .dock-card > :where(.approval-body, .elicitation-body, .dock-ask-body, .user-input-options) {
     max-block-size: 10rem;
   }
 }
@@ -686,8 +745,7 @@
    `.ev-in-more`/`.ev-r-more` (31-exec-view.css), because every one is the same
    control: a text button that opens a clamp. Aligned left with the message rather than stretched across the
    row. */
-.run-input-more,
-.user-input-more {
+.dock-ask-more {
   align-self: flex-start;
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
@@ -699,13 +757,11 @@
   text-underline-offset: 2px;
 }
 
-.run-input-more:hover,
-.user-input-more:hover {
+.dock-ask-more:hover {
   color: var(--c-accent);
 }
 
-.run-input-more:focus-visible,
-.user-input-more:focus-visible {
+.dock-ask-more:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }

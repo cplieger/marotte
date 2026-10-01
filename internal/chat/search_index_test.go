@@ -119,28 +119,133 @@ func TestQueryTrigrams_UnderThreeRunesDemandsNothing(t *testing.T) {
 	}
 }
 
-// Every write path drops the chat's entry, so text written after a query is found
-// by the next one: without the drop the stale filter would reject the new word
-// and the chat would silently stop being searchable for it.
-func TestSearchIndex_AWriteDropsTheEntryAndTheNextQueryFindsTheNewText(t *testing.T) {
+// An append extends the filter the last query built rather than dropping it, so
+// text written after a query is found by the next one without a rebuild: the
+// filter is the same object across the append, and a stale one would reject the
+// new word and the chat would silently stop being searchable for it. Every append
+// path extends: the turn_open's prompt, a text entry, and an entry filed between
+// turns.
+func TestSearchIndex_AnAppendExtendsTheFilterAndTheNextQueryFindsTheNewText(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
+	turn := openPromptTurn(t, s, id, "m-1")
+	if err := s.Append(t.Context(), id, entryOf(turn, "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "alpha bravo"})); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	closeTurn(t, s, id, turn, marotte.TurnOutcomeCompleted)
 
 	s.SearchAll(t.Context(), "alpha")
+	built, ok := s.index.lookup(id)
+	if !ok {
+		t.Fatal("the first query did not record the chat's filter")
+	}
+
+	if err := s.Append(t.Context(), id, entryOf(turn, "", "a2", marotte.EntryKindText, marotte.EntryText{Text: "zetaword"})); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, err := s.AppendBetweenTurns(t.Context(), id, entryOf("", "", "", marotte.EntryKindSteer, marotte.EntrySteer{
+		Text: "betweenword", Origin: marotte.SteerOriginUser, State: marotte.SteerStateRead,
+	})); err != nil {
+		t.Fatalf("AppendBetweenTurns: %v", err)
+	}
+	if _, err := s.OpenTurn(t.Context(), id, &TurnSpec{
+		Source: marotte.TurnOpenNamePrompt,
+		Prompt: &marotte.EntryPrompt{ID: "m-2", Text: "promptword"},
+	}, nil); err != nil {
+		t.Fatalf("OpenTurn: %v", err)
+	}
+
+	for _, query := range []string{"zetaword", "betweenword", "promptword"} {
+		if f, _ := s.index.lookup(id); f != built {
+			t.Fatalf("the filter is not the object the first query built: the append dropped or replaced it")
+		}
+		got := s.SearchAll(t.Context(), query)
+		if got.Matched != 1 || len(got.Matches) != 1 || got.Matches[0].ID != id {
+			t.Errorf("SearchAll(%q) after the append: Matched = %d, Matches = %+v, want the chat", query, got.Matched, got.Matches)
+		}
+	}
+}
+
+// A rewind's record makes the lines the filter indexed unreadable, so the filter is
+// dropped and the next query rebuilds it over what survived: the reverted turn's word
+// is no longer found, the kept turn's still is.
+func TestSearchIndex_ARevertDropsTheFilter(t *testing.T) {
+	s, _ := newTestStore(t)
+	const id = "c-aaaaaaaa"
+	first := openPromptTurn(t, s, id, "m-1")
+	if err := s.Append(t.Context(), id, entryOf(first, "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "keptword"})); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	closeTurn(t, s, id, first, marotte.TurnOutcomeCompleted)
+	second := openPromptTurn(t, s, id, "m-2")
+	if err := s.Append(t.Context(), id, entryOf(second, "", "a2", marotte.EntryKindText, marotte.EntryText{Text: "cutword"})); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	closeTurn(t, s, id, second, marotte.TurnOutcomeCompleted)
+	s.SearchAll(t.Context(), "cutword")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
 
-	if err := s.AppendMessage(t.Context(), id, &marotte.Message{ID: "m2", Role: marotte.RoleUser, Content: "zetaword"}); err != nil {
-		t.Fatalf("AppendMessage: %v", err)
+	if _, _, err := s.Revert(t.Context(), id, second, ""); err != nil {
+		t.Fatalf("Revert: %v", err)
 	}
 	if _, ok := s.index.lookup(id); ok {
-		t.Error("the write left the chat's filter standing")
+		t.Error("the revert left the chat's filter standing")
 	}
-	got := s.SearchAll(t.Context(), "zetaword")
-	if got.Matched != 1 || len(got.Matches) != 1 || got.Matches[0].ID != id {
-		t.Errorf("SearchAll(zetaword) after the write: Matched = %d, Matches = %+v, want the chat", got.Matched, got.Matches)
+	if got := s.SearchAll(t.Context(), "cutword"); got.Matched != 0 {
+		t.Errorf("SearchAll(cutword) after the revert: Matched = %d, want 0", got.Matched)
+	}
+	if got := s.SearchAll(t.Context(), "keptword"); got.Matched != 1 {
+		t.Errorf("SearchAll(keptword) after the revert: Matched = %d, want 1", got.Matched)
+	}
+}
+
+// A merge rewrite replaces the whole log, so the filter is dropped and the next
+// query rebuilds it over the rewritten entries. Reconcile is the production path a
+// rewrite arrives through, and its swap calls the log's Rewrite directly.
+func TestSearchIndex_ARewriteDropsTheFilter(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rewrite func(t *testing.T, s *Store, id marotte.ChatID, entries []marotte.Entry)
+	}{
+		{name: "reconcile", rewrite: func(t *testing.T, s *Store, id marotte.ChatID, entries []marotte.Entry) {
+			if _, _, err := s.Reconcile(t.Context(), id, func(l *EntryLog, _ EntryHeader) (bool, error) {
+				return true, l.Rewrite(t.Context(), entries)
+			}); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			const id = "c-aaaaaaaa"
+			turn := openPromptTurn(t, s, id, "m-1")
+			if err := s.Append(t.Context(), id, entryOf(turn, "", "a1", marotte.EntryKindText, marotte.EntryText{Text: "oldword"})); err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+			closeTurn(t, s, id, turn, marotte.TurnOutcomeCompleted)
+			s.SearchAll(t.Context(), "oldword")
+			if _, ok := s.index.lookup(id); !ok {
+				t.Fatal("the first query did not record the chat's filter")
+			}
+
+			entries, err := s.All(t.Context(), id)
+			if err != nil {
+				t.Fatalf("All: %v", err)
+			}
+			entries[1].Payload = entryOf("", "", "", marotte.EntryKindText, marotte.EntryText{Text: "mergedword"}).Payload
+			tc.rewrite(t, s, id, entries)
+			if _, ok := s.index.lookup(id); ok {
+				t.Error("the rewrite left the chat's filter standing")
+			}
+			if got := s.SearchAll(t.Context(), "mergedword"); got.Matched != 1 {
+				t.Errorf("SearchAll(mergedword) after the rewrite: Matched = %d, want 1", got.Matched)
+			}
+			if got := s.SearchAll(t.Context(), "oldword"); got.Matched != 0 {
+				t.Errorf("SearchAll(oldword) after the rewrite: Matched = %d, want 0", got.Matched)
+			}
+		})
 	}
 }
 
@@ -149,7 +254,7 @@ func TestSearchIndex_AWriteDropsTheEntryAndTheNextQueryFindsTheNewText(t *testin
 func TestSearchIndex_ADeleteDropsTheEntry(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
+	seedChatEntries(t, s, id, "Notes", "alpha bravo")
 	s.SearchAll(t.Context(), "alpha")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
@@ -174,7 +279,8 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 	}
 	ids := []string{"c-aaaaaaaa", "c-bbbbbbbb", "c-cccccccc"}
 	for i, id := range ids {
-		seedChatFileAt(t, seeder, id, "needle here", time.Date(2026, 1, 1, 0, i, 0, 0, time.UTC))
+		c, entries := oneTurnChat(id, "seeded", "needle here", int64(1000*(i+1)))
+		seedChatDir(t, seeder, c, entries, time.Date(2026, 1, 1, 0, i, 0, 0, time.UTC))
 	}
 
 	s, err := NewStore(dir)
@@ -213,12 +319,12 @@ func TestSearchIndex_IsBuiltByTheFirstQueryNotAtOpen(t *testing.T) {
 func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
+	seedChatEntries(t, s, id, "Notes", "alpha bravo")
 	s.SearchAll(t.Context(), "alpha")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
-	if err := os.WriteFile(filepath.Join(s.dir, id+chatFileSuffix), []byte("{not a chat"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.dir, id, headerFileName), []byte("{not a chat"), 0o600); err != nil {
 		t.Fatalf("corrupt chat file: %v", err)
 	}
 
@@ -240,19 +346,19 @@ func TestSearchAll_ARejectingFilterAnswersWithoutARead(t *testing.T) {
 }
 
 // The filters are asked about the FREE text the needle scans with, never the raw
-// query: a scoped filter's `role:user` token and the whitespace the parser
+// query: a scoped filter's `turn:1` token and the whitespace the parser
 // collapses are not text any chat holds, and demanding their trigrams would prune
 // every chat a scoped or loosely-typed query should match.
 func TestSearchAll_AsksTheIndexAboutTheFreeTextOnly(t *testing.T) {
 	s, _ := newTestStore(t)
 	const id = "c-aaaaaaaa"
-	seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "we moved the cache to redis today")})
+	seedChatEntries(t, s, id, "Notes", "we moved the cache to redis today")
 	s.SearchAll(t.Context(), "unrelatedword")
 	if _, ok := s.index.lookup(id); !ok {
 		t.Fatal("the first query did not record the chat's filter")
 	}
 
-	for _, query := range []string{"redis role:user", "role:user", "redis   today", "  redis  "} {
+	for _, query := range []string{"redis turn:1", "turn:1", "redis   today", "  redis  "} {
 		got := s.SearchAll(t.Context(), query)
 		if got.Matched != 1 {
 			t.Errorf("SearchAll(%q) matched %d chats, want 1: the filter must be asked about the free text alone", query, got.Matched)
@@ -271,9 +377,9 @@ func TestChatFilter_MemoryIsSixtyFourKiBPerChat(t *testing.T) {
 	}
 
 	s, _ := newTestStore(t)
-	ids := []string{"c-aaaaaaaa", "c-bbbbbbbb", "c-cccccccc"}
+	ids := []marotte.ChatID{"c-aaaaaaaa", "c-bbbbbbbb", "c-cccccccc"}
 	for _, id := range ids {
-		seedChat(t, s, id, "Notes", []marotte.Message{msg("m1", marotte.RoleUser, "alpha bravo")})
+		seedChatEntries(t, s, id, "Notes", "alpha bravo")
 	}
 	s.SearchAll(t.Context(), "alpha")
 	s.index.mu.Lock()

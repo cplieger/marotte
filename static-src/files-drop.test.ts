@@ -143,10 +143,12 @@ describe("the composer's upload pre-flight", () => {
   });
 
   // The batch that used to pass pre-flight and then 413 as a whole: the server
-  // limit is on the multipart request, not on each file inside it.
+  // limit is on the multipart request, not on each file inside it. Sized from
+  // the const rather than a literal, so raising the cap cannot turn this into a
+  // batch that fits and stop exercising the total.
   it("drops the file that would take the request over the total", async () => {
-    const thirty = 30 * 1024 * 1024;
-    const args = await drop([sized("a.bin", thirty), sized("b.bin", thirty)]);
+    const each = Math.floor(MAX_UPLOAD_TOTAL_BYTES * 0.6);
+    const args = await drop([sized("a.bin", each), sized("b.bin", each)]);
     expect(Array.from(args?.files ?? [], (f) => f.name)).toEqual(["a.bin"]);
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("b.bin"));
   });

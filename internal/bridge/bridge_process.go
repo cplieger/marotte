@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/cplieger/marotte/internal/ids"
-	"github.com/cplieger/marotte/internal/procgroup"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/procgroup"
 )
 
 // Start launches the kiro-cli subprocess and either creates a new ACP
@@ -95,6 +95,11 @@ func (b *Bridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 		b.Stop()
 		return handshakeTimeout(err, phase, budget)
 	}
+	// Between initialize and the first session verb, deliberately: the ignore list
+	// is CONNECTION-scope in KAS and is pushed into every live session's policy
+	// engine, so sending it before any session exists means the first turn of the
+	// first session already enforces it.
+	b.applyIgnoreFiles(hctx, opts.IgnoreFiles)
 	var err error
 	if opts.SessionID != "" {
 		err = b.loadSession(hctx, opts)

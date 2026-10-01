@@ -2,10 +2,15 @@ package auth
 
 import (
 	"context"
+	"io/fs"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cplieger/marotte/internal/procout"
 )
 
 // countingReader is an identity read that records how often it ran and answers
@@ -351,5 +356,49 @@ func TestReadIdentity_SignedOutIsTheArmForAFailedExitWithAPayload(t *testing.T) 
 	}
 	if got.Reason != "" {
 		t.Errorf("Reason = %q, want empty: signed_out carries no reason", got.Reason)
+	}
+}
+
+// The fs.ErrNotExist arm answers for the CLI ITSELF, so an ENOENT naming any
+// other file falls through to the generic failure. os/exec opens os.DevNull for a
+// nil Cmd.Stdin, so a container whose /dev/null is gone fails Start with an
+// ENOENT naming /dev/null while the binary is present and executing — and the
+// wide arm reported "kiro-cli is not installed" for exactly that.
+func TestIdentityReadFailure_ENOENTNamingAnotherFileIsNotAMissingCLI(t *testing.T) {
+	h := NewHandler(fixedPath("/versions/2.21.4/kiro-cli"))
+	err := &fs.PathError{Op: "open", Path: os.DevNull, Err: fs.ErrNotExist}
+
+	got := h.identityReadFailure(t.Context(), err, procout.NewBuffer(stderrCap), 0)
+
+	if got.State != WhoamiUnavailable {
+		t.Errorf("State = %q, want %q", got.State, WhoamiUnavailable)
+	}
+	if want := identityText(reasonCLIFailed); got.Reason != want {
+		t.Errorf("Reason = %q, want %q for an ENOENT naming %s rather than the CLI",
+			got.Reason, want, os.DevNull)
+	}
+}
+
+func TestIdentityReadFailure_ENOENTNamingTheCLIIsAMissingCLI(t *testing.T) {
+	const cliPath = "/versions/2.21.4/kiro-cli"
+	h := NewHandler(fixedPath(cliPath))
+	err := &fs.PathError{Op: "fork/exec", Path: cliPath, Err: fs.ErrNotExist}
+
+	got := h.identityReadFailure(t.Context(), err, procout.NewBuffer(stderrCap), 0)
+
+	if want := identityText(reasonCLIMissing); got.Reason != want {
+		t.Errorf("Reason = %q, want %q for an ENOENT naming the CLI itself",
+			got.Reason, want)
+	}
+}
+
+func TestIdentityReadFailure_LookPathFailureIsAMissingCLI(t *testing.T) {
+	h := NewHandler(fixedPath("kiro-cli"))
+	err := &exec.Error{Name: "kiro-cli", Err: exec.ErrNotFound}
+
+	got := h.identityReadFailure(t.Context(), err, procout.NewBuffer(stderrCap), 0)
+
+	if want := identityText(reasonCLIMissing); got.Reason != want {
+		t.Errorf("Reason = %q, want %q for a PATH lookup failure", got.Reason, want)
 	}
 }

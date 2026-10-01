@@ -1,12 +1,8 @@
 package marotte
 
-// TurnOutcome is a turn's result, rendered as scannable colour on the timeline
-// rail and as the turn footer's tint.
-//
-// CROSS-LANGUAGE CONTRACT: `static-src/turns.ts` deriveOutcome implements the same
-// rule for the IN-FLIGHT turn, which no fetched summary can know. Both are pinned
-// against `internal/chat/testdata/turn_outcomes.json`, so changing the rule in one
-// language fails the other language's test.
+// TurnOutcome is a turn's result, carried on the turn_close entry and the header's
+// last_turn_outcome, rendered as scannable colour on the timeline rail and as the
+// turn footer's tint. Only the server concludes one; the client reads it.
 type TurnOutcome string
 
 // TurnOutcomeRunning and the following constants are the valid TurnOutcome values.
@@ -26,6 +22,10 @@ const (
 	// TurnOutcomeUnknown is an unmeasured stop reason, or a turn whose end never
 	// arrived. The raw string is kept beside it; no consumer may read it instead.
 	TurnOutcomeUnknown TurnOutcome = "unknown"
+	// TurnOutcomeEmpty is a turn KAS ended with end_turn and no content. Its own
+	// value because the empty-turn retry that follows is a second turn under the
+	// same prompt, and the first one's footer has to say why there is a second.
+	TurnOutcomeEmpty TurnOutcome = "empty"
 )
 
 // TurnSeverity is HOW BADLY a turn ended, derived from its TurnOutcome by
@@ -52,20 +52,21 @@ const (
 	TurnSeverityBroken TurnSeverity = "broken"
 )
 
-// SeverityOf grades a turn outcome. Total and MECE over the seven TurnOutcome
-// values with NO default arm, so an eighth outcome is a compile error here rather
+// SeverityOf grades a turn outcome. Total and MECE over the eight TurnOutcome
+// values with NO default arm, so a ninth outcome is a compile error here rather
 // than a value that reads clean at five surfaces.
 //
 // `interrupted` is BROKEN: a fault nobody chose stopped the turn. `unknown` is
 // STOPPED, never broken and never clean — an unmeasured stop reason says nothing
 // about success, and a mark falls back to ambiguous rather than to reassuring.
+// `empty` is STOPPED too: nothing malfunctioned and nothing was answered.
 func SeverityOf(o TurnOutcome) TurnSeverity {
 	switch o {
 	case TurnOutcomeRunning:
 		return TurnSeverityRunning
 	case TurnOutcomeCompleted:
 		return TurnSeverityClean
-	case TurnOutcomeCancelled, TurnOutcomeUnknown:
+	case TurnOutcomeCancelled, TurnOutcomeUnknown, TurnOutcomeEmpty:
 		return TurnSeverityStopped
 	case TurnOutcomeInterrupted, TurnOutcomeFailed, TurnOutcomeRefused:
 		return TurnSeverityBroken
@@ -92,29 +93,16 @@ func DefaultFailureReason(o TurnOutcome) string {
 		return "The turn ended for a reason marotte could not read."
 	// `cancelled` says nothing: the footer's own outcome word already reads
 	// "Cancelled" a row away, so a sentence here is one fact rendered twice.
-	case TurnOutcomeCancelled, TurnOutcomeCompleted, TurnOutcomeRunning:
+	// `empty` says nothing for the same reason.
+	case TurnOutcomeCancelled, TurnOutcomeCompleted, TurnOutcomeRunning, TurnOutcomeEmpty:
 		return ""
 	}
 	return ""
 }
 
-// StopMarkerKind is the transcript marker recording a turn that stopped without the
-// engine answering it. Two consumers in two packages — agent's closeAsInterrupted and
-// command's no-turn carrier — so the two buckets live here rather than twice.
-//
-// EventTurnOutcome is deliberately out of range: that is the CLEAN-close marker
-// recordTurnCarrier mints for a turn which emitted nothing, and it answers a different
-// question.
-func StopMarkerKind(o TurnOutcome) EventKind {
-	if o == TurnOutcomeCancelled {
-		return EventCancelled
-	}
-	return EventInterrupted
-}
-
 // TurnConclusion is one wire stop reason, read. A struct rather than four returns
-// because it travels as a unit into the turn_ended payload and the three persisted
-// fields, where a transposed pair is silent in both directions.
+// because it travels as a unit into the turn_close entry and the header's
+// last_turn_outcome, where a transposed pair is silent in both directions.
 type TurnConclusion struct {
 	Outcome TurnOutcome
 	// Reason is the user-facing account of an abnormal stop, in the words of
@@ -130,6 +118,9 @@ type TurnConclusion struct {
 	// Known is whether the mapping recognised RawStop. False is a cue to log once,
 	// never to treat the turn as failed.
 	Known bool
+	// EmptyIfSilent is the chat closer's ask to grade an end_turn that emitted nothing
+	// `empty`; a run node's completed keeps its status whatever the step said.
+	EmptyIfSilent bool
 }
 
 // ConcludeStopReason maps a wire stop reason onto the turn's outcome.
@@ -165,6 +156,15 @@ func ConcludeStopReason(stop StopReason) TurnConclusion {
 	return c
 }
 
+// WithContent narrows a conclusion that asked for it (EmptyIfSilent) to `empty`
+// when the turn emitted nothing. Read the accumulator's emitted flag after its seal.
+func (c TurnConclusion) WithContent(emitted bool) TurnConclusion {
+	if c.EmptyIfSilent && !emitted {
+		c.Outcome = TurnOutcomeEmpty
+	}
+	return c
+}
+
 // TurnSummary is one row of a chat's session-wide turn index: enough to draw a
 // rail marker and label it, and nothing else. Deliberately NOT the turn's content
 // — the rail spans the whole session while the transcript store holds a paginated
@@ -187,75 +187,3 @@ type TurnSummary struct {
 	// the user asked for it.
 	AgentInitiated bool `json:"agent_initiated,omitempty"`
 }
-
-// LiveTurn is the in-flight turn's accumulated assistant message, as the single-chat
-// GET carries it beside `messages`.
-//
-// It exists because the in-flight reply reaches the chat file only at turn end, so the
-// window that response serves has no carrier for it: `turn_open` states that a turn is
-// running, and this field is the ONE channel that carries the transcript describing it —
-// the SSE connect carries `busy_chats` and no turn content. A SIBLING field rather than
-// an extra element in `messages`, so `has_more`, `turn_offset`, `turn_segment_closed` and
-// `message_count` all keep meaning "what the file holds".
-//
-// A STRUCT mirroring buffer.Snapshot's own four fields — Message, ChunkSeq, BlockBase and
-// Truncated — so the one call site destructures that read and copies each fact BY NAME.
-// The positional form this replaced could hand two same-kind values over transposed, which
-// compiles and is silent in both directions.
-type LiveTurn struct {
-	// Message is the turn as accumulated so far, field-for-field the shape assembled at
-	// turn end so it renders byte-equivalently to the turn that replaces it.
-	Message Message `json:"message"`
-	// ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq). The
-	// client's dedup watermark: a chunk at or below it is already in here.
-	ChunkSeq int64 `json:"chunk_seq"`
-	// BlockBase is the ABSOLUTE index of Message.Blocks[0] in the turn's own block array.
-	// The cap keeps the TAIL of that array and re-indexes it from zero, while a live
-	// message_chunk keeps naming the absolute index (MessageChunkPayload.BlockIndex), so a
-	// client holding this window subtracts the base to place one.
-	//
-	// Unconditional like Truncated, and for the same reason: these are two facts about ONE
-	// transfer, so they cannot have different presence rules. A cut is the exceptional
-	// case, which makes a base of 0 the ordinary answer — and a POSITIVE one, stating that
-	// the window starts at 0.
-	//
-	// NEVER `omitempty`: wiregen emits a REQUIRED field without it, so an absent base
-	// cannot be read as 0, which is the misalignment this field exists to remove.
-	BlockBase int `json:"block_base"`
-	// Truncated reports that the cap withheld part of Message, so the payload carries
-	// the TAIL of the turn and the rest arrives with message_appended.
-	//
-	// A `true` is the EXCEPTIONAL case. The caps this field reports on (internal/agent's
-	// liveTurnGETCaps) are sized above the measured per-dimension maxima precisely so an
-	// ordinary turn is not cut, so what a `true` names is a turn past a ~10.1 MiB runaway
-	// ceiling rather than a routine tail.
-	//
-	// A `false` is therefore load-bearing rather than merely an absence of withholding: it
-	// is a positive statement that this MESSAGE is whole, and it RETRACTS a truncation
-	// marker an earlier GET set for the same message id — a later, wider read outranks the
-	// earlier one, so a reader holding a marker for this message id must drop it
-	// (static-src/store-load.ts adoptLiveTurn).
-	//
-	// NEVER `omitempty`: an absent marker must not be readable as "complete", which is
-	// what makes a capped payload admissible.
-	Truncated bool `json:"truncated"`
-}
-
-// TurnOpenState is the `turn_open` / `turn_workflow_step` pair on the single-chat GET:
-// whether a turn is open at all, and WHOSE it is. One value because the two must be read
-// under a single acquisition (openTurnFacts records that hazard) and because two adjacent
-// bools transpose silently. Zero value: no turn, nothing to own.
-type TurnOpenState struct {
-	// Open counts a workflow STEP's turn and a prompt-class admission reservation with
-	// no Turn minted yet. Openness alone, so its true licenses a reader to keep its
-	// per-turn markers rather than to render the chat as busy.
-	Open bool
-	// WorkflowStep means a run's step opened it, not the reader, so the chat's own agent
-	// is idle. Absent-means-this-chat's-own, matching TurnEndedPayload.WorkflowStep.
-	// Meaningless unless Open — "no turn" and "a run's turn" are not one axis.
-	WorkflowStep bool
-}
-
-// OwnTurn reports whether a turn of the CHAT'S OWN is in flight — the one spelling the
-// connect handshake's busy set also answers, so the two channels cannot disagree.
-func (t TurnOpenState) OwnTurn() bool { return t.Open && !t.WorkflowStep }

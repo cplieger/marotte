@@ -12,15 +12,17 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/rpcerr"
 	"github.com/cplieger/marotte/internal/subject"
-	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/workflow"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -141,6 +143,91 @@ func (rr *runRoutes) handleStepTranscript(w http.ResponseWriter, r *http.Request
 		return
 	}
 	webhttp.WriteJSON(w, out)
+}
+
+// handleTurnRange: GET /api/runs/{id}/turns/{turn}?after=<seq> → one step turn's tail
+// out of the run's own log, plus its open tails and its run_turn stamp. The twin of the
+// chat's range read, addressed by TURN rather than by step path because that is what a
+// `run_turn` stamp names: a parallel node holds several open turns in one log, so the
+// step's transcript cannot say which one moved. A turn the log does not hold is a 404,
+// the one outcome a caller can cause.
+func (rr *runRoutes) handleTurnRange(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		httpreply.BadRequest(w, "missing workflow id")
+		return
+	}
+	turn := r.PathValue("turn")
+	if turn == "" {
+		httpreply.BadRequest(w, "missing turn id")
+		return
+	}
+	from, ok := parseAfterSeq(r)
+	if !ok {
+		httpreply.BadRequest(w, "invalid after seq")
+		return
+	}
+	entries, open, stamps, found, err := rr.runs.TurnRange(r.Context(), id, turn, from)
+	if err != nil {
+		slog.Warn("run turn range failed", "workflow_id", logsafe.Field(id),
+			"turn", logsafe.Field(turn), "error", err)
+		httpreply.InternalError(w, errors.New("run turn unavailable"))
+		return
+	}
+	if !found {
+		httpreply.NotFound(w, "this run has no turn with that id")
+		return
+	}
+	webhttp.WriteJSON(w, map[string]any{
+		"entries":      nonNilRunEntries(entries),
+		"open_entries": nonNilOpenEntries(open),
+		"subject":      nonNilStamps(stamps),
+	})
+}
+
+// parseAfterSeq reads ?after= as the seq the caller already holds and translates it to
+// the log's INCLUSIVE lower bound: from = after + 1 when present, 0 when absent, which
+// asks for the WHOLE turn, turn_open included — no seq value can ask for that, since the
+// turn_open IS seq 0. The wire spelling stays exclusive, and the twin of this door is the
+// chat router's parseAfterParam. A value at the type's ceiling is refused, because the
+// translation would wrap back onto the whole turn.
+func parseAfterSeq(r *http.Request) (from uint64, ok bool) {
+	v := r.URL.Query().Get("after")
+	if v == "" {
+		return 0, true
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || n == math.MaxUint64 {
+		return 0, false
+	}
+	return n + 1, true
+}
+
+// The three lists travel as `[]` rather than null: the client decodes each with its own
+// array reader, and a null is a decode failure that loses the whole page.
+func nonNilRunEntries(e []marotte.Entry) []marotte.Entry {
+	if e == nil {
+		return []marotte.Entry{}
+	}
+	return e
+}
+
+func nonNilOpenEntries(o []marotte.OpenEntry) []marotte.OpenEntry {
+	if o == nil {
+		return []marotte.OpenEntry{}
+	}
+	return o
+}
+
+func nonNilStamps(s []*marotte.SubjectStamp) []*marotte.SubjectStamp {
+	if s == nil {
+		return []*marotte.SubjectStamp{}
+	}
+	return s
 }
 
 // handleLiveRuns: GET /api/runs/live → every live lease as `{workflow_id, chat_id,

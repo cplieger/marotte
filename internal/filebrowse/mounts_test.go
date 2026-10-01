@@ -124,45 +124,6 @@ func TestListFiles_Root_NestedGrantName(t *testing.T) {
 	}
 }
 
-// Cross-mount move is refused with an actionable 400 (a rename cannot
-// cross os.Root handles; it already failed with EXDEV across the
-// shipped container's volumes). Cross-mount copy works.
-func TestAction_CrossMount_MoveRefusedCopyWorks(t *testing.T) {
-	dirA := t.TempDir()
-	dirB := t.TempDir()
-	h, err := New(dirA, dirB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dirA, "src.txt"), []byte("payload"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	prefixA := strings.TrimPrefix(dirA, "/")
-	prefixB := strings.TrimPrefix(dirB, "/")
-
-	move := `{"action":"move","path":"` + prefixA + `/src.txt","dest":"` + prefixB + `/dst.txt"}`
-	rec := postReq(t, h, "/api/files/action", move)
-	if rec.Code != 400 {
-		t.Fatalf("cross-mount move status = %d, want 400; body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "use copy") {
-		t.Errorf("cross-mount move body = %s, want the use-copy hint", rec.Body.String())
-	}
-	if _, err := os.Stat(filepath.Join(dirA, "src.txt")); err != nil {
-		t.Errorf("source vanished after refused move: %v", err)
-	}
-
-	cp := `{"action":"copy","path":"` + prefixA + `/src.txt","dest":"` + prefixB + `/dst.txt"}`
-	rec = postReq(t, h, "/api/files/action", cp)
-	if rec.Code != 200 {
-		t.Fatalf("cross-mount copy status = %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	data, err := os.ReadFile(filepath.Join(dirB, "dst.txt"))
-	if err != nil || string(data) != "payload" {
-		t.Errorf("cross-mount copy dest = %q err=%v, want payload", data, err)
-	}
-}
-
 // An in-tree symlink crossing from one granted mount into another is
 // legal: the loc lands on the TARGET's mount, and the operation runs
 // through that mount's root.

@@ -46,12 +46,12 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
-    message_count: 0,
-    messages: [],
+    turns: new Map(),
+    turn_order: [],
+    turn_count: 0,
     has_more: false,
     thinking: false,
     working_label: "Thinking",
@@ -170,13 +170,12 @@ describe("chat.create", () => {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
     created_at: 0,
     updated_at: 0,
-    message_count: 0,
+    turn_count: 0,
   };
 
   it("sends create_chat with the op id and NO chat id", async () => {
@@ -283,13 +282,12 @@ describe("chat.resume_session", () => {
       context_pct: 0,
       context_size: 0,
       credits: 0,
-      turn_count: 0,
       last_turn_ms: 0,
       has_real_data: false,
     },
     created_at: 0,
     updated_at: 0,
-    message_count: 0,
+    turn_count: 0,
   };
 
   it("sends the session id, the title and an op id, and NO chat id", async () => {

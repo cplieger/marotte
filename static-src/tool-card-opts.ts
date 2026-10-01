@@ -69,16 +69,11 @@ export interface BuildToolCardOpts {
   detailsOpen?: boolean;
 }
 
-/** The `BuildToolCardOpts` a domain tool call describes.
- *
- *  Every field is optional on the wire and `exactOptionalPropertyTypes` refuses
- *  `undefined` as a value for an optional property, so each one is a guarded
- *  assignment rather than a spread — which is why this is worth having once
- *  instead of at each caller. TWO callers: the transcript's reconcile spec
- *  (messages-tools.ts) and the run tab's step blocks (run-step-blocks.ts), and a
- *  step runs exactly the same tools as a chat turn does. The copy that existed
- *  before this had already been transcribed once; a third would be where a field
- *  like `denial` or `diffs` quietly stops reaching one of the two surfaces. */
+/** The `BuildToolCardOpts` a domain tool call describes. Every field is optional on
+ *  the wire and `exactOptionalPropertyTypes` refuses `undefined` as a value for an
+ *  optional property, so each one is a guarded assignment rather than a spread, which
+ *  is why this lives once rather than at each caller. `chatID` defaults to `""`
+ *  because a card can be built for work no chat owns — a parentless run's step. */
 export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): BuildToolCardOpts {
   const opts: BuildToolCardOpts = {
     id: tc.id,

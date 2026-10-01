@@ -117,6 +117,32 @@ type Profile struct {
 	// against a wantRules boolean — editing that table is the moment to re-read the
 	// client text.
 	FileRules []Rule
+	// HonourAutoApprove says whether this rung lets an MCP server's own
+	// `auto_approve` list reach the agent. TRUE on trusted, unrestricted and
+	// custom.
+	//
+	// The list is a per-server standing grant: a tool named in it is meant to run
+	// with no permission request at all. That is a widening the SAME SIZE as a
+	// profile's own, authored in a different place — the MCP panel — by a user who
+	// may never have opened the picker. So the restrictive rungs SUSPEND it rather
+	// than honour it: a chip cannot be a hole in the rung the picker says is in
+	// force, and the whole defect being fixed is a grant nobody could see.
+	//
+	// Trusted honours it because that rung already grants ordinary development
+	// commands, and custom honours it because custom means the user's own
+	// declarations ARE the policy.
+	//
+	// UNRESTRICTED needs no code to WIDEN it — `all: allow` already covers the
+	// `mcp` capability, so rendering the list changes nothing there — and it still
+	// carries the flag TRUE, because the flag is also what the panel reads to
+	// decide whether to say "suspended". False on the loosest rung would render a
+	// suspension notice on the one rung that suspends nothing, which is the same
+	// class of untruth as the grant this fix removes.
+	//
+	// Nothing infers a grant from an MCP tool's own annotations. A server declares
+	// its own tools' annotations, so reading one as consent would let the thing
+	// being authorised author its own authorisation.
+	HonourAutoApprove bool
 }
 
 // profiles is the ordered ladder, loosest last. Order is part of the contract:
@@ -153,6 +179,7 @@ var profiles = []Profile{
 			PresetReadWorkspace, PresetReadOnlyShell, PresetReadAll,
 			PresetEditWorkspace, PresetDevShell,
 		},
+		HonourAutoApprove: true,
 	},
 	{
 		// capability: all. Not silence: the kiro scope still denies writes under
@@ -168,13 +195,15 @@ var profiles = []Profile{
 		// review upstream maintains (see the package comment) — spelling those to
 		// disk would freeze upstream's judgement at today's bundle and make it
 		// marotte's to keep current.
-		ID:        ProfileUnrestricted,
-		Presets:   []string{PresetAllowAll},
-		FileRules: relaxRules(),
+		ID:                ProfileUnrestricted,
+		Presets:           []string{PresetAllowAll},
+		FileRules:         relaxRules(),
+		HonourAutoApprove: true,
 	},
 	{
-		ID:      ProfileCustom,
-		Presets: nil,
+		ID:                ProfileCustom,
+		Presets:           nil,
+		HonourAutoApprove: true,
 	},
 }
 
@@ -295,3 +324,22 @@ func ProfileFor(id string) (Profile, bool) {
 // rather than Custom: it reproduces the floor marotte ships today, where Custom
 // would silently remove the fs_read floor from an instance that never chose to.
 const DefaultProfile = ProfileGuarded
+
+// HonoursAutoApprove answers whether the rung named by id lets an MCP server's
+// own `auto_approve` list reach the agent. See [Profile.HonourAutoApprove] for
+// which rungs do and why.
+//
+// An UNKNOWN or empty id resolves to [DefaultProfile] rather than to false, which
+// is the same fallback [ProfileFor]'s settings-reading caller applies — the answer
+// has to agree with the posture actually in force, and a typo that dropped the
+// fs_read floor to guarded while reporting a bespoke auto-approve answer would be
+// two readers disagreeing about one setting. It lands on false either way today,
+// because guarded is the default rung; stating the resolution rather than the
+// answer is what keeps that true if the default ever moves.
+func HonoursAutoApprove(id string) bool {
+	p, ok := ProfileFor(id)
+	if !ok {
+		p, _ = ProfileFor(DefaultProfile)
+	}
+	return p.HonourAutoApprove
+}

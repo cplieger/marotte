@@ -26,21 +26,13 @@ const (
 type sharedBridge struct {
 	bridge ACPBridge
 
-	// Unresponsive-cancel tracking. session/cancel is a NOTIFICATION, so
-	// nothing acks it: the turn ends only when KAS answers the pending
-	// session/prompt with a cancelled stop reason. If it never does, the
-	// prompt Call blocks forever, the deferred ReleaseAfterPrompt never
-	// runs, and the chat is stuck in bridgePrompting refusing new prompts.
-	//
-	// promptCancel is the in-flight prompt context's cancel func; tripping
-	// it makes Call return ctx.Err() and lets the EXISTING prompt-failure
-	// path finalize the turn. turnGen guards against tripping a LATER
-	// turn: an unacked cancel whose grace expires after the turn ended and
-	// a new one started must not touch the new one.
-	//
-	// A CancelCauseFunc because the failure site cannot otherwise tell an
-	// expired grace from any other cancellation of that context: ctx.Err()
-	// reads context.Canceled for all of them.
+	// promptCancel is the in-flight prompt context's cancel func. session/cancel
+	// is a NOTIFICATION nothing acks, so a KAS that never answers the pending
+	// session/prompt would block the Call forever; tripping this lets the existing
+	// prompt-failure path finalize the turn. turnGen keeps an expired grace from
+	// tripping a LATER turn, and a CancelCauseFunc is what lets the failure site
+	// tell an expired grace from any other cancellation (ctx.Err() reads
+	// context.Canceled for all of them).
 	promptCancel context.CancelCauseFunc
 	cancelTimer  *time.Timer
 
@@ -86,13 +78,13 @@ func (sb *sharedBridge) startedPastSpawn() bool {
 	return sb.state != bridgeStarting
 }
 
-// setState publishes a lifecycle transition. The spawn used to write the field
+// setIdle publishes the idle transition. The spawn used to write the field
 // bare — safe while nothing could hold the bridge before OpenBridge returned —
 // but the admission arm reads liveness DURING the spawn, so the write takes
 // the lock like every other state transition.
-func (sb *sharedBridge) setState(s bridgeState) {
+func (sb *sharedBridge) setIdle() {
 	sb.mu.Lock()
-	sb.state = s
+	sb.state = bridgeIdle
 	sb.mu.Unlock()
 }
 
@@ -211,7 +203,7 @@ func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelCauseFu
 // returns and the ordinary failure path finalizes the turn. Reports whether
 // there was a call to trip.
 //
-// It no longer records WHY: the cause lives on the turn record, epoch-scoped and
+// It records no WHY: the cause lives on the turn record, scoped to the turn and
 // first-wins, so this answers only the bridge's half of an interruption. Refuses
 // when the chat is not prompting or no prompt context is registered.
 func (sb *sharedBridge) cancelPromptCall() bool {

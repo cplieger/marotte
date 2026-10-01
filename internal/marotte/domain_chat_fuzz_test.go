@@ -52,16 +52,16 @@ func FuzzChatHeaderConsistency(f *testing.F) {
 			t.Fatalf("CompactionWatermark mismatch")
 		}
 
-		// Invariant 2: MessageCount must reflect the actual Messages slice length.
-		if header.MessageCount != len(chat.Messages) {
-			t.Fatalf("MessageCount = %d, want %d (len(Messages))",
-				header.MessageCount, len(chat.Messages))
+		// Invariant 2: the two log counters ride the header as stored.
+		if header.TurnCount != chat.TurnCount || header.LastTurnOutcome != chat.LastTurnOutcome {
+			t.Fatalf("TurnCount/LastTurnOutcome = %d/%q, want %d/%q",
+				header.TurnCount, header.LastTurnOutcome, chat.TurnCount, chat.LastTurnOutcome)
 		}
 
 		// Invariant 3: Usage must be copied by value.
 		if header.Usage.ContextPct != chat.Usage.ContextPct ||
 			header.Usage.Credits != chat.Usage.Credits ||
-			header.Usage.TurnCount != chat.Usage.TurnCount {
+			header.Usage.LastTurnMs != chat.Usage.LastTurnMs {
 			t.Fatalf("Usage mismatch between header and chat")
 		}
 	})

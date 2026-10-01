@@ -22,11 +22,23 @@ vi.mock("./editor-openers.js", () => ({
     calls.push(`diff:${p}:${oldText}>${newText}`);
   },
 }));
+// Every name `navigate.ts` imports has to be here, whether a case drives it or
+// not: Browser Mode links the module for real, so one missing export fails the
+// whole file's import rather than the case that would have called it. The five
+// beyond `openGitView` are `openSpec`'s, and each answers the EMPTY value for its
+// type rather than a plausible one, so nothing here can make a case pass for a
+// reason production does not supply. `openSpec` itself is covered in
+// spec-view.test.ts, against that file's own tab store.
 vi.mock("./tabs.js", () => ({
   openGitView: (tab: string) => {
     calls.push(`gitview:${tab}`);
     return Promise.resolve();
   },
+  activateTab: () => undefined,
+  openTab: () => Promise.resolve("failed"),
+  parentChatRef: () => "",
+  setTabParent: () => Promise.resolve(false),
+  tabIdFor: () => "",
 }));
 vi.mock("./git-tabs.js", () => ({
   setGitTab: (tab: string) => {

@@ -38,12 +38,24 @@ vi.mock("./run-view.js", () => ({ openRunView: vi.fn() }));
 // Same shape and same reason for the delegate tab: reached by a lazy `await import`, so
 // replacing it keeps `exec-view/**` out of this suite.
 vi.mock("./subagent-view.js", () => ({ openSubagentView: vi.fn() }));
-// The renderer's per-block map, which is how a hit's element is resolved now: this
-// file builds transcript DOM by hand, so no render would ever register one. A
-// REPLACING factory rather than a spy — the real dispatcher's graph reaches
+// The renderer's PROSE-RUN offset table (design 8.5), the one export find-in-chat
+// reaches here: a hit's ELEMENT is resolved from the card's own `data-entry-id` /
+// `data-entries` stamps now, so no map stands between the fixtures and the module.
+// A REPLACING factory rather than a spy — the real dispatcher's graph reaches
 // `preserveReadingPosition` on the `./scroll.js` stubbed above, so loading it fails
 // linking for the whole file.
-vi.mock("./messages-blocks.js", () => ({ blockElement: vi.fn() }));
+//
+// STAGED per case, never a constant: `undefined` is the default and is the answer for
+// an entry no run holds, so `wantFraction` falls back to the hit's own segment
+// fraction, and a case staging a real `{offset, total}` is what reaches its other arm.
+// Pinned to a constant, that arm was unreachable and a mutant deleting it left the
+// suite green.
+const { runOffsetOf } = vi.hoisted(() => ({
+  runOffsetOf: vi.fn<
+    (turnID: string, entryID: string) => { offset: number; total: number } | undefined
+  >(() => undefined),
+}));
+vi.mock("./messages-blocks.js", () => ({ runOffsetOf }));
 
 import { FindEngine } from "./find-engine.js";
 import type * as ModFindInChat from "./find-in-chat.js";
@@ -649,6 +661,7 @@ describe("Ctrl-F overlay", () => {
 
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import type { Session } from "./types.js";
+import { makeSession } from "./__test-helpers__/model.js";
 import type { Tally } from "./textsearch/copy.js";
 import type { Hit, SearchResult } from "./wire/types.gen.js";
 import type * as ModChatSearch from "./chat-search.js";
@@ -657,7 +670,6 @@ import type * as ModStoreLoad from "./store-load.js";
 import type * as ModScroll from "./scroll.js";
 import type * as ModRunView from "./run-view.js";
 import type * as ModSubagentView from "./subagent-view.js";
-import type * as ModBlocks from "./messages-blocks.js";
 
 describe("server-hit navigation", () => {
   let onHotkey: (e: KeyboardEvent) => void;
@@ -669,7 +681,6 @@ describe("server-hit navigation", () => {
   let scroll: typeof ModScroll;
   let runView: typeof ModRunView;
   let subagentView: typeof ModSubagentView;
-  let blocks: typeof ModBlocks;
   /** The tab-change emitter from THIS test's module graph, for the cross-tab
    *  jump's return trip. A top-level import would write to a different bus
    *  instance than the freshly-imported module subscribed to. */
@@ -699,16 +710,6 @@ describe("server-hit navigation", () => {
     scroll = await import("./scroll.js");
     runView = await import("./run-view.js");
     subagentView = await import("./subagent-view.js");
-    blocks = await import("./messages-blocks.js");
-    // The renderer's map, stood in for by the fixtures' own stamps: each carries the
-    // two coordinates `stampBlock` writes, read DOCUMENT-WIDE because the real map is
-    // keyed by (message, index), not by the row. Per call: a reveal mounts DOM later.
-    vi.mocked(blocks.blockElement).mockImplementation(
-      (messageID, blockIndex) =>
-        document.querySelector<HTMLElement>(
-          `[data-block-msg="${messageID}"][data-block-index="${String(blockIndex)}"]`,
-        ) ?? undefined,
-    );
     const bus = await import("./bus.js");
     switchTab = (): void => {
       bus.emitBus(bus.BUS_TAB_CHANGED, { to: "__files__", kind: "files" });
@@ -735,12 +736,13 @@ describe("server-hit navigation", () => {
     return document.getElementById("chat-find-note")?.textContent ?? "";
   }
 
+  /** A hit on design 8.9's key: `[turn_id, entry_id, segment_kind, offset]`, with the
+   *  lane absent, which is the chat's own agent and the only phase-1 destination. */
   function serverHit(over: Partial<Hit> = {}): Hit {
     return {
-      message_id: "a1",
-      turn_message_id: "u1",
+      turn_id: "u1",
+      entry_id: "e1",
       excerpt: "…retry…",
-      role: "assistant",
       segment_kind: "content",
       turn: 1,
       offset: 0,
@@ -749,13 +751,29 @@ describe("server-hit navigation", () => {
     };
   }
 
-  /** Stage a chat the navigation can read: an ACTIVE id and a live session
-   *  object (tests mutate it to simulate pagination). */
-  function stageChat(messages: unknown[], hasMore = false): Session {
-    const session = { id: "c1", messages, has_more: hasMore } as unknown as Session;
+  /** Stage a chat the navigation can read: an ACTIVE id and a live session whose
+   *  RESIDENT WINDOW is a set of turn ids (tests mutate it to simulate pagination).
+   *
+   *  A turn id is all residency asks for — `ensureHitResident` reads
+   *  `turns.has(hit.turn_id)` and pages from `turn_order[0]` — so a fixture turn's
+   *  entries stay empty and the DOM the walk reads is `mountTurnCard`'s. */
+  function stageChat(turnIDs: string[], hasMore = false): Session {
+    const session: Session = {
+      ...makeSession({ id: "c1", has_more: hasMore }),
+      turns: new Map(turnIDs.map((id) => [id, { entries: [], openEntries: new Map() }])),
+      turn_order: [...turnIDs],
+      turn_count: turnIDs.length,
+    };
     vi.mocked(store.getActiveId).mockReturnValue("c1");
     vi.mocked(store.getActive).mockReturnValue(session);
     return session;
+  }
+
+  /** Page an OLDER turn into a staged session, the way `loadMessages` does: prepended
+   *  to `turn_order` so the cursor `?before=` takes moves. */
+  function prependTurn(session: Session, turnID: string): void {
+    session.turns.set(turnID, { entries: [], openEntries: new Map() });
+    session.turn_order.unshift(turnID);
   }
 
   /** Arm the search half: the server answer as the ENVELOPE the overlay adopts
@@ -797,22 +815,9 @@ describe("server-hit navigation", () => {
     return card;
   }
 
-  /** Wire a fixture delegate box through the REAL disclosure primitive, the
-   *  way messages-blocks.ts does: collapsed, `aria-hidden` + `inert` on the
-   *  body, opened by activating the header. */
-  function wireSubagentBox(box: HTMLElement): void {
-    const header = box.querySelector<HTMLElement>(".subagent-header");
-    const body = box.querySelector<HTMLElement>(".subagent-body");
-    if (header === null || body === null) {
-      throw new Error("fixture box missing header/body");
-    }
-    createDisclosure(header, body, {
-      open: false,
-      onToggle: (open) => {
-        box.classList.toggle("collapsed", !open);
-      },
-    });
-  }
+  // A delegate-box wiring helper stood here. Nothing needs one: a delegate's entries
+  // are rendered on its own page, so a hit in that lane opens the page rather than a
+  // collapsed body in this transcript.
 
   /** Wire a fixture tool card through the REAL disclosure primitive, the way
    *  tool-card.ts wires it: the output region collapsed, so it carries the
@@ -874,7 +879,7 @@ describe("server-hit navigation", () => {
   // when `matched` exceeds it; no flag stands in for that comparison.
 
   it("reports a cut answer as the whole-chat count and the note's sentence", async () => {
-    stageChat([{ id: "u1", role: "user", content: "q" }]);
+    stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
     // Nothing marked locally, so the counter is the empty state the whole-chat
@@ -886,7 +891,7 @@ describe("server-hit navigation", () => {
   it("stays silent on an answer the list holds whole", async () => {
     // A sentence restating the counter is noise: with every occurrence in the
     // list, the counter already says everything the note could.
-    stageChat([{ id: "u1", role: "user", content: "q" }]);
+    stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24 });
     await openAndSearch("retry");
     expect(countText()).toBe("1 matched, not shown here");
@@ -897,14 +902,14 @@ describe("server-hit navigation", () => {
     // `truncated` says the scan did not read everything; a cut is a different fact,
     // carried by `matched`. One list of one hit, matched once, is whole however far
     // the scan reached, so the note has no cut to report.
-    stageChat([{ id: "u1", role: "user", content: "q" }]);
+    stageChat(["u1"]);
     stageHits([serverHit()], { truncated: true });
     await openAndSearch("retry");
     expect(noteText()).toBe("");
   });
 
   it("says the answer was cut, and unsays it when the next one is not", async () => {
-    stageChat([{ id: "u1", role: "user", content: "q" }]);
+    stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
     expect(noteText()).toBe("1 of 347 matches shown; 24 messages scanned");
@@ -920,7 +925,7 @@ describe("server-hit navigation", () => {
     // Refining is exactly the gesture a cut invites, so the sentence has to go
     // even on the path that renders nothing else — which is why the note is set
     // ABOVE render's early return rather than after it.
-    stageChat([{ id: "u1", role: "user", content: "q" }]);
+    stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
     expect(noteText()).not.toBe("");
@@ -932,42 +937,36 @@ describe("server-hit navigation", () => {
     });
   });
 
-  it("resolves the block a hit names when the mounted window starts above index 0", async () => {
-    // The window holds 2..7 of eight blocks, which is what per-block residency makes
-    // ordinary. A same-kind ORDINAL counted from index 0 in the STORE names the FIFTH
-    // mounted trace for a hit in the third, and every consumer downstream then opens,
-    // walks, marks and reports success on the wrong block.
+  it("resolves the entry a hit names when the mounted window starts above the turn's first", async () => {
+    // The window holds entries 2..7 of eight, which is what per-entry residency makes
+    // ordinary. An ORDINAL counted from the turn's first entry names the FIFTH mounted
+    // trace for a hit in the third, and every consumer downstream then opens, walks,
+    // marks and reports success on the wrong entry — which is why the key is the
+    // entry's own ID and never a position (design 8.9).
     const traces = Array.from(
       { length: 8 },
       (_, i) => `paragraph ${String(i)} weighs the retry budget`,
     );
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: traces.map((t) => ({ type: "thinking", thinking: t })),
-      },
-    ]);
+    stageChat(["u1"]);
     const mounted = [2, 3, 4, 5, 6, 7];
     mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row"><div class="assistant-blocks">${mounted
+      `<div data-reconcile-key="a1" class="msg-row">${mounted
         .map(
           (i) =>
-            `<details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="${String(i)}">
+            `<details class="reasoning-block msg-reasoning" data-entry-id="e${String(i)}">
                <summary class="reasoning-summary">Reasoning</summary>
                <blockquote class="reasoning-body">${traces[i] ?? ""}</blockquote>
              </details>`,
         )
-        .join("")}</div></div>`,
+        .join("")}</div>`,
     );
     const want = traces[4] ?? "";
     stageHits([
       serverHit({
         excerpt: want,
         segment_kind: "reasoning",
-        block_index: 4,
+        entry_id: "e4",
         offset: want.indexOf("retry"),
         segment_len: want.length,
       }),
@@ -983,43 +982,31 @@ describe("server-hit navigation", () => {
       expect(document.querySelector("mark.find-hit-current")).not.toBeNull();
     });
     const current = document.querySelector("mark.find-hit-current");
-    expect(current?.closest("[data-block-index]")?.getAttribute("data-block-index")).toBe("4");
+    expect(current?.closest("[data-entry-id]")?.getAttribute("data-entry-id")).toBe("e4");
     // And the one it opened is the one it marked: no other trace was touched.
     expect(document.querySelectorAll("details.reasoning-block[open]")).toHaveLength(1);
   });
 
-  it("declines an element the map still names after it left the document", async () => {
-    // A registry can answer with a node the document no longer holds, where the subtree
-    // query this replaced could not. `navigateToHit` exits on a disconnected target with
-    // nothing selected and nothing said, so declining HERE is what makes the message-row
-    // fallback happen at all.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "text", text: "see the retry backoff here" }],
-      },
-    ]);
+  it("selects the entry and says so when its subtree is not rendered", async () => {
+    // The hit's entry IS mounted and the walker still cannot mark it: the subtree is
+    // `content-visibility: hidden`, so `checkVisibility` prunes it and no mark can be
+    // placed either way. What the reader gets instead is the entry's own element,
+    // flashed, and the sentence saying why.
+    stageChat(["u1"]);
     const row = mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks" style="content-visibility: hidden">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
-             <div class="message assistant">see the retry backoff here</div>
-           </div>
+      `<div data-reconcile-key="a1" class="msg-row" style="content-visibility: hidden">
+         <div class="msg-row" data-entry-id="e1">
+           <div class="message assistant">see the retry backoff here</div>
          </div>
        </div>`,
-    ).querySelector('[data-reconcile-key="a1"]') as HTMLElement;
-    // What a stale entry looks like: the block's element, built and never inserted.
-    const gone = document.createElement("div");
-    gone.setAttribute("data-block-index", "0");
-    gone.innerHTML = `<div class="message assistant">see the retry backoff here</div>`;
-    vi.mocked(blocks.blockElement).mockReturnValue(gone);
+      // The BUBBLE, not the row: a prose run is stamped on its row (that is what a
+      // window drop removes) and `entryElement` answers with the `.message` inside it,
+      // which is what every consumer downstream flashes, walks and jumps to.
+    ).querySelector('[data-entry-id="e1"] > .message') as HTMLElement;
     stageHits([
       serverHit({
         excerpt: "see the retry backoff here",
-        block_index: 0,
         offset: 8,
         segment_len: 26,
       }),
@@ -1038,35 +1025,22 @@ describe("server-hit navigation", () => {
   });
 
   it("counts the server's hits with the no-results skin absent when the DOM holds none", async () => {
-    // The matches are all in blocks the window does not hold, so the walker can mark
+    // The matches are all in entries the window does not hold, so the walker can mark
     // nothing. Painting the box as a miss would contradict the count beside it and
     // read as data loss — the reason enumeration moved server-side at all.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [
-          { type: "text", text: "the retry backoff" },
-          { type: "text", text: "retry again" },
-          { type: "text", text: "and retry once more" },
-        ],
-      },
-    ]);
-    // A body holding the LAST block only: the two the hits name are unmounted.
+    stageChat(["u1"]);
+    // A body holding the LAST entry only: the two the hits name are unmounted.
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="2">
+           <div class="msg-row" data-entry-id="e3">
              <div class="message assistant">and once more</div>
            </div>
-         </div>
        </div>`,
     );
     stageHits([
-      serverHit({ excerpt: "the retry backoff", block_index: 0, offset: 4, segment_len: 17 }),
-      serverHit({ excerpt: "retry again", block_index: 1, offset: 0, segment_len: 11 }),
+      serverHit({ excerpt: "the retry backoff", offset: 4, segment_len: 17 }),
+      serverHit({ excerpt: "retry again", entry_id: "e2", offset: 0, segment_len: 11 }),
     ]);
 
     await openAndSearch("retry");
@@ -1077,33 +1051,23 @@ describe("server-hit navigation", () => {
     );
   });
 
-  it("selects the block and says so for a syntax-only hit (match not in rendered text)", async () => {
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "text", text: "see [docs](https://retry.example) for more" }],
-      },
-    ]);
+  it("selects the entry and says so for a syntax-only hit (match not in rendered text)", async () => {
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
-      // A TOP-LEVEL text block is stamped on its avatar row, not on the bubble, so
+      // A prose RUN is stamped on its row, not on the bubble, so
       // this shape is what the renderer registers and what the normalization has to
       // step through to reach the element the flash belongs on.
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">see docs for more</div>
            </div>
-         </div>
        </div>`,
     );
     // The hit is the link TARGET: real markdown, never rendered as text.
     stageHits([
       serverHit({
         excerpt: "see [docs](https://retry.example) for more",
-        block_index: 0,
         offset: 19,
         segment_len: 43,
       }),
@@ -1122,6 +1086,88 @@ describe("server-hit navigation", () => {
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
   });
 
+  it("resolves a hit on a prose RUN's later entry through the run's data-entries stamp", async () => {
+    // Design 8.5 mounts consecutive `text` entries of one lane as ONE element with ONE
+    // parser, so a run carries TWO stamps: `data-entry-id` is its FIRST member's and
+    // `data-entries` is every member's (`writeRunEntries`, messages-blocks.ts). A hit on
+    // any member after the first is reachable only through the second stamp, and that is
+    // the ORDINARY shape rather than an edge — a seal inside a run renders nothing, so a
+    // turn whose reply arrived in three entries is one element with three ids on it.
+    stageChat(["u1"]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+           <div class="msg-row" data-entry-id="e1" data-entries="e1 e2 e3">
+             <div class="message assistant">first retry paragraph. then the retry backoff. and once more.</div>
+           </div>
+       </div>`,
+    );
+    // The THIRD member's own segment, offset inside IT: a hit the first stamp cannot
+    // answer for, and the same shape the server sends for any resumed prose run.
+    stageHits([
+      serverHit({ entry_id: "e3", excerpt: "then the retry backoff.", offset: 9, segment_len: 23 }),
+    ]);
+
+    // `openAndAdopt`, not `openAndSearch`: the marks are resident, so the two figures
+    // agree and the counter prints no "in chat" clause for that helper to wait on.
+    await openAndAdopt("retry");
+    typeAndEnter("retry");
+
+    // TWO occurrences in the run and the hit names the SECOND, which is what makes this
+    // case falsifiable: `FindEngine.search` marks its first match current on its own, so
+    // an assertion that ANY mark is current — or that the counter reads its DOM grammar —
+    // holds before the press and proves nothing. Selecting mark 1 is the landing's own
+    // work: `pickNearestMark` ranks equal-similarity candidates by relative position, and
+    // it is reached only once `entryElement` has resolved the run through `data-entries`.
+    // With that stamp unread the entry resolves to nothing, the press answers "could not
+    // be shown", and the current mark stays where the walk left it.
+    const bubble = document.querySelector(".message.assistant") as HTMLElement;
+    await vi.waitFor(() => {
+      expect(marks(bubble)[1]?.classList.contains("find-hit-current")).toBe(true);
+    });
+    expect(marks(bubble)[0]?.classList.contains("find-hit-current")).toBe(false);
+    expect(countText()).toBe("1 of 1");
+  });
+
+  it("ranks a hit inside a prose RUN through the run's own offset table, not its segment", async () => {
+    // The OTHER arm of `wantFraction`: a member of a prose RUN is one of several entries
+    // in ONE element, so its own offset means nothing against the text the walk measures
+    // until `runOffsetOf` re-bases it over the whole run.
+    //
+    // The fixture makes the two arms disagree — `e2`'s match is at offset 0 of its own
+    // segment (fraction 0, mark 0) and at rune 12 of a 24-rune run (fraction 0.5, mark 1)
+    // — and both marks carry the same surrounding text, so similarity ties and position
+    // alone decides.
+    stageChat(["u1"]);
+    mountTurnCard(
+      "u1",
+      `<div data-reconcile-key="a1" class="msg-row">
+           <div class="msg-row" data-entry-id="e1" data-entries="e1 e2">
+             <div class="message assistant">retry once. retry twice.</div>
+           </div>
+       </div>`,
+    );
+    // What the renderer's table answers for the run's SECOND member: eleven runes of
+    // `e1`'s own text plus its separator behind it, in a run of twenty-four.
+    runOffsetOf.mockImplementation((_turnID, entryID) =>
+      entryID === "e2" ? { offset: 12, total: 24 } : undefined,
+    );
+    stageHits([serverHit({ entry_id: "e2", excerpt: "retry twice.", offset: 0, segment_len: 12 })]);
+
+    await openAndAdopt("retry");
+    typeAndEnter("retry");
+
+    const bubble = document.querySelector(".message.assistant") as HTMLElement;
+    await vi.waitFor(() => {
+      expect(marks(bubble)[1]?.classList.contains("find-hit-current")).toBe(true);
+    });
+    // The falsifying half: `FindEngine.search` leaves mark 0 current on its own, so with
+    // the run arm gone the segment fraction of 0 re-selects it and this assertion fails.
+    expect(marks(bubble)[0]?.classList.contains("find-hit-current")).toBe(false);
+    expect(runOffsetOf).toHaveBeenCalledWith("u1", "e2");
+    expect(countText()).toBe("1 of 1");
+  });
+
   it("walks again once the jump has rendered a skipped card, rather than reporting a miss", async () => {
     // The transcript's cards carry `content-visibility: auto` (css/14-tools.css),
     // so an OFF-SCREEN card holds no walkable text at all — the walker prunes at
@@ -1131,14 +1177,7 @@ describe("server-hit navigation", () => {
     //
     // Real containment and a real off-screen box: Chromium decides relevancy from
     // the viewport, which is what makes the first walk genuinely blind here.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "text", text: "see the retry backoff here" }],
-      },
-    ]);
+    stageChat(["u1"]);
     const wrap = document.getElementById("messages-wrap") as HTMLElement;
     wrap.style.cssText = "height: 400px; overflow-y: auto";
     const spacer = document.createElement("div");
@@ -1147,17 +1186,14 @@ describe("server-hit navigation", () => {
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row" style="content-visibility: auto; contain-intrinsic-size: auto 2.5rem">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">see the retry backoff here</div>
            </div>
-         </div>
        </div>`,
     );
     stageHits([
       serverHit({
         excerpt: "see the retry backoff here",
-        block_index: 0,
         offset: 8,
         segment_len: 26,
       }),
@@ -1166,8 +1202,8 @@ describe("server-hit navigation", () => {
     // relevancy is decided in a rendering update, so it holds once the browser has
     // laid this fixture out.
     await vi.waitFor(() => {
-      const blocks = document.querySelector<HTMLElement>(".assistant-blocks");
-      expect(blocks?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
+      const skipped = document.querySelector<HTMLElement>('[data-entry-id="e1"]');
+      expect(skipped?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
     });
     // The platform's half of the contract: a jump scrolls its target into view.
     vi.mocked(scroll.jumpTo).mockImplementation((el: Element) => {
@@ -1191,28 +1227,18 @@ describe("server-hit navigation", () => {
     // `requestAnimationFrame` hops inside `stepServerHit`'s `navBusy` latch, so
     // backgrounding the tab between the jump and the re-walk left find's next/prev
     // inert until the tab came forward. A rAF that never calls back is that page.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "text", text: "see the retry backoff here" }],
-      },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks" style="content-visibility: hidden">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
-             <div class="message assistant">see the retry backoff here</div>
-           </div>
+      `<div data-reconcile-key="a1" class="msg-row" style="content-visibility: hidden">
+         <div class="msg-row" data-entry-id="e1">
+           <div class="message assistant">see the retry backoff here</div>
          </div>
        </div>`,
     );
     stageHits([
       serverHit({
         excerpt: "see the retry backoff here",
-        block_index: 0,
         offset: 8,
         segment_len: 26,
       }),
@@ -1232,21 +1258,16 @@ describe("server-hit navigation", () => {
     });
   });
 
-  it("steps into a tool card mounted in ANOTHER message's row", async () => {
-    // Run-card hosting: `runCardFor` routes every later message's step blocks into the
-    // FIRST message's card, so a2's tool card is mounted inside a1's row.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t-launch" }] },
-      { id: "a2", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t-step" }] },
-    ]);
+  it("steps into a tool card mounted in ANOTHER row of the turn", async () => {
+    // Run-card hosting: the run card owns every later step entry's card, so the
+    // stepping call's card is mounted inside the launching entry's row.
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="run-card" data-block-msg="a1" data-block-index="0">
+           <div class="run-card" data-entry-id="e1">
              <div class="run-steps">
-               <div class="tool-call" data-tool-id="t-step" data-block-msg="a2" data-block-index="0">
+               <div class="tool-call" data-tool-id="t-step" data-entry-id="e2">
                  <div class="tool-summary">
                    <span class="tool-title">Read notes</span>
                    <button type="button" class="tool-disclosure"></button>
@@ -1257,18 +1278,16 @@ describe("server-hit navigation", () => {
                </div>
              </div>
            </div>
-         </div>
        </div>
-       <div data-reconcile-key="a2" class="msg-row"><div class="assistant-blocks"></div></div>`,
+       <div data-reconcile-key="a2" class="msg-row"></div>`,
     );
     const card = document.querySelector<HTMLElement>('[data-tool-id="t-step"]');
     wireToolCard(card as HTMLElement);
     stageHits([
       serverHit({
-        message_id: "a2",
+        entry_id: "e2",
         excerpt: "bump the retry backoff to 30s",
         segment_kind: "tool_output",
-        block_index: 0,
         offset: 9,
         segment_len: 29,
       }),
@@ -1313,7 +1332,7 @@ describe("server-hit navigation", () => {
    *  arrives and the third notice state below says so. */
   function editCard(previewRow: string | null): string {
     const preview = previewRow === null ? "" : previewHTML(previewRow);
-    return `<div class="tool-call" data-tool-id="t1" data-block-msg="a1" data-block-index="0">
+    return `<div class="tool-call" data-tool-id="t1" data-entry-id="e1">
               <div class="tool-summary">
                 <span class="tool-title">Replace in File</span>
                 <button type="button" class="tool-disclosure"></button>
@@ -1387,7 +1406,7 @@ describe("server-hit navigation", () => {
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row" style="${rowStyle}">
-         <div class="assistant-blocks">${editCard(previewRow)}</div>
+         ${editCard(previewRow)}
        </div>`,
     );
     const card = document.querySelector<HTMLElement>(".tool-call");
@@ -1398,13 +1417,10 @@ describe("server-hit navigation", () => {
     return card;
   }
 
-  /** The chat behind those fixtures: one tool block, which is what
-   *  `resolveSegmentEl` reads before it consults the renderer's stamp map. */
+  /** The chat behind those fixtures: one turn, whose `tool_call` entry the card
+   *  carries as its own `data-entry-id`, which is what `entryElement` selects. */
   function stageEditChat(): void {
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t1" }] },
-    ]);
+    stageChat(["u1"]);
   }
 
   const DIFF_ROW = "return retry(ctx, fetchOnce)";
@@ -1438,14 +1454,13 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset: DIFF_ROW.indexOf("retry"),
         segment_len: DIFF_ROW.length,
       }),
     ]);
     await vi.waitFor(() => {
-      const blocks = document.querySelector<HTMLElement>(".assistant-blocks");
-      expect(blocks?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
+      const skipped = document.querySelector<HTMLElement>(".tool-call");
+      expect(skipped?.checkVisibility({ contentVisibilityAuto: true })).toBe(false);
     });
     vi.mocked(scroll.jumpTo).mockImplementation((el: Element) => {
       el.scrollIntoView();
@@ -1482,7 +1497,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset: DIFF_ROW.indexOf("retry"),
         segment_len: DIFF_ROW.length,
       }),
@@ -1512,7 +1526,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset: DIFF_ROW.indexOf("retry"),
         segment_len: 4096,
       }),
@@ -1547,7 +1560,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset: DIFF_ROW.indexOf("retry"),
         segment_len: 4096,
       }),
@@ -1581,7 +1593,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset: DIFF_ROW.indexOf("retry"),
         segment_len: 4096,
       }),
@@ -1612,7 +1623,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset,
         segment_len: 4096,
       }),
@@ -1769,7 +1779,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset: DIFF_ROW.indexOf("retry"),
         segment_len: DIFF_ROW.length,
       }),
@@ -1804,7 +1813,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: DIFF_ROW,
         segment_kind: "tool_diff",
-        block_index: 0,
         offset: DIFF_ROW.indexOf("retry"),
         segment_len: 4096,
       }),
@@ -1831,7 +1839,7 @@ describe("server-hit navigation", () => {
    *  output after it, so both regions are behind the card's own disclosure. */
   function inputCard(input: unknown, output: string): string {
     const pretty = JSON.stringify(input, null, 2);
-    return `<div class="tool-call" data-tool-id="t1" data-block-msg="a1" data-block-index="0">
+    return `<div class="tool-call" data-tool-id="t1" data-entry-id="e1">
               <div class="tool-summary">
                 <span class="tool-title">Run Command</span>
                 <button type="button" class="tool-disclosure"></button>
@@ -1847,7 +1855,7 @@ describe("server-hit navigation", () => {
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">${inputCard(input, output)}</div>
+         ${inputCard(input, output)}
        </div>`,
     );
     const card = document.querySelector<HTMLElement>(".tool-call");
@@ -1866,7 +1874,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: leaves,
         segment_kind: "tool_input",
-        block_index: 0,
         offset: leaves.indexOf("Retry"),
         segment_len: leaves.length,
       }),
@@ -1906,7 +1913,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: leaves,
         segment_kind: "tool_input",
-        block_index: 0,
         offset: leaves.indexOf("retry"),
         segment_len: leaves.length,
       }),
@@ -1938,13 +1944,10 @@ describe("server-hit navigation", () => {
   // lookup; `plan` keeps the row path and is narrowed to the plan card; `tool_denial`
   // is a `.tool-details` member like the input.
 
-  /** Stage the chat both turn-level cases read: one turn, one assistant message,
-   *  nothing about the message row that could answer for either kind. */
+  /** Stage the chat both turn-level cases read: one turn, whose entries carry
+   *  nothing that could answer for either kind. */
   function stageTurnLevelChat(): void {
-    stageChat([
-      { id: "u1", role: "user", content: "look at this" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "partial answer" }] },
-    ]);
+    stageChat(["u1"]);
   }
 
   it("lands a turn_failure hit on the card-level .turn-notice", async () => {
@@ -1953,7 +1956,7 @@ describe("server-hit navigation", () => {
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks"><div class="message assistant">partial answer</div></div>
+         <div class="message assistant">partial answer</div>
        </div>`,
     ).insertAdjacentHTML("beforeend", `<div class="turn-notice">${reason}</div>`);
     stageHits([
@@ -1971,8 +1974,8 @@ describe("server-hit navigation", () => {
     await vi.waitFor(() => {
       expect(document.querySelector(".turn-notice mark.find-hit-current")).not.toBeNull();
     });
-    // No block index, so `resolveSegmentEl` could never have answered: the card
-    // came from `turn_message_id` alone.
+    // The kind resolves ahead of the row lookup, so the card came from the hit's
+    // own `turn_id` alone.
     expect(document.querySelector("mark.find-hit-current")?.textContent).toBe("retry");
   });
 
@@ -2052,7 +2055,7 @@ describe("server-hit navigation", () => {
     const card = mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks"><div class="message assistant">partial answer</div></div>
+         <div class="message assistant">partial answer</div>
        </div>`,
     );
     expect(card.querySelector(".turn-notice")).toBeNull();
@@ -2075,38 +2078,28 @@ describe("server-hit navigation", () => {
     expect(document.querySelector("mark.find-hit-current")).toBeNull();
   });
 
-  it("lands a plan hit on the plan card inside the message row", async () => {
-    // Red check: move the narrowing into `resolveSegmentEl` (which opens with
-    // `if (hit.block_index === undefined) return null`, so a plan hit can never
-    // reach an arm there) and the mark lands outside `.plan-message`.
-    stageChat([
-      { id: "u1", role: "user", content: "plan it" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "text", text: "here is the plan" }],
-        plan: [{ content: "Trace the retry path", status: "pending" }],
-      },
-    ]);
+  it("lands a plan hit on the plan card, not on the prose beside it", async () => {
+    // A `plan` entry IS the plan card, so the hit's own entry id is what decides
+    // which of the two credible marks wins: the prose run beside it holds the
+    // needle too, and it is a different entry.
+    //
+    // Red check: point the hit at the prose run's entry id instead and the mark
+    // lands outside `.plan-message`.
+    stageChat(["u1"]);
     const entry = "Trace the retry path";
     mountTurnCard(
       "u1",
-      // The plan card is a DIRECT child of the row, which is what production
-      // builds: `mountPlan` appends it to the message's own wrap. The prose
-      // bubble beside it also holds the needle, so the narrowing is what decides
-      // which of the two credible marks wins.
-      `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="message assistant">the retry plan, in prose</div>
-         </div>
-         <div class="plan-message">
-           <div class="plan-header">Plan</div>
-           <div class="plan-entries"><div class="plan-entry">${entry}</div></div>
-         </div>
+      `<div class="msg-row" data-entry-id="e1">
+         <div class="message assistant">the retry plan, in prose</div>
+       </div>
+       <div class="plan-message" data-entry-id="e2">
+         <div class="plan-header">Plan</div>
+         <div class="plan-entries"><div class="plan-entry">${entry}</div></div>
        </div>`,
     );
     stageHits([
       serverHit({
+        entry_id: "e2",
         excerpt: entry,
         segment_kind: "plan",
         offset: entry.indexOf("retry"),
@@ -2146,7 +2139,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: resource,
         segment_kind: "tool_denial",
-        block_index: 0,
         offset: resource.indexOf("retry"),
         segment_len: resource.length,
       }),
@@ -2162,24 +2154,21 @@ describe("server-hit navigation", () => {
     expect(document.querySelector<HTMLElement>(".tool-disclosure")?.ariaExpanded).toBe("true");
   });
 
-  it("navigates a message hit to the message container (scroll + brief highlight)", async () => {
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "tool_use", tool_call_id: "t1" }] },
-    ]);
+  it("navigates an entry hit to the entry's container (scroll + brief highlight)", async () => {
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">tool card furniture</div>
+      `<div class="msg-row" data-entry-id="e1">
+         <div class="tool-call">tool card furniture</div>
        </div>`,
     );
-    // The filter-only contract: one synthetic hit locating the MESSAGE —
-    // offset 0, zero segment length, no block index. Container navigation is
-    // what keeps the ranker's segment_len division unreachable for this kind.
+    // The filter-only contract: one synthetic hit locating the ENTRY — offset 0,
+    // zero segment length, kind `entry`. Container navigation is what keeps the
+    // ranker's segment_len division unreachable for this kind.
     stageHits([
       serverHit({
         excerpt: "List files a.go b.go",
-        segment_kind: "message",
+        segment_kind: "entry",
         offset: 0,
         segment_len: 0,
       }),
@@ -2188,7 +2177,7 @@ describe("server-hit navigation", () => {
     await openAndSearch("role:assistant");
     typeAndEnter("role:assistant");
 
-    const row = document.querySelector('[data-reconcile-key="a1"]');
+    const row = document.querySelector('[data-entry-id="e1"]');
     await vi.waitFor(() => {
       expect(row?.classList.contains("find-target-flash")).toBe(true);
     });
@@ -2208,19 +2197,14 @@ describe("server-hit navigation", () => {
     "budget empties the retry gives up and files an alert instead.";
 
   it("nearest-match picks the occurrence whose context matches the excerpt", async () => {
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "thinking", thinking: TRACE }] },
-    ]);
+    stageChat(["u1"]);
     const card = mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="0">
+           <details class="reasoning-block msg-reasoning" data-entry-id="e1">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body"></blockquote>
            </details>
-         </div>
        </div>`,
     );
     // Text content set programmatically so the fixture cannot drift from the
@@ -2234,7 +2218,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: "When the budget empties the retry gives up and files an alert instead.",
         segment_kind: "reasoning",
-        block_index: 0,
         offset: secondAt,
         segment_len: TRACE.length,
       }),
@@ -2263,19 +2246,14 @@ describe("server-hit navigation", () => {
     // Both occurrences share one short context (the excerpt window covers the
     // whole trace), so similarity ties and offset/segment_len decides.
     const short = "retry then retry";
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "thinking", thinking: short }] },
-    ]);
+    stageChat(["u1"]);
     const card = mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="0">
+           <details class="reasoning-block msg-reasoning" data-entry-id="e1">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body"></blockquote>
            </details>
-         </div>
        </div>`,
     );
     const quote = card.querySelector(".reasoning-body");
@@ -2286,7 +2264,6 @@ describe("server-hit navigation", () => {
       serverHit({
         excerpt: short,
         segment_kind: "reasoning",
-        block_index: 0,
         offset: 11,
         segment_len: short.length,
       }),
@@ -2305,30 +2282,20 @@ describe("server-hit navigation", () => {
     // A STALE hit: the trace re-rendered since the search answered, so the
     // needle still occurs but nothing around it matches the excerpt. Selecting
     // that mark would claim a precision the ranker does not have.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "thinking", thinking: "the retry lives here in this trace" }],
-      },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <details class="reasoning-block msg-reasoning" data-block-msg="a1" data-block-index="0">
+           <details class="reasoning-block msg-reasoning" data-entry-id="e1">
              <summary class="reasoning-summary">Reasoning</summary>
              <blockquote class="reasoning-body">the retry lives here in this trace</blockquote>
            </details>
-         </div>
        </div>`,
     );
     stageHits([
       serverHit({
         excerpt: "completely unrelated words sharing nothing with that trace",
         segment_kind: "reasoning",
-        block_index: 0,
         offset: 4,
         segment_len: 34,
       }),
@@ -2345,29 +2312,27 @@ describe("server-hit navigation", () => {
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(details, expect.anything());
   });
 
-  it("pages older history in until the hit's message is resident", async () => {
-    const session = stageChat([{ id: "u9", role: "user", content: "recent" }], true);
+  it("pages older history in until the hit's TURN is resident", async () => {
+    // Residency is one map lookup now (`turns.has(hit.turn_id)`) and the cursor is the
+    // oldest resident TURN id, which is the same value `?before=` takes.
+    const session = stageChat(["u9"], true);
     stageHits([
       serverHit({
         excerpt: "the old answer",
-        segment_kind: "message",
+        segment_kind: "entry",
         offset: 0,
         segment_len: 0,
       }),
     ]);
     vi.mocked(storeLoad.loadMessages).mockImplementation((_chatID, _beforeID) => {
-      session.messages = [
-        { id: "u1", role: "user", content: "old" },
-        { id: "a1", role: "assistant", content: "the old answer" },
-        ...session.messages,
-      ] as Session["messages"];
+      prependTurn(session, "u1");
       session.has_more = false;
       return Promise.resolve(true);
     });
     // The paged-in turn arrives as a stub; the reveal is what mounts it.
     vi.mocked(chatSearch.revealHitTurn).mockImplementation(() => {
       if (document.querySelector('[data-reconcile-key="u1"]') === null) {
-        mountTurnCard("u1", `<div data-reconcile-key="a1" class="msg-row">the old answer</div>`);
+        mountTurnCard("u1", `<div data-entry-id="e1" class="msg-row">the old answer</div>`);
       }
       return Promise.resolve();
     });
@@ -2377,9 +2342,7 @@ describe("server-hit navigation", () => {
 
     await vi.waitFor(() => {
       expect(
-        document
-          .querySelector('[data-reconcile-key="a1"]')
-          ?.classList.contains("find-target-flash"),
+        document.querySelector('[data-entry-id="e1"]')?.classList.contains("find-target-flash"),
       ).toBe(true);
     });
     // Paged from the resident window's edge, exactly once.
@@ -2388,8 +2351,8 @@ describe("server-hit navigation", () => {
   });
 
   it("states it when the hit's page cannot be loaded", async () => {
-    stageChat([{ id: "u9", role: "user", content: "recent" }], false);
-    stageHits([serverHit({ segment_kind: "message", offset: 0, segment_len: 0 })]);
+    stageChat(["u9"], false);
+    stageHits([serverHit({ segment_kind: "entry", offset: 0, segment_len: 0 })]);
 
     await openAndSearch("role:assistant");
     typeAndEnter("role:assistant");
@@ -2400,15 +2363,12 @@ describe("server-hit navigation", () => {
     expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
   });
 
-  it("states it when the revealed turn still holds no row for the message", async () => {
-    // The reveal resolved but the projection no longer holds the message (a
-    // rewind, an eviction race): stepping must SAY so, not shrug.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [] },
-    ]);
+  it("states it when the revealed turn still holds no element for the entry", async () => {
+    // The reveal resolved but the window no longer holds the entry (a rewind, an
+    // eviction race): stepping must SAY so, not shrug.
+    stageChat(["u1"]);
     mountTurnCard("u1", null);
-    stageHits([serverHit({ segment_kind: "message", offset: 0, segment_len: 0 })]);
+    stageHits([serverHit({ segment_kind: "entry", offset: 0, segment_len: 0 })]);
 
     await openAndSearch("role:assistant");
     typeAndEnter("role:assistant");
@@ -2418,146 +2378,23 @@ describe("server-hit navigation", () => {
     });
   });
 
-  // A WORKFLOW STEP's hit. Its blocks are DROPPED by the transcript's dispatcher
-  // (messages-blocks.ts placeBlock), so there is no DOM segment for the chain above
-  // to open and the old path ended at "could not be shown" on the launching turn's
-  // row. The run TAB renders that step's transcript out of the same blocks, so it
-  // is a real destination — the hit navigates there instead of resolving in place.
-  it("routes a step hit to the run tab with that node focused", async () => {
-    stageChat([
-      { id: "u1", role: "user", content: "find it" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [
-          { type: "text", text: "the step logged a retry", agent_subtask_id: "wf:wf-1:wf-1/build" },
-        ],
-      },
-    ]);
-    mountTurnCard(
-      "u1",
-      // The launching turn's row exists and holds NO step content: that is the
-      // whole reason the DOM path has nothing to resolve here.
-      `<div data-reconcile-key="a1" class="msg-row"><div class="assistant-blocks"></div></div>`,
-    );
-    stageHits([
-      serverHit({
-        excerpt: "the step logged a retry",
-        segment_kind: "content",
-        agent_subtask_id: "wf:wf-1:wf-1/build",
-        block_index: 0,
-        offset: 15,
-        segment_len: 23,
-      }),
-    ]);
-
-    await openAndSearch("retry");
-    typeAndEnter("retry");
-
-    await vi.waitFor(() => {
-      expect(vi.mocked(runView.openRunView)).toHaveBeenCalledTimes(1);
-    });
-    // The run, the node, and this chat as the tab's parent. Name is "" so the tab
-    // factory derives the label from the run store.
-    expect(vi.mocked(runView.openRunView)).toHaveBeenCalledWith("wf-1", "", "c1", "wf-1/build");
-    // No paging and no turn reveal: the destination is another tab, so opening the
-    // launching chat's history would be work for a surface nobody is about to look
-    // at. And nothing is selected in the transcript, because nothing is there.
-    expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
-    expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
-    expect(document.querySelector("mark.find-hit-current")).toBeNull();
-    // The position AND the destination, painted before navigating: on a successful
-    // open the tab switch tears the overlay down, so anything said afterwards is
-    // said to nobody, and on a refused open this is the accurate position for a
-    // reader still looking at the transcript. No boundary sentence — every hit in
-    // this answer is cross-tab, so there is no phase 1 to cross out of.
-    expect(countText()).toBe("1 of 1 \u00b7 opening the run tab");
-  });
-
-  // The predicate is the RENDERER's own `parseStepSubtask`, not a `wf:` prefix
-  // test, so a malformed step id falls through to the delegate box exactly as it
-  // does in the transcript.
-  it("falls through to the DOM path for a malformed wf: id", async () => {
-    stageChat([
-      { id: "u1", role: "user", content: "find it" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [
-          { type: "tool_use", tool_call_id: "t-sub", agent_subtask_id: "wf:no-second-colon" },
-          {
-            type: "text",
-            text: "delegate found the retry backoff",
-            agent_subtask_id: "wf:no-second-colon",
-          },
-        ],
-      },
-    ]);
-    mountTurnCard(
-      "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="subagent-block collapsed" data-subtask="wf:no-second-colon">
-             <div class="subagent-header">Subagent</div>
-             <div class="subagent-body"><div class="message assistant" data-block-msg="a1" data-block-index="1">delegate found the retry backoff</div></div>
-           </div>
-         </div>
-       </div>`,
-    );
-    const box = document.querySelector<HTMLElement>(".subagent-block");
-    if (box !== null) {
-      wireSubagentBox(box);
-    }
-    stageHits([
-      serverHit({
-        excerpt: "delegate found the retry backoff",
-        segment_kind: "content",
-        agent_subtask_id: "wf:no-second-colon",
-        block_index: 1,
-        offset: 19,
-        segment_len: 32,
-      }),
-    ]);
-
-    await openAndSearch("retry");
-    typeAndEnter("retry");
-
-    // A malformed id is NOT a step, so it must not reach the run tab — and it is a
-    // DELEGATE, so it goes to that delegate's own page, which renders the blocks the
-    // transcript drops. The subtask id is carried through verbatim.
-    await vi.waitFor(() => {
-      expect(vi.mocked(subagentView.openSubagentView)).toHaveBeenCalledWith(
-        "c1",
-        "wf:no-second-colon",
-      );
-    });
-    expect(vi.mocked(runView.openRunView)).not.toHaveBeenCalled();
-    expect(document.querySelector("mark.find-hit-current")).toBeNull();
-  });
+  // THE STEP ARM IS DELETED, with the two cases whose subject it was ("routes a step hit
+  // to the run tab" and "falls through to the DOM path for a malformed wf: id"). A run's
+  // steps are entries of the RUN's own log, so no hit in a chat's log can name one and
+  // there is no `wf:` id left to malform. Design 14 item 9 records the capability cost.
 
   it("sends an ordinary DELEGATE's hit to that delegate's page", async () => {
     // The counter reads the SERVER's figure, so a hit inside a delegate's output is
     // reported however little of it the transcript renders — which is none. Before the
-    // delegate route this ended at "could not be shown" on the launching turn's row, the
-    // same dead end the step branch above was written to close.
-    stageChat([
-      { id: "u1", role: "user", content: "find it" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [
-          { type: "tool_use", tool_call_id: "t-sub", agent_subtask_id: "sub-9" },
-          { type: "text", text: "delegate found the retry backoff", agent_subtask_id: "sub-9" },
-        ],
-      },
-    ]);
-    mountTurnCard("u1", `<div data-reconcile-key="a1" class="msg-row"></div>`);
+    // delegate route this ended at "could not be shown" on the launching turn's row.
+    stageChat(["u1"]);
+    mountTurnCard("u1", `<div class="msg-row" data-entry-id="e1"></div>`);
     stageHits([
       serverHit({
+        entry_id: "e2",
         excerpt: "delegate found the retry backoff",
         segment_kind: "content",
-        agent_subtask_id: "sub-9",
-        block_index: 1,
+        lane: "sub-9",
         offset: 19,
         segment_len: 32,
       }),
@@ -2581,36 +2418,31 @@ describe("server-hit navigation", () => {
   // ---------------------------------------------------------------------------
 
   it("walks the server's list even while resident marks exist for the same query", async () => {
-    // The fixture the old gate was wrong on, kept: 2 DOM marks inside `a1` (from
-    // `retry retry`) against 2 server hits, one of them in a message the transcript
-    // has not mounted. `serverHits.length > engine.total` reads as `2 > 2` = false
+    // The fixture the old gate was wrong on, kept: 2 DOM marks inside the resident
+    // entry (from `retry retry`) against 2 server hits, one of them in a turn the
+    // transcript has not mounted. `serverHits.length > engine.total` reads as `2 > 2` = false
     // here, which is why a count comparison could not have detected the divergence
     // and why the gate had to become ownership instead.
     //
     // Red check: restore the `engine.total === 0` conjunct in `step` — Enter then
-    // cycles the two marks and the non-resident hit is never reached.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry retry" }] },
-      { id: "a9", role: "assistant", blocks: [{ type: "text", text: "retry once more" }] },
-    ]);
+    // cycles the two marks and the unmounted hit is never reached.
+    //
+    // Both turns are RESIDENT and only the first is MOUNTED, which is the shape the
+    // reveal exists for: residency is one map lookup, so a turn the store holds and
+    // the paint has not built is what `revealHitTurn` is asked to build.
+    stageChat(["u1", "u9"]);
     mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
-             <div class="message assistant">retry retry</div>
-           </div>
-         </div>
+      `<div class="msg-row" data-entry-id="e1">
+         <div class="message assistant">retry retry</div>
        </div>`,
     );
     const resident = serverHit({
       excerpt: "retry retry",
-      block_index: 0,
       offset: 0,
       segment_len: 11,
     });
-    const elsewhere = serverHit({ message_id: "a9", turn_message_id: "u9" });
+    const elsewhere = serverHit({ turn_id: "u9", entry_id: "e9" });
     stageHits([resident, elsewhere]);
 
     onHotkey(ctrlF());
@@ -2644,23 +2476,18 @@ describe("server-hit navigation", () => {
     //
     // Red check: delete the `landInPlace` call from `stepServerHit` — the second
     // press is swallowed and the counter stays at 1.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry and retry" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">retry and retry</div>
            </div>
-         </div>
        </div>`,
     );
     stageHits([
-      serverHit({ excerpt: "retry and retry", block_index: 0, offset: 0, segment_len: 15 }),
-      serverHit({ excerpt: "retry and retry", block_index: 0, offset: 10, segment_len: 15 }),
+      serverHit({ excerpt: "retry and retry", offset: 0, segment_len: 15 }),
+      serverHit({ excerpt: "retry and retry", offset: 10, segment_len: 15 }),
     ]);
 
     await openAndAdopt("retry");
@@ -2678,18 +2505,13 @@ describe("server-hit navigation", () => {
     // Red check: restore the `engine.total === 0` conjunct — the counter never
     // leaves the DOM grammar and no hit past the first is visited.
     const HITS = 38;
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">retry</div>
            </div>
-         </div>
        </div>`,
     );
     // Every hit names the resident message and the resident block, which is what
@@ -2697,7 +2519,7 @@ describe("server-hit navigation", () => {
     // positions in the conversation rather than one hit counted 38 times.
     stageHits(
       Array.from({ length: HITS }, (_, i) =>
-        serverHit({ excerpt: "retry", block_index: 0, offset: i, segment_len: HITS + 8 }),
+        serverHit({ excerpt: "retry", offset: i, segment_len: HITS + 8 }),
       ),
     );
 
@@ -2726,30 +2548,18 @@ describe("server-hit navigation", () => {
     // Red check: drop the `serverHitsQuery === shell.value` clause from `step` — the
     // stale hit is navigated and this chat's delegate page opens for a query the
     // reader has already abandoned.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [
-          { type: "text", text: "budget check" },
-          { type: "text", text: "delegate retried", agent_subtask_id: "sub-9" },
-        ],
-      },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">budget check</div>
            </div>
-         </div>
        </div>`,
     );
     // The standing answer's one hit lives in a delegate, so navigating it is
     // observable as a tab opening.
-    stageHits([serverHit({ agent_subtask_id: "sub-9", block_index: 1, offset: 9 })]);
+    stageHits([serverHit({ entry_id: "e2", lane: "sub-9", offset: 9 })]);
     await openAndSearch("retry");
 
     // The next fetch never resolves: this is the window, held open.
@@ -2772,78 +2582,71 @@ describe("server-hit navigation", () => {
     expect(vi.mocked(subagentView.openSubagentView)).not.toHaveBeenCalled();
   });
 
-  it("visits hits in transcript order even when the only mark is in the last message", async () => {
+  it("visits hits in transcript order even when the only mark is in the last entry", async () => {
     // Order is the server's, so where the marks happen to be cannot decide it. With
     // the DOM gate the walk started (and ended) at the one mark, which sits in the
-    // NEWEST message — the reverse of how a reader reads a conversation.
+    // NEWEST entry — the reverse of how a reader reads a conversation.
     //
-    // Red check: restore the `engine.total === 0` conjunct — nothing is revealed at
-    // all, because the mark satisfies the old gate.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "first retry" }] },
-      { id: "a2", role: "assistant", blocks: [{ type: "text", text: "second retry" }] },
-      { id: "a3", role: "assistant", blocks: [{ type: "text", text: "third retry" }] },
-    ]);
-    // Only the LAST message's row carries walkable text.
+    // Red check: restore the `engine.total === 0` conjunct — the first press steps
+    // the one DOM mark, so the walk both starts and ends in the LAST entry.
+    stageChat(["u1"]);
+    // Only the LAST entry's row carries walkable text.
     mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row"><div class="assistant-blocks"></div></div>
-       <div data-reconcile-key="a2" class="msg-row"><div class="assistant-blocks"></div></div>
-       <div data-reconcile-key="a3" class="msg-row">
-         <div class="assistant-blocks"><div class="message assistant">third retry</div></div>
+      `<div class="msg-row" data-entry-id="e1"></div>
+       <div class="msg-row" data-entry-id="e2"></div>
+       <div class="msg-row" data-entry-id="e3">
+         <div class="message assistant">third retry</div>
        </div>`,
     );
     stageHits([
-      serverHit({ message_id: "a1", excerpt: "first retry" }),
-      serverHit({ message_id: "a2", excerpt: "second retry" }),
-      serverHit({ message_id: "a3", excerpt: "third retry" }),
+      serverHit({ entry_id: "e1", excerpt: "first retry" }),
+      serverHit({ entry_id: "e2", excerpt: "second retry" }),
+      serverHit({ entry_id: "e3", excerpt: "third retry", offset: 6, segment_len: 11 }),
     ]);
 
     await openAndSearch("retry");
-    for (const id of ["a1", "a2", "a3"]) {
+    // The two entries with nothing rendered in them are visited FIRST, in the
+    // server's order, and each is revealed because the walker can mark neither.
+    for (const id of ["e1", "e2"]) {
       typeAndEnter("retry");
       await vi.waitFor(() => {
-        expect(vi.mocked(chatSearch.revealHitTurn).mock.lastCall?.[1].message_id).toBe(id);
+        expect(vi.mocked(chatSearch.revealHitTurn).mock.lastCall?.[1].entry_id).toBe(id);
       });
     }
+    // No assertion here that the one mark on screen is not yet current: the ENGINE
+    // marks its first match current when the walker runs, independently of stepping,
+    // so such a check would fail for a reason that is not this rule.
+    // The third press reaches the mark, in place: its entry is mounted and holds the
+    // text, so nothing has to be revealed for it.
+    typeAndEnter("retry");
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-entry-id="e3"] mark.find-hit-current')).not.toBeNull();
+    });
     expect(countText()).toContain("3 of 3");
   });
 
   it("partitions the walk by destination, announcing the boundary once per answer", async () => {
     // A cross-tab step tears the overlay down (BUS_TAB_CHANGED -> closeChatFind), so
     // an interleaved walk would destroy the local one rather than merely interrupt
-    // it. The partition is by `agent_subtask_id` — the client's own ROUTING — so a
+    // it. The partition is by the hit's LANE — the client's own ROUTING — so a
     // hit EARLIER in the transcript is still visited second when it answers by
     // opening another view.
     //
     // Red check: make `buildStepOrder` return `hits` unpartitioned — the first Enter
     // opens the delegate's page.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "text", text: "delegate retried", agent_subtask_id: "sub-1" }],
-      },
-      { id: "a2", role: "assistant", blocks: [{ type: "text", text: "local retry" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
-      `<div data-reconcile-key="a1" class="msg-row"><div class="assistant-blocks"></div></div>
-       <div data-reconcile-key="a2" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a2" data-block-index="0">
-             <div class="message assistant">local retry</div>
-           </div>
-         </div>
+      `<div class="msg-row" data-entry-id="e2">
+         <div class="message assistant">local retry</div>
        </div>`,
     );
     // WIRE order puts the cross-tab hit first, which is where it sits in the
     // conversation; the walk must not.
     stageHits([
-      serverHit({ message_id: "a1", agent_subtask_id: "sub-1", excerpt: "delegate retried" }),
-      serverHit({ message_id: "a2", excerpt: "local retry", block_index: 0, offset: 6 }),
+      serverHit({ entry_id: "e1", lane: "sub-1", excerpt: "delegate retried" }),
+      serverHit({ entry_id: "e2", excerpt: "local retry", offset: 6 }),
     ]);
 
     await openAndSearch("retry");
@@ -2886,53 +2689,37 @@ describe("server-hit navigation", () => {
   });
 
   it("puts a MOUNTED delegate invocation in phase 2, because the routing decides", async () => {
-    // `placeBlock` draws exactly one of a delegate's blocks — its invocation, as the
-    // card's header — so a `tool_title` hit on it is visible on screen with no reader
-    // action. It is still phase 2: `navigateToHit` routes every non-empty subtask id
+    // The transcript draws exactly one of a delegate's entries — its invocation, as
+    // the card's header — so a `tool_title` hit on it is visible on screen with no
+    // reader action. It is still phase 2: `navigateToHit` routes every non-empty LANE
     // to another view, and the partition uses that same predicate rather than asking
     // what the transcript happens to have mounted.
     //
     // Red check: partition on whether `resolveSegmentEl` answers an element (a
     // "mounted means local" classification) — the invocation is then visited FIRST
     // and answers with a tab switch on the first press.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      {
-        id: "a1",
-        role: "assistant",
-        blocks: [{ type: "tool_use", tool_call_id: "t-sub", agent_subtask_id: "sub-1" }],
-      },
-      { id: "a2", role: "assistant", blocks: [{ type: "text", text: "local retry" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
-      // The delegate's card IS in the transcript, stamped like any other block.
-      `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="subagent-block" data-block-msg="a1" data-block-index="0">
-             <div class="subagent-header"><span class="tool-title">Sub-agent: retry-sweeper</span></div>
-           </div>
-         </div>
+      // The delegate's card IS in the transcript, stamped like any other entry — and
+      // it carries the invocation's OWN entry id, which is in the turn's lane.
+      `<div class="subagent-block" data-entry-id="e1">
+         <div class="subagent-header"><span class="tool-title">Sub-agent: retry-sweeper</span></div>
        </div>
-       <div data-reconcile-key="a2" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a2" data-block-index="0">
-             <div class="message assistant">local retry</div>
-           </div>
-         </div>
+       <div class="msg-row" data-entry-id="e2">
+         <div class="message assistant">local retry</div>
        </div>`,
     );
     stageHits([
       serverHit({
-        message_id: "a1",
-        agent_subtask_id: "sub-1",
+        entry_id: "e1",
+        lane: "sub-1",
         segment_kind: "tool_title",
         excerpt: "Sub-agent: retry-sweeper",
-        block_index: 0,
         offset: 11,
         segment_len: 24,
       }),
-      serverHit({ message_id: "a2", excerpt: "local retry", block_index: 0, offset: 6 }),
+      serverHit({ entry_id: "e2", excerpt: "local retry", offset: 6 }),
     ]);
 
     // `openAndAdopt` rather than `openAndSearch`: both marks are resident here, so
@@ -2963,34 +2750,19 @@ describe("server-hit navigation", () => {
     // Red checks: clear `resumeKey` in `teardown` (the close runs before the
     // subscriber can spend it), or clear the input unconditionally in the
     // BUS_TAB_CHANGED subscriber — either way the walk restarts from the top.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "local retry" }] },
-      {
-        id: "a2",
-        role: "assistant",
-        blocks: [{ type: "text", text: "first delegate retry", agent_subtask_id: "sub-1" }],
-      },
-      {
-        id: "a3",
-        role: "assistant",
-        blocks: [{ type: "text", text: "second delegate retry", agent_subtask_id: "sub-2" }],
-      },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">local retry</div>
            </div>
-         </div>
        </div>`,
     );
     stageHits([
-      serverHit({ message_id: "a1", excerpt: "local retry", block_index: 0, offset: 6 }),
-      serverHit({ message_id: "a2", agent_subtask_id: "sub-1", excerpt: "first delegate retry" }),
-      serverHit({ message_id: "a3", agent_subtask_id: "sub-2", excerpt: "second delegate retry" }),
+      serverHit({ entry_id: "e1", excerpt: "local retry", offset: 6 }),
+      serverHit({ entry_id: "e2", lane: "sub-1", excerpt: "first delegate retry" }),
+      serverHit({ entry_id: "e3", lane: "sub-2", excerpt: "second delegate retry" }),
     ]);
 
     await openAndSearch("retry");
@@ -3025,29 +2797,22 @@ describe("server-hit navigation", () => {
   // landed in the chat with nothing marked and the count unreachable.
 
   it("opens on a handoff carrying the query, landed on the hit it names rather than the first", async () => {
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry and retry" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">retry and retry</div>
            </div>
-         </div>
        </div>`,
     );
     const first = serverHit({
       excerpt: "retry and retry",
-      block_index: 0,
       offset: 0,
       segment_len: 15,
     });
     const second = serverHit({
       excerpt: "retry and retry",
-      block_index: 0,
       offset: 10,
       segment_len: 15,
     });
@@ -3075,30 +2840,25 @@ describe("server-hit navigation", () => {
   it("opens on the answer it has when the handoff's hit is not in it", async () => {
     // The chat moved on between the two searches (a rewind, a compaction), so the
     // named hit is nowhere in the fresh answer. Chasing it would page history in
-    // for a message that is gone; the box opens as an ordinary open would.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry once" }] },
-    ]);
+    // for a turn that is gone; the box opens as an ordinary open would.
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">retry once</div>
            </div>
-         </div>
        </div>`,
     );
-    stageHits([serverHit({ excerpt: "retry once", block_index: 0, offset: 0, segment_len: 10 })]);
+    stageHits([serverHit({ excerpt: "retry once", offset: 0, segment_len: 10 })]);
 
-    openAt("retry", serverHit({ message_id: "a9", excerpt: "a retry that is gone", offset: 2 }));
+    openAt("retry", serverHit({ turn_id: "u9", excerpt: "a retry that is gone", offset: 2 }));
     await settle();
     expect(countText()).toBe("1 of 1");
     const hits = [...document.querySelectorAll<HTMLElement>("mark.find-hit")];
     expect(hits[0]?.classList.contains("find-hit-current")).toBe(true);
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenCalledWith(hits[0], expect.anything());
-    // Nothing was paged in or revealed for the missing message.
+    // Nothing was paged in or revealed for the missing turn.
     expect(vi.mocked(storeLoad.loadMessages)).not.toHaveBeenCalled();
     expect(vi.mocked(chatSearch.revealHitTurn)).not.toHaveBeenCalled();
   });
@@ -3107,29 +2867,22 @@ describe("server-hit navigation", () => {
     // Closed before its answer landed. The next Ctrl-F keeps what every close keeps
     // — the query, and the cursor restored to the hit — and jumps nowhere: the
     // landing belonged to the open that asked for it, and this one is the reader's.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry and retry" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">retry and retry</div>
            </div>
-         </div>
        </div>`,
     );
     const first = serverHit({
       excerpt: "retry and retry",
-      block_index: 0,
       offset: 0,
       segment_len: 15,
     });
     const second = serverHit({
       excerpt: "retry and retry",
-      block_index: 0,
       offset: 10,
       segment_len: 15,
     });
@@ -3159,16 +2912,11 @@ describe("server-hit navigation", () => {
     //
     // Red check: drop the `serverHits.length > 0` conjunct from `step` — Enter then
     // routes into an empty walk and goes dead on content the reader can see.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "workflow and workflow" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
            <div class="message assistant">workflow and workflow</div>
-         </div>
        </div>`,
     );
     stageHits([]);
@@ -3190,32 +2938,24 @@ describe("server-hit navigation", () => {
     //
     // Red check: return an empty envelope instead of `null` on the fetch's null arm
     // — the answer is replaced by nothing, every clause below goes red at once.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry once" }] },
-      { id: "a2", role: "assistant", blocks: [{ type: "text", text: "retry twice" }] },
-    ]);
+    stageChat(["u1"]);
     mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">retry once</div>
            </div>
-         </div>
        </div>
        <div data-reconcile-key="a2" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a2" data-block-index="0">
+           <div class="msg-row" data-entry-id="e2">
              <div class="message assistant">retry twice</div>
            </div>
-         </div>
        </div>`,
     );
     stageHits(
       [
-        serverHit({ message_id: "a1", excerpt: "retry once", block_index: 0, offset: 0 }),
-        serverHit({ message_id: "a2", excerpt: "retry twice", block_index: 0, offset: 0 }),
+        serverHit({ entry_id: "e1", excerpt: "retry once", offset: 0 }),
+        serverHit({ entry_id: "e2", excerpt: "retry twice", offset: 0 }),
       ],
       { scanned: 3, matched: 3 },
     );
@@ -3247,7 +2987,7 @@ describe("server-hit navigation", () => {
     //
     // Red check: drop the `owned ?` gate from render's `setNote` — the note
     // survives the query change.
-    stageChat([{ id: "u1", role: "user", content: "q" }]);
+    stageChat(["u1"]);
     stageHits([serverHit()], { scanned: 24, matched: 347 });
     await openAndSearch("retry");
     expect(noteText()).not.toBe("");
@@ -3273,7 +3013,7 @@ describe("server-hit navigation", () => {
     //
     // Red check: drop the `owned` conjunct from `noResults` — the skin paints during
     // the in-flight window, over a query nothing has answered yet.
-    stageChat([{ id: "u1", role: "user", content: "q" }]);
+    stageChat(["u1"]);
     const skinOn = (): boolean =>
       document.getElementById("chat-find")?.classList.contains("chat-find-no-results") === true;
 
@@ -3306,21 +3046,16 @@ describe("server-hit navigation", () => {
     // Red check: restore the `engine.total === 0` conjunct in `step` — Enter then
     // walks the marks and DOES reach the new one, which is the behaviour this case
     // exists to say we do not have.
-    stageChat([
-      { id: "u1", role: "user", content: "q" },
-      { id: "a1", role: "assistant", blocks: [{ type: "text", text: "retry" }] },
-    ]);
+    stageChat(["u1"]);
     const card = mountTurnCard(
       "u1",
       `<div data-reconcile-key="a1" class="msg-row">
-         <div class="assistant-blocks">
-           <div class="msg-row" data-block-msg="a1" data-block-index="0">
+           <div class="msg-row" data-entry-id="e1">
              <div class="message assistant">retry</div>
            </div>
-         </div>
        </div>`,
     );
-    stageHits([serverHit({ excerpt: "retry", block_index: 0, offset: 0, segment_len: 5 })]);
+    stageHits([serverHit({ excerpt: "retry", offset: 0, segment_len: 5 })]);
     await openAndAdopt("retry");
     expect(document.querySelectorAll("mark.find-hit")).toHaveLength(1);
 
@@ -3330,7 +3065,7 @@ describe("server-hit navigation", () => {
     const sealed = document.createElement("div");
     sealed.className = "message assistant";
     sealed.textContent = "retry again";
-    card.querySelector(".assistant-blocks")?.appendChild(sealed);
+    card.querySelector(".msg-row")?.appendChild(sealed);
 
     // The live re-run, driven through the transcript observer the module registers.
     const rerun = vi.mocked(scroll.onTranscriptMutate).mock.calls[0]?.[0];

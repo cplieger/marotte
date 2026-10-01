@@ -55,7 +55,11 @@ func (f *fakeStore) LoadRetentionHeader(marotte.ChatID) (RetentionHeader, error)
 }
 
 func (f *fakeStore) Remove(chatID marotte.ChatID) (string, error) {
-	if err := os.Remove(filepath.Join(f.dir, string(chatID)+chatFileSuffix)); err != nil {
+	dir := filepath.Join(f.dir, string(chatID))
+	if _, err := os.Stat(dir); err != nil {
+		return "", err
+	}
+	if err := os.RemoveAll(dir); err != nil {
 		return "", err
 	}
 	f.mu.Lock()
@@ -118,15 +122,18 @@ func newPurgeTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, st
 	return New(store, opts...), store, dir
 }
 
-// writeAgedChat writes a chat file whose MTIME is `age` in the past and
-// returns its path. age=0 means "now".
+// writeAgedChat writes a chat directory whose header's MTIME is `age` in the past
+// and returns the header's path. age=0 means "now".
 //
 // The fake store reports no readable projection for it unless a test sets one, so
 // purgeReferenceTime falls through to the mtime — which is what makes these age
 // assertions readable. The UpdatedAt path has its own test.
 func writeAgedChat(t *testing.T, dir, id string, age time.Duration) string {
 	t.Helper()
-	p := filepath.Join(dir, id+".json")
+	if err := os.MkdirAll(filepath.Join(dir, id), 0o700); err != nil {
+		t.Fatalf("mkdir aged chat %s: %v", id, err)
+	}
+	p := filepath.Join(dir, id, headerFileName)
 	if err := os.WriteFile(p, []byte(`{"id":"`+id+`"}`), 0o600); err != nil {
 		t.Fatalf("write aged chat %s: %v", id, err)
 	}

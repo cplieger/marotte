@@ -22,9 +22,51 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { init, markHydrated, _resetForTest } from "./sse-adapter.js";
 import { createScriptedFetch, type ScriptedFetch, until } from "./__test-helpers__/sse-fetch.js";
 
-vi.mock("./store-load.js", () => ({ loadList: vi.fn(), loadMessages: vi.fn() }));
+vi.mock("./store-load.js", () => ({
+  loadList: vi.fn(),
+  loadMessages: vi.fn(),
+  requestTurnRange: vi.fn(),
+  scheduleListRetry: vi.fn(),
+  confirmChatExists: vi.fn(() => Promise.resolve("unresolved")),
+  serverMayAnswer: vi.fn(() => false),
+  chatListLoaded: vi.fn(() => false),
+}));
 vi.mock("./tabs-sync.js", () => ({ listTabs: vi.fn() }));
-vi.mock("./run-store.js", () => ({ rebuildLiveRuns: vi.fn(), invalidateCachedRuns: vi.fn() }));
+// Every name any module in this graph imports has to exist here: Browser Mode links ESM
+// for real rather than reading properties off a namespace object, so a partial factory
+// fails the whole file at COLLECTION. Each reader answers the EMPTY value for its type —
+// one claiming a live run would make a frame-ordering assertion pass for a reason
+// production did not supply.
+vi.mock("./run-store.js", () => ({
+  rebuildLiveRuns: vi.fn(),
+  // The adapter's `run_turn` arm asks past what this client holds, so the name has to exist
+  // on the mock or the module graph does not link (a mock is linked, not read off an object).
+  runTurnHeldSeq: vi.fn(() => undefined),
+  adoptConnectRuns: vi.fn(),
+  invalidateCachedRuns: vi.fn(),
+  invalidateRun: vi.fn(),
+  invalidateRunControls: vi.fn(),
+  forgetRun: vi.fn(),
+  noteRunLive: vi.fn(),
+  noteRunSettled: vi.fn(),
+  openRunTurn: vi.fn(),
+  openRunEntry: vi.fn(),
+  appendRunEntry: vi.fn(),
+  // The open tails a whole-turn read REPLACES, reached by the range read in this graph.
+  adoptRunOpenEntries: vi.fn(),
+  clearRunHole: vi.fn(),
+  registerLiveRunObserver: vi.fn(),
+  registerRunStateDemand: vi.fn(),
+  liveRunsForChat: vi.fn(() => []),
+  liveRunIDsForChat: vi.fn(() => []),
+  peekLiveRun: vi.fn(() => undefined),
+  peekRunState: vi.fn(() => undefined),
+  runState: vi.fn(() => undefined),
+  runChatID: vi.fn(() => ""),
+  runLabelOf: vi.fn(() => ""),
+  isNeedInputPark: vi.fn(() => false),
+  isNeedInputPause: vi.fn(() => false),
+}));
 vi.mock("./session-catalog.js", () => ({ fetchCatalog: vi.fn() }));
 vi.mock("./send-state.js", () => ({ setSSEStatus: vi.fn() }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
@@ -82,8 +124,8 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     expect(seen).toEqual([]);
 
     markHydrated();
-    // Order is preserved, and order is load-bearing: a message_chunk released before
-    // the message_created it extends is orphaned.
+    // Order is preserved, and order is load-bearing: an entry_delta released before the
+    // entry_opened it extends is a hole, which costs a range read to repair.
     expect(seen).toEqual(["connected", "pending_snapshot", "permission_needed"]);
   });
 
@@ -92,12 +134,12 @@ describe("the adapter holds frames until the chat store is hydrated", () => {
     const conn = await opened();
     markHydrated();
     conn.frame({
-      type: "message_chunk",
+      type: "entry_delta",
       chat_id: "chat-1",
-      payload: { message_id: "m1", delta: "x" },
+      payload: { turn: "t1", entry_id: "e1", lane: "", delta: "x", n: 1 },
     });
     await until(() => seen.length === 1);
-    expect(seen).toEqual(["message_chunk"]);
+    expect(seen).toEqual(["entry_delta"]);
   });
 
   it("markHydrated is idempotent and does not re-deliver", async () => {

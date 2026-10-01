@@ -18,8 +18,8 @@ import (
 	"sync"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/marotte/internal/subject"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/subject"
 )
 
 // scrubLog strips the CR and LF a wire-sourced value could carry to forge extra

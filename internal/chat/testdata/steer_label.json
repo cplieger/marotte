@@ -1,0 +1,196 @@
+{
+  "_comment": [
+    "The steer LABEL contract: every (origin, state, reason) a producer can stamp, and",
+    "the words the client renders for it.",
+    "",
+    "Regenerate:  UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestSteerLabelContract",
+    "Re-run the other reader:  npx vitest --run steer-label-contract",
+    "",
+    "`triples` is SCANNED from the producers, never listed: the scan walks every non-test",
+    "Go file under internal/, resolves each marotte.EntrySteer construction and mutation",
+    "against internal/marotte's own constants, and expands an origin that comes from data",
+    "to both members of the closed enum. `sites` is the scan's own evidence, so a NEW",
+    "producer moves this golden and the fixture has to be read before it is regenerated.",
+    "",
+    "`label` is the SERVER's statement of the client's words (parts joined with ' · ');",
+    "the reason clause is worded only on a dropped row, which is labelFor's own rule.",
+    "steer-label-contract.test.ts renders every `compared` row through buildSteerNote in",
+    "chromium and asserts the label matches.",
+    "",
+    "ONE DECLARED EDGE, carried as `compared: false` with its reason: the replay",
+    "projection leaves State unset, and no client reader sees that value — the merge",
+    "stamps dropped/restart on a projected steer the record never held before any reader",
+    "is served. Asserting a label for it would assert a render that cannot happen."
+  ],
+  "origins": [
+    "agent",
+    "user"
+  ],
+  "states": [
+    "dropped",
+    "read"
+  ],
+  "triples": [
+    {
+      "origin": "agent",
+      "state": "dropped",
+      "reason": "boundary",
+      "label": "Workflow result not delivered · the turn ended first",
+      "compared": true,
+      "sites": [
+        "internal/translate/steering.go:110",
+        "internal/translate/steering.go:119"
+      ]
+    },
+    {
+      "origin": "agent",
+      "state": "dropped",
+      "reason": "restart",
+      "label": "Workflow result not delivered · the session restarted",
+      "compared": true,
+      "sites": [
+        "internal/agent/entry_merge.go:604"
+      ]
+    },
+    {
+      "origin": "agent",
+      "state": "read",
+      "reason": "",
+      "label": "Workflow result",
+      "compared": true,
+      "sites": [
+        "internal/agent/run_appender.go:81",
+        "internal/agent/run_bounds.go:456",
+        "internal/translate/steering.go:181",
+        "internal/translate/steering.go:90"
+      ]
+    },
+    {
+      "origin": "agent",
+      "state": "",
+      "reason": "",
+      "label": "",
+      "compared": false,
+      "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
+      "sites": [
+        "internal/translate/projection_entries.go:246"
+      ]
+    },
+    {
+      "origin": "user",
+      "state": "dropped",
+      "reason": "boundary",
+      "label": "Not read · the turn ended first",
+      "compared": true,
+      "sites": [
+        "internal/translate/steering.go:110"
+      ]
+    },
+    {
+      "origin": "user",
+      "state": "dropped",
+      "reason": "restart",
+      "label": "Not read · the session restarted",
+      "compared": true,
+      "sites": [
+        "internal/agent/bridge_coord.go:1194",
+        "internal/agent/bridge_coord.go:1204",
+        "internal/agent/entry_merge.go:604"
+      ]
+    },
+    {
+      "origin": "user",
+      "state": "read",
+      "reason": "",
+      "label": "Mid-turn message",
+      "compared": true,
+      "sites": [
+        "internal/translate/steering.go:181",
+        "internal/translate/steering.go:90"
+      ]
+    },
+    {
+      "origin": "user",
+      "state": "",
+      "reason": "",
+      "label": "",
+      "compared": false,
+      "edge": "the replay projection's unset state: the merge stamps dropped/restart before any reader is served, so no render exists to pin",
+      "sites": [
+        "internal/translate/projection_entries.go:246"
+      ]
+    }
+  ],
+  "sites": [
+    {
+      "site": "internal/agent/bridge_coord.go:1194",
+      "form": "literal",
+      "origin": "user",
+      "state": "dropped",
+      "reason": "restart"
+    },
+    {
+      "site": "internal/agent/bridge_coord.go:1204",
+      "form": "literal",
+      "origin": "user",
+      "state": "dropped",
+      "reason": "restart"
+    },
+    {
+      "site": "internal/agent/entry_merge.go:604",
+      "form": "mutation",
+      "origin": "",
+      "state": "dropped",
+      "reason": "restart"
+    },
+    {
+      "site": "internal/agent/run_appender.go:81",
+      "form": "literal",
+      "origin": "agent",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/agent/run_bounds.go:456",
+      "form": "literal",
+      "origin": "agent",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/translate/projection_entries.go:246",
+      "form": "literal",
+      "origin": "",
+      "state": "",
+      "reason": ""
+    },
+    {
+      "site": "internal/translate/steering.go:110",
+      "form": "literal",
+      "origin": "",
+      "state": "dropped",
+      "reason": "boundary"
+    },
+    {
+      "site": "internal/translate/steering.go:119",
+      "form": "literal",
+      "origin": "agent",
+      "state": "dropped",
+      "reason": "boundary"
+    },
+    {
+      "site": "internal/translate/steering.go:181",
+      "form": "literal",
+      "origin": "",
+      "state": "read",
+      "reason": ""
+    },
+    {
+      "site": "internal/translate/steering.go:90",
+      "form": "literal",
+      "origin": "",
+      "state": "read",
+      "reason": ""
+    }
+  ]
+}

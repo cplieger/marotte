@@ -306,6 +306,38 @@
   /* A long code line SCROLLS rather than wraps — a wrapped line in a diff is
      worse than a clipped one, because the +/- column stops aligning. */
   overflow-x: auto;
+
+  /* EVERY ROW SPANS THE COLUMN'S WHOLE SCROLL RANGE, because the row background
+     IS the change signal: a `.diff-row` is a block-level flex container, so its
+     used width is its containing block's — the SCROLLPORT — while `white-space:
+     pre` text overflows past it, and the green/red tint therefore stopped
+     wherever the reader happened to be. Measured at 430px on the shipped
+     stylesheet: rows painted 342px against a 1149px range, so 70% of every
+     changed line was untinted at the far end of the scroll (45% at 754px on a
+     desktop). Reported as the highlight not being present on the right side once
+     the diff is scrolled horizontally.
+
+     ONE grid track sized `minmax(max-content, 1fr)` answers it in the cascade,
+     with no measurement and no observer: the base size is the WIDEST row's
+     max-content, `1fr` grows the track to the scrollport when every line fits,
+     and the items stretch to the track — so every row is exactly
+     `max(scrollport, widest row)` and the tint reaches the right edge at every
+     scroll offset in both directions. The two pieces are each load-bearing: a
+     bare `max-content` track leaves a short diff's rows narrower than the column
+     (measured 67px in a 342px box), and `minmax(100%, max-content)` resolves to
+     the 100% base and changes nothing, because grid grows a track to its growth
+     limit only to fill space it does not have here.
+
+     `min-inline-size: max-content` on the ROW is the obvious spelling and is
+     wrong: it sizes each row to its OWN content, so a short line between two long
+     ones still stops short (measured 619px against an 811px offset).
+
+     The two-pane shape keeps its JS measurement (`--diff-hspan`, 60-mcp.css)
+     rather than this: there the range is the WIDER OF TWO columns, and a
+     per-column track would give each its own max-content, so the columns' shared
+     horizontal bar would clamp at the narrower side and snap back. */
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr);
 }
 
 .diff-pane-unified .diff-line-text {
@@ -330,9 +362,15 @@
 
 .editor-find {
   display: flex;
-  align-items: center;
-  gap: var(--sp-1);
   flex-shrink: 0;
+
+  /* A COLUMN for the transcript box's reason (24-find.css `.search-status`): the
+     match counter is a LINE UNDER THE CONTROLS, because its writers put whole
+     sentences in it and a slot between the field and the buttons cannot hold one.
+     No `gap`, so an empty counter costs no height and the resting bar is one row;
+     the row owns its own `align-items`/`gap` and the counter pays for its spacing
+     with the margin that arrives with its text. */
+  flex-direction: column;
 
   /* Asymmetric inline insets, for the reason 24-find.css derives in full on
      `.chat-find`: the row's height is a button's, so the close × is flush with
@@ -349,6 +387,12 @@
   padding-inline: var(--sp-3) var(--sp-1);
   background: var(--c-bg-secondary);
   border-block-end: 1px solid var(--c-border);
+}
+
+.editor-find-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
 }
 
 .editor-find-input {
@@ -369,14 +413,8 @@
   }
 }
 
-.editor-find-count {
-  min-inline-size: 4.5rem;
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  white-space: nowrap;
-}
+/* `.editor-find-count` carries only the no-results tint below; its shape is
+   `.search-status` (24-find.css), shared with the transcript's counter. */
 
 .editor-find-nav {
   display: flex;

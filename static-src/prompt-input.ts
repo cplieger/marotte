@@ -1,44 +1,15 @@
 // ---------------------------------------------------------------------------
-// Prompt input: form submit, keydown (Enter, ↑/↓ history), send button,
-// iOS viewport fix.
+// Prompt input: form submit, keydown (Enter, ↑/↓ history), send button, iOS
+// viewport fix. send-state.ts drives three button faces: idle sends, streaming
+// cancels, error retries; the error face means there is nothing to send TO, so
+// every other failure reports through a toast and the turn's own divider.
 //
-// Three send-button states driven by send-state.ts:
-//   idle      → send icon, click submits
-//   streaming → stop icon (pulse), click cancels the turn
-//   error     → alert icon, tooltip names the failure, click RETRIES
-//
-// THE ERROR FACE MEANS "THERE IS NOTHING TO SEND TO", NOT "THE LAST SEND
-// FAILED". Two states reach it and both are about reachability: the SSE stream is
-// down, or kiro-cli could not be spawned for this chat. Every ordinary failure —
-// a 429 throttle, a 5xx, a capacity refusal, a timeout, a refused model switch —
-// goes to a bottom-right toast (failure-notice.ts) and to the turn's own
-// transcript divider instead. An alert icon on the control whose job is to send
-// reads as "this chat is dead", which was false for all of them.
-//
-// NOTHING HERE DISABLES THE COMPOSER, and that is the whole point of the
-// module. The retired fourth state (`blocked`) set `disabled` on the button AND
-// the textarea, and every failure routed to it: a 429 throttle, a 5xx, a dead
-// POST, a failed bridge start, a dropped SSE stream. None of those means the
-// user may not send. A failed prompt leaves the server IDLE (CmdPrompt's
-// deferred ReleaseAfterPrompt runs on the error path too), so the chat is
-// promptable again the moment the error arrives — and pressing Send again is
-// exactly what the user wants at that moment. Disabling the textarea also made
-// the pending text unrecoverable and left switching chats as the only way out.
-//
-// The rule: the composer stays live unless the process behind it is gone, and
-// no state this module can observe proves that. A dropped SSE stream does not
-// (the stream and the command POST are different connections, the POST usually
-// still lands, and the reconnect replay catches the transcript up). A full
-// context does not (kiro-cli compacts on the next turn). What a real failure
-// earns is a report, not a lock.
-//
-// There is no `queued` state either: a prompt typed during a turn is a steer,
-// sent straight away, so nothing waits on the button. Steers awaiting the agent
-// show on the chip row (pending-steers.ts).
+// Nothing here disables the composer: a failed prompt leaves the server idle.
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
 import { getActive, getActiveId } from "./store.js";
+import { payloadOf, turnOpenOf } from "./turns.js";
 import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_CANCEL, ICON_ALERT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -46,16 +17,10 @@ import { collapseAll } from "./pill-expand.js";
 import { setComposerValue } from "./composer-value.js";
 import { signal, effect, touch } from "@cplieger/reactive";
 
-// Single source of truth for the "context (nearly) full" state, scoped to the
-// ACTIVE chat (the prompt bar is shared). The VALUE is computed and written by
-// context-ui.ts (refreshContextUI); this module owns the send button/textarea,
-// so it holds the signal and is the sole reader/writer of the resulting
-// placeholder + tooltip. ADVISORY ONLY — it changes what the bar says and never
-// whether a send is allowed, because kiro-cli compacts on the next turn and
-// refusing the send left the user nothing to do about it. Keeping the signal
-// here (rather than importing it from context-ui) keeps the send-state →
-// prompt-input import chain free of the heavy status/context-ui modules, so the
-// transport/actions graph never loads them.
+/** The "context (nearly) full" state of the ACTIVE chat, written by
+ *  context-ui.ts and rendered here as a placeholder and a tooltip. ADVISORY: it
+ *  never refuses a send. Declared here rather than imported from context-ui so
+ *  the send-state chain does not pull that module in. */
 export const contextFull = signal(false);
 
 /** Placeholder / tooltip shown while `contextFull` is true. Module-local:
@@ -64,9 +29,7 @@ const CONTEXT_FULL_REASON =
   "Context nearly full. kiro-cli will compact automatically on the next turn.";
 
 /** Appended to every error tooltip. A fixed suffix rather than a test against
- *  the reason's wording: deciding whether a message already implies "resend"
- *  means matching keywords against upstream prose, and one redundant sentence in
- *  the throttle case is cheaper than a classifier that reads it wrong. */
+ *  the reason's wording, which is upstream prose. */
 const RETRY_HINT = "Send again to retry.";
 
 type Submit = (text: string) => void;
@@ -86,8 +49,7 @@ const STATE_ICON: Record<SendKind, string> = {
 const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   idle: "Send",
   streaming: "Cancel this turn",
-  // Unreachable in practice (send-state only builds an error with a non-empty
-  // reason), present because the record is exhaustive over the union.
+  // Unreachable: send-state only builds an error with a reason of its own.
   error: RETRY_HINT,
 };
 
@@ -99,13 +61,9 @@ function reasonOf(s: SendState): string {
 
 let initialized = false;
 
-/** How long after `compositionend` an Enter is still treated as the IME's
- *  commit key rather than a send.
- *
- *  Ported from Crew's guard verbatim, and it is not belt-and-braces with the
- *  `isComposing` / keyCode legs: on several IMEs the commit Enter arrives just
- *  AFTER composition ended, with `isComposing` already false and no 229. The
- *  tail is the only thing that covers that ordering. */
+/** How long after `compositionend` an Enter is still the IME's commit key rather
+ *  than a send. Several IMEs deliver that Enter just AFTER composition ended,
+ *  with `isComposing` false and no keyCode 229, so no other leg covers it. */
 const IME_TAIL_MS = 50;
 
 class PromptInputController {
@@ -114,9 +72,7 @@ class PromptInputController {
   private draft = "";
   private lastActiveID = "";
 
-  // IME composition state. `composing` is the first leg of the three-way guard
-  // below; `imeTimer` is the compositionend tail that keeps it true a moment
-  // longer.
+  // IME composition state; `imeTimer` holds `composing` true for the tail.
   private composing = false;
   private imeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -126,30 +82,13 @@ class PromptInputController {
   private onSubmit: Submit = () => undefined;
 
   /** Send whatever is in the composer. THE send path: the form's submit handler,
-   *  Enter, and the keyboard shortcut all call this.
-   *
-   *  Nothing fakes a submit event any more, and that mattered. Enter and the
-   *  shortcut used to run `form.dispatchEvent(new Event("submit"))`, and
-   *  `new Event()` is `cancelable: false`, so the handler's preventDefault() was
-   *  a no-op: the browser went on to perform the form's NATIVE submission on
-   *  every send. What stopped that being a page navigation was the
-   *  `action="javascript:void 0"` backstop in index.html plus CSP
-   *  `form-action 'self'`, which turned it into a console violation instead —
-   *  the exact failure that backstop's comment describes. Calling the send
-   *  directly removes the cause rather than the symptom.
-   *
-   *  NOT `form.requestSubmit()`, which fires a cancelable event but runs the
-   *  form's constraint validation first. The decision dock is a child of this
-   *  same form, and an elicitation field carries `pattern`, `minLength`,
-   *  `type=email`/`url` and `step=1` from the MCP server's own schema — so a
-   *  half-typed value in a dock field is `:invalid`, and requestSubmit would
-   *  silently refuse to send the chat message and report validity on the dock
-   *  instead.
-   *
-   *  submit.ts decides what a send MEANS: a prompt on an idle chat, a steer into
-   *  a turn already running. Nothing here refuses it. A previous send having
-   *  failed is precisely when the user wants to press again, so the retry is the
-   *  plain path rather than a special one. */
+   *  Enter and the keyboard shortcut all call this, and submit.ts decides what a
+   *  send means. Neither of the two ways of going through the form works. A
+   *  dispatched `new Event("submit")` is not cancelable, so preventDefault() is a
+   *  no-op and the browser performs the form's native submission. And
+   *  `requestSubmit()` runs constraint validation first, which the decision dock
+   *  is inside: a half-typed elicitation field is `:invalid` under the MCP
+   *  server's own schema, so the chat message would silently not be sent. */
   sendComposer(): void {
     const text = $.promptInput.value.trim();
     if (text === "") {
@@ -165,13 +104,9 @@ class PromptInputController {
     this.draft = "";
   }
 
-  /** Leave cycling and put the saved draft back in the box.
-   *
-   *  ONE method for both keys that end cycling (Escape, and ArrowDown off the
-   *  newest prompt), because exitCycling() zeroes this.draft: read it after the
-   *  exit and you get "", so the user's typing is silently thrown away. Escape
-   *  saved it to a local first and ArrowDown did not, which is exactly the bug
-   *  this method removes the room for. */
+  /** Leave cycling and put the saved draft back in the box. ONE method for both
+   *  keys that end cycling (Escape, ArrowDown off the newest prompt), because
+   *  exitCycling() zeroes `draft`: read after the exit it is "". */
   private restoreDraft(el: HTMLTextAreaElement): void {
     const saved = this.draft;
     this.exitCycling();
@@ -179,53 +114,53 @@ class PromptInputController {
   }
 
   /** Whether this keystroke belongs to an IME composition, so Enter must reach
-   *  the browser (committing the candidate) instead of sending the prompt.
-   *
-   *  Three legs, and each covers a case the others miss, which is why this is a
-   *  port of Crew's predicate rather than a reinvention of it:
-   *
-   *    - `this.composing` — set by compositionstart and held through the
-   *      compositionend tail. The only leg that survives an Enter delivered
-   *      after composition ended.
-   *    - `e.isComposing` — the platform's own answer, read straight off the
-   *      native KeyboardEvent (there is no synthetic-event wrapper here).
-   *      Authoritative when the browser sets it, and it is sometimes FALSE on
-   *      exactly the Enter that commits the candidate.
-   *    - `e.keyCode === 229` — the "processed by the IME" sentinel. Deprecated
-   *      but still what several Android and Windows IMEs report for that final
-   *      Enter, which is the reason the leg exists.
-   *
-   *  Marotte's shell terminal is deliberately out of scope: @cplieger/web-terminal-ui
-   *  owns everything above the raw stream, IME included. */
+   *  the browser and commit the candidate instead of sending. Three legs, each
+   *  covering a case the others miss:
+   *    - `composing`, the only one that survives an Enter delivered after
+   *      composition ended;
+   *    - `e.isComposing`, authoritative where the browser sets it, and sometimes
+   *      false on exactly the committing Enter;
+   *    - keyCode 229, what several Android and Windows IMEs report instead. */
   private isComposing(e: KeyboardEvent): boolean {
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- keyCode 229 is the whole reason to port this guard: the IME's commit Enter reports it when isComposing is already false.
     return this.composing || e.isComposing || e.keyCode === 229;
   }
 
-  /** Drop composition state. Blur and Escape.
-   *
-   *  Defensive rather than decorative: a browser that never delivers
-   *  compositionend (some Android IMEs, when the field loses focus mid-candidate)
-   *  would otherwise leave the flag stuck true and disable Enter for the rest of
-   *  the page's life — a worse failure than the bug being fixed. */
+  /** Drop composition state, on blur and on Escape. Some Android IMEs never
+   *  deliver compositionend when the field loses focus mid-candidate, which
+   *  would leave Enter dead for the rest of the page's life. */
   private resetIME(): void {
     clearTimeout(this.imeTimer);
     this.imeTimer = undefined;
     this.composing = false;
   }
 
+  /** What the reader typed into THIS composer, newest first: each turn's prompt
+   *  plus their own steers into it, so a steer whose `origin` is `agent` is a
+   *  workflow's report rather than typed text. A turn's steers come after its
+   *  prompt, so walking backwards keeps the list in position order. */
   private userPrompts(): string[] {
     const s = getActive();
     if (s === undefined) {
       return [];
     }
     const out: string[] = [];
-    for (let i = s.messages.length - 1; i >= 0; i--) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const m = s.messages[i]!;
-      if (m.role === "user" && (m.content ?? "") !== "") {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        out.push(m.content!);
+    for (let i = s.turn_order.length - 1; i >= 0; i--) {
+      const turnID = s.turn_order[i];
+      const t = turnID === undefined ? undefined : s.turns.get(turnID);
+      if (t === undefined) {
+        continue;
+      }
+      for (let j = t.entries.length - 1; j >= 0; j--) {
+        const e = t.entries[j];
+        const steer = e === undefined ? undefined : payloadOf(e, "steer");
+        if (steer?.origin === "user" && steer.text !== "") {
+          out.push(steer.text);
+        }
+      }
+      const text = turnOpenOf(t)?.prompt?.text ?? "";
+      if (text !== "") {
+        out.push(text);
       }
     }
     return out;
@@ -247,18 +182,9 @@ class PromptInputController {
     return !el.value.slice(pos).includes("\n");
   }
 
-  /** Show a value in the box WITHOUT announcing it.
-   *
-   *  History cycling is navigation, not editing: the displayed prompt is a
-   *  preview of something already sent, and `this.draft` holds what the user
-   *  actually typed until they leave the cycle. So no `input` event — the
-   *  module's own listener treats one as leaving the cycle, and the per-chat
-   *  draft layer would record the old prompt as the new draft.
-   *
-   *  The corollary belongs to that layer and is why it reads its own map rather
-   *  than this element: while a history item is on screen the textarea is not the
-   *  draft, so a save that read `.value` here sent the old prompt to the server
-   *  and overwrote the real one with it. */
+  /** Show a value in the box WITHOUT announcing it: cycling is navigation, so a
+   *  displayed prompt is a preview and `draft` still holds the typed text. An
+   *  `input` event would leave the cycle and be recorded as the new draft. */
   private setInputValue(el: HTMLTextAreaElement, v: string): void {
     el.value = v;
     el.setSelectionRange(v.length, v.length);
@@ -266,10 +192,8 @@ class PromptInputController {
 
   private applyButtonState(): void {
     const k = this.state.kind;
-    // Context-full is advisory and only says anything while idle: text typed
-    // mid-turn is a STEER (it does not size the next prompt), and after a
-    // failure the error is the more useful thing to report. It writes the
-    // placeholder and the tooltip; it does NOT refuse a send.
+    // Only while idle: text typed mid-turn is a steer and does not size the next
+    // prompt, and after a failure the error is the more useful thing to report.
     const ctxFull = k === "idle" && contextFull.value;
     const reason = reasonOf(this.state);
     $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
@@ -284,14 +208,10 @@ class PromptInputController {
     $.sendBtn.classList.toggle("streaming", k === "streaming");
     $.sendBtn.classList.toggle("failed", k === "error");
 
-    // ONE button, two meanings: type=button while streaming so a click cannot
-    // fire the form — clicking always CANCELS during a turn, while Enter still
-    // submits (the keydown dispatches the form event directly). Two gestures,
-    // one rule each; the label never decides.
+    // type=button while streaming keeps a click out of the form: a click always
+    // cancels during a turn, while Enter still sends.
     $.sendBtn.type = k === "streaming" ? "button" : "submit";
-    // Written unconditionally rather than left alone, so nothing that ever set
-    // them can leave the composer stuck off. See the module header for why no
-    // observable state earns a lock.
+    // Unconditional, so nothing that ever set them can leave the composer off.
     $.sendBtn.disabled = false;
     $.promptInput.disabled = false;
     $.promptInput.placeholder = ctxFull ? CONTEXT_FULL_REASON : "Message Kiro...";
@@ -314,8 +234,6 @@ class PromptInputController {
     const form = $.promptForm;
     const input = $.promptInput;
 
-    // The one button's streaming-click = cancel. type=button in that state
-    // keeps the click out of the form's submit path entirely.
     this.onCancel = onCancel;
     this.onSubmit = onSubmit;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
@@ -326,10 +244,8 @@ class PromptInputController {
       }
     });
 
-    // One effect keeps the tooltip/placeholder in sync with the context-full
-    // signal (runs once immediately for the initial paint, then on every
-    // change). setSendState() calls applyButtonState directly for send-state
-    // kind changes (this.state isn't a signal), so both inputs stay in sync.
+    // Follows the context-full signal; setSendState() paints the other input
+    // directly, because `state` is not a signal.
     effect(() => {
       touch(contextFull);
       this.applyButtonState();
@@ -340,9 +256,8 @@ class PromptInputController {
       this.sendComposer();
     });
 
-    // Composition listeners live beside the other input listeners, on the same
-    // element. compositionstart clears any pending tail so back-to-back
-    // compositions cannot have a stale timer flip the flag false mid-candidate.
+    // compositionstart clears any pending tail, so back-to-back compositions
+    // cannot have a stale timer flip the flag false mid-candidate.
     input.addEventListener("compositionstart", () => {
       clearTimeout(this.imeTimer);
       this.imeTimer = undefined;
@@ -363,23 +278,16 @@ class PromptInputController {
         this.exitCycling();
       }
 
-      // Escape drops composition state UNCONDITIONALLY, ahead of the
-      // history-cycling branch below. That branch is guarded on `idx !== -1`, so
-      // a reset placed inside it would only ever fire while cycling history —
-      // the wrong condition entirely. No stopPropagation here either: the
-      // cycling branch stops it because it consumes the key, while a plain
-      // Escape still has to reach the global handler that collapses pills and
-      // closes the dock.
+      // Ahead of the cycling branch, which is guarded on `idx !== -1`. No
+      // stopPropagation: a plain Escape still has to reach the global handler
+      // that collapses pills and closes the dock.
       if (e.key === "Escape") {
         this.resetIME();
       }
 
       if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
-        // A composing Enter falls THROUGH to the browser, which commits the IME
-        // candidate. The check has to sit inside this branch rather than as an
-        // early return at the top of the handler: an early return would also
-        // break ArrowUp/ArrowDown history navigation during composition, which
-        // is not the bug.
+        // Inside this branch rather than an early return at the top, which would
+        // also break history navigation during composition.
         if (this.isComposing(e)) {
           return;
         }
@@ -435,12 +343,7 @@ class PromptInputController {
     input.addEventListener("focus", () => {
       collapseAll();
     });
-    // The composer had no blur listener at all. It earns one now: a browser that
-    // drops compositionend (some Android IMEs, when the field loses focus
-    // mid-candidate) must not leave the flag stuck true and Enter disabled for
-    // the rest of the page's life. The draft layer keeps its OWN blur listener
-    // for its own concern; see the note above setComposerValue for why this
-    // module does not import it.
+    // The draft layer keeps its own blur listener for its own concern.
     input.addEventListener("blur", () => {
       this.resetIME();
     });
@@ -460,12 +363,8 @@ export function initPromptInput(onSubmit: Submit, onCancel: Cancel): void {
   instance.init(onSubmit, onCancel);
 }
 
-/** Send the composer's contents. The keyboard shortcut's entry point, and the
- *  same path Enter and the send button take.
- *
- *  Exported rather than left as a synthetic submit event dispatched at the form:
- *  see PromptInputController.sendComposer for why faking that event performed a
- *  native form submission on every send. */
+/** Send the composer's contents: the keyboard shortcut's entry point, and the
+ *  same path Enter and the send button take. */
 export function sendComposer(): void {
   instance.sendComposer();
 }

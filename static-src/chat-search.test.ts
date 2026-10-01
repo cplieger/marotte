@@ -35,12 +35,13 @@ const {
   initSearchRevealBuilder,
 } = await import("./chat-search.js");
 
+/** A hit on design 8.9's key: `[turn_id, entry_id, segment_kind, offset]`. `turn` is
+ *  the turn's own `turn_open.n`, which is what the rail and the folded rows read. */
 function hit(over: Partial<Hit> = {}): Hit {
   return {
-    message_id: "a1",
-    turn_message_id: "u1",
+    turn_id: "u1",
+    entry_id: "e1",
     excerpt: "…retry…",
-    role: "assistant",
     segment_kind: "content",
     turn: 2,
     offset: 0,
@@ -67,9 +68,7 @@ function answer(body: SearchResult | null): void {
 /** The three injected surfaces, declared once because they are MODULE state in
  *  chat-search.ts: a case that armed its own would leak it into the next. The
  *  suite's `mockReset` restores each implementation before every test. */
-const reveal = vi.fn((_chatID: string, _turnID: string, _messageID: string, _blockIndex?: number) =>
-  Promise.resolve(),
-);
+const reveal = vi.fn((_chatID: string, _turnID: string, _entryID?: string) => Promise.resolve());
 const forWalk = vi.fn((_chatID: string, _turnID: string) => Promise.resolve());
 const endWalk = vi.fn((_chatID: string) => undefined);
 
@@ -111,10 +110,8 @@ describe("runServerSearch: the request", () => {
 });
 
 describe("runServerSearch: the reveal", () => {
-  it("opens each hit's turn by its OPENING message id", async () => {
-    answer(
-      reply([hit({ turn_message_id: "u1" }), hit({ message_id: "a2", turn_message_id: "u3" })]),
-    );
+  it("opens each hit's turn by the turn id the hit carries", async () => {
+    answer(reply([hit({ turn_id: "u1" }), hit({ turn_id: "u3", entry_id: "e2" })]));
     await runServerSearch("c1", "retry");
     expect(openForSearch).toHaveBeenCalledWith("c1", "u1");
     expect(openForSearch).toHaveBeenCalledWith("c1", "u3");
@@ -129,9 +126,9 @@ describe("runServerSearch: the reveal", () => {
     // lands before the bump so the walker's re-run sees the rows.
     answer(
       reply([
-        hit({ turn_message_id: "u1" }),
-        hit({ message_id: "a2", turn_message_id: "u1" }),
-        hit({ message_id: "a3", turn_message_id: "u3" }),
+        hit({ turn_id: "u1" }),
+        hit({ turn_id: "u1", entry_id: "e2" }),
+        hit({ turn_id: "u3", entry_id: "e3" }),
       ]),
     );
     const order: string[] = [];
@@ -151,14 +148,14 @@ describe("runServerSearch: the reveal", () => {
     expect(reveal).not.toHaveBeenCalled();
   });
 
-  it("does not build for a hit the server could not resolve to a turn opener", async () => {
-    answer(reply([hit({ turn_message_id: "" })]));
+  it("does not build for a hit that names no turn", async () => {
+    answer(reply([hit({ turn_id: "" })]));
     await runServerSearch("c1", "retry");
     expect(forWalk).not.toHaveBeenCalled();
   });
 
   it("records the hit turns and their counts for the rail and the folded rows", async () => {
-    answer(reply([hit({ turn: 2 }), hit({ turn: 2, message_id: "a2" }), hit({ turn: 5 })]));
+    answer(reply([hit({ turn: 2 }), hit({ turn: 2, entry_id: "e2" }), hit({ turn: 5 })]));
     await runServerSearch("c1", "retry");
     expect([...searchHitTurns()].sort((a, b) => a - b)).toEqual([2, 5]);
     expect(searchHitCount(2)).toBe(2);
@@ -183,9 +180,9 @@ describe("runServerSearch: the reveal", () => {
     // adopts, so the reply travels as one value rather than a list beside two
     // accessors that could describe a different answer. A cut is what `matched`
     // exceeding the list says, and nothing here re-derives it.
-    answer(reply([hit(), hit({ message_id: "a2" })], { scanned: 24, matched: 347 }));
+    answer(reply([hit(), hit({ entry_id: "e2" })], { scanned: 24, matched: 347 }));
     expect(await runServerSearch("c1", "retry")).toEqual({
-      matches: [hit(), hit({ message_id: "a2" })],
+      matches: [hit(), hit({ entry_id: "e2" })],
       scanned: 24,
       matched: 347,
       truncated: false,
@@ -257,8 +254,8 @@ describe("runServerSearch: the reveal", () => {
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
-  it("skips a hit the server could not resolve to a turn opener", async () => {
-    answer(reply([hit({ turn_message_id: "" })]));
+  it("skips a hit that names no turn", async () => {
+    answer(reply([hit({ turn_id: "" })]));
     await runServerSearch("c1", "retry");
     expect(openForSearch).not.toHaveBeenCalled();
   });
@@ -277,37 +274,35 @@ describe("revealHitTurn: the per-hit reveal navigation runs before selecting", (
     bumpMessages.mockImplementation(() => {
       order.push("bump");
     });
-    await revealHitTurn("c1", hit({ turn_message_id: "u7" }));
+    await revealHitTurn("c1", hit({ turn_id: "u7" }));
     // Same ordering contract as the search-wide reveal: the body must exist
     // before the repaint that unfolds it, and the bump is the stated `shape`.
     expect(order).toEqual(["open:u7", "build:u7", "bump"]);
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
-  it("names the hit's own BLOCK, so the build can centre on it rather than the head", async () => {
-    // The turn-block ordinal is a fact of the residency projection, which is on the
-    // other side of this injection: what crosses is the block's identity, and the
-    // consumer converts. Without it every hit in a 700-block turn builds the head and
-    // the reader lands on `could not be shown`.
-    await revealHitTurn("c1", hit({ turn_message_id: "u7", message_id: "a4", block_index: 311 }));
-    expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "a4", 311);
+  it("names the hit's own ENTRY, so the build can centre on it rather than the head", async () => {
+    // The entry's ordinal inside its turn is a fact of the residency projection, on the
+    // other side of this injection, so what crosses is the entry's IDENTITY and the
+    // consumer resolves the position. Without it every hit in a 700-entry turn builds
+    // the head and the reader lands on `could not be shown`.
+    await revealHitTurn("c1", hit({ turn_id: "u7", entry_id: "e311" }));
+    expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "e311");
   });
 
-  it("passes no block for a hit that names none, which is the message's own row", async () => {
-    // A `message`-kind hit and a legacy blockless one both resolve to the ROW, and
-    // `turnOrdinalOf` answers the message's FIRST ordinal for an absent index.
-    await revealHitTurn(
-      "c1",
-      hit({ turn_message_id: "u7", message_id: "a4", segment_kind: "message" }),
-    );
-    expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "a4", undefined);
+  it("names the entry for an entry-kind hit too, so the kind cannot move the build", async () => {
+    // An `entry` hit locates the entry rather than a span in it, and the build still
+    // centres on that entry: the kind decides what NAVIGATION does with the element,
+    // never which element is built.
+    await revealHitTurn("c1", hit({ turn_id: "u7", entry_id: "e4", segment_kind: "entry" }));
+    expect(reveal).toHaveBeenCalledExactlyOnceWith("c1", "u7", "e4");
   });
 
-  it("does nothing for a hit with no turn opener", async () => {
+  it("does nothing for a hit that names no turn", async () => {
     // The beforeEach reset already bumped once; this test asserts the CALL
     // BELOW adds nothing.
     bumpMessages.mockClear();
-    await revealHitTurn("c1", hit({ turn_message_id: "" }));
+    await revealHitTurn("c1", hit({ turn_id: "" }));
     expect(openForSearch).not.toHaveBeenCalled();
     expect(reveal).not.toHaveBeenCalled();
     expect(bumpMessages).not.toHaveBeenCalled();

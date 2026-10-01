@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
-	"github.com/cplieger/marotte/internal/marotte"
 )
 
 // Runs owns the workflow-run surface: launch, cancel, retry, the durable lease, the
@@ -22,8 +23,17 @@ type Runs struct {
 	bus       runBroadcaster
 	schedules *schedule.Store `wiring:"optional"`
 	leases    *runlease.Store `wiring:"optional"`
-	bridges   *bridgeManager
-	coord     *BridgeCoordinator
+	// log is the run record: one entry log per run under <configDir>/runs, the
+	// open step turns and the host each run's death closer reaches through.
+	log     *runLog `wiring:"optional"`
+	bridges *bridgeManager
+	coord   *BridgeCoordinator
+	// notices queues, per launching chat, the finished runs whose completion notice
+	// KAS put in that chat's steering buffer; run_notices.go.
+	notices map[marotte.ChatID][]runNotice
+	// terminals answers whether a run's carrier is waiting on a live shell command,
+	// the one liveness the idle window cannot read off frames.
+	terminals runTerminalReader `wiring:"optional"`
 	utility   func() *utilityRuntime
 	lifecycle *lifetime
 	// workDir is the workspace root a projected diff path is made relative to, carried
@@ -40,7 +50,12 @@ type Runs struct {
 	// the kept-carrier bound cannot infer from a timeout (run_host.go).
 	carriers carrierUse
 	bounds   runBoundsState
-	mu       sync.Mutex
+	// cancelRetryBase is the first wait of a refused cancel's re-attempt ladder
+	// (retryTermination). A field rather than a package var because the ladder runs on
+	// untracked timers that can outlive whoever set the value. Set once, before the
+	// first cancel; zero means defaultCancelRetryBase.
+	cancelRetryBase time.Duration
+	mu              sync.Mutex
 }
 
 // runChatReader is the chat store as the run surface uses it: a chat's session
@@ -79,6 +94,15 @@ type runTranslator interface {
 	// SessionNotifyAsk derives the ask a `_kiro/session/notify` frame carries, or
 	// reports false. A DERIVATION: this surface owns the ask's whole lifecycle.
 	SessionNotifyAsk(msg *marotte.RPCResponse) (marotte.RunInputNeededPayload, bool)
+}
+
+// runTerminalReader is the agent-terminal registry as the run surface uses it: is
+// one of the sessions a run's own open steps named waiting on a live command. The
+// question is session-scoped rather than chat-scoped because a parallel run is
+// several steps on ONE carrier chat, so a chat-wide answer reports every step as
+// working while any one of them, or the chat's own conversation, holds a shell.
+type runTerminalReader interface {
+	LiveTerminalForSession(chatID marotte.ChatID, sessions map[string]struct{}) bool
 }
 
 // runBroadcaster is the event fan-out as the run surface uses it: publish an ask and

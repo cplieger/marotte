@@ -29,12 +29,12 @@ type writeBody struct {
 }
 
 func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
-	webhttp.LimitBody(w, r, maxFileSize)
+	webhttp.LimitBody(w, r, MaxFileSize)
 	var body writeBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: write body too large",
-				"path", logsafe.Field(l.abs), "limit", maxFileSize, "error", logsafe.Field(maxErr.Error()))
+				"path", logsafe.Field(l.abs), "limit", MaxFileSize, "error", logsafe.Field(maxErr.Error()))
 			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON(errFileTooLarge))
 			return
@@ -75,19 +75,36 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	// component). It also adds the fsync this write never had.
 	if _, err := atomicfile.WriteFileInRoot(r.Context(), l.m.root, l.rel(),
 		[]byte(body.Content), atomicfile.WithMode(mode)); err != nil {
-		if errors.Is(err, atomicfile.ErrSymlinkTarget) || errors.Is(err, atomicfile.ErrNotRegular) {
-			slog.Warn("filebrowse: refused a write onto a non-regular target",
-				"path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-			httpreply.BadRequest(w, "not a regular file")
-			return
-		}
-		slog.Warn("filebrowse: write failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpreply.ErrorJSON("write failed"))
+		writeFileError(w, l, err)
 		return
 	}
 	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(body.Content))
 	webhttp.Ok(w)
+}
+
+// writeFileError maps a confined-write failure onto the HTTP status the client
+// needs. atomicfile's sentinels and the syscall errno underneath them
+// distinguish the cases without inspecting error text; a full volume is the one
+// failure with a remedy the user can act on, so it gets its own status and
+// message instead of the generic 500. Unlike readFileError it carries no
+// context-cancellation branch, so a cancelled write still answers 500 — the
+// behaviour of the inline code this extraction replaced.
+func writeFileError(w http.ResponseWriter, l loc, err error) {
+	switch {
+	case errors.Is(err, atomicfile.ErrSymlinkTarget), errors.Is(err, atomicfile.ErrNotRegular):
+		slog.Warn("filebrowse: refused a write onto a non-regular target",
+			"path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
+		httpreply.BadRequest(w, "not a regular file")
+	case isOutOfSpace(err):
+		slog.Warn("filebrowse: write failed, out of space",
+			"path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
+		webhttp.WriteJSONStatus(w, http.StatusInsufficientStorage,
+			httpreply.ErrorJSON(errNoSpaceLeft))
+	default:
+		slog.Warn("filebrowse: write failed", "path", logsafe.Field(l.abs), "error", logsafe.Field(err.Error()))
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON("write failed"))
+	}
 }
 
 // staleWriteAllowed is the stale-write guard: it reports whether the write may
@@ -106,7 +123,7 @@ func staleWriteAllowed(w http.ResponseWriter, r *http.Request, l loc, body write
 	if body.ExpectedHash == "" {
 		return true
 	}
-	current, err := atomicfile.ReadBoundedInRoot(r.Context(), l.m.root, l.rel(), maxFileSize)
+	current, err := atomicfile.ReadBoundedInRoot(r.Context(), l.m.root, l.rel(), MaxFileSize)
 	if errors.Is(err, fs.ErrNotExist) {
 		return true
 	}

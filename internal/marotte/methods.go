@@ -146,6 +146,22 @@ const (
 	MethodPrompt = "session/prompt"
 )
 
+// MethodPolicyIgnoreFilesChanged tells KAS which ignore FILES to enforce, and it
+// is the whole door: KAS reads no `_meta.kiro` key and no session key for this,
+// and the ACP server constructs its agent with no list at all, which is why
+// kiro-cli's own TUI reads a gitignored file fine.
+//
+// CONNECTION-scope, so it is sent once per bridge; hot, so no session restart
+// follows; and `{files: []}` CLEARS the list, which is why an empty list is never
+// sent (see StartOpts.IgnoreFiles). A malformed payload is a warn and a no-op on
+// KAS's side, so a bad frame cannot disable enforcement, only fail to change it.
+const (
+	MethodPolicyIgnoreFilesChanged = "_kiro/policy/ignore_files_changed"
+
+	// ParamIgnoreFiles is the notification's one params key, carrying []string.
+	ParamIgnoreFiles = "files"
+)
+
 // Session-level ACP method names — streaming updates, permissions, config.
 const (
 	MethodSessionUpdate     = "session/update"

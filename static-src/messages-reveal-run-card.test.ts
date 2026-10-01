@@ -10,24 +10,47 @@
 //
 // It drives the REAL transcript rather than mocking it, because the thing under test
 // is which card in which view — a mocked renderer would let a document-wide lookup
-// pass. `turn-residency.test.ts` is the harness precedent.
+// pass. The entry fixtures and the seed-whole-turns `activate` are
+// `block-virtualization.test.ts`'s, which is this fence's reference harness.
+//
+// THE CARD'S OWNER IS AN ENTRY, and the fixture has to satisfy the derivation rather
+// than a message's `tool_calls` array: `runCardOwners` gives a run's card to the FIRST
+// `tool_call` entry in turn and `seq` order whose EFFECTIVE run id names it, and
+// `effectiveRunID` reads `payload.workflow_id` off the call itself. So one sealed
+// `tool_call` entry carrying that field is the whole launcher, and the scope is the
+// RESIDENT window — which is what makes the stub case below answer false rather than
+// needing a second mechanism.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { makeSession } from "./__test-helpers__/model.js";
+import type { TurnState } from "./types.js";
+import type { Entry } from "./wire/types.gen.js";
 
 // The render graph reaches the shared DOM registry, which throws on a missing app
-// root. Every id has to exist before the imports below are evaluated.
+// root. Every id has to exist before the imports below are evaluated, and the pair
+// the send-state effect reads is among them. NESTED as the shipped page nests them:
+// `#messages-wrap` is the scroller inside the outer wrapper.
 for (const id of [
-  "messages",
-  "messages-wrap",
   "messages-wrap-outer",
   "chat-view",
   "scroll-bottom",
+  "send-btn",
+  "prompt-input",
 ]) {
-  const d = document.createElement("div");
+  const d = document.createElement(id === "prompt-input" ? "textarea" : "div");
   d.id = id;
+  if (id === "scroll-bottom") {
+    d.appendChild(document.createElement("span"));
+  }
   document.body.appendChild(d);
 }
+const scrollerEl = document.createElement("div");
+scrollerEl.id = "messages-wrap";
+document.getElementById("messages-wrap-outer")?.appendChild(scrollerEl);
+const messagesEl = document.createElement("div");
+messagesEl.id = "messages";
+scrollerEl.appendChild(messagesEl);
 
 // scroll.ts is a self-initialising singleton over a real scroller; the canonical mock
 // is what every suite in this graph uses. `jumpTo` is a spy on it, which is the
@@ -47,71 +70,102 @@ vi.mock("./api-client.js", async () => ({
 const { mountChatView, revealRunCard, activeTranscriptView } = await import("./messages.js");
 const { setSessions, setActive, bumpMessages, removeChat } = await import("./store.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
-const { RESIDENT_BLOCKS } = await import("./block-window.js");
+const { RESIDENT_ENTRIES } = await import("./block-window.js");
 const { resetTurnRail } = await import("./turn-rail.js");
 const { scrollMock } = await import("./__test-helpers__/scroll-mock.js");
+const { KEY_ATTR } = await import("./reconcile.js");
 
-interface Msg {
-  id: string;
-  role: string;
-  ts: number;
-  content?: string;
-  blocks?: unknown[];
-  tool_calls?: unknown[];
-}
-
-function user(id: string): Msg {
-  return { id, role: "user", ts: 1, content: `prompt ${id}` };
-}
-
-/** An assistant turn that LAUNCHED a run: `ToolCall.workflow_id` is what the
- *  dispatcher keys the run card on. */
-function launcher(id: string, workflowID: string): Msg {
-  const tc = `tc-${workflowID}`;
+function sealed(turnID: string, at: number, kind: Entry["kind"], payload: unknown): Entry {
   return {
-    id,
-    role: "assistant",
-    ts: 2,
-    content: "",
-    blocks: [{ type: "tool_use", tool_call_id: tc }],
-    tool_calls: [
-      {
-        id: tc,
-        title: "Run Workflow",
-        kind: "other",
-        status: "completed",
-        workflow_id: workflowID,
-      },
-    ],
-  };
+    id: `${turnID}-e${String(at)}`,
+    turn: turnID,
+    kind,
+    seq: at,
+    ts: at + 1,
+    payload,
+  } as Entry;
 }
 
-function plain(id: string): Msg[] {
-  return [user(`u${id}`), { id: `a${id}`, role: "assistant", ts: 2, content: `reply ${id}` }];
+function turnOpen(turnID: string, n: number): Entry {
+  return sealed(turnID, 0, "turn_open", {
+    prompt: { id: `${turnID}-p`, text: `prompt ${turnID}` },
+    source: "prompt",
+    n,
+  });
 }
 
-function activate(chatID: string, messages: Msg[]): void {
+/** A prose turn: one sealed `text` entry, which is one mounted prose run. */
+function plainTurn(turnID: string, n: number): Entry[] {
+  return [
+    turnOpen(turnID, n),
+    sealed(turnID, 1, "text", { text: `reply ${turnID}` }),
+    sealed(turnID, 2, "turn_close", { outcome: "completed" }),
+  ];
+}
+
+/** A turn that LAUNCHED a run: one sealed `tool_call` entry whose own
+ *  `payload.workflow_id` is what `effectiveRunID` reads, so this entry owns that run's
+ *  card wherever the window holds it. */
+function launcherTurn(turnID: string, n: number, workflowID: string): Entry[] {
+  return [
+    turnOpen(turnID, n),
+    sealed(turnID, 1, "tool_call", {
+      id: `${turnID}-tc`,
+      title: "Run Workflow",
+      kind: "other",
+      status: "completed",
+      ts: 1,
+      workflow_id: workflowID,
+    }),
+    sealed(turnID, 2, "turn_close", { outcome: "completed" }),
+  ];
+}
+
+/** A turn that spends the whole entry budget on its own, so every turn behind it is a
+ *  stub. `thinking` entries rather than `text`: a body of sealed `text` entries is ONE
+ *  prose run and would cost one ordinal, so the budget would never bind. */
+function hugeTurn(turnID: string, n: number, count: number): Entry[] {
+  const out: Entry[] = [turnOpen(turnID, n)];
+  for (let at = 1; at <= count; at++) {
+    out.push(sealed(turnID, at, "thinking", { text: `step ${String(at)}` }));
+  }
+  out.push(sealed(turnID, count + 1, "turn_close", { outcome: "completed" }));
+  return out;
+}
+
+/** Seed whole turns and paint them, the way a window GET lands: one `TurnState` per
+ *  turn in `turn_order`, then the `load` bump the loader ends on. */
+function activate(chat: string, turnEntries: readonly (readonly Entry[])[]): void {
+  const turns = new Map<string, TurnState>();
+  const order: string[] = [];
+  for (const entries of turnEntries) {
+    const first = entries[0];
+    if (first === undefined) {
+      continue;
+    }
+    turns.set(first.turn, { entries: [...entries], openEntries: new Map() });
+    order.push(first.turn);
+  }
   setSessions([
     {
-      id: chatID,
-      name: "c",
-      model: "",
-      acp_session_id: "",
-      current_mode_id: "",
-      available_modes: [],
-      available_models: [],
-      usage: { context_size: 0 },
-      message_count: messages.length,
-      messages,
-      has_more: false,
-      thinking: false,
-      working_label: "Thinking",
+      ...makeSession({ id: chat, name: chat }),
+      turns,
+      turn_order: order,
+      turn_count: order.length,
     },
-  ] as never);
-  setActive(chatID);
-  // A same-id re-activation writes no signal the paint effect tracks; the bump is
-  // what store-load.ts issues after every page mutation.
-  bumpMessages(chatID);
+  ]);
+  setActive(chat);
+  bumpMessages(chat, "load");
+}
+
+function card(turnID: string): HTMLElement | null {
+  const root = activeTranscriptView() ?? messagesEl;
+  for (const child of root.children) {
+    if (child.getAttribute(KEY_ATTR) === turnID) {
+      return child as HTMLElement;
+    }
+  }
+  return null;
 }
 
 let seq = 0;
@@ -133,53 +187,48 @@ beforeEach(() => {
 describe("revealRunCard", () => {
   it("scrolls to a mounted run card and says so", () => {
     const c = chatID();
-    activate(c, [user("u1"), launcher("a1", "wf_1")]);
+    activate(c, [launcherTurn("t1", 1, "wf_1")]);
     const view = activeTranscriptView();
-    const card = view?.querySelector<HTMLElement>('.run-card[data-run="wf_1"]');
+    const runCard = view?.querySelector<HTMLElement>('.run-card[data-run="wf_1"]');
     // The premise, or this case asserts nothing about scoping: the card is really
     // mounted inside THIS chat's view.
-    expect(card).not.toBeNull();
+    expect(runCard).not.toBeNull();
 
     expect(revealRunCard(c, "wf_1")).toBe(true);
     expect(scrollMock.jumpTo).toHaveBeenCalledTimes(1);
-    expect(scrollMock.jumpTo.mock.calls[0]?.[0]).toBe(card);
+    expect(scrollMock.jumpTo.mock.calls[0]?.[0]).toBe(runCard);
   });
 
   // The renderer fact this function rests on, and the reason it does not also unfold:
-  // a turn pushed out of the resident BLOCK window is a header/footer STUB with no
-  // `.turn-body`, so it holds
-  // no run card at all and this answers false. The collapsed FACE used to mount a
-  // duplicate card, which is what made a stub answer true; that duplicate is gone —
-  // the composer band's run bar is the persistent surface for a live run now — and
-  // the honest answer is that the reader is in the right conversation and the card is
-  // one unfold away.
+  // a turn pushed out of the resident ENTRY window is a header/footer STUB with no
+  // `.turn-body`, so it holds no run card at all and this answers false. The collapsed
+  // FACE used to mount a duplicate card, which is what made a stub answer true; that
+  // duplicate is gone — the composer band's run bar is the persistent surface for a
+  // live run now — and the honest answer is that the reader is in the right
+  // conversation and the card is one unfold away. `runCardOwners` agrees from the other
+  // side: its scope is the resident window, so a paged-out mention owns no card.
   it("answers false for a launching turn that folded to a stub", () => {
     const c = chatID();
-    const messages: Msg[] = [user("u0"), launcher("a0", "wf_old")];
-    // Push the launching turn out of the resident window. Residency is counted in
-    // BLOCKS, not turns, so this adds enough plain turns to exceed that budget; the
-    // stub premise is asserted below rather than assumed.
-    for (let i = 1; i <= RESIDENT_BLOCKS; i++) {
-      messages.push(...plain(String(i)));
-    }
-    activate(c, messages);
+    // The newest turn spends the whole entry budget by itself, so the launching turn
+    // behind it is outside the window. The stub premise is asserted below rather than
+    // assumed.
+    activate(c, [launcherTurn("t-old", 1, "wf_old"), hugeTurn("t-big", 2, RESIDENT_ENTRIES + 64)]);
     const view = activeTranscriptView();
     // The premise: the turn really is a stub, which is what takes its card with it.
-    expect(view?.querySelector('[data-key="u0"] > .turn-body')).toBeNull();
+    expect(card("t-old")?.querySelector(":scope > .turn-body")).toBeNull();
     expect(view?.querySelector('.run-card[data-run="wf_old"]')).toBeNull();
 
     expect(revealRunCard(c, "wf_old")).toBe(false);
     expect(scrollMock.jumpTo).not.toHaveBeenCalled();
   });
 
-  // The honest false case, and the one item 6's state-3 copy is written against: the
-  // window is PAGINATED, so a run launched far enough back is not resident and no
-  // client-side unfold can reach it. Serving a step's transcript from KAS on demand is
-  // the answer to that whole family (followups FU-1).
+  // The honest false case: the window is PAGINATED, so a run launched far enough back
+  // is not resident and no client-side unfold can reach it. A step's transcript is
+  // served from the RUN's own log on demand, which is the answer to that whole family.
   it("answers false when the launching turn has been paged out", () => {
     const c = chatID();
     // A resident view whose window simply does not hold the launcher.
-    activate(c, [...plain("1"), ...plain("2")]);
+    activate(c, [plainTurn("t1", 1), plainTurn("t2", 2)]);
     expect(activeTranscriptView()).not.toBeNull();
 
     expect(revealRunCard(c, "wf_old")).toBe(false);
@@ -192,7 +241,7 @@ describe("revealRunCard", () => {
   // card and claim it landed.
   it("answers false, and touches nothing, for a chat with no resident view", () => {
     const c = chatID();
-    activate(c, [user("u1"), launcher("a1", "wf_1")]);
+    activate(c, [launcherTurn("t1", 1, "wf_1")]);
     // The card really is in the DOCUMENT, under the chat that owns it.
     expect(document.querySelector('.run-card[data-run="wf_1"]')).not.toBeNull();
 
@@ -200,29 +249,32 @@ describe("revealRunCard", () => {
     expect(scrollMock.jumpTo).not.toHaveBeenCalled();
   });
 
-  // A run this conversation never launched has no turn to open either, so the walk
-  // finds nothing and nothing is disturbed.
+  // A run this conversation never launched has no card to find, so nothing is
+  // disturbed.
   it("answers false for a run this chat did not launch", () => {
     const c = chatID();
-    activate(c, [user("u1"), launcher("a1", "wf_1")]);
+    activate(c, [launcherTurn("t1", 1, "wf_1")]);
     expect(revealRunCard(c, "wf_other")).toBe(false);
     expect(scrollMock.jumpTo).not.toHaveBeenCalled();
   });
 
   it("answers false for an empty run id", () => {
     const c = chatID();
-    activate(c, [user("u1"), launcher("a1", "wf_1")]);
+    activate(c, [launcherTurn("t1", 1, "wf_1")]);
     expect(revealRunCard(c, "")).toBe(false);
     expect(scrollMock.jumpTo).not.toHaveBeenCalled();
   });
 
-  // A chat whose window has been dropped keeps its view for a moment (the
-  // multiplexer parks up to PARKED_VIEWS), so the store read is what stops the walk
-  // rather than throwing on an absent session.
+  // ORACLE CORRECTED, because the implementation moved under it: this case's comment
+  // used to say "the store read is what stops the walk rather than throwing on an
+  // absent session", and `revealRunCard` makes no store read at all — it resolves the
+  // VIEW and queries inside it. So what it pins is that dropping a chat's window
+  // disposes that chat's view: with the view left standing the card would still be
+  // there and this would answer true.
   it("answers false when the chat's window is gone", () => {
     const c = chatID();
-    activate(c, [user("u1"), launcher("a1", "wf_1")]);
-    setTurnOpen(c, "u1", false);
+    activate(c, [launcherTurn("t1", 1, "wf_1")]);
+    setTurnOpen(c, "t1", false);
     removeChat(c);
     expect(revealRunCard(c, "wf_1")).toBe(false);
   });
