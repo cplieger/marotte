@@ -440,7 +440,7 @@
    declaration below is one the DOT's rule already made and this row answers
    differently, so the rules read as the difference between the two marks rather
    than as a second copy of one. The four numbers they name — the two bands, the
-   mask's divisor, the still band at the end of this file — are the mark's, and
+   closing beat's hole, the still band at the end of this file — are the mark's, and
    `tab-dot.test.ts` measures both marks against each other rather than against a
    transcription. */
 .tab[data-kind="run"] .tab-status-dot:not([data-status="failed"]) {
@@ -452,7 +452,7 @@
 
    The DISC's opacity beat is cancelled, because this row is not a disc. Fading a
    ring whole says nothing a ring cannot already say, and it would run BESIDE the
-   masked glow below — two animations claiming one fact, which is the defect this
+   closing beat below — two animations claiming one fact, which is the defect this
    file spends most of its length avoiding. `animation: none` rather than scoping the
    base rule away from `[data-kind="run"]`: the base rule's subject is the silhouette
    it paints, and a `:not()` there would make every future disc rule read as though
@@ -461,12 +461,15 @@
    `position: relative` is HERE rather than on the base rule, because the overlay is
    this row's alone now — a chat row's dot animates itself and carries no pseudo.
 
-   --run-band is the mark's name for the band, read by the glow below so the two
-   cannot drift apart on width. */
+   --run-band is the mark's name for the band, read by the closing beat below so the
+   two cannot drift apart on width. `overflow` and the promotion are that beat's, for
+   the reasons its own state rule gives. */
 .tab[data-kind="run"] .tab-status-dot[data-status="working"] {
   background: transparent;
   border: var(--run-band) solid var(--dot-color);
   position: relative;
+  overflow: hidden;
+  transform: translateZ(0);
   animation: none;
 
   --run-band: 2px;
@@ -624,7 +627,7 @@
      every band width below is arithmetic against it: --dot-size has to be the
      painted DIAMETER and not the diameter plus two bands, or a 3px band paints a
      14px mark beside an 8px dot. It is also what the reset cannot reach on the
-     ::before this rule's `working` state hangs a glow on. */
+     ::before this rule's `working` state closes the hole with. */
   box-sizing: border-box;
   inline-size: var(--dot-size);
   block-size: var(--dot-size);
@@ -716,89 +719,70 @@
     opacity var(--dur-enter) var(--ease-enter) var(--dur-standard);
 }
 
-/* Working — a run is executing. The breathe shares the activity dot's CLOCK rather
-   than its construction, and since 2026-09 that is the whole of what they share: a
-   disc animates its own opacity while this mark keeps a masked overlay, because the
-   overlay is what morphs the hole between a square and a circle and a disc has no
-   hole to morph. What both still take from `vk-dot-beat` (03-base.css) is the
-   keyframe and the phase, so neither adds keyframes of its own and a mark that
-   starts breathing mid-cycle is in step with every other
-   beat because the delay comes off one global origin. */
+/* Working — a run is executing. The beat shares the activity dot's CLOCK rather than
+   its construction: a disc animates its own opacity, while this mark's hole closes
+   (the overlay below). Both run on --dot-beat-dur off the one `--beat-phase` origin,
+   so a mark that starts mid-cycle closes as every dot peaks. */
 .tab-run-dot[data-status="working"],
 .run-bar-glyph[data-status="working"],
 .entry-mark[data-status="working"] {
   border-width: var(--run-band);
 
-  /* `position: relative` only, for the overlay's containing block. No
-     `translateZ`/`will-change`: the overlay animates `opacity` alone, which the
-     compositor already handles without promoting its parent, so a layer per open tab
-     would be bought for nothing. */
+  /* The overlays' containing block and CLIP (`overflow` clips at the padding box,
+     which under border-box sizing IS the hole). Promoted so the overlay layers snap
+     against the ring rather than the page: their offset from it is whole pixels by
+     construction (the rounded inset below), so the closing circle stays centred
+     wherever the mark lands. */
   position: relative;
+  overflow: hidden;
+  transform: translateZ(0);
 
-  /* The band, in one place, because the mask below has to know it: the overlay's
-     hole is the mark's inradius less this. In px like every other band in this
-     file, so the `waiting` < `input` == `working` relation holds at a root font
-     size other than 16px. */
+  /* The band, in one place, because the overlay below derives the hole from it. In
+     px like every other band in this file, so the `waiting` < `input` == `working`
+     relation holds at a root font size other than 16px. */
   --run-band: 2px;
   --dot-color: var(--c-dot-working);
 }
 
-/* THE GLOW BEAT, AND IT IS THE ONE RULE EVERY SQUARE MARK SHARES BY SELECTOR LIST
-   — the run row's own activity dot included, which is why that third selector is
-   here rather than in its block. The block above states the opposite convention for
-   the mark's band, radius and fill, and the difference is real: those are the three
-   declarations each family answers differently, while this construction is
-   character-identical for all three and used to be shared anyway, by inheriting the
-   activity dot's rule and overriding only the mask. With the dot's overlay gone
-   there is nothing left to inherit, so the sharing is stated instead of implied.
-
-   The MASK is what a ring needs and a disc does not. Over a solid disc the
-   overlay's bright core has almost no headroom above its own backdrop; over a
-   ring's transparent HOLE it has all of it, so at the beat's peak an unmasked
-   0.55 core would fill the hole and the mark would read as a disc. Masked, the beat
-   brightens the BAND and fills the hole's four corners, so what a reader sees is the
-   hole morphing between a square and the circle inscribed in it — the effect this
-   mark is recognised by, and the construction the bar's own retired conic-arc
-   spinner used for the same job.
-
-   NOTHING HERE EXTENDS PAST THE MARK, which is why this beat needed no change when
-   the activity dot's did. `box-sizing: border-box` (02-reset.css) puts the padding
-   box — an absolutely positioned child's containing block — INSIDE the band, so on
-   an 8px mark with a 2px band that box is 4x4 and `inset: -2px` resolves to exactly
-   the mark's own 8x8 border box. A disc has no band, so the same declaration there
-   resolved to 12x12 and put a feathered edge 2px outside the element, whose visible
-   radius then moved with the beat and rendered differently at every pixel density.
-   Read `inset: -2px` as "fill the mark", not as "overhang it". */
+/* THE CLOSING BEAT, shared by every square mark (the run row's own dot included).
+   The hole fills from its corners, passes through its inscribed circle and shrinks
+   to nothing, then reopens. Compositor-only: ::before is ink around a transparent
+   circle of the hole's corner radius sqrt(2) * h, scaled down to --mark-close, and
+   the parent's `overflow: hidden` clips it to the hole; half-size (h + 1px) /
+   --mark-close keeps its edge under the band at the peak (a 60px layer, ~14 KB at
+   dpr 1). Scaling leaves a 0.28px pinhole that reads as a dark pixel at dpr 2 and 3,
+   so ::after fades a fill over the hole as the scale bottoms out. */
 .tab-run-dot[data-status="working"]::before,
 .run-bar-glyph[data-status="working"]::before,
 .entry-mark[data-status="working"]::before,
 .tab[data-kind="run"] .tab-status-dot[data-status="working"]::before {
   content: "";
   position: absolute;
-  inset: -2px;
-  border-radius: 50%;
+  inset: round(down, var(--mark-hole) - (var(--mark-hole) + 1px) / var(--mark-close), 1px);
   background: radial-gradient(
-    closest-side,
-    color-mix(in oklch, var(--dot-color) 60%, #fff) 0 70%,
-    transparent 92%
+    circle,
+    transparent 0 calc(1.4142 * var(--mark-hole)),
+    var(--dot-color) calc(1.4142 * var(--mark-hole) + 0.5px)
   );
+
+  /* h, the hole's half-width, and the scale the beat closes it to (read by
+     `vk-mark-close` in 03-base.css as well as by the box above). */
+  --mark-hole: calc(var(--dot-size) / 2 - var(--run-band));
+  --mark-close: 0.1;
+
+  animation: vk-mark-close var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
+}
+
+.tab-run-dot[data-status="working"]::after,
+.run-bar-glyph[data-status="working"]::after,
+.entry-mark[data-status="working"]::after,
+.tab[data-kind="run"] .tab-status-dot[data-status="working"]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background: var(--dot-color);
   opacity: 0;
-
-  --beat-peak: 0.55;
-
-  animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
-
-  /* An absolute length rather than a percentage, because it is derived from two
-     numbers the mark already declares and a percentage would have to be re-derived
-     whenever either moved. The hole it clears is the square hole's INRADIUS, so the
-     circle is inscribed in it and the hole's four corners keep a sliver of glow —
-     0.83px at the diagonal, inside the feather, and the mask's job is keeping the
-     bright CORE off the centre rather than clipping the band exactly. */
-  mask: radial-gradient(
-    closest-side,
-    transparent 0 calc(var(--dot-size) / 2 - var(--run-band)),
-    #000 calc(var(--dot-size) / 2 - var(--run-band))
-  );
+  animation: vk-mark-seal var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
 }
 
 /* WAITING and INPUT — the run wants you, and the halo is what says so. It is the
@@ -909,15 +893,17 @@
     border-width: 3px;
   }
 
-  /* The overlay disappears ENTIRELY, for the reason the dot's does: reduced motion
-     leaves the beat resting at this rule's own `opacity: 0` and the glow would be
-     invisible anyway, but that is a property of the declared REST. Removing the
-     pseudo is what makes it independent of a future non-zero resting amplitude,
-     which would otherwise paint a permanent bright band over the donut. */
+  /* The overlay disappears ENTIRELY. Reduced motion would leave the beat resting at
+     scale 1 with the hole open, but that is a property of the declared REST;
+     removing the pseudo keeps the still band the whole answer whatever the rest. */
   .tab-run-dot[data-status="working"]::before,
   .run-bar-glyph[data-status="working"]::before,
   .entry-mark[data-status="working"]::before,
-  .tab[data-kind="run"] .tab-status-dot[data-status="working"]::before {
+  .tab[data-kind="run"] .tab-status-dot[data-status="working"]::before,
+  .tab-run-dot[data-status="working"]::after,
+  .run-bar-glyph[data-status="working"]::after,
+  .entry-mark[data-status="working"]::after,
+  .tab[data-kind="run"] .tab-status-dot[data-status="working"]::after {
     content: none;
   }
 
@@ -928,7 +914,7 @@
      untouched.
 
      Re-pointing --run-band rather than declaring `border-width` keeps that number in
-     the one place the state's own rule reads it from, the mask's divisor included —
+     the one place the state's own rule reads it from, the closing beat's hole included —
      which is moot here only because the overlay is gone. The dot's donut needs no
      answer either: it is (0,2,0) against this rule's (0,4,0), so it loses on a row
      that is already a ring. The overlay itself is removed by the square marks' own

@@ -96,7 +96,7 @@ describe("the skeleton period", () => {
     if (anim instanceof CSSAnimation) {
       expect(anim.animationName).toBe("vk-skeleton");
     }
-    expect(anim?.effect?.getTiming().duration).toBe(1500);
+    expect(anim?.effect?.getTiming().duration).toBe(2000);
     expect(anim?.effect?.getTiming().iterations).toBe(Infinity);
   });
 

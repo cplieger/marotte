@@ -2,7 +2,9 @@
  *  still breathe together. Mechanism and the measurements: `03-base.css` "THE DOT
  *  BEAT" and `marotte-ui.md` "Entry motion is a GPU budget". */
 
-const NAME = "vk-dot-beat";
+/** Every keyframe set that beats on `--dot-beat-dur`: the dots' opacity beat and the
+ *  square marks' closing hole and its seal (03-base.css). */
+const NAMES: ReadonlySet<string> = new Set(["vk-dot-beat", "vk-mark-close", "vk-mark-seal"]);
 
 /** Must equal `--dot-beat-dur` (01-tokens.css). Read from the document rather than
  *  restated, so a retuned token cannot leave the phase grid on the old period. */
@@ -41,7 +43,7 @@ const stampedFor = new WeakMap<Element, number>();
  *  a new one can be, so that case stamps. */
 function beatStartTime(el: Element): number | undefined {
   for (const a of el.getAnimations({ subtree: true })) {
-    if ((a as CSSAnimation).animationName !== NAME) {
+    if (!NAMES.has((a as CSSAnimation).animationName)) {
       continue;
     }
     return a.startTime === null ? undefined : Number(a.startTime);
@@ -85,7 +87,7 @@ export function initBeatPhase(): void {
   document.addEventListener(
     "animationstart",
     (e: AnimationEvent) => {
-      if (e.animationName !== NAME || e.target === null) {
+      if (!NAMES.has(e.animationName) || e.target === null) {
         return;
       }
       stamp(e.target as Element);

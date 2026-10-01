@@ -241,15 +241,16 @@
   height: 0.3125rem;
   border-radius: 50%;
   background: currentcolor;
-  animation: vk-dot-pulse 1.2s var(--ease-standard) infinite;
+  animation: vk-dot-pulse var(--dot-beat-dur) var(--ease-standard) infinite;
 }
 
+/* The stagger is a fraction of the period, so a retuned beat keeps the wave's shape. */
 .activity-dot:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: calc(var(--dot-beat-dur) / 8);
 }
 
 .activity-dot:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: calc(var(--dot-beat-dur) / 4);
 }
 
 /* The placeholder pulse, for `.skeleton` in 30-utilities.css. BOTH ends are
@@ -320,6 +321,28 @@
 @keyframes vk-dot-beat {
   50% {
     opacity: var(--beat-peak);
+  }
+}
+
+/* The square marks' beat: their hole closes on this clock and the seal covers the
+   last pinhole (12-tabs.css "THE CLOSING BEAT"). `beat-phase.ts` stamps both by
+   name alongside vk-dot-beat, so they peak with every dot. */
+@keyframes vk-mark-close {
+  50% {
+    transform: scale(var(--mark-close));
+  }
+}
+
+@keyframes vk-mark-seal {
+  0%,
+  30%,
+  70%,
+  100% {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
   }
 }
 

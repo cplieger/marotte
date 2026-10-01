@@ -1115,7 +1115,7 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   }
 
   /** The band a state's own rule paints, in px, in whichever of the three spellings
-   *  that rule uses: --run-band when the beat's mask has to read the same number,
+   *  that rule uses: --run-band when the closing beat has to read the same number,
    *  `border-width` when a base rule already supplies the style, and the `border`
    *  shorthand when it does not. Both marks answer, so a run row's own ring is
    *  measurable against the mark's with one reader. */
@@ -1195,13 +1195,18 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
   it("is never a filled disc, in any state or at any scope", () => {
     // The disc is the activity dot's. Shape is the only thing keeping the two
     // marks apart at identical hue, so a background of the ink here would collapse
-    // that separation at the one moment both marks are violet.
-    for (const rule of allRules(tabs).filter((r) => r.selector.includes(".tab-run-dot"))) {
+    // that separation at the one moment both marks are violet. The one fill is the
+    // closing beat's seal, which rests invisible and shows only at the beat's peak.
+    const marks = allRules(tabs).filter((r) => r.selector.includes(".tab-run-dot"));
+    for (const rule of marks.filter((r) => !r.selector.includes("::after"))) {
       expect(
         /background:\s*var\(--dot-color\)/.test(rule.body),
         `${rule.selector} must not fill the mark; got: ${rule.body.trim()}`,
       ).toBe(false);
     }
+    const seal = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::after', "top");
+    expect(seal.body).toContain("opacity: 0;");
+    expect(seal.body).toContain("vk-mark-seal");
   });
 
   it("separates its own wants-you pair by band at the exec column's ratio", () => {
@@ -1225,30 +1230,38 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     expect(/box-shadow/.test(working)).toBe(false);
     expect(
       ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top").body,
-    ).toContain("vk-dot-beat");
+    ).toContain("vk-mark-close");
   });
 
   it("beats on the overlay and not on the ring", () => {
     // The ring is the shape; only the overlay moves. Its animation is scoped to the
     // working state, so a settled run-dot carries none at all — which matters more
     // than it reads: an animation OUTRANKS a normal declaration, so a settled state
-    // could not answer a base-rule beat by resetting opacity.
+    // could not answer a base-rule beat by resetting it.
     const ring = ruleContaining(tabs, '.tab-run-dot[data-status="working"]', "top");
     const glow = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top");
     expect(/animation:/.test(ring.body)).toBe(false);
-    expect(glow.body).toContain("vk-dot-beat");
-    expect(glow.body).toContain("--beat-peak: 0.55");
+    expect(glow.body).toContain("vk-mark-close var(--dot-beat-dur)");
   });
 
-  it("keeps the beat off the ring's hole, so a peak is not a disc", () => {
-    // The dot's overlay composites over a solid disc of its own hue and has almost
-    // no headroom; over a ring's transparent hole it has all of it, so at the
-    // beat's peak an unmasked core would fill the hole and paint the dot's shape.
+  it("closes the hole by scaling it, clipped to the ring", () => {
+    // The beat is a transform on a pre-painted hole, so it repaints nothing; the
+    // parent's overflow is what keeps the overlay's ink inside the ring.
+    const ring = ruleContaining(tabs, '.tab-run-dot[data-status="working"]', "top");
     const glow = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::before', "top");
-    expect(glow.body).toContain("mask: radial-gradient(");
-    // Derived from the mark's own radius and band rather than a percentage, so
-    // moving either number cannot leave the mask behind.
-    expect(glow.body).toContain("calc(var(--dot-size) / 2 - var(--run-band))");
+    expect(ring.body).toContain("overflow: hidden");
+    // Derived from the mark's own size and band, so moving either cannot leave the
+    // hole behind; the open hole reaches the square hole's CORNER.
+    expect(glow.body).toContain("--mark-hole: calc(var(--dot-size) / 2 - var(--run-band))");
+    expect(glow.body).toContain("transparent 0 calc(1.4142 * var(--mark-hole))");
+    const beat = /@keyframes\s+vk-mark-close\s*\{([\s\S]*?)\n\}/u.exec(loadCSS("03-base.css"));
+    expect(beat, "03-base.css defines vk-mark-close").not.toBeNull();
+    expect(beat![1]!).toContain("transform: scale(var(--mark-close))");
+    expect(beat![1]!, "never a paint property").not.toMatch(/background|border|opacity/u);
+    // The seal covers the pinhole the scale leaves, on the same clock, in the ink.
+    const seal = ruleContaining(tabs, '.tab-run-dot[data-status="working"]::after', "top");
+    expect(seal.body).toContain("vk-mark-seal var(--dot-beat-dur)");
+    expect(seal.body).toContain("background: var(--dot-color)");
   });
 
   it("removes the beat overlay entirely under reduced motion", () => {
@@ -1724,26 +1737,22 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
     expect(heavy / hairline).toBeGreaterThanOrEqual(2);
   });
 
-  it("keeps the beat, and masks it off the ring's hole", async () => {
+  it("keeps the beat, and closes the ring's hole with it", async () => {
     // The motion is the SQUARE MARKS' shared overlay rule, which this row's selector
-    // joins — a chat row's disc animates itself and carries no pseudo at all, so
-    // there is nothing left here to inherit. The MASK is what a ring needs and a disc
-    // does not: over a transparent hole the beat's bright core has all the headroom it
-    // lacks over a disc, so at the peak an unmasked core would fill the hole and
-    // paint the very disc this replaced.
+    // joins — a chat row's disc animates itself and carries no pseudo at all.
     const { setTabStatus } = await import("./tabs.js");
     const { id, parent } = await runSubTab();
     setTabStatus(id, "working");
     setTabStatus(parent, "working");
 
-    const glow = getComputedStyle(dotOf(rowOf(id)), "::before");
+    const dot = dotOf(rowOf(id));
+    const glow = getComputedStyle(dot, "::before");
     expect(glow.content).toBe('""');
-    expect(glow.animationName).toBe("vk-dot-beat");
-    expect(glow.maskImage).toContain("radial-gradient");
+    expect(glow.animationName).toBe("vk-mark-close");
+    expect(getComputedStyle(dot).overflow).toBe("hidden");
 
     // The launching chat's own dot is the control, in the same state: a solid disc
-    // that beats on ITSELF and builds no overlay, because it has no hole to protect
-    // and nothing about it should vary with pixel density.
+    // that beats on ITSELF and builds no overlay, because it has no hole to close.
     const chatDot = dotOf(rowOf(parent));
     expect(getComputedStyle(chatDot).backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(getComputedStyle(chatDot).animationName).toBe("vk-dot-beat");
