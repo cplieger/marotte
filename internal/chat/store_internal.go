@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,10 +121,13 @@ func (s *Store) headerExists(chatID marotte.ChatID) bool {
 
 // pathFor is the chat's DIRECTORY.
 func (s *Store) pathFor(chatID marotte.ChatID) (string, error) {
-	if !chatIDPattern(chatID) {
+	id := string(chatID)
+	// The ".." test is already implied by chatIDPattern; it is the guard form
+	// CodeQL's go/path-injection recognises, which a custom predicate is not.
+	if !chatIDPattern(chatID) || strings.Contains(id, "..") {
 		return "", errInvalidChatID(chatID)
 	}
-	return filepath.Join(s.dir, string(chatID)), nil
+	return filepath.Join(s.dir, id), nil
 }
 
 // header is the chat's header file. The id is validated by every caller's pathFor;
