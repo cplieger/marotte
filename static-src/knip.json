@@ -4,6 +4,7 @@
     "app.ts",
     "sw.ts",
     "vitest.stryker.config.ts",
+    "__test-helpers__/stryker-fc-setup.ts",
     "sse-worker.ts",
     "**/*.test.ts",
     "**/*.node.test.ts",
