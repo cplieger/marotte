@@ -44,7 +44,7 @@
   },
   "timeoutMS": 10000,
   "timeoutFactor": 2,
-  "dryRunTimeoutMinutes": 20,
+  "dryRunTimeoutMinutes": 40,
   "concurrency": 4,
   "disableBail": false,
   "cleanTempDir": "always",

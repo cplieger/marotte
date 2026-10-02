@@ -38,11 +38,17 @@ const projects = base.test?.projects?.map((project) =>
     : project,
 );
 
+const baseSetupFiles = base.test?.setupFiles ?? [];
+
 export default {
   ...base,
   test: {
     ...base.test,
     ...(projects ? { projects } : {}),
+    setupFiles: [
+      ...(Array.isArray(baseSetupFiles) ? baseSetupFiles : [baseSetupFiles]),
+      "./__test-helpers__/stryker-fc-setup.ts",
+    ],
     // 90s: the Hirschberg large-input properties (2001x2001-line diffs,
     // 3 fast-check runs) tipped over the previous 30s cap once diff.ts +
     // the instrumentation overhead grew (weekly-stryker 2026-07-18 dry-run
