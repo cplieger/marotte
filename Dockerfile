@@ -110,7 +110,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # shell.ts imports createTerminal, localScrollbackStorage, presetSingle and
 # mobileToolbar from @cplieger/web-terminal-ui; cmd/bundle bundles it into app.js.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.1.2
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.2.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
