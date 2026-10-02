@@ -188,8 +188,13 @@ export const ICON_ALERT = svg(
 // keeps its git name: `ICON_GIT_DOWN_ARROW` has one caller and a git-scoped meaning.
 export const ICON_ARROW_UP = svg("ui", '<path d="M12 19V5M5 12l7-7 7 7"/>');
 export const ICON_GIT_DOWN_ARROW = svg("ui", '<path d="M12 5v14M5 12l7 7 7-7"/>');
-export const ICON_REFRESH =
-  '<svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
+/** Lucide `rotate-cw` with its head's horizontal leg moved from y=8 to y=9, so both
+ *  legs sit on the 3-unit grid; the last curve ends on the head's 45° line so the
+ *  shaft meets the corner without a kink. */
+export const ICON_REFRESH = svg(
+  "ui",
+  '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.74 1.74 6.24 3.24L21 9"/><path d="M21 3v6h-6"/>',
+);
 
 // The funnel: this app's mark for a filter that NARROWS A LIST, and only that.
 // The file browser's changed-by-this-chat toggle is deliberately not a consumer —
@@ -660,6 +665,28 @@ export const ICON_TAB_RUN = svg(
  *  weight rendered as a hairline the eye read as an artifact. */
 export const ICON_TAB_SUBTAB =
   '<svg class="ic-ui ic-subtab" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v7a4 4 0 004 4h12"/><path d="m15 10 5 5-5 5"/></svg>';
+// --- Exec-tree kind glyphs (`exec-view/tree.ts` `kindGlyph`) ---
+/** Parallel: Lucide `split` rotated 180°, so the branches fan DOWN, the tree's own
+ *  direction. No boxes, which is what keeps it clear of `ICON_TAB_RUN`. */
+export const ICON_EXEC_PARALLEL = svg(
+  "ui",
+  '<path d="M8 21H3v-5"/><path d="M16 21h5v-5"/><path d="M12 2v8.3a4 4 0 0 0 1.172 2.872L21 21"/><path d="m9 15-6 6"/>',
+);
+/** Sequence: a descending staircase, one step after another top to bottom. */
+export const ICON_EXEC_SEQUENCE = svg("ui", '<path d="M3 3h6v6h6v6h6v6"/>');
+/** Watch: Lucide `eye`, a node that observes an external condition until it holds. */
+export const ICON_EXEC_WATCH = svg(
+  "ui",
+  '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/>' +
+    '<circle cx="12" cy="12" r="3"/>',
+);
+/** Group: Lucide `layers-2`, a bundle of members. Two layers rather than `layers`'
+ *  three, which is one feature too many at 16px. */
+export const ICON_EXEC_GROUP = svg(
+  "ui",
+  '<path d="M13 13.74a2 2 0 0 1-2 0L2.5 8.87a1 1 0 0 1 0-1.74L11 2.26a2 2 0 0 1 2 0l8.5 4.87a1 1 0 0 1 0 1.74z"/>' +
+    '<path d="m20 14.285 1.5.845a1 1 0 0 1 0 1.74L13 21.74a2 2 0 0 1-2 0l-8.5-4.87a1 1 0 0 1 0-1.74l1.5-.845"/>',
+);
 /** Forge brand marks (Simple Icons, CC0), ONE set for the whole app: two sets left the
  *  GitHub mark a different shape on the Sources tab and the PRs tab.
  *  `fill="currentColor"` so a mark renders in the host's ink; the `.forge-kind-<kind>`

@@ -815,18 +815,12 @@
   opacity: 0.7;
 }
 
-/* The KIND glyph, which is what tells a loop from a branch without reading. A
-   sequence has none: plain top-to-bottom flow is the default, and a glyph on every
-   row would be decoration. */
+/* The KIND glyph, which is what tells a loop from a branch without reading. */
 .ev-kind {
   flex-shrink: 0;
   display: grid;
   place-items: center;
   color: var(--c-text-tertiary);
-}
-
-.ev-kind[hidden] {
-  display: none;
 }
 
 .ev-text {
