@@ -66,7 +66,6 @@ function evRow(opts: { depth: number; kids: boolean; expanded?: boolean }): HTML
   glyph.className = "ev-state";
   const kindSlot = document.createElement("span");
   kindSlot.className = "ev-kind";
-  kindSlot.hidden = true;
   const text = document.createElement("span");
   text.className = "ev-text";
   const label = document.createElement("span");

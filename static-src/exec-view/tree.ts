@@ -30,32 +30,36 @@ import { el } from "@cplieger/reactive";
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import {
+  ICON_EXEC_GROUP,
+  ICON_EXEC_PARALLEL,
+  ICON_EXEC_SEQUENCE,
+  ICON_EXEC_WATCH,
   ICON_REFRESH,
-  ICON_GIT_BRANCH,
-  ICON_HOURGLASS,
   ICON_TAB_AGENT,
   ICON_TAB_SUBTAB,
 } from "../icons.js";
 import { formatElapsed } from "../strings.js";
-import { elapsed, type ExecNode } from "./model.js";
+import { elapsed, type ExecKind, type ExecNode } from "./model.js";
 import { place } from "./place.js";
 import { STATE_WORD, paintStateMark, type ExecState } from "./status.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
  *  naming what it does, since "sequence"/"parallel" shouldn't require reading.
- *  A sequence gets none: plain top-to-bottom flow is the default. */
-function kindGlyph(kind: ExecNode["kind"]): Element | null {
+ *  Exhaustive with no default, so a new `ExecKind` fails the type check. */
+function kindGlyph(kind: ExecKind): Element {
   switch (kind) {
+    case "step":
+      return iconEl(ICON_TAB_AGENT);
+    case "sequence":
+      return iconEl(ICON_EXEC_SEQUENCE);
     case "repeat":
       return iconEl(ICON_REFRESH);
     case "parallel":
-      return iconEl(ICON_GIT_BRANCH);
+      return iconEl(ICON_EXEC_PARALLEL);
     case "watch":
-      return iconEl(ICON_HOURGLASS);
-    case "step":
-      return iconEl(ICON_TAB_AGENT);
-    default:
-      return null;
+      return iconEl(ICON_EXEC_WATCH);
+    case "group":
+      return iconEl(ICON_EXEC_GROUP);
   }
 }
 
@@ -207,16 +211,15 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     row.sub.textContent = node.subtitle ?? "";
     row.sub.hidden = (node.subtitle ?? "") === "";
     row.root.dataset["state"] = node.state;
+    // Rows are keyed by PATH, and a replanned run can put a different kind at one path.
+    if (row.root.dataset["kind"] !== node.kind) {
+      row.kindSlot.replaceChildren(kindGlyph(node.kind));
+    }
     row.root.dataset["kind"] = node.kind;
     // The GROUP BOX. Toggled rather than added, because `paint` re-runs for the same
     // reconciled row and a node gains children as the run progresses.
     row.root.classList.toggle("ev-group", depth === 0 && node.children.length > 0);
     paintStateMark(row.glyph, node.state);
-    const kg = kindGlyph(node.kind);
-    if (row.kindSlot.childElementCount === 0 && kg !== null) {
-      row.kindSlot.appendChild(kg);
-    }
-    row.kindSlot.hidden = kg === null;
     // Assigned through locals: the fields are optional under
     // exactOptionalPropertyTypes, so `undefined` is not a value they accept.
     if (node.start === undefined) {
