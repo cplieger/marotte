@@ -30,7 +30,7 @@ require (
 	github.com/cplieger/toolbelt/v3 v3.4.2
 	github.com/cplieger/web-terminal-engine/v6 v6.0.1
 	github.com/cplieger/webhttp/v3 v3.0.0
-	github.com/cplieger/wiregen/v3 v3.1.0
+	github.com/cplieger/wiregen/v3 v3.1.1
 	github.com/evanw/esbuild v0.28.2
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sync v0.23.0
