@@ -245,8 +245,10 @@ vi.mock("./api-client.js", () =>
   })),
 );
 
-import { openGitView, tabIdFor, getActiveTabRoute, _resetForTest } from "./tabs.js";
+import { openGitView, openTab, tabIdFor, getActiveTabRoute, _resetForTest } from "./tabs.js";
 import { applyRoute } from "./route-apply.js";
+import { parseRoute } from "./route-path.js";
+import { openFile } from "./editor-openers.js";
 import {
   registerNotificationOpener,
   _resetNotificationOpenerForTest,
@@ -293,6 +295,35 @@ describe("an open intent is idempotent", () => {
     await openGitView("prs");
     expect(tabIdFor("git")).not.toBe("");
     expect(getActiveTabRoute()).toEqual({ kind: "git", tab: "prs" });
+  });
+});
+
+// The server's ServeMux answers `/file//workspace/a.md` with a 307 to
+// `/file/workspace/a.md`, so a reload or a new browser tab parses the path
+// without its leading slash.
+describe("a file deep link that lost its leading slash", () => {
+  beforeEach(() => {
+    vi.mocked(openFile).mockClear();
+  });
+
+  it("opens the tab already open under the absolute path", async () => {
+    expect.assertions(1);
+    await openTab({ kind: "editor", ref: "/workspace/a.md" });
+    await applyRoute(parseRoute("/file/workspace/a.md", "#L3"));
+    expect(vi.mocked(openFile).mock.calls).toEqual([["/workspace/a.md", 3]]);
+  });
+
+  it("opens the tab already open under the slash-less path", async () => {
+    expect.assertions(1);
+    await openTab({ kind: "editor", ref: "workspace/.kiro/steering/a.md" });
+    await applyRoute(parseRoute("/file/workspace/.kiro/steering/a.md", ""));
+    expect(vi.mocked(openFile).mock.calls).toEqual([["workspace/.kiro/steering/a.md", undefined]]);
+  });
+
+  it("opens a file no tab holds under its absolute path", async () => {
+    expect.assertions(1);
+    await applyRoute(parseRoute("/file/workspace/a.md", ""));
+    expect(vi.mocked(openFile).mock.calls).toEqual([["/workspace/a.md", undefined]]);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   setGitTab,
   setDocsTab,
   setHistoryTab,
+  tabIdFor,
 } from "./tabs.js";
 import { replaceRoute } from "./router.js";
 import type { RouteOrigin } from "./router.js";
@@ -108,7 +109,7 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
       break;
     }
     case "file":
-      openFile(route.path, route.line);
+      openFile(openedFilePath(route.path), route.line);
       break;
     case "docs":
       // The sub-tab is forced BEFORE the open, matching its settings and git siblings:
@@ -191,4 +192,15 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
         });
   }
   return Promise.resolve();
+}
+
+/** ServeMux answers `/file//workspace/x` with a 307 to `/file/workspace/x`, so a
+ *  reload or a new browser tab parses the path without its leading slash, which
+ *  `/api/file` reads as `/` + path. The tab already open under either spelling
+ *  wins; otherwise the absolute one, which every in-app opener uses. */
+function openedFilePath(path: string): string {
+  if (path.startsWith("/") || tabIdFor("editor", path) !== "") {
+    return path;
+  }
+  return `/${path}`;
 }

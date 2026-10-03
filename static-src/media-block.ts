@@ -18,9 +18,10 @@
 //
 // The `![](…)` door is the honest one, and it is deliberately the only one. A
 // transcript file reference otherwise exists as linkified prose (which requires a
-// `/` and an extension in FILE_EXTS — and FILE_EXTS carries no audio extensions,
-// so audio is not linkified at all) or as a tool card's subject, which is an EDIT
-// subject rather than a presentation. There is no resource-link and no file entry
+// `/` and an extension in FILE_EXTS, and FILE_EXTS carries no audio extensions,
+// so audio is not linkified at all), as a markdown link, which opens the file in
+// the editor rather than presenting it, or as a tool card's subject, which is an
+// EDIT subject rather than a presentation. There is no resource-link and no file entry
 // on the transcript wire: an entry's kind is one of the fourteen the appender
 // mints, and not one of them presents a file. So `![](…)` is the one place the
 // agent CHOSE to present a
@@ -29,7 +30,7 @@
 
 import { el } from "@cplieger/reactive";
 import { isPlayableAudio, isViewableImage } from "./file-extensions.js";
-import { fileDownloadURL, isServedPath } from "./utils-url.js";
+import { fileDownloadURL, servedPath } from "./utils-url.js";
 
 /** The element a served file in an image position deserves — or null when the
  *  `<img>` the parser already built is the right answer (a remote URL, or an
@@ -39,8 +40,8 @@ import { fileDownloadURL, isServedPath } from "./utils-url.js";
  *  a link's text when `]` closes and its URL only when `)` does, so the alt has
  *  already landed on the `<img>` by the time a src arrives. */
 export function mediaElementFor(src: string, alt: string): HTMLElement | null {
-  const path = src.trim();
-  if (!isServedPath(path) || isViewableImage(path)) {
+  const path = servedPath(src);
+  if (path === null || isViewableImage(path)) {
     return null;
   }
   const url = fileDownloadURL(path);

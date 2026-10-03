@@ -59,7 +59,9 @@ import {
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { isSafeUrl, rewriteServedImageSrc } from "./utils-url.js";
+import { isSafeUrl, rewriteServedImageSrc, servedFileRoute } from "./utils-url.js";
+import { buildPath } from "./route-path.js";
+import { bindFileLink } from "./linkify.js";
 import { mediaElementFor } from "./media-block.js";
 import { buildPreviewCard, isPreviewHref } from "./preview-card.js";
 import { latexToMathML } from "./mathml.js";
@@ -464,6 +466,17 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
       { once: true },
     );
     return;
+  }
+  if (attrName === "href" && node.tagName === "A") {
+    const file = servedFileRoute(value);
+    if (file !== null) {
+      // The browser would ask the SPA for `/workspace/...` and land on a chat.
+      node.setAttribute("href", buildPath(file));
+      node.removeAttribute("target");
+      node.removeAttribute("rel");
+      bindFileLink(node as HTMLAnchorElement, file.path, file.line);
+      return;
+    }
   }
   if (attrName === "class" && node.tagName === "CODE") {
     node.setAttribute("class", "language-" + value);
