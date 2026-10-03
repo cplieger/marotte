@@ -19,7 +19,7 @@ package marotte
 // kinds (ToolKind, PushKind, EntryKind) carry too.
 type TabKind string
 
-// The ten tab kinds. Each string is the wire value AND the client's TabKind
+// The eleven tab kinds. Each string is the wire value AND the client's TabKind
 // union member, so a rename here is a cross-language change.
 //
 // There is deliberately no "plan". The client's TabKind.plan was dead — nothing
@@ -39,6 +39,8 @@ type TabKind string
 // directory (".kiro/specs/<name>" or "<repo>/.kiro/specs/<name>"), because the
 // docs scanner covers every "<repo>/.kiro" root and a bare name is ambiguous
 // across them.
+//
+// "web" is one sandboxed HTML preview; its Ref is the page's absolute path.
 const (
 	TabKindChat     TabKind = "chat"
 	TabKindEditor   TabKind = "editor"
@@ -50,6 +52,7 @@ const (
 	TabKindHistory  TabKind = "history"
 	TabKindDocs     TabKind = "docs"
 	TabKindSpec     TabKind = "spec"
+	TabKindWeb      TabKind = "web"
 )
 
 // tabKinds is the authoritative set, and the bool answers the question a caller
@@ -71,9 +74,10 @@ var tabKinds = map[TabKind]bool{
 	TabKindHistory:  true,
 	TabKindDocs:     true,
 	TabKindSpec:     false,
+	TabKindWeb:      false,
 }
 
-// Valid reports whether k is one of the ten kinds. Used at the command
+// Valid reports whether k is one of the eleven kinds. Used at the command
 // boundary and again inside the store, because a kind that reaches the persisted
 // set is a kind every client has to render.
 func (k TabKind) Valid() bool {
@@ -154,7 +158,7 @@ type TabSubject struct {
 // It carries no op_id and no idempotency key: those are the command envelope's,
 // and the store has no opinion about either.
 type OpenTab struct {
-	// Kind is required and must be one of the ten (see TabKind.Valid).
+	// Kind is required and must be one of the eleven (see TabKind.Valid).
 	Kind TabKind `json:"kind"`
 	// Ref is required for every kind but a singleton, where it must be empty.
 	Ref string `json:"ref,omitempty"`

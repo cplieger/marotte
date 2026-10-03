@@ -1659,6 +1659,8 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
         return true; // trim consecutive spaces
       }
       break;
+    default:
+      break;
   }
   return false;
 }

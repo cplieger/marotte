@@ -32,6 +32,7 @@ import {
   renderEditModeUI,
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
+import { captureSelection, restoreEditorView } from "./editor-scroll.js";
 import { registerCleanup } from "./actions/index.js";
 import { BUS_EDITOR_FILE_LOADED, emitBus } from "./bus.js";
 
@@ -251,7 +252,7 @@ export async function fetchGitDiffSources(
   state.loaded = true;
   state.error.value = error;
   if (getActiveFilePath() === state.path) {
-    restoreUI(state);
+    repaint(state);
   }
 }
 
@@ -284,7 +285,12 @@ export function activateFile(path: string): void {
   setActiveFilePath(path);
   $.editorFilename.textContent = routeForPath(path).displayPath;
   $.editorError.classList.add("hidden");
-  $.editorHighlight.parentElement?.scrollTo(0, 0);
+  // The pane is shared by every editor tab, so a file shown for the first time
+  // must not inherit the previous file's offset; a known file is restored below.
+  if (state.view === null) {
+    $.editorHighlight.parentElement?.scrollTo(0, 0);
+    $.editorContent.scrollLeft = 0;
+  }
 
   const m = state.mode.value;
   // An image has no text buffer, so there is nothing for `loadFile` to fetch
@@ -293,7 +299,7 @@ export function activateFile(path: string): void {
   // path alone, and `loaded` is set so a re-activation does not try again.
   if (m.kind === "image") {
     state.loaded = true;
-    restoreUI(state);
+    paint(state);
     return;
   }
 
@@ -309,13 +315,29 @@ export function activateFile(path: string): void {
     // read fills the buffer Edit needs, and until it lands the pane would
     // otherwise sit on the file the reader came from.
     if (paintsWithoutBuffer(state)) {
-      restoreUI(state);
+      paint(state);
     }
     void loadFile(state, activeLoadController.signal);
     return;
   }
-  restoreUI(state);
+  paint(state);
   applyPendingLine(state.path);
+}
+
+/** Repaint a file onto the shared pane and put the pane back where this file was
+ *  left. A `#L<line>` deep link runs after it and wins. */
+function repaint(state: FileState): void {
+  captureSelection(state);
+  paint(state);
+}
+
+/** `repaint` without the capture, for an activation: the textarea still holds the
+ *  outgoing file, which `saveCurrentState` has already recorded. */
+function paint(state: FileState): void {
+  restoreUI(state);
+  if (getActiveFilePath() === state.path) {
+    restoreEditorView(state);
+  }
 }
 
 function saveCurrentState(): void {
@@ -331,6 +353,7 @@ function saveCurrentState(): void {
       state.mode.value.kind === "conflict")
   ) {
     state.current.value = $.editorContent.value;
+    captureSelection(state);
   }
 }
 
@@ -387,7 +410,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   }
   adoptDiskBytes(state, d.content ?? "", d.content_hash ?? "");
   state.loaded = true;
-  restoreUI(state);
+  repaint(state);
   applyPendingLine(state.path);
   emitBus(BUS_EDITOR_FILE_LOADED, { path: state.path });
 }
@@ -489,7 +512,7 @@ function applyRefreshedRead(
   }
   if (!state.dirty.value) {
     adoptDiskBytes(state, content, hash);
-    restoreUI(state);
+    repaint(state);
     return;
   }
   state.original.value = content;

@@ -99,6 +99,8 @@ const DESTINATION: Readonly<Record<TabKind, FindDestination>> = {
   subagent: "none",
   spec: "none",
   settings: "none",
+  // A cross-origin frame's document cannot be searched from the app.
+  web: "none",
 };
 
 /** Search or filter, for the destinations that own the answer themselves.

@@ -106,6 +106,7 @@ var steerLabels = map[marotte.SteerOrigin]map[marotte.SteerState]string{
 var steerReasonClauses = map[marotte.SteerReason]string{
 	marotte.SteerReasonRestart:  "the session restarted",
 	marotte.SteerReasonBoundary: "the turn ended first",
+	marotte.SteerReasonDeleted:  "you deleted it",
 }
 
 // steerProjectionEdge is the one triple no client reader can see.

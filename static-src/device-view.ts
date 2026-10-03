@@ -3,8 +3,8 @@
 // JSON blob, so a second module doing its own drops whatever landed between its
 // read and its write. The key name cannot change either — nothing is migrated.
 //
-// `static/index.html`'s inline pre-paint snippet reads this blob's `theme`
-// before any module loads; `theme-init-snippet.test.ts` pins both names.
+// prepaint.js reads this blob before first paint (theme, sidebar width, pointer
+// fields, shell panel) through these same readers; it never writes.
 
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 
@@ -16,16 +16,21 @@ export type ThemeChoice = "dark" | "light" | "system";
  *  "fine" a mouse, a trackpad or a stylus with a cursor. */
 export type PointerTier = "fine" | "coarse";
 
-/** The three fields, as one record. Read together because they are stored
+/** The four fields, as one record. Read together because they are stored
  *  together; written one at a time because that is how they change. */
 interface DeviceView {
   active_view: string;
   shell_open: boolean;
   shell_h: number;
+  sidebar_w: number;
 }
 
 function empty(): DeviceView {
-  return { active_view: "", shell_open: false, shell_h: 0 };
+  return { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0 };
+}
+
+function validLength(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 /** The whole blob, or an empty object. Never throws: storage can be disabled
@@ -56,16 +61,16 @@ function writeBlob(patch: Record<string, unknown>): void {
 
 /** Every field validated rather than spread: a hand-edited blob or one written
  *  by an older build can carry a string where a number belongs, and `shell_h`
- *  feeds the panel's sizing arithmetic directly. An invalid field falls back to
+ *  and `sidebar_w` feed sizing arithmetic directly. An invalid field falls back to
  *  its default while its valid siblings are kept. */
 export function loadDeviceView(): DeviceView {
   const o = readBlob();
   const e = empty();
-  const h = o["shell_h"];
   return {
     active_view: typeof o["active_view"] === "string" ? o["active_view"] : e.active_view,
     shell_open: typeof o["shell_open"] === "boolean" ? o["shell_open"] : e.shell_open,
-    shell_h: typeof h === "number" && Number.isFinite(h) && h >= 0 ? h : e.shell_h,
+    shell_h: validLength(o["shell_h"]) ?? e.shell_h,
+    sidebar_w: validLength(o["sidebar_w"]) ?? e.sidebar_w,
   };
 }
 
@@ -94,6 +99,15 @@ export function shellHeight(): number {
 
 export function setShellHeight(px: number): void {
   writeBlob({ shell_h: px });
+}
+
+/** The dragged sidebar width in px; 0 means the CSS default (the minimum). */
+export function sidebarWidth(): number {
+  return loadDeviceView().sidebar_w;
+}
+
+export function setSidebarWidth(px: number): void {
+  writeBlob({ sidebar_w: px });
 }
 
 /** The cached theme choice, or null when none was ever written. A CACHE of
@@ -141,7 +155,7 @@ export function markCoarseSeen(): void {
 }
 
 /** Refresh the cache so the NEXT load paints the right theme before its fetch
- *  resolves. `null` clears the field, which makes the snippet fall back to the OS
+ *  resolves. `null` clears the field, which makes prepaint.js fall back to the OS
  *  preference — the same answer an absent server value gets. */
 export function cacheTheme(theme: ThemeChoice | null): void {
   if (theme === null) {

@@ -266,7 +266,7 @@ func TestPromptEntry_CarriesTheAttachments(t *testing.T) {
 		Text:        "have a look at these",
 		MessageID:   "m-1",
 		Attachments: atts,
-	})
+	}, nil)
 
 	if got.ID != "m-1" || got.Text != "have a look at these" {
 		t.Errorf("promptEntry = %+v, want id m-1 and the prompt's text", got)
@@ -289,7 +289,7 @@ func TestPromptEntry_CarriesTheAttachments(t *testing.T) {
 // A prompt with no attachments must carry none, so `omitempty` keeps the field
 // off the wire and off disk for the overwhelmingly common case.
 func TestPromptEntry_NoAttachmentsCarriesNone(t *testing.T) {
-	got := promptEntry(&marotte.PromptCommand{Text: "just a question", MessageID: "m-1"})
+	got := promptEntry(&marotte.PromptCommand{Text: "just a question", MessageID: "m-1"}, nil)
 	if got.Attachments != nil {
 		t.Errorf("attachments = %#v, want nil", got.Attachments)
 	}

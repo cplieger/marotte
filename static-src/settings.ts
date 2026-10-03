@@ -9,12 +9,11 @@ import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitBadge } from "./git-badge.js";
 import { getGitTab } from "./git-tabs.js";
 import { noteDefaultBrowsePath } from "./files.js";
-import { restoreShell } from "./shell.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
 import { loadSettings, patchSettings, initSettingsTracking } from "./persist.js";
 import type { EffectiveSettings } from "./persist.js";
-import { cacheTheme, cachedTheme, shellOpen } from "./device-view.js";
+import { cacheTheme, cachedTheme } from "./device-view.js";
 import type { ThemeChoice } from "./device-view.js";
 import { applyThemeChoice, initThemeToggle } from "./theme.js";
 import type { ThemeStorage } from "@cplieger/ui-primitives/theme";
@@ -129,8 +128,8 @@ function repaintTheme(choice: ThemeChoice): void {
  *
  *  That adoption is the single value the deletion of the old whole-document
  *  arrangement carries over, and it is not a migration path: the document is
- *  gone and unread, while this cache is a live localStorage field the pre-paint
- *  snippet is still reading on every load. The theme is also the one loss a
+ *  gone and unread, while this cache is a live localStorage field prepaint.js
+ *  is still reading on every load. The theme is also the one loss a
  *  reader would SEE — on the very next load, as the wrong colour — so it is
  *  adopted rather than reset. Once, and only when nothing is set server-side, so
  *  a deliberate later change can never be overwritten by a stale cache.
@@ -214,8 +213,8 @@ export function _resetThemeForTest(): void {
 
 /** Fetch settings from server and apply notification state only.
  *  Used for lightweight re-sync (e.g. after login) without touching
- *  per-device UI state. Compare with restoreAll() which also restores
- *  localStorage-based UI (shell, file browser, editor tabs). */
+ *  per-device UI state. Compare with restoreAll(), which also seeds the file
+ *  browser path and the settings panels. */
 export async function syncSettings(): Promise<EffectiveSettings | null> {
   const s = await loadSettings();
   // Null means the fetch failed: seeding the dedup tracker from nothing would
@@ -236,14 +235,11 @@ export async function syncSettings(): Promise<EffectiveSettings | null> {
   return s;
 }
 
-/** Restore all state: this device's own UI from device-view, workspace prefs
- *  from the loaded settings payload. Called once at startup. Unlike
- *  syncSettings(), this also restores shell, file browser, and editor tabs.
- *  (Theme is applied separately by initThemeToggle() during initUI.) */
+/** Restore the workspace prefs the loaded settings payload carries. Called once
+ *  at startup, and only when the read answered, so per-device state does not
+ *  belong here: a failed read never calls this. (Theme is applied separately by
+ *  initThemeToggle() during initUI.) */
 export function restoreAll(s: EffectiveSettings): void {
-  if (shellOpen()) {
-    restoreShell();
-  }
   // UNCONDITIONAL: "" is a real value meaning "nothing recorded", and the recorder
   // maps it to the mounts listing, so a guard would leave the recorder uncalled on a
   // fresh volume for no gain.

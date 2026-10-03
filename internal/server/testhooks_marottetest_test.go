@@ -7,9 +7,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/sse"
 )
@@ -107,5 +112,139 @@ func TestTestHooks_CensusReportsPresenceAndSuppression(t *testing.T) {
 		if _, ok := got.Suppressed[kr.Kind]; !ok {
 			t.Errorf("push_suppressed_total lacks kind %q", kr.Kind)
 		}
+	}
+}
+
+func TestTestHooks_PreviewTokenMintsAnExpiredGrant(t *testing.T) {
+	h, ph, page := previewStack(t)
+	mux := http.NewServeMux()
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	body := `{"path":"` + page + `","expires_at":"` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"}`
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/preview-token", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/test/preview-token = %d %s, want 200", rec.Code, rec.Body)
+	}
+	var g marotte.PreviewGrant
+	if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := serveStack(h, http.MethodGet, g.URL, ""); got.Code != http.StatusForbidden {
+		t.Errorf("GET an expired grant's URL = %d, want 403", got.Code)
+	}
+
+	bare := http.NewServeMux()
+	(&Server{agent: &fakeEngine{}}).registerTestHooks(bare)
+	rec = httptest.NewRecorder()
+	bare.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/preview-token", strings.NewReader(body)))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("POST /api/test/preview-token with no preview wired = %d, want 404", rec.Code)
+	}
+}
+
+func TestTestHooks_PreviewResolverMakesEveryRouteAnswer503(t *testing.T) {
+	h, ph, page := previewStack(t)
+	mux := http.NewServeMux()
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	g, err := ph.Grant(page, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := `{"path":"` + page + `"}`
+	routes := []struct{ name, method, target, body string }{
+		{"grant", http.MethodPost, "/api/preview/grant", grant},
+		{"page", http.MethodGet, g.URL, ""},
+		{"stamp", http.MethodGet, "/api/preview/stamp?path=" + url.QueryEscape(page), ""},
+	}
+	toggle := func(on string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/preview-resolver", strings.NewReader(`{"unavailable":`+on+`}`)))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("POST /api/test/preview-resolver %s = %d, want 204", on, rec.Code)
+		}
+	}
+	toggle("true")
+	t.Cleanup(func() { toggle("false") })
+	for _, r := range routes {
+		if rec := serveStack(h, r.method, r.target, r.body, "Content-Type", "application/json"); rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s with the resolver off = %d %s, want 503", r.name, rec.Code, rec.Body)
+		}
+	}
+	toggle("false")
+	for _, r := range routes {
+		if rec := serveStack(h, r.method, r.target, r.body, "Content-Type", "application/json"); rec.Code != http.StatusOK {
+			t.Errorf("%s with the resolver back = %d %s, want 200", r.name, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestTestHooks_PreviewResolverBusyExhaustsTheRetryBudget(t *testing.T) {
+	h, ph, page := previewStack(t)
+	mux := http.NewServeMux()
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	g, err := ph.Grant(page, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/preview-resolver", strings.NewReader(body)))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("POST /api/test/preview-resolver %s = %d, want 204", body, rec.Code)
+		}
+	}
+	set(`{"busy":true}`)
+	t.Cleanup(func() { set(`{}`) })
+	for _, r := range []struct{ name, method, target, body string }{
+		{"grant", http.MethodPost, "/api/preview/grant", `{"path":"` + page + `"}`},
+		{"page", http.MethodGet, g.URL, ""},
+	} {
+		rec := serveStack(h, r.method, r.target, r.body, "Content-Type", "application/json")
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "kept changing") {
+			t.Errorf("%s with the resolver busy = %d %s, want 503 naming the churn", r.name, rec.Code, rec.Body)
+		}
+	}
+	set(`{}`)
+	if rec := serveStack(h, http.MethodGet, g.URL, ""); rec.Code != http.StatusOK {
+		t.Errorf("page with the resolver back = %d, want 200", rec.Code)
+	}
+}
+
+func TestTestHooks_PreviewGrowServesTheCheckedSize(t *testing.T) {
+	h, ph, page := previewStack(t)
+	mux := http.NewServeMux()
+	(&Server{agent: &fakeEngine{}, preview: ph}).registerTestHooks(mux)
+	asset := filepath.Join(filepath.Dir(page), "grow.bin")
+	if err := os.WriteFile(asset, []byte("0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g, err := ph.Grant(page, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(body string) int {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/test/preview-grow", strings.NewReader(body)))
+		return rec.Code
+	}
+	for _, bad := range []string{`{"path":"` + asset + `","bytes":0}`, `{"path":"` + filepath.Dir(page) + `","bytes":5}`} {
+		if code := post(bad); code != http.StatusBadRequest {
+			t.Errorf("POST /api/test/preview-grow %s = %d, want 400", bad, code)
+		}
+	}
+	if code := post(`{"path":"` + asset + `","bytes":5}`); code != http.StatusNoContent {
+		t.Fatalf("POST /api/test/preview-grow = %d, want 204", code)
+	}
+	rec := serveStack(h, http.MethodGet, g.Base+"grow.bin", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "0123456789" {
+		t.Errorf("GET grow.bin = %d %q, want 200 and the 10 bytes the size check saw", rec.Code, rec.Body)
+	}
+	if st, err := os.Stat(asset); err != nil || st.Size() != 15 {
+		t.Errorf("grow.bin on disk = %v %v, want 15 bytes (the hook grew it)", st, err)
+	}
+	if rec := serveStack(h, http.MethodGet, g.Base+"grow.bin", ""); rec.Body.Len() != 15 {
+		t.Errorf("second GET grow.bin = %d bytes, want 15 (the growth is one-shot)", rec.Body.Len())
 	}
 }

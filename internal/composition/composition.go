@@ -30,6 +30,7 @@ import (
 	"github.com/cplieger/marotte/internal/mcp"
 	"github.com/cplieger/marotte/internal/mcp/prewarm"
 	"github.com/cplieger/marotte/internal/policyfile"
+	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/marotte/internal/runlease"
 	"github.com/cplieger/marotte/internal/schedule"
@@ -271,6 +272,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	h.Membership().SetRetentionWake(purgeScheduler.Trigger)
 	purgeScheduler.Start(appCtx)
 
+	previewSigner, err := preview.NewSigner()
+	if err != nil {
+		return nil, fmt.Errorf("preview signer: %w", err)
+	}
+
 	srv := server.New(
 		server.WithSteering(steer),
 		server.WithAgent(h),
@@ -284,6 +290,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithMCPStatus(h.MCPRegistry()),
 		server.WithMCPRegistry(mcpRegistry),
 		server.WithForges(forgesHTTP),
+		server.WithPreview(preview.New(cfg.WorkDir, previewSigner, slog.Default())),
 		server.WithTools(toolsEngine),
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),

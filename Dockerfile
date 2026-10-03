@@ -122,10 +122,9 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
 # concatenated into static/style.css by cmd/bundle (via a MANIFEST entry),
 # then skinned by static-src/css/04-uip-skin.css.
 #
-# The theme adoption (static-src/theme.ts's createTheme storage adapter + the
-# index.html themeInitSnippetFromJSON anti-FOUC snippet) needs
-# @cplieger/ui-primitives >= 2.1.0, which ships the createTheme storage-adapter
-# API. This ARG and static-src/package.json's @cplieger/ui-primitives pin
+# createTheme with a storage adapter (static-src/theme.ts, and the pre-paint
+# theme step bundled into static/prepaint.js) needs @cplieger/ui-primitives
+# >= 2.1.0. This ARG and static-src/package.json's @cplieger/ui-primitives pin
 # track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui-primitives
 ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.1.1

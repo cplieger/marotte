@@ -90,8 +90,23 @@ export type FileMode =
   // from the file route rather than from a loaded buffer.
   | { kind: "image" };
 
+/** Where the reader left one file on the SHARED pane. Every editor tab paints into
+ *  the same elements, so a position held by the DOM is the last file's, never
+ *  this one's. */
+export interface EditorView {
+  top: number;
+  left: number;
+  /** The textarea pans a long line inside itself (block axis is the pane's). */
+  areaLeft: number;
+  selection: { start: number; end: number; direction: "forward" | "backward" | "none" } | null;
+  /** Keyed by the comparison it was taken in, so a different diff opens at its top. */
+  diff: { key: string; top: number; left: number } | null;
+}
+
 export interface FileState {
   path: string;
+  /** Null until the file has been shown once; a first open lands at the top. */
+  view: EditorView | null;
   /** Saved-on-disk content. Reactive so `dirty` can derive from it. */
   original: Signal<string>;
   /** Live editor-buffer content. Reactive so `dirty` can derive from it. */
@@ -170,6 +185,7 @@ class EditorState {
     });
     return {
       path,
+      view: null,
       original,
       current,
       loaded: false,

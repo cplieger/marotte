@@ -21,6 +21,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_WEB: "",
   ICON_TAB_AGENT: "",
   // roles.ts is in this graph (the factory derives a delegate tab's label from
   // it), and Browser Mode links a mock as real ESM, so every name any module here

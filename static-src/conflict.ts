@@ -135,8 +135,7 @@ export function resolveHunk(file: ConflictFile, hunkIndex: number, resolution: R
 }
 
 function joinFile(lines: string[], trailing: boolean): string {
-  if (lines.length === 0) {
-    return trailing ? "\n" : "";
-  }
+  // No empty-list arm: `[].join("\n")` is `""`, so the expression below already
+  // answers `"\n"` / `""` for a file a resolution emptied.
   return lines.join("\n") + (trailing ? "\n" : "");
 }

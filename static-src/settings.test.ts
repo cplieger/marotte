@@ -115,13 +115,6 @@ vi.mock("./editor-core.js", () => ({
   // these, so no path under test changes behavior.
   restoreEditorTabs: undefined,
 }));
-vi.mock("./shell.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  restoreShell: undefined,
-}));
 vi.mock("./tools.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading

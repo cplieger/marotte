@@ -30,6 +30,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_WEB: "",
   ICON_TAB_AGENT: "",
   // roles.ts is in this graph now (tab-materialize.ts derives a delegate tab's
   // label from it), and Browser Mode links for real rather than reading
@@ -55,9 +56,8 @@ vi.mock("./icons.js", () => ({
 }));
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
-// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
-// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
-// whole file at link time.
+// `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
+// this whole file at link time.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
   ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),

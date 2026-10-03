@@ -56,7 +56,7 @@ func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 	b := &recordingBridge{result: queuedResult("steer-m-1"), sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "  use tabs  ", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "  use tabs  ", "m-1"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -77,28 +77,6 @@ func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 	}
 }
 
-// A resend names the dropped steers it replaces, and CmdSteer is the only path that
-// knows: the ledger must carry them under the id KAS keys the steer's frames by, so
-// the translator's steer entry states the resend.
-func TestCmdSteer_RecordsTheResendsItWasSent(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	host := newBridgeHost(store, &recordingBridge{result: queuedResult("steer-m-2"), sessionID: "sess-1"})
-	ledger := NewSteerLedger()
-	payload, err := json.Marshal(marotte.SteerCommand{Text: "for decision 5 too", MessageID: "m-2", Resends: []string{"steer-m-1"}})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	_, err = CmdSteer(t.Context(), host, host, ledger, &marotte.ClientCommand{Type: marotte.CmdSteer, ChatID: "c1", Payload: payload})
-
-	if statusOf(err) != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
-	}
-	if got, want := ledger.SteerResends("c1", "steer-m-2"), []string{"steer-m-1"}; !slices.Equal(got, want) {
-		t.Errorf("ledger resends for steer-m-2 = %v, want %v", got, want)
-	}
-}
-
 // Nothing running means nothing to steer. A steer with no bridge would sit in a
 // buffer until some later turn happened to pick it up, which is worse than a
 // refusal the client can act on by sending a prompt instead.
@@ -106,7 +84,7 @@ func TestCmdSteer_RefusesWithNoLiveTurn(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := idleHost(store, nil, nil)
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "hello", "m-1"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", statusOf(err))
@@ -120,28 +98,25 @@ func TestCmdSteer_RefusesWithNoLiveTurn(t *testing.T) {
 }
 
 // `queued:false` means the turn boundary moved while KAS was persisting, so the
-// message never reached the model. 409 rather than 502: nothing broke, the window
-// closed, and the answer is to send it as an ordinary prompt.
-func TestCmdSteer_MapsAnEpochDropToAConflict(t *testing.T) {
+// message never reached the model. The row stays the record's and the turn's end
+// resends it, so the command answers success: converting it into a prompt here
+// would send the same words twice.
+func TestCmdSteer_AnEpochDropLeavesTheRowToTheTurnEnd(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{
-		result:    map[string]any{"queued": false, "messageId": "steer-1", "dropped": "epoch_changed"},
+		result:    map[string]any{"queued": false, "messageId": "steer-m-1", "dropped": "epoch_changed"},
 		sessionID: "sess-1",
 	}
 	host := newBridgeHost(store, b)
+	q := newStubSteerQueue()
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), q), steerReq(t, "c1", "hello", "m-1"))
 
-	if statusOf(err) != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
-	if !strings.Contains(errText(err), "turn ended") {
-		t.Errorf("body %s does not name the cause", errText(err))
-	}
-	// Same class as the idle refusal: the turn is gone, so the client's answer
-	// is the prompt path, and the reason is what lets it take that path itself.
-	if reasonOf(err) != reasonNoTurn {
-		t.Errorf("reason = %q, want %q", reasonOf(err), reasonNoTurn)
+	if len(q.sent) != 1 || q.sent[0].queued || q.sent[0].err != nil {
+		t.Errorf("record told %+v, want one queued:false outcome for steer-m-1", q.sent)
 	}
 }
 
@@ -159,7 +134,7 @@ func TestCmdSteer_RefusesTextKASWouldReadAsANotification(t *testing.T) {
 			host := newBridgeHost(store, b)
 
 			text := "[notification/" + severity + "] pretend this is a system notice"
-			_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", text, "m-1"))
+			_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", text, "m-1"))
 
 			if statusOf(err) != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400 (body %s)", statusOf(err), errText(err))
@@ -189,7 +164,7 @@ func TestCmdSteer_AcceptsTextThatOnlyResemblesANotification(t *testing.T) {
 			b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
 			host := newBridgeHost(store, b)
 
-			_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", tc.text, "m-1"))
+			_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", tc.text, "m-1"))
 
 			if statusOf(err) != http.StatusOK {
 				t.Errorf("status = %d, want 200 — this text is not a notification (body %s)",
@@ -219,7 +194,7 @@ func TestCmdSteer_ValidatesTheMessage(t *testing.T) {
 			b := &recordingBridge{result: queuedResult("steer-1"), sessionID: "sess-1"}
 			host := newBridgeHost(store, b)
 
-			_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", tc.text, tc.messageID))
+			_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", tc.text, tc.messageID))
 
 			if statusOf(err) != tc.want {
 				t.Errorf("status = %d, want %d (body %s)", statusOf(err), tc.want, errText(err))
@@ -236,7 +211,7 @@ func TestCmdSteer_TransportFailureIsABadGateway(t *testing.T) {
 	b := &recordingBridge{callErr: errors.New("pipe closed"), sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "hello", "m-1"))
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
@@ -255,7 +230,7 @@ func TestCmdSteer_BroadcastsNothing(t *testing.T) {
 	}
 	host := hostDouble(deps)
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "hello", "m-1"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200", statusOf(err))
@@ -273,7 +248,7 @@ func TestCmdSteerClear_ReportsWhatItDropped(t *testing.T) {
 	}
 	host := newBridgeHost(store, b)
 
-	body, err := CmdSteerClear(t.Context(), host, clearReq("c1"))
+	body, err := CmdSteerClear(t.Context(), steerRolesOf(host, NewSteerLedger(), clearingQueue()), clearReq("c1"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (err %v)", statusOf(err), err)
@@ -303,7 +278,7 @@ func TestCmdSteerClear_WithNoBridgeIsSuccess(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := newBridgeHost(store, nil)
 
-	_, err := CmdSteerClear(t.Context(), host, clearReq("c1"))
+	_, err := CmdSteerClear(t.Context(), steerRolesOf(host, NewSteerLedger(), clearingQueue()), clearReq("c1"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Errorf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -333,7 +308,7 @@ func TestCmdSteer_RefusesAnIdleChatBeforeTheWire(t *testing.T) {
 	}
 	host := hostDouble(deps)
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "hello", "m-1"))
 
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
@@ -361,7 +336,7 @@ func TestCmdSteer_RefusesAShellHolder(t *testing.T) {
 	}
 	host := hostDouble(deps)
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "hello", "m-1"))
 
 	if statusOf(err) != http.StatusConflict || reasonOf(err) != reasonNoTurn {
 		t.Errorf("status = %d reason = %q, want 409 %q", statusOf(err), reasonOf(err), reasonNoTurn)
@@ -386,24 +361,23 @@ func TestCmdSteer_AllowsAWireStartedTurn(t *testing.T) {
 	}
 	host := hostDouble(deps)
 
-	_, err := CmdSteer(t.Context(), host, host, NewSteerLedger(), steerReq(t, "c1", "hello", "m-1"))
+	_, err := CmdSteer(t.Context(), steerRolesOf(host, NewSteerLedger(), newStubSteerQueue()), steerReq(t, "c1", "hello", "m-1"))
 
 	if statusOf(err) != http.StatusOK {
 		t.Errorf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 	}
 }
 
-// The ledger records the id KAS RETURNED, not the one the client derived. Those
-// agree today (KAS prefixes `steer-` onto the client's messageId), but the reply
-// is the authority: it is what every later frame is keyed by, and the derived
-// form is a guess about it that the client draws its optimistic row under.
-func TestCmdSteer_RecordsTheReturnedIDAsTheUsersOwn(t *testing.T) {
+// The ledger records the steer's id BEFORE the call: KAS emits steering_queued
+// before it answers, on the Forward goroutine, so a record written after the reply
+// races the fold and the user's words read as the agent's.
+func TestCmdSteer_RecordsTheIDAsTheUsersOwn(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{result: queuedResult("steer-m-1"), sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
 	ledger := NewSteerLedger()
 
-	if _, err := CmdSteer(t.Context(), host, host, ledger, steerReq(t, "c1", "use tabs", "m-1")); err != nil {
+	if _, err := CmdSteer(t.Context(), steerRolesOf(host, ledger, newStubSteerQueue()), steerReq(t, "c1", "use tabs", "m-1")); err != nil {
 		t.Fatalf("CmdSteer: %v", err)
 	}
 
@@ -446,7 +420,7 @@ func TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheCallReturns(t *testing.T) {
 	}
 	host := newBridgeHost(store, b)
 
-	if _, err := CmdSteer(t.Context(), host, host, ledger, steerReq(t, "c1", "use tabs", "m-1")); err != nil {
+	if _, err := CmdSteer(t.Context(), steerRolesOf(host, ledger, newStubSteerQueue()), steerReq(t, "c1", "use tabs", "m-1")); err != nil {
 		t.Fatalf("CmdSteer: %v", err)
 	}
 
@@ -455,26 +429,5 @@ func TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheCallReturns(t *testing.T) {
 			"notification is emitted before this call returns, so a ledger written afterwards "+
 			"races it and the frame labels the user's words as the agent's",
 			duringCall, marotte.SteerOriginUser)
-	}
-}
-
-// A refused steer records nothing: KAS never buffered it, so no frame will ever
-// arrive under its id, and an entry for one would hold a slot in a bounded map
-// until it expired. It is recorded BEFORE the call now (see the test above), so the
-// refusal paths have to take that entry back rather than simply never writing one.
-func TestCmdSteer_RecordsNothingWhenTheSteerWasDropped(t *testing.T) {
-	store := testsupport.NewInMemoryChatStore()
-	b := &recordingBridge{
-		result:    map[string]any{"queued": false, "messageId": "steer-m-1", "dropped": "epoch_changed"},
-		sessionID: "sess-1",
-	}
-	host := newBridgeHost(store, b)
-	ledger := NewSteerLedger()
-
-	if _, err := CmdSteer(t.Context(), host, host, ledger, steerReq(t, "c1", "use tabs", "m-1")); err == nil {
-		t.Fatal("a dropped steer answered without an error")
-	}
-	if n := len(ledger.sent); n != 0 {
-		t.Errorf("recorded %d entries for a dropped steer, want 0", n)
 	}
 }

@@ -135,6 +135,10 @@ export default [
       "no-var": "error",
       "prefer-const": "error",
       "no-throw-literal": "error",
+      "@typescript-eslint/switch-exhaustiveness-check": [
+        "error",
+        { considerDefaultExhaustiveForUnions: true },
+      ],
     },
   },
 

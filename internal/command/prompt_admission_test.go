@@ -210,10 +210,6 @@ func (a *scriptedAdmission) AbandonInFlightTurn(context.Context, marotte.ChatID,
 	a.rec.add("abandon")
 }
 
-func (a *scriptedAdmission) RecordDroppedSteer(context.Context, marotte.ChatID, ParkedSteer) {
-	a.rec.add("droppedSteer")
-}
-
 // admissionHost wires the scripted admission and the ordered bridge over the
 // store-backed host double.
 type admissionHost struct {

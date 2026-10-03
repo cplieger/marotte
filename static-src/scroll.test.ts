@@ -2878,3 +2878,125 @@ describe("pagination furniture belongs to its own view", () => {
     }).toEqual({ parkedKept: true, activeHasNone: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// THREE SEAMS WHERE NOTHING ELSE CAN ANSWER.
+//
+// The epoch's timed backstop is the only closer for an epoch nothing scrolled,
+// `onViewportChange`'s release is the only way off a subscription whose owner has
+// gone, and `block: "end"` is the one landing rule `jumpTo` applies that its
+// `"start"` and `"center"` siblings do not.
+// ---------------------------------------------------------------------------
+describe("the epoch's timed backstop", () => {
+  beforeEach(realLayoutReset);
+
+  it("closes an epoch nothing scrolled, so the reader's next gesture is theirs", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    // An epoch with no scroll in it: Chromium answers a scroll with `scrollend`,
+    // which is a close, so an epoch that moves nothing has no event closer at all
+    // and the backstop is the only one left. Without it every later scroll is read
+    // as this controller's own for the rest of the session.
+    scroll.beginSelfScroll();
+
+    await land(1600); // past SELF_SCROLL_MAX_MS
+
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    wrap.scrollTop = 1200;
+    await land();
+    off();
+    expect(seen.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("holds the epoch open before its budget runs out", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    scroll.beginSelfScroll();
+
+    await land(600); // well inside SELF_SCROLL_MAX_MS
+
+    const seen = vi.fn();
+    const off = scroll.onReaderGesture(seen);
+    wrap.scrollTop = 1200;
+    await land();
+    off();
+    expect(seen).not.toHaveBeenCalled();
+  });
+});
+
+describe("onViewportChange's release", () => {
+  beforeEach(realLayoutReset);
+
+  /** ONE viewport change. The scroll listener is what dispatches it, so a plain
+   *  `scrollTop` write is the trigger — no gesture is needed and none is wanted. */
+  async function viewportChange(wrap: HTMLElement): Promise<void> {
+    wrap.scrollTop = wrap.scrollTop === 0 ? 300 : 0;
+    await land();
+  }
+
+  it("stops delivering to the listener that released, and to no other", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    const first = vi.fn();
+    const second = vi.fn();
+    const offFirst = scroll.onViewportChange(first);
+    scroll.onViewportChange(second);
+
+    // The FIRST-registered listener on purpose: at index 0 a `> 0` test finds
+    // nothing to remove, which is the off-by-one a `>= 0` boundary exists for.
+    offFirst();
+    await viewportChange(wrap);
+
+    expect({ first: first.mock.calls.length, second: second.mock.calls.length > 0 }).toEqual({
+      first: 0,
+      second: true,
+    });
+  });
+
+  it("takes nothing else down when the same release is called twice", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+    const first = vi.fn();
+    const second = vi.fn();
+    const offFirst = scroll.onViewportChange(first);
+    scroll.onViewportChange(second);
+
+    // A disposer a caller runs twice must not splice out whoever now sits where
+    // the released listener used to: an unguarded removal at index -1 takes the
+    // LAST subscriber instead.
+    offFirst();
+    offFirst();
+    await viewportChange(wrap);
+
+    expect({ first: first.mock.calls.length, second: second.mock.calls.length > 0 }).toEqual({
+      first: 0,
+      second: true,
+    });
+  });
+});
+
+describe("jumpTo's end-aligned landing", () => {
+  beforeEach(realLayoutReset);
+
+  it("parks the reader for a target whose BOTTOM lands short of the live edge", async () => {
+    // 3000px of content in the 400px scrollport, so the maximum offset is 2600 and
+    // the live-edge band starts at 2500. The target's top sits at 2550, which is
+    // INSIDE that band — so aligning its top would read as the live edge — while
+    // `block: "end"` aligns its bottom and lands at 2350, which does not.
+    const wrap = realScroller();
+    block(2550);
+    const target = block(200);
+    block(250);
+    await land();
+    expect(wrap.scrollHeight - wrap.clientHeight).toBe(2600);
+
+    scroll.jumpTo(target, { block: "end", behavior: "instant" });
+
+    expect(scroll.readingState()).toBe("reading");
+  });
+});

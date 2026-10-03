@@ -365,6 +365,8 @@ export function end_tokens_to_indent(p: Parser, indent: number): number {
       case LIST_ITEM:
         idx = i;
         break;
+      default:
+        break;
     }
   }
   while (p.len > idx) {

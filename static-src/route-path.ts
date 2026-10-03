@@ -51,6 +51,10 @@ interface RouteFiles {
   kind: "files";
   path: string;
 }
+interface RouteWeb {
+  kind: "web";
+  path: string;
+}
 interface RouteFile {
   kind: "file";
   path: string;
@@ -119,7 +123,8 @@ export type Route =
   | RouteRun
   | RouteSubagent
   | RouteSpec
-  | RouteSettings;
+  | RouteSettings
+  | RouteWeb;
 
 // --- Parse current URL into a Route ---
 
@@ -217,6 +222,14 @@ export function parseRoute(pathname: string, hash: string): Route {
       // `/files/workspace/x` and the legacy `/files//workspace/x` land on one path.
       const raw = safeDecode(segments.slice(1).join("/")).replace(/^\/+/, "");
       return { kind: "files", path: raw === "" || raw === "." ? "/" : `/${raw}` };
+    }
+
+    case "web": {
+      const raw = safeDecode(segments.slice(1).join("/")).replace(/^\/+/, "");
+      if (raw !== "") {
+        return { kind: "web", path: `/${raw}` };
+      }
+      break;
     }
 
     case "file": {
@@ -367,6 +380,8 @@ export function buildPath(route: Route): string {
       return route.line !== undefined && route.line > 0
         ? `/file/${encodePath(route.path)}#L${String(route.line)}`
         : `/file/${encodePath(route.path)}`;
+    case "web":
+      return `/web/${encodePath(route.path.replace(/^\/+/, ""))}`;
     case "settings":
       // General is the canonical default; omit the tab segment.
       return route.tab === "general" ? "/settings" : `/settings/${route.tab}`;

@@ -321,11 +321,12 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
  *  KAS buffer but arrives as `agent_notice`, so nothing here needs a field for
  *  whose words it holds.
  *
- *  A steer LEAVES this array when `appendEntry` sees a `steer` entry with its
- *  id, whatever the state, and at the `turn_closed` that settles the chat for
- *  a row KAS was holding when its bridge died. The transcript's record IS that
- *  entry, at its own `seq`; nothing here outlives it. So the array is strictly
- *  "waiting", which is why there is no `injected` flag.
+ *  A steer LEAVES this array on a `steer` entry that settles it (its own id, its
+ *  `kas` batch id, or a `resends` naming it), whatever the state, or on a
+ *  `steer_queued` frame with state `removed`. A row the server could not deliver
+ *  stays, marked `unsent`, until the next prompt carries it. The transcript's
+ *  record IS that entry, at its own `seq`; nothing here outlives it. So the array
+ *  is strictly "waiting", which is why there is no `injected` flag.
  *
  *  `compacted` is the one field the SERVER never writes: a compaction landing
  *  while a row is still waiting is a client-side arrival-order fact, marked on
@@ -334,9 +335,9 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
  *  A steer lands in the turn already running, so a row here is never a message
  *  held back for a later one. */
 export interface PendingSteer {
-  /** KAS's own steer id (`steer-<uuid>`), and the key for every lifecycle
-   *  event. Client-minted and echoed back, so the row that appears is the
-   *  one this device sent. */
+  /** The row's key, and the id every lifecycle event names it by. For a user row it is
+   *  `steer-<messageID>`, derived from this device's POST, and it never changes: a
+   *  resubmit moves `kas` instead, so the row keeps its element. */
   id: string;
   text: string;
   /** Whose words these are, resolved SERVER-side (`marotte.SteerOrigin`).
@@ -362,6 +363,12 @@ export interface PendingSteer {
    *  `waiting` and holds no order against the log; the alternative is comparing two
    *  wall clocks, which this design refuses everywhere else. */
   compacted?: true;
+  /** The id KAS holds this row under when it is not `id`: a combined resubmit sends the
+   *  kept rows as one steer, and that steer's `steer` entry is what retires them. */
+  kas?: string;
+  /** The server holds the row and could not deliver it to any turn (`steer_queued`
+   *  state `unsent`); it goes with the chat's next prompt unless deleted first. */
+  unsent?: true;
 }
 
 // --- Local session state (client-only projection of server chat) ---
@@ -451,10 +458,11 @@ export interface Session {
   /** Mid-turn steers the agent has NOT read yet: the bottom dock's rows.
    *  Written on submit (intent) and by `steer_queued` (fact).
    *
-   *  A row LEAVES on its own `steer` ENTRY, whatever that entry's state, and every
-   *  row still here leaves at a `turn_closed` that settles the chat. There is no
-   *  second field for a read steer: the entry IS the transcript fact, positioned by
-   *  seal order in the turn body, so nothing anchors a note against a block index. */
+   *  A row LEAVES on a `steer` ENTRY that settles it, whatever that entry's state, or
+   *  on a `removed` frame; a row the server could not deliver stays, marked `unsent`.
+   *  There is no second field for a read steer: the entry IS the transcript fact,
+   *  positioned by seal order in the turn body, so nothing anchors a note against a
+   *  block index. */
   steers?: PendingSteer[];
   /** The model the reader picked for the NEXT turn, from `ChatHeader.pending_model`.
    *  The badge's ONE input — the `.pending` class and the "after current turn"

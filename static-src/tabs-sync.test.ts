@@ -46,6 +46,9 @@ const {
   opTimedOut,
   removesPending,
   setOnRemovesSettled,
+  beginReorder,
+  reorderCommitted,
+  overlayOrder,
   _resetTabsSyncForTest,
 } = await import("./tabs-sync.js");
 
@@ -877,5 +880,117 @@ describe("op correlation", () => {
     ingestTabsChanged({ changed: subject("a"), order: ["a"], version: 1, op_id: "op-create" });
     await settle();
     expect(t.applied[0]?.local).toBe(true);
+  });
+});
+
+// --- The pending reorder ---
+//
+// A drop shows its order at once, so every frame and snapshot that can predate the
+// commit must not overwrite it, and a refusal must put the order back exactly once.
+
+describe("pending reorder: the transition table", () => {
+  /** The projection holding a, b, c at v1, with a drop to c, a, b in flight. */
+  async function droppedCAB(): Promise<Mock<() => void>> {
+    listing.answers = [list(1, "a", "b", "c")];
+    await listTabs();
+    const rollback = vi.fn();
+    beginReorder("op-r", { order: ["c", "a", "b"], rollback });
+    t.ids = ["c", "a", "b"];
+    return rollback;
+  }
+
+  it("rewrites a frame below the commit to the pending order", async () => {
+    await droppedCAB();
+    ingestTabsChanged({ changed: subject("d"), order: ["a", "b", "c", "d"], version: 2 });
+    await settle();
+    expect(t.applied[0]?.delta.order).toEqual(["c", "a", "b", "d"]);
+    expect(t.ids).toEqual(["c", "a", "b", "d"]);
+  });
+
+  it("retires on the frame carrying its own op_id", async () => {
+    const rollback = await droppedCAB();
+    ingestTabsChanged({ order: ["c", "a", "b"], version: 2, op_id: "op-r" });
+    await settle();
+    // Retired: a later frame's order is no longer rewritten, and a late failure
+    // does not roll back a reorder the collection holds.
+    ingestTabsChanged({ order: ["b", "c", "a"], version: 3 });
+    await settle();
+    expect(t.applied[1]?.delta.order).toEqual(["b", "c", "a"]);
+    opFailed("op-r");
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  it("retires at once when the response's version is already covered", async () => {
+    await droppedCAB();
+    ingestTabsChanged({ order: ["c", "a", "b"], version: 2 });
+    await settle();
+    reorderCommitted("op-r", 2);
+    expect(overlayOrder(["a", "b", "c"])).toEqual(["a", "b", "c"]);
+  });
+
+  it("waits for the frame when the response's version is ahead of the watermark", async () => {
+    await droppedCAB();
+    reorderCommitted("op-r", 2);
+    expect(overlayOrder(["a", "b", "c"]), "still pending").toEqual(["c", "a", "b"]);
+    ingestTabsChanged({ order: ["c", "a", "b"], version: 2 });
+    await settle();
+    expect(overlayOrder(["a", "b", "c"]), "absorbed by the frame at its version").toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("never advances the watermark from a response", async () => {
+    await droppedCAB();
+    reorderCommitted("op-r", 5);
+    expect(tabsVersion()).toBe(1);
+  });
+
+  it("is absorbed by a snapshot that covers it, correlation or not", async () => {
+    await droppedCAB();
+    reorderCommitted("op-r", 2);
+    listing.answers = [list(2, "c", "a", "b")];
+    await listTabs();
+    expect(overlayOrder(["a", "b", "c"])).toEqual(["a", "b", "c"]);
+  });
+
+  it("rolls back exactly once on a failure, and ignores the frame after it", async () => {
+    const rollback = await droppedCAB();
+    opFailed("op-r");
+    opFailed("op-r");
+    expect(rollback).toHaveBeenCalledTimes(1);
+    ingestTabsChanged({ order: ["a", "b", "c"], version: 2 });
+    await settle();
+    expect(t.applied[0]?.delta.order).toEqual(["a", "b", "c"]);
+  });
+
+  it("reorders a snapshot below the commit and leaves one at or past it alone", async () => {
+    await droppedCAB();
+    reorderCommitted("op-r", 3);
+    listing.answers = [list(2, "a", "b", "c")];
+    await listTabs();
+    expect(t.resets.at(-1), "a list that predates the drop").toEqual(["c", "a", "b"]);
+    listing.answers = [list(3, "b", "a", "c")];
+    await listTabs();
+    expect(t.resets.at(-1), "a list that includes it").toEqual(["b", "a", "c"]);
+  });
+
+  it("applies two pending reorders in gesture order and drops a retired one", async () => {
+    await droppedCAB();
+    beginReorder("op-r2", { order: ["b", "c", "a"], rollback: vi.fn() });
+    expect(overlayOrder(["a", "b", "c"])).toEqual(["b", "c", "a"]);
+    opFailed("op-r2");
+    expect(overlayOrder(["a", "b", "c"])).toEqual(["c", "a", "b"]);
+  });
+
+  it("sorts an id the pending order does not name last, and never drops it", async () => {
+    await droppedCAB();
+    expect(overlayOrder(["a", "x", "b", "c"])).toEqual(["c", "a", "b", "x"]);
+  });
+
+  it("is not a pending remove", async () => {
+    await droppedCAB();
+    expect(removesPending()).toBe(false);
   });
 });

@@ -408,3 +408,27 @@ describe("parseConflicts with an opener inside the ours side", () => {
     expect(file.hunks[0]!.theirsLines).toEqual(["<<<<<<< quoted", "theirs"]);
   });
 });
+
+// A resolution can empty a file outright — the whole file is one conflict and the
+// side the reader keeps is blank — and the editor saves whatever comes back, so
+// the trailing newline has to survive the round trip either way.
+describe("resolveHunk on a file that is nothing but the conflict", () => {
+  const body = ["<<<<<<< HEAD", "=======", "theirs", ">>>>>>> branch"];
+
+  it("empties the file but keeps its final newline", () => {
+    const file = parseConflicts([...body, ""].join("\n"));
+    expect(file.hunks).toHaveLength(1);
+    expect(resolveHunk(file, 0, "ours")).toBe("\n");
+  });
+
+  it("empties a file that had no final newline to nothing at all", () => {
+    const file = parseConflicts(body.join("\n"));
+    expect(file.hunks).toHaveLength(1);
+    expect(resolveHunk(file, 0, "ours")).toBe("");
+  });
+
+  it("keeps the kept side when it is the non-empty one", () => {
+    const file = parseConflicts([...body, ""].join("\n"));
+    expect(resolveHunk(file, 0, "theirs")).toBe("theirs\n");
+  });
+});

@@ -512,7 +512,7 @@ func TestIdempotency_commandRouteParticipates(t *testing.T) {
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
 	s := New()
-	h := webhttp.Chain(mux, s.middlewareStack(fallbackCSPPolicy(), idem)...)
+	h := webhttp.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
 
 	post := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "http://example.com/api/command",

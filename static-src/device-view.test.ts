@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // device-view.ts owns the localStorage fields that are not the workspace's: the
-// active tab, the two shell fields, the theme's pre-paint cache, and the three
+// active tab, the two shell fields, the sidebar width, the theme's pre-paint cache, and the three
 // pointer fields (the detected tier, the user's stated choice, and the sticky
 // has-been-touched flag).
 //
@@ -10,8 +10,8 @@
 // replaced had TWO of them, a `writeLocal` for the device fields beside a
 // `cacheTheme` for the theme. That only worked because `writeLocal` remembered to
 // re-read the theme and re-attach it by hand; forget that line and choosing a
-// theme, then resizing the shell, silently clears the theme the pre-paint snippet
-// is about to read.
+// theme, then resizing the shell, silently clears the theme prepaint.js is about
+// to read.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -30,8 +30,10 @@ import {
   setPointerModeChoice,
   setShellHeight,
   setShellOpen,
+  setSidebarWidth,
   shellHeight,
   shellOpen,
+  sidebarWidth,
 } from "./device-view.js";
 import { LS_UI_STATE_KEY } from "./ls-keys.js";
 
@@ -44,19 +46,26 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe("the three fields this screen keeps to itself", () => {
+describe("the four fields this screen keeps to itself", () => {
   it("reads back what it wrote, per field", () => {
     setActiveView("chat-x");
     setShellOpen(true);
     setShellHeight(320);
+    setSidebarWidth(400);
 
     expect(activeView()).toBe("chat-x");
     expect(shellOpen()).toBe(true);
     expect(shellHeight()).toBe(320);
+    expect(sidebarWidth()).toBe(400);
   });
 
   it("answers the defaults when nothing has been written", () => {
-    expect(loadDeviceView()).toEqual({ active_view: "", shell_open: false, shell_h: 0 });
+    expect(loadDeviceView()).toEqual({
+      active_view: "",
+      shell_open: false,
+      shell_h: 0,
+      sidebar_w: 0,
+    });
   });
 
   it("keeps a valid field when a sibling is the wrong type", () => {
@@ -69,7 +78,12 @@ describe("the three fields this screen keeps to itself", () => {
       JSON.stringify({ active_view: "chat-y", shell_open: "yes", shell_h: "tall" }),
     );
 
-    expect(loadDeviceView()).toEqual({ active_view: "chat-y", shell_open: false, shell_h: 0 });
+    expect(loadDeviceView()).toEqual({
+      active_view: "chat-y",
+      shell_open: false,
+      shell_h: 0,
+      sidebar_w: 0,
+    });
   });
 
   it("refuses a negative or non-finite height", () => {
@@ -79,12 +93,30 @@ describe("the three fields this screen keeps to itself", () => {
     }
   });
 
+  it("refuses a negative, non-finite or non-number width and keeps its siblings", () => {
+    // JSON cannot carry NaN or Infinity (both serialise to null), so those two are
+    // what a blob written by a broken build reads back as; the raw literals are
+    // planted too, through a hand-written blob string.
+    for (const raw of [
+      '{"sidebar_w":-5,"shell_h":300}',
+      '{"sidebar_w":"400","shell_h":300}',
+      '{"sidebar_w":null,"shell_h":300}',
+      JSON.stringify({ sidebar_w: Number.NaN, shell_h: 300 }),
+      JSON.stringify({ sidebar_w: Number.POSITIVE_INFINITY, shell_h: 300 }),
+    ]) {
+      localStorage.setItem(LS_UI_STATE_KEY, raw);
+      expect(sidebarWidth(), raw).toBe(0);
+      expect(shellHeight(), raw).toBe(300);
+    }
+  });
+
   it("survives a blob that is not an object, and one that is not JSON at all", () => {
+    const defaults = { active_view: "", shell_open: false, shell_h: 0, sidebar_w: 0 };
     localStorage.setItem(LS_UI_STATE_KEY, '"a string"');
-    expect(loadDeviceView()).toEqual({ active_view: "", shell_open: false, shell_h: 0 });
+    expect(loadDeviceView()).toEqual(defaults);
 
     localStorage.setItem(LS_UI_STATE_KEY, "{not json");
-    expect(loadDeviceView()).toEqual({ active_view: "", shell_open: false, shell_h: 0 });
+    expect(loadDeviceView()).toEqual(defaults);
   });
 });
 
@@ -105,7 +137,7 @@ describe("the theme's pre-paint cache", () => {
     expect(cachedTheme()).toBeNull();
   });
 
-  it("clearing removes the field, so the snippet falls back to the OS preference", () => {
+  it("clearing removes the field, so prepaint.js falls back to the OS preference", () => {
     cacheTheme("light");
     cacheTheme(null);
     expect("theme" in blob()).toBe(false);
@@ -168,6 +200,7 @@ describe("one owner of the key", () => {
     setActiveView("chat-z");
     setShellOpen(true);
     setShellHeight(420);
+    setSidebarWidth(380);
 
     setPointerModeChoice("coarse");
     markCoarseSeen();
@@ -178,6 +211,7 @@ describe("one owner of the key", () => {
       active_view: "chat-z",
       shell_open: true,
       shell_h: 420,
+      sidebar_w: 380,
     });
   });
 
@@ -198,12 +232,37 @@ describe("one owner of the key", () => {
     setActiveView("chat-z");
     setShellOpen(true);
     setShellHeight(420);
+    setSidebarWidth(380);
     cacheTheme("dark");
 
     expect(loadDeviceView()).toEqual({
       active_view: "chat-z",
       shell_open: true,
       shell_h: 420,
+      sidebar_w: 380,
+    });
+  });
+
+  it("a sidebar-width write preserves the theme, the pointer fields and the other three", () => {
+    cacheTheme("light");
+    setPointerModeChoice("coarse");
+    markCoarseSeen();
+    cachePointerTier("fine");
+    setActiveView("chat-z");
+    setShellOpen(true);
+    setShellHeight(420);
+
+    setSidebarWidth(380);
+
+    expect(cachedTheme()).toBe("light");
+    expect(pointerModeChoice()).toBe("coarse");
+    expect(coarseEverSeen()).toBe(true);
+    expect(cachedPointerTier()).toBe("fine");
+    expect(loadDeviceView()).toEqual({
+      active_view: "chat-z",
+      shell_open: true,
+      shell_h: 420,
+      sidebar_w: 380,
     });
   });
 

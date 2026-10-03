@@ -78,8 +78,6 @@ func (o *recoveryOutcome) FinalizeLocalShellTurn(context.Context, marotte.ChatID
 func (o *recoveryOutcome) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string) {
 }
 
-func (o *recoveryOutcome) RecordDroppedSteer(context.Context, marotte.ChatID, ParkedSteer) {}
-
 // recoveryBridges records whether the recovery tore the session down, which is the
 // first irreversible thing it does and therefore the cleanest observable for
 // "did the gate fire".
@@ -199,4 +197,69 @@ func TestRecoverEmptyTurn_GateRequiresAllThreeClauses(t *testing.T) {
 
 func hasSource(got []marotte.TurnOpenSource, want marotte.TurnOpenSource) bool {
 	return slices.Contains(got, want)
+}
+
+// orderedRetryBridges hands the retry a bridge that logs its prompt into the same
+// ordered log the steer lock writes to.
+type orderedRetryBridges struct {
+	*recoveryBridges
+	add func(string)
+}
+
+func (b *orderedRetryBridges) OpenBridge(context.Context, marotte.ChatID, string) (Bridge, error) {
+	return &orderedRetryBridge{add: b.add}, nil
+}
+
+type orderedRetryBridge struct {
+	recoveryBridge
+	add func(string)
+}
+
+func (b *orderedRetryBridge) CallAt(_ context.Context, method string, _ any) (*marotte.RPCResponse, uint64, error) {
+	if method == marotte.MethodPrompt {
+		b.add("prompt")
+	}
+	return &marotte.RPCResponse{}, 0, nil
+}
+
+func (b *orderedRetryBridge) Call(ctx context.Context, method string, params any) (*marotte.RPCResponse, error) {
+	resp, _, err := b.CallAt(ctx, method, params)
+	return resp, err
+}
+
+type orderedSteerLock struct {
+	*stubSteerQueue
+	add func(string)
+}
+
+func (q orderedSteerLock) LockSteerOps(context.Context, marotte.ChatID) (func(), error) {
+	q.add("lock")
+	return func() { q.add("unlock") }, nil
+}
+
+// The retry's execution starts only after its drain has held the chat's steer lock,
+// as a prompt's does, so a delete in flight ends before the retry's cursor reads.
+func TestRecoverEmptyTurn_TheRetryDrainsUnderTheSteerLockBeforeItsPrompt(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+	add := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		order = append(order, s)
+	}
+	outcome := &recoveryOutcome{}
+	roles := promptRolesOf(&orderedRetryBridges{recoveryBridges: &recoveryBridges{benchDeps: newBenchDeps()}, add: add})
+	roles.admission = outcome
+	roles.turnOutcome = outcome
+	q := orderedSteerLock{stubSteerQueue: newStubSteerQueue(), add: add}
+	roles.queue, roles.jobs = q, q
+	firing := marotte.TurnResult{Stop: marotte.StopReasonEndTurn, EmittedNothing: true, WireEnded: true}
+
+	recoverEmptyTurn(t.Context(), roles, "c1", "t-0", firing, &marotte.PromptCommand{Text: "q", MessageID: "m1"}, map[string]any{})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"lock", "unlock", "prompt"}; !slices.Equal(order, want) {
+		t.Errorf("order = %v, want %v", order, want)
+	}
 }

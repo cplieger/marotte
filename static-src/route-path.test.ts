@@ -289,6 +289,18 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "settings", tab: "general" },
     },
     {
+      name: "/web/<abs path> → the page it names",
+      pathname: "/web/workspace/demo/index.html",
+      hash: "",
+      expected: { kind: "web", path: "/workspace/demo/index.html" },
+    },
+    {
+      name: "/web alone → default chat",
+      pathname: "/web",
+      hash: "",
+      expected: { kind: "chat", id: "" },
+    },
+    {
       name: "/unknown → default chat",
       pathname: "/unknown",
       hash: "",
@@ -385,6 +397,15 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
       { kind: "history", tab: "runs" },
     ),
     arbFilesRoute,
+    // web: an absolute page path, any segment text but a separator
+    fc
+      .array(
+        fc
+          .string({ minLength: 1, maxLength: 15 })
+          .filter((s) => !s.includes("/") && s !== "." && s !== ""),
+        { minLength: 1, maxLength: 4 },
+      )
+      .map((segs): Route => ({ kind: "web", path: `/${segs.join("/")}` })),
     // file without line
     fc
       .array(
@@ -455,6 +476,18 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
       }),
       { numRuns: 500 },
     );
+  });
+
+  it.each([
+    "/workspace/demo/my page.html",
+    "/workspace/demo/a#b?.html",
+    "/workspace/demo/100%.html",
+    "/workspace/demo/café-日本.html",
+    "/workspace/demo/a%2fb.html",
+  ])("round-trips the web page %s", (path) => {
+    const url = buildPath({ kind: "web", path });
+    expect(url).not.toContain("#");
+    expect(parseRoute(url, "")).toEqual({ kind: "web", path });
   });
 
   it("serialises a files route with no empty segment", () => {

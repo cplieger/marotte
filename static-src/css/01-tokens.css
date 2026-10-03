@@ -323,6 +323,11 @@
      * below the L19 body no shadow can reach 1.15:1. marotte-ui.md "The well". */
     --c-well: color-mix(in oklch, oklch(0% 0 none) 55%, transparent);
 
+    /* A previewed page's canvas: white in BOTH themes, because a page that sets
+     * no background was written against a browser's white default and is
+     * unreadable on a dark one. Hence a seed outside the theme ramp. */
+    --c-preview-canvas: oklch(100% 0 none);
+
     /* ---- The band, TINTED by an outcome --------------------------------- *
      * A stopped or broken turn's footer says so in hue. It used to be a
      * `color-mix()` of the status ink at 12% into the band, and a mix moves
@@ -373,7 +378,16 @@
     --sp-3: 0.75rem;
     --sp-4: 1rem;
     --sp-5: 1.25rem;
-    --sidebar-w: 16.25rem;
+    --sidebar-w-min: 16.25rem;
+
+    /* `- 1px`: a fractional `100vw` snaps the chat area a fraction under
+       --main-min-w, which hides the rail at the width chosen to keep it. */
+    --sidebar-w-max: min(32rem, 100vw - var(--main-min-w) - 1px);
+    --sidebar-w: clamp(
+      var(--sidebar-w-min),
+      var(--sidebar-w-pref, var(--sidebar-w-min)),
+      var(--sidebar-w-max)
+    );
     /* THE measure, for every full-page surface. The transcript, the composer, the
        dock, the run page and a delegate's page all end on this column, so a reader
        crossing between them learns one pair of edges (user ruling, 2026-09-10).
@@ -381,6 +395,10 @@
        that divergence; 18-pages.css `[id="run-body"]` records why the
        machine-output argument behind it was withdrawn rather than retuned. */
     --content-max-w: 50rem;
+
+    /* The chat area's floor under a widened sidebar. Query conditions cannot read
+       `var()`, so the literals restating it are pinned by sidebar-width-css.test.ts. */
+    --main-min-w: 57.5rem;
     /* ---- Control heights ------------------------------------------------- *
      * --ctl-h stands alone in its row or beside a full-size button, --ctl-h-dense
      * is a labelled field or an action in a dense row (marotte-ui.md "One control

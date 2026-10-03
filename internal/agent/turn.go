@@ -103,6 +103,9 @@ type chatLifecycle struct {
 	// so a waiter can still read a result after the chat has moved on. Several
 	// handles can be outstanding at once, hence a map.
 	retained map[string]*Turn
+	// fwdExits holds, per forward generation still running, the channel its
+	// goroutine closes on exit.
+	fwdExits map[uint64]chan struct{}
 	// changed is closed and REPLACED on EVERY state change, under mu. A channel
 	// rather than a Cond, which re-acquires the mutex to return, so a parked waiter
 	// would hold the lock the finalize needs.

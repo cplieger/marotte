@@ -7,7 +7,7 @@
 // WHERE THE PREFERENCE LIVES IS NOT THIS MODULE'S BUSINESS, and that is the
 // point of taking the storage adapter as a parameter. The value is a
 // workspace preference in config.json, mirrored by a localStorage paint cache
-// the pre-paint snippet reads; both halves and the policy joining them live in
+// prepaint.js reads; both halves and the policy joining them live in
 // settings.ts, which already imports this module — so reaching back for them
 // here would be an import cycle, and the parameter is what makes the direction
 // explicit rather than accidental.
@@ -25,7 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { $, forceReflow } from "./dom.js";
-import { LS_UI_STATE_KEY } from "./ls-keys.js";
+import { LS_UI_STATE_KEY, THEME_ATTRIBUTE } from "./ls-keys.js";
 import { createTheme } from "@cplieger/ui-primitives/theme";
 import type { ThemeController, ThemeStorage } from "@cplieger/ui-primitives/theme";
 // The vocabulary is declared where the paint cache stores it, so the two
@@ -148,7 +148,7 @@ export function initThemeToggle(storage: ThemeStorage): void {
   controller = createTheme({
     storageKey: LS_UI_STATE_KEY,
     storage,
-    attribute: "data-theme",
+    attribute: THEME_ATTRIBUTE,
     // The resolved theme drives the <html> attribute (the library's job); the
     // icon follows the CHOICE, read back from the controller.
     onChange: () => {

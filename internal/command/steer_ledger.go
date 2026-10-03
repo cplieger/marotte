@@ -3,16 +3,15 @@ package command
 // The steer ledger: which mid-turn steers are the USER's own words.
 //
 // Nothing on the wire separates them from a workflow's report (see
-// marotte.SteerOrigin), so CmdSteer records the id KAS returned for every steer
-// this server sent. In-memory, TTL'd and bounded like createLedger next door,
-// because a steer's whole lifetime is one turn.
+// marotte.SteerOrigin), so the server records the id of every steer it sends.
+// In-memory, TTL'd and bounded like createLedger next door, because a steer's
+// whole lifetime is one turn.
 
 // ACCEPTED COST: a restart mid-turn loses the set, so a steer sent before it and
 // read after labels as the agent's — unreachable in practice, since the restart
 // kills the turn that would have read it.
 
 import (
-	"slices"
 	"sync"
 	"time"
 
@@ -50,88 +49,28 @@ type sentSteer struct {
 // Construct with NewSteerLedger.
 type SteerLedger struct {
 	sent map[steerKey]sentSteer
-	// parked holds, per chat and in arrival order, the steers accepted for an
-	// admitted prompt whose bridge is not live yet; the prompt's drain delivers
-	// them after StartTurn. Capped at maxParkedPerChat with a `full` refusal.
-	parked map[marotte.ChatID][]ParkedSteer
-	now    func() time.Time
-	ttl    time.Duration
-	maxN   int
-	mu     sync.Mutex
+	now  func() time.Time
+	ttl  time.Duration
+	maxN int
+	mu   sync.Mutex
 }
-
-// maxParkedPerChat bounds one chat's parked set: the 65th steer is refused with
-// reason `full` rather than growing a slice nothing drains until a bridge spawns.
-const maxParkedPerChat = 64
 
 // NewSteerLedger returns an empty ledger.
 func NewSteerLedger() *SteerLedger {
 	return &SteerLedger{
-		sent:   make(map[steerKey]sentSteer),
-		parked: make(map[marotte.ChatID][]ParkedSteer),
-		now:    time.Now,
-		ttl:    steerTTL,
-		maxN:   maxSteerOps,
+		sent: make(map[steerKey]sentSteer),
+		now:  time.Now,
+		ttl:  steerTTL,
+		maxN: maxSteerOps,
 	}
-}
-
-// ParkSteer holds a steer for the chat's admitted prompt until its bridge is
-// live; false when the chat's parked set is full.
-func (l *SteerLedger) ParkSteer(chatID marotte.ChatID, steerID, text string, resends []string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if len(l.parked[chatID]) >= maxParkedPerChat {
-		return false
-	}
-	l.parked[chatID] = append(l.parked[chatID], ParkedSteer{ID: steerID, Text: text, Resends: resends})
-	return true
-}
-
-// HasParkedSteers reports whether the chat holds an undelivered parked steer.
-func (l *SteerLedger) HasParkedSteers(chatID marotte.ChatID) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.parked[chatID]) > 0
-}
-
-// NextParkedSteer is the oldest parked steer still undelivered.
-func (l *SteerLedger) NextParkedSteer(chatID marotte.ChatID) (ParkedSteer, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	rows := l.parked[chatID]
-	if len(rows) == 0 {
-		return ParkedSteer{}, false
-	}
-	return rows[0], true
-}
-
-// ForgetParkedSteer drops one delivered or refused row from the parked set.
-func (l *SteerLedger) ForgetParkedSteer(chatID marotte.ChatID, steerID string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	rows := slices.DeleteFunc(l.parked[chatID], func(p ParkedSteer) bool { return p.ID == steerID })
-	if len(rows) == 0 {
-		delete(l.parked, chatID)
-		return
-	}
-	l.parked[chatID] = rows
-}
-
-// TakeParkedSteers drains the chat's whole parked set, in arrival order.
-func (l *SteerLedger) TakeParkedSteers(chatID marotte.ChatID) []ParkedSteer {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	rows := l.parked[chatID]
-	delete(l.parked, chatID)
-	return rows
 }
 
 // RecordUserSteer records that this server sent steerID for chatID, re-sending
 // the dropped steers resends names (nil for an ordinary steer).
 //
-// Called with the id KAS RETURNED, never the one marotte derived: the reply's
-// `messageId` is what every later frame is keyed by, so recording anything else
-// would file the steer under a name no frame carries.
+// steerID is the id the caller chose before the RPC (marotte.SteerIDFor). It
+// matches every later frame because KAS builds its own steer id from the
+// messageId it is sent.
 func (l *SteerLedger) RecordUserSteer(chatID marotte.ChatID, steerID string, resends []string) {
 	if l == nil || steerID == "" {
 		return
@@ -176,22 +115,6 @@ func (l *SteerLedger) SteerOrigin(chatID marotte.ChatID, steerID string) marotte
 	return marotte.SteerOriginAgent
 }
 
-// ForgetUserSteer drops ONE recorded steer, for a send that turned out not to
-// have reached KAS's buffer. CmdSteer records the derived id BEFORE its RPC (the
-// only ordering that beats the notification), so a refused send has to take its
-// entry back. Not a correctness fix: nothing else can carry a `steer-` id, so a
-// stale entry mislabels nothing and the TTL reclaims it. What it protects is the
-// bounded map, whose sweep evicts the entry closest to expiry once it is full, so
-// slots spent on sends that never happened cost real records.
-func (l *SteerLedger) ForgetUserSteer(chatID marotte.ChatID, steerID string) {
-	if l == nil || steerID == "" {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.sent, steerKey{chat: chatID, id: steerID})
-}
-
 // ForgetChat drops every steer recorded for one chat, at its teardown.
 //
 // A linear scan over a map the bound above keeps in the low hundreds, because
@@ -208,7 +131,6 @@ func (l *SteerLedger) ForgetChat(chatID marotte.ChatID) {
 			delete(l.sent, k)
 		}
 	}
-	delete(l.parked, chatID)
 }
 
 // sweep drops expired entries and, if the map is still full, the entry closest

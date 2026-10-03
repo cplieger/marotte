@@ -89,6 +89,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_HISTORY: "",
   ICON_TAB_DOCS: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_WEB: "",
 }));
 // The tab set is SERVER-owned, so a row lands on the strip through a real round
 // trip against the fake collection rather than through a store mutator.
@@ -124,9 +125,8 @@ vi.mock("./context-menu.js", () => ({ showContextMenu: vi.fn() }));
 vi.mock("./chat-export.js", () => ({ downloadChatExport: vi.fn() }));
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
-// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
-// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
-// whole file at link time.
+// `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
+// this whole file at link time.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
   ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),

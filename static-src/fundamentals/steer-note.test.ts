@@ -31,9 +31,8 @@ function textOf(root: HTMLElement, sel: string): string | null {
   return root.querySelector(sel)?.textContent ?? null;
 }
 
-/** Any control at all. The note carries none in either state now: `runArmedResend`
- *  re-sends an undelivered message for the reader, so no button asks them to do it by
- *  hand, and the CLAMP's opener is the one button the note may hold. */
+/** Any control at all. The note carries none in either state: an undelivered message is
+ *  the server's to resend, and the CLAMP's opener is the one button the note may hold. */
 function controls(root: HTMLElement): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).filter(
     (b) => !b.classList.contains("steer-note-more"),
@@ -127,6 +126,13 @@ describe("the reason clause", () => {
 
     expect(textOf(n, ".steer-note-label")).toBe("Not read \u00b7 the turn ended first");
     expect(n.getAttribute("aria-label")).toBe("Not read \u00b7 the turn ended first: use tabs");
+  });
+
+  it("words a deleted row as the reader's own removal", () => {
+    const n = note({ text: "use tabs", dropped: true, reason: "deleted" });
+
+    expect(textOf(n, ".steer-note-label")).toBe("Not read \u00b7 you deleted it");
+    expect(n.getAttribute("aria-label")).toBe("Not read \u00b7 you deleted it: use tabs");
   });
 
   // THE TABLE IS TOTAL OVER THE ENUM, which is what stops a reason reaching a reader

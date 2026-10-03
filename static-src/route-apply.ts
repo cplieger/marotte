@@ -169,6 +169,13 @@ export function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Prom
         .catch(() => {
           /* noop */
         });
+    case "web":
+      // Returned so the location claim stands until the open's round trip settles.
+      return openTab({ kind: "web", ref: route.path })
+        .then(() => undefined)
+        .catch(() => {
+          /* noop */
+        });
     case "subagent":
       // A delegate's page has nothing to fetch — its blocks are already in the chat store,
       // or they are not resident and the page says so — so this is just the tab.

@@ -31,6 +31,8 @@ const (
 	outDir = "static"
 	// jsExt is the extension every bundled module and chunk lands under.
 	jsExt = ".js"
+	// fixedEntryName keeps an entry's output name free of a content hash.
+	fixedEntryName = "[name]"
 )
 
 func main() {
@@ -51,6 +53,9 @@ func run() error {
 		return err
 	}
 	if err := bundleServiceWorker(); err != nil {
+		return err
+	}
+	if err := bundlePrepaint(); err != nil {
 		return err
 	}
 	if err := buildCSS(); err != nil {
@@ -233,7 +238,7 @@ func bundleApp(workerURL string) error {
 		Bundle:            true,
 		Format:            api.FormatESModule,
 		Splitting:         true,
-		EntryNames:        "[name]",
+		EntryNames:        fixedEntryName,
 		ChunkNames:        "chunks/[name]-[hash]",
 		Define:            map[string]string{workerURLDefine: strconv.Quote(workerURL)},
 		MinifyWhitespace:  true,
@@ -311,7 +316,7 @@ func bundleServiceWorker() error {
 		Outdir:            outDir,
 		Bundle:            true,
 		Format:            api.FormatIIFE,
-		EntryNames:        "[name]",
+		EntryNames:        fixedEntryName,
 		MinifyWhitespace:  true,
 		MinifyIdentifiers: true,
 		MinifySyntax:      true,
@@ -321,6 +326,28 @@ func bundleServiceWorker() error {
 		Write:             true,
 	})
 	return buildErr("sw", &result)
+}
+
+// bundlePrepaint bundles prepaint.ts as one classic script (IIFE) at the fixed
+// /prepaint.js: index.html loads it as a blocking <script src> in <head>, which a
+// module cannot be, and a fixed name keeps the HTML free of a build-time rewrite.
+// The name carries no hash, so the server revalidates it rather than caching it.
+func bundlePrepaint() error {
+	result := api.Build(api.BuildOptions{
+		EntryPoints:       []string{filepath.Join(srcDir, "prepaint.ts")},
+		Outdir:            outDir,
+		Bundle:            true,
+		Format:            api.FormatIIFE,
+		EntryNames:        fixedEntryName,
+		MinifyWhitespace:  true,
+		MinifyIdentifiers: true,
+		MinifySyntax:      true,
+		Sourcemap:         api.SourceMapLinked,
+		Charset:           api.CharsetUTF8,
+		LogLevel:          api.LogLevelWarning,
+		Write:             true,
+	})
+	return buildErr("prepaint", &result)
 }
 
 func buildErr(what string, result *api.BuildResult) error {

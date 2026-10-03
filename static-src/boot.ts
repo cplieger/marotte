@@ -73,6 +73,8 @@ import { requestRunTurnRange } from "./run-turn-range.js";
 import { chatTabFoldsRun } from "./chat-run-dots.js";
 import { subagentTabProjectsChat } from "./subagent-view.js";
 import { markBootDone } from "./view-swap.js";
+import { dropStoredShellPanel, releaseStoredShellPanel } from "./shell-height.js";
+import { restoreShell } from "./shell.js";
 import { applyShareTarget } from "./share-target.js";
 import { error as toastError } from "./toast.js";
 
@@ -126,6 +128,7 @@ export async function startBoot(d: BootDeps): Promise<void> {
     await Promise.allSettled([
       settingsRead.then(adoptSettings),
       identity.then((v) => adoptIdentity(v, workspace)),
+      identity.then(adoptShell),
       workspace,
     ]);
   } catch (err) {
@@ -136,7 +139,7 @@ export async function startBoot(d: BootDeps): Promise<void> {
   }
 }
 
-/** The settings answer: theme, the model and effort seeds, the UI-state restore.
+/** The settings answer: theme, the model and effort seeds, the workspace prefs.
  *
  *  Null means the fetch FAILED, which is not "the settings are the defaults", so
  *  nothing is restored and boot continues: the theme keeps the pre-paint cache and
@@ -159,6 +162,23 @@ function adoptSettings(settings: EffectiveSettings | null): void {
     /* best-effort */
   }
   suppressPush(false);
+}
+
+/** This device's shell panel. No settings answer gates it, because it is per-device
+ *  state; the identity verdict does, because a restore opens the terminal's socket
+ *  and the login screen makes no calls. So a signed-out boot, which forgets this
+ *  device's records, shuts the pre-painted panel at once. */
+function adoptShell(v: IdentityVerdict): void {
+  try {
+    if (v.state === "signed_out") {
+      dropStoredShellPanel($.shellPanel);
+    } else {
+      restoreShell();
+    }
+  } finally {
+    // The release for a path that restored nothing; after a restore it is a no-op.
+    releaseStoredShellPanel();
+  }
 }
 
 /** The identity answer: one sidebar row, the post-auth fan-out, and the two things

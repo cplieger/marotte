@@ -104,8 +104,10 @@ func CmdDeleteChat(ctx context.Context, mem *Membership, cmd *marotte.ClientComm
 	return responseOK, nil
 }
 
-// CmdCancel cancels the active turn, if any.
-func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, terms TerminalAccess, cmd *marotte.ClientCommand) (any, error) {
+// CmdCancel cancels the active turn, if any. The turn's end resends its unread
+// steers together; a payload lead names the row the reader wants first. It never
+// waits on the steer lock, so a stop never queues behind a delete.
+func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, terms TerminalAccess, queue SteerQueue, cmd *marotte.ClientCommand) (any, error) {
 	// Only pending permissions are cleared; KAS owns the write gate and
 	// cancelling a turn already reverts its own approval.
 	perms.ClearPendingPermsForChat(cmd.ChatID)
@@ -118,7 +120,15 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 	if sb == nil {
 		return responseOK, nil
 	}
+	undoLead := func() {}
+	if queue != nil {
+		var p marotte.CancelCommand
+		if len(cmd.Payload) > 0 && json.Unmarshal(cmd.Payload, &p) == nil && p.Lead != "" {
+			undoLead = queue.SetSteerLead(cmd.ChatID, p.Lead)
+		}
+	}
 	if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
+		undoLead()
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	// session/cancel is a notification, so nothing acks it directly: the turn
@@ -146,6 +156,7 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 // chat's agent terminals.
 func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID marotte.ChatID) {
 	perms.ClearPendingPermsForChat(chatID)
+	teardown.BeginChatTeardown(chatID, true)
 	if sb := bridges.Bridge(chatID); sb != nil {
 		if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)
@@ -161,6 +172,7 @@ func closeChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingP
 // a deleted chat). Mirrors closeChatTeardown so the two grades cannot drift.
 func deleteChatTeardown(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, chatID marotte.ChatID, sessionChain []string) {
 	perms.ClearPendingPermsForChat(chatID)
+	teardown.BeginChatTeardown(chatID, false)
 	if sb := bridges.Bridge(chatID); sb != nil {
 		if err := sb.Notify(ctx, marotte.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", chatID, keyError, err)

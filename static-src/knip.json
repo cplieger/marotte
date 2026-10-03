@@ -6,6 +6,7 @@
     "vitest.stryker.config.ts",
     "__test-helpers__/stryker-fc-setup.ts",
     "sse-worker.ts",
+    "prepaint.ts",
     "**/*.test.ts",
     "**/*.node.test.ts",
     "**/*.fuzz.test.ts",

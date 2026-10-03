@@ -82,17 +82,9 @@ export function __testResetTracking(): void {
   }
 }
 
-/** Flush any pending debounced PATCH immediately (fire-and-forget). */
-function flushPendingPatch(): void {
-  if (Object.keys(patchQueue).length === 0) {
-    return;
-  }
-  executePatch();
-}
-
 /** Shared dispatch body: drains the queue, dispatches the PATCH, and
- *  resolves all pending promises. Used by both flushPendingPatch (sync
- *  flush on beforeunload) and the debounce timer callback. */
+ *  resolves all pending promises. Called by the debounce timer and, for a
+ *  still-debounced write, by the unload cleanup below. */
 function executePatch(): void {
   const body = patchQueue;
   const allInputs = patchInputs;
@@ -141,10 +133,14 @@ function executePatch(): void {
 }
 
 registerCleanup(() => {
+  // An armed timer means a NON-EMPTY queue, so this needs no emptiness test of its own:
+  // `patchSettings` fills the queue before it arms the timer, and the only two paths that
+  // empty the queue — `executePatch` itself and `__testResetTracking` — clear the timer
+  // with it.
   if (patchTimer !== undefined) {
     clearTimeout(patchTimer);
     patchTimer = undefined;
-    flushPendingPatch();
+    executePatch();
   }
 });
 

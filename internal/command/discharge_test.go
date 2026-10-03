@@ -82,6 +82,7 @@ func TestCommandDischarges_ClassifiesEveryCommand(t *testing.T) {
 		marotte.CmdSetSupervisedMode:   "CmdSetSupervisedMode",
 		marotte.CmdSteer:               "CmdSteer",
 		marotte.CmdSteerClear:          "CmdSteerClear",
+		marotte.CmdSteerRemove:         "CmdSteerRemove",
 		marotte.CmdOpenTab:             "CmdOpenTab",
 		marotte.CmdCloseTab:            "CmdCloseTab",
 		marotte.CmdReorderTabs:         "CmdReorderTabs",

@@ -105,6 +105,15 @@ describe("handleFindKey", () => {
     expect(e.defaultPrevented).toBe(false);
   });
 
+  it("leaves a web preview to the browser's own find", () => {
+    activeKind = "web";
+    const e = ctrlF();
+    handleFindKey(e);
+    expect(chatFind).not.toHaveBeenCalled();
+    expect(filesFind).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
   it("means find-in-chat over a chat tab", () => {
     activeKind = "chat";
     handleFindKey(ctrlF());

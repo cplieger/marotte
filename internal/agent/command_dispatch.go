@@ -35,6 +35,8 @@ func (rt *Runtime) registerCommandHandlers() {
 		Admission:     rt,
 		TurnOutcome:   rt,
 		Steers:        rt.steerLedger,
+		SteerQueue:    rt.steerQueue,
+		SteerJobs:     rt.steerQueue,
 		Status:        rt,
 		AuthReadiness: rt.authReadiness,
 		SpecApprovals: specApprovalsOrNil(rt.specApprovals),

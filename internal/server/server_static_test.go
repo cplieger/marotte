@@ -307,6 +307,8 @@ func TestAssetCachePolicy(t *testing.T) {
 		// Stable names whose content a release replaces.
 		"app.js":            revalidateAsset,
 		"sw.js":             revalidateAsset,
+		"prepaint.js":       revalidateAsset,
+		"prepaint.js.map":   revalidateAsset,
 		"style.css":         revalidateAsset,
 		"favicon.svg":       revalidateAsset,
 		"icon-192.png":      revalidateAsset,

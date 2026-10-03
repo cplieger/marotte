@@ -140,18 +140,6 @@ function steerRefused(message: string, code?: string): { outcome: Promise<unknow
   });
 }
 
-/** The `resends` the send primitive was handed on the Nth dispatch, and the ones the
- *  steer action was. `undefined` is a real answer: it is what an absent carry looks
- *  like on both verbs, which is what the negative control reads. */
-function sentResends(call = 0): readonly string[] | undefined {
-  return (mockSendPromptTo.mock.calls[call]?.[2] as { resends?: readonly string[] } | undefined)
-    ?.resends;
-}
-
-function steeredResends(call = 0): readonly string[] | undefined {
-  return (mockSteer.mock.calls[call]?.[0] as { resends?: readonly string[] } | undefined)?.resends;
-}
-
 /** The message id the send primitive was called with on the Nth dispatch. */
 function sentMessageID(call = 0): string {
   return (
@@ -581,47 +569,6 @@ describe("steer attachments", () => {
 
     await submitPrompt("c1", "one good file");
     expect(steeredText()).toBe("one good file\n\nAttached file: ok.ts");
-  });
-});
-
-// THE CONVERTED SEND CARRIES THE IDS TOO. A prompt whose 409 becomes a steer is the
-// same intent on a different verb, so the record has to name the same re-sent steers
-// either way — without it the carry produces ids on the idle path alone, and a resend
-// that met a busy chat draws a note with no provenance.
-describe("submitPrompt threads the resend ids through both verbs", () => {
-  it("names them on the prompt", async () => {
-    resetStore("c1");
-    mockSendPromptTo.mockResolvedValue("sent");
-
-    expect(await submitPrompt("c1", "hello", { resends: ["steer-1"] })).toBe("sent");
-    expect(sentResends()).toEqual(["steer-1"]);
-  });
-
-  it("names them on the steer a plain 409 converts the prompt into", async () => {
-    resetStore("c1");
-    mockSendPromptTo.mockResolvedValue("queued");
-
-    expect(await submitPrompt("c1", "hello", { resends: ["steer-1", "steer-2"] })).toBe("steered");
-    expect(mockSteer).toHaveBeenCalledTimes(1);
-    expect(steeredResends()).toEqual(["steer-1", "steer-2"]);
-  });
-
-  it("names them on a steer sent straight into a running turn", async () => {
-    resetStore("c1");
-    setThinking("c1", true);
-
-    expect(await submitPrompt("c1", "hello", { resends: ["steer-3"] })).toBe("steered");
-    expect(steeredResends()).toEqual(["steer-3"]);
-  });
-
-  it("sends no `resends` when the caller supplies none", async () => {
-    // The negative control: without it every case above passes against a build that
-    // stamps a constant onto both payloads.
-    resetStore("c1");
-    mockSendPromptTo.mockResolvedValue("sent");
-
-    await submitPrompt("c1", "hello");
-    expect(sentResends()).toBeUndefined();
   });
 });
 

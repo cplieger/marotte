@@ -142,6 +142,17 @@ function filesTabName(dir: string): string {
   return dir === FB_ROOT ? "Files" : (dir.split("/").pop() ?? dir);
 }
 
+/** A preview tab's label: the page's file name, except an index page, which takes
+ *  its folder's name so a strip of several demos stays readable. */
+function webTabName(path: string): string {
+  const parts = path.split("/").filter((p) => p !== "");
+  const file = parts.at(-1) ?? path;
+  if (/^index\.html?$/i.test(file) && parts.length >= 2) {
+    return parts.at(-2) ?? file;
+  }
+  return file;
+}
+
 // --- The subagent ref codec ---
 
 /** The one composite ref on this wire: `<chatID>/<agentSubtaskID>`.
@@ -467,6 +478,31 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
         },
       };
     }
+    case "web": {
+      const path = subject.ref;
+      return {
+        name: webTabName(path),
+        icon: TAB_ICONS.web,
+        view: TAB_VIEWS.web,
+        route: { kind: "web", path },
+        owns: subject.owns,
+        ...parentOf(subject),
+        refresh: () => {
+          lazily(
+            import("./web-view.js").then(({ showWebTab }) => {
+              showWebTab(path);
+            }),
+          );
+        },
+        onClose: () => {
+          lazily(
+            import("./web-view.js").then(({ releaseWebTab }) => {
+              releaseWebTab(path);
+            }),
+          );
+        },
+      };
+    }
     case "history":
       return {
         name: "History",
@@ -529,7 +565,7 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
 
 /** The subject a URL route names: which tab kind, and which ref. The inverse of the
  *  `route` each case above produces, beside them so a new kind is ONE compile error
- *  covering both directions. Total over the ten kinds, no default branch.
+ *  covering both directions. Total over the eleven kinds, no default branch.
  *
  *  A singleton's sub-position is DROPPED (`/settings/tools` and `/settings` name one
  *  tab), because applyRoute corrects it after the activation. A FILES ref is the tab's
@@ -559,5 +595,7 @@ export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
       return { kind: "history", ref: "" };
     case "docs":
       return { kind: "docs", ref: "" };
+    case "web":
+      return { kind: "web", ref: route.path };
   }
 }

@@ -88,6 +88,20 @@ function applyTouched(on: boolean): void {
   }
 }
 
+/** Lay the document out for the stored tier and the third-tier flag, from storage
+ *  alone: reads, never writes, so prepaint.js can run it before any module. */
+export function applyStoredTier(): void {
+  applyTier(resolveTier());
+  // THE FLAG IS WRITTEN HERE AND NOWHERE ELSE, which preserves the freeze: its
+  // inputs are facts from a PREVIOUS load, so nothing re-lays-out mid-session.
+  // A STATED CHOICE OUTRANKS EVERY OBSERVATION: a reader who PINNED a tier gets no
+  // floor, since raising it to 44px would overturn the dense layout they asked for
+  // (a `coarse` choice already declares the same floor).
+  applyTouched(
+    pointerModeChoice() === null && (coarseEverSeen() || cachedPointerTier() === "coarse"),
+  );
+}
+
 /** Kept so a repeat init detaches its listener rather than stacking a second. */
 let observer: ((e: PointerEvent) => void) | null = null;
 /** The last tier WRITTEN, so a steady mouse costs a compare, not a storage write. */
@@ -116,7 +130,7 @@ export function initPointerTier(opts: InitOptions = {}): void {
     observer = null;
   }
 
-  applyTier(resolveTier());
+  applyStoredTier();
 
   // Backfill the sticky flag from either stored FACT, never from the guess: a guess
   // says a coarse pointer is AVAILABLE, the flag says one has been used here.
@@ -128,17 +142,6 @@ export function initPointerTier(opts: InitOptions = {}): void {
   }
   coarseAnnounced = seen;
   recorded = cachedPointerTier();
-
-  // THE FLAG IS WRITTEN HERE AND NOWHERE ELSE, which is what preserves the
-  // freeze: `seen` is a fact from a PREVIOUS load, so nothing re-lays-out under
-  // the reader mid-session. The `observe` callback below must never touch it.
-  //
-  // A STATED CHOICE OUTRANKS EVERY OBSERVATION, so a reader who touched once and
-  // then PINNED a tier via the sidebar toggle gets no floor from this: rung 1 of
-  // `resolveTier` is a preference, and raising the floor to 44px anyway would
-  // overturn the dense layout they asked for. A `coarse` choice needs no flag
-  // either — that arm already declares the same floor.
-  applyTouched(seen && pointerModeChoice() === null);
 
   const observe = (e: PointerEvent): void => {
     const tier = tierFor(e.pointerType);

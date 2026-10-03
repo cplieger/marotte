@@ -1,13 +1,12 @@
-// Single source of truth for localStorage keys used across modules.
-// The anti-FOUC theme-init script inlined in static/index.html can't import
-// this (it runs before modules load), so it hardcodes the same literal — kept
-// in sync by theme-init-snippet.test.ts.
+// Single source of truth for the localStorage keys and the theme attribute used
+// across modules, prepaint.js included: it bundles this module rather than
+// repeating the literals.
 
 /** The blob holding everything about THIS SCREEN: the active tab, the two shell
- *  fields, and the theme's pre-paint cache. Owned end to end by
- *  `device-view.ts`, which is the only writer — every write is a
- *  read-modify-write of one JSON document, so a second writer drops whatever
- *  landed between its read and its write.
+ *  fields, the sidebar width, the pointer fields, and the theme's pre-paint
+ *  cache. Owned end to end by `device-view.ts`, which is the only writer — every
+ *  write is a read-modify-write of one JSON document, so a second writer drops
+ *  whatever landed between its read and its write.
  *
  *  The name is a leftover from when this key held the whole UI arrangement, and
  *  it is KEPT deliberately: nothing is migrated, and renaming it would silently
@@ -15,6 +14,11 @@
  *  server-owned: the tab SET is its own collection (`internal/tabs`, projected by
  *  `tabs.ts`), and the theme and browser path are `config.json` keys. */
 export const LS_UI_STATE_KEY = "marotte.ui-state";
+
+/** The `<html>` attribute the theme paints, beside the key because both
+ *  `createTheme` constructions (`theme.ts`, `prepaint-steps.ts`) pass the pair:
+ *  two literals could drift and paint the first frame on a different attribute. */
+export const THEME_ATTRIBUTE = "data-theme";
 
 /** Per-chat, per-turn fold overrides: which turns THIS reader has opened or
  *  folded by hand.
@@ -48,6 +52,11 @@ export const LS_DISMISSED_BANNERS_KEY = "marotte.dismissed-banners";
  *  reverse the refusal. See `notify-ask.ts`. */
 export const LS_NOTIFY_ASK_KEY = "marotte.notify-ask";
 
+/** Per-page preview width picks: which viewport THIS screen chose for each
+ *  previewed page. Per-device because a width is a property of the screen in
+ *  front of the reader, the same reason `shell_h` is. */
+export const LS_WEB_VIEWPORT_KEY = "marotte.web-viewport";
+
 /** Every key above, so a sign-out can drop them without naming them one by one.
  *
  *  Here rather than at the three owning modules because this file is by
@@ -61,6 +70,7 @@ export function clearDeviceKeys(): void {
     LS_TURN_FOLDS_KEY,
     LS_DISMISSED_BANNERS_KEY,
     LS_NOTIFY_ASK_KEY,
+    LS_WEB_VIEWPORT_KEY,
   ]) {
     try {
       localStorage.removeItem(key);

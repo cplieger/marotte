@@ -31,6 +31,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_WEB: "",
   ICON_TAB_AGENT: "",
   // roles.ts is in this graph now (tab-materialize.ts derives a delegate tab's
   // label from it), and Browser Mode links for real rather than reading
@@ -123,15 +124,14 @@ vi.mock("./dom.js", () => ({
 }));
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
-// The three FUNCTIONS are stubbed and nothing else is: spreading the original keeps
-// `DRAG_THRESHOLD_PX` real, so the tap-vs-drag cases below measure against the slop
-// production uses rather than against a number restated here — a restated one
-// drifts silently while the boundary cases keep passing.
+// Spreading the original keeps `exceedsSlop` real, so the tap-vs-drag cases below
+// measure against the production slop rather than a restated number that could drift.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
   ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
+  setTapCallback: vi.fn(),
 }));
 // The two leaf stores the factory reads for a DISPLAY NAME, plus the three
 // pointer writers the optimistic close moves (getActiveId / setActive /
@@ -211,8 +211,15 @@ import { observeStamp, _resetForTest as _resetFreshnessForTest } from "./subject
 import { closeTabCommand } from "./actions/tabs.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
-import { attachDrag, DRAG_THRESHOLD_PX, setReorderCallback } from "./tabs-drag.js";
+import {
+  attachDrag,
+  pointerDragActivation,
+  setReorderCallback,
+  setTapCallback,
+} from "./tabs-drag.js";
 import { $ } from "./dom.js";
+import { showContextMenu } from "./context-menu.js";
+import type { ContextMenuItem } from "./context-menu.js";
 import type { OpenTabOutcome } from "./tabs.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import type { TabOpeners } from "./tab-materialize.js";
@@ -237,6 +244,8 @@ bindTabsSync({ ingest: ingestTabsChanged, list: listTabs });
 // at module load and every suite below clears mocks in its beforeEach. Driving it
 // is exactly what a completed drag does.
 const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
+// What a lifted hold released without travel asks the strip to do.
+const tapRow = vi.mocked(setTapCallback).mock.calls[0]?.[0];
 
 // --- The injected half of the factory ---
 //
@@ -369,6 +378,14 @@ describe("openTab", () => {
     expect.assertions(2);
     await openChat("a");
     expect(hasTab("chat", "a")).toBe(true);
+    expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  it("activates the tab a lifted tap names", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    expect(tapRow).toBeTypeOf("function");
+    tapRow?.(chatID("a"));
     expect(getActiveTabId()).toBe(chatID("a"));
   });
 
@@ -1530,7 +1547,8 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
     return rows();
   }
 
-  const past = DRAG_THRESHOLD_PX + 1;
+  const slop = pointerDragActivation("touch").slopPx;
+  const past = slop + 1;
 
   it.each([
     { desc: "sideways", dx: past, dy: 0 },
@@ -1551,12 +1569,26 @@ describe("a drag on the strip scrolls it and never activates a row", () => {
   });
 
   // The slop is inclusive: a finger never holds perfectly still, and travel AT the
-  // threshold is still the tap the reader meant.
-  it("activates the row a tap that wobbled inside the slop released on", async () => {
+  // threshold is still the tap the reader meant. Measured as a DISTANCE, so a
+  // diagonal wobble whose legs are each under the slop is judged on its length.
+  it.each([
+    { desc: "at the slop on one axis", dx: slop, dy: 0 },
+    { desc: "diagonally inside it", dx: 5, dy: 5 },
+  ])("activates the row a tap that wobbled $desc released on", async ({ dx, dy }) => {
     expect.assertions(1);
     const nodes = await renderTabs();
-    gesture(nodes[0] as HTMLElement, DRAG_THRESHOLD_PX, DRAG_THRESHOLD_PX);
+    gesture(nodes[0] as HTMLElement, dx, dy);
     expect(getActiveTabId()).toBe(chatID("a"));
+  });
+
+  // The same Euclidean metric as the drag that would start: 4px on each axis is
+  // 5.66px of travel, past the mouse's 5px, so this release is a drag's and must
+  // not also activate the row.
+  it("leaves the active tab alone when a mouse travels past its distance diagonally", async () => {
+    expect.assertions(1);
+    const nodes = await renderTabs();
+    gesture(nodes[0] as HTMLElement, 4, 4, "mouse");
+    expect(getActiveTabId()).toBe(chatID("b"));
   });
 
   it("activates the row a mouse clicked", async () => {
@@ -2284,17 +2316,49 @@ describe("pinned tabs", () => {
     expect(await rowRefs()).toEqual(["a", "b"]);
   });
 
-  // The partition is what enforces this: a drop commits through `reorder_tabs`,
-  // whose frame re-partitions, so the illegal position snaps back rather than
-  // being refused mid-drag inside the drag subsystem's index arithmetic.
+  // The partition is what enforces this: a drop is partitioned before it is shown
+  // or sent, so the illegal position snaps back at the drop rather than being
+  // refused mid-drag inside the drag subsystem's index arithmetic — and a drop the
+  // partition undoes entirely changes nothing, so it sends nothing.
   it("cannot be dragged below an unpinned tab", async () => {
-    expect.assertions(2);
+    expect.assertions(3);
     await openChats("a", "b", "c");
     await setTabPinned(chatID("a"), true);
     expect(commitDrop).toBeTypeOf("function");
     commitDrop?.([chatID("b"), chatID("c"), chatID("a")]);
     await settleTabs();
     expect(await rowRefs()).toEqual(["a", "b", "c"]);
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(0);
+  });
+
+  // The drag announces and slides from this answer, so a snap-back must not read
+  // as a move and a partial partition must report where the tab really went.
+  it("answers the top-level order a drop applied, or null when it applied none", async () => {
+    expect.assertions(3);
+    await openChats("a", "b", "c");
+    await setTabPinned(chatID("a"), true);
+    expect(commitDrop?.([chatID("b"), chatID("c"), chatID("a")])).toBeNull();
+    expect(commitDrop?.([chatID("c"), chatID("b"), chatID("a")])).toEqual([
+      chatID("a"),
+      chatID("c"),
+      chatID("b"),
+    ]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["a", "c", "b"]);
+  });
+
+  it("sends the server the partitioned order it shows", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    await setTabPinned(chatID("a"), true);
+    commitDrop?.([chatID("c"), chatID("b"), chatID("a")]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["a", "c", "b"]);
+    expect(tabServer.sentOfType("reorder_tabs")[0]?.payload["order"]).toEqual([
+      chatID("a"),
+      chatID("c"),
+      chatID("b"),
+    ]);
   });
 
   it("still honours a drag that reorders within the pinned run", async () => {
@@ -3128,5 +3192,211 @@ describe("the freshness dispatcher", () => {
 
     expect(openers.chatShow).toHaveBeenCalledWith("a");
     expect(openers.chatRefresh).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A drop shows its order at once.
+//
+// The drag's preview already moved the row, so the projection adopts the dropped
+// order the moment it is committed and a pending reorder in tabs-sync keeps it
+// through every render, frame and re-list until the server answers.
+// ---------------------------------------------------------------------------
+
+describe("a drop is shown before the server confirms it", () => {
+  async function threeChatsHeld(): Promise<void> {
+    await openChats("a", "b", "c");
+    tabServer.setMode("manual");
+  }
+
+  it("shows a dropped order before the server's frame lands", async () => {
+    expect.assertions(2);
+    await threeChatsHeld();
+    commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
+    expect(tabServer.pendingCount(), "the frame is still held").toBe(1);
+  });
+
+  it("keeps the dropped order through a render between the drop and the frame", async () => {
+    expect.assertions(1);
+    await threeChatsHeld();
+    commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
+    renameTab(chatID("a"), "renamed");
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
+  });
+
+  it("keeps the dropped order through a re-list that predates it", async () => {
+    expect.assertions(1);
+    await threeChatsHeld();
+    const before = {
+      tabs: tabServer.subjects().map((s) => ({ ...s })),
+      version: tabServer.version(),
+    };
+    commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
+    await settleTabs();
+    tabServer.queueList(before);
+    await listTabs();
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
+  });
+
+  it("changes nothing on screen when the confirming frame lands", async () => {
+    expect.assertions(2);
+    await threeChatsHeld();
+    commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
+    tabServer.flushFrames();
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["c", "a", "b"]);
+  });
+
+  // The re-list here is unreachable, so only the rollback can put the strip back.
+  it("rolls a refused drop back and re-lists on a 409", async () => {
+    expect.assertions(3);
+    await openChats("a", "b", "c");
+    const listsBefore = tabServer.listCalls();
+    tabServer.failNext("reorder_tabs", 409, "set moved");
+    tabServer.queueList(null);
+    commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
+    await settleTabs();
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(1);
+    expect(tabServer.listCalls()).toBe(listsBefore + 1);
+    expect(await rowRefs()).toEqual(["a", "b", "c"]);
+  });
+
+  it("rolls a failed drop back", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    tabServer.failNext("reorder_tabs", 500, "boom");
+    commitDrop?.([chatID("c"), chatID("a"), chatID("b")]);
+    await settleTabs();
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(1);
+    expect(await rowRefs()).toEqual(["a", "b", "c"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Move up" / "Move down" on a chat row's context menu.
+//
+// The unit is a GROUP (a parent and its whole subtree) within its pin partition,
+// and the commit is the drop's own, so it is shown at once and rolled back on a
+// refusal. There is no keyboard shortcut.
+// ---------------------------------------------------------------------------
+
+describe("Move up / Move down in the chat menu", () => {
+  /** Open the context menu on `ref`'s row and answer with the items it offered. */
+  async function menuFor(ref: string): Promise<ContextMenuItem[]> {
+    await paint();
+    const row = rows().find((r) => r.dataset["tabId"] === chatID(ref));
+    if (row === undefined) {
+      throw new Error(`no row for ${ref}`);
+    }
+    vi.mocked(showContextMenu).mockClear();
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    return vi.mocked(showContextMenu).mock.lastCall?.[0] ?? [];
+  }
+
+  function item(items: ContextMenuItem[], label: string): ContextMenuItem {
+    const found = items.find((i) => i.label === label);
+    if (found === undefined) {
+      throw new Error(`no ${label}`);
+    }
+    return found;
+  }
+
+  function announced(): Promise<string> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve(document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? "");
+      }, 150);
+    });
+  }
+
+  it("offers both after Pin and before the exports, on every chat row", async () => {
+    expect.assertions(2);
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+    expect((await menuFor("p")).map((i) => i.label)).toEqual([
+      "Pin",
+      "Move up",
+      "Move down",
+      "Export as Markdown",
+      "Export as JSON",
+    ]);
+    expect((await menuFor("kid")).map((i) => i.label)).toEqual([
+      "Move up",
+      "Move down",
+      "Export as Markdown",
+      "Export as JSON",
+    ]);
+  });
+
+  it("disables Move up on the first group and Move down on the last", async () => {
+    expect.assertions(4);
+    await openChats("a", "b");
+    expect(item(await menuFor("a"), "Move up").disabled).toBe(true);
+    expect(item(await menuFor("a"), "Move down").disabled).toBe(false);
+    expect(item(await menuFor("b"), "Move up").disabled).toBe(false);
+    expect(item(await menuFor("b"), "Move down").disabled).toBe(true);
+  });
+
+  it("will not cross the pin partition in either direction", async () => {
+    expect.assertions(2);
+    await openChats("a", "b", "c");
+    await setTabPinned(chatID("a"), true);
+    expect(item(await menuFor("b"), "Move up").disabled, "first unpinned").toBe(true);
+    expect(item(await menuFor("a"), "Move down").disabled, "last pinned").toBe(true);
+  });
+
+  it("disables both on a sub-tab, whose position is its parent's", async () => {
+    expect.assertions(2);
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+    await openChat("other");
+    const items = await menuFor("kid");
+    expect(item(items, "Move up").disabled).toBe(true);
+    expect(item(items, "Move down").disabled).toBe(true);
+  });
+
+  it("carries a parent's sub-tab with it, in one exact-set reorder", async () => {
+    expect.assertions(3);
+    await openChat("p");
+    await openTab({ kind: "chat", ref: "kid", parent: chatID("p") });
+    await openChat("other");
+    item(await menuFor("other"), "Move up").action();
+    await settleTabs();
+    expect(await rowRefs()).toEqual(["other", "p", "kid"]);
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(1);
+    expect(tabServer.sentOfType("reorder_tabs")[0]?.payload["order"]).toEqual([
+      chatID("other"),
+      chatID("p"),
+      chatID("kid"),
+    ]);
+  });
+
+  it("shows the move before the server's frame lands", async () => {
+    expect.assertions(1);
+    await openChats("a", "b");
+    tabServer.setMode("manual");
+    item(await menuFor("a"), "Move down").action();
+    expect(await rowRefs()).toEqual(["b", "a"]);
+  });
+
+  it("announces the move with the drag's own phrase", async () => {
+    expect.assertions(1);
+    await openChats("a", "b");
+    renameTab(chatID("b"), "Bee");
+    item(await menuFor("b"), "Move up").action();
+    expect(await announced()).toBe("Moved Bee to position 1");
+  });
+
+  it("sends nothing from a disabled item", async () => {
+    expect.assertions(2);
+    await openChats("a", "b");
+    const up = item(await menuFor("a"), "Move up");
+    expect(up.disabled).toBe(true);
+    up.action();
+    await settleTabs();
+    expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(0);
   });
 });

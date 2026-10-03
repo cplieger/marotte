@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Route } from "./route-path.js";
-// The nine tab kinds have ONE definition and it is the Go const block in
+// The tab kinds have ONE definition and it is the Go const block in
 // internal/marotte/domain_tabs.go, emitted here by wire-codegen as a registered
 // enum. Both tables below are typed as exhaustive records over it, so a new
 // kind added server-side fails the client type gate here rather than reaching a
@@ -39,6 +39,7 @@ import {
   ICON_TAB_HISTORY,
   ICON_TAB_DOCS,
   ICON_TAB_SPEC,
+  ICON_TAB_WEB,
 } from "./icons.js";
 
 /** The view element each tab kind shows. Callers can omit `view` from a spec
@@ -65,6 +66,7 @@ export const TAB_VIEWS: Readonly<Record<TabKind, string>> = {
   run: "#run-view",
   subagent: "#subagent-view",
   spec: "#spec-view",
+  web: "#web-view",
 };
 
 /** The leading glyph each tab kind renders.
@@ -89,6 +91,7 @@ export const TAB_ICONS: Readonly<Record<TabKind, string>> = {
   run: ICON_TAB_RUN,
   subagent: ICON_TAB_AGENT,
   spec: ICON_TAB_SPEC,
+  web: ICON_TAB_WEB,
 };
 
 /** The activity dot's states. Six come from a chat's live state (derived by
@@ -145,7 +148,7 @@ export interface TabViewSpec {
    *  kind cannot opt out of being refreshable.
    *
    *  Called by tabs.ts `refreshRow` gated on `viewStale`, never by this kind's own
-   *  `onShow` — the gate is asked in one place for all ten kinds. It writes no
+   *  `onShow` — the gate is asked in one place for every kind. It writes no
    *  projection state and pushes no route. */
   readonly refresh: () => void;
   /** Called when the tab is closed.

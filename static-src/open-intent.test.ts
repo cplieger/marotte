@@ -147,6 +147,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_WEB: "",
   ICON_TAB_AGENT: "",
   ICON_TAB_PLAN: "",
   ICON_TAB_SPEC: "",
@@ -208,7 +209,11 @@ vi.mock("./tabs-drag.js", () => ({
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
   setReorderCallback: vi.fn(),
-  DRAG_THRESHOLD_PX: 5,
+  setReprojectCallback: vi.fn(),
+  setTapCallback: vi.fn(),
+  dragOwnsStrip: vi.fn(() => false),
+  exceedsSlop: vi.fn(() => false),
+  pointerDragActivation: vi.fn(() => ({ holdMs: 150, slopPx: 8 })),
 }));
 vi.mock("./store.js", () =>
   import("./__test-helpers__/store-mock.js").then((m) => ({ ...m.storeMock })),

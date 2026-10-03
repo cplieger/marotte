@@ -67,6 +67,7 @@ vi.mock("./icons.js", () => ({
   FILE_ICONS: {},
   ICON_SAVE_OK: "",
   ICON_SAVE_FAIL: "",
+  ICON_TAB_WEB: "",
 }));
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));

@@ -41,8 +41,6 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdCreateChat, bind1(mem, CmdCreateChat))
 	d.Register(marotte.CmdResumeSession, bind1(mem, CmdResumeSession))
 	d.Register(marotte.CmdCompact, bind1(r.Bridges, CmdCompact))
-	d.Register(marotte.CmdSteer, bind3(r.Bridges, r.Admission, r.Steers, CmdSteer))
-	d.Register(marotte.CmdSteerClear, bind1(r.Bridges, CmdSteerClear))
 	d.Register(marotte.CmdCreateHook, bind1(r.Workspace, CmdCreateHook))
 
 	d.Register(marotte.CmdOpenTab, bind1(mem, CmdOpenTab))
@@ -65,10 +63,10 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(marotte.CmdSetMode, bind4(r.Bridges, r.Chats, r.Bus, r.Modes, CmdSetMode))
 	d.Register(marotte.CmdSetSupervisedMode, bind2(r.Bridges, r.Chats, CmdSetSupervisedMode))
 
-	d.Register(marotte.CmdCancel, bind3(r.Bridges, r.Perms, r.Terminals, CmdCancel))
+	d.Register(marotte.CmdCancel, bind4(r.Bridges, r.Perms, r.Terminals, r.SteerQueue, CmdCancel))
 	d.Register(marotte.CmdForkChat, bind4(r.Bridges, r.Chats, r.Workspace, mem, CmdForkChat))
 
-	d.Register(marotte.CmdPrompt, bind1(&promptRoles{
+	prompt := &promptRoles{
 		bridges:     r.Bridges,
 		chats:       r.Chats,
 		bus:         r.Bus,
@@ -78,8 +76,17 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 		admission:   r.Admission,
 		turnOutcome: r.TurnOutcome,
 		steers:      r.Steers,
+		queue:       r.SteerQueue,
+		jobs:        r.SteerJobs,
 		auth:        r.AuthReadiness,
-	}, CmdPrompt))
+	}
+	d.Register(marotte.CmdPrompt, bind1(prompt, CmdPrompt))
+	d.Register(marotte.CmdSteer, bind1(prompt, CmdSteer))
+	d.Register(marotte.CmdSteerClear, bind1(prompt, CmdSteerClear))
+	d.Register(marotte.CmdSteerRemove, bind1(prompt, CmdSteerRemove))
+	if r.SteerQueue != nil {
+		r.SteerQueue.OnSteerJob(runSteerJobs(prompt))
+	}
 
 	d.status = r.Status
 	return mem

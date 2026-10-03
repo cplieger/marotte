@@ -9,7 +9,7 @@
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="sw-env.d.ts" />
 
-import { type PrecacheManifest, isShellPath, parseManifest } from "./precache.js";
+import { type PrecacheManifest, isPreviewPath, isShellPath, parseManifest } from "./precache.js";
 import { buildPath } from "./route-path.js";
 import type { Route } from "./route-path.js";
 import { parsePushTarget, pushTargetRoute, pushTargetTag } from "./push-subject.js";
@@ -148,6 +148,10 @@ sw.addEventListener("activate", ((event: ExtendableEvent) => {
 // that reason, because a handler that asks the cache first has already taken the
 // request over.
 sw.addEventListener("fetch", ((event: FetchEvent) => {
+  const url = new URL(event.request.url);
+  if (url.origin === location.origin && isPreviewPath(url.pathname)) {
+    return;
+  }
   if (event.request.mode === "navigate") {
     event.respondWith(fetch(event.request));
     event.waitUntil(
@@ -161,7 +165,6 @@ sw.addEventListener("fetch", ((event: FetchEvent) => {
   if (event.request.method !== "GET") {
     return;
   }
-  const url = new URL(event.request.url);
   if (url.origin !== location.origin || !isShellPath(url.pathname)) {
     return;
   }

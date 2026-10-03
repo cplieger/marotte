@@ -52,6 +52,7 @@ function fileState(text: string): FileState {
   const original = signal(text);
   return {
     path: "a.go",
+    view: null,
     original,
     current,
     loaded: true,

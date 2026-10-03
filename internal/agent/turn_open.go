@@ -90,6 +90,9 @@ func (bc *BridgeCoordinator) openWireTurn(ctx context.Context, chatID marotte.Ch
 	if !created {
 		return t
 	}
+	if bc.steerTurnBound != nil {
+		bc.steerTurnBound(chatID, t.ID)
+	}
 	bc.announceTurnOpened(ctx, chatID, t)
 	if err := bc.chatStore.WriteCounters(ctx, chatID); err != nil {
 		slog.Warn("turn opened but the header's counters did not follow", "chat_id", chatID, "turn", t.ID, "error", err)
@@ -134,6 +137,9 @@ func (bc *BridgeCoordinator) StartTurn(ctx context.Context, chatID marotte.ChatI
 	if lc.own == nil {
 		lc.own = t
 		lc.setStateLocked(turnOpen)
+	}
+	if bc.steerTurnStarted != nil && t.Source.PromptClass() {
+		bc.steerTurnStarted(chatID, t.ID)
 	}
 	return true
 }

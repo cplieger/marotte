@@ -1016,3 +1016,56 @@ describe("openSpec", () => {
     expect(m.reparented).toEqual([{ id: `spec:${DIR}`, parent: "chat:c1" }]);
   });
 });
+
+// --- The shared scroller ---
+
+describe("the page's scroll position", () => {
+  const OTHER = ".kiro/specs/other";
+  const long = `# Design\n\n${Array.from({ length: 200 }, (_, i) => `Paragraph ${String(i)}.`).join("\n\n")}`;
+
+  function scroller(): HTMLElement {
+    const el = document.querySelector<HTMLElement>("[id='spec-view'] > .page-content");
+    if (el === null) {
+      throw new Error("no .page-content");
+    }
+    return el;
+  }
+
+  beforeEach(() => {
+    document.body.replaceChildren();
+    const viewEl = document.createElement("div");
+    viewEl.id = "spec-view";
+    viewEl.style.cssText = "display:flex;flex-direction:column;height:300px;width:600px";
+    const content = document.createElement("div");
+    content.className = "page-content";
+    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
+    const bodyEl = document.createElement("div");
+    bodyEl.id = "spec-body";
+    content.appendChild(bodyEl);
+    viewEl.appendChild(content);
+    document.body.appendChild(viewEl);
+  });
+
+  it("is per spec: A, then B, then A lands each where it was left", async () => {
+    m.specTabs.set(DIR, "");
+    m.specTabs.set(OTHER, "");
+    const a = reply(spec([prose("design.md", "design", long)]));
+    const b = reply(spec([prose("design.md", "design", long)], OTHER));
+    m.replies = [a, b, a, b];
+    view.showSpec(DIR);
+    await settle();
+    expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight);
+    scroller().scrollTop = 900;
+    await settle();
+    view.showSpec(OTHER);
+    await settle();
+    expect(scroller().scrollTop).toBe(0);
+    scroller().scrollTop = 400;
+    await settle();
+    view.showSpec(DIR);
+    expect(scroller().scrollTop).toBe(900);
+    await settle();
+    view.showSpec(OTHER);
+    expect(scroller().scrollTop).toBe(400);
+  });
+});

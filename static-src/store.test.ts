@@ -63,12 +63,10 @@ import {
   recordSteerSent,
   forgetSteer,
   recordSteerQueued,
-  dropSteers,
   dropConfirmedSteers,
   restoreSteers,
   forgetSteers,
   markSteersCompacted,
-  pendingSteerCarry,
   setCodeReferences,
   codeReferencesFor,
   setLiveRefusal,
@@ -1245,28 +1243,107 @@ describe("the steer dock holds what the agent has NOT read", () => {
     expect(steerCount("a")).toBe(0);
   });
 
-  it("drops only the named ids", () => {
+  it("takes a row out on its removed frame and leaves its neighbours", () => {
     recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
     recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
-    dropSteers("a", ["s1"]);
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user", state: "removed" });
     expect(get("a")?.steers?.map((e) => e.id)).toEqual(["s2"]);
   });
 
-  it("treats an empty id list as drop-everything, which is what a boundary means", () => {
+  it("marks a row the server could not deliver as unsent, in place", () => {
     recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
     recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
-    dropSteers("a");
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user", state: "unsent" });
+    expect(get("a")?.steers?.map((e) => [e.id, e.unsent])).toEqual([
+      ["s1", true],
+      ["s2", undefined],
+    ]);
+  });
+
+  it("clears the unsent mark when the row is queued again", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user", state: "unsent" });
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user", state: "queued" });
+    expect(get("a")?.steers?.[0]?.unsent).toBeUndefined();
+  });
+
+  it("records a batch's id on its members without adding a row", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    recordSteerQueued("a", { id: "s3", text: "three", origin: "user" });
+    recordSteerQueued("a", {
+      id: "steer-b1",
+      text: "one\n\nthree",
+      origin: "user",
+      replaces: ["s1", "s3"],
+    });
+    expect(get("a")?.steers?.map((e) => [e.id, e.text, e.kas])).toEqual([
+      ["s1", "one", "steer-b1"],
+      ["s2", "two", undefined],
+      ["s3", "three", "steer-b1"],
+    ]);
+  });
+
+  it("retires every member of a batch on the batch's own steer entry", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    recordSteerQueued("a", {
+      id: "steer-b1",
+      text: "one\n\ntwo",
+      origin: "user",
+      replaces: ["s1", "s2"],
+    });
+    const turn = openTurnIn("a", "t1");
+    appendEntry(
+      "a",
+      sealed(
+        turn,
+        1,
+        "steer",
+        { text: "one\n\ntwo", origin: "user", state: "read" },
+        { id: "steer-b1" },
+      ),
+    );
     expect(get("a")?.steers).toBeUndefined();
   });
 
-  it("is a no-op for ids it does not hold, and for a chat it does not hold", () => {
+  it("retires a batch's members at once when the log already holds the batch's entry", () => {
+    const turn = openTurnIn("a", "t1");
+    appendEntry(
+      "a",
+      sealed(
+        turn,
+        1,
+        "steer",
+        { text: "one\n\ntwo", origin: "user", state: "read" },
+        { id: "steer-b1" },
+      ),
+    );
     recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
-    const before = get("a");
-    dropSteers("a", ["nope"]);
-    expect(get("a")).toBe(before);
-    expect(() => {
-      dropSteers("ghost");
-    }).not.toThrow();
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    recordSteerQueued("a", {
+      id: "steer-b1",
+      text: "one\n\ntwo",
+      origin: "user",
+      replaces: ["s1", "s2"],
+    });
+    expect(get("a")?.steers).toBeUndefined();
+  });
+
+  it("retires the rows a steer entry names as its resends", () => {
+    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
+    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
+    const turn = openTurnIn("a", "t1");
+    appendEntry(
+      "a",
+      sealed(
+        turn,
+        1,
+        "steer",
+        { text: "two", origin: "user", state: "read", resends: ["s2"] },
+        { id: "steer-other" },
+      ),
+    );
+    expect(get("a")?.steers?.map((e) => e.id)).toEqual(["s1"]);
   });
 
   it("takes the confirmed rows out on an explicit discard and keeps the pending one", () => {
@@ -1310,47 +1387,6 @@ describe("the steer dock holds what the agent has NOT read", () => {
     const before = get("a");
     markSteersCompacted("a");
     expect(get("a")).toBe(before);
-  });
-});
-
-describe("pendingSteerCarry: what a boundary must re-send", () => {
-  beforeEach(() => {
-    resetStore("a");
-  });
-
-  it("reads the waiting entries in arrival order, id beside text", () => {
-    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
-    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
-    expect(pendingSteerCarry("a")).toEqual([
-      { id: "s1", text: "one" },
-      { id: "s2", text: "two" },
-    ]);
-  });
-
-  it("narrows to a named set, still in arrival order", () => {
-    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
-    recordSteerQueued("a", { id: "s2", text: "two", origin: "user" });
-    expect(pendingSteerCarry("a", ["s2", "s1"]).map((e) => e.id)).toEqual(["s1", "s2"]);
-  });
-
-  it("excludes a row whose own POST is still in flight", () => {
-    recordSteerSent("a", "m1", "one");
-    expect(pendingSteerCarry("a")).toEqual([]);
-  });
-
-  it("excludes the agent's own notice, which KAS re-wakes itself", () => {
-    recordSteerQueued("a", { id: "notify-1", text: "done", origin: "agent" });
-    expect(pendingSteerCarry("a")).toEqual([]);
-  });
-
-  it("reads the whole set for an empty id list", () => {
-    recordSteerQueued("a", { id: "s1", text: "one", origin: "user" });
-    expect(pendingSteerCarry("a", [])).toHaveLength(1);
-  });
-
-  it("answers empty for a chat with nothing waiting, and one it does not hold", () => {
-    expect(pendingSteerCarry("a")).toEqual([]);
-    expect(pendingSteerCarry("ghost")).toEqual([]);
   });
 });
 

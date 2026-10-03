@@ -38,14 +38,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./actions/chat.js", () => ({
   clearSteers: { dispatch: mocks.clearDispatch },
   cancelTurn: { dispatch: mocks.cancelDispatch },
+  removeSteer: { dispatch: vi.fn() },
 }));
 vi.mock("./confirm.js", () => ({ confirm: mocks.confirmMock }));
 vi.mock("./composer-value.js", () => ({ setComposerValue: mocks.setComposerValueMock }));
-vi.mock("./steer-resend.js", () => ({
-  preferSteerFirst: vi.fn(),
-  forgetSteerPreference: vi.fn(),
-  noteBoundaryDrop: vi.fn(),
-  runArmedResend: vi.fn(),
+vi.mock("./composer-state.js", () => ({
+  composerDraft: vi.fn(() => ""),
+  restoreRefusedEdit: vi.fn(),
 }));
 
 import {

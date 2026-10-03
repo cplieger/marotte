@@ -455,6 +455,26 @@ export const ICON_TAB_SPEC = svg(
   "ui",
   '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
 );
+export const ICON_TAB_WEB = svg(
+  "ui",
+  '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>',
+);
+export const ICON_VIEWPORT_FILL = svg(
+  "ui",
+  '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+);
+export const ICON_VIEWPORT_PHONE = svg(
+  "ui",
+  '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+);
+export const ICON_VIEWPORT_TABLET = svg(
+  "ui",
+  '<rect width="16" height="20" x="4" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+);
+export const ICON_VIEWPORT_DESKTOP = svg(
+  "ui",
+  '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+);
 // Generic custom-agent tab icon (hexagon module + core dot). The one
 // common glyph shared by every workspace custom agent (and bundled
 // non-workflow agents like semantic_reviewer) in the mode picker.

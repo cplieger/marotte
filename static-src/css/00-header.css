@@ -29,6 +29,20 @@
   initial-value: 0;
 }
 
+/* Registered so `getComputedStyle(root)` answers px, not token text, to
+   sidebar-resize.ts. The values are 01-tokens.css's; px is the initial value. */
+@property --sidebar-w-min {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 260px;
+}
+
+@property --sidebar-w-max {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 260px;
+}
+
 /* A TIMELINE-RAIL MARKER'S POSITION, a 0..1 fraction of the track written per
  * element by `turn-rail.ts` and consumed by one rule in 29-turns.css. Registered
  * because an unregistered property with no inline value makes the `calc()` reading

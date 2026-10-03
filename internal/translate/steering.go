@@ -72,15 +72,15 @@ func (t *Translator) steeringQueued(ctx context.Context, chatID marotte.ChatID, 
 		Origin:  t.steerOrigin(chatID, k.MessageID),
 	}
 	// RECORDED as well as broadcast: the buffer is KAS's and nothing can read it
-	// back, so a client that missed this frame is replayed from the same payload.
-	t.steerBufferWaiting(chatID, queued)
-	t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerQueued, chatID, queued))
+	// back, so a client that missed this frame is replayed from the same record.
+	queued, ok := t.steerBufferWaiting(chatID, &queued)
+	if ok {
+		t.bus.Broadcast(ctx, marotte.NewEvent(marotte.EventSteerQueued, chatID, queued))
+	}
 }
 
-// steeringInjected appends the read steer's entry and takes it off the waiting set.
+// steeringInjected takes the read steer off the waiting set and appends its entry.
 func (t *Translator) steeringInjected(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
-	origin := t.steerOrigin(chatID, k.MessageID)
-	t.steerBufferRead(chatID, k.MessageID)
 	// The bare text: KAS's persisted row and therefore the replay carry it without
 	// the prefix, and the merge would read the two spellings as two steers.
 	text := k.Content
@@ -88,28 +88,30 @@ func (t *Translator) steeringInjected(ctx context.Context, chatID marotte.ChatID
 		text = stripNotificationPrefix(text)
 	}
 	steer := &marotte.EntrySteer{
-		Text: text, Origin: origin, State: marotte.SteerStateRead, Severity: k.NotificationSeverity,
-		Resends: t.steerResends(chatID, k.MessageID),
+		Text: text, Origin: t.steerOrigin(chatID, k.MessageID), State: marotte.SteerStateRead,
+		Severity: k.NotificationSeverity, Resends: t.steerResends(chatID, k.MessageID),
 	}
 	t.stampRunNotice(chatID, k.MessageID, steer)
+	t.steerBufferRead(chatID, k.MessageID)
 	t.appendSteer(ctx, chatID, k.MessageID, steer)
 }
 
-// steeringCleared appends a dropped entry for every steer the buffer still held
-// (the ones nothing read; an injected frame removed the others). An agent-origin
-// note this process never held is recorded TEXT-LESS, and that entry is itself the
-// signal the next session/load's merge reads: the words it lacks are what the merge
-// fills, so nothing beside it has to say so.
+// steeringCleared appends a dropped entry for every AGENT row the record still held
+// (the ones nothing read; an injected frame removed the others). A user row's entry
+// is the host's, at the row's own terminal transition. An agent-origin note this
+// process never held is recorded TEXT-LESS, and that entry is itself the signal the
+// next session/load's merge reads: the words it lacks are what the merge fills, so
+// nothing beside it has to say so.
 func (t *Translator) steeringCleared(ctx context.Context, chatID marotte.ChatID, k *sessionInfoKiroBlock) {
 	held := make(map[string]marotte.SteerQueuedPayload)
-	for _, p := range t.steerBufferForgotten(chatID, k.MessageIDs) {
+	for _, p := range t.steerBufferCleared(chatID, k.MessageIDs) {
 		held[p.SteerID] = p
 	}
 	for _, id := range k.MessageIDs {
 		if p, ok := held[id]; ok {
 			t.appendSteer(ctx, chatID, id, &marotte.EntrySteer{
 				Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped,
-				Reason: marotte.SteerReasonBoundary, Resends: t.steerResends(chatID, id),
+				Reason: marotte.SteerReasonBoundary,
 			})
 			continue
 		}
@@ -164,14 +166,11 @@ func (t *Translator) appendSteer(ctx context.Context, chatID marotte.ChatID, ste
 		})
 }
 
-// steerReadByAck records the read a stripped acknowledgement marker evidences.
-// steering_injected reaches this process only for the execution it owns, so a steer a
-// DELEGATE consumed arrives as the marker alone, and without this the dock shows it
-// waiting until a boundary clear calls it dropped — a steer applied two minutes
-// earlier, labelled unread. The buffer's forget both answers and removes under one
-// lock, which is what makes "nothing has recorded this id yet" decidable here: an
-// injected frame takes the id when it writes its own entry. Taking it is also what
-// leaves a later clear with nothing to drop.
+// steerReadByAck records the read a stripped acknowledgement marker evidences: a
+// steer a DELEGATE consumed arrives as the marker alone, since steering_injected
+// reaches only the execution this process owns. The buffer's forget answers and
+// removes under one lock, so an id an injected frame already recorded is not
+// recorded twice and a later clear has nothing left to drop.
 func (t *Translator) steerReadByAck(ctx context.Context, chatID marotte.ChatID, lane, steerID string) {
 	held := t.steerBufferForgotten(chatID, []string{steerID})
 	if len(held) == 0 {
@@ -211,20 +210,30 @@ func (t *Translator) appendSteerInLane(
 	}
 }
 
-// The three buffer writes, each nil-guarded for the same reason steerOrigin is:
+// The buffer writes, each nil-guarded for the same reason steerOrigin is:
 // the role is optional at construction, and a Translator built without it has to
 // translate rather than panic.
 
-func (t *Translator) steerBufferWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
-	if t.steerBuffer != nil {
-		t.steerBuffer.SteerWaiting(chatID, p)
+func (t *Translator) steerBufferWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
+	if t.steerBuffer == nil {
+		out := *p
+		out.State = marotte.SteerRowQueued
+		return out, true
 	}
+	return t.steerBuffer.SteerWaiting(chatID, p)
 }
 
 func (t *Translator) steerBufferRead(chatID marotte.ChatID, steerID string) {
 	if t.steerBuffer != nil {
 		t.steerBuffer.SteerRead(chatID, steerID)
 	}
+}
+
+func (t *Translator) steerBufferCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
+	if t.steerBuffer == nil {
+		return nil
+	}
+	return t.steerBuffer.SteerCleared(chatID, steerIDs)
 }
 
 func (t *Translator) steerBufferForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {

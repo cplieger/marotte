@@ -230,6 +230,9 @@ const (
 	// KAS empties the steering buffer when a turn ends, so a steer queued
 	// against a turn that finished first is dropped having never been read.
 	SteerReasonBoundary SteerReason = "boundary"
+	// SteerReasonDeleted is the reason on a steer the reader deleted from the
+	// dock before the agent read it.
+	SteerReasonDeleted SteerReason = "deleted"
 )
 
 // EntrySteer is the steer payload. Text is the bare text, the `[notification/<sev>]`

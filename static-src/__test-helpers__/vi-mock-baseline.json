@@ -188,7 +188,6 @@
   "sse-adapter.test.ts",
   "status-versions.test.ts",
   "steer-compaction-marker.test.ts",
-  "steer-resend.test.ts",
   "store-load.test.ts",
   "subagent-card-metrics.test.ts",
   "subagent-dots.test.ts",

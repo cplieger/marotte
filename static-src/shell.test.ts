@@ -57,6 +57,7 @@ interface Live {
   setShellHeight: (px: number) => void;
   recordShellOpen: (open: boolean) => void;
   shellHeight: () => number;
+  storedShellOpen: () => boolean;
   restartDispatch: (...args: unknown[]) => Promise<unknown>;
   confirmMock: (...args: unknown[]) => Promise<boolean>;
   toastError: (...args: unknown[]) => void;
@@ -85,6 +86,7 @@ vi.mock("./code-blocks.js", () => ({
 // The three per-device fields moved out of the arrangement document into their
 // own module; only the two this panel owns are stubbed.
 vi.mock("./device-view.js", () => ({
+  shellOpen: (): boolean => live.storedShellOpen(),
   shellHeight: (): number => live.shellHeight(),
   setShellHeight: (px: number): void => live.setShellHeight(px),
   setShellOpen: (open: boolean): void => live.recordShellOpen(open),
@@ -177,7 +179,9 @@ function ptr(
   });
 }
 
-async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
+async function setup(
+  uiStateData: { shell_h?: number; shell_open?: boolean } = {},
+): Promise<Harness> {
   vi.resetModules();
   bootSeq++;
 
@@ -294,6 +298,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     setShellHeight,
     recordShellOpen,
     shellHeight,
+    storedShellOpen: () => uiStateData.shell_open ?? false,
     restartDispatch,
     confirmMock,
     toastError,
@@ -687,7 +692,7 @@ describe("shell.ts: reattaching after the session ends", () => {
 
 describe("shell.ts: restore", () => {
   it("restoreShell opens the panel and builds the terminal", async () => {
-    const h = await setup();
+    const h = await setup({ shell_open: true });
     h.mod.initShellPanel();
     h.mod.restoreShell();
     expect(h.createTerminal).toHaveBeenCalledTimes(1);
@@ -695,8 +700,17 @@ describe("shell.ts: restore", () => {
     expect(h.recordShellOpen).toHaveBeenCalledWith(true);
   });
 
+  it("restoreShell leaves a panel this device left closed closed", async () => {
+    const h = await setup({ shell_open: false });
+    h.mod.initShellPanel();
+    h.mod.restoreShell();
+    expect(h.createTerminal).not.toHaveBeenCalled();
+    expect(h.shellPanel.classList.contains("shell-closed")).toBe(true);
+    expect(h.recordShellOpen).not.toHaveBeenCalled();
+  });
+
   it("restoreShell does NOT steal focus at boot; a user open does focus", async () => {
-    const h = await setup();
+    const h = await setup({ shell_open: true });
     h.mod.initShellPanel();
     h.mod.restoreShell();
     await nextFrame();
@@ -718,6 +732,48 @@ describe("shell.ts: restore", () => {
     const h = await setup();
     h.mod.initShellPanel();
     expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("");
+  });
+});
+
+describe("shell.ts: releasing the pre-paint panel state", () => {
+  const root = document.documentElement;
+  const prepaint = (): void => {
+    root.setAttribute("data-shell-open", "");
+    root.style.setProperty("--shell-h", "300px");
+  };
+  const released = (): boolean =>
+    !root.hasAttribute("data-shell-open") && root.style.getPropertyValue("--shell-h") === "";
+
+  afterEach(() => {
+    root.removeAttribute("data-shell-open");
+    root.style.removeProperty("--shell-h");
+  });
+
+  it("restoreShell releases it as it opens the panel", async () => {
+    const h = await setup({ shell_open: true });
+    h.mod.initShellPanel();
+    prepaint();
+    h.mod.restoreShell();
+    expect(h.shellPanel.classList.contains("shell-closed")).toBe(false);
+    expect(released()).toBe(true);
+  });
+
+  it("an open from the toolbar button releases it", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    prepaint();
+    h.shellBtn.click();
+    expect(released()).toBe(true);
+  });
+
+  it("a close releases it too, so the panel can collapse", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+    prepaint();
+    h.shellToggleBtn.click();
+    expect(h.shellPanel.classList.contains("shell-closed")).toBe(true);
+    expect(released()).toBe(true);
   });
 });
 

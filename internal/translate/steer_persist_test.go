@@ -66,32 +66,32 @@ func TestSteeringInjected_PersistsAReadSteerRow(t *testing.T) {
 	}
 }
 
-// The half that matters most: a correction the agent NEVER READ. Rendering it
-// after a reload as though it had landed is a false statement about the user's
-// own message, which is worse than the note being absent.
-func TestSteeringCleared_PersistsAnUndeliveredSteerRow(t *testing.T) {
+// The half that matters most: an agent note nothing READ. Rendering it after a
+// reload as though it had landed is a false statement, which is worse than the
+// note being absent. A user row's undelivered entry is the host's, written at
+// the row's own terminal transition.
+func TestSteeringCleared_PersistsAnUndeliveredAgentNote(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
-	deps.userSteers = map[string]bool{"steer-1": true}
 	tr := New(rolesOf(deps))
 
 	// The queued frame is what puts the text in reach: the cleared frame carries
 	// ids and nothing else.
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
-			"messageId": "steer-1",
-			"content":   "use tabs",
+			"messageId": "notify-wf-1",
+			"content":   "a run finished",
 		}), FrameAttribution{})
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
-			"messageIds": []string{"steer-1"},
+			"messageIds": []string{"notify-wf-1"},
 		}), FrameAttribution{})
 
 	rows := steerRows(t, deps, "c1")
 	if len(rows) != 1 {
 		t.Fatalf("persisted %d steer entries, want 1", len(rows))
 	}
-	if rows[0].Text != "use tabs" {
-		t.Errorf("Text = %q, want the steer's text", rows[0].Text)
+	if rows[0].Text != "a run finished" {
+		t.Errorf("Text = %q, want the note's text", rows[0].Text)
 	}
 	if rows[0].State != marotte.SteerStateDropped {
 		t.Errorf("State = %q, want %q", rows[0].State, marotte.SteerStateDropped)
@@ -125,20 +125,15 @@ func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
 	}
 }
 
-// The REPORTED defect, in the shape a reader met it: a steer this server sent,
-// cleared unread by a manual stop, whose ledger entry was missing at queue time.
-// The row must still be the USER's, because the id says so.
-//
-// Both halves of the damage key on this one field. The note's label comes from
-// (origin, dropped), so an agent verdict titles the reader's own words "Workflow
-// result not delivered"; and pendingSteerCarry keeps only user-origin rows, so the
-// boundary resend DISCARDS the text instead of sending it as the next turn — the
-// one thing the dropped state promises will happen.
+// A steer this server sent whose ledger entry was missing at queue time is still
+// the USER's, because the id says so — so the clear writes nothing for it: a user
+// row's entry is the host's, and an agent verdict here would title the reader's own
+// words "Workflow result not delivered".
 //
 // The ledger is left empty deliberately: that is every one of its loss modes at
 // once (the queued-frame race, TTL expiry, cap eviction, chat teardown, restart).
 func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
-	deps, _, _ := depsWithStore(t, "c1")
+	deps, events, _ := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
 	const id = "steer-m-mtyaeheu-i481u605rb5m5u2c1y"
 
@@ -147,21 +142,17 @@ func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
 			"messageId": id,
 			"content":   "correction, the url does not work",
 		}), FrameAttribution{})
+	if p, ok := (*events)[0].Payload.(marotte.SteerQueuedPayload); !ok || p.Origin != marotte.SteerOriginUser {
+		t.Errorf("queued payload = %+v, want origin %q — a %q id is one this server sent",
+			(*events)[0].Payload, marotte.SteerOriginUser, marotte.SteerIDPrefix)
+	}
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
 			"messageIds": []string{id},
 		}), FrameAttribution{})
 
-	rows := steerRows(t, deps, "c1")
-	if len(rows) != 1 {
-		t.Fatalf("persisted %d steer entries, want 1", len(rows))
-	}
-	if rows[0].Origin != marotte.SteerOriginUser {
-		t.Errorf("Origin = %q, want %q — a %q id is one this server sent",
-			rows[0].Origin, marotte.SteerOriginUser, marotte.SteerIDPrefix)
-	}
-	if rows[0].State != marotte.SteerStateDropped {
-		t.Errorf("State = %q, want %q", rows[0].State, marotte.SteerStateDropped)
+	if rows := steerRows(t, deps, "c1"); len(rows) != 0 {
+		t.Errorf("persisted %+v, want nothing: the user row's entry is the host's", rows)
 	}
 }
 

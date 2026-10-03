@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,12 +64,19 @@ type BridgeCoordinator struct {
 	// runs is the run registry, for the death closer's run arm: every open step turn
 	// of every run this chat's bridge hosted closes with the chat's turns.
 	runs *runLog `wiring:"optional"`
-	// takeUnreadSteers drains what a dead bridge leaves unread: the steers parked
-	// for a spawning prompt, which KAS never held, and the IDS of the rows KAS had
-	// queued that this process holds no text for — one id per entry, because the
-	// record of that loss is now an empty-text steer entry rather than a header
-	// flag. Nil in tests.
-	takeUnreadSteers func(marotte.ChatID) (parked []command.ParkedSteer, queuedIDs []string) `wiring:"optional"`
+	// takeAgentSteers drains the agent rows a dead bridge leaves unread: one id per
+	// entry, because the record of that loss is an empty-text steer entry. A user
+	// row is the steer record's, resent by its turn end. Nil in tests.
+	takeAgentSteers func(marotte.ChatID) []string `wiring:"optional"`
+	// steerTurnEnded, steerTurnStarted, steerTurnBound and steerTurnRevised are the
+	// steer record's turn hooks; steerBridgeGone tells it a buffer died with no turn
+	// to collect its rows. Nil in tests. steerTurnStarted runs under the chat's
+	// lifecycle lock, so it never waits on the record's publication queue.
+	steerTurnEnded   func(marotte.ChatID, command.SteerTurnEnd) `wiring:"optional"`
+	steerTurnStarted func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
+	steerTurnBound   func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
+	steerTurnRevised func(chatID marotte.ChatID, turnID string) `wiring:"optional"`
+	steerBridgeGone  func(marotte.ChatID)                       `wiring:"optional"`
 	// secretStorage reports whether the runtime holds a credential store, read at
 	// SPAWN time: a bool captured here runs before NewHub opens the store, so it
 	// would be false for every bridge this process ever starts.
@@ -136,17 +142,12 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		dischargeWaiting:  h.DischargeWaiting,
 		applyPendingModel: h.applyPendingModel,
 		runs:              h.runs.log,
-		takeUnreadSteers: func(chatID marotte.ChatID) ([]command.ParkedSteer, []string) {
-			parked := h.steerLedger.TakeParkedSteers(chatID)
-			waiting := h.bus.steers.TakeForChat(chatID)
-			var queuedIDs []string
-			for _, w := range waiting {
-				if !slices.ContainsFunc(parked, func(p command.ParkedSteer) bool { return p.ID == w.SteerID }) {
-					queuedIDs = append(queuedIDs, w.SteerID)
-				}
-			}
-			return parked, queuedIDs
-		},
+		takeAgentSteers:   h.bus.steers.TakeAgentRows,
+		steerTurnEnded:    h.bus.steers.TurnEnded,
+		steerTurnStarted:  h.bus.steers.TurnStarted,
+		steerTurnBound:    h.bus.steers.TurnBound,
+		steerTurnRevised:  h.bus.steers.TurnRevised,
+		steerBridgeGone:   h.bus.steers.BridgeGone,
 	}
 }
 
@@ -583,6 +584,7 @@ func (bc *BridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) 
 // position against this goroutine's, so it cannot let the goroutine take the
 // attachment asynchronously and then guess which one the position belongs to.
 func (bc *BridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, gen uint64) {
+	exited := bc.turns.exitFor(chatID, gen)
 	ch := bridge.NotifCh()
 	// The generation keeps a straggler from the previous bridge from advancing a
 	// counter that restarted at zero.
@@ -605,6 +607,7 @@ func (bc *BridgeCoordinator) forwardAt(chatID marotte.ChatID, bridge ACPBridge, 
 	// No frame can advance the position now, so anything parked on one has to be
 	// told. Before the death closer, so a woken settle has already deferred by then.
 	bc.turns.sealPosition(chatID, gen)
+	exited()
 
 	slog.Info("bridge exited", "chat_id", chatID)
 
@@ -1035,6 +1038,9 @@ func (bc *BridgeCoordinator) WireTurnStart(ctx context.Context, chatID marotte.C
 		bound, _ = bc.turns.bindPending(ctx, chatID)
 	}
 	if bound {
+		if t, ok := bc.turns.ownTurn(chatID); ok && bc.steerTurnBound != nil {
+			bc.steerTurnBound(chatID, t.ID)
+		}
 		return
 	}
 	bc.openWireTurn(ctx, chatID)
@@ -1115,6 +1121,9 @@ func (bc *BridgeCoordinator) ReviseTurnBinding(ctx context.Context, chatID marot
 	if agent == nil {
 		return
 	}
+	if bc.steerTurnRevised != nil {
+		bc.steerTurnRevised(chatID, agent.ID)
+	}
 	bc.announceTurnOpened(ctx, chatID, agent)
 	if err := bc.chatStore.WriteCounters(ctx, chatID); err != nil {
 		slog.Warn("turn opened but the header's counters did not follow", "chat_id", chatID, "turn", agent.ID, "error", err)
@@ -1174,37 +1183,26 @@ func (bc *BridgeCoordinator) closeHostedRuns(ctx context.Context, chatID marotte
 	}
 }
 
-// dropUnreadSteers is the death closer's third step: the parked rows KAS never
-// held are written as steer{state: dropped, origin: user} after the chat's
-// turn_close, the waiting projection is cleared, and a row KAS had queued that this
-// process holds no text for is recorded as an EMPTY-TEXT steer entry — one per id.
+// dropUnreadSteers is the death closer's third step: an agent row KAS had queued
+// that this process holds no text for is recorded as an EMPTY-TEXT steer entry, one
+// per id, and the user rows' buffer is reported gone.
 //
 // That entry IS the reconcile signal: an empty text is "KAS persisted words this
 // process never received", which is what the header flag it replaces meant, read
 // from the log by the predicate the next session/load asks.
 func (bc *BridgeCoordinator) dropUnreadSteers(ctx context.Context, chatID marotte.ChatID) {
-	if bc.takeUnreadSteers == nil {
+	if bc.steerBridgeGone != nil {
+		bc.steerBridgeGone(chatID)
+	}
+	if bc.takeAgentSteers == nil {
 		return
 	}
-	parked, queuedIDs := bc.takeUnreadSteers(chatID)
-	for _, p := range parked {
-		bc.recordDroppedSteer(ctx, chatID, p)
-	}
-	for _, id := range queuedIDs {
+	for _, id := range bc.takeAgentSteers(chatID) {
 		bc.recordSteer(ctx, chatID, id, &marotte.EntrySteer{
-			Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped,
+			Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
 			Reason: marotte.SteerReasonRestart,
 		})
 	}
-}
-
-// recordDroppedSteer writes steer{state: dropped, origin: user} for a parked steer
-// KAS refused or never received.
-func (bc *BridgeCoordinator) recordDroppedSteer(ctx context.Context, chatID marotte.ChatID, p command.ParkedSteer) {
-	bc.recordSteer(ctx, chatID, p.ID, &marotte.EntrySteer{
-		Text: p.Text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped,
-		Reason: marotte.SteerReasonRestart, Resends: p.Resends,
-	})
 }
 
 // recordSteer writes a steer entry this server minted: into the chat's open turn,

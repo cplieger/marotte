@@ -80,6 +80,9 @@ import {
   opTimedOut,
   removesPending,
   setOnRemovesSettled,
+  beginReorder,
+  reorderCommitted,
+  overlayOrder,
   type TabsTarget,
 } from "./tabs-sync.js";
 import {
@@ -98,7 +101,17 @@ import { activeView, setActiveView } from "./device-view.js";
 import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { signal, effect, el } from "@cplieger/reactive";
-import { attachDrag, DRAG_THRESHOLD_PX, isDragHandled, setReorderCallback } from "./tabs-drag.js";
+import {
+  attachDrag,
+  dragOwnsStrip,
+  exceedsSlop,
+  isDragHandled,
+  pointerDragActivation,
+  setReorderCallback,
+  setReprojectCallback,
+  setTapCallback,
+} from "./tabs-drag.js";
+import { announce } from "@cplieger/ui-primitives/announce";
 import type { ViewportBox } from "./viewport-frame.js";
 import { viewportBox, viewportMoved } from "./viewport-frame.js";
 import { showContextMenu } from "./context-menu.js";
@@ -445,16 +458,17 @@ function insertRow(row: TabRow): void {
   state.tabs.splice(at, 0, row);
 }
 
-/** Group `state.tabs` into [parent, ...its whole descendant tree] runs, in array
- *  order. Shared by the pin partition, which must move a parent and everything
- *  under it as one unit — splitting them would put a child under a stranger.
+/** Group `rows` into [parent, ...its whole descendant tree] runs, in array order.
+ *  Shared by the pin partition and the menu's Move up / Move down, which must move
+ *  a parent and everything under it as one unit — splitting them would put a child
+ *  under a stranger.
  *
  *  Membership is tested against every row already IN a group, not just each
  *  group's first element: a sub-tab can itself have one, and matching only the
  *  head made such a grandchild an orphan top-level group. */
-function tabGroups(): TabRow[][] {
+function groupsOf(rows: readonly TabRow[]): TabRow[][] {
   const groups: TabRow[][] = [];
-  for (const t of state.tabs) {
+  for (const t of rows) {
     const owner =
       t.subject.parent === ""
         ? undefined
@@ -468,27 +482,27 @@ function tabGroups(): TabRow[][] {
   return groups;
 }
 
-/** Reorder `state.tabs` so every pinned group precedes every unpinned one,
- *  stably and with each parent's children still behind it.
- *
- *  A RENDERING rule over the stored order, applied here rather than server-side:
- *  the collection keeps the order it was given and `TabSubject.Pinned` says which
- *  rows float, so an unpin leaves the tab exactly where it was.
- *
- *  In the ARRAY rather than in the render, because two mechanisms read DOM order
- *  back as the truth: a drop reads the new order out of the strip (tabs-drag.ts)
- *  and the keyboard arrows walk `el.parentElement.children`. A render-time sort
- *  would make both disagree with what is stored. It is also what makes a pinned
- *  tab undraggable below an unpinned one with no change to the drag subsystem:
- *  every drop commits through a reorder whose frame re-partitions, so an illegal
- *  drop snaps back. */
-function applyPinOrder(): void {
-  const groups = tabGroups();
+function tabGroups(): TabRow[][] {
+  return groupsOf(state.tabs);
+}
+
+/** `rows` with every pinned group ahead of every unpinned one, stably and with
+ *  each parent's children still behind it. */
+function pinPartition(rows: readonly TabRow[]): readonly TabRow[] {
+  const groups = groupsOf(rows);
   const pinned = groups.filter((g) => g[0]?.subject.pinned === true);
   if (pinned.length === 0 || pinned.length === groups.length) {
-    return;
+    return rows;
   }
-  state.tabs = [...pinned, ...groups.filter((g) => g[0]?.subject.pinned !== true)].flat();
+  return [...pinned, ...groups.filter((g) => g[0]?.subject.pinned !== true)].flat();
+}
+
+/** Reorder `state.tabs` by the pin partition: a RENDERING rule over the stored
+ *  order, so an unpin leaves the tab where it was. In the ARRAY rather than the
+ *  render, because a drop and the keyboard arrows both read DOM order back as the
+ *  truth, and a render-time sort would make them disagree with what is stored. */
+function applyPinOrder(): void {
+  state.tabs = [...pinPartition(state.tabs)];
 }
 
 /** Expand a top-level order into the EXACT SET the server's `reorder_tabs`
@@ -1183,28 +1197,96 @@ export async function setTabParent(id: string, parent: string): Promise<boolean>
   return true;
 }
 
-/** Publish the arrangement a drag committed.
- *
- *  ON COMMIT ONLY, never per pointer move: an order is a whole-collection write,
- *  so a per-frame publish would be an fsync and a broadcast per pixel.
- *
- *  A 409 re-lists and NEVER re-sends. The exact-set check refused because the set
- *  moved under the drag, so the arrangement the gesture committed describes a
- *  collection that no longer exists — re-sending it would refuse again, and the
- *  honest answer is the current set with the drag snapped back. */
-function publishReorder(order: readonly string[]): void {
-  const expanded = expandOrder(order);
+const idOfRow = (t: TabRow): string => t.subject.id;
+
+/** Publish a top-level order a drop or the menu committed, showing it at once.
+ *  Expanded and pin-partitioned BEFORE it is shown or sent, so the server gets the
+ *  order every device will render and a drop the partition undoes sends nothing.
+ *  A pending reorder (tabs-sync) holds the shown order until the server answers; a
+ *  409 rolls back and re-lists, never re-sends, because the set moved under the
+ *  gesture. On commit only: an order is a whole-collection write. Answers the
+ *  top-level order it applied, or null when the partition undid the move. */
+function publishReorder(order: readonly string[]): readonly string[] | null {
+  const prior = state.tabs.map(idOfRow);
+  const next = pinPartition(permute(state.tabs, idOfRow, expandOrder(order))).map(idOfRow);
+  if (next.length === prior.length && next.every((id, i) => id === prior[i])) {
+    return null;
+  }
+  const opID = newOpID();
+  markLocalOp(opID);
+  beginReorder(opID, {
+    order: next,
+    // The captured order with any NEWER pending reorder re-applied on top, so
+    // rolling back an older drop never undoes a newer one.
+    rollback: () => {
+      state.tabs = permute(state.tabs, idOfRow, overlayOrder(prior));
+      applyPinOrder();
+      emit();
+    },
+  });
+  state.tabs = permute(state.tabs, idOfRow, next);
+  emit();
   void (async () => {
-    const opID = newOpID();
-    markLocalOp(opID);
-    const outcome = await reorderTabsCommand.dispatch({ order: expanded, opID });
+    const outcome = await reorderTabsCommand.dispatch({ order: next, opID });
     if (outcome === REORDER_STALE) {
+      opFailed(opID);
       await listTabs();
+    } else if (outcome === null) {
+      opFailed(opID);
+    } else {
+      reorderCommitted(opID, outcome.version);
     }
   })();
+  return tabGroups().map((g) => g[0]?.subject.id ?? "");
 }
 
 setReorderCallback(publishReorder);
+setReprojectCallback(renderDOM);
+// A lifted hold's release goes to the list, which holds the pointer capture, so it
+// never reaches the row's own activation listener.
+setTapCallback(activateTab);
+
+/** Where the menu's Move up / Move down would take a tab: its group swapped with the
+ *  adjacent group in the SAME pin partition. Null for a sub-tab (its position is its
+ *  parent's), at either end, and at the partition boundary. */
+function moveTarget(
+  id: string,
+  delta: -1 | 1,
+): { groups: TabRow[][]; at: number; to: number } | null {
+  const groups = tabGroups();
+  const at = groups.findIndex((g) => g[0]?.subject.id === id);
+  const head = groups[at]?.[0];
+  const neighbour = groups[at + delta]?.[0];
+  if (head === undefined || neighbour === undefined) {
+    return null;
+  }
+  if (neighbour.subject.pinned !== head.subject.pinned) {
+    return null;
+  }
+  return { groups, at, to: at + delta };
+}
+
+function canMoveTab(id: string, delta: -1 | 1): boolean {
+  return moveTarget(id, delta) !== null;
+}
+
+/** Move a tab and its whole subtree one group up or down, committing through the
+ *  same path a drop takes. */
+function moveTab(id: string, delta: -1 | 1): void {
+  const move = moveTarget(id, delta);
+  if (move === null) {
+    return;
+  }
+  const groups = [...move.groups];
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- both indices checked by moveTarget
+  [groups[move.at], groups[move.to]] = [groups[move.to]!, groups[move.at]!];
+  const applied = publishReorder(groups.map((g) => g[0]?.subject.id ?? ""));
+  const at = applied?.indexOf(id) ?? -1;
+  const row = rowOfID(id);
+  if (row !== undefined && at >= 0) {
+    announce(`Moved ${row.name} to position ${String(at + 1)}`);
+  }
+}
 
 // --- Local writers ---
 
@@ -1243,6 +1325,7 @@ const DOT_SUBJECT: Readonly<Record<TabKind, string>> = {
   history: "history",
   docs: "docs",
   spec: "spec",
+  web: "preview",
 };
 
 /** The five states that say nothing about a subject, so one wording serves every
@@ -2050,7 +2133,9 @@ function renderDOM(): void {
 
   // Insert + position. Skip over exiting elements when checking whether a tab is
   // already in the right spot — they're still in the DOM (animating out) but
-  // shouldn't affect sibling ordering.
+  // shouldn't affect sibling ordering. While a drag holds the strip the pointer owns
+  // the order of every row already in it, so none is re-seated.
+  const reseat = !dragOwnsStrip();
   let prev: HTMLElement | null = null;
   for (const row of state.tabs) {
     let node = existing.get(row.subject.id);
@@ -2078,7 +2163,7 @@ function renderDOM(): void {
       ) {
         expectedNext = expectedNext.nextSibling;
       }
-      if (node !== expectedNext) {
+      if (reseat && node !== expectedNext) {
         if (prev !== null) {
           prev.after(node);
         } else {
@@ -2247,7 +2332,7 @@ function createTabEl(row: TabRow): HTMLElement {
 
   paintTooltip(node, row.name);
 
-  // Right-click context menu for chat tabs: pin/unpin, then export (md/json).
+  // Right-click context menu for chat tabs: pin/unpin, move up/down, then export.
   // Non-chat tabs keep the native browser menu.
   //
   // There is no "Promote to its own tab" any more. `TabSubject.Parent` is set at
@@ -2275,6 +2360,24 @@ function createTabEl(row: TabRow): HTMLElement {
         },
       });
     }
+    // On every chat row, a sub-tab's included, so the items never shift position
+    // between rows; a sub-tab shows both disabled.
+    items.push(
+      {
+        label: "Move up",
+        disabled: !canMoveTab(id, -1),
+        action: () => {
+          moveTab(id, -1);
+        },
+      },
+      {
+        label: "Move down",
+        disabled: !canMoveTab(id, 1),
+        action: () => {
+          moveTab(id, 1);
+        },
+      },
+    );
     items.push(
       {
         label: "Export as Markdown",
@@ -2326,6 +2429,7 @@ function createTabEl(row: TabRow): HTMLElement {
 // off-row is the answer either way.
 let gestureOriginX = 0;
 let gestureOriginY = 0;
+let gesturePointerType = "";
 let gestureFrame: ViewportBox = { offsetLeft: 0, offsetTop: 0, width: 0, height: 0 };
 let gestureIsDrag = false;
 
@@ -2344,6 +2448,7 @@ function attachTapGuard(node: HTMLElement): void {
     }
     gestureOriginX = e.clientX;
     gestureOriginY = e.clientY;
+    gesturePointerType = e.pointerType;
     gestureFrame = viewportBox();
     gestureIsDrag = false;
   });
@@ -2359,8 +2464,11 @@ function attachTapGuard(node: HTMLElement): void {
       return;
     }
     if (
-      Math.abs(e.clientX - gestureOriginX) > DRAG_THRESHOLD_PX ||
-      Math.abs(e.clientY - gestureOriginY) > DRAG_THRESHOLD_PX
+      exceedsSlop(
+        e.clientX - gestureOriginX,
+        e.clientY - gestureOriginY,
+        pointerDragActivation(gesturePointerType),
+      )
     ) {
       gestureIsDrag = true;
     }

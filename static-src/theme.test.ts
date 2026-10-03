@@ -8,8 +8,7 @@
 // The storage adapter is a PARAMETER now (settings.ts supplies the real one, and
 // the authority is a config.json key), so these cases hand it the paint-cache
 // adapter — device-view.ts's own read-modify-write of the `theme` field. That is
-// deliberate rather than convenient: the cache is what the pre-paint snippet
-// reads, so the blob assertions below still pin the one storage behaviour a
+// deliberate rather than convenient: the cache is what prepaint.js reads, so the blob assertions below still pin the one storage behaviour a
 // reader would notice breaking, siblings preserved and all.
 //
 // The third state is the point: with a 2-state toggle, "follow the OS" was only

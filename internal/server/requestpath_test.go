@@ -258,7 +258,7 @@ func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	idem := newIdempotencyCache(idempotencyTTL)
 	t.Cleanup(idem.stop)
 	s := New(WithHostPolicy(policy))
-	h := webhttp.Chain(mux, s.middlewareStack(fallbackCSPPolicy(), idem)...)
+	h := webhttp.Chain(mux, s.middlewareStack(baseCSPPolicy, idem)...)
 
 	post := func(host, origin string) *httptest.ResponseRecorder {
 		// A non-canonical spelling of the mutating repair route: whichever gate

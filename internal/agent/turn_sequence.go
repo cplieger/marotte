@@ -21,8 +21,47 @@ func (r *turnRegistry) attachForward(chatID marotte.ChatID) uint64 {
 	lc.fwdGen++
 	lc.observedSeq = 0
 	lc.forwardGone = false
+	if lc.fwdExits == nil {
+		lc.fwdExits = make(map[uint64]chan struct{})
+	}
+	lc.fwdExits[lc.fwdGen] = make(chan struct{})
 	lc.wakeLocked()
 	return lc.fwdGen
+}
+
+// exitFor answers the func generation gen's own goroutine calls to close its exit
+// channel. Taken when the goroutine starts: by its exit a teardown may have
+// forgotten the lifecycle, and a fresh one would hold no channel to close.
+func (r *turnRegistry) exitFor(chatID marotte.ChatID, gen uint64) (done func()) {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return func() {}
+	}
+	lc.mu.Lock()
+	exit := lc.fwdExits[gen]
+	lc.mu.Unlock()
+	return func() {
+		if exit == nil {
+			return
+		}
+		close(exit)
+		lc.mu.Lock()
+		delete(lc.fwdExits, gen)
+		lc.mu.Unlock()
+	}
+}
+
+// forwardExit answers a channel the CURRENT forward goroutine closes when it
+// exits, nil when none is attached. Per generation, so a newer bridge's attach
+// does not release a wait on the old one's frames.
+func (r *turnRegistry) forwardExit(chatID marotte.ChatID) <-chan struct{} {
+	lc, ok := r.lookup(chatID)
+	if !ok {
+		return nil
+	}
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.fwdExits[lc.fwdGen]
 }
 
 // observe advances the position the folder has reached to seq, waking anything

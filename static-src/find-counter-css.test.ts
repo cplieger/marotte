@@ -46,6 +46,11 @@ vi.mock("./editor-scroll.js", () => ({
   flashEditorLine: vi.fn(),
   markEditorSpan: vi.fn(),
   clearEditorMark: vi.fn(),
+  // Present so real-ESM linking succeeds; editor-diff and editor-openers import them.
+  trackEditorView: () => undefined,
+  captureSelection: () => undefined,
+  restoreEditorView: () => undefined,
+  bindDiffView: () => undefined,
 }));
 
 const NOUNS = {

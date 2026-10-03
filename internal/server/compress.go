@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/cplieger/marotte/internal/preview"
 )
 
 // compressMinBytes is the body size at which gzip starts paying for itself: below it
@@ -52,6 +54,10 @@ func compressJSON(next http.Handler) http.Handler {
 // isCompressSkipped reports whether path is a streaming surface the wrapper must not
 // see.
 func isCompressSkipped(path string) bool {
+	// A preview file is served with Range support, which a gzip wrapper would break.
+	if strings.HasPrefix(path, preview.PathPrefix) {
+		return true
+	}
 	for _, p := range compressSkipPaths {
 		if path == p || strings.HasPrefix(path, p+"/") {
 			return true

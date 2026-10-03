@@ -51,6 +51,40 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 	}
 }
 
+// The broadcast is the frame the record answered, so a row the server re-sent under
+// a fresh id reaches the client as the batch frame naming the rows it carries.
+func TestSteeringQueued_BroadcastsWhatTheBufferRecorded(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	deps.queuedAnswer = func(p marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
+		p.Replaces = []string{"steer-a", "steer-b"}
+		return p, true
+	}
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{"messageId": "steer-new", "content": "use tabs"}),
+		FrameAttribution{})
+
+	if len(*events) != 1 {
+		t.Fatalf("broadcast %d events, want 1", len(*events))
+	}
+	p, ok := (*events)[0].Payload.(marotte.SteerQueuedPayload)
+	if !ok || !slices.Equal(p.Replaces, []string{"steer-a", "steer-b"}) {
+		t.Errorf("payload = %+v, want Replaces [steer-a steer-b]", (*events)[0].Payload)
+	}
+}
+
+// A chat whose teardown began answers no frame, so nothing is broadcast for it.
+func TestSteeringQueued_AChatGoingAwayBroadcastsNothing(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	deps.queuedAnswer = func(p marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) { return p, false }
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{"messageId": "notify-1", "content": "a run finished"}),
+		FrameAttribution{})
+
+	if len(*events) != 0 {
+		t.Errorf("events = %v, want none for a chat going away", eventTypes(*events))
+	}
+}
+
 // The agent's own notice leaves as its own event, never as a steer. KAS delivers
 // it through the same buffer and the severity is the only thing distinguishing
 // it, so the split has to happen here: forwarding it as a steer put the agent's
@@ -122,10 +156,12 @@ func TestSteeringInjected_AnnouncesTheReadSteerEntry(t *testing.T) {
 	}
 }
 
-// A boundary drop is recorded per steer, with the text and origin the queued frame
+// A boundary drop is recorded per AGENT note, with the text the queued frame
 // carried: KAS's cleared frame names ids alone, so the waiting set is the one
-// place the words survive.
-func TestSteeringCleared_RecordsEachDroppedSteer(t *testing.T) {
+// place the words survive. A user row named beside it gets no entry here, because
+// the host writes one at the row's own terminal transition and a row it resends
+// after the clear must never read "Not read".
+func TestSteeringCleared_RecordsEachDroppedAgentNoteAndNoUserRow(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	deps.userSteers = map[string]bool{"steer-1": true}
 	tr := New(rolesOf(deps))
@@ -141,28 +177,15 @@ func TestSteeringCleared_RecordsEachDroppedSteer(t *testing.T) {
 		}), FrameAttribution{})
 
 	rows := steerRows(t, deps, "c1")
-	if len(rows) != 2 {
-		t.Fatalf("steer entries = %+v, want one dropped row per cleared id", rows)
+	want := steerRow{
+		ID: "notify-wf-2", Text: "a run finished", Origin: marotte.SteerOriginAgent,
+		State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
 	}
-	// Each drop carries the BOUNDARY reason: the turn ended before the agent read it,
-	// which is the one thing this clear knows and the label's clause is worded from.
-	want := map[string]steerRow{
-		"steer-1": {ID: "steer-1", EntrySteer: marotte.EntrySteer{
-			Text: "use tabs", Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped,
-			Reason: marotte.SteerReasonBoundary,
-		}},
-		"notify-wf-2": {ID: "notify-wf-2", EntrySteer: marotte.EntrySteer{
-			Text: "a run finished", Origin: marotte.SteerOriginAgent, State: marotte.SteerStateDropped,
-			Reason: marotte.SteerReasonBoundary,
-		}},
+	if len(rows) != 1 || !reflect.DeepEqual(rows[0], want) {
+		t.Errorf("steer entries = %+v, want only the agent note %+v", rows, want)
 	}
-	for _, row := range rows {
-		if !reflect.DeepEqual(row, want[row.ID]) {
-			t.Errorf("dropped row %q = %+v, want %+v", row.ID, row, want[row.ID])
-		}
-	}
-	if got := appendedSteers(t, *events); len(got) != 2 {
-		t.Errorf("entry_appended{steer} frames = %d, want 2: %v", len(got), eventTypes(*events))
+	if got := appendedSteers(t, *events); len(got) != 1 {
+		t.Errorf("entry_appended{steer} frames = %d, want 1: %v", len(got), eventTypes(*events))
 	}
 	if left := waitingOf(t, deps, "c1"); len(left) != 0 {
 		t.Errorf("waiting after the clear = %v, want empty", left)
@@ -336,36 +359,28 @@ func TestSteeringInjected_TheEntryCarriesTheOrigin(t *testing.T) {
 	}
 }
 
-// The steer entry carries the resends the sender recorded, read or dropped: KAS's
-// frames never name them, so the ledger is the one source.
-func TestSteering_TheEntryCarriesTheRecordedResends(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		kind  string
-		frame map[string]any
-	}{
-		{"read", "steering_injected", map[string]any{"messageId": "steer-2", "content": "for decision 5 too"}},
-		{"dropped", "steering_cleared", map[string]any{"messageIds": []string{"steer-2"}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			deps, events, _ := depsWithStore(t, "c1")
-			deps.userSteers = map[string]bool{"steer-2": true}
-			deps.steerResends = map[string][]string{"steer-2": {"steer-1"}}
-			tr := New(rolesOf(deps))
-			tr.HandleSessionInfoUpdate(t.Context(), "c1",
-				steerFrame(t, "steering_queued", map[string]any{"messageId": "steer-2", "content": "for decision 5 too"}), FrameAttribution{})
-			*events = nil
+// The read steer's entry carries the resends the sender recorded: KAS's frames
+// never name them, so the ledger is the one source, and a client matches them
+// against its row keys to take every row the combined steer carried.
+func TestSteeringInjected_TheEntryCarriesTheRecordedResends(t *testing.T) {
+	deps, events, _ := depsWithStore(t, "c1")
+	deps.userSteers = map[string]bool{"steer-2": true}
+	deps.steerResends = map[string][]string{"steer-2": {"steer-1"}}
+	tr := New(rolesOf(deps))
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{"messageId": "steer-2", "content": "for decision 5 too"}), FrameAttribution{})
+	*events = nil
 
-			tr.HandleSessionInfoUpdate(t.Context(), "c1", steerFrame(t, tc.kind, tc.frame), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_injected", map[string]any{"messageId": "steer-2", "content": "for decision 5 too"}),
+		FrameAttribution{})
 
-			rows := appendedSteers(t, *events)
-			if len(rows) != 1 {
-				t.Fatalf("entry_appended{steer} frames = %d, want 1: %v", len(rows), eventTypes(*events))
-			}
-			if want := []string{"steer-1"}; !slices.Equal(rows[0].Resends, want) {
-				t.Errorf("%s steer resends = %v, want the ledger's %v", tc.name, rows[0].Resends, want)
-			}
-		})
+	rows := appendedSteers(t, *events)
+	if len(rows) != 1 {
+		t.Fatalf("entry_appended{steer} frames = %d, want 1: %v", len(rows), eventTypes(*events))
+	}
+	if want := []string{"steer-1"}; !slices.Equal(rows[0].Resends, want) {
+		t.Errorf("read steer resends = %v, want the ledger's %v", rows[0].Resends, want)
 	}
 }
 

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
@@ -19,6 +20,7 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID, 
 	// waiting_on_user survives ClearAtTurnEnd past turn end; the chat going away
 	// must clear it too, or a reconnect replays a status for a chat that's gone.
 	rt.bus.chatStatus.Clear(chatID)
+	rt.beginSteerTeardown(ctx, chatID, false)
 	rt.coord.CloseBridge(ctx, chatID, marotte.TurnOutcomeCancelled)
 	rt.agentTerms.KillForChat(chatID)
 	rt.coord.turns.forget(chatID)
@@ -26,13 +28,31 @@ func (rt *Runtime) cleanupChatState(ctx context.Context, chatID marotte.ChatID, 
 		rt.reapChatSession(ctx, chatID)
 	}
 	rt.lines.Clear(chatID)
-	// A steer's lifetime is one turn, so the chat going away means every id
-	// recorded for it can only ever answer a frame that will not arrive. Both
-	// registries, because they answer different questions and neither clears the
-	// other: the ledger holds whose WORDS an id carried, the buffer holds which ids
-	// are still waiting to be read.
+	// The ledger holds whose WORDS an id carried, the record which rows are held;
+	// neither clears the other.
 	rt.steerLedger.ForgetChat(chatID)
-	rt.bus.ClearWaitingSteersForChat(chatID)
+	rt.bus.steers.EndTeardown(chatID)
+}
+
+// BeginChatTeardown is command.ChatTeardown's first step, before the teardown's
+// cancel: the turn end that cancel causes then resends nothing.
+func (rt *Runtime) BeginChatTeardown(chatID marotte.ChatID, keep bool) {
+	rt.beginSteerTeardown(rt.lifecycle.shutdownCtx, chatID, keep)
+}
+
+// beginSteerTeardown marks the chat's steer record gone and captures its forward
+// exit before the registry forgets it. On a close, where the record survives, an
+// unread row leaves the note it would have had at a cancel.
+func (rt *Runtime) beginSteerTeardown(ctx context.Context, chatID marotte.ChatID, notes bool) {
+	unread := rt.bus.steers.BeginTeardown(chatID, rt.coord.turns.forwardExit(chatID))
+	if !notes {
+		return
+	}
+	for _, p := range unread {
+		rt.coord.recordSteer(durable.Context(ctx), chatID, p.SteerID, &marotte.EntrySteer{
+			Text: p.Text, Origin: p.Origin, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
+		})
+	}
 }
 
 // reapChatSession removes the chat's on-disk KAS session state on permanent
@@ -55,5 +75,17 @@ func (rt *Runtime) reapSessions(chain []string) {
 	}
 	for _, id := range chain {
 		rt.sessionReaper.Reap(id)
+	}
+}
+
+func (rt *Runtime) wireSteerRecords() {
+	recs := rt.bus.steers
+	recs.broadcast = func(e marotte.ServerEvent) { rt.bus.Broadcast(context.Background(), e) }
+	recs.note = func(ctx context.Context, chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) {
+		rt.coord.recordSteer(durable.Context(ctx), chatID, steerID, steer)
+	}
+	recs.promptHeld = func(chatID marotte.ChatID) bool {
+		source, held := rt.coord.AdmissionHolderSource(chatID)
+		return held && source.PromptClass()
 	}
 }

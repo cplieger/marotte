@@ -104,6 +104,8 @@ func (r *recordingTeardown) CloseChatState(_ context.Context, id marotte.ChatID)
 	r.closed = append(r.closed, id)
 }
 
+func (r *recordingTeardown) BeginChatTeardown(marotte.ChatID, bool) {}
+
 func createChat(t *testing.T, mem *Membership, opID string) ChatOpened {
 	t.Helper()
 	opened, err := mem.CreateChatAndOpen(t.Context(), ChatCreate{

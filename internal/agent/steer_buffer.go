@@ -1,182 +1,744 @@
 package agent
 
 import (
-	"cmp"
+	"context"
+	"log/slog"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/cplieger/marotte/internal/command"
+	"github.com/cplieger/marotte/internal/ids"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/subject"
 )
 
-// steerBuffer is marotte's projection of KAS's own steering buffer: the mid-turn
-// steers the model has NOT read, replayed on every new SSE connection so a
-// reconnecting browser gets its dock back. It exists because nothing can read that
-// buffer back — steer and steer/clear are the whole verb set, with no list.
-//
-// DELIBERATELY NO TTL: the removal signals are real (a boundary clear and an
-// injection both announce themselves), so an expiry would invent a deadline nothing
-// upstream has. Growth is bounded by those removals, ClearForChat and the cap below.
-type steerBuffer struct {
-	waiting map[steerKey]marotte.SteerQueuedPayload
-	// versions holds the shared `pending` counter every queue and removal bumps
-	// under mu; see mintPending.
-	versions *subject.Versions
-	maxN     int
-	mu       sync.Mutex
+// steerRecords holds every chat's user steer rows and what KAS's buffer holds of
+// them, in memory only. KAS's read cursor does not rewind on a clear
+// (kirodotdev/Kiro#11449), so after a clear inside a turn the first send is ONE
+// combined probe whose fate is observed, never predicted.
+type steerRecords struct {
+	chats     map[marotte.ChatID]*steerRecord
+	versions  *subject.Versions
+	note      func(ctx context.Context, chatID marotte.ChatID, steerID string, steer *marotte.EntrySteer) `wiring:"optional"`
+	broadcast func(marotte.ServerEvent)                                                                   `wiring:"optional"`
+	// promptHeld decides a cleared row's fate when no turn is bound.
+	promptHeld func(marotte.ChatID) bool `wiring:"optional"`
+	runJob     func(command.SteerJob)
+	jobs       uint64
+	mu         sync.Mutex
 }
 
-// steerKey addresses one waiting steer: the chat that owns it plus KAS's own id.
-// THE PAIR, never the id alone — an id is unique within one session and there is one
-// session per chat, so two live chats holding one id is ordinary. A struct rather
-// than a joined string, because the id's shape is KAS's and may hold any separator.
-type steerKey struct {
-	chat marotte.ChatID
-	id   string
+type steerRecord struct {
+	exit <-chan struct{}
+	// opEnd is the FIRST turn end that skipped the in-flight op's rows.
+	opEnd *command.SteerTurnEnd
+	// starting is a turn StartTurn began whose bracket has not bound the channel:
+	// its execution may already be reading the buffer.
+	starting string
+	turnID   string
+	probe    string
+	op       string
+	opTarget string
+	lead     string
+	rows     []dockRow
+	others   []marotte.SteerQueuedPayload
+	// queue is published by one drainer at a time, so frames and notes go out in
+	// the order the steps took the lock.
+	queue   []*steerFx
+	nextSeq uint64
+	channel channelState
+	// opChannel is the channel the op found, so a clear with no bound turn resends
+	// its kept rows unbound rather than as a probe.
+	opChannel channelState
+	// reinject: a dead bridge's KAS log may hold rows no clear names, which the next
+	// session/load queues again.
+	reinject bool
+	gone     bool
+	flushing bool
 }
 
-// maxWaitingPerChat bounds one chat's waiting set, so a producer that never sends a
-// removal cannot grow the map without limit; a steer is a typed human gesture, so
-// the live population is single digits. At the cap the OLDEST entry by id is
-// dropped, which costs one unreplayed row rather than refusing every later one.
-const maxWaitingPerChat = 64
-
-func newSteerBuffer() *steerBuffer {
-	return &steerBuffer{waiting: make(map[steerKey]marotte.SteerQueuedPayload), maxN: maxWaitingPerChat}
+type dockRow struct {
+	key   string
+	kasID string
+	text  string
+	owner string
+	seq   uint64
+	state rowState
+	// sent: the KEY has reached KAS, so it is never sent under the key again.
+	sent bool
+	// noted: a steer entry exists under the key, so it never gets a second one.
+	noted bool
 }
 
-// SteerWaiting records a steer KAS has buffered and the model has not read.
-// Idempotent by key, which is required rather than defensive: a reconnect replays the
-// queued frame, and this is what stops one row being counted twice against the cap.
-func (b *steerBuffer) SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
-	if p.SteerID == "" {
+type steerFx struct {
+	done    chan struct{}
+	chat    marotte.ChatID
+	frames  []marotte.SteerQueuedPayload
+	notes   []steerNote
+	jobs    []command.SteerJob
+	changed bool
+}
+
+type steerNote struct {
+	steer *marotte.EntrySteer
+	id    string
+}
+
+// maxSteerRows bounds one chat: a 65th user row is refused, an agent row evicts
+// the oldest agent row.
+const maxSteerRows = 64
+
+func newSteerRecords() *steerRecords {
+	return &steerRecords{chats: make(map[marotte.ChatID]*steerRecord)}
+}
+
+func (r *steerRecords) record(chatID marotte.ChatID, create bool) *steerRecord {
+	rec := r.chats[chatID]
+	if create && rec == nil {
+		rec = &steerRecord{}
+		r.chats[chatID] = rec
+	}
+	return rec
+}
+
+// step runs fn under the lock, then publishes what it owed in step order. It
+// answers false for a torn-down chat. Never call it from a publication: the
+// drainer would wait on itself.
+func (r *steerRecords) step(chatID marotte.ChatID, create bool, fn func(rec *steerRecord, fx *steerFx)) bool {
+	fx := &steerFx{chat: chatID, done: make(chan struct{})}
+	r.mu.Lock()
+	rec := r.record(chatID, create)
+	if rec == nil || rec.gone {
+		r.mu.Unlock()
+		return false
+	}
+	fn(rec, fx)
+	rec.prune()
+	if fx.changed || len(fx.frames) > 0 || len(fx.notes) > 0 {
+		mintPending(&r.versions)
+	}
+	r.awaitLocked(rec, fx)
+	return true
+}
+
+// awaitLocked queues fx behind every earlier step and returns once it is published.
+// It is entered holding r.mu and releases it.
+func (r *steerRecords) awaitLocked(rec *steerRecord, fx *steerFx) {
+	rec.queue = append(rec.queue, fx)
+	drain := !rec.flushing
+	rec.flushing = true
+	r.mu.Unlock()
+	if drain {
+		r.drain(rec)
+	}
+	<-fx.done
+}
+
+func (r *steerRecords) drain(rec *steerRecord) {
+	ctx := context.Background()
+	r.mu.Lock()
+	for len(rec.queue) > 0 {
+		fx := rec.queue[0]
+		rec.queue = rec.queue[1:]
+		r.mu.Unlock()
+		r.publish(ctx, rec, fx)
+		close(fx.done)
+		r.mu.Lock()
+	}
+	rec.flushing = false
+	r.mu.Unlock()
+}
+
+// publish: a torn-down chat's frames are not owed; its notes and jobs still are.
+// gone is read after the notes, which can block while a teardown begins.
+func (r *steerRecords) publish(ctx context.Context, rec *steerRecord, fx *steerFx) {
+	for _, n := range fx.notes {
+		if r.note != nil {
+			r.note(ctx, fx.chat, n.id, n.steer)
+		}
+	}
+	r.mu.Lock()
+	gone := rec.gone
+	r.mu.Unlock()
+	for _, f := range fx.frames {
+		if !gone && r.broadcast != nil {
+			r.broadcast(marotte.NewEvent(marotte.EventSteerQueued, fx.chat, f))
+		}
+	}
+	for _, j := range fx.jobs {
+		if r.runJob != nil {
+			r.runJob(j)
+		}
+	}
+}
+
+func (rec *steerRecord) prune() {
+	rec.rows = slices.DeleteFunc(rec.rows, func(w dockRow) bool {
+		return w.state == rowDone || (w.state == rowRead && w.owner == "")
+	})
+}
+
+func (rec *steerRecord) row(key string) *dockRow {
+	for i := range rec.rows {
+		if w := &rec.rows[i]; !w.state.terminal() && w.key == key {
+			return w
+		}
+	}
+	return nil
+}
+
+func (rec *steerRecord) live(fn func(w *dockRow)) {
+	for i := range rec.rows {
+		if w := &rec.rows[i]; !w.state.terminal() {
+			fn(w)
+		}
+	}
+}
+
+func (rec *steerRecord) under(id string) []*dockRow {
+	var out []*dockRow
+	rec.live(func(w *dockRow) {
+		if id != "" && w.kasID == id && (w.state.inKAS() || w.state == rowUnsent) {
+			out = append(out, w)
+		}
+	})
+	return out
+}
+
+func (rec *steerRecord) unownedWaiting() []*dockRow {
+	var out []*dockRow
+	rec.live(func(w *dockRow) {
+		if w.state == rowWaiting && w.owner == "" {
+			out = append(out, w)
+		}
+	})
+	return out
+}
+
+func rowFrame(w *dockRow) marotte.SteerQueuedPayload {
+	state := marotte.SteerRowQueued
+	switch w.state {
+	case rowDone:
+		state = marotte.SteerRowRemoved
+	case rowUnsent:
+		state = marotte.SteerRowUnsent
+	case rowParked, rowQueued, rowOutstanding, rowWaiting, rowCleared, rowRead, nRowStates:
+	}
+	return marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser, State: state}
+}
+
+func batchFrame(id string, members []*dockRow) marotte.SteerQueuedPayload {
+	keys := make([]string, 0, len(members))
+	texts := make([]string, 0, len(members))
+	for _, w := range members {
+		keys = append(keys, w.key)
+		texts = append(texts, w.text)
+	}
+	return marotte.SteerQueuedPayload{
+		SteerID: id, Text: joinSteers(texts), Origin: marotte.SteerOriginUser,
+		Replaces: keys, State: marotte.SteerRowQueued,
+	}
+}
+
+func joinSteers(texts []string) string { return strings.Join(texts, "\n\n") }
+
+func freshSteerID() string { return marotte.SteerIDFor(ids.NewMessageID()) }
+
+// setState owes a row frame only when the WIRE state moves: every state but
+// unsent reads queued, so a row moving between them repaints nothing.
+func setState(w *dockRow, s rowState, fx *steerFx) {
+	was := w.state == rowUnsent
+	w.state = s
+	if was != (s == rowUnsent) {
+		fx.frames = append(fx.frames, rowFrame(w))
+	}
+	fx.changed = true
+}
+
+// retire leaves a row whose key already carries its one entry with a removed
+// frame, the only signal that takes it off a client's dock.
+func retire(w *dockRow, steer *marotte.EntrySteer, fx *steerFx) {
+	w.state = rowDone
+	fx.changed = true
+	if w.noted || steer == nil {
+		fx.frames = append(fx.frames, rowFrame(w))
 		return
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	k := steerKey{chat: chatID, id: p.SteerID}
-	if _, held := b.waiting[k]; !held {
-		b.evictOldestLocked(chatID)
-	}
-	b.waiting[k] = p
-	mintPending(&b.versions)
+	w.noted = true
+	fx.notes = append(fx.notes, steerNote{id: w.key, steer: steer})
 }
 
-// SteerRead drops the one steer an injected frame names: the model has read it, so
-// replaying it would offer a delivered message back to the dock.
-func (b *steerBuffer) SteerRead(chatID marotte.ChatID, steerID string) {
-	b.SteerForgotten(chatID, []string{steerID})
+func deletedSteer(w *dockRow) *marotte.EntrySteer {
+	return &marotte.EntrySteer{
+		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonDeleted,
+	}
 }
 
-// SteerForgotten drops every named steer, for the frame that says KAS's buffer no
-// longer holds them, and RETURNS the ones it was still holding. Named ids only,
-// matching the wire: a turn boundary reports exactly which ids it cleared.
-//
-// The return is what separates a DROP from HOUSEKEEPING. KAS clears at every turn
-// boundary, so the cleared frame also names ids the model already read — and an
-// injected frame removed those here, so an id still present is one nothing read.
-// It comes back with its PAYLOAD because the cleared frame carries ids and no text,
-// so this set is the only place the words survive. Atomic with the removal on
-// purpose: read-then-forget is two acquisitions of one lock over one decision.
-func (b *steerBuffer) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
-	if len(steerIDs) == 0 {
-		return nil
+func boundarySteer(w *dockRow) *marotte.EntrySteer {
+	return &marotte.EntrySteer{
+		Text: w.text, Origin: marotte.SteerOriginUser, State: marotte.SteerStateDropped, Reason: marotte.SteerReasonBoundary,
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var held []marotte.SteerQueuedPayload
-	for _, id := range steerIDs {
-		k := steerKey{chat: chatID, id: id}
-		if p, ok := b.waiting[k]; ok {
-			held = append(held, p)
-			delete(b.waiting, k)
+}
+
+func (r *steerRecords) gone(chatID marotte.ChatID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.chats[chatID]
+	return rec != nil && rec.gone
+}
+
+// SteerWaiting folds steering_queued. A frame naming this record's rows is
+// published by the record in step order, so ok is false; an agent row answers
+// itself for the caller to broadcast.
+func (r *steerRecords) SteerWaiting(chatID marotte.ChatID, in *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
+	p := *in
+	if p.SteerID == "" {
+		return p, false
+	}
+	other := false
+	r.step(chatID, true, func(rec *steerRecord, fx *steerFx) {
+		if members := rec.under(p.SteerID); len(members) > 0 {
+			frame := batchFrame(p.SteerID, members)
+			if len(members) == 1 && members[0].key == p.SteerID {
+				frame = rowFrame(members[0])
+			}
+			fx.frames = append(fx.frames, frame)
+			return
+		}
+		other = true
+		p.State = marotte.SteerRowQueued
+		rec.others = slices.DeleteFunc(rec.others, func(o marotte.SteerQueuedPayload) bool { return o.SteerID == p.SteerID })
+		if len(rec.others) >= maxSteerRows {
+			rec.others = rec.others[1:]
+		}
+		rec.others = append(rec.others, p)
+		fx.changed = true
+	})
+	return p, other
+}
+
+// SteerRead folds steering_injected.
+func (r *steerRecords) SteerRead(chatID marotte.ChatID, steerID string) {
+	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
+		rec.readLocked(steerID, false, fx)
+	})
+}
+
+// SteerForgotten folds an acknowledgement-evidenced read and answers what it read,
+// with the text a lane's read entry needs.
+func (r *steerRecords) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
+	var out []marotte.SteerQueuedPayload
+	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
+		for _, id := range steerIDs {
+			if p, ok := rec.takeOther(id); ok {
+				fx.changed = true
+				out = append(out, p)
+				continue
+			}
+			if p, ok := rec.readLocked(id, true, fx); ok {
+				out = append(out, p)
+			}
+		}
+	})
+	return out
+}
+
+func (rec *steerRecord) takeOther(id string) (marotte.SteerQueuedPayload, bool) {
+	for i, o := range rec.others {
+		if o.SteerID == id {
+			rec.others = slices.Delete(rec.others, i, i+1)
+			return o, true
 		}
 	}
-	if len(held) > 0 {
-		mintPending(&b.versions)
-	}
-	return held
+	return marotte.SteerQueuedPayload{}, false
 }
 
-// ClearForChat drops every waiting steer owned by chatID, at its teardown. A
-// steer's lifetime is one turn, so a chat that is gone can only ever hold ids no
-// frame will arrive for.
-func (b *steerBuffer) ClearForChat(chatID marotte.ChatID) {
-	b.TakeForChat(chatID)
-}
-
-// TakeForChat drops every waiting steer owned by chatID and answers the rows it
-// held, so the death closer can tell the rows KAS queued from the ones this
-// process parked.
-func (b *steerBuffer) TakeForChat(chatID marotte.ChatID) []marotte.SteerQueuedPayload {
-	if chatID == "" {
-		return nil
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var taken []marotte.SteerQueuedPayload
-	for k, p := range b.waiting {
-		if k.chat == chatID {
-			delete(b.waiting, k)
-			taken = append(taken, p)
+// readLocked: byAck is a delegate's read, which proves nothing about the main
+// cursor reaching new rows.
+func (rec *steerRecord) readLocked(id string, byAck bool, fx *steerFx) (marotte.SteerQueuedPayload, bool) {
+	if !byAck {
+		if _, ok := rec.takeOther(id); ok {
+			fx.changed = true
 		}
 	}
-	if len(taken) > 0 {
-		mintPending(&b.versions)
+	members := rec.under(id)
+	if len(members) == 0 {
+		return marotte.SteerQueuedPayload{}, false
 	}
-	return taken
+	read := batchFrame(id, members)
+	ev := readEvent(members, byAck)
+	for _, w := range members {
+		if rowRuleFor(w.state, ev) == rRead {
+			w.state = rowRead
+		}
+	}
+	fx.changed = true
+	if rec.channel == chanProbing && id == rec.probe {
+		rec.probeReadLocked(ev, fx)
+	}
+	return marotte.SteerQueuedPayload{SteerID: id, Text: read.Text, Origin: marotte.SteerOriginUser}, true
 }
 
-// List returns the waiting steers as the events a connect replay writes, filtered to
-// one chat when chatFilter is set.
-//
-// ORDER IS PART OF THE CONTRACT, ascending by chat then id, so two tabs reconnecting
-// stack the same dock. Not SEND order — the wire carries no sequence for a steer.
-func (b *steerBuffer) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	keys := make([]steerKey, 0, len(b.waiting))
-	for k := range b.waiting {
-		if chatFilter != "" && k.chat != chatFilter {
+// readEvent names a probe's read whether or not it is still the channel's: a late
+// read after its turn closed is a fact the turn-end job reads.
+func readEvent(members []*dockRow, byAck bool) steerEvent {
+	if !slices.ContainsFunc(members, func(w *dockRow) bool { return w.state == rowOutstanding }) {
+		return evInjectedOther
+	}
+	if byAck {
+		return evAckProbe
+	}
+	return evInjectedProbe
+}
+
+func (rec *steerRecord) probeReadLocked(ev steerEvent, fx *steerFx) {
+	switch channelRule(rec.channel, ev) {
+	case cOpen:
+		rec.probe = ""
+		rec.channel = chanOpen
+		if len(rec.unownedWaiting()) > 0 {
+			fx.jobs = append(fx.jobs, command.SteerJob{Chat: fx.chat})
+		}
+	case cOwed:
+		rec.owe(fx)
+	case cUnhandled, cImpossible, cKeep, cNone, cUnconfirmed, cProbing, cResubmit, cFlush:
+	}
+}
+
+// owe hands un-owned waiting rows to a job as the next probe; with none waiting the
+// channel is UNCONFIRMED.
+func (rec *steerRecord) owe(fx *steerFx) {
+	rec.probe = ""
+	if len(rec.unownedWaiting()) == 0 {
+		rec.channel = chanUnconfirmed
+		return
+	}
+	rec.channel = chanProbing
+	fx.jobs = append(fx.jobs, command.SteerJob{Chat: fx.chat})
+}
+
+// SteerCleared folds steering_cleared, ours or anyone's, and answers the AGENT rows
+// it named. A user row gets no entry at a clear: a resubmitted row is never noted
+// "Not read".
+func (r *steerRecords) SteerCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
+	var out []marotte.SteerQueuedPayload
+	promptHeld := r.heldByPrompt(chatID)
+	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
+		named := false
+		for _, id := range steerIDs {
+			if p, ok := rec.takeOther(id); ok {
+				fx.changed = true
+				out = append(out, p)
+			}
+			if rec.clearUnderLocked(id, promptHeld, fx) {
+				named = true
+			}
+		}
+		if named && channelRule(rec.channel, evForeignClear) == cOwed {
+			rec.owe(fx)
+		}
+	})
+	return out
+}
+
+// clearUnderLocked: with no turn and no held prompt to decide them, the rows the
+// clear named are unsent.
+func (rec *steerRecord) clearUnderLocked(id string, promptHeld bool, fx *steerFx) (named bool) {
+	for _, w := range rec.under(id) {
+		if !w.state.inKAS() {
 			continue
 		}
-		keys = append(keys, k)
+		named = true
+		next := rowCleared
+		if rec.channel == chanNone && w.owner == "" && !promptHeld {
+			next = rowUnsent
+		}
+		if rowRuleFor(w.state, evForeignClear) == rCleared {
+			setState(w, next, fx)
+		}
 	}
-	slices.SortFunc(keys, func(a, c steerKey) int {
-		return cmp.Or(cmp.Compare(a.chat, c.chat), cmp.Compare(a.id, c.id))
+	if id == rec.probe && rec.channel == chanProbing {
+		rec.probe = ""
+	}
+	return named
+}
+
+func (r *steerRecords) heldByPrompt(chatID marotte.ChatID) bool {
+	return r.promptHeld != nil && r.promptHeld(chatID)
+}
+
+// TakeAgentRows drains the agent rows a dead bridge leaves unread, for the death
+// closer's text-less entries. It works on a torn-down record too.
+func (r *steerRecords) TakeAgentRows(chatID marotte.ChatID) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.chats[chatID]
+	if rec == nil || len(rec.others) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rec.others))
+	for _, o := range rec.others {
+		out = append(out, o.SteerID)
+	}
+	rec.others = nil
+	mintPending(&r.versions)
+	return out
+}
+
+// TurnStarted records the turn StartTurn began. It runs under the turn registry's
+// lock, so it must not wait on a publication.
+func (r *steerRecords) TurnStarted(chatID marotte.ChatID, turnID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if rec := r.record(chatID, true); !rec.gone {
+		rec.starting = turnID
+	}
+}
+
+// TurnBound opens the channel for a turn that became own; unbound rows already in
+// KAS join it, because that turn's execution is the one whose cursor reads them.
+func (r *steerRecords) TurnBound(chatID marotte.ChatID, turnID string) {
+	r.step(chatID, true, func(rec *steerRecord, fx *steerFx) {
+		if channelRule(rec.channel, evBind) == cImpossible {
+			slog.Warn("a steer channel was still open when another turn bound", "chat_id", chatID, "turn", rec.turnID)
+			rec.endLocked(r, command.SteerTurnEnd{TurnID: rec.turnID}, fx)
+		}
+		rec.turnID = turnID
+		rec.channel = chanOpen
+		rec.probe = ""
+		rec.starting = ""
 	})
-	out := make([]marotte.ServerEvent, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, k.chat, b.waiting[k]))
+}
+
+func (r *steerRecords) TurnRevised(chatID marotte.ChatID, turnID string) {
+	r.step(chatID, false, func(rec *steerRecord, _ *steerFx) {
+		if channelRule(rec.channel, evRevise) == cKeep {
+			rec.turnID = turnID
+		}
+	})
+}
+
+// TurnEnded hands the closing turn's un-owned rows to a job that resends them
+// together in order; a row an op owns records the end for the op.
+func (r *steerRecords) TurnEnded(chatID marotte.ChatID, end command.SteerTurnEnd) {
+	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
+		rec.endLocked(r, end, fx)
+	})
+}
+
+func (rec *steerRecord) endLocked(r *steerRecords, end command.SteerTurnEnd, fx *steerFx) {
+	own := end.TurnID != "" && end.TurnID == rec.turnID
+	unbound := rec.channel == chanNone && end.Source.PromptClass()
+	ev := evTurnEnd
+	if end.BridgeDeath {
+		ev = evTurnDeath
+	}
+	if end.TurnID != "" && end.TurnID == rec.starting {
+		rec.starting = ""
+	}
+	collected := rec.collectEnded(end, own, unbound, ev)
+	if own && channelRule(rec.channel, ev) == cNone {
+		rec.turnID = ""
+		rec.channel = chanNone
+		rec.probe = ""
+	}
+	end.Lead = rec.lead
+	rec.lead = ""
+	if len(collected) > 0 {
+		r.handToJob(collected, end, fx)
+	}
+}
+
+func (rec *steerRecord) collectEnded(end command.SteerTurnEnd, own, unbound bool, ev steerEvent) []*dockRow {
+	var collected []*dockRow
+	rec.live(func(w *dockRow) {
+		if !endCollects(w.state, own, unbound, end.Source.PromptClass()) || rowRuleFor(w.state, ev) != rCollect {
+			return
+		}
+		if end.BridgeDeath && w.state.inKAS() {
+			rec.reinject = true
+		}
+		if w.owner != "" {
+			rec.noteOpEnd(w, end)
+			return
+		}
+		collected = append(collected, w)
+	})
+	return collected
+}
+
+func (rec *steerRecord) noteOpEnd(w *dockRow, end command.SteerTurnEnd) {
+	if w.owner == rec.op && rec.opEnd == nil {
+		end.Lead = rec.lead
+		rec.opEnd = &end
+	}
+}
+
+func (r *steerRecords) handToJob(rows []*dockRow, end command.SteerTurnEnd, fx *steerFx) {
+	r.jobs++
+	owner := "job-" + strconv.FormatUint(r.jobs, 10)
+	for _, w := range rows {
+		w.owner = owner
+	}
+	fx.changed = true
+	fx.jobs = append(fx.jobs, command.SteerJob{Chat: fx.chat, Owner: owner, End: &end})
+}
+
+// endCollects: a closing turn takes the rows KAS holds for it, the rows its channel
+// owns, and the parked rows when it is prompt-class.
+func endCollects(s rowState, own, unbound, promptClass bool) bool {
+	switch s {
+	case rowQueued, rowCleared:
+		return own || unbound
+	case rowOutstanding, rowWaiting:
+		return own
+	case rowParked:
+		return promptClass
+	case rowUnsent, rowRead, rowDone, nRowStates:
+	}
+	return false
+}
+
+// BridgeGone leaves the rows a dead buffer held with no turn to collect them unsent
+// for the chat's next prompt; KAS's log may re-inject them on load.
+func (r *steerRecords) BridgeGone(chatID marotte.ChatID) {
+	r.step(chatID, false, func(rec *steerRecord, fx *steerFx) {
+		if rec.channel != chanNone {
+			return
+		}
+		rec.live(func(w *dockRow) {
+			if w.owner == "" && w.state.inKAS() {
+				rec.reinject = true
+				setState(w, rowUnsent, fx)
+			}
+		})
+	})
+}
+
+// BeginTeardown runs before the teardown's cancel, so every later fold, job and op
+// finds the record gone. It answers the rows nothing read, for the close path's
+// notes, and keeps the agent rows for the death closer. It returns only once every
+// earlier step has published, so no frame of the chat lands after it.
+func (r *steerRecords) BeginTeardown(chatID marotte.ChatID, exit <-chan struct{}) []marotte.SteerQueuedPayload {
+	r.mu.Lock()
+	rec := r.record(chatID, true)
+	if rec.gone {
+		r.awaitLocked(rec, &steerFx{chat: chatID, done: make(chan struct{})})
+		return nil
+	}
+	var unread []marotte.SteerQueuedPayload
+	rec.live(func(w *dockRow) {
+		if !w.noted && rowRuleFor(w.state, evTeardown) == rDrop {
+			unread = append(unread, marotte.SteerQueuedPayload{SteerID: w.key, Text: w.text, Origin: marotte.SteerOriginUser})
+		}
+	})
+	rec.rows = nil
+	rec.op, rec.opEnd, rec.lead, rec.reinject, rec.starting = "", nil, "", false, ""
+	rec.channel, rec.turnID, rec.probe = chanNone, "", ""
+	rec.exit, rec.gone = exit, true
+	mintPending(&r.versions)
+	r.awaitLocked(rec, &steerFx{chat: chatID, done: make(chan struct{})})
+	return unread
+}
+
+// EndTeardown forgets the record once the chat's last forward goroutine and every
+// queued step have drained, bounded, so a late fold cannot recreate it for a chat
+// that is gone.
+func (r *steerRecords) EndTeardown(chatID marotte.ChatID) {
+	r.mu.Lock()
+	rec := r.chats[chatID]
+	r.mu.Unlock()
+	if rec == nil {
+		return
+	}
+	if rec.exit != nil {
+		select {
+		case <-rec.exit:
+		case <-time.After(command.ResendBridgeWait):
+			slog.Warn("a torn-down chat's bridge did not drain in time", "chat_id", chatID)
+		}
+	}
+	r.mu.Lock()
+	r.awaitLocked(rec, &steerFx{chat: chatID, done: make(chan struct{})})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.chats[chatID] == rec {
+		delete(r.chats, chatID)
+	}
+}
+
+// List answers the connect replay: every visible row with its wire state, a batch
+// frame for every id a row is held under that is not its key, then agent rows.
+func (r *steerRecords) List(chatFilter marotte.ChatID) []marotte.ServerEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	chats := make([]marotte.ChatID, 0, len(r.chats))
+	for id, rec := range r.chats {
+		if !rec.gone && (chatFilter == "" || id == chatFilter) {
+			chats = append(chats, id)
+		}
+	}
+	slices.Sort(chats)
+	var out []marotte.ServerEvent
+	for _, id := range chats {
+		out = r.chats[id].appendReplay(out, id)
 	}
 	return out
 }
 
-// evictOldestLocked makes room for one new entry in chatID's set. Caller holds
-// b.mu. Bounded PER CHAT rather than globally, so a busy chat cannot evict a
-// quiet one's rows.
-func (b *steerBuffer) evictOldestLocked(chatID marotte.ChatID) {
-	held := make([]string, 0, b.maxN)
-	for k := range b.waiting {
-		if k.chat == chatID {
-			held = append(held, k.id)
+func (rec *steerRecord) appendReplay(out []marotte.ServerEvent, id marotte.ChatID) []marotte.ServerEvent {
+	batches := map[string][]*dockRow{}
+	var order []string
+	rec.live(func(w *dockRow) {
+		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, id, rowFrame(w)))
+		if w.kasID != "" && w.kasID != w.key {
+			if _, seen := batches[w.kasID]; !seen {
+				order = append(order, w.kasID)
+			}
+			batches[w.kasID] = append(batches[w.kasID], w)
 		}
+	})
+	for _, kas := range order {
+		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, id, batchFrame(kas, batches[kas])))
 	}
-	if len(held) < b.maxN {
-		return
+	for _, o := range rec.others {
+		out = append(out, marotte.NewEvent(marotte.EventSteerQueued, id, o))
 	}
-	slices.Sort(held)
-	for _, id := range held[:len(held)-b.maxN+1] {
-		delete(b.waiting, steerKey{chat: chatID, id: id})
+	return out
+}
+
+// SetLead records the send-now arrow's row for the next turn end.
+func (r *steerRecords) SetLead(chatID marotte.ChatID, key string) (undo func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.record(chatID, false)
+	if rec == nil || rec.gone || key == "" {
+		return func() {}
+	}
+	rec.lead = key
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if rec.lead == key {
+			rec.lead = ""
+		}
 	}
 }
 
-// SteerWaiting / SteerRead / SteerForgotten on the bus are the translate-side role:
-// the steering cascade feeds the buffer as it broadcasts, so a replay and a live
-// frame carry the same payload.
+// NeedsPostLoadClear: KAS may hold copies this record also holds, nothing bound is
+// reading, and no agent row would be lost to the clear.
+func (r *steerRecords) NeedsPostLoadClear(chatID marotte.ChatID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec := r.chats[chatID]
+	return rec != nil && !rec.gone && rec.reinject && rec.turnID == "" && len(rec.others) == 0
+}
 
-func (b *bus) SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
-	b.steers.SteerWaiting(chatID, p)
+func (b *bus) SteerWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
+	return b.steers.SteerWaiting(chatID, p)
 }
 
 func (b *bus) SteerRead(chatID marotte.ChatID, steerID string) {
@@ -187,7 +749,6 @@ func (b *bus) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte
 	return b.steers.SteerForgotten(chatID, steerIDs)
 }
 
-// ClearWaitingSteersForChat drops every waiting steer owned by chatID.
-func (b *bus) ClearWaitingSteersForChat(chatID marotte.ChatID) {
-	b.steers.ClearForChat(chatID)
+func (b *bus) SteerCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
+	return b.steers.SteerCleared(chatID, steerIDs)
 }

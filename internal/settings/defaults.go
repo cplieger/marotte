@@ -161,8 +161,8 @@ const (
 	// OS. An absent key is the absence, and it resolves to system at the client.
 	//
 	// The theme is ALSO cached in the browser's localStorage, and that is not a
-	// second source of truth: the inline pre-paint snippet in static/index.html
-	// has to pick a theme before any fetch can resolve, so the cache is a
+	// second source of truth: the pre-paint script (static/prepaint.js) has to
+	// pick a theme before any fetch can resolve, so the cache is a
 	// paint-time hint this value overwrites on every load. It is also the one
 	// value the uistate deletion carries across — see settings.ts.
 	//

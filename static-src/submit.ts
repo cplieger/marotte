@@ -43,14 +43,6 @@ import { restoreFailedSend } from "./composer-state.js";
 
 export type SubmitResult = "sent" | "steered" | "failed";
 
-/** What a caller can say about a send beyond its words. */
-export interface SubmitOpts {
-  /** The steer entries whose text this send re-sends. Both verbs carry it: a send the
-   *  409 path converts into a steer names the same entries the prompt would have, so
-   *  the record does not state a resend on the idle path alone. */
-  resends?: readonly string[];
-}
-
 /** The send-error face for a 409 reason:"starting" refusal. Holder-neutral on
  *  purpose: the admission slot may be held by a cold spawn, a shell command or a
  *  workflow step, and for a shell holder nothing is "starting" — the honest claim is
@@ -105,11 +97,7 @@ function messageIDFor(chatID: string, text: string): string {
  * error through send-state, and the retry travels under the failed attempt's own
  * message id so it lands on the user row that attempt already persisted.
  */
-export async function submitPrompt(
-  chatID: string,
-  text: string,
-  opts: SubmitOpts = {},
-): Promise<SubmitResult> {
+export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
   if (chatID === "" || text === "") {
     return "failed";
   }
@@ -137,12 +125,10 @@ export async function submitPrompt(
   const attachGen = attachmentGeneration(chatID);
   const messageID = messageIDFor(chatID, text);
 
-  const resends = opts.resends ?? [];
-
   if (isThinking(chatID)) {
-    return steer(chatID, text, messageID, attachments, attachGen, resends, CONVERT_BUDGET);
+    return steer(chatID, text, messageID, attachments, attachGen, CONVERT_BUDGET);
   }
-  return prompt(chatID, text, messageID, attachments, attachGen, resends, CONVERT_BUDGET);
+  return prompt(chatID, text, messageID, attachments, attachGen, CONVERT_BUDGET);
 }
 
 /** How many prompt⇄steer conversions one submit may make. Two allows the honest
@@ -157,20 +143,18 @@ async function prompt(
   messageID: string,
   attachments: readonly unknown[],
   attachGen: number,
-  resends: readonly string[],
   convertBudget: number,
 ): Promise<SubmitResult> {
   const result = await sendPromptTo(chatID, text, {
     messageID,
     ...(attachments.length > 0 ? { attachments } : {}),
-    ...(resends.length > 0 ? { resends } : {}),
   });
   if (result === "queued") {
     // Plain 409: a steerable turn started underneath us. Steer into it. The
     // conversion is gated on the ABSENCE of the "starting" reason — that
     // refusal's holder cannot receive a steer and takes the branch below.
     if (convertBudget > 0) {
-      return steer(chatID, text, messageID, attachments, attachGen, resends, convertBudget - 1);
+      return steer(chatID, text, messageID, attachments, attachGen, convertBudget - 1);
     }
     recordFailure(chatID, text, messageID, attachments, attachGen);
     reportSendRefused(STARTING_FACE);
@@ -223,21 +207,19 @@ async function steer(
   messageID: string,
   attachments: readonly unknown[],
   attachGen: number,
-  resends: readonly string[],
   convertBudget: number,
 ): Promise<SubmitResult> {
   const outcome = await steerChat.dispatch({
     chatID,
     text: withAttachmentPaths(text, attachments),
     messageID,
-    ...(resends.length > 0 ? { resends } : {}),
   }).outcome;
   if (outcome.status === "success") {
     lastFailed = undefined;
     return "steered";
   }
   if (outcome.status === "error" && outcome.error.code === "no_turn" && convertBudget > 0) {
-    return prompt(chatID, text, messageID, attachments, attachGen, resends, convertBudget - 1);
+    return prompt(chatID, text, messageID, attachments, attachGen, convertBudget - 1);
   }
   recordFailure(chatID, text, messageID, attachments, attachGen);
   if (outcome.status === "error") {

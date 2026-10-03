@@ -18,24 +18,19 @@ import {
   setSessions,
   setActive,
   get,
-  appendEntry,
   defaultUsage,
   openTurn,
   recordSteerQueued,
-  recordSteerSent,
   registerTurnRepair,
   steerCount,
   setAgentStatus,
   tabStatusFor,
-  dropSteers,
-  pendingSteerCarry,
 } from "../store.js";
 import { noteRunLive, noteRunSettled } from "../run-store.js";
 import type { Session } from "../types.js";
 import type { Entry, EntryTurnClose, TurnOutcome } from "../wire/types.gen.js";
 import { severityOf } from "../turn-severity.js";
 import type * as ApiClient from "../api-client.js";
-import type * as ChatActions from "../actions/chat.js";
 
 // The run store's fetcher. Replaced so the live-run cases below seed the inventory
 // without a real request, and spread rather than swapped so every other consumer in
@@ -95,31 +90,7 @@ vi.mock("../send-state.js", () => ({
   setAgentDown: mockSetAgentDown,
   clearAgentDown: mockClearAgentDown,
   setSSEStatus: vi.fn(),
-  // Present-but-inert so real-ESM linking succeeds: steer-resend.js is in this graph
-  // (the settled arm fires the boundary resend) and imports the name for its
-  // give-up path, which no case here reaches.
   reportSendRefused: vi.fn(),
-}));
-
-// The boundary resend is driven for REAL in this file — the settled arm is its one
-// firing point, so mocking it would leave the feature's whole trigger unpinned — and
-// only its two outward calls are replaced. `sendPromptTo` is what a resent turn IS,
-// and `clearSteers` would otherwise POST for every boundary in the file.
-const { mockSendPromptTo } = vi.hoisted(() => ({
-  mockSendPromptTo: vi.fn((_chatID: string, _text: string, _opts?: { messageID?: string }) =>
-    Promise.resolve<"sent" | "failed">("sent"),
-  ),
-}));
-vi.mock("../chat-commands.js", () => ({
-  sendPromptTo: mockSendPromptTo,
-  switchModel: vi.fn(),
-}));
-const { mockClearSteers } = vi.hoisted(() => ({
-  mockClearSteers: vi.fn(() => Promise.resolve(true)),
-}));
-vi.mock("../actions/chat.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof ChatActions>()),
-  clearSteers: { dispatch: mockClearSteers },
 }));
 
 const { mockReportFailure } = vi.hoisted(() => ({ mockReportFailure: vi.fn() }));
@@ -188,11 +159,6 @@ const { ERROR_ROUTES } = await import("./turn.js");
 // so a STATIC import here links it against the real module before the mocker is ready
 // and the whole file dies in module linking.
 const { forgetDeferredCue, hasDeferredCue } = await import("../agent-finished-cue.js");
-// After the mocks for the same reason: it reaches chat-commands and actions/chat, both
-// replaced above. The REAL module, because the settled arm is the resend's one firing
-// point and a mock would leave the trigger unpinned; `forgetSteerResend` is how each
-// case resets the per-chat slot it holds.
-const { forgetSteerResend, noteBoundaryDrop } = await import("../steer-resend.js");
 
 function makeSession(id: string, over: Partial<Session> = {}): Session {
   return {
@@ -270,12 +236,6 @@ const mockRepairTurn = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The armed slot is per chat and the module is cached, so the reset is its own
-  // forget rather than a re-import.
-  for (const id of ["chat-1", "chat-2"]) {
-    forgetSteerResend(id);
-  }
-  mockSendPromptTo.mockResolvedValue("sent");
   // `mockReset` is on, so an implementation set at construction is gone by now. A null
   // answer is what a 404 gives, which is what every case that does not stub a run wants.
   mockApiGetTyped.mockResolvedValue(null);
@@ -431,30 +391,15 @@ describe("turn_closed side effects", () => {
     expect(get("chat-1")?.turn_open).toBe(false);
   });
 
-  // KAS clears its steering buffer at every turn boundary, and a steer it was HOLDING
-  // gets no `steer{dropped}` entry — a bridge death writes none — so the row would sit
-  // in the dock past the turn it belonged to. This is the leave that owes.
-  it("drops the chat's waiting steers", () => {
+  // The close KEEPS the dock: the server owns every queued row and states each one's
+  // fate (read, re-queued, resent, unsent), so a client-side drop here would erase a row
+  // the server is about to resend.
+  it("keeps the chat's waiting steers", () => {
     seedLive();
     recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
+
+    fireClose("chat-1");
     expect(steerCount("chat-1")).toBe(1);
-
-    fireClose("chat-1");
-    expect(steerCount("chat-1")).toBe(0);
-  });
-
-  // NO active-chat gate here, deliberately, and this is the store half of the
-  // reported symptom: the reader leaves the tab, the turn ends server-side, and
-  // the dock they come back to is empty. It is RIGHT to be empty — a row still
-  // waiting was never read and can never post.
-  it("drops them for a background (non-active) chat too", () => {
-    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
-    setActive("chat-2");
-    openTurnOn("chat-1");
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-
-    fireClose("chat-1");
-    expect(steerCount("chat-1")).toBe(0);
   });
 
   // Every ask BLOCKS its turn, so a turn that has closed is not waiting on one. What is
@@ -510,23 +455,6 @@ describe("turn_closed with another turn still open", () => {
     expect(get("chat-1")?.turn_open).toBe(true);
   });
 
-  it("leaves an unread steer waiting", () => {
-    // The agent can still read it: the other turn is running right now, so dropping the
-    // row here would report a steer as undelivered while it is about to be delivered.
-    seedTwoOpen();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    fireClose("chat-1");
-    expect(steerCount("chat-1")).toBe(1);
-  });
-
-  it("sends no resend", async () => {
-    seedTwoOpen();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    fireClose("chat-1");
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-  });
-
   it("retires no pending ask", () => {
     // The sweep keeps only RUN-scoped asks, so ungated it strands the live JSON-RPC
     // request of the turn that is still running.
@@ -551,13 +479,11 @@ describe("turn_closed with another turn still open", () => {
   // handler stops applying these effects for every close.
   it("applies every one of them once the last open turn closes", () => {
     seedTwoOpen();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
     fireClose("chat-1", { turnID: "t2" });
     fireClose("chat-1");
 
     expect(get("chat-1")?.thinking).toBe(false);
     expect(get("chat-1")?.turn_open).toBe(false);
-    expect(steerCount("chat-1")).toBe(0);
     expect(mockDropTurnDecisions).toHaveBeenCalledWith("chat-1");
   });
 });
@@ -571,14 +497,12 @@ describe("turn_closed with another turn still open", () => {
 describe("turn_closed carrying a workflow id", () => {
   it("is left to the run's handler entirely", () => {
     seedLive();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
 
     fireClose("chat-1", { workflowID: "wf_1" });
 
     expect(get("chat-1")?.turns.get("t1")?.closeAt).toBeUndefined();
     expect(get("chat-1")?.thinking).toBe(true);
     expect(get("chat-1")?.turn_open).toBe(true);
-    expect(steerCount("chat-1")).toBe(1);
     expect(mockDropTurnDecisions).not.toHaveBeenCalled();
     expect(refreshTurnRail).not.toHaveBeenCalled();
   });
@@ -591,138 +515,6 @@ describe("turn_closed carrying a workflow id", () => {
     fireClose("chat-1", { workflowID: "" });
     expect(get("chat-1")?.turns.get("t1")?.closeAt).toBe(1);
     expect(get("chat-1")?.thinking).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// THE UNREAD MESSAGE IS SENT AS THE NEXT TURN, and the settled branch is its one
-// firing point. The join, precedence and retry ladder are steer-resend.test.ts's;
-// these cases own that the trigger fires with the right payload, and not for a close
-// that settles nothing. `handlers/steer.test.ts` handed this file all six.
-// ---------------------------------------------------------------------------
-
-describe("the settled close carries an unread steer forward", () => {
-  it("sends it as a new turn when the turn ends with the message unread", async () => {
-    seedLive();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "actually target main", origin: "user" });
-
-    fireClose("chat-1");
-
-    await vi.waitFor(() => {
-      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    });
-    expect(mockSendPromptTo.mock.calls[0]?.[0]).toBe("chat-1");
-    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("actually target main");
-  });
-
-  // Several unread messages are ONE new turn, joined by a blank line in the order they
-  // were typed — not N turns, which would make the agent answer each in isolation.
-  it("concatenates several unread steers into one new turn", async () => {
-    seedLive();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "first", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-2", text: "second", origin: "user" });
-    recordSteerQueued("chat-1", { id: "steer-3", text: "third", origin: "user" });
-
-    fireClose("chat-1");
-
-    await vi.waitFor(() => {
-      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    });
-    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("first\n\nsecond\n\nthird");
-  });
-
-  // THE CAPTURE READS THE ROWS THE DROP REMOVES, so the order inside the branch is
-  // load-bearing: `noteBoundaryDrop(pendingSteerCarry(...))`, then `dropSteers`, then
-  // the fire. Reversed, every boundary carries nothing.
-  it("captures the text before it empties the dock", async () => {
-    seedLive();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "carry me", origin: "user" });
-
-    fireClose("chat-1");
-
-    await vi.waitFor(() => {
-      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    });
-    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("carry me");
-    expect(steerCount("chat-1")).toBe(0);
-  });
-
-  // A steer KAS DID read leaves the dock on its own `steer` entry, inside `appendEntry`,
-  // so the boundary finds nothing to carry. That is what replaces the old capture at
-  // `steer_cleared`: the entry is the leave, and the two cannot double up.
-  it("carries nothing for a steer whose own entry already arrived", async () => {
-    seedLive();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "the agent read this", origin: "user" });
-    appendEntry("chat-1", {
-      id: "steer-1",
-      turn: "t1",
-      kind: "steer",
-      seq: 1,
-      ts: 2,
-      payload: { text: "the agent read this", origin: "user", state: "read" },
-    });
-    expect(steerCount("chat-1")).toBe(0);
-
-    fireClose("chat-1", { seq: 2 });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-  });
-
-  // THE LOOP GUARD, and it is structural rather than a counter: a turn opened by a
-  // resend ends with an empty dock, so the capture arms nothing and nothing fires.
-  it("opens nothing further when the resent turn ends with nothing pending", async () => {
-    seedLive();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "one", origin: "user" });
-    fireClose("chat-1");
-    await vi.waitFor(() => {
-      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    });
-
-    // The resent turn's own end.
-    openTurnOn("chat-1", "t2", 2);
-    fireClose("chat-1", { turnID: "t2" });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-  });
-
-  // A turn that ended with everything read has nothing to carry, and this is the common
-  // case, so it must cost no POST at all.
-  it("sends nothing when the agent read everything", async () => {
-    seedLive();
-
-    fireClose("chat-1");
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-    expect(mockClearSteers).not.toHaveBeenCalled();
-  });
-
-  // A row still SENDING is excluded: its own POST is still resolving, and submit.ts
-  // already converts a `no_turn` refusal of it into a prompt — so resending it here
-  // would send one message twice.
-  it("leaves a still-sending steer to its own POST", async () => {
-    seedLive();
-    recordSteerSent("chat-1", "m-1", "still in flight");
-
-    fireClose("chat-1");
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-  });
-
-  // A slot armed by an earlier boundary is still owed a turn, and this is the door that
-  // fires it — spelled here the way steer-resend.ts's own producer spells it.
-  it("fires a slot armed before the frame arrived", async () => {
-    seedLive();
-    recordSteerQueued("chat-1", { id: "steer-1", text: "armed earlier", origin: "user" });
-    noteBoundaryDrop("chat-1", pendingSteerCarry("chat-1", ["steer-1"]));
-    dropSteers("chat-1", ["steer-1"]);
-    expect(mockSendPromptTo).not.toHaveBeenCalled();
-
-    fireClose("chat-1", { payload: { outcome: "cancelled" } });
-
-    await vi.waitFor(() => {
-      expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
-    });
-    expect(mockSendPromptTo.mock.calls[0]?.[1]).toBe("armed earlier");
   });
 });
 

@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   absPath,
   onWorkspaceRoot,
+  relBeneath,
   relToWorkspace,
   setWorkspaceRoot,
   workspaceRoot,
@@ -134,5 +135,48 @@ describe("relToWorkspace", () => {
   it("round-trips with absPath for a relative path", () => {
     expect.assertions(1);
     expect(relToWorkspace(absPath("a/b.go"))).toBe("a/b.go");
+  });
+});
+
+describe("a root spelled with a trailing slash, or the filesystem root", () => {
+  beforeEach(() => {
+    _resetForTest();
+  });
+
+  it("stores a trailing-slash root without the slash", () => {
+    expect.assertions(3);
+    setWorkspaceRoot("/custom/work/");
+    expect(workspaceRoot()).toBe("/custom/work");
+    expect(relToWorkspace("/custom/work/a.html")).toBe("a.html");
+    expect(absPath("a.html")).toBe("/custom/work/a.html");
+  });
+
+  it("does not notify when only the trailing slash differs", () => {
+    expect.assertions(1);
+    setWorkspaceRoot("/workspace");
+    let woke = 0;
+    onWorkspaceRoot(() => {
+      woke++;
+    });
+    setWorkspaceRoot("/workspace/");
+    expect(woke).toBe(0);
+  });
+
+  it("keeps / as the root and converts beneath it", () => {
+    expect.assertions(3);
+    setWorkspaceRoot("/");
+    expect(workspaceRoot()).toBe("/");
+    expect(relToWorkspace("/demo/index.html")).toBe("demo/index.html");
+    expect(absPath("demo/index.html")).toBe("/demo/index.html");
+  });
+
+  it.each([
+    { base: "/workspace", abs: "/workspace/demo/x.html", want: "demo/x.html" },
+    { base: "/workspace", abs: "/workspace-old/x.html", want: null },
+    { base: "/workspace", abs: "/etc/x.html", want: null },
+    { base: "/", abs: "/demo/x.html", want: "demo/x.html" },
+  ])("relBeneath($base, $abs) is $want", ({ base, abs, want }) => {
+    expect.assertions(1);
+    expect(relBeneath(base, abs)).toBe(want);
   });
 });
