@@ -15,7 +15,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // EnforceFile makes the regular file at path carry want, and returns the

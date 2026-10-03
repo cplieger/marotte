@@ -19,7 +19,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // escapeStage is one staged ancestor swap: a workspace containing work/sub/f.txt

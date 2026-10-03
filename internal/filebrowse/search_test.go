@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // searchHandlerAt builds a handler whose single mount CLAIMS policyDir

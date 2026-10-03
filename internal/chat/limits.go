@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // cgroupMemMaxV2 and cgroupMemMaxV1 are the cgroup files the chat-file cap is

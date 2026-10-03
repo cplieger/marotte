@@ -30,7 +30,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 	"golang.org/x/sync/singleflight"
 )
 

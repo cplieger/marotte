@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/agent"
 	"github.com/cplieger/marotte/internal/auth"
 	"github.com/cplieger/marotte/internal/bridge"

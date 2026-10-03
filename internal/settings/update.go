@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // ErrUnreadable marks the one failure Update reports that is about the STORED
