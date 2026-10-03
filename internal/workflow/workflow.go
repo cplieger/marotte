@@ -129,8 +129,25 @@ const unknownMethodMarker = "has no persistence classification"
 // while a failure is transient and worth retrying. Callers ask errors.Is.
 var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli build")
 
+// The two refusals KAS's run-ownership gate throws as plain Errors, so they reach the
+// wire as a -32603 whose `error.data.details` is the sentence and carries no code
+// (acp-server.js acquireRunOwnership and ensureRunOwnership, kiro-cli 2.27.0). Each
+// marker is the part the load and mutate variants share.
+const (
+	ownedElsewhereMarker = "appears to be running in another process"
+	justClaimedMarker    = "was just claimed by another process"
+)
+
+// ErrOwnedElsewhere means another process's ownership stamp names the run and KAS does
+// not judge that stamp stale.
+var ErrOwnedElsewhere = errors.New("another process holds this run")
+
+// ErrJustClaimed means another claim on the run is in flight right now.
+var ErrJustClaimed = errors.New("another claim on this run is in flight")
+
 // Classify types a `_kiro/workflow/*` RPC failure AT THE BOUNDARY: an unregistered
-// verb comes back wrapping ErrUnknownMethod with the original still unwrappable.
+// verb or an ownership refusal comes back wrapping its sentinel with the original
+// still unwrappable.
 //
 // It reads the boundary error's own `error.data` and never the rendered message
 // chain: RPCError.Error() is the bare `error.message`, which for this shape is the
@@ -140,8 +157,18 @@ func Classify(err error) error {
 	if err == nil {
 		return nil
 	}
-	if strings.Contains(rpcerr.Details(err), unknownMethodMarker) {
-		return fmt.Errorf("%w: %w", ErrUnknownMethod, err)
+	details := rpcerr.Details(err)
+	for _, c := range []struct {
+		sentinel error
+		marker   string
+	}{
+		{ErrUnknownMethod, unknownMethodMarker},
+		{ErrOwnedElsewhere, ownedElsewhereMarker},
+		{ErrJustClaimed, justClaimedMarker},
+	} {
+		if strings.Contains(details, c.marker) {
+			return fmt.Errorf("%w: %w", c.sentinel, err)
+		}
 	}
 	return err
 }

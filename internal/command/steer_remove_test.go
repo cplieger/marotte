@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
@@ -309,6 +310,7 @@ func TestCmdSteerRemove_ATurnThatClosedUnderTheOpHandsTheRowsToTheTurnEnd(t *tes
 			if got := body.(map[string]any); got["deleted"] != "steer-b" {
 				t.Errorf("body = %v, want deleted steer-b", got)
 			}
+			q.waitUnlocked(t)
 			log := q.callLog()
 			end, rows, unlock := slices.Index(log, "end-op"), slices.Index(log, "job-rows"), slices.Index(log, "unlock")
 			if end < 0 || rows < end || unlock < rows {
@@ -330,10 +332,76 @@ func TestCmdSteerClear_ATurnThatClosedUnderTheClearIsResolved(t *testing.T) {
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 (body %s)", statusOf(err), errText(err))
 	}
+	q.waitUnlocked(t)
 	log := q.callLog()
 	if end, rows := slices.Index(log, "end-op"), slices.Index(log, "job-rows"); end < 0 || rows < end || slices.Index(log, "unlock") < rows {
 		t.Errorf("record calls = %v, want end-op, then the turn end's rows, then unlock", log)
 	}
+}
+
+// The reader's request does not wait out a turn end's resend: the delete answers while
+// the resolution still holds the steer lock, and the lock is released when it ends.
+func TestCmdSteerRemove_RepliesBeforeTheTurnEndIsResolved(t *testing.T) {
+	b := newSteerBridge()
+	q := clearingQueue()
+	q.opEnd = &SteerTurnEnd{TurnID: "t1"}
+	q.jobRowsGate = make(chan struct{})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := CmdSteerRemove(t.Context(), steerRolesOf(removeHost(b), NewSteerLedger(), q), removeReq(t, "c1", "steer-b"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("CmdSteerRemove = %v, want success", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(q.jobRowsGate)
+		t.Fatal("CmdSteerRemove did not reply while the turn end was still being resolved")
+	}
+	if slices.Contains(q.callLog(), "unlock") {
+		t.Errorf("the steer lock was released before the turn end resolved; calls were %v", q.callLog())
+	}
+	close(q.jobRowsGate)
+	q.waitUnlocked(t)
+}
+
+// A turn that closed under the op is resolved on its own budget: a clear that spent
+// the op's RPC budget must not leave the kept rows unsent once the dead bridge drains.
+func TestCmdSteerRemove_ATurnEndOutlivesTheOpsBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		b := newSteerBridge()
+		b.onCall = func(method string) {
+			if method == marotte.MethodSessionSteerClear {
+				time.Sleep(steerRemoveBudget + time.Second)
+			}
+		}
+		exit := make(chan struct{})
+		go func() {
+			time.Sleep(steerRemoveBudget + 2*time.Second)
+			close(exit)
+		}()
+		h := newResendHost(b, AdmissionAcquired, 0, false)
+		q := clearingQueue()
+		q.opEnd = &SteerTurnEnd{TurnID: "t1", BridgeDeath: true, Exit: exit}
+		q.jobRows = []SteerRow{{Key: "steer-a", Text: "kept"}}
+		q.resentKeys = []string{"steer-a"}
+		q.resentText = "kept"
+
+		if _, err := CmdSteerRemove(t.Context(), steerRolesOf(h, NewSteerLedger(), q), removeReq(t, "c1", "steer-b")); err != nil {
+			t.Fatalf("CmdSteerRemove = %v, want success", err)
+		}
+		h.waitPrompt(t)
+
+		if log := q.callLog(); !slices.Contains(log, "delivered") || slices.Contains(log, "unsent") {
+			t.Errorf("record calls = %v, want the kept rows delivered and never left unsent", log)
+		}
+		if len(h.opened) != 1 || h.opened[0].Text != "kept" {
+			t.Errorf("prompts opened = %+v, want the kept row as one prompt", h.opened)
+		}
+	})
 }
 
 // A reader who closes the tab mid-delete must not strand the rows it kept: the

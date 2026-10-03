@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"sync"
+	"testing"
+	"time"
 
 	"github.com/cplieger/marotte/internal/marotte"
 )
@@ -34,6 +36,8 @@ type stubSteerQueue struct {
 	postLoad   bool
 	agentRows  bool
 	jobGone    bool
+	// jobRowsGate, when set, holds JobRows until it is closed.
+	jobRowsGate chan struct{}
 	// unfolded makes every read-loop barrier fail.
 	unfolded bool
 }
@@ -64,6 +68,19 @@ func (q *stubSteerQueue) callLog() []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return slices.Clone(q.calls)
+}
+
+// waitUnlocked polls until the steer lock is released, which a turn end handed to a
+// goroutine does after the command has replied.
+func (q *stubSteerQueue) waitUnlocked(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.Contains(q.callLog(), "unlock") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the steer lock was never released; calls were %v", q.callLog())
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func (q *stubSteerQueue) LockSteerOps(ctx context.Context, _ marotte.ChatID) (func(), error) {
@@ -148,6 +165,9 @@ func (q *stubSteerQueue) EndOp(marotte.ChatID, string) *SteerTurnEnd {
 func (q *stubSteerQueue) OnSteerJob(run func(SteerJob)) { q.run = run }
 
 func (q *stubSteerQueue) JobRows(marotte.ChatID, string, string) ([]SteerRow, bool) {
+	if q.jobRowsGate != nil {
+		<-q.jobRowsGate
+	}
 	q.log("job-rows")
 	return q.jobRows, q.jobGone
 }
