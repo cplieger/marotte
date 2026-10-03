@@ -69,31 +69,38 @@ func TestAffordance_ARetryableRunOffersRetryWhoeverLaunchedIt(t *testing.T) {
 	}
 }
 
-// TestAffordance_HostedOnlyVerbsAreWithheldWithAReason: pause and resume reach a
-// run only through the process holding its registry entry — KAS's pause throws for
-// a run absent from the live registry, and resume EXECUTES, so the text-only
-// utility bridge would grind the run through its steps with no tools.
-func TestAffordance_HostedOnlyVerbsAreWithheldWithAReason(t *testing.T) {
-	for _, tc := range []struct {
-		status string
-		verb   string
-	}{
-		{"running", verbPause},
-		{string(marotte.RunStatusPaused), verbResume},
+// TestAffordance_PauseIsWithheldFromARunNothingHosts: KAS's pause throws for a run
+// absent from the live registry, so an unhosted pause is withheld with a reason.
+func TestAffordance_PauseIsWithheldFromARunNothingHosts(t *testing.T) {
+	got := affordanceOf(runFacts{status: "running"})
+	if got.permits(verbPause) {
+		t.Errorf("pause is offered on a run nothing hosts; its only outcome is a refusal")
+	}
+	if got.refusal(verbPause) == "" {
+		t.Errorf("pause was withheld with no sentence; an empty control row tells a reader " +
+			"nothing about why the run cannot be driven")
+	}
+	// Cancel reaches a run through any connection, so a live run whose engine is gone
+	// still has a way out.
+	if !got.permits(verbCancel) {
+		t.Errorf("cancel was withheld from a live run (%v), leaving it unstoppable", got.Verbs)
+	}
+}
+
+// TestAffordance_ResumeIsOfferedOnAPausedRunNothingHosts: a resume makes the run's
+// launching session live first, which is the state a restart leaves a run in.
+func TestAffordance_ResumeIsOfferedOnAPausedRunNothingHosts(t *testing.T) {
+	for name, f := range map[string]runFacts{
+		"parentless":    {status: string(marotte.RunStatusPaused)},
+		"chat-parented": {status: string(marotte.RunStatusPaused), parentChat: "c1", parentName: "Nightly"},
 	} {
-		t.Run(tc.status+"/"+tc.verb, func(t *testing.T) {
-			got := affordanceOf(runFacts{status: tc.status})
-			if got.permits(tc.verb) {
-				t.Errorf("%s is offered on a run nothing hosts; its only outcome is a refusal", tc.verb)
+		t.Run(name, func(t *testing.T) {
+			got := affordanceOf(f)
+			if !got.permits(verbResume) {
+				t.Errorf("affordanceOf(%+v) verbs = %v, want resume offered", f, got.Verbs)
 			}
-			if got.refusal(tc.verb) == "" {
-				t.Errorf("%s was withheld with no sentence; an empty control row tells a reader "+
-					"nothing about why the run cannot be driven", tc.verb)
-			}
-			// Cancel reaches a run through any connection, so a live run whose engine
-			// is gone still has a way out.
-			if !got.permits(verbCancel) {
-				t.Errorf("cancel was withheld from a live run (%v), leaving it unstoppable", got.Verbs)
+			if sentence := got.refusal(verbResume); sentence != "" {
+				t.Errorf("resume carries a refusal %q on a run it can reach", sentence)
 			}
 		})
 	}
@@ -110,13 +117,15 @@ func TestAffordance_ARefusalNamesTheChatToOpen(t *testing.T) {
 
 	// A never-named chat carries an empty Name, and `open ""` is not a remedy
 	// anybody can follow, so the id is the fallback.
-	unnamed := affordanceOf(runFacts{status: "running", parentChat: "c-abc"}).refusal(verbPause)
+	unnamedAff := affordanceOf(runFacts{status: "running", parentChat: "c-abc"})
+	unnamed := unnamedAff.refusal(verbPause)
 	if !strings.Contains(unnamed, "c-abc") {
 		t.Errorf("the refusal for an unnamed chat = %q, want it to name the chat's id", unnamed)
 	}
 
 	// A parentless run has no chat to open, so its sentence must not invent one.
-	parentless := affordanceOf(runFacts{status: "running"}).refusal(verbPause)
+	parentlessAff := affordanceOf(runFacts{status: "running"})
+	parentless := parentlessAff.refusal(verbPause)
 	if strings.Contains(parentless, "chat") && !strings.Contains(parentless, "Cancel") {
 		t.Errorf("a parentless run's refusal = %q, want it to name no chat and to name the "+
 			"verb that still works", parentless)
@@ -190,7 +199,8 @@ func TestAffordance_EveryOfferedVerbHasARoute(t *testing.T) {
 func refusableVerb(verb string) bool {
 	for _, status := range allRunStatuses {
 		for _, hosted := range []bool{true, false} {
-			if affordanceOf(runFacts{status: status, hosted: hosted}).refusal(verb) != "" {
+			aff := affordanceOf(runFacts{status: status, hosted: hosted})
+			if aff.refusal(verb) != "" {
 				return true
 			}
 		}
@@ -219,9 +229,9 @@ func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 
 	t.Run("the chat's current session, with no bridge open", func(t *testing.T) {
 		h := seed(t, "sess_owned")
-		id, name := h.runs.chatForSession(t.Context(), "sess_owned")
-		if id != "c1" || name != "Nightly publish" {
-			t.Errorf("chatForSession = (%q, %q), want (c1, Nightly publish)", id, name)
+		id, name, complete := h.runs.chatForSession(t.Context(), "sess_owned")
+		if id != "c1" || name != "Nightly publish" || !complete {
+			t.Errorf("chatForSession = (%q, %q, %v), want (c1, Nightly publish, true)", id, name, complete)
 		}
 	})
 
@@ -230,7 +240,7 @@ func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 	// matching only the current one would report it as parentless.
 	t.Run("a RETIRED session in the chain still resolves", func(t *testing.T) {
 		h := seed(t, "sess_old", "sess_current")
-		if id, _ := h.runs.chatForSession(t.Context(), "sess_old"); id != "c1" {
+		if id, _, _ := h.runs.chatForSession(t.Context(), "sess_old"); id != "c1" {
 			t.Errorf("chatForSession(a retired session) = %q, want c1", id)
 		}
 	})
@@ -238,7 +248,7 @@ func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 	t.Run("a parentless run and a stranger session resolve to nothing", func(t *testing.T) {
 		h := seed(t, "sess_owned")
 		for _, session := range []string{"", "sess_stranger"} {
-			if id, name := h.runs.chatForSession(t.Context(), session); id != "" || name != "" {
+			if id, name, _ := h.runs.chatForSession(t.Context(), session); id != "" || name != "" {
 				t.Errorf("chatForSession(%q) = (%q, %q), want empty", session, id, name)
 			}
 		}

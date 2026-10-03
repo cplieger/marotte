@@ -7,9 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -133,7 +138,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		t.Helper()
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+			methodKiroWorkflowList: parentlessRunList("wf_1"),
 			// SetStepStatus reads the tree first, so the target must resolve to its node.
 			methodKiroWorkflowInspect: parkedInspect(
 				t, marotte.RunStatusPaused, needInputPauseReason, "sess_step",
@@ -197,8 +202,8 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 		}
 	})
 
-	// Why `discard` is returned rather than derived: a carrier THIS call started holds
-	// a run nothing is executing once the verb fails, so it must go.
+	// A carrier THIS verb started holds a run nothing is executing once the verb
+	// fails, so it must go.
 	t.Run("a refused verb tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
 		br.callRPCErrs = map[string]*marotte.RPCError{
@@ -215,7 +220,7 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	// The DECLINE, the one outcome neither the error path above nor a lifecycle frame
 	// covers: KAS resolved the run and WROTE NOTHING, so no run_complete follows and
 	// nothing else would ever close the process the re-host started. Driven through the
-	// re-host, because every other case pre-inserts a bridge where discard is a no-op.
+	// re-host, because every other case pre-inserts a bridge this verb did not start.
 	t.Run("a DECLINED step status tears the carrier it started back down", func(t *testing.T) {
 		h, br := seed(t)
 		br.callResults[methodKiroWorkflowUpdate] = json.RawMessage(
@@ -251,39 +256,88 @@ func TestRunVerbs_ReHostARunNothingHolds(t *testing.T) {
 	})
 }
 
-// The three wrongs discarding `insert`'s refusal produced are in marotte-runtime.md's
-// liveness-split block. The factory is overridden because newTestHub's serves one
-// shared bridge, and the question here is which of TWO processes survives.
-func TestRehost_ALostRaceStopsItsOwnBridgeAndLeavesTheWinnerAlone(t *testing.T) {
+// The three wrongs ending a resident carrier produced are in marotte-runtime.md's
+// liveness-split block. A resident under the run's chat id is found before any second
+// process exists. The factory is overridden because newTestHub's serves one shared
+// bridge, and the question here is whether a SECOND one is ever made.
+func TestRehost_AResidentCarrierIsHandedBackAndNoSecondProcessStarts(t *testing.T) {
 	h, _, _ := newTestHub()
 	incumbent := newFakeBridge()
 	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: incumbent, state: bridgeIdle})
 
-	loser := newFakeBridge()
-	h.bridge.mgr.factory = func() ACPBridge { return loser }
+	second := newFakeBridge()
+	h.bridge.mgr.factory = func() ACPBridge { return second }
 
-	sb, discard, err := h.runs.rehost(t.Context(), "wf_1")
+	host, err := h.runs.acquireHost(t.Context(), "wf_1", func(context.Context, string) runOrigin {
+		return runOrigin{parent: runParent{session: testLaunchSession}}
+	})
 	if err != nil {
-		t.Fatalf("rehost against an occupied chat id = %v, want the incumbent", err)
+		t.Fatalf("acquireHost against an occupied chat id = %v, want the incumbent", err)
 	}
-	if sb.bridge != incumbent {
-		t.Error("the loser was handed its own bridge, which is in no map — so nothing " +
-			"will ever close it and its ~300 MB process tree outlives the run")
+	if host.sb.bridge != incumbent {
+		t.Error("the caller was handed a bridge other than the resident one")
 	}
-	if !loser.isStopped() {
-		t.Error("the second process was left running: its frames arrive on a chat id " +
-			"another bridge owns, indistinguishable from the winner's")
+	if second.startCount() != 0 {
+		t.Error("a second process was started for a run whose carrier was already registered")
 	}
 
 	// The refusal path, which is where the third wrong lands.
-	discard(errors.New("refused"))
+	host.release(errors.New("refused"))
 	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
-		t.Error("the loser's discard closed the WINNER's carrier, so a run KAS may " +
+		t.Error("release closed a carrier this verb did not start, so a run KAS may " +
 			"already be driving has nowhere to send its frames")
 	}
 	if incumbent.isStopped() {
-		t.Error("the winner's process was stopped by the loser's discard")
+		t.Error("the resident process was stopped by a release it does not own")
 	}
+}
+
+// session/load sends `_kiro/terminal/shell_type` before it answers, so the carrier
+// must be registered and forwarded BEFORE the load or nothing answers it. KAS 2.27.0
+// then stalls the load about 2s and carries on without the client's shell.
+func TestRehost_AHostRequestDuringTheLoadIsAnswered(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
+	if _, err := h.runs.listRaw(t.Context()); err != nil {
+		t.Fatalf("Setup: warming the utility session: %s", err)
+	}
+	carrier := &hostRequestingBridge{fakeBridge: newFakeBridge(), answered: make(chan struct{})}
+	h.bridge.mgr.factory = func() ACPBridge { return carrier }
+
+	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("Resume on an unhosted parentless run = %v, want nil", err)
+	}
+	if !slices.Contains(carrier.callLog(), methodKiroWorkflowResume) {
+		t.Errorf("the resume never reached the loaded carrier; calls were %v", carrier.callLog())
+	}
+}
+
+// hostRequestingBridge sends `_kiro/terminal/shell_type` from inside a Start that names
+// a session and fails unless it is answered, which makes KAS's stall observable.
+type hostRequestingBridge struct {
+	*fakeBridge
+	answered chan struct{}
+	once     sync.Once
+}
+
+func (b *hostRequestingBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
+	if opts.SessionID != "" {
+		id := int64(41)
+		b.deliver(&marotte.RPCResponse{ID: &id, Method: methodKiroShellType})
+		select {
+		case <-b.answered:
+		case <-time.After(2 * time.Second):
+			return errors.New("session/load: _kiro/terminal/shell_type was never answered")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return b.fakeBridge.Start(ctx, opts)
+}
+
+func (b *hostRequestingBridge) Respond(ctx context.Context, id int64, result any, err error) error {
+	b.once.Do(func() { close(b.answered) })
+	return b.fakeBridge.Respond(ctx, id, result, err)
 }
 
 // A context error says the verb's outcome is UNKNOWN, so the carrier stays — the same
@@ -292,7 +346,7 @@ func TestRehost_ALostRaceStopsItsOwnBridgeAndLeavesTheWinnerAlone(t *testing.T) 
 func TestRehost_ACancelledVerbKeepsTheCarrierItStarted(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList: parentlessRunList("wf_1"),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: context.Canceled}
 
@@ -326,15 +380,19 @@ func TestRetry_ACancelledRetryKeepsTheLeaseItMinted(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			br.callResults = map[string]json.RawMessage{
-				methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+				methodKiroWorkflowList: parentlessRunList("wf_1"),
 			}
 			br.callErrs = map[string]error{methodKiroWorkflowRetry: tc.cause}
 			if _, held := h.runs.lease("wf_1"); held {
 				t.Fatal("the fixture holds a lease, so Retry mints none and this proves nothing")
 			}
 
-			if _, err := h.runs.Retry(t.Context(), "wf_1", runAffordance{}); err == nil {
+			aff := h.runs.affordance(t.Context(), "wf_1", "aborted")
+			if _, err := h.runs.Retry(t.Context(), "wf_1", aff); err == nil {
 				t.Fatal("a failed retry reported success")
+			}
+			if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+				t.Fatalf("Setup: the retry never reached KAS; calls were %v", br.callLog())
 			}
 			why := "a run KAS may be driving cannot be bounded without the lease armDeadline reads"
 			if !tc.wantLease {
@@ -438,9 +496,8 @@ func TestCloseKeptCarrier_DecidesOnAFreshRead(t *testing.T) {
 	})
 }
 
-// A second verb reuses the kept carrier through hostOrRehost, whose discard is then a
-// no-op, so a bound that declines once and stops leaves exactly the leak it exists to
-// end. Through the TIMER, because the re-arm is the timer's own decision; the negative
+// A second verb reuses the kept carrier, and its release leaves the carrier alone, so
+// a bound that declines once and stops leaves exactly the leak it exists to end. Through the TIMER, because the re-arm is the timer's own decision; the negative
 // half runs first and only the positive half polls.
 func TestBoundKeptCarrier_ReArmsWhileAVerbIsStillHoldingTheCarrier(t *testing.T) {
 	old := keptCarrierGrace
@@ -517,7 +574,7 @@ func TestCarrierUse_AVerbHoldsItsCarrierForTheWholeSpan(t *testing.T) {
 		"a retry in flight": {
 			methodKiroWorkflowRetry,
 			func(t *testing.T, h *Runtime) error {
-				_, err := h.runs.Retry(t.Context(), "wf_1", runAffordance{})
+				_, err := h.runs.Retry(t.Context(), "wf_1", &runAffordance{})
 				return err
 			},
 		},
@@ -586,7 +643,7 @@ func TestRehost_ACancelledVerbArmsTheBoundOnTheCarrierItKeeps(t *testing.T) {
 
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList: parentlessRunList("wf_1"),
 		// KAS never took the resume, so the run is still parked.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", marotte.RunStatusPaused, ""),
 	}
@@ -619,7 +676,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, br := newTestHub()
 			br.callResults = map[string]json.RawMessage{
-				methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+				methodKiroWorkflowList:    parentlessRunList("wf_1"),
 				methodKiroWorkflowInspect: reply,
 			}
 			h.runs.asks.Add(&runAsk{
@@ -660,7 +717,7 @@ func TestAnswerInput_AMovedOnStepIsSettledRatherThanAnswered(t *testing.T) {
 func TestAnswerInput_ARunBetweenStepsHoldsTheAnswerRatherThanDiscardingIt(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList: parentlessRunList("wf_1"),
 		// Non-terminal, and no node parked: the resume landed, the re-park has not.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 	}
@@ -719,7 +776,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList:    parentlessRunList("wf_1"),
 		methodKiroWorkflowInspect: tree,
 	}
 	h.runs.asks.Add(&runAsk{
@@ -749,7 +806,7 @@ func TestAnswerInput_AParkedBranchIsAnsweredEvenWhenItIsNotTheFirstMatch(t *test
 func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList: parentlessRunList("wf_1"),
 		methodKiroWorkflowInspect: parkedInspect(
 			t, marotte.RunStatusPaused, needInputPauseReason, "sess_current",
 		),
@@ -783,7 +840,7 @@ func TestAnswerInput_TheFreshAddressBeatsTheOneTheAskCarries(t *testing.T) {
 func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList: parentlessRunList("wf_1"),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowInspect: errors.New("bridge died")}
 	h.runs.asks.Add(&runAsk{
@@ -812,7 +869,7 @@ func TestAnswerInput_AnUnreadableRunFallsBackToTheAddressTheAskCarries(t *testin
 func TestAnswerInput_HostsBeforeItClaimsTheAsk(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList: parentlessRunList("wf_1"),
 	}
 	if _, err := h.runs.listRaw(t.Context()); err != nil {
 		t.Fatalf("warm the utility session: %v", err)
@@ -839,7 +896,7 @@ func TestAnswerInput_HostsBeforeItClaimsTheAsk(t *testing.T) {
 func TestCancel_IsUnchangedByTheReHostAndStartsNoProcess(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
-		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowList:    parentlessRunList("wf_1"),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "aborted", ""),
 	}
@@ -1036,7 +1093,7 @@ func TestCloseStoppedBridge_AsksAboutAVerbInFlight(t *testing.T) {
 	}
 }
 
-// The identity re-check the deferral needs: a discard on a non-context error closes the
+// The identity re-check the deferral needs: a release on a non-context error closes the
 // carrier itself, so a later verb can re-host and put a DIFFERENT process under the same
 // chat id while this close is still pending.
 func TestCloseStoppedBridge_DoesNotCloseALaterReHostsCarrier(t *testing.T) {
@@ -1064,5 +1121,345 @@ func TestCloseStoppedBridge_DoesNotCloseALaterReHostsCarrier(t *testing.T) {
 				"the carrier it was armed for, not whatever occupies its key later", got, incumbent)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+const testLaunchSession = "sess_launch"
+
+func parentlessRunList(workflowID string) json.RawMessage {
+	return json.RawMessage(`{"runs":[{"workflowId":"` + workflowID +
+		`","status":"paused","parentSessionId":"` + testLaunchSession + `"}]}`)
+}
+
+// A parentless run is re-hosted by LOADING the session it was launched from, with the
+// profile's presets: KAS checks every step against that session, and a fresh session
+// would leave it rebuilt from disk without them, so the steps would ask.
+func TestRehost_LoadsAParentlessRunsLaunchingSession(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
+
+	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("Resume on an unhosted parentless run = %v, want nil", err)
+	}
+	opts := br.lastStartOpts()
+	if opts == nil || opts.SessionID != testLaunchSession {
+		t.Fatalf("the carrier started with %+v, want a load of the launching session %q", opts, testLaunchSession)
+	}
+	if !slices.Equal(opts.Presets, []string{"read-workspace"}) {
+		t.Errorf("the load carried presets %v, want the profile's [read-workspace]", opts.Presets)
+	}
+	if h.bridge.mgr.get(runChatID("wf_1")) == nil {
+		t.Error("the loaded carrier is not registered under the run's synthetic chat id")
+	}
+	if !slices.Contains(br.callLog(), methodKiroWorkflowResume) {
+		t.Errorf("the resume never reached KAS; calls were %v", br.callLog())
+	}
+}
+
+// A chat-parented run is reached through its chat's own bridge, which loads the chat's
+// session with the presets. A run bridge loading that session would be a second
+// resident on it, and a verb never closes the chat's bridge, refused or not.
+func TestRehost_ReachesAChatParentedRunThroughTheChatsBridge(t *testing.T) {
+	h, cs, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
+		}),
+	}
+	br.callRPCErrs = map[string]*marotte.RPCError{
+		methodKiroWorkflowPause: {Code: -32603, Message: "Workflow wf_1 is not registered."},
+	}
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.RecordSession("sess_owned")
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: seeding the chat: %s", err)
+	}
+
+	// The refused verb is the first to hold the chat's bridge, so nothing but the
+	// ownership rule keeps it open.
+	if err := h.runs.Pause(t.Context(), "wf_1"); err == nil {
+		t.Fatal("Setup: the scripted pause refusal did not happen")
+	}
+	if opts := br.lastStartOpts(); opts == nil || opts.SessionID != "sess_owned" {
+		t.Errorf("the carrier started with %+v, want the chat's own session loaded", opts)
+	}
+	if h.bridge.mgr.get("c1") == nil {
+		t.Fatal("a refused verb closed the chat's bridge, which belongs to the conversation")
+	}
+	if err := h.runs.Resume(t.Context(), "wf_1"); err != nil {
+		t.Fatalf("Resume on a chat-parented run = %v, want nil", err)
+	}
+	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+		t.Error("a run bridge was registered for a chat-parented run")
+	}
+}
+
+// A verb is REFUSED as a state of the run when no carrier here can hold the session
+// the run was launched from, rather than driven on another session, where the
+// profile's presets do not govern its steps. Nothing is left registered, the chat's
+// own bridge stays, and the ask the reader typed into stays offered.
+func TestRehost_ALaunchingSessionNoCarrierCanHoldRefusesTheVerb(t *testing.T) {
+	cases := map[string]struct {
+		list  func(*testing.T) json.RawMessage
+		chain []string
+		// failLoads makes every carrier the factory builds refuse a named load, so the
+		// chat's open falls back to a fresh session.
+		failLoads bool
+	}{
+		"the inventory names no launching session": {
+			list: func(*testing.T) json.RawMessage {
+				return json.RawMessage(`{"runs":[{"workflowId":"wf_1","status":"paused"}]}`)
+			},
+		},
+		"the chat's load fell back to a fresh session": {
+			list:      chatRunList("sess_owned"),
+			chain:     []string{"sess_owned"},
+			failLoads: true,
+		},
+		"the run came from a segment the chat has retired": {
+			list:  chatRunList("sess_launched_from"),
+			chain: []string{"sess_launched_from", "sess_now"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, cs, br := newTestHub()
+			br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: tc.list(t)}
+			if len(tc.chain) > 0 {
+				if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+					c.Name = "Launcher"
+					for _, s := range tc.chain {
+						c.RecordSession(s)
+					}
+					return true
+				}); err != nil {
+					t.Fatalf("Setup: seeding the chat: %s", err)
+				}
+			}
+			// The utility session shares the factory, so it is started first.
+			if _, err := h.runs.listRaw(t.Context()); err != nil {
+				t.Fatalf("Setup: warming the utility session: %s", err)
+			}
+			var built []*fakeBridge
+			if tc.failLoads {
+				h.bridge.mgr.factory = func() ACPBridge {
+					f := newFakeBridge()
+					f.loadErr = errors.New("session/load: refused")
+					built = append(built, f)
+					return f
+				}
+			}
+			h.runs.asks.Add(&runAsk{
+				chatID:  "run:wf_1",
+				payload: marotte.RunInputNeededPayload{WorkflowID: "wf_1", AskID: "a1", StepSessionID: "sess_step"},
+			})
+
+			err := h.runs.AnswerInput(t.Context(), "wf_1", "a1", "the main branch")
+			if !errors.Is(err, errLaunchSessionUnavailable) {
+				t.Fatalf("AnswerInput = %v, want errLaunchSessionUnavailable", err)
+			}
+			if errors.Is(err, errRunHostStart) {
+				t.Error("a state of the run was reported as a spawn fault on this server")
+			}
+			calls := slices.Clone(br.callLog())
+			for _, f := range built {
+				calls = append(calls, f.callLog()...)
+			}
+			if slices.Contains(calls, marotte.MethodPrompt) {
+				t.Errorf("the answer was sent although no carrier holds the launching session; calls were %v", calls)
+			}
+			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+				t.Error("a run bridge was left registered for a run nothing can drive")
+			}
+			if len(tc.chain) > 0 && h.bridge.mgr.get("c1") == nil {
+				t.Error("the refused verb closed the chat's bridge, which belongs to the conversation")
+			}
+			if !h.runs.asks.HasRun("wf_1") {
+				t.Error("the ask was taken off every surface for a verb that never reached KAS")
+			}
+		})
+	}
+}
+
+// chatRunList is `_kiro/workflow/list` naming one paused run launched from parent.
+func chatRunList(parent string) func(*testing.T) json.RawMessage {
+	return func(t *testing.T) json.RawMessage {
+		return kasRuns(t, map[string]any{"workflowId": "wf_1", "status": "paused", "parentSessionId": parent})
+	}
+}
+
+// Retry reaches a chat-parented run through the same contract: a retry KAS would run
+// under another session is never sent.
+func TestRetry_RefusesARunWhoseLaunchingSegmentTheChatRetired(t *testing.T) {
+	h, cs, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_1", "status": "aborted", "parentSessionId": "sess_launched_from",
+		}),
+	}
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.RecordSession("sess_launched_from")
+		c.RecordSession("sess_now")
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: seeding the chat: %s", err)
+	}
+
+	_, err := h.runs.Retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	if !errors.Is(err, errLaunchSessionUnavailable) {
+		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		t.Error("the retry was sent under a session the run was not launched from")
+	}
+}
+
+// A failed load and an unreadable inventory are faults on THIS server, not states of
+// the run: the verb may succeed on the next attempt. Neither drives the run on a fresh
+// session, and nothing is left registered.
+func TestRehost_AFailedLoadIsAFaultOnThisServer(t *testing.T) {
+	cases := map[string]struct {
+		loadErr error
+		listErr error
+	}{
+		"KAS refuses the load": {loadErr: fmt.Errorf("session/load: %w",
+			&marotte.RPCError{Code: -32603, Message: "Internal error"})},
+		"the inventory cannot be read": {listErr: errors.New("utility session gone")},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
+			br.loadErr = tc.loadErr
+			if _, err := h.runs.listRaw(t.Context()); err != nil {
+				t.Fatalf("Setup: warming the utility session: %s", err)
+			}
+			if tc.listErr != nil {
+				br.setCallErr(methodKiroWorkflowList, tc.listErr)
+			}
+			starts := br.startCount()
+
+			err := h.runs.Resume(t.Context(), "wf_1")
+			if !errors.Is(err, errRunHostStart) {
+				t.Fatalf("Resume = %v, want errRunHostStart", err)
+			}
+			if errors.Is(err, errLaunchSessionUnavailable) {
+				t.Error("a fault on this server was reported as a state of the run")
+			}
+			if got := br.startCount() - starts; got != 0 {
+				t.Errorf("%d carriers finished starting, want 0: no fresh session may stand in", got)
+			}
+			if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+				t.Error("a bridge was left registered for a run nothing re-hosted")
+			}
+			if slices.Contains(br.callLog(), methodKiroWorkflowResume) {
+				t.Error("the resume was sent although no carrier holds the launching session")
+			}
+		})
+	}
+}
+
+// The REST answers: a launching session no carrier can hold is a 409 carrying its
+// sentence, and a refused load is this server's failed spawn, a 500.
+func TestControlHandler_SplitsAnUnavailableLaunchSessionFromAFailedLoad(t *testing.T) {
+	cases := map[string]struct {
+		list    json.RawMessage
+		loadErr error
+		want    int
+	}{
+		"no launching session is a 409": {
+			list: json.RawMessage(`{"runs":[{"workflowId":"wf_1","status":"paused"}]}`),
+			want: http.StatusConflict,
+		},
+		"a run the inventory does not list is a 404": {list: json.RawMessage(`{"runs":[]}`), want: http.StatusNotFound},
+		"a refused load is a 500": {
+			list:    parentlessRunList("wf_1"),
+			loadErr: fmt.Errorf("session/load: %w", &marotte.RPCError{Code: -32603, Message: "Internal error"}),
+			want:    http.StatusInternalServerError,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, _, br := newTestHub()
+			br.callResults = map[string]json.RawMessage{
+				methodKiroWorkflowList:    tc.list,
+				methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", ""),
+			}
+			br.loadErr = tc.loadErr
+
+			req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
+			req.SetPathValue("id", "wf_1")
+			rec := httptest.NewRecorder()
+			h.runRoutes.handleResume(rec, req)
+
+			if rec.Code != tc.want {
+				t.Fatalf("resume = %d, want %d: %s", rec.Code, tc.want, rec.Body)
+			}
+			if tc.want == http.StatusConflict && !strings.Contains(rec.Body.String(), "Cancel and delete still work") {
+				t.Errorf("the body = %s, want the sentence naming what still works", rec.Body)
+			}
+		})
+	}
+}
+
+// Retry on a run launched from a segment its chat has since retired is refused even
+// while that chat is open: the open bridge holds another session, which never
+// registered the run and whose presets KAS does not check the run's steps against.
+func TestRetry_RefusesARetiredSegmentRunWhileItsChatIsOpen(t *testing.T) {
+	h, cs, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: kasRuns(t, map[string]any{
+			"workflowId": "wf_1", "status": "aborted", "parentSessionId": "sess_launched_from",
+		}),
+		methodKiroWorkflowRetry: json.RawMessage(`{}`),
+	}
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
+		c.RecordSession("sess_launched_from")
+		c.RecordSession("sess_now")
+		return true
+	}); err != nil {
+		t.Fatalf("Setup: seeding the chat: %s", err)
+	}
+	open, err := h.coord.OpenBridge(t.Context(), "c1", "")
+	if err != nil || open.SessionID() != "sess_now" {
+		t.Fatalf("Setup: opening the chat = (%v, %v), want it live on sess_now", open, err)
+	}
+
+	_, err = h.runs.Retry(t.Context(), "wf_1", h.runs.affordance(t.Context(), "wf_1", "aborted"))
+	if !errors.Is(err, errLaunchSessionUnavailable) {
+		t.Fatalf("Retry = %v, want errLaunchSessionUnavailable", err)
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		t.Error("the retry was sent on a chat open on a session the run was not launched from")
+	}
+}
+
+// A launching session no READABLE chat owns is not proved parentless while a chat
+// file exists that could not be read: it may be that chat's session, and loading it
+// on a run bridge would replay a conversation into a run carrier.
+func TestRehost_AnIncompleteChatScanRefusesToLoadOnARunBridge(t *testing.T) {
+	h, cs, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
+	unreadable := filepath.Join(cs.Dir(), "c9")
+	if err := os.MkdirAll(unreadable, 0o700); err != nil {
+		t.Fatalf("Setup: %s", err)
+	}
+	if err := os.WriteFile(filepath.Join(unreadable, "chat.json"), []byte("{"), 0o600); err != nil {
+		t.Fatalf("Setup: %s", err)
+	}
+	if _, err := h.runs.listRaw(t.Context()); err != nil {
+		t.Fatalf("Setup: warming the utility session: %s", err)
+	}
+	starts := br.startCount()
+
+	if err := h.runs.Resume(t.Context(), "wf_1"); !errors.Is(err, errRunHostStart) {
+		t.Fatalf("Resume = %v, want errRunHostStart", err)
+	}
+	if got := br.startCount() - starts; got != 0 {
+		t.Errorf("%d carriers started, want 0: the session may belong to the unreadable chat", got)
+	}
+	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+		t.Error("a run bridge was registered on a session no complete scan proved parentless")
 	}
 }

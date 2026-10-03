@@ -1175,7 +1175,6 @@ export const decodePolicyView: Decoder<PolicyView> = (v) => {
     rules: o["rules"] === null ? [] : decodeArray(o["rules"], decodePolicyRule, "$.policy_view.rules"),
     writable_scopes: o["writable_scopes"] === null ? [] : decodeArray(o["writable_scopes"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.writable_scopes"),
     capabilities: o["capabilities"] === null ? [] : decodeArray(o["capabilities"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.capabilities"),
-    relax_capabilities: o["relax_capabilities"] === null ? [] : decodeArray(o["relax_capabilities"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.relax_capabilities"),
     profiles: o["profiles"] === null ? [] : decodeArray(o["profiles"], decodeSecurityProfile, "$.policy_view.profiles"),
     available: reqBool(o, "available", "$.policy_view"),
   };

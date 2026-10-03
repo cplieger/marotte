@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
 )
@@ -124,7 +125,11 @@ func (rs *Runs) launch(ctx context.Context, source string, inputs map[string]str
 
 	// Register BEFORE invoke: the first lifecycle frame follows it immediately, and
 	// a frame arriving before the map entry has no bridge to answer through.
-	rs.bridges.insert(runChatID(wfID), &sharedBridge{bridge: bridge, state: bridgeIdle})
+	launched := &sharedBridge{bridge: bridge, state: bridgeIdle}
+	if !rs.bridges.insert(runChatID(wfID), launched) {
+		bridge.Stop()
+		return "", "", fmt.Errorf("workflow %s already has a run bridge", wfID)
+	}
 	// The run's envelope, before anything can execute — see runlease.Lease.
 	rs.grantLease(cctx, wfID, recipe.Name, o)
 	rs.coord.goForward(runChatID(wfID), bridge)
@@ -195,15 +200,6 @@ func (rs *Runs) Delete(ctx context.Context, workflowID string) error {
 	return nil
 }
 
-// errRunNotHosted is returned by a control verb that needs the run's OWN bridge
-// when there is none. Distinct from a KAS refusal so the REST layer can answer
-// 409 with an explanation rather than 500.
-var errRunNotHosted = errors.New(
-	"this run has no live bridge on this server, so it cannot be paused or resumed from here; " +
-		"cancel still works. A run from before the last restart is in this state, " +
-		"and so is an agent-launched run whose chat is closed -- open that chat to bring it back",
-)
-
 // Pause asks a running run to stop at its next node boundary, keeping its state
 // resumable. The in-flight node runs to completion, so the reply confirms the ASK
 // rather than a paused state; a re-hosted pause is expected to be REFUSED, because
@@ -267,114 +263,64 @@ type kasRetryOutcome struct {
 
 // Retry resets a finished run's failed work and reports what it reset.
 //
-// Legal only from `failed` or `aborted`, and `closeStoppedBridge` tears the bridge
-// down on exactly those statuses, so retry is the one control verb that must reach
-// a run nothing hosts. THE HOST IS RESOLVED, not assumed: keying on `run:<id>`
-// alone sent every chat-parented run down the re-host branch, spawning a second
-// engine for a run whose parent session is still alive. That branch LOADS FIRST,
-// because KAS's retry refuses a run it has never seen.
+// Legal only from `failed` or `aborted`, the statuses `closeStoppedBridge` tears the
+// bridge down on. It is hosted from the gate's own read of where the run came from
+// (aff), so the verb acts on the answer the gate approved.
 func (rs *Runs) Retry(
-	ctx context.Context, workflowID string, aff runAffordance,
-) (marotte.RunRetriedResponse, error) {
+	ctx context.Context, workflowID string, aff *runAffordance,
+) (out marotte.RunRetriedResponse, err error) {
 	if workflowID == "" {
-		return marotte.RunRetriedResponse{}, errors.New("missing workflow id")
+		return out, errors.New("missing workflow id")
 	}
 	cctx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
-	// The run's real host: its own bridge, or the LAUNCHING CHAT's. Already
-	// registered there, so no load is needed and no second engine is started.
-	if _, sb := rs.hostBridgeFor(workflowID, aff.ParentChat); sb != nil {
-		// Held for the whole span, so neither the kept-carrier bound nor a
-		// lifecycle frame's deferred close can come due under it — carrierUse.
-		rs.carriers.enter(sb)
-		defer rs.carriers.leave(sb)
-		recipe := aff.Recipe
-		out, err := rs.retryCall(cctx, sb.bridge, workflowID)
-		if err != nil {
-			// The verb LANDED and only its report is unusable, so the run may be running.
-			if errors.Is(err, errRetryOutcomeUnreadable) {
-				rs.rearmRetried(cctx, workflowID, recipe)
-			}
-			return marotte.RunRetriedResponse{}, err
-		}
-		// Only on success: a refused retry re-drove nothing, so the run's previous
-		// terminal reason is still the truth about it.
-		rs.rearmRetried(cctx, workflowID, recipe)
-		slog.Info("workflow run retried on its host",
-			"workflow_id", workflowID, "recipe", recipe,
-			"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
-		return out, nil
-	}
-	return rs.retryRehosted(cctx, workflowID, aff.Recipe)
-}
-
-// retryRehosted retries a run NOTHING in this process holds: re-host it, load the
-// run into that process, then retry. recipe is the name the gate's inventory read
-// carried, "" when it carried none — threaded because nothing here can learn it
-// once the run is re-driving.
-func (rs *Runs) retryRehosted(
-	ctx context.Context, workflowID, recipe string,
-) (marotte.RunRetriedResponse, error) {
-	// The shared re-host: it registers the carrier before the verb, because retry's
-	// first lifecycle frame follows the call at once, and hands back the teardown
-	// this call owes on a failure.
-	sb, discard, err := rs.rehost(ctx, workflowID)
+	host, err := rs.acquireHost(cctx, workflowID, func(context.Context, string) runOrigin { return aff.origin })
 	if err != nil {
-		return marotte.RunRetriedResponse{}, rs.retryStartErr(ctx, err)
+		return out, rs.retryStartErr(cctx, err)
 	}
-	rs.carriers.enter(sb)
-	defer rs.carriers.leave(sb)
-
+	defer func() {
+		// An unreadable report means KAS TOOK the retry, so the run may be re-driving
+		// inside this carrier.
+		if errors.Is(err, errRetryOutcomeUnreadable) {
+			host.release(nil)
+			return
+		}
+		host.release(err)
+	}()
+	// recipe is threaded from the gate because nothing here can learn it once the run
+	// is re-driving.
+	recipe := aff.origin.recipe
 	// The lease before the verb, as a launch grants between `new` and `invoke`:
 	// retry's own `run_start` can arrive before the call returns.
 	minted := false
 	if _, held := rs.lease(workflowID); !held {
-		rs.grantLease(ctx, workflowID, recipe, manualLaunch())
+		rs.grantLease(cctx, workflowID, recipe, manualLaunch())
 		minted = true
 	}
-
-	out, err := rs.loadThenRetry(ctx, sb.bridge, workflowID)
+	out, err = rs.retryCall(cctx, host.sb.bridge, workflowID)
 	if errors.Is(err, errRetryOutcomeUnreadable) {
-		// KAS ACCEPTED the retry, so the run may be re-driving inside this bridge:
+		// KAS ACCEPTED the retry, so the run may be re-driving inside this carrier:
 		// only the report is lost, and tearing down would kill the work mid-node.
-		rs.rearmRetried(ctx, workflowID, recipe)
-		return marotte.RunRetriedResponse{}, err
+		rs.rearmRetried(cctx, workflowID, recipe)
+		return out, err
 	}
 	if err != nil {
-		// Nothing is executing, so the carrier goes — except on a CONTEXT error,
-		// which keeps BOTH it and the lease under the one unknown-outcome rule:
-		// armDeadline returns when there is no lease, so a retry KAS did take
+		// Nothing is executing, so the minted lease goes back, except on a CONTEXT
+		// error: armDeadline returns when there is no lease, so a retry KAS did take
 		// would execute with no deadline and nothing to arm one.
 		if minted && !isCtxErr(err) {
-			rs.releaseLease(ctx, workflowID)
+			rs.releaseLease(cctx, workflowID)
 		}
-		discard(err)
-		return marotte.RunRetriedResponse{}, err
+		return out, err
 	}
-	// A fresh clock and a clean row, now that the retry has landed: the run's
-	// recorded termination is no longer a fact about it.
-	rs.rearmRetried(ctx, workflowID, recipe)
-	slog.Info("workflow run re-hosted and retried",
+	// Only on success: a refused retry re-drove nothing, so the run's previous
+	// terminal reason is still the truth about it.
+	rs.rearmRetried(cctx, workflowID, recipe)
+	slog.Info("workflow run retried",
 		"workflow_id", workflowID, "recipe", recipe,
 		"retried_nodes", len(out.RetriedNodeIDs), "status", out.Status)
 	return out, nil
-}
-
-// loadThenRetry registers the run in a fresh process and retries it. The `load`
-// is not optional: KAS's retry handler requires the run in its live registry and
-// says so ("not registered. Load or create it first.").
-func (rs *Runs) loadThenRetry(
-	ctx context.Context, bridge acpCaller, workflowID string,
-) (marotte.RunRetriedResponse, error) {
-	resp, err := bridge.Call(ctx, methodKiroWorkflowLoad, map[string]any{
-		keyWorkflowID:     workflowID,
-		keyWorkspacePaths: []string{rs.lifecycle.workDir},
-	})
-	if cErr := runCallErr(resp, err); cErr != nil {
-		return marotte.RunRetriedResponse{}, fmt.Errorf("workflow load: %w", rs.retryDeadlineErr(ctx, cErr))
-	}
-	return rs.retryCall(ctx, bridge, workflowID)
 }
 
 // retryCall issues the verb and decodes its outcome report. Folded through
@@ -458,40 +404,42 @@ var errStepStatusUnreadable = fmt.Errorf(
 // advance. The verb carries NO node id, so KAS resolves its target positionally and a
 // client naming node X can have KAS mark node Y — the tree is READ first and the write
 // withheld unless the two agree. Schema and resolver: marotte-acp.md.
-func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status string) error {
+func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status string) (err error) {
 	if nodeID == "" {
 		return errors.New("missing node id")
 	}
 	if !slices.Contains(runStepStatuses, status) {
 		return fmt.Errorf("step status must be one of %v", runStepStatuses)
 	}
-	// BEFORE hostOrRehost, unlike AnswerInput's read: `inspect` runs on the utility
-	// session, so a withheld write spends no process start. Cost: the target can go
-	// stale across the spawn, bounded by an unhosted run advancing nothing itself.
-	if err := rs.stepStatusAddress(ctx, workflowID, nodeID); err != nil {
-		return err
+	// BEFORE hostRun, unlike AnswerInput's read: `inspect` runs on the utility
+	// session, so a withheld write spends no process start. The run's position lock
+	// spans read and write: opening a chat starts its heal, which may resume this run.
+	release, lockErr := rs.positions.acquire(ctx, workflowID)
+	if lockErr != nil {
+		return lockErr
 	}
-	sb, discard, err := rs.hostOrRehost(ctx, workflowID)
+	defer release()
+	if addrErr := rs.stepStatusAddress(ctx, workflowID, nodeID); addrErr != nil {
+		return addrErr
+	}
+	host, err := rs.hostRun(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	rs.carriers.enter(sb)
-	defer rs.carriers.leave(sb)
-	resp, cErr := sb.bridge.Call(ctx, methodKiroWorkflowUpdate, map[string]any{
+	// A decline releases with a cause too: nothing was written, so no run_complete
+	// follows and a re-host's process would outlive the verb.
+	defer func() { host.release(err) }()
+	resp, cErr := host.sb.bridge.Call(ctx, methodKiroWorkflowUpdate, map[string]any{
 		keyWorkflowID: workflowID,
 		"action":      updateStatusAction,
 		"status":      status,
 	})
 	if callErr := runCallErr(resp, cErr); callErr != nil {
-		discard(callErr)
 		return callErr
 	}
 	// The REPLY is read, because a decline is not a throw: both declines answer
 	// {updated:false} with a 200, which a caller ignoring it reports as landed.
 	if refusal := stepStatusRefusal(resp); refusal != "" {
-		// The carrier goes on this path too: a decline means nothing was written, so
-		// no run_complete follows and a re-host's process would outlive the verb.
-		discard(errStepStatusRefused)
 		return fmt.Errorf("%w: %s", errStepStatusRefused, refusal)
 	}
 	if status == runStepRunning {
@@ -625,7 +573,7 @@ var errAskAlreadySettled = errors.New(
 // THE ORDER IS THE CONTRACT: carrier, then claim, then address, then send. Each
 // step guards a window the next one would open — see marotte-runtime.md's
 // liveness-split block. A failed send puts the claim back.
-func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string) error {
+func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string) (err error) {
 	if workflowID == "" || askID == "" {
 		return errors.New("missing workflow id or ask id")
 	}
@@ -636,17 +584,15 @@ func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string)
 	// an answer in flight — see pendingRunAsks.beginAnswer.
 	rs.asks.beginAnswer(workflowID)
 	defer rs.asks.endAnswer(workflowID)
-	sb, discard, err := rs.hostOrRehost(ctx, workflowID)
+	host, err := rs.hostRun(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	// From HERE, not from the Call: the address read below is a round trip, and a
+	// Held from HERE, not from the Call: the address read below is a round trip, and a
 	// bound coming due inside it would close the carrier this answer is about to use.
-	rs.carriers.enter(sb)
-	defer rs.carriers.leave(sb)
+	defer func() { host.release(err) }()
 	a, ok := rs.asks.TakeIfPresent(workflowID, askID)
 	if !ok {
-		discard(errAskAlreadySettled)
 		return errAskAlreadySettled
 	}
 	session, verdict := rs.answerAddress(ctx, workflowID, a)
@@ -655,7 +601,6 @@ func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string)
 		// re-offering a card for a step that has moved on asks the reader to
 		// answer a question KAS has stopped waiting on.
 		rs.announceSettled(ctx, a, marotte.SettledByMoot)
-		discard(errAskAlreadySettled)
 		return errAskAlreadySettled
 	}
 	if verdict == answerBusy {
@@ -663,22 +608,18 @@ func (rs *Runs) AnswerInput(ctx context.Context, workflowID, askID, text string)
 		// wanted. The card goes back and the reader is told to retry — settling
 		// here would discard what they typed and tell them the step had moved on.
 		rs.restoreAsk(ctx, a)
-		discard(errRunNotParked)
 		return errRunNotParked
 	}
 	if session == "" {
-		unaddressable := errors.New("the step that asked cannot be addressed on this server")
 		rs.restoreAsk(ctx, a)
-		discard(unaddressable)
-		return unaddressable
+		return errors.New("the step that asked cannot be addressed on this server")
 	}
-	resp, cErr := sb.bridge.Call(ctx, marotte.MethodPrompt, map[string]any{
+	resp, cErr := host.sb.bridge.Call(ctx, marotte.MethodPrompt, map[string]any{
 		marotte.KeySessionID: session,
 		marotte.KeyPrompt:    []any{marotte.TextBlock(text)},
 	})
 	if callErr := runCallErr(resp, cErr); callErr != nil {
 		rs.restoreAsk(ctx, a)
-		discard(callErr)
 		return callErr
 	}
 	// A FRESH budget, the rule Resume follows: each arm bounds EXECUTING time.
@@ -777,20 +718,14 @@ func askedStep(n *askNode, nodeID string) *askNode {
 // the utility bridge: that session denies every permission request and errors every
 // fs/terminal call, so a run resumed there would grind with no tools.
 func (rs *Runs) hostedControl(ctx context.Context, workflowID, method string) error {
-	sb, discard, err := rs.hostOrRehost(ctx, workflowID)
+	host, err := rs.hostRun(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	// Held for the whole span, so a kept carrier's bound cannot come due under a
-	// verb still using it — carrierUse.
-	rs.carriers.enter(sb)
-	defer rs.carriers.leave(sb)
-	resp, cErr := sb.bridge.Call(ctx, method, map[string]any{keyWorkflowID: workflowID})
-	if callErr := runCallErr(resp, cErr); callErr != nil {
-		discard(callErr)
-		return callErr
-	}
-	return nil
+	resp, cErr := host.sb.bridge.Call(ctx, method, map[string]any{keyWorkflowID: workflowID})
+	callErr := runCallErr(resp, cErr)
+	host.release(callErr)
+	return callErr
 }
 
 // errRunHostStart marks a failure to START a carrier for a run: a spawn fault on
@@ -798,73 +733,300 @@ func (rs *Runs) hostedControl(ctx context.Context, workflowID, method string) er
 // 500 rather than echoing an internal path as though the caller had asked wrongly.
 var errRunHostStart = errors.New("a process for this run could not be started")
 
-// hostOrRehost resolves the process holding a run, STARTING one when nothing does,
-// and hands back the teardown its caller owes on a FAILED verb.
-//
-// `discard` is a no-op for an already-hosted run — a bridge THIS call started must
-// go, one that was already there belongs to a launch or a conversation — and it
-// takes the CAUSE, because a context error keeps the carrier. Both asymmetries are
-// in marotte-runtime.md's liveness-split block. It never releases the LEASE.
-func (rs *Runs) hostOrRehost(
-	ctx context.Context, workflowID string,
-) (sb *sharedBridge, discard func(error), err error) {
-	if held := rs.hostBridge(ctx, workflowID); held != nil {
-		return held, func(error) {}, nil
-	}
-	return rs.rehost(ctx, workflowID)
+// errLaunchSessionUnavailable means no carrier here can hold the session a run was
+// launched from: the inventory names none, or the chat owning it is open on another
+// session. KAS checks every step against that session, so driving the run anyway
+// would leave the profile's presets out of its steps. A state of the run, answered 409
+// with launchSessionUnavailableText.
+var errLaunchSessionUnavailable = errors.New("the run's launching session cannot be opened here")
+
+// launchSessionUnavailableText is errLaunchSessionUnavailable as the reader sees it.
+const launchSessionUnavailableText = "This run's launching session cannot be opened on this server. " +
+	"Cancel and delete still work."
+
+// errRunNotListed means KAS's inventory does not list the run, so where it was
+// launched from is unknown. Answered 404.
+var errRunNotListed = errors.New("run not found")
+
+// runParent is where a run was launched from: its launching session, and the chat
+// owning it, "" for a parentless run.
+type runParent struct {
+	chat    marotte.ChatID
+	session string
 }
 
-// rehost starts a process for a run nothing hosts and registers it under the run's
-// synthetic `run:<id>` chat id. KAS rehydrates from disk, so marotte supplies the
-// carrier and nothing else.
-//
-// Registration precedes the verb, whose first lifecycle frame can arrive before the
-// call returns, and the bridge OUTLIVES the bounded start — StartOpts.Lifetime is
-// what it lives on. A LOST race hands back the incumbent with a no-op discard, for
-// the three reasons in marotte-runtime.md's liveness-split block.
-func (rs *Runs) rehost(
-	ctx context.Context, workflowID string,
-) (sb *sharedBridge, discard func(error), err error) {
+// runOrigin is a run's launch facts, read once off KAS's inventory and the chat
+// store. err says why parent cannot route a verb, and is nil when it can.
+type runOrigin struct {
+	err      error
+	parent   runParent
+	chatName string
+	recipe   string
+}
+
+// originOf reads where a run was launched from. A parent with no owning chat is
+// trusted only after a COMPLETE chat scan: an unreadable chat file could own the
+// session, and loading a chat's session onto a run bridge replays it into a carrier.
+func (rs *Runs) originOf(ctx context.Context, workflowID string) runOrigin {
+	runs, err := rs.listRaw(ctx)
+	if err != nil {
+		slog.Warn("could not read the run inventory, so a run's parent chat and recipe are unknown",
+			"workflow_id", workflowID, "error", err)
+		return runOrigin{err: fmt.Errorf("%w: reading the run inventory: %w", errRunHostStart, err)}
+	}
+	i := slices.IndexFunc(runs, func(r kasWorkflowRun) bool { return r.WorkflowID == workflowID })
+	if i < 0 {
+		return runOrigin{err: errRunNotListed}
+	}
+	// WorkflowName, not Name: the recipe is what the single-run rule compares a
+	// re-armed lease against, and Name is `runLabel ?? workflowName`.
+	o := runOrigin{recipe: runs[i].WorkflowName, parent: runParent{session: runs[i].ParentSessionID}}
+	if o.parent.session == "" {
+		o.err = fmt.Errorf("%w: the run inventory names no launching session", errLaunchSessionUnavailable)
+		return o
+	}
+	var complete bool
+	o.parent.chat, o.chatName, complete = rs.chatForSession(ctx, o.parent.session)
+	if o.parent.chat == "" && !complete {
+		o.err = fmt.Errorf("%w: a chat file could not be read, so which chat launched the run is unknown",
+			errRunHostStart)
+	}
+	return o
+}
+
+// runHost is one verb's hold on the process carrying a run, counted in carrierUse
+// before the run's host lock is released, so no other verb can end the carrier
+// uncounted. Every verb releases it exactly once.
+type runHost struct {
+	rs         *Runs
+	sb         *sharedBridge
+	chatID     marotte.ChatID
+	workflowID string
+	// started is whether this verb started the carrier, which makes release the one
+	// place its end is decided.
+	started bool
+}
+
+// hostRun is acquireHost for a verb with no inventory read of its own.
+func (rs *Runs) hostRun(ctx context.Context, workflowID string) (*runHost, error) {
+	return rs.acquireHost(ctx, workflowID, rs.originOf)
+}
+
+// acquireHost resolves the carrier for one verb under the run's host lock, which a
+// waiter gives up on with its own ctx: the run's own bridge, else its launching session
+// made live with the profile's presets, never a carrier on any other session. KAS
+// checks every step against that session, and rebuilds it from disk without presets
+// when no process has it loaded. origin is read only when the run's own bridge is not
+// live, so a hosted run costs no `workflow/list` trip.
+func (rs *Runs) acquireHost(
+	ctx context.Context, workflowID string, origin func(context.Context, string) runOrigin,
+) (*runHost, error) {
+	unlock, err := rs.hosts.acquire(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	if sb := rs.runOwnBridge(workflowID); sb != nil {
+		defer unlock()
+		return rs.hold(workflowID, runChatID(workflowID), sb, false), nil
+	}
+	o := origin(ctx, workflowID)
+	if o.err != nil {
+		unlock()
+		return nil, o.err
+	}
+	if o.parent.chat != "" {
+		return rs.acquireDurably(ctx, unlock, func(dctx context.Context) (*runHost, error) {
+			sb, err := rs.rehostOnChat(dctx, workflowID, o.parent)
+			if err != nil {
+				return nil, err
+			}
+			return rs.hold(workflowID, o.parent.chat, sb, false), nil
+		})
+	}
+	return rs.loadRunCarrier(ctx, workflowID, o.parent.session, unlock)
+}
+
+// hold enters sb for one verb. The caller holds the run's host lock.
+func (rs *Runs) hold(workflowID string, chatID marotte.ChatID, sb *sharedBridge, started bool) *runHost {
+	rs.carriers.enter(sb)
+	return &runHost{rs: rs, sb: sb, chatID: chatID, workflowID: workflowID, started: started}
+}
+
+// errVerbNeverSent is the release cause for a host acquired on behalf of a verb that
+// had already given up, so KAS took nothing.
+var errVerbNeverSent = errors.New("the verb gave up before anything was sent")
+
+// acquireDurably runs acquire on a durable context in a tracked goroutine that owns
+// unlock, so the run's host lock is held until acquisition ends even when the verb
+// waits no longer than its own ctx. A cancelled spawn would leave a chat detached from
+// its session for good (tryLoadSession's failure branch), and a half-loaded carrier
+// visible to the next verb. The lock is released before the host is handed over, so it
+// never spans the verb's RPC, and a host acquired for a verb that gave up is released
+// with errVerbNeverSent while the lock is still held, so no queued verb can enter it.
+func (rs *Runs) acquireDurably(
+	ctx context.Context, unlock func(), acquire func(context.Context) (*runHost, error),
+) (*runHost, error) {
+	type acquired struct {
+		h   *runHost
+		err error
+	}
+	var (
+		mu                   sync.Mutex
+		abandoned, delivered bool
+	)
+	done := make(chan acquired, 1)
+	dctx := durable.Context(ctx)
+	rs.lifecycle.inflight.Go(func() {
+		h, err := acquire(dctx)
+		mu.Lock()
+		if abandoned {
+			mu.Unlock()
+			if h != nil {
+				h.releaseLocked(errVerbNeverSent)
+			}
+			unlock()
+			return
+		}
+		delivered = true
+		mu.Unlock()
+		unlock()
+		done <- acquired{h: h, err: err}
+	})
+	select {
+	case r := <-done:
+		return r.h, r.err
+	case <-ctx.Done():
+		mu.Lock()
+		if delivered {
+			// The host is already the verb's: it fails on its own ctx and releases it.
+			mu.Unlock()
+			r := <-done
+			return r.h, r.err
+		}
+		abandoned = true
+		mu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+// release ends this verb's hold. cause is why the verb failed, nil when it landed or
+// KAS took it. A carrier the verb started and that failed it is ended here and only
+// here, under the run's host lock so no verb enters it meanwhile. A context error
+// means KAS may have taken the verb, and a carrier another verb has held may be
+// driving the run, so both are kept under the kept-carrier bound; otherwise it closes.
+func (h *runHost) release(cause error) {
+	rs := h.rs
+	if !h.started || cause == nil {
+		rs.carriers.leave(h.sb)
+		return
+	}
+	unlock, err := rs.hosts.acquire(rs.lifecycle.shutdownCtx, h.workflowID)
+	if err != nil {
+		// Shutting down, which stops every carrier.
+		rs.carriers.leave(h.sb)
+		return
+	}
+	defer unlock()
+	h.releaseLocked(cause)
+}
+
+// releaseLocked is release's decision for a carrier the verb started, made while the
+// caller holds the run's host lock.
+func (h *runHost) releaseLocked(cause error) {
+	rs := h.rs
+	rs.carriers.leave(h.sb)
+	if !h.started || cause == nil {
+		return
+	}
+	switch {
+	case isCtxErr(cause):
+		slog.Warn("a run verb ended with its context cancelled, so its carrier is kept: "+
+			"whether KAS took the verb is unknown, and frames from a run it drove would go nowhere",
+			"workflow_id", h.workflowID, "error", cause)
+		rs.boundKeptCarrier(h.chatID, h.workflowID, h.sb)
+	case h.sb.runVerbs.Load() > 1:
+		rs.boundKeptCarrier(h.chatID, h.workflowID, h.sb)
+	case rs.bridges.get(h.chatID) == h.sb:
+		rs.coord.CloseBridge(rs.lifecycle.shutdownCtx, h.chatID, marotte.TurnOutcomeInterrupted)
+	}
+}
+
+// rehostOnChat reaches a chat-parented run through the chat's own bridge, never a run
+// bridge, which would be a second resident on the chat's session. That bridge must
+// hold the run's own launching session: OpenBridge falls back to a fresh session when
+// a load fails, and loads only the chat's CURRENT segment.
+func (rs *Runs) rehostOnChat(
+	ctx context.Context, workflowID string, parent runParent,
+) (*sharedBridge, error) {
+	held, err := rs.coord.OpenBridge(ctx, parent.chat, "")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
+	}
+	// OpenBridge hands back a bridge another caller is still starting.
+	if !held.startedPastSpawn() {
+		return nil, fmt.Errorf("%w: the launching chat is still opening", errRunHostStart)
+	}
+	if got := string(held.SessionID()); got != parent.session {
+		slog.Warn("a run's launching chat is open on another session, so the run was not driven",
+			"workflow_id", workflowID, "chat_id", parent.chat,
+			"launch_session", parent.session, "chat_session", got)
+		return nil, errLaunchSessionUnavailable
+	}
+	return held, nil
+}
+
+// loadRunCarrier makes a parentless run's launching session live on a run bridge under
+// the run's synthetic chat id, and takes ownership of unlock. Registered and forwarded
+// BEFORE the load, because session/load sends host requests Forward answers through
+// the map (ACPBridge.NotifCh).
+func (rs *Runs) loadRunCarrier(
+	ctx context.Context, workflowID, session string, unlock func(),
+) (*runHost, error) {
+	chatID := runChatID(workflowID)
+	sb, existed := rs.bridges.orInsert(chatID)
+	if existed {
+		unlock()
+		return nil, fmt.Errorf("%w: a run bridge is already registered for this run", errRunHostStart)
+	}
+	return rs.acquireDurably(ctx, unlock, func(dctx context.Context) (*runHost, error) {
+		if err := rs.startRunCarrier(dctx, chatID, sb, session); err != nil {
+			return nil, fmt.Errorf("%w: %w", errRunHostStart, err)
+		}
+		slog.Info("re-hosted a run by loading its launching session", "workflow_id", workflowID,
+			"session_id", session)
+		return rs.hold(workflowID, chatID, sb, true), nil
+	})
+}
+
+// startRunCarrier loads session on sb's bridge. On failure sb leaves the map and its
+// bridge is stopped, which is what ends the forward loop attached before Start.
+func (rs *Runs) startRunCarrier(
+	ctx context.Context, chatID marotte.ChatID, sb *sharedBridge, session string,
+) error {
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
-	bridge := rs.bridges.factory()
-	if sErr := bridge.Start(cctx, &marotte.StartOpts{
+	rs.coord.goForward(chatID, sb.bridge)
+	if err := sb.bridge.Start(cctx, &marotte.StartOpts{
 		Lifetime:    rs.lifecycle.shutdownCtx,
+		SessionID:   session,
 		AgentEngine: resolveAgentEngine(),
 		Presets:     securityPresets(cctx, rs.lifecycle.configDir),
 		IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, rs.lifecycle.configDir) },
 		ToolSearch:  toolSearchEnabled(cctx, rs.lifecycle.configDir),
 		Knowledge:   knowledgeEnabled(cctx, rs.lifecycle.configDir),
 		Memory:      memoryEnabled(cctx, rs.lifecycle.configDir),
-	}); sErr != nil {
-		return nil, nil, fmt.Errorf("%w: %w", errRunHostStart, sErr)
+	}); err != nil {
+		rs.bridges.removeIfSame(chatID, sb)
+		sb.bridge.Stop()
+		return err
 	}
-	chatID := runChatID(workflowID)
-	resident, inserted := rs.bridges.insert(chatID, &sharedBridge{bridge: bridge, state: bridgeIdle})
-	if !inserted {
-		bridge.Stop()
-		slog.Info("another call had already re-hosted this run, so the second process was stopped",
-			"workflow_id", workflowID)
-		return resident, func(error) {}, nil
-	}
-	rs.coord.goForward(chatID, bridge)
-	slog.Info("re-hosted a run nothing was holding", "workflow_id", workflowID)
-	return resident, func(cause error) {
-		if isCtxErr(cause) {
-			slog.Warn("a run verb ended with its context cancelled, so its carrier is kept: "+
-				"whether KAS took the verb is unknown, and frames from a run it drove would go nowhere",
-				"workflow_id", workflowID, "error", cause)
-			rs.boundKeptCarrier(chatID, workflowID, resident)
-			return
-		}
-		rs.coord.CloseBridge(ctx, chatID, marotte.TurnOutcomeInterrupted)
-	}, nil
+	sb.setIdle()
+	return nil
 }
 
 // carrierUse counts the run verbs currently HOLDING each carrier, so the kept-carrier
-// bound asks rather than inferring — the premise it replaces held for Retry's call
-// alone, and the key is the CARRIER because a lost insert race hands back the
-// incumbent. Both: marotte-runtime.md's liveness-split block.
+// bound asks rather than inferring. The key is the CARRIER, because one carrier holds
+// several verbs in turn. Both: marotte-runtime.md's liveness-split block.
 type carrierUse struct {
 	held map[*sharedBridge]int
 	// onIdle is the close a lifecycle frame deferred because a verb was holding the
@@ -880,6 +1042,7 @@ type carrierUse struct {
 // between taking the carrier and sending, so a Call-scoped count would leave the
 // reader's carrier closable for the length of that read.
 func (c *carrierUse) enter(sb *sharedBridge) {
+	sb.runVerbs.Add(1)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.held == nil {
@@ -939,6 +1102,44 @@ func (c *carrierUse) whenIdle(sb *sharedBridge, closeFn func()) {
 	c.mu.Unlock()
 }
 
+// runLocks is one lock per run that a waiter can give up on with its ctx, which
+// sync.Mutex cannot. A ctx already ended when a lock frees loses, so a verb that gave
+// up never acquires.
+type runLocks struct {
+	held map[string]chan struct{}
+	mu   sync.Mutex
+}
+
+func (p *runLocks) acquire(ctx context.Context, workflowID string) (release func(), err error) {
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		p.mu.Lock()
+		busy, taken := p.held[workflowID]
+		if !taken {
+			if p.held == nil {
+				p.held = make(map[string]chan struct{})
+			}
+			done := make(chan struct{})
+			p.held[workflowID] = done
+			p.mu.Unlock()
+			return func() {
+				p.mu.Lock()
+				delete(p.held, workflowID)
+				p.mu.Unlock()
+				close(done)
+			}, nil
+		}
+		p.mu.Unlock()
+		select {
+		case <-busy:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 // keptCarrierGrace is how long a carrier kept on an unknown outcome is given before
 // its run is re-read. Still STRICTLY longer than launchTimeout, which covers Retry's
 // own bounded call, but the grace is no longer the safety argument — carrierUse is.
@@ -975,7 +1176,8 @@ func (rs *Runs) boundKeptCarrier(chatID marotte.ChatID, workflowID string, kept 
 }
 
 // closeKeptCarrier is the bound's whole decision, split out so it is answerable
-// without a timer.
+// without a timer. It decides under the run's host lock, so no verb can enter kept
+// between the checks and the close.
 //
 // IDENTITY leads, so a stale bound neither closes a later re-host's carrier nor
 // re-arms forever over one nothing will close; USE comes next because it is a local
@@ -983,6 +1185,12 @@ func (rs *Runs) boundKeptCarrier(chatID marotte.ChatID, workflowID string, kept 
 func (rs *Runs) closeKeptCarrier(
 	chatID marotte.ChatID, workflowID string, kept *sharedBridge,
 ) carrierVerdict {
+	unlock, err := rs.hosts.acquire(rs.lifecycle.shutdownCtx, workflowID)
+	if err != nil {
+		// Shutting down, which stops every carrier.
+		return carrierSpared
+	}
+	defer unlock()
 	if rs.bridges.get(chatID) != kept {
 		return carrierSpared
 	}
@@ -1006,92 +1214,46 @@ func (rs *Runs) closeKeptCarrier(
 
 // isCtxErr reports whether an error is a cancellation or a deadline, at any
 // wrapping depth. It is the ONE condition under which a failed verb keeps the
-// carrier this call started (hostOrRehost).
+// carrier it started (runHost.release).
 func isCtxErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// hostBridge resolves the bridge whose process holds the run's registry entry.
-//
-// Two ways a run is hosted (marotte-runtime.md): its own `run:<id>` bridge, or the
-// LAUNCHING CHAT's, since KAS parents an agent-launched run on that session. Costs
-// one `workflow/list` round trip on the second path only.
-func (rs *Runs) hostBridge(ctx context.Context, workflowID string) *sharedBridge {
-	_, sb := rs.hostBridgeChat(ctx, workflowID)
-	return sb
-}
-
-// hostBridgeChat is hostBridge plus the CHAT ID that bridge belongs to, or "" when
-// nothing here hosts the run. The id is what a synthesised ask is keyed to
-// (askChatID), so a reconstructed question lands in the launching conversation's
-// dock. One function rather than two, to pay the `workflow/list` trip once.
+// hostBridgeChat resolves the bridge whose process holds the run's registry entry,
+// plus the CHAT ID it belongs to, or "" when nothing here hosts the run: the run's
+// own `run:<id>` bridge, or the LAUNCHING CHAT's, since KAS parents an agent-launched
+// run on that session. The id is what a synthesised ask is keyed to (askChatID).
+// Costs one `workflow/list` round trip on the second path only.
 func (rs *Runs) hostBridgeChat(
 	ctx context.Context, workflowID string,
 ) (marotte.ChatID, *sharedBridge) {
 	if sb := rs.runOwnBridge(workflowID); sb != nil {
 		return runChatID(workflowID), sb
 	}
-	// One resolution for both questions run_affordance.go asks about a run's parent:
-	// which chat owns it, and whether that chat is a live carrier.
-	chatID, _ := rs.chatForSession(ctx, rs.listedRun(ctx, workflowID).ParentSessionID)
-	return rs.hostBridgeFor(workflowID, chatID)
-}
-
-// runOwnBridge is the process holding the run under its OWN `run:<id>` chat id, or
-// nil when nothing re-hosted it there.
-//
-// ONE owner for a three-line preference, because the preference is load-bearing and
-// has two composition sites (hostBridgeChat and CancelForSessions): a re-hosted run's
-// registry entry lives in THAT process, so consulting the chat's bridge first would
-// send the verb to a process which has forgotten the run and be refused.
-func (rs *Runs) runOwnBridge(workflowID string) *sharedBridge {
-	return rs.bridges.get(runChatID(workflowID))
-}
-
-// hostBridgeFor is hostBridgeChat for a caller that ALREADY KNOWS the run's parent
-// chat: no RPC, no chat-store read, and only a LIVE bridge answers.
-//
-// The resolution above costs a `workflow/list` round trip plus a chat-directory
-// scan, and two reads can DISAGREE, leaving the verb acting on a different answer
-// than the gate approved.
-func (rs *Runs) hostBridgeFor(
-	workflowID string, parentChat marotte.ChatID,
-) (marotte.ChatID, *sharedBridge) {
-	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil {
-		return runChatID(workflowID), sb
-	}
-	if parentChat == "" {
+	o := rs.originOf(ctx, workflowID)
+	if o.err != nil || o.parent.chat == "" {
 		return "", nil
 	}
-	sb := rs.bridges.get(parentChat)
+	sb := rs.bridges.get(o.parent.chat)
 	if sb == nil {
 		return "", nil
 	}
-	return parentChat, sb
+	return o.parent.chat, sb
 }
 
-// listedRun finds one run in KAS's own inventory, the only place this process can
-// read a run it did not launch: `inspect` carries neither the parent session nor
-// the recipe.
+// runOwnBridge is the process holding the run under its OWN `run:<id>` chat id, or
+// nil when nothing re-hosted it there. A carrier still loading is nil too: it holds
+// nothing yet, and a verb reaching it waits on the run's host lock.
 //
-// The ZERO VALUE is the answer for a missing run, an empty field and an unreadable
-// inventory alike, because none of the three may fail a control read or a retry.
-func (rs *Runs) listedRun(ctx context.Context, workflowID string) kasWorkflowRun {
-	if workflowID == "" {
-		return kasWorkflowRun{}
+// ONE owner for a three-line preference, because the preference is load-bearing and
+// every host resolution composes it: a re-hosted run's registry entry lives in THAT
+// process, so consulting the chat's bridge first would send the verb to a process
+// which has forgotten the run and be refused.
+func (rs *Runs) runOwnBridge(workflowID string) *sharedBridge {
+	if sb := rs.bridges.get(runChatID(workflowID)); sb != nil && sb.startedPastSpawn() {
+		return sb
 	}
-	runs, err := rs.listRaw(ctx)
-	if err != nil {
-		slog.Warn("could not read the run inventory, so a run's parent chat and recipe are unknown",
-			"workflow_id", workflowID, "error", err)
-		return kasWorkflowRun{}
-	}
-	for i := range runs {
-		if runs[i].WorkflowID == workflowID {
-			return runs[i]
-		}
-	}
-	return kasWorkflowRun{}
+	return nil
 }
 
 // control issues a verb that is safe on either connection, PREFERRING the process
@@ -1182,13 +1344,14 @@ func (rt *Runtime) dispatchRequest(ctx context.Context, chatID marotte.ChatID, m
 }
 
 // closeStoppedBridge closes a run bridge once its run STOPPED EXECUTING, terminal or
-// paused alike; hostOrRehost re-hosts a parked one on demand. Run bridges only, no
+// paused alike; hostRun re-hosts a parked one on demand. Run bridges only, no
 // lease released, an unrecognised status kept: marotte-runtime.md for each.
 //
 // The close is a goroutine because this runs FROM the forward loop, whose channel
 // CloseBridge → Stop closes. It ASKS about a verb in flight, closeKeptCarrier's own
-// question, and DEFERS rather than re-arming: it holds a terminal frame, so the held
-// span's end is a signal it can wait on. That and the identity re-check: same doc.
+// question, and DEFERS until the carrier is idle: it holds a terminal frame, so the
+// held span's end is a signal it can wait on. A verb that entered meanwhile hands the
+// carrier to the kept-carrier bound instead (closeStoppedCarrier).
 func (rt *Runtime) closeStoppedBridge(chatID marotte.ChatID, msg *marotte.RPCResponse) {
 	var p struct {
 		Status marotte.RunStatus `json:"status"`
@@ -1204,12 +1367,29 @@ func (rt *Runtime) closeStoppedBridge(chatID marotte.ChatID, msg *marotte.RPCRes
 		return
 	}
 	slog.Info("run stopped executing, closing its bridge", "chat_id", chatID, "status", p.Status)
-	rt.runs.carriers.whenIdle(sb, func() {
-		if rt.bridge.mgr.get(chatID) != sb {
-			return
-		}
-		go rt.coord.CloseBridge(rt.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
-	})
+	workflowID := workflowIDOf(chatID)
+	// Only the goroutine takes the host lock: whenIdle can run this closure from
+	// carrierUse.leave inside runHost.release, which holds it.
+	rt.runs.carriers.whenIdle(sb, func() { go rt.runs.closeStoppedCarrier(chatID, workflowID, sb) })
+}
+
+// closeStoppedCarrier ends sb once its run stopped executing, deciding under the run's
+// host lock. A verb that entered sb since the frame may be re-driving the run, so sb
+// then goes to the kept-carrier bound, which re-reads the run before closing.
+func (rs *Runs) closeStoppedCarrier(chatID marotte.ChatID, workflowID string, sb *sharedBridge) {
+	unlock, err := rs.hosts.acquire(rs.lifecycle.shutdownCtx, workflowID)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if rs.bridges.get(chatID) != sb {
+		return
+	}
+	if rs.carriers.busy(sb) {
+		rs.boundKeptCarrier(chatID, workflowID, sb)
+		return
+	}
+	rs.coord.CloseBridge(rs.lifecycle.shutdownCtx, chatID, marotte.TurnOutcomeInterrupted)
 }
 
 // recipeBySource resolves a launch source against the CURRENT recipe list.
@@ -1408,8 +1588,7 @@ func resumablePause(reason string, detail *pauseDetail) bool {
 }
 
 // resumeInterruptedRuns resumes the runs a chat's rehydrated bridge should pick
-// back up: the ones ITS sessions launched that stopped for a cause nobody chose. A
-// run heals WITH its chat, which is why an agent-launched run has no Resume button.
+// back up: the ones ITS sessions launched that stopped for a cause nobody chose.
 //
 // Scoped twice: to this chat's session chain (never resumeAll, which would sweep
 // runs another chat or the TUI paused on purpose), and to the involuntary reasons.
@@ -1607,6 +1786,11 @@ func decodeNodeFrame(msg *marotte.RPCResponse) nodeFrame {
 // resumeIfInterrupted inspects one paused run and resumes it when the pause was
 // involuntary. Resumed on the CHAT's bridge, so that process owns the run again.
 func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, workflowID string) {
+	release, err := rs.positions.acquire(ctx, workflowID)
+	if err != nil {
+		return
+	}
+	defer release()
 	// The wider involuntary set, because this RESUMES; the orphan sweep's
 	// narrower `restartPaused` cancels.
 	if !rs.involuntarilyPaused(ctx, workflowID) {

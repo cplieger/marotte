@@ -58,6 +58,9 @@ func (b *Bridge) sendNotif(msg *marotte.RPCResponse) {
 }
 
 func (b *Bridge) readLoop() {
+	if !b.claimNotifClose() {
+		return
+	}
 	defer b.drainPendingAndClose()
 	var tracker parseErrTracker
 	for {

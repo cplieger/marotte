@@ -966,6 +966,7 @@ func TestAnswerInput(t *testing.T) {
 	// card the reader was shown unanswerable by construction.
 	t.Run("a run nothing hosts is re-hosted and the answer lands", func(t *testing.T) {
 		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{

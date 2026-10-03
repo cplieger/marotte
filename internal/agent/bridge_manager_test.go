@@ -182,7 +182,7 @@ func TestRetireBridges_LeavesRunBridgesUntouched(t *testing.T) {
 	h, _, _ := newTestHub()
 	br := newFakeBridge()
 	sb := &sharedBridge{bridge: br, state: bridgeIdle}
-	if _, inserted := h.bridge.mgr.insert(runChatID("wf-1"), sb); !inserted {
+	if !h.bridge.mgr.insert(runChatID("wf-1"), sb) {
 		t.Fatal("insert run bridge = false, want true")
 	}
 

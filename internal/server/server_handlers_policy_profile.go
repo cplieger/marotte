@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/marotte/internal/durable"
@@ -18,53 +18,11 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// POST /api/permissions/profile — select the named security posture.
-//
-// A selection has TWO halves, and the second one is why this endpoint has the
-// shape it does. The presets ride the session door (_meta.kiro.policyPreset on
-// session/new), and KAS injects them at SESSION scope bound to the one session
-// they arrived on. KAS creates a workflow STEP's session itself, with no _meta and
-// no marotte involvement, so a preset can never reach one — measured on this
-// container: 280 permission prompts, every one of them on a step session and none
-// on a seeded one. A USER-scope rule in permissions.yaml IS evaluated for every
-// session in the process, step sessions included, so the loosest rung writes its
-// posture there as well. Every other rung writes none, because a durable allow at
-// user scope survives a restart and applies to any other ACP client sharing this
-// HOME; policyfile.Profile.FileRules records that decision in full.
-//
-// It owns that rule set by MERGE, not by replacement: only the rules the profile
-// mechanism itself could have written are removed (policyfile.ProfileOwnedRules),
-// so a hand-authored rule survives a profile change and keeps applying beside the
-// new profile's own. The blanket overwrite this replaced destroyed such a rule
-// silently on every click. Both facts are in the panel copy, because a description
-// promising a posture the code does not deliver is the defect being fixed and the
-// inverse would be the same defect.
-//
-// Its own endpoint rather than a key on PATCH /api/settings: persisting the
-// setting is the smallest part of what a selection does, and a settings PATCH that
-// silently rewrote policy files would be a side effect nobody reading the route
-// could predict.
-//
-// THREE files and no cross-file atomicity to be had, so a defined ORDER plus a
-// compensating restore is what keeps the two halves from disagreeing: snapshot both
-// writable files, write the user file, write the workspace file, then config.json;
-// on a failure at either write, put both files back and answer 500. The FILES are
-// restored rather than the setting because they are the half that has already taken
-// effect — KAS watches them and hot-reloads, while the setting only reaches a
-// session at its next start — so a part-way failure leaves both halves naming the
-// OLD profile. Accepted cost: KAS sees two reloads on that path, the new rules and
-// then the restore. Either ordering has such a window; this one keeps it on the
-// half that can be undone.
-//
-// Two doors into Custom, and Seed is the difference. The Customize button sends
-// seed=true, which MATERIALISES what is currently in force into the user file so
-// the editable table opens on the outgoing profile's rules as a starting point.
-// "What is in force" has TWO halves and both have to be copied: the live session's
-// preset rules, which only a live policy view can report, and the outgoing rung's
-// own FileRules, which live in the user file the merge is about to rewrite.
-// Selecting Custom from the list sends seed=false, which adds nothing — and, since
-// the merge preserves what it does not own, leaves the user's own rules standing
-// rather than wiping the file.
+// POST /api/permissions/profile — select the named security posture. A named profile
+// is presets alone and Custom's rules are already in the files, so a selection writes
+// no policy file: it persists the id, re-renders KAS's MCP config and recycles the
+// utility session. Customize is the one write (seedCustom). Its own endpoint, because
+// a settings PATCH doing all this would surprise.
 
 // errNoLivePolicy is returned when the profile's own rules cannot be read, which
 // is the one condition that must not degrade into a silent blank slate: an empty
@@ -104,64 +62,17 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "seed applies only when switching to the custom profile")
 		return
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	if body.Seed {
+		if !s.seedCustom(w, r) {
+			return
+		}
+	} else if err := s.persistProfile(r.Context(), profile.ID); err != nil {
 		httpreply.InternalError(w, err)
 		return
 	}
-	roots := policyfile.Roots{Home: home, WorkDir: s.workDir}
-
-	// Materialise BEFORE anything is cleared, and the reason is FAIL-CLOSED rather
-	// than ordering: the rules come from the live session rather than from these
-	// files, so clearing first would not destroy the source, but it would destroy
-	// the user's policy before discovering the copy is impossible. Reading first
-	// means a Customize that cannot see the profile leaves the profile in place
-	// instead of landing on an empty Custom, which drops every grant they had.
-	var seeded []policyfile.Rule
-	if body.Seed {
-		seeded, err = s.rulesInForce(r.Context())
-		if err != nil {
-			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
-				httpreply.ErrorJSON("cannot read the current profile's rules to copy them; nothing was changed"))
-			return
-		}
-	}
-	// The user-scope rules this selection writes: a seed copies what is in force
-	// (the live preset rules AND the outgoing rung's file rules), a named rung
-	// writes its own (empty on every rung but the loosest), and Custom picked from
-	// the list writes none and keeps whatever is there.
-	userRules := profile.FileRules
-	if body.Seed {
-		userRules = seeded
-	}
-	// Read both files before touching either, which buys two things from one read.
-	// The overwrite this replaced never read them, so an unparseable hand-edited
-	// file was destroyed silently; this adopts policyRuleAdd's refusal instead. And
-	// the same read is the snapshot a failed write is put back from.
-	snap, badScope, err := snapshotPolicyFiles(roots)
-	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(
-			"the existing "+badScope+"-scope permissions file could not be read; edit it manually",
-		))
-		return
-	}
-	if err := writeProfilePolicy(r.Context(), roots, userRules); err != nil {
-		s.failProfileSelection(r.Context(), w, roots, snap, err)
-		return
-	}
-	if err := s.persistProfile(r.Context(), profile.ID); err != nil {
-		s.failProfileSelection(r.Context(), w, roots, snap, err)
-		return
-	}
-	// AFTER persistProfile, and that ordering is the whole correctness of this
-	// call: the renderer resolves the rung by READING the setting this handler has
-	// just written, so running it any earlier renders the outgoing profile's
-	// posture and the suspension silently does not happen.
-	//
-	// durable.Context for the reason stated at server_handlers_settings.go's
-	// ignore-files arm: the profile has already landed, so a reader closing the tab
-	// mid-POST would otherwise leave KAS's mcp.json carrying the OUTGOING rung's
-	// autoApprove grants — the wider posture, standing until the next MCP mutation.
+	// After persistProfile, because the renderer reads the setting. durable: the
+	// profile has landed, so a closed tab must not leave mcp.json on the outgoing
+	// rung's autoApprove grants.
 	s.renderMCPForProfile(durable.Context(r.Context()), profile.ID)
 	// The presets ride the session door, so the sessions already running still
 	// carry the OLD profile. Recycling the utility session is what makes GET
@@ -172,31 +83,17 @@ func (s *Server) handlePolicyProfile(w http.ResponseWriter, r *http.Request) {
 		s.policyReload.RestartUtilitySession()
 	}
 	slog.Info("security profile selected", "profile", profile.ID,
-		"presets", profile.Presets, "seeded_rules", len(seeded), "file_rules", len(userRules))
+		"presets", profile.Presets, "seeded", body.Seed)
 	webhttp.Ok(w)
 	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventSettingsUpdated, "", marotte.SettingsUpdatedPayload{}))
 	s.agent.Broadcast(r.Context(), marotte.NewEvent(marotte.EventPermissionsChanged, "",
 		marotte.PermissionsChangedPayload{Status: "success"}))
 }
 
-// renderMCPForProfile re-renders KAS's MCP config so the newly selected rung's
-// auto-approve posture applies to the chats already running. KAS watches that file
-// and re-merges on change, which is what makes a suspension immediate instead of
-// waiting for whenever the user next opens a chat.
-//
-// It must be called AFTER the profile is persisted; the renderer reads the setting.
-//
-// A FAILURE LOGS AND THE SELECTION STILL ANSWERS 200, which is deliberate and is
-// the opposite of failProfileSelection's treatment. By this point both policy files
-// and config.json have landed, so the selection HAS happened: a 500 would tell the
-// user their profile did not change when it did, and restoring the policy files
-// here would leave config.json naming a profile whose rules are no longer on disk —
-// strictly worse than a stale MCP file. So the log names the consequence instead:
-// the previous rung's auto-approve posture stands until the next render, which is
-// the next MCP config mutation or the boot reconcile after a restart.
-//
-// Its own method rather than three lines inline because handlePolicyProfile sits at
-// its cognitive-complexity ceiling, the same reason rulesInForce below is one.
+// renderMCPForProfile re-renders KAS's MCP config so the rung's auto-approve posture
+// reaches running chats. Call it AFTER the profile is persisted: the renderer reads
+// the setting. A failure logs and the selection still answers 200, because the
+// profile HAS changed; the old posture stands until the next MCP change or restart.
 func (s *Server) renderMCPForProfile(ctx context.Context, profileID string) {
 	if s.mcpRender == nil {
 		return
@@ -205,37 +102,6 @@ func (s *Server) renderMCPForProfile(ctx context.Context, profileID string) {
 		slog.Error("security profile: re-rendering the MCP config failed; the previous profile's auto-approve posture stands until the next MCP change or restart",
 			"profile", profileID, "error", err)
 	}
-}
-
-// rulesInForce is what the OUTGOING profile currently contributes to policy, as
-// writable file rules — the two halves this file's header calls "what is in
-// force", and what a seed materialises into the user file. A hand-authored rule is
-// deliberately not among them and does not need to be: the merge preserves what it
-// does not own. Its own function rather than inline in the handler because the
-// handler sits at its cognitive-complexity ceiling and this is the one sub-step of
-// a selection that stands on its own.
-//
-// TWO halves and both have to be copied. The outgoing rung's OWN file rules are
-// the half presetRulesInForce cannot see: it filters to SESSION scope, and these
-// live in the user file. Without them the removal pass inside SetProfileRules
-// takes `sandbox_network: allow` out and nothing puts it back — the one capability
-// `all` does not cover, and the whole reason RelaxCapabilities has two members —
-// so Customize would hand the user a Custom posture narrower than the profile it
-// claims to have materialised. Upsert dedups by Signature, so an overlap with a
-// session-scope rule of the same shape costs nothing.
-//
-// activeProfile only ever answers with an id the ladder holds, so that lookup
-// cannot miss; the boolean is checked rather than discarded because a later change
-// to that fallback must not silently drop this half again.
-func (s *Server) rulesInForce(ctx context.Context) ([]policyfile.Rule, error) {
-	seeded, err := s.presetRulesInForce(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if outgoing, found := policyfile.ProfileFor(s.activeProfile(ctx)); found {
-		seeded = append(seeded, outgoing.FileRules...)
-	}
-	return seeded, nil
 }
 
 // presetRulesInForce reads the rules the ACTIVE profile's presets contributed to
@@ -280,178 +146,84 @@ func (s *Server) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, err
 	return out, nil
 }
 
-// policySnapshot is both writable files' rules as they stood before a selection,
-// keyed by scope.
-//
-// atomicfile gives per-FILE atomicity and a selection writes three files, so
-// cross-file atomicity is not something the library can provide and this endpoint
-// does not invent one. A snapshot plus a compensating restore is the achievable
-// form of "the panel never disagrees with its own policy".
-type policySnapshot map[string][]policyfile.Rule
-
-// writableScopes are the two scopes a selection touches, in the order it touches
-// them: user first, because that is the scope carrying the posture. One list for
-// the snapshot, the write and the restore, so the three cannot disagree about
-// which files are in play.
-func writableScopes() []string {
-	return []string{policyfile.ScopeUser, policyfile.ScopeWorkspace}
-}
-
-// snapshotPolicyFiles reads both writable files so a failed selection can be put
-// back. A parse error propagates: the caller refuses the request rather than
-// overwriting a file marotte could not understand.
-//
-// The middle result is the scope whose file could not be read, and it is
-// meaningful ONLY when the error is non-nil. It exists because this reads TWO
-// files where policyRuleAdd's identically-worded refusal reads one, so the message
-// left the user to guess which of them to go and fix. The cause and the resolved
-// PATH go to the log instead of the response: Load fails for a FIFO at the name,
-// an oversize file, a symlink at the final component, a multi-document YAML and
-// ordinary I/O, none of which the user can tell apart from the message, and a
-// filesystem path in an HTTP error body is a detail no client has a use for.
-func snapshotPolicyFiles(roots policyfile.Roots) (policySnapshot, string, error) {
-	snap := make(policySnapshot, len(writableScopes()))
-	for _, scope := range writableScopes() {
-		path, err := policyfile.PathFor(scope, roots)
-		if err != nil {
-			slog.Warn("a writable permissions file path could not be resolved, so the profile selection was refused",
-				"scope", scope, "error", err)
-			return nil, scope, err
-		}
-		f, err := policyfile.Load(path)
-		if err != nil {
-			slog.Warn("a writable permissions file could not be read, so the profile selection was refused",
-				"scope", scope, "path", path, "error", err)
-			return nil, scope, err
-		}
-		snap[scope] = f.Rules
+// seedCustom is Customize: it copies the preset rules in force into the USER file as
+// Custom's starting table, then persists custom. The read comes first so a profile
+// that cannot be seen is left in place rather than landing on an empty Custom, which
+// drops every grant. A persist failure puts the file back, so a copied grant never
+// outlives the profile it described. It writes the response on every failure.
+func (s *Server) seedCustom(w http.ResponseWriter, r *http.Request) bool {
+	seeded, err := s.presetRulesInForce(r.Context())
+	if err != nil {
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpreply.ErrorJSON("the current profile's rules could not be read to copy them, so nothing was changed"))
+		return false
 	}
-	return snap, "", nil
-}
-
-// writeProfilePolicy makes userRules the profile's contribution to the user file
-// and takes the profile mechanism's rules out of the workspace one, preserving
-// every hand-authored rule in both.
-//
-// Only the user file receives content, and that is the fix rather than a
-// simplification. What was MEASURED (2026-08-26, kiro-cli 2.19.2, two states of
-// this container) is that a USER-scope file rule is evaluated for a session KAS
-// created itself — which every workflow step's session is — while a session preset
-// is not: 145 step-session asks with `rules: []`, zero with one user-scope shell
-// allow. Do NOT restate that as "user scope is the only scope KAS evaluates for
-// such a session": workspace scope was never measured, and KAS loads both files
-// process-wide and resolves by restrictiveness regardless of scope, so a
-// hand-authored workspace allow may well reach a step session too. The reason the
-// workspace file receives no CONTENT is one-writer-of-one-posture, not
-// unreachability — a second file granting the same posture is a second thing to
-// keep in step with the picker, and it buys no precision when one instance is one
-// HOME and one workspace root. It still gets the removal half, so a rule the
-// previous release's relaxation wrote there cannot outlive the profile that
-// replaced it, and a leftover workspace rule cannot widen or narrow the posture
-// with nothing on screen saying so.
-//
-// Every error names the SCOPE it came from, because two files go through this loop
-// and the caller's 400 and 500 both reach the log without one otherwise — the
-// sibling snapshotPolicyFiles logs scope and path on each of its failure branches,
-// and an asymmetry inside one file is how the next reader learns the wrong lesson.
-// Wrapped with %w rather than %v: policyfile.ErrTooManyRules must stay reachable
-// through errors.Is, which failProfileSelection tests for to answer 400 instead of
-// 500, and TestPolicyProfile_AFullUserFileIsTheCallersProblem pins that status.
-func writeProfilePolicy(ctx context.Context, roots policyfile.Roots, userRules []policyfile.Rule) error {
-	for _, scope := range writableScopes() {
-		path, err := policyfile.PathFor(scope, roots)
-		if err != nil {
-			return fmt.Errorf("resolve the %s-scope permissions file: %w", scope, err)
-		}
-		f, err := policyfile.Load(path)
-		if err != nil {
-			return fmt.Errorf("read the %s-scope permissions file: %w", scope, err)
-		}
-		var incoming []policyfile.Rule
-		if scope == policyfile.ScopeUser {
-			incoming = userRules
-		}
-		if err := f.SetProfileRules(incoming); err != nil {
-			return fmt.Errorf("apply the profile to the %s-scope permissions file: %w", scope, err)
-		}
-		if err := policyfile.Save(ctx, path, f); err != nil {
-			return fmt.Errorf("write the %s-scope permissions file: %w", scope, err)
-		}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		httpreply.InternalError(w, err)
+		return false
 	}
-	return nil
-}
-
-// restorePolicyFiles puts both writable files back to snap, compensating a
-// selection that failed after writing them.
-//
-// Its own failure is logged with the path, because at that point the file grants a
-// posture config.json does not name and only the operator can reconcile the two;
-// the caller then answers a 500 naming both files rather than the generic one.
-func restorePolicyFiles(ctx context.Context, roots policyfile.Roots, snap policySnapshot) error {
-	for _, scope := range writableScopes() {
-		path, err := policyfile.PathFor(scope, roots)
-		if err != nil {
-			return err
-		}
-		if err := policyfile.Save(ctx, path, &policyfile.File{Rules: snap[scope]}); err != nil {
-			slog.Error("could not restore a permissions file after a failed profile selection",
-				"scope", scope, "path", path, "error", err)
-			return err
-		}
+	path, err := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: s.workDir})
+	if err != nil {
+		httpreply.InternalError(w, err)
+		return false
 	}
-	return nil
-}
-
-// failProfileSelection answers a selection that failed after the files were
-// touched: put them back, then report. Never a 200 — the files and config.json
-// would then name different postures, which is exactly what the write order and
-// this restore exist to prevent.
-//
-// A restore that itself FAILS is the one path that leaves a file granting a
-// posture config.json does not name, so it broadcasts permissions_changed on the
-// way out. That is not decoration: the Active-policy table reads the live policy,
-// so the refetch is what makes it show the rules that are actually in force and
-// visibly disagree with the picker beside it, instead of that disagreement waiting
-// on KAS's own reload notification to happen to arrive.
-//
-// ErrTooManyRules is separated from the generic 500 because it is not marotte
-// failing: it is the user's own file at the 512-rule cap, a condition they caused
-// and can fix, and the sibling rule endpoint already answers 400 for it. Folding
-// it into an internal error made every profile selection report a bug in marotte
-// for a full file.
-//
-// The sentinel is tested BEFORE the restore because on that path there is nothing
-// to put back. SetProfileRules is the only source of ErrTooManyRules here and it
-// returns before writeProfilePolicy reaches its Save, so both files are still
-// exactly as the caller left them; restoring anyway rewrote them with byte-
-// identical content, which bumps mtime, wakes KAS's watcher and produces a
-// policy-changed notification for a request that changed nothing. It also let the
-// 500 below claim "the previous rules could not be put back" for a case with
-// nothing to put back. Reordering these two blocks reintroduces both.
-func (s *Server) failProfileSelection(ctx context.Context, w http.ResponseWriter, roots policyfile.Roots,
-	snap policySnapshot, cause error,
-) {
-	if errors.Is(cause, policyfile.ErrTooManyRules) {
-		httpreply.BadRequest(w,
-			"the permissions file is at its rule limit; remove a rule from the table and try again")
-		return
-	}
-	if err := restorePolicyFiles(ctx, roots, snap); err != nil {
-		s.agent.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
-			marotte.PermissionsChangedPayload{Status: "failed"}))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
-			"the profile could not be applied and the previous rules could not be put back; "+
-				"inspect permissions.yaml under ~/.kiro/settings and ~/.kiro/workspace-roots",
+	_, statErr := os.Stat(path)
+	existed := statErr == nil
+	f, err := policyfile.Load(path)
+	if err != nil {
+		slog.Warn("the user permissions file could not be read, so Customize was refused", "path", path, "error", err)
+		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(
+			"the user permissions file could not be read, so nothing was changed. Fix the file by hand and try again",
 		))
-		return
+		return false
 	}
-	httpreply.InternalError(w, cause)
+	before := slices.Clone(f.Rules)
+	for i := range seeded {
+		if _, uErr := f.Upsert(&seeded[i]); uErr != nil {
+			httpreply.BadRequest(w,
+				"the user permissions file is at its rule limit. Remove a rule from the table and try again")
+			return false
+		}
+	}
+	// Durable from the first write on: a disconnect between the two files must not
+	// cancel the persist or the compensation and strand the copied grants.
+	ctx := durable.Context(r.Context())
+	if err := policyfile.Save(ctx, path, f); err != nil {
+		httpreply.InternalError(w, err)
+		return false
+	}
+	if err := s.persistProfile(ctx, policyfile.ProfileCustom); err != nil {
+		if rErr := restoreUserFile(ctx, path, existed, before); rErr != nil {
+			slog.Error("could not restore the user permissions file after a failed Customize",
+				"path", path, "error", rErr)
+			s.agent.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
+				marotte.PermissionsChangedPayload{Status: "failed"}))
+			webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(
+				"the profile could not be applied and the copied rules could not be taken back out. "+
+					"Check permissions.yaml under ~/.kiro/settings",
+			))
+			return false
+		}
+		httpreply.InternalError(w, err)
+		return false
+	}
+	return true
+}
+
+func restoreUserFile(ctx context.Context, path string, existed bool, before []policyfile.Rule) error {
+	if !existed {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return policyfile.Save(ctx, path, &policyfile.File{Rules: before})
 }
 
 // persistProfile writes the profile id into config.json, merging rather than
 // replacing so it cannot drop a sibling preference. A document that cannot be
-// read refuses the write, and the caller then restores the policy files it has
-// already rewritten.
+// read refuses the write.
 func (s *Server) persistProfile(ctx context.Context, id string) error {
 	raw, err := json.Marshal(id)
 	if err != nil {

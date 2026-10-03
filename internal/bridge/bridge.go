@@ -157,7 +157,10 @@ type Bridge struct {
 	mu               sync.Mutex
 	writeMu          sync.Mutex
 	pendingMu        sync.Mutex
-	enableHooks      bool
+	// readMu decides whether a read loop or Stop closes notifCh (claimNotifClose).
+	readMu       sync.Mutex
+	notifClaimed bool
+	enableHooks  bool
 	// secretStorage gates the `_meta.kiro.secretStorage` declaration in initialize.
 	secretStorage bool
 	// toolSearch and knowledge gate the `settings.toolSearch` row and the two

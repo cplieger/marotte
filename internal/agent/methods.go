@@ -149,14 +149,10 @@ const (
 	methodKiroWorkflowPause = "_kiro/workflow/pause"
 
 	// Resets a finished run's FAILED and aborted nodes plus their ancestors. Legal
-	// only from `failed`/`aborted`, and it requires the run in the calling
-	// process's live registry, so a re-hosting caller must `load` first. Resetting
-	// ZERO nodes is a success reply.
+	// only from `failed`/`aborted`. A run the calling process has not registered is
+	// loaded from disk by KAS itself (KAS 0.66.22), so no `workflow/load` precedes
+	// it. Resetting ZERO nodes is a success reply.
 	methodKiroWorkflowRetry = "_kiro/workflow/retry"
-
-	// Registers an existing run from disk into the calling process; the
-	// prerequisite for every verb reaching a run it has never seen.
-	methodKiroWorkflowLoad = "_kiro/workflow/load"
 
 	// Mutates a live run. marotte narrows it to a step-status update (mark a step
 	// completed/failed so the run advances); `replace_remaining` is a plan editor

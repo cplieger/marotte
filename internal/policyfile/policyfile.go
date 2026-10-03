@@ -115,15 +115,8 @@ const (
 // this set (see the view handler, which unions in every capability the rules KAS
 // reports already use). What is left is a suggestion list: being incomplete now
 // costs a dropdown entry, not a write.
-// capAll is KAS's umbrella alias meaning every capability it resolves through
-// META_CAPABILITIES. One spelling because three separate sets name it — the
-// suggestion list, the umbrella set and the relaxation's own first element — and
-// a divergence between them would make the relaxation claim a grant it never
-// wrote.
-const capAll = "all"
-
 var suggestedCapabilities = map[string]struct{}{
-	capAll: {}, "builtin": {}, "filesystem": {},
+	"all": {}, "builtin": {}, "filesystem": {},
 	"fs_read": {}, "fs_write": {}, "shell": {},
 	"web_fetch": {}, "web_search": {}, "mcp": {},
 	"subagent": {}, "skill": {}, "power": {},
@@ -136,96 +129,6 @@ var suggestedCapabilities = map[string]struct{}{
 func Capabilities() []string {
 	out := make([]string, 0, len(suggestedCapabilities))
 	for c := range suggestedCapabilities {
-		out = append(out, c)
-	}
-	slices.Sort(out)
-	return out
-}
-
-// umbrellas are the capability names that stand for a SET rather than for one
-// thing. KAS resolves each against META_CAPABILITIES; marotte only needs to know
-// which names are aliases, not what two of them expand to.
-var umbrellas = map[string]struct{}{
-	capAll: {}, "builtin": {}, "filesystem": {},
-}
-
-// allMembers is what KAS's `all` alias expands to, snapshotted off the 2.19.1
-// bundle (META_CAPABILITIES.all = BUILTIN + mcp) and verified on the live engine
-// through explain.
-//
-// It is here for ONE purpose: to compute what `all` does NOT cover, so the
-// relaxation can name the remainder explicitly. It validates nothing, so going
-// stale cannot fail closed — a member KAS adds later is simply also covered by
-// the `all` rule the switch writes, and a member KAS removes would leave that
-// capability asking, which TestRelaxCapabilities_ExactSet turns into a visible
-// decision rather than a silent gap.
-//
-// sandbox_network is absent on purpose: it is a real capability in KAS's
-// VALID_CAPABILITIES and genuinely not a member of `all`, which is the whole
-// reason the relaxation cannot be the single word "all".
-var allMembers = map[string]struct{}{
-	"fs_read": {}, "fs_write": {}, "shell": {},
-	"web_fetch": {}, "web_search": {}, "mcp": {},
-	"subagent": {}, "skill": {}, "power": {},
-	"context": {}, "diagnostics": {},
-}
-
-// RelaxCapabilities returns the capability set the LOOSEST security profile
-// writes broad allow rules for, sorted. It is the broadest grant a permissions
-// file can express.
-//
-// Its consumer is [Profile.FileRules] on the unrestricted rung, reached through
-// relaxRules in profile.go — not the Settings -> Permissions relaxation CHECKBOX
-// this doc used to name, which the profile picker replaced. The switch is gone;
-// the set outlived it because the question it answers ("what is the broadest
-// grant") is the same one the loosest rung has to answer.
-//
-// DERIVED as `all` plus every non-umbrella capability that alias does not cover,
-// which today is exactly {all, sandbox_network}, rather than listed — so it
-// cannot name a capability the vocabulary snapshot does not have, and a change to
-// either input is a visible decision.
-//
-// TWO rules rather than one, because `all` is an alias over a fixed table and not
-// a wildcard: writing only `all` would leave sandbox_network asking while the
-// rung's own description says it never asks. Two rather than the twelve discrete
-// names for the opposite reason: eleven of them would be pure noise in the Active
-// policy list, and keeping the alias is what makes a capability a later KAS
-// version adds to BUILTIN allowed with no marotte release, which is what someone
-// who picked this rung meant.
-//
-// It writes one bare rule per member, which is what makes it exactly reversible:
-// Signature keys on capability + effect + globs, so removing the same bare rules
-// removes precisely what was written and leaves any hand-authored narrower rule
-// for the same capability untouched. [File.SetProfileRules] is what depends on
-// that.
-//
-// ONE set, not a ladder of its own. An "everyday" variant that withheld `power`
-// was built and then removed (2026-08-25) on the user's call: two postures whose
-// only difference is one capability cost a reveal rule, a cascade rule and a
-// second status line, and the narrow shape stays expressible by hand as
-// `all: allow` plus `power: ask` — which works cleanly, since deny > ask > allow
-// and `power` has none of shell's parse-driven ask paths. What this grants that a
-// user should know about is therefore stated in the picker's copy rather than
-// withheld by omission: a power runs its author's code at the user's privilege,
-// and Cedar is the only guard, because a power's manifest carries no permissions
-// field.
-//
-// What it CANNOT do, because effects resolve by restrictiveness and a hardcoded
-// scope sits above every file: the kiro scope still denies writes under
-// ~/.kiro/settings, .kiro/settings and ~/.kiro/workspace-roots, and still asks
-// before writing .git/**, .kiro/agents/**, .kiro/hooks/**, .vscode/** and
-// **/*.code-workspace. Measured on the live engine with an all=allow rule in
-// force. The picker's description says so; copy that implied otherwise would be
-// the same defect as a control that silently does nothing.
-func RelaxCapabilities() []string {
-	out := []string{capAll}
-	for c := range suggestedCapabilities {
-		if _, alias := umbrellas[c]; alias {
-			continue
-		}
-		if _, covered := allMembers[c]; covered {
-			continue
-		}
 		out = append(out, c)
 	}
 	slices.Sort(out)
@@ -473,16 +376,10 @@ func sanitizePatterns(in []string) ([]string, error) {
 		seen[p] = struct{}{}
 		out = append(out, p)
 	}
-	// A list that emptied itself is not the same input as an ABSENT list, and the
-	// difference inverts the rule's meaning. Rule.Match is `yaml:"match,omitempty"`,
-	// so a nil Match serialises with no `match` key at all — which SetProfileRules
-	// and relaxRules both document as the broadest grant a permissions file can
-	// express (KAS reads a match-less rule as `**`). So `match:[""]`, whose literal
-	// reading is "matches nothing", would be written as "matches everything".
-	//
-	// The condition is len(in) > 0, never len(out) == 0: an absent list is the
-	// legitimate way to write that broad grant (relaxRules constructs a bare rule
-	// with Match nil) and must stay writable.
+	// A list that emptied itself is not an ABSENT list: Rule.Match is omitempty, and a
+	// match-less rule is the broadest grant (KAS reads it as `**`), so `match:[""]`
+	// would be written as "matches everything". Keyed on len(in), so a bare rule
+	// stays writable.
 	if len(in) > 0 && len(out) == 0 {
 		return nil, ErrPatternEmpty
 	}
@@ -551,73 +448,6 @@ func (f *File) Upsert(r *Rule) (bool, error) {
 	}
 	f.Rules = append(f.Rules, *r)
 	return true, nil
-}
-
-// SetProfileRules makes rules the security profile's whole contribution to this
-// file, preserving every rule the profile mechanism did not write.
-//
-// It drops every rule whose Signature appears in [ProfileOwnedRules] and then
-// Upserts each of rules, so a selection replaces the OUTGOING profile's rules and
-// nothing else. Returns ErrTooManyRules when the file is already at the cap.
-// SetProfileRules(nil) is the remove-and-add-nothing case, which is what a
-// restrictive rung and the workspace file both want, and it can never return
-// ErrTooManyRules because nothing is Upserted.
-//
-// ALL OR NOTHING: an error leaves f exactly as it was found. The removal pass runs
-// before the Upsert loop, so building in place would leave an ErrTooManyRules
-// holding a PARTIAL posture — the outgoing profile's rules gone and only part of
-// the incoming set added — and a caller that Saved after the error would persist
-// it. Staging into a scratch value and assigning once is two lines and removes
-// that; nothing has to know the failure order to use this safely.
-//
-// MERGE by ownership, and Signature is the only ownership handle there is: a rule
-// carries no provenance in the file, and no RPC reports which writer produced one.
-// The alternative was the blanket overwrite this replaced, which destroyed a
-// hand-authored rule on every profile click without saying so.
-//
-// Three consequences, all deliberate:
-//
-//   - A hand-authored rule that happens to be byte-identical to one a profile
-//     writes — `capability: all, effect: allow` with no globs — is indistinguishable
-//     from the profile's own and IS removed. Removal is the right side to err on for
-//     that exact shape, because "the profile is the policy" is what the panel
-//     promises about it.
-//   - A NARROWER rule for the same capability survives (`all: allow` with a match
-//     list is a different Signature), which is the property
-//     TestRelaxCapabilities_RulesAreExactlyReversible already pins.
-//   - A surviving deny or ask still beats the profile's allow, because effects
-//     resolve by restrictiveness. So a hand-authored rule can outlive a profile
-//     change and grant more or less than the profile's name suggests; the panel copy
-//     says so, and the Active policy table lists it.
-func (f *File) SetProfileRules(rules []Rule) error {
-	owned := ProfileOwnedRules()
-	sigs := make(map[string]struct{}, len(owned))
-	for i := range owned {
-		sigs[Signature(&owned[i])] = struct{}{}
-	}
-	// A fresh slice rather than an in-place filter: reusing the backing array would
-	// leave a removed rule's Match and Exclude reachable through the tail of a
-	// security policy this file is about to hand to Save. One pass rather than
-	// repeated Remove calls, so a hand-edited file holding the same rule twice loses
-	// both copies — leaving one would leave the outgoing profile's grant in force.
-	kept := make([]Rule, 0, len(f.Rules))
-	for i := range f.Rules {
-		if _, isProfileRule := sigs[Signature(&f.Rules[i])]; isProfileRule {
-			continue
-		}
-		kept = append(kept, f.Rules[i])
-	}
-	// Upsert through a scratch File rather than f, so a refusal partway through the
-	// loop cannot leave the receiver holding half a posture. kept is already a fresh
-	// allocation, so the append aliases nothing f still points at.
-	staged := File{Rules: kept}
-	for i := range rules {
-		if _, err := staged.Upsert(&rules[i]); err != nil {
-			return err
-		}
-	}
-	f.Rules = staged.Rules
-	return nil
 }
 
 // Remove deletes the first rule matching r by Signature. Returns true if a

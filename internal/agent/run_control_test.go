@@ -121,7 +121,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb == nil {
+		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb == nil {
 			t.Fatal("hostBridge = nil for a run parented on a chat with a live bridge; " +
 				"every pause and resume on an agent-launched run would answer 409")
 		}
@@ -134,7 +134,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb == nil {
+		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb == nil {
 			t.Fatal("hostBridge = nil for a run parented on a session the chat has since retired")
 		}
 	})
@@ -143,7 +143,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		// Seeded but never opened. Resolving the chat id here and calling on nothing
 		// would panic; answering with the utility bridge would run the run toolless.
 		h, _ := setup(t, "sess_owned", "sess_owned")
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
+		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
 			t.Error("hostBridge returned a bridge for a chat that has none")
 		}
 	})
@@ -153,7 +153,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
+		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
 			t.Error("hostBridge matched a parentless run to a chat; an empty parent session " +
 				"must never match a chat's chain")
 		}
@@ -164,7 +164,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
+		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
 			t.Error("hostBridge matched a run parented on a session this chat does not own")
 		}
 	})
@@ -197,7 +197,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 		if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 			t.Fatalf("OpenBridge: %v", err)
 		}
-		if sb := h.runs.hostBridge(t.Context(), "wf_1"); sb != nil {
+		if _, sb := h.runs.hostBridgeChat(t.Context(), "wf_1"); sb != nil {
 			t.Error("hostBridge returned a bridge while the run inventory was unreadable")
 		}
 	})

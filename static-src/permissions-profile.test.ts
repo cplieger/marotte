@@ -88,7 +88,6 @@ function view(profile: string, rules: PolicyRule[] = []): PolicyView {
     available: true,
     writable_scopes: ["user", "workspace"],
     capabilities: ["fs_read", "fs_write", "shell"],
-    relax_capabilities: [],
     profiles: LADDER,
     profile,
     rules,
@@ -445,31 +444,11 @@ describe("the table outside Custom", () => {
   });
 });
 
-/** Does this description CLAIM step coverage, as opposed to denying it? Both forms
- *  name a workflow step, so the denial is what separates them. */
-function claimsStepCoverage(desc: string): boolean {
-  return /workflow step/i.test(desc) && !/not covered/i.test(desc);
-}
-
 describe("what a profile description promises", () => {
-  // The one SERVER fact these strings duplicate — which rung writes file rules —
-  // asserted from the client's side, because the wire carries id and presets only.
-  // Exactly one PRESET rung may claim step coverage, and it is the rung the picker
-  // itself calls loosest: the ladder's second-to-last position, which is where
-  // renderProfiles reads it from too. Custom is excluded because it holds no
-  // presets at all, so it claims coverage on a different mechanism.
-  it("claims step coverage on exactly one preset rung, the loosest", async () => {
-    await mount(view("guarded"));
-    const presets = LADDER.filter((p) => p.id !== "custom").map((p) => p.id);
-    const claiming = presets.filter((id) => claimsStepCoverage(descriptionFor(id)));
-    expect(claiming).toEqual([LADDER[LADDER.length - 2]?.id]);
-  });
-
   // read-only grants read-all, which is fs_read OUTSIDE the workspace. "Reads any
   // file on this machine" covers that in general terms and never names the
   // consequence, so a reader picking a rung called read-only was not told it exposes
-  // credentials. internal/policyfile/profile.go names it at the grant and states
-  // that the picker's description is where a reader learns it.
+  // credentials.
   it("names read-only's real escalation rather than describing it in general terms", async () => {
     await mount(view("guarded"));
     const desc = descriptionFor("read-only");
@@ -478,88 +457,35 @@ describe("what a profile description promises", () => {
     expect(desc).toContain("no prompt");
   });
 
-  // A profile has two halves and they reach different places. Its presets ride the
-  // session door and cover only the sessions marotte opens; Kiro creates a workflow
-  // step's session itself, so a preset never arrives there. Only the loosest rung
-  // also writes a durable user-scope rule, which is the half a step session reads —
-  // so it is the only one that may claim step coverage, and it has to disclose the
-  // durability it is buying that coverage with.
-  it("names the durable user-scope rule and the step coverage on the loosest rung", async () => {
-    await mount(view("guarded"));
-    const desc = descriptionFor("unrestricted");
-    expect(desc).toContain("durable");
-    expect(desc).toContain("user permissions file");
-    expect(desc).toContain("workflow steps");
-    expect(desc).toContain("every Kiro client on this machine");
-  });
-
-  // The inverse of the same defect: a rung that quietly under-delivers. Each of
-  // these sends presets and writes no file rule, so a workflow step gets none of
-  // what the description promises unless the description says so.
-  //
-  // And it has to say it WITHOUT overstating the restriction, which is the trap the
-  // first draft fell into ("a workflow step still asks even for that", where "that"
-  // was reading a file). An uncovered step is not bare: it carries the bundled
-  // agent's policy, which allows workspace reads and a few read-only commands, so a
-  // description claiming a step asks for reads sends a reader up the ladder for
-  // coverage they already have.
-  it("says a workflow step is uncovered and what it still gets, on every rung that writes no rule", async () => {
-    await mount(view("guarded"));
-    for (const id of ["guarded", "read-only", "trusted"]) {
-      const desc = descriptionFor(id);
-      expect(desc).toContain("A workflow step is not covered");
-      expect(desc).toContain("reads this workspace");
-      expect(desc).toContain("asks before writing a file");
-    }
-  });
-
-  // Subagents are covered on EVERY rung, so no rung may claim them: invoke_sub_agent
-  // creates no session, so a subagent rides its parent's session id and inherits
-  // whatever the parent was seeded with. Only step sessions were ever uncovered, and
-  // billing the loosest rung as the only one covering subagents pushed a reader to
-  // it on a false premise — the same class of defect as the posture claim this
-  // change exists to fix.
-  it("claims subagent coverage on no rung, because every rung already has it", async () => {
+  // Every rung reaches workflow steps and subagents, a named rung through its presets
+  // and Custom through its files, and no rung writes a rule to disk, so a description
+  // that singled one rung out for either would push a reader up the ladder on a false
+  // premise.
+  it("claims no step or subagent coverage and no durable rule on any rung", async () => {
     await mount(view("guarded"));
     for (const id of ["guarded", "read-only", "trusted", "unrestricted", "custom"]) {
-      expect(descriptionFor(id)).not.toContain("subagent");
+      const desc = descriptionFor(id);
+      expect(desc).not.toMatch(/workflow step/i);
+      expect(desc).not.toContain("subagent");
+      expect(desc).not.toContain("durable");
+      expect(desc).not.toContain("permissions file");
     }
-  });
-
-  it("claims no durable rule on any rung that does not write one", async () => {
-    await mount(view("guarded"));
-    for (const id of ["guarded", "read-only", "trusted", "custom"]) {
-      expect(descriptionFor(id)).not.toContain("durable");
-    }
-  });
-
-  // Custom's own rules DO reach a step session — it sends no preset, so the files
-  // are its whole policy — but only the scope that was MEASURED may be claimed. The
-  // rule-add form defaults to workspace scope, and workspace reachability for a
-  // session Kiro created itself is an inference rather than a measurement, so a flat
-  // "they apply to workflow steps too" promised coverage for the scope a user's
-  // rules land in by default on the strength of that inference.
-  it("scopes Custom's step claim to the scope that was measured", async () => {
-    await mount(view("guarded"));
-    const desc = descriptionFor("custom");
-    expect(desc).toContain("workflow steps");
-    expect(desc).toContain("user scope");
   });
 });
 
 describe("the Security profile section hint", () => {
-  it("states the durable rule, the step coverage and that the user's rules are kept", () => {
-    const hint = securityProfileHint();
-    expect(hint).toContain("durable rule to your user permissions file");
-    expect(hint).toContain("workflow steps");
-    expect(hint).toContain("never deleted");
+  it("says the user's own rules are kept beside the profile", () => {
+    expect(securityProfileHint()).toContain("keep applying alongside the profile");
   });
 
-  // The hint used to say a selection "replaces the rules below with its own", which
-  // the merge made false in the direction that matters: a reader would expect their
-  // own rules to be gone and they are not.
-  it("no longer claims a selection replaces the rules below", () => {
-    expect(securityProfileHint()).not.toContain("replaces the rules below");
+  // A selection writes no rule, so a hint describing a durable write, a replacement
+  // of the table or a step-coverage difference would describe a mechanism that is gone.
+  it("claims no write, no replacement and no step-coverage difference", () => {
+    const hint = securityProfileHint();
+    expect(hint).not.toContain("durable");
+    expect(hint).not.toContain("permissions file");
+    expect(hint).not.toMatch(/workflow step/i);
+    expect(hint).not.toContain("replaces the rules below");
   });
 });
 

@@ -38,8 +38,9 @@ func (bm *bridgeManager) get(chatID marotte.ChatID) *sharedBridge {
 }
 
 // orInsert returns the existing bridge for chatID, or creates one via the factory,
-// inserts it, and returns (newBridge, false). OpenBridge's singleflight is what lets
-// the new bridge be returned unlocked.
+// inserts it, and returns (newBridge, false). The caller's own serialization
+// (OpenBridge's spawnSF, loadRunCarrier's run host lock) is what lets the new bridge
+// be returned unlocked.
 func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()
 	if existing, ok := bm.bridges[chatID]; ok {
@@ -53,21 +54,18 @@ func (bm *bridgeManager) orInsert(chatID marotte.ChatID) (sb *sharedBridge, exis
 	return sb, false
 }
 
-// insert registers an ALREADY-STARTED bridge under chatID: a run bridge's map key is
-// its workflow id, which only `workflow/new`'s reply knows. Replacing an entry would
-// orphan a live process, so insert refuses and answers the RESIDENT one, letting a
-// loser reach the winner's bridge rather than holding one no map holds. See rehost.
-func (bm *bridgeManager) insert(
-	chatID marotte.ChatID, sb *sharedBridge,
-) (resident *sharedBridge, inserted bool) {
+// insert registers an ALREADY-STARTED bridge under chatID: a launched run bridge's map
+// key is its workflow id, which only `workflow/new`'s reply knows. Replacing an entry
+// would orphan a live process, so insert refuses and reports false.
+func (bm *bridgeManager) insert(chatID marotte.ChatID, sb *sharedBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
-	if held, exists := bm.bridges[chatID]; exists {
-		return held, false
+	if _, exists := bm.bridges[chatID]; exists {
+		return false
 	}
 	bm.bridges[chatID] = sb
 	slog.Info("bridge registered", "chat_id", chatID)
-	return sb, true
+	return true
 }
 
 // remove deletes chatID from the map and returns the removed bridge, or nil. Does NOT

@@ -303,20 +303,15 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 }
 
 // TestBridgeManagerInsert_RefusesReplacement pins that inserting over a live
-// entry fails rather than orphaning the process the entry holds, AND that the
-// refusal hands back the incumbent — rehost's loser has no other way to reach it.
+// entry fails rather than orphaning the process the entry holds.
 func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	h, _, br := newTestHub()
 	first := &sharedBridge{bridge: br, state: bridgeIdle}
-	if _, inserted := h.bridge.mgr.insert("run:wf_1", first); !inserted {
+	if !h.bridge.mgr.insert("run:wf_1", first) {
 		t.Fatal("first insert refused")
 	}
-	resident, inserted := h.bridge.mgr.insert("run:wf_1", &sharedBridge{bridge: br, state: bridgeIdle})
-	if inserted {
+	if h.bridge.mgr.insert("run:wf_1", &sharedBridge{bridge: br, state: bridgeIdle}) {
 		t.Error("second insert over a live entry succeeded")
-	}
-	if resident != first {
-		t.Error("the refused insert did not answer the incumbent entry")
 	}
 	if got := h.bridge.mgr.get("run:wf_1"); got != first {
 		t.Error("the original entry did not survive the refused insert")
@@ -341,7 +336,7 @@ func TestRetry_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	// which is what every fixture in this file stages: no launching chat to thread,
 	// so the verb finds its host through the run's own bridge. A chat-parented run
 	// threading its real parent is run_retry_test.go's subject.
-	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err != nil {
+	if _, err := h.runs.Retry(t.Context(), id, &runAffordance{}); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 	if got := h.runs.endReason(id); got != "" {
@@ -368,7 +363,7 @@ func TestRetry_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	h.runs.claimTermination(id)
 	h.runs.recordEnd(id, runEndOverran)
 
-	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err == nil {
+	if _, err := h.runs.Retry(t.Context(), id, &runAffordance{}); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if got := h.runs.endReason(id); got != runEndOverran {
@@ -393,7 +388,8 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
 		// The run list is where a re-hosted run's recipe comes from.
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted"}]}`,
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
+				`"parentSessionId":"` + testLaunchSession + `"}]}`,
 		),
 	}
 	held := make(chan struct{})
@@ -403,8 +399,8 @@ func TestRetry_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testin
 	// recipe off KAS's run list, so a hand-built stand-in would keep this green after
 	// the thread broke and the lease went back to being nameless.
 	aff := h.runs.affordance(t.Context(), id, "aborted")
-	if aff.Recipe != "nightly" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.Recipe)
+	if aff.origin.recipe != "nightly" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
 	}
 
 	done := make(chan error, 1)
@@ -463,7 +459,8 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowRetry: json.RawMessage(`{}`),
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted"}]}`,
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
+				`"parentSessionId":"` + testLaunchSession + `"}]}`,
 		),
 	}
 	// Deliberately NO bridge in the manager: that is what makes this the re-hosting
@@ -473,8 +470,8 @@ func TestRetry_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 	}
 	// The gate's own answer, which is what carries the name to the lease.
 	aff := h.runs.affordance(t.Context(), id, "aborted")
-	if aff.Recipe != "nightly" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.Recipe)
+	if aff.origin.recipe != "nightly" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want nightly off KAS's run list", aff.origin.recipe)
 	}
 
 	if _, err := h.runs.Retry(t.Context(), id, aff); err != nil {
@@ -504,12 +501,17 @@ func TestRetry_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) 
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowList: json.RawMessage(
-			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted"}]}`,
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","workflowName":"nightly","status":"aborted",` +
+				`"parentSessionId":"` + testLaunchSession + `"}]}`,
 		),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	if _, err := h.runs.Retry(t.Context(), id, runAffordance{}); err == nil {
+	_, err := h.runs.Retry(t.Context(), id, h.runs.affordance(t.Context(), id, "aborted"))
+	if !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		t.Fatalf("Setup: the retry never reached KAS (err %v); calls were %v", err, br.callLog())
+	}
+	if err == nil {
 		t.Fatal("a refused retry reported success")
 	}
 	if _, ok := h.runs.lease(id); ok {

@@ -30,6 +30,12 @@ func (s *Store) List(ctx context.Context) []marotte.ChatHeader {
 	return headers
 }
 
+// ListComplete is List plus whether it holds every chat that exists: false when an
+// existing chat file could not be read.
+func (s *Store) ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool) {
+	return s.listWithCompleteness(ctx)
+}
+
 // ListStamped is List plus the `chats` stamp the REST envelope carries. The scan
 // takes no lock, so the version is read FIRST: a Mutate landing during the scan
 // puts its header in the list and its bump outside the stamp, and the client then

@@ -49,7 +49,14 @@ type Runs struct {
 	// carriers counts which run carriers a verb is holding right now — the one fact
 	// the kept-carrier bound cannot infer from a timeout (run_host.go).
 	carriers carrierUse
-	bounds   runBoundsState
+	// positions serializes a run's positional step-status write with its heal's
+	// resume: `_kiro/workflow/update` targets a step positionally, so a resume landing
+	// between SetStepStatus's read and its write would mark another step.
+	positions runLocks
+	// hosts serializes, per run, finding or starting the carrier a verb runs on with
+	// entering it (acquireHost), so one unhosted run is loaded once.
+	hosts  runLocks
+	bounds runBoundsState
 	// cancelRetryBase is the first wait of a refused cancel's re-attempt ladder
 	// (retryTermination). A field rather than a package var because the ladder runs on
 	// untracked timers that can outlive whoever set the value. Set once, before the
@@ -59,10 +66,12 @@ type Runs struct {
 }
 
 // runChatReader is the chat store as the run surface uses it: a chat's session
-// chain, and (via List) the chat owning a given run's parent session.
+// chain, and (via ListComplete) the chat owning a given run's parent session.
 type runChatReader interface {
 	Get(ctx context.Context, id marotte.ChatID) (*marotte.Chat, bool)
-	List(ctx context.Context) []marotte.ChatHeader
+	// ListComplete also reports whether every existing chat was read, which is what
+	// lets a run's launching session be proved parentless.
+	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
 }
 
 // recordScheduleOutcome puts a run's ending on the launching SCHEDULE's row. It is

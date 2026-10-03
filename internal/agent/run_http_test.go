@@ -585,7 +585,8 @@ func TestHandleAnswer(t *testing.T) {
 	})
 
 	t.Run("an unknown ask is a 409 naming the situation", func(t *testing.T) {
-		h, _, _ := newTestHub()
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
 		rec := httptest.NewRecorder()
 		h.runRoutes.handleAnswer(rec, answerReq(t, "wf_1", "a1", "the main branch"))
 		if rec.Code != http.StatusConflict {
@@ -601,7 +602,7 @@ func TestHandleAnswer(t *testing.T) {
 	t.Run("a run between steps is a 409 that says to retry", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+			methodKiroWorkflowList:    parentlessRunList("wf_1"),
 			methodKiroWorkflowInspect: inspectReply(t, "wf_1", "running", ""),
 		}
 		h.runs.asks.Add(&runAsk{
@@ -628,7 +629,8 @@ func TestHandleAnswer(t *testing.T) {
 	// A park drops the process, so "nothing hosts this run" is the ordinary state of
 	// every run an ask is raised on: refusing there makes the card unanswerable.
 	t.Run("a run with no bridge is re-hosted and answers 200", func(t *testing.T) {
-		h, _, _ := newTestHub()
+		h, _, br := newTestHub()
+		br.callResults = map[string]json.RawMessage{methodKiroWorkflowList: parentlessRunList("wf_1")}
 		h.runs.asks.Add(&runAsk{
 			chatID: "run:wf_1",
 			payload: marotte.RunInputNeededPayload{
@@ -647,7 +649,7 @@ func TestHandleAnswer(t *testing.T) {
 	t.Run("a failed spawn answers a generic 500", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callResults = map[string]json.RawMessage{
-			methodKiroWorkflowList: json.RawMessage(`{"runs":[]}`),
+			methodKiroWorkflowList: parentlessRunList("wf_1"),
 		}
 		if _, err := h.runs.listRaw(t.Context()); err != nil {
 			t.Fatalf("Setup: warming the utility session: %s", err)
@@ -705,9 +707,8 @@ func pauseReq(id string) *http.Request {
 // answer 409 carrying KAS's reason, not a generic failure — otherwise the reason reaches
 // the log alone.
 //
-// The run is HOSTED deliberately. affordanceOf refuses pause outright for a run nothing
-// in this process holds (hostedOnlyVerbs), so an unhosted pause never reaches
-// controlHandler at all; see the note on the deleted subtests below.
+// The run is HOSTED, so the pause reaches the process that holds it and the refusal
+// is KAS's own.
 func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callResults = map[string]json.RawMessage{
@@ -739,27 +740,6 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 			rec.Body.String())
 	}
 }
-
-// Two subtests were DELETED here in the merge that brought the run-affordance gate in
-// beside the re-host, and the deletion is behaviour-affecting rather than cosmetic.
-//
-// They drove handlePause on a running run this process does not hold, and asserted that
-// the re-host is attempted and that a spawn fault answers 500 rather than echoing KAS's
-// session-door text. `hostedOnlyVerbs` now refuses pause and resume for exactly that
-// population BEFORE a process is started, so neither path is reachable through this
-// route: the reader gets the affordance's own sentence, which names opening the
-// launching chat as the remedy, and no ~300 MB process tree is spawned to be refused.
-//
-// The premise the deleted tests rested on is the one the two branches disagreed about —
-// whether KAS rehydrates a run from disk. `rehost`'s doc says it does; `hostedOnlyVerbs`
-// says pause reaches `registry.require`, which does not. The deleted tests' own fixture
-// armed KAS to answer "Workflow 'wf_1' is not registered" after the re-host, which
-// corroborates the second reading, so the gate is kept and the spawn is not attempted.
-//
-// What is NOT covered any more: controlHandler's arm ORDER, that `errRunHostStart` is
-// tested before writeControlErr's *RPCError type test. That branch is still live for a
-// verb that can reach a re-host, and TestHandleStepStatus_SplitsAValidationRefusalFrom
-// AStartFailure below covers the same split on the step-status route.
 
 // TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure: the re-host put a
 // SERVER fault on a path that had only ever carried a caller's mistake, so
@@ -837,6 +817,7 @@ func stepTargetInspect(t *testing.T, workflowID, nodeID string) json.RawMessage 
 func addressableStep(t *testing.T, h *Runtime, br *fakeBridge, workflowID, nodeID string) {
 	t.Helper()
 	br.setCallResult(methodKiroWorkflowInspect, stepTargetInspect(t, workflowID, nodeID))
+	br.setCallResult(methodKiroWorkflowList, parentlessRunList(workflowID))
 	if _, err := h.runs.rawInspect(t.Context(), workflowID); err != nil {
 		t.Fatalf("Setup: warming the utility session: %s", err)
 	}
@@ -887,6 +868,8 @@ func TestSetStepStatus(t *testing.T) {
 		// An AGENT-launched run has no bridge of its own — KAS parents it on the calling
 		// chat's session — so resolving that chat's bridge avoids a needless re-host.
 		cs.seed(t, "c1", func(c *marotte.Chat) { c.RecordSession("sess_parent") })
+		// A live chat bridge holds the chat's current session.
+		br.sessionID = "sess_parent"
 		h.bridge.mgr.insert("c1", &sharedBridge{bridge: br, state: bridgeIdle})
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowList: json.RawMessage(

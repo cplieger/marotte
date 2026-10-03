@@ -221,8 +221,7 @@ func TestSanitizeRule_RefusesAnAllEmptyPatternList(t *testing.T) {
 // TestSanitizeRule_BareRuleStaysWritable is the other half of the condition, and
 // it is the assertion that fails if the refusal is ever keyed on the OUTPUT being
 // empty instead of on the caller having supplied something. An ABSENT match list
-// is legitimate: relaxRules constructs exactly this shape for the loosest
-// profile rung, and it is the intended broad grant.
+// is legitimate: it is the broadest grant a rule can state.
 func TestSanitizeRule_BareRuleStaysWritable(t *testing.T) {
 	got, err := SanitizeRule(&Rule{Capability: "all", Effect: EffectAllow})
 	if err != nil {
@@ -230,13 +229,6 @@ func TestSanitizeRule_BareRuleStaysWritable(t *testing.T) {
 	}
 	if got.Match != nil || got.Exclude != nil {
 		t.Errorf("sanitized = %+v, want nil Match and nil Exclude", got)
-	}
-	// The in-repo producer of bare rules, so the assertion tracks the real caller
-	// rather than a hand-built shape that resembles it.
-	for _, r := range relaxRules() {
-		if _, err := SanitizeRule(&r); err != nil {
-			t.Errorf("SanitizeRule(%+v) = %v, want it written", r, err)
-		}
 	}
 }
 
