@@ -35,6 +35,20 @@ describe("rewriteServedImageSrc", () => {
     }
   });
 
+  // A markdown destination is a URL, so `%20` is a space in the filename.
+  it("decodes a percent-escaped path once", () => {
+    expect(rewriteServedImageSrc("/workspace/my%20shot.png")).toBe(
+      "/api/file/download?path=%2Fworkspace%2Fmy%20shot.png",
+    );
+  });
+
+  // `/workspace/../config/x` passes the prefix test and names a `/config` file.
+  it("leaves a path with a dot segment untouched", () => {
+    for (const p of ["/workspace/../config/x.png", "/workspace/%2e%2e/config/x.png"]) {
+      expect(rewriteServedImageSrc(p)).toBe(p);
+    }
+  });
+
   it("leaves remote and relative sources untouched", () => {
     for (const p of [
       "https://example.com/a.png",

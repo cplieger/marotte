@@ -248,7 +248,8 @@ func writeAttachments(b *strings.Builder, uploadDir, workDir string) {
 	b.WriteString("clear an image a tool returned. A `.txt` where the user expected an image means the ")
 	b.WriteString("clipboard carried text, not pixels\n")
 	b.WriteString("- To SHOW the user an image you produced, write it as markdown: ")
-	b.WriteString("`![label](" + workDir + "/out/shot.png)`. That renders inline; a bare path is prose. The ")
+	b.WriteString("`![label](" + workDir + "/out/shot.png)`. That renders inline, where a bare absolute path ")
+	b.WriteString("outside backticks becomes a button that opens the file instead. The ")
 	b.WriteString("path must be absolute and under `" + workDir + "/` or `" + uploadDir + "/` (never ")
 	b.WriteString("`/config/`), and png/jpg/jpeg/gif/webp/svg/avif/ico/bmp all paint. Audio ")
 	b.WriteString("(mp3/wav/ogg/m4a/flac/aac/opus) in the same position gets a player, any other file a ")
@@ -266,7 +267,11 @@ func writeAttachments(b *strings.Builder, uploadDir, workDir string) {
 	b.WriteString("--base=./`) and link the built `index.html`. The tab reloads when files in the folder ")
 	b.WriteString("change. Build responsive pages with `<meta name=\"viewport\" content=\"width=device-width\">`; ")
 	b.WriteString("add `<meta name=\"marotte-preview\" content=\"phone\">` (or `tablet`, `desktop`, or a ")
-	b.WriteString("pixel width such as `1280`) only when the demo should be judged at that size\n\n")
+	b.WriteString("pixel width such as `1280`) only when the demo should be judged at that size\n")
+	b.WriteString("- To LINK any other file, write `[label](" + workDir + "/path/file.ext#L<line>)` with its ")
+	b.WriteString("plain absolute path under `" + workDir + "/` or `" + uploadDir + "/` (the `#L<line>` is ")
+	b.WriteString("optional): a click opens the file in a marotte editor tab, an image in the image viewer, so ")
+	b.WriteString("link files that way rather than as a `/file/...` or `/api/...` URL\n\n")
 }
 
 func writeLimitations(b *strings.Builder) {

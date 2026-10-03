@@ -1,9 +1,10 @@
 // Table-driven tests for smd-renderer.ts TOKEN_TAG_MAP coverage via
 // add_token_dom verifying all token types produce correct elements.
 
-import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { domRenderer } from "./smd-renderer.js";
-import { createMarkdownStream } from "./markdown.js";
+import { createMarkdownStream, renderMarkdownInto } from "./markdown.js";
+import { initLinkifyCallbacks } from "./linkify.js";
 import {
   PARAGRAPH,
   HEADING_1,
@@ -556,5 +557,207 @@ describe("smd-renderer table sections", () => {
     const cells = [...container.querySelectorAll("th")];
     expect(cells[0]?.getAttribute("style")).toBe("text-align:center");
     expect(cells[1]?.hasAttribute("style")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A markdown link to a served file opens it in a marotte tab, not a browser tab.
+// ---------------------------------------------------------------------------
+
+describe("markdown links to served files", () => {
+  // Re-injected per test, as a plain closure: `mockReset: true` would reset a
+  // vi.fn() implementation between tests.
+  const opened: [string, number | undefined][] = [];
+  // Whether the link's own handler cancelled each click, read by an ancestor
+  // listener that then cancels it anyway so the test page never navigates.
+  const taken: boolean[] = [];
+  const hosts: HTMLElement[] = [];
+
+  beforeEach(() => {
+    opened.length = 0;
+    taken.length = 0;
+    initLinkifyCallbacks({
+      open: (path, line) => {
+        opened.push([path, line]);
+      },
+    });
+  });
+
+  afterEach(() => {
+    for (const h of hosts.splice(0)) {
+      h.remove();
+    }
+  });
+
+  function mount(): HTMLElement {
+    const host = document.createElement("div");
+    host.addEventListener("click", (e) => {
+      taken.push(e.defaultPrevented);
+      e.preventDefault();
+    });
+    document.body.append(host);
+    hosts.push(host);
+    return host;
+  }
+
+  function render(md: string): HTMLAnchorElement {
+    const host = mount();
+    renderMarkdownInto(host, md);
+    const link = host.querySelector("a");
+    expect(link, `no anchor rendered for ${md}`).not.toBeNull();
+    return link as HTMLAnchorElement;
+  }
+
+  function click(link: HTMLAnchorElement, init: MouseEventInit = {}): void {
+    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+  }
+
+  it("points a workspace link at the editor route", () => {
+    const link = render("[spec](/workspace/docs/spec.md)");
+    expect(link.getAttribute("href")).toBe("/file//workspace/docs/spec.md");
+  });
+
+  it("drops the new-tab target and rel from a workspace link", () => {
+    const link = render("[spec](/workspace/docs/spec.md)");
+    expect(link.hasAttribute("target")).toBe(false);
+    expect(link.hasAttribute("rel")).toBe(false);
+  });
+
+  it("points an uploads link at the editor route", () => {
+    const link = render("[notes](/uploads/notes.txt)");
+    expect(link.getAttribute("href")).toBe("/file//uploads/notes.txt");
+  });
+
+  it("carries a #L line into the editor route", () => {
+    const link = render("[app](/workspace/src/app.ts#L42)");
+    expect(link.getAttribute("href")).toBe("/file//workspace/src/app.ts#L42");
+  });
+
+  it("opens the file through the injected opener on a plain click", () => {
+    const link = render("[spec](/workspace/docs/spec.md)");
+    click(link);
+    expect(opened).toEqual([["/workspace/docs/spec.md", undefined]]);
+    expect(taken).toEqual([true]);
+  });
+
+  it("opens the file at its #L line on a plain click", () => {
+    const link = render("[app](/workspace/src/app.ts#L42)");
+    click(link);
+    expect(opened).toEqual([["/workspace/src/app.ts", 42]]);
+  });
+
+  it("opens a linked image through the same opener", () => {
+    const link = render("[shot](/workspace/out/shot.png)");
+    click(link);
+    expect(opened).toEqual([["/workspace/out/shot.png", undefined]]);
+  });
+
+  it.each([
+    ["ctrlKey", { ctrlKey: true }],
+    ["metaKey", { metaKey: true }],
+    ["shiftKey", { shiftKey: true }],
+    ["altKey", { altKey: true }],
+    ["a middle button", { button: 1 }],
+  ] as const)("leaves a click with %s to the browser", (_label, init) => {
+    const link = render("[spec](/workspace/docs/spec.md)");
+    // The premise: this is a file link, so only the modifier keeps it unhandled.
+    expect(link.getAttribute("href")).toBe("/file//workspace/docs/spec.md");
+    click(link, init);
+    expect(opened).toEqual([]);
+    expect(taken).toEqual([false]);
+  });
+
+  it("keeps an external link in a new browser tab", () => {
+    const link = render("[site](https://example.com/a)");
+    expect(link.getAttribute("href")).toBe("https://example.com/a");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener");
+    click(link);
+    expect(opened).toEqual([]);
+    expect(taken).toEqual([false]);
+  });
+
+  it.each(["/config/mcp.json", "/workspace/../config/mcp.json", "/uploads/./../config/x.json"])(
+    "never rewrites %s",
+    (dest) => {
+      const link = render(`[x](${dest})`);
+      expect(link.getAttribute("href")).toBe(dest);
+      expect(link.getAttribute("target")).toBe("_blank");
+    },
+  );
+
+  // A query belongs to a URL and a trailing slash names a directory, so neither
+  // is a file the editor can open.
+  it.each(["/workspace/a.md?download=1", "/workspace/marotte/", "/uploads/"])(
+    "leaves %s to the browser",
+    (dest) => {
+      const link = render(`[x](${dest})`);
+      expect(link.getAttribute("href")).toBe(dest);
+      expect(link.getAttribute("target")).toBe("_blank");
+    },
+  );
+
+  it("leaves a dot segment to the browser", () => {
+    const link = render("[a](/workspace/./a.md)");
+    expect(link.getAttribute("href")).toBe("/workspace/./a.md");
+    expect(link.getAttribute("target")).toBe("_blank");
+  });
+
+  // The editor route has no heading anchors, so the file at its top is the
+  // nearest destination; the plain link would land on a chat.
+  it.each(["#install", "#L0", "#L12tail", "#L9007199254740992"])(
+    "opens the file at its top for the fragment %s",
+    (fragment) => {
+      const link = render(`[a](/workspace/a.md${fragment})`);
+      expect(link.getAttribute("href")).toBe("/file//workspace/a.md");
+      click(link);
+      expect(opened).toEqual([["/workspace/a.md", undefined]]);
+    },
+  );
+
+  it("carries the largest exact line number", () => {
+    const link = render("[a](/workspace/a.md#L9007199254740991)");
+    expect(link.getAttribute("href")).toBe("/file//workspace/a.md#L9007199254740991");
+  });
+
+  it.each([":42", ":42:7"])("reads the %s suffix as line 42", (suffix) => {
+    const link = render(`[c](/workspace/src/a.ts${suffix})`);
+    expect(link.getAttribute("href")).toBe("/file//workspace/src/a.ts#L42");
+    click(link);
+    expect(opened).toEqual([["/workspace/src/a.ts", 42]]);
+  });
+
+  it("decodes a percent-escaped destination exactly once", () => {
+    const link = render("[notes](/workspace/my%20notes.md)");
+    expect(link.getAttribute("href")).toBe("/file//workspace/my%20notes.md");
+    click(link);
+    expect(opened).toEqual([["/workspace/my notes.md", undefined]]);
+  });
+
+  it("keeps a bare percent sign as part of the filename", () => {
+    const link = render("[p](/workspace/100%.md)");
+    expect(link.getAttribute("href")).toBe("/file//workspace/100%25.md");
+    click(link);
+    expect(opened).toEqual([["/workspace/100%.md", undefined]]);
+  });
+
+  it("rewrites a destination that streams in across deltas", () => {
+    const host = mount();
+    const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
+    stream.writeDelta("see [a](/work");
+    stream.writeDelta("space/a.md#L3) done");
+    stream.end();
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("/file//workspace/a.md#L3");
+  });
+
+  it("holds no nested file button in a streamed link labelled with a path", () => {
+    const host = mount();
+    const stream = createMarkdownStream(host, { flushIntervalMs: 0 });
+    // The blank line closes the paragraph, which is when linkification runs.
+    stream.writeDelta("see [docs/spec.md](/workspace/docs/spec.md) now\n\nnext");
+    stream.end();
+    const link = host.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("/file//workspace/docs/spec.md");
+    expect(link?.querySelector("button")).toBeNull();
   });
 });

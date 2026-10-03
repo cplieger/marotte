@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { isViewableImage } from "./file-extensions.js";
+import type { Route } from "./route-path.js";
 import { UPLOADS_DIR } from "./upload-policy.js";
 
 /** URL safety predicate for a rendered href/src: http, https and mailto are the
@@ -52,7 +53,7 @@ export function fileDownloadURL(path: string): string {
 const SERVED_ROOTS = ["/workspace/", `${UPLOADS_DIR}/`] as const;
 
 /** Is this an absolute path the byte route can serve? */
-export function isServedPath(path: string): boolean {
+function isServedPath(path: string): boolean {
   return SERVED_ROOTS.some((root) => path.startsWith(root));
 }
 
@@ -70,9 +71,69 @@ export function isServedPath(path: string): boolean {
  *  unaffected.
  */
 export function rewriteServedImageSrc(src: string): string {
-  const trimmed = src.trim();
-  if (!isServedPath(trimmed) || !isViewableImage(trimmed)) {
+  const path = servedPath(src);
+  if (path === null || !isViewableImage(path)) {
     return src;
   }
-  return fileDownloadURL(trimmed);
+  return fileDownloadURL(path);
+}
+
+/** The file path a markdown destination names under SERVED_ROOTS, else null.
+ *
+ *  Percent-decoded once, because the destination is a URL and every consumer
+ *  re-encodes. A `.` or `..` segment answers null: `/workspace/../config/x`
+ *  passes the prefix test and names a `/config` file, and `/workspace/./x`
+ *  names `/workspace/x` under a second editor tab. */
+export function servedPath(dest: string): string | null {
+  const raw = dest.trim();
+  let path = raw;
+  try {
+    path = decodeURIComponent(raw);
+  } catch {
+    // A bare `%` is a literal character of the filename.
+  }
+  if (!isServedPath(path) || path.split("/").some((seg) => seg === "." || seg === "..")) {
+    return null;
+  }
+  return path;
+}
+
+/** The editor route a link destination names, else null. A `#L<line>`
+ *  fragment, or a `:line[:col]` suffix when there is no fragment, becomes the
+ *  line; any other fragment is dropped, since the editor has no anchors.
+ *
+ *  A query or a trailing `/` answers null: neither names a file. */
+export function servedFileRoute(dest: string): Extract<Route, { kind: "file" }> | null {
+  const trimmed = dest.trim();
+  const hashAt = trimmed.indexOf("#");
+  const beforeHash = hashAt < 0 ? trimmed : trimmed.slice(0, hashAt);
+  const decoded = beforeHash.includes("?") ? null : servedPath(beforeHash);
+  if (decoded === null) {
+    return null;
+  }
+  let path = decoded;
+  let digits: string | undefined;
+  if (hashAt >= 0) {
+    digits = /^#L(\d+)$/.exec(trimmed.slice(hashAt))?.[1];
+  } else {
+    const suffix = /:(\d+)(?::\d+)?$/.exec(decoded);
+    if (suffix !== null) {
+      path = decoded.slice(0, suffix.index);
+      digits = suffix[1];
+    }
+  }
+  if (path.endsWith("/")) {
+    return null;
+  }
+  const line = lineNumber(digits);
+  return line === undefined ? { kind: "file", path } : { kind: "file", path, line };
+}
+
+/** A positive line that `Number` holds exactly, else undefined. */
+function lineNumber(digits: string | undefined): number | undefined {
+  if (digits === undefined) {
+    return undefined;
+  }
+  const n = Number(digits);
+  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
 }

@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // Inline file-path linkification: `src/foo.ts:42` in rendered PROSE becomes a
-// button that opens the editor at that line. SKIP_TAGS is matched against a text
-// node's immediate parent, not its ancestors, so text wrapped in an element
-// inside a <pre> escapes it — a shape neither prose caller produces. <a>/<button>
-// skip because a control inside a control is broken either way.
+// button that opens the editor at that line. A text node with any SKIP_TAGS
+// ancestor is skipped, not only one whose parent matches, because the streaming
+// renderer wraps a link's label in a per-chunk span. <a>/<button> skip because a
+// control inside a control is broken either way.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -31,7 +31,7 @@ const PATH_TEST_RX = new RegExp(PATH_PATTERN);
 // Global version for replacePaths exec loop.
 const PATH_EXEC_RX = new RegExp(PATH_PATTERN, "g");
 
-const SKIP_TAGS = new Set(["CODE", "PRE", "A", "BUTTON"]);
+const SKIP_TAGS = "code, pre, a, button";
 
 /** Open handler, injected — the same pattern `initAttachmentPillCallbacks` uses for
  *  this exact function, and for the same reason: `openAtLine` reaches
@@ -47,14 +47,22 @@ export function initLinkifyCallbacks(cbs: { open: (path: string, line?: number) 
   _open = cbs.open;
 }
 
+/** Open `path` in the editor when `a` takes a plain primary click. A modified or
+ *  non-primary click keeps the browser default, which follows the anchor's href. */
+export function bindFileLink(a: HTMLAnchorElement, path: string, line?: number): void {
+  a.addEventListener("click", (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    _open(path, line);
+  });
+}
+
 export function linkifyPaths(root: HTMLElement): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
-      const parent = n.parentElement;
-      if (parent === null) {
-        return NodeFilter.FILTER_REJECT;
-      }
-      if (SKIP_TAGS.has(parent.tagName)) {
+      if (n.parentElement?.closest(SKIP_TAGS) !== null) {
         return NodeFilter.FILTER_REJECT;
       }
       return PATH_TEST_RX.test(n.nodeValue ?? "")

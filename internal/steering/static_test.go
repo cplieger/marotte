@@ -225,6 +225,21 @@ func TestWriteAttachments_UsesTheUploadDirConstant(t *testing.T) {
 	}
 }
 
+func TestWriteAttachments_TellsHowToLinkAFile(t *testing.T) {
+	var b strings.Builder
+	writeAttachments(&b, "/u", "/w")
+	out := b.String()
+	for _, want := range []string{
+		"`[label](/w/path/file.ext#L<line>)`",
+		"opens the file in a marotte editor tab",
+		"a bare absolute path outside backticks becomes a button that opens the file",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeAttachments output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestWriteAttachments_StatesTheCaps(t *testing.T) {
 	var b strings.Builder
 	writeAttachments(&b, "/u", "/w")

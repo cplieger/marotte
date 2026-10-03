@@ -56,6 +56,16 @@ describe("mediaElementFor", () => {
     expect(a?.getAttribute("src")).toBe("/api/file/download?path=%2Fuploads%2Fclip.mp3");
   });
 
+  it("decodes a percent-escaped path once", () => {
+    const a = mediaElementFor("/workspace/my%20clip.mp3", "");
+    expect(a?.getAttribute("src")).toBe("/api/file/download?path=%2Fworkspace%2Fmy%20clip.mp3");
+    expect(a?.textContent).toBe("my clip.mp3");
+  });
+
+  it("leaves a path with a dot segment to the <img> path", () => {
+    expect(mediaElementFor("/workspace/../config/x.zip", "")).toBeNull();
+  });
+
   it("gives anything else a download affordance", () => {
     const link = mediaElementFor("/workspace/out/report.zip", "the report");
     expect(link?.tagName).toBe("A");

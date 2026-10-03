@@ -178,6 +178,15 @@ describe("linkifyPaths: skip zones", () => {
     expect(links(root)).toHaveLength(0);
   });
 
+  // A streamed link wraps its label in a per-chunk span, so the text's parent is
+  // that span and the anchor sits one level above it.
+  it("leaves a path wrapped in a span inside an <a> untouched", () => {
+    const root = document.createElement("div");
+    root.innerHTML = `<a href="#"><span data-vk-chunk-enter="">src/foo.ts</span></a>`;
+    linkifyPaths(root);
+    expect(links(root)).toHaveLength(0);
+  });
+
   it("leaves a path inside a <button> untouched", () => {
     const root = document.createElement("div");
     root.innerHTML = `<button>src/foo.ts</button>`;
