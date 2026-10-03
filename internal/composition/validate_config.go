@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // validateConfig performs fail-fast checks on the configuration so

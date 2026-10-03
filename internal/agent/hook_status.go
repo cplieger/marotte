@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 	"github.com/cplieger/marotte/internal/workspace"
 )
 

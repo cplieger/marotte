@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 func writeConfig(t *testing.T, dir, body string) {

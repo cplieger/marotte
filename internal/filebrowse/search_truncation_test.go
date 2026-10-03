@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // This file pins ONE rule in both directions: a part of the tree the search meant

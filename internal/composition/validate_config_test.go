@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // TestCheckDirWritable covers the probe's verdicts and the property the

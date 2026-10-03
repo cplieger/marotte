@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 // newWithin runs New on its own goroutine and fails if it has not returned

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/atomicfile/v4"
 )
 
 func TestReadBytes_MissingFile(t *testing.T) {
