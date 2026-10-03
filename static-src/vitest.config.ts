@@ -74,6 +74,16 @@ export default defineConfig({
   // build ships no worker, and the empty string is the adapter's "run the per-tab
   // stream" reading (static-src/globals.d.ts).
   define: { __SSE_WORKER_URL__: JSON.stringify("") },
+  // Vite discovers a dependency on the first test file that imports it and then
+  // reloads the browser mid-run, which fails whichever file is loading at that
+  // moment. Pre-bundling the terminal's entry points up front avoids the reload.
+  optimizeDeps: {
+    include: [
+      "@cplieger/web-terminal-ui",
+      "@cplieger/web-terminal-ui/features/mobile-toolbar",
+      "@cplieger/web-terminal-ui/presets/single",
+    ],
+  },
   resolve: {
     alias: [
       // Allow deep imports into @cplieger/actions internals for test reset
