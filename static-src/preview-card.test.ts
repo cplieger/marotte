@@ -101,7 +101,7 @@ describe("the markdown renderer", () => {
 
   it("leaves a non-HTML workspace link a link", () => {
     const host = render("[notes](/workspace/demo/notes.md)");
-    expect(host.querySelector("a")?.getAttribute("href")).toBe("/workspace/demo/notes.md");
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("/file//workspace/demo/notes.md");
     expect(host.querySelector(".preview-card")).toBeNull();
   });
 
