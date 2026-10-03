@@ -307,62 +307,20 @@ function profileLabel(id: string): string {
   }
 }
 
-/** What each profile actually grants, in the terms a reader decides on.
- *
- *  Read-only names where it reaches on purpose. It grants reads OUTSIDE the
- *  workspace, so an SSH key or a sibling project is readable without a prompt, and
- *  a description that said only "reads" would be hiding the part that matters.
- *
- *  Every named rung also says whether a WORKFLOW STEP is covered, because that is
- *  the one place the two halves of a profile differ. A profile's presets ride the
- *  session door and reach only the sessions marotte opens; Kiro creates a workflow
- *  step's session itself, so a preset never arrives there. Only the loosest rung
- *  also writes a durable rule to the user-scope permissions file, which is the half
- *  a step session does read — and that rule outlives a restart and applies to every
- *  Kiro client on this machine, so it is stated rather than implied.
- *
- *  An UNCOVERED step is not a step that asks for everything, and saying so was this
- *  text's own version of the defect it exists to fix. A step session carries the
- *  bundled agent's policy: workspace reads are allowed there (measured — 123
- *  read_file and 46 grep_search allows in the same logs that produced the 145 asks)
- *  plus a small read-only command allowlist. So what an uncovered step actually
- *  asks for is writes and anything outside that allowlist, and that is what the
- *  three restrictive rungs say.
- *
- *  CUSTOM does cover a step session, and its claim is narrowed to USER scope for
- *  the same reason the rest of this text was rewritten. Only user scope was
- *  measured against a step session; the rule-add form's scope select defaults to
- *  WORKSPACE, and while KAS loads both files process-wide and may well evaluate a
- *  workspace rule for a step too, "may well" is an inference. Promising coverage
- *  for the scope a user's rules land in by default, on an inference, would be this
- *  text's own defect pointed at the one rung the user authors by hand.
- *
- *  SUBAGENTS are covered on every rung, so no rung claims them: invoke_sub_agent
- *  creates no session, so a subagent rides its parent's session id and inherits
- *  whatever the parent was seeded with. Only STEP sessions were ever uncovered.
- *
- *  The step-coverage sentence duplicates a SERVER fact the wire does not carry —
- *  which rungs hold policyfile.Profile.FileRules, where marotte.SecurityProfile
- *  ships id and presets only. The Go side owns the guard:
- *  TestProfiles_OnlyTheLoosestRungWritesFileRules tables all five rungs against a
- *  wantRules boolean, so a rung gaining file rules turns it red, and that field's
- *  doc comment points back at this function. The two move together.
- *
- *  A description promising a posture the code does not deliver is the defect this
- *  text was rewritten to remove; one that under-delivers, or that oversells what a
- *  restrictive rung withholds, is the same defect pointed the other way. */
+/** What each profile grants, in the terms a reader decides on. Read-only names that
+ *  it reads OUTSIDE the workspace. */
 function profileDescription(id: string): string {
   switch (id) {
     case "guarded":
-      return "Reads files in this workspace. Everything else asks. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
+      return "Reads files in this workspace. Everything else asks.";
     case "read-only":
-      return "Also reads any file on this machine, runs read-only commands, and reaches the web. That includes files outside this workspace, so an SSH key or a sibling project is readable with no prompt. Every change asks. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
+      return "Also reads any file on this machine, runs read-only commands, and reaches the web. That includes files outside this workspace, so an SSH key or a sibling project is readable with no prompt. Every change asks.";
     case "trusted":
-      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean. A workflow step is not covered: it reads this workspace and asks before writing a file or running anything but a few read-only commands.";
+      return "Also edits files in this workspace and runs everyday development commands. Destructive and irreversible ones still ask, including git push, reset and clean.";
     case "unrestricted":
-      return "Never asks, including before installing a power, and the only preset profile that also covers workflow steps. It writes a durable allow rule to your user permissions file, so it survives a restart and applies to every Kiro client on this machine until you pick another profile. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
+      return "Never asks, including before installing a power. Kiro still protects its own settings and still asks before writing .git, .kiro/agents and .kiro/hooks.";
     case CUSTOM_PROFILE:
-      return "Your own rules, edited in the table below. Nothing is granted that you do not add, and a rule you add at user scope covers workflow steps too.";
+      return "Your own rules, edited in the table below. Nothing is granted that you do not add.";
     default:
       return "";
   }
@@ -492,22 +450,10 @@ class NativePolicyController {
 
   // --- The security profile --------------------------------------------------
   //
-  // The profile is the policy. Selecting one writes that profile's own rules into
-  // the user permissions file server-side and takes the previous profile's back
-  // out, so the table below describes what is in force rather than competing with
-  // it, and outside Custom the table is read-only for that reason: with a profile
-  // in charge, a hand-edit would be a second writer of one posture and the first
-  // thing to disagree with the picker.
-  //
-  // It MERGES rather than replaces: a rule the user authored is not the profile
-  // mechanism's to delete, so it survives the switch and keeps applying. That is
-  // what the leaving-Custom confirm now warns about — a surviving grant, not a
-  // deletion.
-  //
-  // Two doors into Custom and they differ in where the table starts. Customize
-  // materialises the profile in force as a baseline to tweak; picking Custom from
-  // the list adds nothing and leaves whatever is already there. Both go through one
-  // endpoint, distinguished by `seed`.
+  // A selection writes no rule, so the user's own rules survive it. Outside Custom
+  // the table is read-only, or a hand-edit would be a second posture beside the
+  // picker's. Customize copies the presets in force into the table; picking Custom
+  // from the list copies nothing.
 
   /** Render the picker. One radio per profile, its own description under the label,
    *  because what separates two of them is a sentence rather than a word.
@@ -604,14 +550,8 @@ class NativePolicyController {
     }
   }
 
-  /** Select a profile. The server merges rather than replaces, so the rules the
-   *  user authored SURVIVE the switch — and the confirm says that, because a grant
-   *  outliving the posture change that was supposed to narrow it is the surprise
-   *  this screen can produce.
-   *
-   *  Reverting the radio on cancel is not enough on its own — the paint comes from
-   *  the server either way — but it stops the picker showing a selection that never
-   *  happened for the duration of the round trip. */
+  /** Select a profile. The leaving-Custom confirm says the user's own rules SURVIVE,
+   *  because a grant outliving a narrowing is the surprise this screen can produce. */
   private async selectProfile(id: string): Promise<void> {
     if (id === this.activeProfile) {
       return;
@@ -685,14 +625,9 @@ class NativePolicyController {
     }
   }
 
-  /** Make every control that can START a selection inert, radios included, for the
-   *  duration of one write.
-   *
-   *  Two overlapping selections are not bounded by the server: each snapshots both
-   *  writable policy files before writing, so the second's snapshot can hold the
-   *  first's rules and a failure then restores the wrong profile's rules under a
-   *  config.json naming the other one. Re-queried on release rather than captured,
-   *  so a radio the intervening load() mounted is left enabled too. */
+  /** Make every control that can START a selection inert for one write: Customize
+   *  snapshots the user file first, so an overlapping one could restore the wrong
+   *  rules. Re-queried on release, so a radio load() mounted meanwhile is enabled. */
   private setPickerInert(inert: boolean): void {
     const btn = maybeEl<HTMLButtonElement>("security-profile-customize");
     if (btn !== null) {

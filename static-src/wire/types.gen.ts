@@ -1616,14 +1616,9 @@ export interface PolicyRuleCore {
  * PolicyView is the GET /api/permissions response: the native policy rule
  * set plus the metadata the editor needs. Available is false when no bridge
  * could answer (the view falls back to reading the editable files directly).
- * Capabilities and RelaxCapabilities answer different questions and neither is a
- * filter on the other. Capabilities is what the rule-adder's dropdown OFFERS —
- * the suggested set unioned with every capability the live rules already use, so
- * it can learn a name marotte shipped without. RelaxCapabilities is the fixed
- * membership of the LOOSEST security profile's file rules, derived in policyfile
- * and deliberately not discovered: it decides what picking that rung grants, so it
- * may not grow from whatever happens to be in the returned rules. (It named the
- * Settings -> Permissions relaxation switch until the profile picker replaced it.)
+ * Capabilities is what the rule-adder's dropdown OFFERS: the suggested set
+ * unioned with every capability the live rules already use, so it can learn a
+ * name marotte shipped without.
  */
 export interface PolicyView {
   /**
@@ -1635,12 +1630,11 @@ export interface PolicyView {
   rules: PolicyRule[];
   writable_scopes: string[];
   capabilities: string[];
-  relax_capabilities: string[];
   /**
  * Profiles is the security-posture ladder in picker order, loosest last, and
  * Profile above is the one in force. Both travel here rather than being derived
- * client-side for the same reason RelaxCapabilities does: the ladder decides
- * what one click grants, so policyfile owns it and the client renders it.
+ * client-side: the ladder decides what one click grants, so policyfile owns it
+ * and the client renders it.
  * //
  * Order is part of the payload. A client that sorted these would put the
  * loosest option somewhere in the middle of a list a reader scans from

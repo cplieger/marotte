@@ -56,7 +56,6 @@ function view(rules: PolicyRule[], caps = ["fs_read", "fs_write", "shell"]): Pol
     available: true,
     writable_scopes: ["user", "workspace"],
     capabilities: caps,
-    relax_capabilities: [],
     // Custom, so the table is editable and its rows carry their controls.
     profiles: [
       { id: "guarded", presets: ["read-workspace"] },

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/marotte/internal/command"
@@ -46,6 +47,9 @@ type sharedBridge struct {
 	// checkpoint for a level that keeps moving back.
 	effortHealed bool
 	retire       bool
+	// runVerbs counts the run verbs that have ever held this carrier (carrierUse.enter),
+	// so a failed verb can tell a carrier it alone used from one another verb shares.
+	runVerbs atomic.Int32
 }
 
 // tryAcquireForPrompt attempts to transition from idle to prompting.

@@ -86,12 +86,9 @@ func TestPolicyProfile_AnUnwiredRendererIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestPolicyProfile_ARenderFailureStillAnswers200 pins the deliberate asymmetry
-// with failProfileSelection. By this point both policy files and config.json have
-// landed, so the selection HAS happened: a 500 would tell the user their profile
-// did not change when it did, and restoring the policy files here would leave
-// config.json naming a profile whose rules are no longer on disk. So the failure is
-// logged with its consequence and the selection is reported as what it is.
+// TestPolicyProfile_ARenderFailureStillAnswers200: by the render, config.json has
+// landed, so the selection HAS happened and a 500 would say it did not. The failure
+// is logged with its consequence and the selection is reported as what it is.
 func TestPolicyProfile_ARenderFailureStillAnswers200(t *testing.T) {
 	s, eng, reload, _, _ := profileFixture(t, nil)
 	render := &fakeMCPRender{configDir: s.configDir, err: errors.New("disk full")}

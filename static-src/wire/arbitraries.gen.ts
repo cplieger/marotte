@@ -1049,11 +1049,10 @@ const arbModel = fc.letrec<{
       rules: fc.array(tie("PolicyRule"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       writable_scopes: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       capabilities: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
-      relax_capabilities: fc.array(fc.string(), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       profiles: fc.array(tie("SecurityProfile"), { maxLength: 2, size: "small", depthIdentifier: "wiregen" }),
       available: fc.boolean(),
     },
-    { requiredKeys: ["profile", "rules", "writable_scopes", "capabilities", "relax_capabilities", "profiles", "available"] },
+    { requiredKeys: ["profile", "rules", "writable_scopes", "capabilities", "profiles", "available"] },
   ),
   PollResult: fc.record(
     {

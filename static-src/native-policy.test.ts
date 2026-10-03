@@ -89,7 +89,6 @@ const sampleView: PolicyView = {
   // Empty here on purpose: this fixture has no relaxation checkbox in its DOM,
   // so the switch is out of scope for these tests. permissions-relax.test.ts
   // owns it.
-  relax_capabilities: [],
   // The picker is out of scope here (no profile DOM in this fixture);
   // permissions-profile.test.ts owns it. Guarded so the table renders unlocked.
   profiles: [{ id: "guarded", presets: ["read-workspace"] }],

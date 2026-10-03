@@ -368,7 +368,7 @@ func (rr *runRoutes) handleControls(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, marotte.RunControlsResponse{
 		Verbs:        aff.Verbs,
 		Refused:      aff.Refused,
-		ParentChatID: string(aff.ParentChat),
+		ParentChatID: string(aff.origin.parent.chat),
 	})
 }
 
@@ -437,13 +437,17 @@ func (rr *runRoutes) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid step-status payload")
 		return
 	}
-	// Three arms: `errRunHostStart` is a failed SPAWN, so a 400 with its text would tell
-	// the reader they asked wrongly and hand them an internal path; `errStepStatusRefused`
-	// is every state-of-the-world refusal, at 409; everything else is a 400.
+	// `errRunHostStart` is a failed SPAWN, so a 400 with its text would tell the reader
+	// they asked wrongly and hand them an internal path; `errStepStatusRefused` and
+	// `errLaunchSessionUnavailable` are states of the run, at 409; everything else is a 400.
 	err := rr.runs.SetStepStatus(r.Context(), id, body.NodeID, body.Status)
 	switch {
 	case err == nil:
 		webhttp.Ok(w)
+	case errors.Is(err, errRunNotListed):
+		httpreply.NotFound(w, errRunNotListed.Error())
+	case errors.Is(err, errLaunchSessionUnavailable):
+		httpreply.Conflict(w, launchSessionUnavailableText)
 	case errors.Is(err, errRunHostStart):
 		slog.Warn("run step status: could not host the run", "workflow_id", logsafe.Field(id),
 			"node_id", logsafe.Field(body.NodeID), "error", err)
@@ -482,6 +486,10 @@ func (rr *runRoutes) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		// Also a state of the world, and the one refusal the reader can ACT on: the card
 		// is back, so 409 carries the retry sentence rather than a 400.
 		httpreply.Conflict(w, err.Error())
+	case errors.Is(err, errRunNotListed):
+		httpreply.NotFound(w, errRunNotListed.Error())
+	case errors.Is(err, errLaunchSessionUnavailable):
+		httpreply.Conflict(w, launchSessionUnavailableText)
 	case errors.Is(err, errRunHostStart):
 		// A failed spawn is this server's fault, so it must not read as the caller's.
 		slog.Warn("run answer: could not host the run", "workflow_id", logsafe.Field(id),
@@ -545,17 +553,17 @@ const verbDelete = "delete"
 // has one, and falls back to naming the status when the status alone is the reason.
 func (rr *runRoutes) permits(
 	w http.ResponseWriter, r *http.Request, verb, id string,
-) (runAffordance, bool) {
+) (*runAffordance, bool) {
 	status, err := rr.status(r.Context(), id)
 	if err != nil {
 		slog.Warn("run control: status read failed",
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New(verb+" failed"))
-		return runAffordance{}, false
+		return nil, false
 	}
 	if status == "" {
 		httpreply.NotFound(w, "run not found")
-		return runAffordance{}, false
+		return nil, false
 	}
 	aff := rr.runs.affordance(r.Context(), id, status)
 	if aff.permits(verb) {
@@ -576,10 +584,20 @@ func (rr *runRoutes) permits(
 // "internal error" while the actionable sentence went only to the container log.
 func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err error) {
 	switch {
-	case errors.Is(err, errRunNotHosted):
-		// A state of the world, not a fault.
-		slog.Info("run control unavailable: run not hosted here", "verb", verb, "workflow_id", logsafe.Field(id))
-		httpreply.Conflict(w, err.Error())
+	case errors.Is(err, errRunHostStart):
+		// FIRST: a re-host whose handshake KAS itself refused puts an *RPCError UNDER
+		// this sentinel, and the type test below would report this server's failed
+		// spawn as a state of the run.
+		slog.Warn("run control failed",
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
+		httpreply.InternalError(w, errors.New(verb+" failed"))
+	case errors.Is(err, errRunNotListed):
+		httpreply.NotFound(w, errRunNotListed.Error())
+	case errors.Is(err, errLaunchSessionUnavailable):
+		// A state of the run, not a fault.
+		slog.Info("run control unavailable: the run's launching session cannot be opened here",
+			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
+		httpreply.Conflict(w, launchSessionUnavailableText)
 	case errors.Is(err, errRetryEngineSlow):
 		slog.Warn("run control timed out starting an engine", "verb", verb, "workflow_id", logsafe.Field(id))
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
@@ -640,15 +658,6 @@ func (rr *runRoutes) controlHandler(w http.ResponseWriter, r *http.Request, verb
 		}
 	}
 	if err := verb.issue(rr.runs, r.Context(), id); err != nil {
-		// A START failure is tested FIRST: a re-host whose handshake KAS itself refused
-		// puts an *RPCError UNDER errRunHostStart, so writeControlErr's type test would
-		// report this server's failed spawn as a state of the run.
-		if errors.Is(err, errRunHostStart) {
-			slog.Warn("run control failed",
-				"verb", verb.name, "workflow_id", logsafe.Field(id), "error", err, "detail", rpcerr.Details(err))
-			httpreply.InternalError(w, errors.New(verb.name+" failed"))
-			return
-		}
 		rr.writeControlErr(w, verb.name, id, err)
 		return
 	}

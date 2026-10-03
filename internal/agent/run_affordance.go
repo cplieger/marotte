@@ -46,46 +46,37 @@ var runStatusVerbs = map[marotte.RunStatus][]string{
 	marotte.RunStatusCancelled: {},
 }
 
-// hostedOnlyVerbs need the process that holds the run's registry entry and cannot
-// re-host one: KAS's pause reaches `registry.require`, which throws for a run not
-// in the live in-memory registry and does not rehydrate from disk. Resume executes,
-// so the utility bridge is no carrier either — a text-only session denies every
-// permission request and errors every fs call. Retry is deliberately NOT here: it
-// loads the run into a fresh process first.
-var hostedOnlyVerbs = []string{verbPause, verbResume}
+// hostedOnlyVerbs need the process that holds the run's registry entry: KAS's pause
+// reaches `registry.require`, which throws for a run not in the live in-memory
+// registry. Resume and Retry are not here, because a verb that finds nothing holding
+// the run makes its launching session live first (acquireHost).
+var hostedOnlyVerbs = []string{verbPause}
 
 // runAffordance answers what may be done to one run.
 type runAffordance struct {
 	// Refused maps a verb this run does not offer to one sentence for the reader,
 	// and carries only a verb whose absence would otherwise be unexplained.
 	Refused map[string]string
-	// ParentChat is the chat whose agent launched the run, "" when parentless.
-	// Part of the answer rather than a second lookup: it is what the refusal
-	// sentences are ABOUT, and resolving it twice would pay for the run inventory
-	// twice.
-	ParentChat marotte.ChatID
-	// Recipe is the run's recipe name off KAS's inventory, "" when unknown. Retry
-	// needs it for the lease it re-arms, and it sits one field from the parent
-	// session on the same read. Not part of the wire answer.
-	Recipe string
+	// origin is the gate's read of where the run came from, which Retry routes on
+	// rather than reading again: two reads can disagree.
+	origin runOrigin
 	// Verbs are the offered controls, in the order a row presents them.
 	Verbs []string
 }
 
 // permits reports whether the run offers this verb.
-func (a runAffordance) permits(verb string) bool {
+func (a *runAffordance) permits(verb string) bool {
 	return slices.Contains(a.Verbs, verb)
 }
 
 // refusal is the sentence for a verb this run does not offer, or "" when the
 // affordance has nothing to add to the run's own status.
-func (a runAffordance) refusal(verb string) string {
+func (a *runAffordance) refusal(verb string) string {
 	return a.Refused[verb]
 }
 
 // runFacts is what an affordance is decided from: the status the caller read, the
-// recipe and parent session off KAS's run inventory, the chat owning that session
-// off the chat store, and hosting off the bridge map.
+// chat owning the run's parent session, and hosting off the bridge map.
 type runFacts struct {
 	// status is the run's own status, as `inspect` reports it.
 	status string
@@ -94,8 +85,6 @@ type runFacts struct {
 	// parentName is that chat's display name, for the refusal sentence. Empty for
 	// an unnamed chat, which the sentence then omits rather than quoting nothing.
 	parentName string
-	// recipe is the run's recipe name, off the same read as the parent session.
-	recipe string
 	// hosted reports whether some live bridge in this process holds the run's
 	// registry entry.
 	hosted bool
@@ -106,21 +95,15 @@ type runFacts struct {
 func affordanceOf(f runFacts) runAffordance {
 	byStatus, known := runStatusVerbs[marotte.RunStatus(f.status)]
 	if !known {
-		// The parent chat still travels: the page's step-transcript note needs it
-		// whatever the status is.
-		return runAffordance{ParentChat: f.parentChat, Recipe: f.recipe}
+		return runAffordance{}
 	}
-	out := runAffordance{
-		ParentChat: f.parentChat,
-		Recipe:     f.recipe,
-		Verbs:      make([]string, 0, len(byStatus)),
-	}
+	out := runAffordance{Verbs: make([]string, 0, len(byStatus))}
 	for _, verb := range byStatus {
 		if slices.Contains(hostedOnlyVerbs, verb) && !f.hosted {
 			if out.Refused == nil {
 				out.Refused = map[string]string{}
 			}
-			out.Refused[verb] = notHostedRefusal(verb, f.parentChat, f.parentName)
+			out.Refused[verb] = notHostedRefusal(f.parentChat, f.parentName)
 			continue
 		}
 		out.Verbs = append(out.Verbs, verb)
@@ -128,18 +111,18 @@ func affordanceOf(f runFacts) runAffordance {
 	return out
 }
 
-// notHostedRefusal is the sentence a hosted-only verb gets when nothing in this
-// process holds the run. It names the launching chat when there is one, because
-// that is the reader's remedy: opening that chat respawns its bridge. A parentless
-// run has no such door, so its sentence says which verb still works.
-func notHostedRefusal(verb string, parentChat marotte.ChatID, parentName string) string {
+// notHostedRefusal is the sentence Pause gets when nothing in this process holds the
+// run. It names the launching chat when there is one, because that is the reader's
+// remedy: opening that chat respawns its bridge. A parentless run has no such door,
+// so its sentence says which verb still works.
+func notHostedRefusal(parentChat marotte.ChatID, parentName string) string {
 	if parentChat != "" {
 		return "This run is driven by an agent in " + chatLabel(parentChat, parentName) +
-			", and that conversation is not open here, so it cannot be " + pastTense(verb) +
-			" from this page. Open that chat to bring the run back within reach."
+			", and that conversation is not open here, so it cannot be paused from this page. " +
+			"Open that chat to bring the run back within reach."
 	}
-	return "This run has no live engine on this server, so it cannot be " + pastTense(verb) +
-		" from here. A run from before the last restart is in this state; Cancel still works."
+	return "This run has no live engine on this server, so it cannot be paused from here. " +
+		"Cancel still works."
 }
 
 // chatLabel names a chat for a sentence a person reads: its name when it has one,
@@ -151,60 +134,42 @@ func chatLabel(chatID marotte.ChatID, name string) string {
 	return strconv.Quote(name)
 }
 
-// pastTense spells a verb the way the refusal sentence needs it. Explicit because
-// two of the four are irregular enough that appending "d" is wrong.
-func pastTense(verb string) string {
-	switch verb {
-	case verbPause:
-		return "paused"
-	case verbResume:
-		return "resumed"
-	case verbRetry:
-		return "retried"
-	case verbCancel:
-		return "cancelled"
-	}
-	return verb
-}
-
 // affordance resolves the facts and answers what may be done to the run.
 //
 // status is passed in rather than read here: every caller has already made that
 // `inspect` call, and one decision must rest on one status read, not two that can
-// disagree. Costs ONE out-of-process read, listedRun's `workflow/list`, which
+// disagree. Costs ONE out-of-process read, originOf's `workflow/list`, which
 // carries both the parent session and the recipe.
-func (rs *Runs) affordance(ctx context.Context, workflowID, status string) runAffordance {
-	listed := rs.listedRun(ctx, workflowID)
-	// WorkflowName, not Name: the recipe is what the single-run rule compares a
-	// re-armed lease against, and Name is `runLabel ?? workflowName`, so a labelled
-	// run would carry a recipe nothing matches.
-	f := runFacts{status: status, recipe: listed.WorkflowName}
-	f.parentChat, f.parentName = rs.chatForSession(ctx, listed.ParentSessionID)
+func (rs *Runs) affordance(ctx context.Context, workflowID, status string) *runAffordance {
+	o := rs.originOf(ctx, workflowID)
+	f := runFacts{status: status, parentChat: o.parent.chat, parentName: o.chatName}
 	f.hosted = rs.bridges.get(runChatID(workflowID)) != nil ||
 		(f.parentChat != "" && rs.bridges.get(f.parentChat) != nil)
-	return affordanceOf(f)
+	aff := affordanceOf(f)
+	aff.origin = o
+	return &aff
 }
 
 // chatForSession resolves a run's parent SESSION to the chat that owns it, from the
-// chat store alone.
+// chat store alone, and reports whether the scan read every chat: an unowned answer
+// from an incomplete scan proves nothing.
 //
 // Matched against the whole session CHAIN, not the current id: a chat changes
 // session on a failed session/load, a model-switch fallback and empty-turn
-// recovery, so the current id alone would leave a run launched before such a change
-// looking parentless. Unlike hostBridgeChat this does NOT require a live bridge — a
-// closed chat is exactly when the reader needs to be told which one to open.
+// recovery. Unlike hostBridgeChat this does NOT require a live bridge — a closed
+// chat is exactly when the reader needs to be told which one to open.
 func (rs *Runs) chatForSession(
 	ctx context.Context, sessionID string,
-) (chatID marotte.ChatID, name string) {
+) (chatID marotte.ChatID, name string, complete bool) {
 	if sessionID == "" {
-		return "", ""
+		return "", "", true
 	}
 	// Indexed: marotte.ChatHeader is 304 bytes, which gocritic's rangeValCopy flags.
-	headers := rs.chats.List(ctx)
+	headers, complete := rs.chats.ListComplete(ctx)
 	for i := range headers {
 		if slices.Contains(headers[i].SessionChain(), sessionID) {
-			return marotte.ChatID(headers[i].ID), headers[i].Name
+			return marotte.ChatID(headers[i].ID), headers[i].Name, complete
 		}
 	}
-	return "", ""
+	return "", "", complete
 }

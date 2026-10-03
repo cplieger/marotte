@@ -1197,8 +1197,8 @@ func TestChatTeardown_DeleteByChainReapsWithoutTheRecord(t *testing.T) {
 }
 
 // TestSessionLoad_HealsTheChatsRestartPausedRuns is the recovery model for agent-launched
-// runs, and the reason there is no Resume button anywhere. A restart kills a chat's bridge,
-// which KAS reconciles by PAUSING the runs that bridge launched; the user's next message
+// runs. A restart kills a chat's bridge, which KAS reconciles by PAUSING the runs that
+// bridge launched; the user's next message
 // respawns it and this sweep makes the run heal with the chat. The sweep runs OFF the spawn
 // path deliberately — the prompt must not wait behind a run-list round trip — so the resume is
 // awaited rather than assumed, and the wait fails closed.

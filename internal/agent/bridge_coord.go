@@ -233,6 +233,9 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID marotte.Cha
 
 	setupErr := func(err error) error {
 		bc.bridge.mgr.removeIfSame(chatID, sb)
+		// Ends a forward loop already attached to it, whose stream a Start that
+		// failed before spawning never closes.
+		sb.bridge.Stop()
 		sb.setIdle()
 		return err
 	}
@@ -344,7 +347,9 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// The attachment is taken HERE, not inside the goroutine: the load's read-loop
 	// position below is only comparable within one attachment. See replay_drain.go.
 	gen := bc.turns.attachForward(chatID)
-	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, sb.bridge, gen) })
+	// Captured before the goroutine: the failure branch below swaps sb.bridge.
+	loading := sb.bridge
+	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, loading, gen) })
 	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)

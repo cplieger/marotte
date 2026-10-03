@@ -173,23 +173,11 @@ const (
 	KeyFBPath = "fb_path"
 )
 
-// There is deliberately no notify_permission key.
-//
-// A permission ask BLOCKS the turn: nothing proceeds until it is answered, and
-// off-screen there is no other marker for one (a background chat waiting on an
-// approval renders identically to one that is working). So a switch that
-// silenced the ask was not a preference — it was a way to stall every later
-// turn of every chat with no signal, discoverable only by noticing that work
-// had stopped. The permission notice is a FLOOR: marotte.PushKindPermission is
-// registered with no settings key, so no value in config.json can turn it off
-// (pinned by push.TestPermissionKindHasNoSettingsKey).
-//
-// What IS relaxable is the permission SYSTEM rather than the notice about it:
-// the Settings -> Permissions workspace relaxation (policyfile.RelaxCapabilities)
-// writes broad allow rules, so the asks stop happening instead of happening
-// silently. The master notifications_enabled switch still turns everything off
-// together, which is a deliberate and comprehensive choice rather than one
-// channel quietly going dark while the others keep arriving.
+// There is deliberately no notify_permission key. A permission ask BLOCKS the turn
+// and off-screen nothing else marks it, so silencing the notice would stall every
+// later turn with no signal (pinned by push.TestPermissionKindHasNoSettingsKey).
+// What is relaxable is the permission SYSTEM, through the security profile, and the
+// master notifications_enabled switch still turns everything off together.
 
 // DefaultChatRetentionDays is the seeded default for chat_retention_days.
 //

@@ -65,6 +65,9 @@ type fakeBridge struct {
 	// startErr, when non-nil, fails every spawn — a fault on this server rather than a
 	// statement about the run, which the REST layer classifies apart (errRunHostStart).
 	startErr error
+	// loadErr, when non-nil, fails every spawn that NAMES a session: a session/load
+	// that fails while a session/new on the same factory still starts.
+	loadErr error
 	// starts counts spawns. One factory serves the utility session AND every run bridge,
 	// so "was a process started" is only meaningful as a DELTA across the call.
 	starts int
@@ -102,6 +105,9 @@ func (b *fakeBridge) Start(ctx context.Context, opts *marotte.StartOpts) error {
 	b.mu.Lock()
 	gate := b.startGate
 	startErr := b.startErr
+	if opts.SessionID != "" && b.loadErr != nil {
+		startErr = b.loadErr
+	}
 	b.mu.Unlock()
 	if startErr != nil {
 		return startErr
@@ -169,10 +175,8 @@ func (b *fakeBridge) startCount() int {
 	return b.starts
 }
 
-// isStopped reports whether Stop has been called. The re-host's lost-race arm is
-// the one place a caller must be able to see that a bridge it was NOT handed was
-// torn down, and presence in the bridge map cannot answer it — the loser's bridge
-// was never in the map.
+// isStopped reports whether Stop has been called, which is also what closes this
+// fake's frame stream and so ends a forward loop ranging over it.
 func (b *fakeBridge) isStopped() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()

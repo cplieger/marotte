@@ -49,7 +49,6 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 			"workflowId": "wf_1", "name": "publish",
 			"status": "aborted", "parentSessionId": "sess_owned",
 		}),
-		methodKiroWorkflowLoad:  json.RawMessage(`{}`),
 		methodKiroWorkflowRetry: retryReply(t, "wf_1", "running", nodes...),
 	}
 	if _, err := cs.Mutate(t.Context(), "c1", func(c *marotte.Chat, _ bool) bool {
@@ -71,14 +70,14 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 // real rather than hand-built, checking BOTH threaded facts: a stand-in would keep
 // passing once the affordance stopped carrying either, and the verb would then
 // re-host a run whose own process is alive or re-arm a nameless lease.
-func gateAnswer(t *testing.T, h *Runtime, workflowID string) runAffordance {
+func gateAnswer(t *testing.T, h *Runtime, workflowID string) *runAffordance {
 	t.Helper()
 	aff := h.runs.affordance(t.Context(), workflowID, "aborted")
-	if aff.ParentChat != "c1" {
-		t.Fatalf("Setup: the gate resolved parent %q, want the launching chat c1", aff.ParentChat)
+	if aff.origin.parent.chat != "c1" {
+		t.Fatalf("Setup: the gate resolved parent %q, want the launching chat c1", aff.origin.parent.chat)
 	}
-	if aff.Recipe != "publish" {
-		t.Fatalf("Setup: the gate resolved recipe %q, want publish off KAS's run list", aff.Recipe)
+	if aff.origin.recipe != "publish" {
+		t.Fatalf("Setup: the gate resolved recipe %q, want publish off KAS's run list", aff.origin.recipe)
 	}
 	return aff
 }
@@ -122,12 +121,14 @@ func TestHandleRetry_AnswersTheOutcomeRatherThanOk(t *testing.T) {
 
 // TestRetry_AddressesTheRunsRealHost: a chat-parented run has no bridge under
 // `runChatID(workflowID)`, so keying on that alone re-hosts every one of them and
-// spawns a second engine for a run whose process is still alive. The load call is
-// the tell — the fake hands out one bridge, and `load` marks the re-host branch.
+// spawns a second engine for a run whose process is still alive. The fake hands out
+// one bridge, so a start is the tell.
 func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	h, br := seedChatParentedRun(t, true, "final-verify")
+	aff := gateAnswer(t, h, "wf_1")
+	starts := br.startCount()
 
-	out, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1"))
+	out, err := h.runs.Retry(t.Context(), "wf_1", aff)
 	if err != nil {
 		t.Fatalf("Retry on a chat-parented run = %v, want nil", err)
 	}
@@ -138,9 +139,8 @@ func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	if !slices.Contains(calls, methodKiroWorkflowRetry) {
 		t.Fatalf("the verb never reached KAS; calls were %v", calls)
 	}
-	if slices.Contains(calls, methodKiroWorkflowLoad) {
-		t.Errorf("the run was re-hosted (a load was issued) although the process holding it is "+
-			"alive; that starts a second engine for one run. Calls were %v", calls)
+	if got := br.startCount() - starts; got != 0 {
+		t.Errorf("%d processes started for a run whose launching chat's process is alive", got)
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
 		t.Error("a bridge was registered under the run's synthetic id for a run its launching " +
@@ -148,11 +148,9 @@ func TestRetry_AddressesTheRunsRealHost(t *testing.T) {
 	}
 }
 
-// TestRetry_LoadsBeforeItRetriesAReHostedRun: `_kiro/workflow/retry` does not
-// rehydrate — it requires the run in the calling process's live registry and
-// refuses otherwise ("not registered. Load or create it first."), so recovery after
-// a process death is `load` then `retry`, as kiro-cli's own client does.
-func TestRetry_LoadsBeforeItRetriesAReHostedRun(t *testing.T) {
+// TestRetry_ReachesAnUnhostedChatRunThroughItsChat: a chat-parented run nothing in
+// this process holds is retried on its launching chat's bridge.
+func TestRetry_ReachesAnUnhostedChatRunThroughItsChat(t *testing.T) {
 	// No chat bridge and no run bridge: nothing in this process holds the run.
 	h, br := seedChatParentedRun(t, false, "phase-c-loop")
 
@@ -160,32 +158,35 @@ func TestRetry_LoadsBeforeItRetriesAReHostedRun(t *testing.T) {
 		t.Fatalf("Retry on a run nothing hosts = %v, want nil", err)
 	}
 	calls := br.callLog()
-	load := slices.Index(calls, methodKiroWorkflowLoad)
-	retry := slices.Index(calls, methodKiroWorkflowRetry)
-	if load < 0 {
-		t.Fatalf("no load was issued before retrying a run this process has never seen; KAS "+
-			"refuses that retry as unregistered. Calls were %v", calls)
+	if !slices.Contains(calls, methodKiroWorkflowRetry) {
+		t.Fatalf("the retry never reached KAS; calls were %v", calls)
 	}
-	if retry < 0 || load > retry {
-		t.Errorf("load/retry order = %v, want the load first", calls)
+	// A chat-parented run is reached through its chat, whose session load carries the
+	// presets the steps are checked against, never through a second resident on it.
+	if h.bridge.mgr.get("c1") == nil {
+		t.Error("the launching chat's bridge was not opened, so its session is not live")
+	}
+	if h.bridge.mgr.get(runChatID("wf_1")) != nil {
+		t.Error("a run bridge was registered for a chat-parented run")
 	}
 }
 
-// TestRetry_AFailedLoadLeavesNothingBehind: a bridge left registered for a run that
-// never re-drove holds a kiro-cli subprocess and a lease nothing releases.
-func TestRetry_AFailedLoadLeavesNothingBehind(t *testing.T) {
+// TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind: a bridge left registered
+// for a run that never re-drove holds a kiro-cli subprocess and a lease nothing
+// releases, and the chat's own bridge belongs to the conversation.
+func TestRetry_ARefusedRetryOnAReHostedRunLeavesNothingBehind(t *testing.T) {
 	h, br := seedChatParentedRun(t, false)
-	br.setCallRPCErr(methodKiroWorkflowLoad,
+	br.setCallRPCErr(methodKiroWorkflowRetry,
 		&marotte.RPCError{Code: -32603, Message: "Workflow wf_1 not found on disk"})
 
 	if _, err := h.runs.Retry(t.Context(), "wf_1", gateAnswer(t, h, "wf_1")); err == nil {
-		t.Fatal("Retry = nil after the load failed; nothing was registered, so nothing can run")
-	}
-	if slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
-		t.Error("the verb was issued against a process that failed to load the run")
+		t.Fatal("Retry = nil for a retry KAS refused")
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
-		t.Error("the bridge was left registered for a run that never re-drove")
+		t.Error("a run bridge was left registered for a run that never re-drove")
+	}
+	if h.bridge.mgr.get("c1") == nil {
+		t.Error("a failed retry closed the chat's bridge, which belongs to the conversation")
 	}
 	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("the lease minted for the attempt was not given back")
@@ -384,9 +385,9 @@ func TestRetry_AnUnreadableOutcomeIsNotReportedAsAFailedRetry(t *testing.T) {
 			if !errors.Is(err, errRetryOutcomeUnreadable) {
 				t.Fatalf("Retry = %v, want errRetryOutcomeUnreadable", err)
 			}
-			if h.bridge.mgr.get(runChatID("wf_1")) == nil {
-				t.Error("the bridge that just started re-driving the run was closed because its " +
-					"reply could not be parsed")
+			if h.bridge.mgr.get("c1") == nil {
+				t.Error("the chat bridge that just started re-driving the run was closed because " +
+					"its reply could not be parsed")
 			}
 			if _, held := h.runs.lease("wf_1"); !held {
 				t.Error("the lease was released for a run that may be executing, so the wall " +
@@ -433,12 +434,12 @@ func TestRetry_ReadsTheParentTheGateResolved(t *testing.T) {
 		"workflowId": "wf_1", "name": "publish", "status": "aborted",
 	}))
 
+	starts := br.startCount()
 	if _, err := h.runs.Retry(t.Context(), "wf_1", aff); err != nil {
-		t.Fatalf("Retry = %v, want nil", err)
+		t.Fatalf("Retry = %v, want nil: the verb re-asked and got a different answer", err)
 	}
-	if slices.Contains(br.callLog(), methodKiroWorkflowLoad) {
-		t.Errorf("the run was re-hosted although the gate had already resolved its live host; "+
-			"the verb re-asked and got a different answer. Calls were %v", br.callLog())
+	if got := br.startCount() - starts; got != 0 {
+		t.Errorf("%d processes started although the gate had already resolved the run's live host", got)
 	}
 	if sb := h.bridge.mgr.get(runChatID("wf_1")); sb != nil {
 		t.Error("a second engine was registered under the run's synthetic id for a run its " +

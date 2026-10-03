@@ -201,6 +201,8 @@ func (b *Bridge) reapProcess() {
 // same bridge; the sync.Once gate prevents a double-close panic on b.done.
 // Reaps the process via cmd.Wait so the OS releases its process entry
 // immediately (no <defunct> accumulation across chat lifecycle churn).
+// NotifCh closes here when no read loop ever started, so a consumer ranging
+// over a bridge whose Start failed early still ends.
 func (b *Bridge) Stop() {
 	b.stopOnce.Do(func() {
 		close(b.done)
@@ -210,7 +212,26 @@ func (b *Bridge) Stop() {
 		if b.cmd != nil && b.cmd.Process != nil {
 			b.reapProcess()
 		}
+		b.readMu.Lock()
+		if !b.notifClaimed {
+			close(b.notifCh)
+		}
+		b.readMu.Unlock()
 	})
+}
+
+// claimNotifClose hands closing notifCh to the read loop, or reports false when Stop
+// already closed it. Exactly one of the two owns the close.
+func (b *Bridge) claimNotifClose() bool {
+	b.readMu.Lock()
+	defer b.readMu.Unlock()
+	select {
+	case <-b.done:
+		return false
+	default:
+	}
+	b.notifClaimed = true
+	return true
 }
 
 // handshakeBudget bounds a session START: initialize, session/new, and the

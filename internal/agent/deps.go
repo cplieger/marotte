@@ -51,12 +51,13 @@ type bridgeChatRecords interface {
 
 // chatRecords is the runtime's field type: a UNION of the narrower views the
 // composition root passes on to bridgeChatRecords, command.ChatStore and
-// translate.ChatRecords. The runtime itself calls only Get, List, Mutate and
-// Exists.
+// translate.ChatRecords. The runtime itself calls only Get, List, ListComplete,
+// Mutate and Exists.
 type chatRecords interface {
 	bridgeChatRecords
 
 	List(ctx context.Context) []marotte.ChatHeader
+	ListComplete(ctx context.Context) ([]marotte.ChatHeader, bool)
 	// Exists is the digest resolver's `chat` gone predicate: file present and not
 	// tombstoned, read under NO per-chat mutex, because Mutate holds that mutex
 	// across an fsynced file rewrite the resolver must never wait out.
@@ -189,8 +190,9 @@ type utilityBridge interface {
 	// handshake ONLY; the subprocess's lifetime is StartOpts.Lifetime, REQUIRED.
 	Start(ctx context.Context, opts *marotte.StartOpts) error
 	// NotifCh yields incoming ACP notifications with the read loop's sequence,
-	// closing when the subprocess exits. The forward goroutine must be draining
-	// it BEFORE Start: on v3 session/new blocks on requests that arrive here.
+	// closing when the subprocess exits, or at Stop when none ever started. The
+	// forward goroutine must be draining it BEFORE Start: on v3 session/new blocks on
+	// requests that arrive here.
 	NotifCh() <-chan marotte.Notification
 }
 
