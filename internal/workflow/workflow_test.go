@@ -198,6 +198,50 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// TestClassify_OwnershipRefusals: both of KAS's ownership refusals, in their load and
+// mutate spellings, come back typed with the original still reachable.
+func TestClassify_OwnershipRefusals(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		want    error
+		name    string
+		details string
+	}{
+		{
+			name: "a live owner refuses a load", want: ErrOwnedElsewhere,
+			details: "Workflow 'wf_1' appears to be running in another process (owner pid 42, liveness verdict: live); " +
+				"refusing to load it here. Retry after that process releases it or its run goes stale.",
+		},
+		{
+			name: "a live owner refuses a mutation", want: ErrOwnedElsewhere,
+			details: "Workflow 'wf_1' appears to be running in another process (owner pid 42, liveness verdict: live); " +
+				"refusing to mutate it here. Retry after that process releases it or its run goes stale.",
+		},
+		{
+			name: "a claim in flight refuses a load", want: ErrJustClaimed,
+			details: "Workflow 'wf_1' was just claimed by another process; refusing to load it here. " +
+				"Retry if that process does not end up driving it.",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			orig := rpcErr("Internal error", `{"details":"`+c.details+`"}`)
+			got := Classify(orig)
+			if !errors.Is(got, c.want) {
+				t.Errorf("Classify(%q) = %v, want it to wrap %v", c.details, got, c.want)
+			}
+			if !errors.Is(got, orig) {
+				t.Errorf("Classify(%q) = %v, want the original error still unwrappable", c.details, got)
+			}
+		})
+	}
+	if got := Classify(rpcErr("Internal error", `{"details":"workflow not found"}`)); errors.Is(got, ErrOwnedElsewhere) ||
+		errors.Is(got, ErrJustClaimed) {
+		t.Errorf("Classify(workflow not found) = %v, want no ownership sentinel", got)
+	}
+}
+
 // TestSteps_IncludesAStepThatHasNotRun pins the one thing Steps adds over
 // StepSessions: a path naming a PENDING step must be answerable, because that is a
 // different answer from a path naming nothing at all.

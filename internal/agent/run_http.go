@@ -578,6 +578,8 @@ func (rr *runRoutes) permits(
 	return aff, false
 }
 
+const runClaimInFlightText = "Another action on this run is already under way. Refresh to see the result."
+
 // writeControlErr answers a verb that reached KAS and failed, distinguishing a
 // refusal from a fault. InternalError is kept for what it is for: a fault that is
 // not the reader's to act on. Anonymising the rest sent the reader the constant
@@ -609,6 +611,12 @@ func (rr *runRoutes) writeControlErr(w http.ResponseWriter, verb, id string, err
 			"verb", verb, "workflow_id", logsafe.Field(id), "error", err)
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON(errRetryOutcomeUnreadable.Error()))
+	case errors.Is(err, workflow.ErrJustClaimed):
+		// KAS says another PROCESS, but the competing claim is usually a second verb on
+		// this same carrier: the host lock is not held across the verb's RPC.
+		slog.Info("run control refused: another claim on the run is in flight",
+			"verb", verb, "workflow_id", logsafe.Field(id), "detail", rpcerr.Details(err))
+		httpreply.Conflict(w, runClaimInFlightText)
 	case isRPCRefusal(err):
 		// KAS declined. Its sentence names the reason and the fix is frequently the
 		// reader's, so it is forwarded rather than replaced by a sentinel.

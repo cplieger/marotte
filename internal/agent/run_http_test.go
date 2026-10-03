@@ -741,6 +741,45 @@ func TestControlHandler_ForwardsKASsOwnRefusal(t *testing.T) {
 	}
 }
 
+// TestHandleResume_AClaimInFlightIsReaderText: KAS refuses a second claim in flight with
+// a sentence about "another process", which here is usually a second verb on the same
+// carrier. The reader gets plain words keyed on the typed refusal instead.
+func TestHandleResume_AClaimInFlightIsReaderText(t *testing.T) {
+	h, _, br := newTestHub()
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList:    json.RawMessage(`{"runs":[]}`),
+		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", ""),
+	}
+	h.bridge.mgr.insert(runChatID("wf_1"), &sharedBridge{bridge: br, state: bridgeIdle})
+	br.callRPCErrs = map[string]*marotte.RPCError{
+		methodKiroWorkflowResume: {
+			Code:    -32603,
+			Message: "Internal error",
+			Data: json.RawMessage(`{"details":"Workflow 'wf_1' was just claimed by another process; ` +
+				`refusing to load it here. Retry if that process does not end up driving it."}`),
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/resume", nil)
+	req.SetPathValue("id", "wf_1")
+	rec := httptest.NewRecorder()
+
+	h.runRoutes.handleResume(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("a resume refused for a claim in flight = %d, want %d: %s",
+			rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding the body %s: %v", rec.Body.String(), err)
+	}
+	if body.Error != runClaimInFlightText {
+		t.Errorf("the body's error = %q, want %q", body.Error, runClaimInFlightText)
+	}
+}
+
 // TestHandleStepStatus_SplitsAValidationRefusalFromAStartFailure: the re-host put a
 // SERVER fault on a path that had only ever carried a caller's mistake, so
 // `errRunHostStart` reached the 400 arm. 400 for a KAS refusal here is deliberate.

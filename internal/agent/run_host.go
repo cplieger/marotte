@@ -22,6 +22,7 @@ import (
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/runlease"
+	"github.com/cplieger/marotte/internal/workflow"
 )
 
 // Workflow RPC param keys, shared across the five verbs.
@@ -429,12 +430,12 @@ func (rs *Runs) SetStepStatus(ctx context.Context, workflowID, nodeID, status st
 	// A decline releases with a cause too: nothing was written, so no run_complete
 	// follows and a re-host's process would outlive the verb.
 	defer func() { host.release(err) }()
-	resp, cErr := host.sb.bridge.Call(ctx, methodKiroWorkflowUpdate, map[string]any{
+	resp, callErr := rs.callReclaiming(ctx, host.sb.bridge, workflowID, methodKiroWorkflowUpdate, map[string]any{
 		keyWorkflowID: workflowID,
 		"action":      updateStatusAction,
 		"status":      status,
 	})
-	if callErr := runCallErr(resp, cErr); callErr != nil {
+	if callErr != nil {
 		return callErr
 	}
 	// The REPLY is read, because a decline is not a throw: both declines answer
@@ -722,10 +723,59 @@ func (rs *Runs) hostedControl(ctx context.Context, workflowID, method string) er
 	if err != nil {
 		return err
 	}
-	resp, cErr := host.sb.bridge.Call(ctx, method, map[string]any{keyWorkflowID: workflowID})
-	callErr := runCallErr(resp, cErr)
+	_, callErr := rs.callReclaiming(ctx, host.sb.bridge, workflowID, method, map[string]any{keyWorkflowID: workflowID})
 	host.release(callErr)
 	return callErr
+}
+
+// callReclaiming sends a verb that loads the run into b's process. The first KAS to
+// start after a crash stamps each run it reconciles as its own (acp-server.js
+// sweepStaleRuns), and that is the utility session, which every run read starts. The
+// stamp refuses every other process until its owner exits or it goes stale, about
+// 135 s later. The utility does no workflow work of its own, so on that refusal it is
+// stopped, which voids the stamp, and the verb is sent again. A concurrent verb may have
+// stopped it already, so the resend does not depend on this call finding it live.
+func (rs *Runs) callReclaiming(
+	ctx context.Context, b acpCaller, workflowID, method string, params map[string]any,
+) (*marotte.RPCResponse, error) {
+	resp, err := b.Call(ctx, method, params)
+	callErr := runCallErr(resp, err)
+	if !errors.Is(callErr, workflow.ErrOwnedElsewhere) {
+		return resp, callErr
+	}
+	rs.utility().session.Stop()
+	slog.Info("a run was held by another process, so the utility session was stopped "+
+		"and the verb sent again", "workflow_id", workflowID, "method", method)
+	return resendWhileOwned(ctx, b, method, params)
+}
+
+// reclaimGrace bounds resendWhileOwned. KAS's liveness probe is `process.kill(pid, 0)`,
+// and the stopped session's KAS leaves the process table some 25 ms after Stop
+// returns (measured on kiro-cli 2.27.0).
+var reclaimGrace = 2 * time.Second
+
+const reclaimPoll = 50 * time.Millisecond
+
+// resendWhileOwned sends the verb until KAS stops refusing it for another owner, the
+// grace ends or ctx does, and answers the last reply.
+func resendWhileOwned(
+	ctx context.Context, b acpCaller, method string, params map[string]any,
+) (*marotte.RPCResponse, error) {
+	deadline := time.Now().Add(reclaimGrace)
+	for {
+		resp, err := b.Call(ctx, method, params)
+		callErr := runCallErr(resp, err)
+		if !errors.Is(callErr, workflow.ErrOwnedElsewhere) || !time.Now().Before(deadline) {
+			return resp, callErr
+		}
+		wait := time.NewTimer(reclaimPoll)
+		select {
+		case <-ctx.Done():
+			wait.Stop()
+			return resp, callErr
+		case <-wait.C:
+		}
+	}
 }
 
 // errRunHostStart marks a failure to START a carrier for a run: a spawn fault on
@@ -1522,15 +1572,14 @@ func (rs *Runs) workflowNew(ctx context.Context, bridge acpCaller, source string
 	return res.WorkflowID, nil
 }
 
-// runCallErr folds a bridge Call's two failure channels into one error.
+// runCallErr folds a bridge Call's two failure channels into one error, KAS's
+// refusal typed by workflow.Classify in either: the real bridge returns the reply's
+// RPCError wrapped in its own error as well as on the reply.
 func runCallErr(resp *marotte.RPCResponse, err error) error {
-	if err != nil {
-		return err
+	if err == nil && resp != nil && resp.Error != nil {
+		err = resp.Error
 	}
-	if resp != nil && resp.Error != nil {
-		return resp.Error
-	}
-	return nil
+	return workflow.Classify(err)
 }
 
 // --- Restart recovery ---
@@ -1800,8 +1849,13 @@ func (rs *Runs) resumeIfInterrupted(ctx context.Context, chatID marotte.ChatID, 
 	if sb == nil {
 		return
 	}
-	resp, err := sb.bridge.Call(ctx, methodKiroWorkflowResume, map[string]any{keyWorkflowID: workflowID})
-	if cErr := runCallErr(resp, err); cErr != nil {
+	if _, cErr := rs.callReclaiming(ctx, sb.bridge, workflowID, methodKiroWorkflowResume,
+		map[string]any{keyWorkflowID: workflowID}); cErr != nil {
+		if errors.Is(cErr, workflow.ErrJustClaimed) {
+			slog.Info("rehydrate: another resume of this run is in flight, so the heal left it to that one",
+				"workflow_id", workflowID, "chat_id", chatID)
+			return
+		}
 		slog.Warn("rehydrate: resume failed", "workflow_id", workflowID, "chat_id", chatID, "error", cErr)
 		return
 	}

@@ -554,12 +554,16 @@ func (rec *steerRecord) endLocked(r *steerRecords, end command.SteerTurnEnd, fx 
 
 func (rec *steerRecord) collectEnded(end command.SteerTurnEnd, own, unbound bool, ev steerEvent) []*dockRow {
 	var collected []*dockRow
+	adopt := rec.deleting() && rec.opEnd == nil
 	rec.live(func(w *dockRow) {
 		if !endCollects(w.state, own, unbound, end.Source.PromptClass()) || rowRuleFor(w.state, ev) != rCollect {
 			return
 		}
 		if end.BridgeDeath && w.state.inKAS() {
 			rec.reinject = true
+		}
+		if w.owner == "" && adopt {
+			w.owner = rec.op
 		}
 		if w.owner != "" {
 			rec.noteOpEnd(w, end)
@@ -569,6 +573,10 @@ func (rec *steerRecord) collectEnded(end command.SteerTurnEnd, own, unbound bool
 	})
 	return collected
 }
+
+// deleting: one boundary under a delete is one send, so its first turn end takes every
+// row the turn leaves. A discard takes none: a row sent after it began is not its to drop.
+func (rec *steerRecord) deleting() bool { return rec.op != "" && rec.opTarget != "" }
 
 func (rec *steerRecord) noteOpEnd(w *dockRow, end command.SteerTurnEnd) {
 	if w.owner == rec.op && rec.opEnd == nil {

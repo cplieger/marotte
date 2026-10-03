@@ -254,6 +254,11 @@ func TestCmdSteerRemove_ATurnEndingUnderTheClearResendsTheKeptRows(t *testing.T)
 			if n := s.spy.note("steer-a"); n == nil || n.Reason != marotte.SteerReasonDeleted {
 				t.Errorf("target entry = %+v, want deleted", n)
 			}
+			// The command replies before the turn end it handed off is resolved.
+			deadline := time.Now().Add(5 * time.Second)
+			for _, live := s.state("steer-b"); live && time.Now().Before(deadline); _, live = s.state("steer-b") {
+				time.Sleep(time.Millisecond)
+			}
 			if n := s.spy.note("steer-b"); n == nil || n.Reason != marotte.SteerReasonBoundary {
 				t.Errorf("kept entry = %+v, want the boundary note", n)
 			}

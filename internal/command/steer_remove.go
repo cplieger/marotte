@@ -73,7 +73,12 @@ func CmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 	if err != nil {
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
-	defer unlock()
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			unlock()
+		}
+	}()
 	opID := ids.NewMessageID()
 	needsClear, refuse := roles.queue.BeginRemove(cmd.ChatID, p.SteerID, opID)
 	if refuse != "" {
@@ -84,7 +89,7 @@ func CmdSteerRemove(ctx context.Context, roles *promptRoles, cmd *marotte.Client
 	}
 	rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)
 	defer cancel()
-	defer endSteerOp(rpcCtx, roles, cmd.ChatID, opID)
+	defer func() { handedOff = endSteerOp(ctx, roles, cmd.ChatID, opID, unlock) }()
 	cleared, landed := clearSteerBuffer(rpcCtx, roles, cmd.ChatID)
 	res := roles.queue.RemoveCleared(cmd.ChatID, opID, cleared, landed)
 	if res.Reason != "" && res.Reason != SteerRefuseConsumed {
@@ -105,12 +110,25 @@ func removed(key string) map[string]any {
 	return responseWith(map[string]any{"deleted": key})
 }
 
-// endSteerOp ends an op that marked rows, still under the steer lock: a turn that
-// closed under it is resolved here, its rows still the op's.
-func endSteerOp(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, opID string) {
-	if end := roles.queue.EndOp(chatID, opID); end != nil {
-		resolveTurnEnd(ctx, roles, chatID, opID, end)
+// endSteerOp ends an op that marked rows, still under the steer lock. A turn that
+// closed under it is resolved with its rows still the op's, on a goroutine that takes
+// over unlock and answers true, so the command replies without waiting out the
+// resend's admission. It runs on a turn context like runSteerJobs', not the op's RPC
+// budget, which the clear and the resend may already have spent.
+func endSteerOp(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, opID string, unlock func()) bool {
+	end := roles.queue.EndOp(chatID, opID)
+	if end == nil {
+		return false
 	}
+	roles.lifecycle.InflightAdd(1)
+	go func() {
+		defer roles.lifecycle.InflightDone()
+		defer unlock()
+		tctx, cancel := roles.lifecycle.TurnContext(ctx)
+		defer cancel()
+		resolveTurnEnd(tctx, roles, chatID, opID, end)
+	}()
+	return true
 }
 
 // runSteerJobs runs each job on its own goroutine under the chat's steer lock: the

@@ -205,7 +205,12 @@ func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	if err != nil {
 		return nil, StatusError(http.StatusServiceUnavailable, err)
 	}
-	defer unlock()
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			unlock()
+		}
+	}()
 	opID := ids.NewMessageID()
 	needsClear, refuse := roles.queue.BeginDiscard(cmd.ChatID, opID)
 	if refuse != "" {
@@ -215,7 +220,7 @@ func CmdSteerClear(ctx context.Context, roles *promptRoles, cmd *marotte.ClientC
 	if needsClear {
 		rpcCtx, cancel := context.WithTimeout(durable.Context(ctx), steerRemoveBudget)
 		defer cancel()
-		defer endSteerOp(rpcCtx, roles, cmd.ChatID, opID)
+		defer func() { handedOff = endSteerOp(ctx, roles, cmd.ChatID, opID, unlock) }()
 		names, landed := clearSteerBuffer(rpcCtx, roles, cmd.ChatID)
 		if res := roles.queue.DiscardCleared(cmd.ChatID, opID, landed); res.Reason != "" {
 			return nil, steerRefusal(res.Reason)

@@ -783,6 +783,67 @@ func TestSteerRecords_ATurnEndingAfterTheResubmitIsAnsweredByEndOp(t *testing.T)
 	}
 }
 
+// A turn ending under a delete hands every row it leaves to the op, the parked ones
+// the op never marked included, so one boundary goes back as one send.
+func TestSteerRecords_ATurnEndingUnderADeleteHandsItTheParkedRowsToo(t *testing.T) {
+	s := newSteerHarness(t)
+	s.steer("steer-a", "a")
+	s.steer("steer-b", "b")
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-c", "c",
+		command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
+		t.Fatalf("RouteSteer(steer-c) refused %q", refuse)
+	}
+	s.mustState("steer-c", rowParked)
+	const op = "op-steer-a"
+	if needs, refuse := s.q.BeginRemove(s.chat, "steer-a", op); !needs || refuse != "" {
+		t.Fatalf("BeginRemove = %v %q, want a clear", needs, refuse)
+	}
+	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+
+	if jobs := s.spy.takeJobs(); len(jobs) != 0 {
+		t.Errorf("jobs = %+v, want the op alone to resolve the turn's rows", jobs)
+	}
+	s.q.RemoveCleared(s.chat, op, s.clearKAS(), true)
+	end := s.q.EndOp(s.chat, op)
+	if end == nil {
+		t.Fatal("EndOp answered no turn end for a turn that closed under the op")
+	}
+	rows, _ := s.q.JobRows(s.chat, op, end.Lead)
+	keys := make([]string, 0, len(rows))
+	for _, r := range rows {
+		keys = append(keys, r.Key)
+	}
+	if want := []string{"steer-b", "steer-c"}; !slices.Equal(keys, want) {
+		t.Errorf("op rows = %v, want %v", keys, want)
+	}
+}
+
+// A discard takes no row a turn end leaves: a row sent after Discard all began is the
+// turn end's own job, and the discard does not drop it.
+func TestSteerRecords_ATurnEndingUnderADiscardLeavesALaterRowToItsJob(t *testing.T) {
+	s := newSteerHarness(t)
+	s.steer("steer-a", "a")
+	const op = "op-discard"
+	if needs, refuse := s.q.BeginDiscard(s.chat, op); !needs || refuse != "" {
+		t.Fatalf("BeginDiscard = %v %q, want a clear", needs, refuse)
+	}
+	if _, refuse := s.q.RouteSteer(s.chat, "steer-b", "b",
+		command.SteerHolder{Held: true, PromptClass: true}); refuse != "" {
+		t.Fatalf("RouteSteer(steer-b) refused %q", refuse)
+	}
+	s.recs.TurnEnded(s.chat, command.SteerTurnEnd{Source: marotte.TurnSourcePrompt})
+	s.q.DiscardCleared(s.chat, op, true)
+	s.q.EndOp(s.chat, op)
+
+	jobs := s.spy.takeJobs()
+	if len(jobs) != 1 {
+		t.Fatalf("jobs = %+v, want the turn end's own job for steer-b", jobs)
+	}
+	if rows, _ := s.q.JobRows(s.chat, jobs[0].Owner, ""); len(rows) != 1 || rows[0].Key != "steer-b" {
+		t.Errorf("job rows = %+v, want steer-b", rows)
+	}
+}
+
 // A dead bridge's buffer may come back in KAS's log on the next load, so rows it
 // held are marked for the post-load clear; the turn end's job carries the death.
 func TestSteerRecords_ABridgeDeathCollectsTheRowsAndArmsThePostLoadClear(t *testing.T) {
