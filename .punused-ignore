@@ -324,3 +324,16 @@ method (*EntryLog).TurnRange
 # and assert a turn closed (or stayed open) through it; production decides
 # closure inside turnlog and never needs to ask.
 method (*Turn).Closed
+
+# --- 22. The HTML preview. Handler.ServeHTTP is reached as an http.Handler:
+# RegisterRoutes mounts the handler value itself with mux.Handle(PathPrefix, h),
+# so the call goes through net/http's interface and punused sees only the tests.
+# The three setters are the preview half of section 19's test-only control
+# surface: their one caller is internal/server's testhooks_marottetest.go,
+# behind the marotte_test build tag punused's default build never selects, and
+# the browser fixture drives them to stage a busy resolver, an unavailable
+# workspace and a file that grows after its size check.
+method (*Handler).ServeHTTP
+function SetResolverUnavailable
+function SetResolverBusy
+function GrowAfterNextSizeCheck
