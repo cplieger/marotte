@@ -79,7 +79,9 @@ func checkDirWritable(ctx context.Context, dir, envVar string) error {
 	}
 	// Probe writability — Stat mode bits can lie (NFS, FUSE, Docker
 	// volume permissions). A real write is the only reliable test.
-	res, err := atomicfile.ProbeWritable(ctx, dir)
+	// WithMode matches the private writes this directory holds, so the probe
+	// proves an owner-only file can be staged here, as each of them must.
+	res, err := atomicfile.ProbeWritable(ctx, dir, atomicfile.WithMode(0o600))
 	if err != nil {
 		// Not a verdict on the directory: the probe was never attempted, so
 		// writability is unproven and this stays fatal.

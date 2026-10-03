@@ -343,3 +343,33 @@ func TestHandleUpload_UnknownFreeSpaceStillUploads(t *testing.T) {
 		t.Errorf("content = %q, want %q", got, "hi")
 	}
 }
+
+// An upload is the user's own file in their tree, so it takes the permissions an
+// ordinary file created in that directory takes rather than an owner-only mode.
+func TestHandleUpload_FileTakesTheDirectoryDefaults(t *testing.T) {
+	h, backing := uploadsHandler(t)
+	ref, err := os.Create(filepath.Join(backing, "ref.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refInfo, err := ref.Stat()
+	_ = ref.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refInfo.Mode().Perm()&0o044 == 0 {
+		t.Skipf("umask makes an ordinary file %#o; nothing distinguishes an owner-only upload", refInfo.Mode().Perm())
+	}
+
+	rec := serveUpload(t, h, uploadOrdered(t, "", []string{"note.txt"}, [][]byte{[]byte("hi")}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %q", rec.Code, rec.Body.String())
+	}
+	info, err := os.Stat(filepath.Join(backing, "note.txt"))
+	if err != nil {
+		t.Fatalf("stat uploaded file: %v", err)
+	}
+	if got := info.Mode().Perm(); got&0o044 == 0 {
+		t.Errorf("uploaded file mode = %#o, want the group/other read bits an ordinary file here gets (%#o)", got, refInfo.Mode().Perm())
+	}
+}

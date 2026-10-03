@@ -343,3 +343,21 @@ func TestSteeringETag_MovesWithTheDocument(t *testing.T) {
 		t.Errorf("ETag unchanged across a rewrite (%q); a constant token refuses nothing", before)
 	}
 }
+
+// custom.md shares a steering directory with the owner-only environment.md, so
+// a save that has to create that directory creates it owner-only.
+func TestHandleSteeringPut_CreatesAnOwnerOnlyDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "steering")
+	s := &Server{steering: fakeSteering{path: filepath.Join(dir, "custom.md")}}
+
+	if rec := putSteering(t, s, steeringAbsentETag, "be terse"); rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/steering = %d, want 200; body %q", rec.Code, rec.Body.String())
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat %s: %v", dir, err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("steering dir mode = %#o, want 0o700", got)
+	}
+}
