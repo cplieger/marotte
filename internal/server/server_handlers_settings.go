@@ -213,7 +213,7 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	// on disk but the parent-dir fsync was unconfirmed; log and
 	// proceed (the library already logged the fsync failure at Warn).
 	res, err := atomicfile.WriteFile(r.Context(), path, []byte(body.Content),
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o755))
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
 	if err != nil {
 		httpreply.InternalError(w, err)
 		return

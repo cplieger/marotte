@@ -18,6 +18,9 @@ import (
 // editor can branch on it rather than matching prose.
 const errStaleWrite = "file changed on disk since you opened it"
 
+// chmodInRoot is a test seam over os.Root.Chmod.
+var chmodInRoot = (*os.Root).Chmod
+
 // writeBody is the PUT /api/file payload.
 type writeBody struct {
 	Content string `json:"content"`
@@ -52,13 +55,19 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	if !staleWriteAllowed(w, r, l, body) {
 		return
 	}
-	// Preserve an existing regular file's permission bits: a temp-then-rename
-	// sets the mode on the temp, so the mode has to be carried across
-	// explicitly or every save would flatten a 0o755 script to 0o644. Only a
-	// regular file's bits are read.
-	mode := os.FileMode(0o644)
+	// A rename publishes a new inode, so an existing regular file's bits are
+	// carried across or a save would flatten a 0o755 script. An owner-only mode
+	// is enforced on the write; a wider one is restored afterwards, best effort,
+	// so a directory whose ACL widens new files cannot refuse the save. A new
+	// file passes no mode; the directory decides.
+	var opts []atomicfile.Option
+	var restore os.FileMode
 	if info, err := l.m.root.Lstat(l.rel()); err == nil && info.Mode().IsRegular() {
-		mode = info.Mode().Perm()
+		if perm := info.Mode().Perm(); perm&0o077 == 0 {
+			opts = append(opts, atomicfile.WithMode(perm))
+		} else {
+			restore = perm
+		}
 	}
 	// One confined atomic write, the same primitive the upload path uses.
 	//
@@ -74,9 +83,15 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	// a lost race only replaces the LINK (rename(2) does not follow a final
 	// component). It also adds the fsync this write never had.
 	if _, err := atomicfile.WriteFileInRoot(r.Context(), l.m.root, l.rel(),
-		[]byte(body.Content), atomicfile.WithMode(mode)); err != nil {
+		[]byte(body.Content), opts...); err != nil {
 		writeFileError(w, l, err)
 		return
+	}
+	if restore != 0 {
+		if err := chmodInRoot(l.m.root, l.rel(), restore); err != nil {
+			slog.Debug("filebrowse: could not restore the file's mode after a write",
+				"path", logsafe.Field(l.abs), "mode", restore, "error", logsafe.Field(err.Error()))
+		}
 	}
 	slog.Info("filebrowse: file written", "path", logsafe.Field(l.abs), "bytes", len(body.Content))
 	webhttp.Ok(w)

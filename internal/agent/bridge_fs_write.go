@@ -9,19 +9,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/spec"
 )
+
+// chmodInRoot is a test seam over os.Root.Chmod.
+var chmodInRoot = (*os.Root).Chmod
 
 // respondFSWrite handles fs/write_text_file. Request params:
 //
 //	{ sessionId, path, content: "..." }
 //
 // Response: empty object on success. Caps content at fsWriteCap. Creates
-// parent directories (0o755) if missing.
+// missing parent directories as ordinary 0o755 directories.
 //
 // A write reaching this handler is already authorized (KAS gates the whole
 // turn) and applies immediately — including the REVERT of a rejected
@@ -52,32 +58,46 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, ms
 	}
 
 	// Preserve the existing file's permission bits so the agent can't silently
-	// demote a 0o755 script or promote a 0o600 secret to 0o644. New files use
-	// 0o644. Lstat (not Stat) so a symlink at the target is seen as a symlink
-	// rather than its resolved target. Only a REGULAR file's mode is adopted —
-	// the permission bits of a symlink, FIFO or device node describe an object
-	// this write refuses to replace. atomicfile refuses the rest one layer down
-	// (ErrSymlinkTarget / ErrNotRegular).
-	mode := os.FileMode(0o644)
+	// demote a 0o755 script or promote a 0o600 secret. An owner-only mode is
+	// enforced on the write; a wider one is restored afterwards, best effort,
+	// so a workspace whose ACL widens new files cannot refuse the save. A new
+	// file passes no mode; the directory decides. Lstat, so only a REGULAR
+	// file's bits are adopted; atomicfile refuses a symlink, FIFO or device
+	// at the target (ErrSymlinkTarget / ErrNotRegular).
+	var opts []atomicfile.Option
+	var restore os.FileMode
 	if info, statErr := root.Lstat(rel); statErr == nil && info.Mode().IsRegular() {
-		mode = info.Mode().Perm()
+		if perm := info.Mode().Perm(); perm&0o077 == 0 {
+			opts = append(opts, atomicfile.WithMode(perm))
+		} else {
+			restore = perm
+		}
+	}
+	// Missing parents are ordinary directories of the user's tree, created
+	// through the root so they stay confined.
+	if dir := filepath.Dir(rel); dir != "." {
+		if mkErr := root.MkdirAll(dir, 0o755); mkErr != nil {
+			in.respondFSError(ctx, chatID, msg, mkErr)
+			return
+		}
 	}
 
 	// One confined atomic write. Every component of rel is re-resolved inside
 	// the root on every operation, so a swapped ancestor cannot redirect the
 	// write. Temp-then-rename means the target is either the old bytes or all
-	// of the new ones, never a truncated partial. WithMkdirMode fsyncs each
-	// created directory level into its parent and enforces the mode there. A
-	// target occupied by a directory, FIFO, device node or socket is refused up
-	// front rather than opened (a FIFO's open(2) would otherwise block this
-	// handler indefinitely under lifetime.inflight, against a KAS Call with no
-	// timeout).
-	if _, wErr := atomicfile.WriteFileInRoot(ctx, root, rel, []byte(p.Content),
-		atomicfile.WithMode(mode),
-		atomicfile.WithMkdirMode(0o755),
-	); wErr != nil {
+	// of the new ones, never a truncated partial. A target occupied by a
+	// directory, FIFO, device node or socket is refused up front rather than
+	// opened (a FIFO's open(2) would otherwise block this handler indefinitely
+	// under lifetime.inflight, against a KAS Call with no timeout).
+	if _, wErr := atomicfile.WriteFileInRoot(ctx, root, rel, []byte(p.Content), opts...); wErr != nil {
 		in.respondFSError(ctx, chatID, msg, wErr)
 		return
+	}
+	if restore != 0 {
+		if chErr := chmodInRoot(root, rel, restore); chErr != nil {
+			slog.Debug("fs/write_text_file: could not restore the file's mode",
+				"chat_id", chatID, "path", logsafe.Field(rel), "mode", restore, "error", logsafe.Field(chErr.Error()))
+		}
 	}
 	// A dirty bit keyed on the path, not attribution: it touches no ledger, no
 	// turn and no card.

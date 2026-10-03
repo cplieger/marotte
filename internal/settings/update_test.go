@@ -278,3 +278,25 @@ func TestUpdate_AFailingMergeWritesNothing(t *testing.T) {
 		t.Errorf("config.json =\n%s\nwant it untouched:\n%s", data, stored)
 	}
 }
+
+// config.json is private state, so a write leaves it owner-only and a config
+// directory the write creates is owner-only too.
+func TestUpdate_WritesAnOwnerOnlyDocument(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "config")
+
+	if _, err := Update(t.Context(), dir, setKey(KeyTheme, "light")); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	for p, want := range map[string]os.FileMode{
+		filepath.Join(dir, Filename): 0o600,
+		dir:                          0o700,
+	} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %#o, want %#o", p, got, want)
+		}
+	}
+}

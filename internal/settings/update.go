@@ -57,7 +57,7 @@ func Update(ctx context.Context, configDir string, fn func(doc map[string]json.R
 		return nil, err
 	}
 	res, err := atomicfile.WriteFile(ctx, path, append(pretty, '\n'),
-		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
 	if err != nil {
 		return nil, err
 	}

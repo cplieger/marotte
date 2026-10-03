@@ -224,7 +224,7 @@ func writeOneUpload(ctx context.Context, dest loc, fh *multipart.FileHeader) (n 
 	// staying kernel-confined to the mount. It refuses a symlink dest and
 	// removes the temp on any error.
 	if _, werr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
-		atomicfile.WithMode(0o600), atomicfile.WithMaxBytes(maxUploadSize)); werr != nil {
+		atomicfile.WithMaxBytes(maxUploadSize)); werr != nil {
 		return cr.n, werr
 	}
 	return cr.n, nil
