@@ -77,7 +77,7 @@ func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, folder strin
 		writePageError(w, h.resolveError(err, "not found"))
 		return
 	}
-	f := os.NewFile(uintptr(fd), name)
+	f := os.NewFile(uintptr(fd), "preview")
 	defer func() { _ = f.Close() }()
 	w.Header().Set("Content-Type", contentTypeFor(name))
 	if !isPageName(name) {
