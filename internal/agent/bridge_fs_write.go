@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/spec"
@@ -58,20 +59,13 @@ func (in *inbound) respondFSWrite(ctx context.Context, chatID marotte.ChatID, ms
 	}
 
 	// Preserve the existing file's permission bits so the agent can't silently
-	// demote a 0o755 script or promote a 0o600 secret. An owner-only mode is
-	// enforced on the write; a wider one is restored afterwards, best effort,
-	// so a workspace whose ACL widens new files cannot refuse the save. A new
-	// file passes no mode; the directory decides. Lstat, so only a REGULAR
-	// file's bits are adopted; atomicfile refuses a symlink, FIFO or device
-	// at the target (ErrSymlinkTarget / ErrNotRegular).
+	// demote a 0o755 script or promote a 0o600 secret; a new file passes no mode
+	// and the directory decides. Lstat, so only a REGULAR file's bits are
+	// adopted; atomicfile refuses a symlink, FIFO or device at the target.
 	var opts []atomicfile.Option
 	var restore os.FileMode
 	if info, statErr := root.Lstat(rel); statErr == nil && info.Mode().IsRegular() {
-		if perm := info.Mode().Perm(); perm&0o077 == 0 {
-			opts = append(opts, atomicfile.WithMode(perm))
-		} else {
-			restore = perm
-		}
+		opts, restore = filemode.RewriteOptions(info.Mode().Perm())
 	}
 	// Missing parents are ordinary directories of the user's tree, created
 	// through the root so they stay confined.

@@ -196,3 +196,39 @@ func TestEnforceMode_SentinelIsTheLibrarysOwn(t *testing.T) {
 		t.Error("ErrModeNotStored matches os.ErrPermission; the two failures must stay distinguishable")
 	}
 }
+
+func TestRewriteOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		perm        os.FileMode
+		wantOpts    int
+		wantRestore os.FileMode
+	}{
+		{name: "owner_only_is_enforced", perm: 0o600, wantOpts: 1},
+		{name: "owner_only_exec_is_enforced", perm: 0o700, wantOpts: 1},
+		{name: "group_readable_is_restored", perm: 0o640, wantRestore: 0o640},
+		{name: "world_readable_script_is_restored", perm: 0o755, wantRestore: 0o755},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, restore := RewriteOptions(tc.perm)
+			if len(opts) != tc.wantOpts || restore != tc.wantRestore {
+				t.Errorf("RewriteOptions(%#o) = %d options, restore %#o; want %d options, restore %#o",
+					tc.perm, len(opts), restore, tc.wantOpts, tc.wantRestore)
+			}
+			if tc.wantOpts == 0 {
+				return
+			}
+			path := filepath.Join(t.TempDir(), "f")
+			if _, err := atomicfile.WriteFile(t.Context(), path, []byte("x"), opts...); err != nil {
+				t.Fatalf("WriteFile with RewriteOptions(%#o): %v", tc.perm, err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat: %v", err)
+			}
+			if got := info.Mode().Perm(); got != tc.perm {
+				t.Errorf("written mode = %#o, want %#o", got, tc.perm)
+			}
+		})
+	}
+}

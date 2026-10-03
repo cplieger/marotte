@@ -94,3 +94,14 @@ func enforceMode(path string, want os.FileMode, extraFlags int) (os.FileMode, er
 func chmodBits(m os.FileMode) os.FileMode {
 	return m.Perm() | m&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky)
 }
+
+// RewriteOptions says how to rewrite an existing regular file of mode perm so
+// it keeps its permission bits. An owner-only mode is enforced on the write. Any
+// other mode comes back as restore, for the caller to chmod after the write, so
+// a directory whose inherited ACL widens new files cannot refuse the save.
+func RewriteOptions(perm os.FileMode) (opts []atomicfile.Option, restore os.FileMode) {
+	if perm&0o077 == 0 {
+		return []atomicfile.Option{atomicfile.WithMode(perm)}, 0
+	}
+	return nil, perm
+}

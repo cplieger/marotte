@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/marotte/internal/filemode"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/webhttp/v3"
@@ -56,18 +57,12 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		return
 	}
 	// A rename publishes a new inode, so an existing regular file's bits are
-	// carried across or a save would flatten a 0o755 script. An owner-only mode
-	// is enforced on the write; a wider one is restored afterwards, best effort,
-	// so a directory whose ACL widens new files cannot refuse the save. A new
-	// file passes no mode; the directory decides.
+	// carried across or a save would flatten a 0o755 script; a new file passes
+	// no mode and the directory decides.
 	var opts []atomicfile.Option
 	var restore os.FileMode
 	if info, err := l.m.root.Lstat(l.rel()); err == nil && info.Mode().IsRegular() {
-		if perm := info.Mode().Perm(); perm&0o077 == 0 {
-			opts = append(opts, atomicfile.WithMode(perm))
-		} else {
-			restore = perm
-		}
+		opts, restore = filemode.RewriteOptions(info.Mode().Perm())
 	}
 	// One confined atomic write, the same primitive the upload path uses.
 	//
