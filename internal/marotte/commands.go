@@ -29,6 +29,9 @@ const (
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
 	CmdSteer               CommandType = "steer"
 	CmdSteerClear          CommandType = "steer_clear"
+	// CmdSteerRemove drops ONE waiting steer: KAS has no per-steer verb, so the
+	// server clears the buffer and resends the others together, in order.
+	CmdSteerRemove CommandType = "steer_remove"
 	// The four tab commands. Membership is a mutation, so it rides this envelope
 	// rather than a second REST surface with its own failure semantics.
 	CmdOpenTab     CommandType = "open_tab"
@@ -63,9 +66,6 @@ type PromptCommand struct {
 	MessageID   string       `json:"message_id"`
 	Model       string       `json:"model,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
-	// Resends names the dropped steers whose text the client carried into this
-	// prompt; it lands on turn_open.prompt.resends so the record states the resend.
-	Resends []string `json:"resends,omitempty"`
 }
 
 // Attachment is a file staged beside a prompt; its extension decides whether it
@@ -278,9 +278,18 @@ type SetSupervisedModeCommand struct {
 type SteerCommand struct {
 	Text      string `json:"text"`
 	MessageID string `json:"message_id"`
-	// Resends names the dropped steers whose text this one re-sends (a boundary
-	// resend); it lands on the steer entry's resends.
-	Resends []string `json:"resends,omitempty"`
+}
+
+// SteerRemoveCommand is the payload for type="steer_remove". SteerID is the key of
+// a dock row the user sent; the rows they kept are resent together, in order.
+type SteerRemoveCommand struct {
+	SteerID string `json:"steer_id"`
+}
+
+// CancelCommand is the payload for type="cancel". Lead is the key of the dock row
+// the stop is for: the unread steers the stop resends go out with it first.
+type CancelCommand struct {
+	Lead string `json:"lead,omitempty"`
 }
 
 // OpenTabCommand is the payload for type="open_tab": open a tab for something

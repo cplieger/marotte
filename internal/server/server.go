@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/specapproval"
 	"github.com/cplieger/marotte/internal/tabs"
 	"github.com/cplieger/pinstall/v3"
@@ -52,6 +53,8 @@ type Server struct {
 	kiroDocs *docsCache
 	// tabs is the open-tab set; nil (no config dir) answers an empty collection at version 0.
 	tabs tabReader
+	// preview serves /preview/ and its grant and stamp endpoints; nil leaves them unmounted.
+	preview routeHandler
 	// specApprovals is the spec-phase approval record; nil (no config dir) means
 	// the spec GET carries no approvals.
 	specApprovals specApprovalReader
@@ -113,6 +116,9 @@ func WithMCPStatus(r routeHandler) Option { return func(s *Server) { s.mcpStatus
 
 // WithMCPRegistry sets the route handler for the MCP registry proxy endpoint.
 func WithMCPRegistry(r routeHandler) Option { return func(s *Server) { s.mcpRegistry = r } }
+
+// WithPreview sets the sandboxed web-preview routes.
+func WithPreview(r routeHandler) Option { return func(s *Server) { s.preview = r } }
 
 // WithForges sets the route handler for forge (GitHub/GitLab/Gitea) HTTP endpoints.
 func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r } }
@@ -319,6 +325,9 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
 	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
+	if s.preview != nil {
+		s.preview.RegisterRoutes(mux)
+	}
 	s.registerTestHooks(mux)
 
 	// Computed from the embedded index.html so the inline importmap's sha256 stays in sync
@@ -406,7 +415,7 @@ func registerAPIFallback(mux *http.ServeMux) {
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST FIRST
 // (webhttp.Chain's order): access logging, panic recovery, the security layer (dynamic CSP
-// + ALLOWED_HOSTS + stdlib CSRF), the canonical-path gate, the REST idempotency dedup.
+// + ALLOWED_HOSTS + stdlib CSRF), the Fetch Metadata gate, the canonical-path gate, the REST idempotency dedup.
 //
 // A method rather than an inline literal so the ORDER is assertable without binding a
 // port: that order is a security property, and a test hand-assembling the same list would
@@ -425,9 +434,12 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 			// a failing one is surfaced.
 			webhttp.ProbeLogLevel("/api/health"),
 			webhttp.WithClientIP(s.trustedProxies...),
+			// A preview path carries a 12h bearer token, so it logs as the route template.
+			webhttp.WithTemplatePathsUnder(preview.PathPrefix),
 		),
 		webhttp.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
+		fetchMetadataGate,
 		// INSIDE the host allowlist and the CSRF check, so their 403 is never shadowed by
 		// a 400 about spelling; OUTSIDE the mux, because ServeMux canonicalizes before it
 		// selects a pattern and no handler can be reached to refuse for itself; outside

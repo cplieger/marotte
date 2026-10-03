@@ -8,8 +8,9 @@
    `display … allow-discrete` transition leg, which snapped shut in practice;
    the visibility variant animates on every engine. Open (class removal)
    transitions height 0 → var(--shell-h) via the base transition — no
-   @starting-style needed since the element never enters/leaves the layout
-   (this also makes the first restoreShell() open animate consistently). */
+   @starting-style needed since the element never enters/leaves the layout.
+   A panel stored open paints open from the first frame, with no animation
+   (the pre-open rule below). */
 .shell-panel {
   /* THE PAINTED BAR'S OWN HEIGHT, declared here because two rules read it: the bar
      paints it, and the bar's target expander subtracts it from the tier's hit
@@ -54,6 +55,21 @@
   /* Live resize drag: the pointer must track 1:1, not ease 200ms behind. */
   &.resizing {
     transition: none;
+  }
+}
+
+/* prepaint.js owns the first frame of a stored-open panel: the root attribute
+   paints the closed panel at its open height until setShellOpen or the boot's
+   settings answer removes it. Values mirror the base rule, so the hand-over
+   starts no transition. */
+:root[data-shell-open] .shell-panel {
+  transition: none;
+
+  &.shell-closed {
+    height: var(--shell-h, 16rem);
+    opacity: 1;
+    visibility: visible;
+    border-block-start-width: 1px;
   }
 }
 

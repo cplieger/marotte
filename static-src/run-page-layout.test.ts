@@ -58,6 +58,7 @@ describe("the run page claims its height", () => {
     '[id="git-view"]',
     '[id="editor-view"]',
     '[id="files-view"]',
+    '[id="web-view"]',
     '[id="history-view"]',
     '[id="run-view"]',
     '[id="subagent-view"]',

@@ -36,6 +36,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_GIT: "",
   ICON_TAB_FILES: "",
   ICON_TAB_RUN: "",
+  ICON_TAB_WEB: "",
   ICON_TAB_AGENT: "",
   // roles.ts is in this graph now (tab-materialize.ts derives a delegate tab's
   // label from it), and Browser Mode links for real rather than reading
@@ -105,13 +106,13 @@ vi.mock("./dom.js", () => ({
 }));
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
-// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
-// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
-// whole file at link time.
+// `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
+// this whole file at link time.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
   ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),
   isDragHandled: vi.fn(() => false),
+  dragOwnsStrip: vi.fn(() => false),
   setReorderCallback: vi.fn(),
 }));
 vi.mock("./store.js", () =>
@@ -173,9 +174,10 @@ import {
   tabIdFor,
   getActiveTabId,
   setTabPinned,
+  renameTab,
   _resetForTest,
 } from "./tabs.js";
-import { setReorderCallback } from "./tabs-drag.js";
+import { dragOwnsStrip, setReorderCallback } from "./tabs-drag.js";
 import { registerTabOpeners, _resetTabOpenersForTest } from "./tab-materialize.js";
 import { ingestTabsChanged, listTabs, tabsVersion, _resetTabsSyncForTest } from "./tabs-sync.js";
 import { resetActionFramework } from "./actions/__test-helpers__/action-test-setup.js";
@@ -709,7 +711,9 @@ describe("a repeated gesture that must NOT collapse", () => {
     expect(pins).toEqual([true, false, true]);
   });
 
-  it("executes a drag A -> B -> A, all three, ending at A", async () => {
+  // A drop that changes nothing sends nothing, so the strip starts at A and the
+  // three drops are B, A, B — the last order equals the first.
+  it("executes a drag A -> B -> A -> B, all three, ending at B", async () => {
     expect.assertions(3);
     tabServer.setMode("event-first");
     await openTab({ kind: "chat", ref: "a" });
@@ -718,15 +722,15 @@ describe("a repeated gesture that must NOT collapse", () => {
     const b = tabIdFor("chat", "b");
     expect(commitDrop).toBeTypeOf("function");
 
-    commitDrop?.([a, b]);
-    await settleTabs();
     commitDrop?.([b, a]);
     await settleTabs();
     commitDrop?.([a, b]);
     await settleTabs();
+    commitDrop?.([b, a]);
+    await settleTabs();
 
     expect(tabServer.sentOfType("reorder_tabs")).toHaveLength(3);
-    expect(await rowRefs()).toEqual(["a", "b"]);
+    expect(await rowRefs()).toEqual(["b", "a"]);
   });
 
   // The exact-set check IS the whole precondition, so a 409 means the set moved
@@ -822,5 +826,80 @@ describe("a failed mutation leaves the strip unchanged", () => {
     expect(await rowRefs()).toEqual(["a", "b"]);
     // A 500 is not a 409: only the exact-set refusal means "you are behind".
     expect(tabServer.listCalls()).toBe(listsBefore);
+  });
+});
+
+// A drop is the one mutation whose preview the DOM already shows before the
+// server answers: the drag moves the row itself, so the strip and the projection
+// disagree until something repaints from the projection.
+describe("a drop and the strip it reorders", () => {
+  beforeEach(async () => {
+    tabServer.setMode("event-first");
+    await openTab({ kind: "chat", ref: "a" });
+    await openTab({ kind: "chat", ref: "b" });
+    await paint();
+  });
+
+  afterEach(() => {
+    vi.mocked(dragOwnsStrip).mockReturnValue(false);
+  });
+
+  function strip(): HTMLElement {
+    const list = document.getElementById("tab-list");
+    if (list === null) {
+      throw new Error("no strip");
+    }
+    return list;
+  }
+
+  function stripRefs(): string[] {
+    const byID = new Map(tabServer.subjects().map((s) => [s.id, s.ref]));
+    return [...strip().children].map(
+      (c) => byID.get((c as HTMLElement).dataset["tabId"] ?? "") ?? "?",
+    );
+  }
+
+  it("snaps a refused drop back to the order the server kept", async () => {
+    expect.assertions(2);
+    const [a, b] = [...strip().children];
+    if (a === undefined || b === undefined) {
+      throw new Error("two rows expected");
+    }
+    // What the drag's preview does to the DOM before it reports the order.
+    strip().insertBefore(b, a);
+    tabServer.failNext("reorder_tabs", 500, "boom");
+    commitDrop?.([tabIdFor("chat", "b"), tabIdFor("chat", "a")]);
+    await settleTabs();
+    expect(tabServer.subjects().map((s) => s.ref)).toEqual(["a", "b"]);
+    expect(await rowRefs()).toEqual(["a", "b"]);
+  });
+
+  // A render landing mid-drag (a rename, another device's frame) must not re-seat a
+  // row: the pointer owns the order, and a re-seat moves the slot under a still one.
+  it("leaves the previewed row where the preview put it on a render mid-drag", async () => {
+    expect.assertions(1);
+    const [a, b] = [...strip().children];
+    if (a === undefined || b === undefined) {
+      throw new Error("two rows expected");
+    }
+    strip().insertBefore(b, a);
+    vi.mocked(dragOwnsStrip).mockReturnValue(true);
+    renameTab(tabIdFor("chat", "b"), "renamed");
+    await paint();
+    await paint();
+    expect(stripRefs()).toEqual(["b", "a"]);
+  });
+
+  it("re-seats rows from the projection on a render after the drag ends", async () => {
+    expect.assertions(1);
+    const [a, b] = [...strip().children];
+    if (a === undefined || b === undefined) {
+      throw new Error("two rows expected");
+    }
+    strip().insertBefore(b, a);
+    renameTab(tabIdFor("chat", "b"), "renamed");
+    await paint();
+    await paint();
+    expect(stripRefs()).toEqual(["a", "b"]);
   });
 });

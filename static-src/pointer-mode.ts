@@ -99,8 +99,8 @@ export function revealPointerModeToggle(): void {
   $.pointerModeBtn.classList.remove("hidden");
 }
 
-/** Wire the toggle. `initPointerTier` must already have run, since the button
- *  reports the tier that is in force. */
+/** Wire the toggle. The tier must already be applied (prepaint.js, then
+ *  `initPointerTier`), since the button reports the tier that is in force. */
 export function initPointerModeToggle(): void {
   const btn = $.pointerModeBtn;
   btn.classList.toggle("hidden", !coarseEverSeen());

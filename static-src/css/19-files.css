@@ -449,7 +449,8 @@
   background: var(--c-bg-primary);
 }
 
-[id="app"]:has(.shell-panel:not(.shell-closed)) .bottom-bar {
+[id="app"]:has(.shell-panel:not(.shell-closed)) .bottom-bar,
+:root[data-shell-open] .bottom-bar {
   padding-bottom: var(--sp-2);
 }
 

@@ -7,8 +7,22 @@
 // sw.ts is coverage-excluded because it runs in ServiceWorkerGlobalScope, and
 // everything in it that was worth pinning was pure.
 import { describe, it, expect } from "vitest";
-import { isShellPath, parseManifest } from "./precache.js";
+import { isPreviewPath, isShellPath, parseManifest } from "./precache.js";
 import bundleGo from "../cmd/bundle/main.go?raw";
+
+describe("isPreviewPath", () => {
+  it("claims a preview document and its assets", () => {
+    expect(isPreviewPath("/preview/tok/index.html")).toBe(true);
+    expect(isPreviewPath("/preview/tok/css/app.css")).toBe(true);
+  });
+
+  it.each(["/previewx", "/api/preview/grant", "/", "/web/workspace/demo/index.html"])(
+    "leaves %s to the worker's other rules",
+    (path) => {
+      expect(isPreviewPath(path)).toBe(false);
+    },
+  );
+});
 
 describe("isShellPath", () => {
   it("admits a name built from the Go side's own chunk template", () => {

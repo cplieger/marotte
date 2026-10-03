@@ -3,260 +3,128 @@
 [![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/marotte/badges/size.json)](https://github.com/cplieger/marotte/pkgs/container/marotte) ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue) ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/marotte/badges/mutation.json)](https://github.com/cplieger/marotte/issues?q=label%3Agremlins-tracker) [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/marotte/releases)
 
 <!-- hub-overview BEGIN -->
-A browser-based front-end for the **Kiro CLI**: chat with an AI coding agent from any device, with a live terminal, a file editor, and git/forge workflows in the same tab.
-
-Marotte runs `kiro-cli` as an Agent Client Protocol (ACP) subprocess and wraps it in a full workspace UI. The **server is the single source of truth**: every action is persisted and echoed to every connected client over Server-Sent Events, so a conversation open on your phone and your desktop stays in sync.
-
-Published as a multi-arch (amd64 + arm64) container image on **GHCR** (`ghcr.io/cplieger/marotte`) and **Docker Hub** (`cplieger/marotte`).
+marotte puts the Kiro coding agent, `kiro-cli`, in a browser tab on your own server, to chat with from a phone or a desktop. The same tab has a terminal, a file editor and git.
 
 ## ⚠️ Alpha software
 
-Marotte is in alpha and under active development. **Any update can introduce a breaking change with no migration path** to the API, the stored chat format, configuration, or behavior. Pin a specific image tag instead of `latest`, and check the release notes before upgrading.
+marotte is in alpha. Any update can change how it works, or how chats and settings are stored, without converting yours. Pin an image tag from the [releases](https://github.com/cplieger/marotte/releases) instead of `latest`, and read the release notes before you upgrade.
 
-## ⚠️ It drives an AI agent with shell and file access
+## What it does
 
-Marotte controls an agent that can run shell commands and read and write your files under `/workspace`, and it exposes kiro-cli's stored credentials. It has **no built-in authentication**: anyone who can reach the port can use it. Before exposing it beyond your own machine, do one (ideally both) of:
+- Chat with the Kiro agent from any device, the same conversation on every screen.
+- Review a whole turn's file edits before you keep them, or rewind a chat and its edits.
+- Edit files, use a terminal, and commit and open pull requests on GitHub, GitLab, Codeberg or Gitea.
+- Install language servers and command-line tools from a catalog of about 700.
+- Get notified when the agent finishes or needs approval.
 
-- put it behind an authenticating reverse proxy (Caddy forward-auth, oauth2-proxy, Authentik, …), and/or
-- keep the published port on loopback or a private network.
+## Who it is for
 
-Signing in from the UI authenticates **kiro-cli to AWS** (the agent's identity); it is not a gate on marotte itself.
+You need a Kiro account and an `amd64` or `arm64` Docker host. marotte has no login of its own, so keep it on your private network or behind a reverse proxy that asks for one. One container is one person's workspace.
+
+- [Kiro Crew](https://github.com/kirodotdev/KiroCrew) is Kiro's own workspace, with a desktop app, a web dashboard and a CLI. You install kiro-cli for it separately.
+- [Agent Cockpit](https://github.com/daronyondem/agent-cockpit) is a browser interface for several agents, Kiro among them. marotte drives only kiro-cli, and installs it.
+- [Web Terminal for Kiro](https://github.com/cplieger/web-terminal-kiro) shows kiro-cli's own terminal screen instead of a chat.
+
+Pick Kiro Crew for long unattended tasks, editable memory, Slack or Discord, or a dashboard with its own login, Agent Cockpit to switch agent vendors, and Web Terminal for Kiro for kiro-cli's own terminal screen.
+
+marotte is free software under the AGPL-3.0-or-later license.
 <!-- hub-overview END -->
 
-## Run
+## Quick start
+
+The image is on GitHub Container Registry and Docker Hub, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository.
 
 ```yaml
-# compose.yaml
 services:
   marotte:
     image: ghcr.io/cplieger/marotte:latest
     container_name: marotte
-    user: "${PUID:-1000}:${PGID:-1000}"  # from .env; must own the bind mounts
-    ports:
-      - "9847:9847"
-    volumes:
-      - "./config:/config"  # chats, kiro-cli auth/state, tools
-      - "./workspace:/workspace"  # your repos
-      - "./uploads:/uploads"  # files you attach in the composer
     restart: unless-stopped
-    init: true  # required: reaps the processes an agent's terminal commands leave behind
+    init: true  # optional, because the image already runs tini
+    # Create the three host folders below and run "sudo chown -R 1000:1000 /opt/appdata/marotte"
+    # before the first start, or the container restarts in a loop. If .env sets PUID and PGID, use those numbers.
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    ports:
+      - "9847:9847"  # keep this port on your own network, see README "Security"
+
+    volumes:
+      - "/opt/appdata/marotte/config:/config"  # chats, the Kiro sign-in, installed tools
+      - "/opt/appdata/marotte/workspace:/workspace"  # your repositories
+      - "/opt/appdata/marotte/uploads:/uploads"  # files you attach to a message
 ```
 
-Before the first start, create the bind-mount directories and give them to that UID (1000 unless you set `PUID`/`PGID`). The entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
+1. Create the folders with `sudo mkdir -p /opt/appdata/marotte/config /opt/appdata/marotte/workspace /opt/appdata/marotte/uploads`.
+2. Give them to user 1000 with `sudo chown -R 1000:1000 /opt/appdata/marotte`. If you set `PUID` and `PGID` in `.env`, use those numbers.
+3. Run `docker compose up -d`.
+4. Open `http://<server>:9847`, where `<server>` is the address of the server on your network, for example `http://192.168.1.10:9847`.
+5. Sign in with your Kiro account when the page asks. Chats use that account's plan and credits, which the sidebar shows.
 
-```bash
-mkdir -p ./config ./workspace ./uploads
-chown -R "${PUID:-1000}:${PGID:-1000}" ./config ./workspace ./uploads
-```
+The first start downloads kiro-cli, about 530 MB, which can take a few minutes. The page, files, git and the terminal work in the meantime, and chats say kiro-cli is still installing. Amazon publishes kiro-cli under the AWS Customer Agreement. marotte downloads it instead of shipping it in the image, so starting the container means you accept that agreement.
 
-To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
+Run `docker logs marotte`. After the download you should see `msg=installed package=kiro-cli`. If you see `failed to create required directories`, step 2 was skipped.
 
-Open <http://localhost:9847>. The UI comes up right away, and `kiro-cli` is downloaded and verified in the background on first boot. Until that finishes, health reports `503` and chats say so, while files, git, settings and the shell already work. Then sign in to `kiro-cli` and start chatting.
+## Using it from a phone
 
-## Capabilities
-
-Marotte is a full workspace in the browser, and everything below is reachable from any device viewing the same server.
-
-**Chat:** conversations kept in sync across devices over SSE, streaming markdown responses, and collapsible reasoning ("thinking") blocks. Send mid-turn and your message joins the running turn. Prefix a message with `!` to run a shell command. `/compact` compacts the context now, `/drop` ends a wedged turn, and `/goal` sets an objective the agent works toward across turns until it meets the goal or its iteration budget runs out. Attach files by drag-drop, paste, or the composer's `+` menu; PDF, CSV and Office documents reach the agent as documents, images as images, and anything else as a path it opens with its file tools. Also find-in-chat, per-chat export, a cross-chat search, a History view over past conversations and workflow runs, and configurable chat retention.
-
-**Agent control:** switch modes (Default, Spec, Quick Spec, Bug Fix, Plan, Autonomous, plus your own workspace agents from `.kiro/agents/`), switch models mid-conversation, set reasoning effort from low to max, answer permission prompts, structured questions and MCP elicitation forms, and fork a tangent that leaves the original chat untouched. Subagent work renders as collapsible cards, and the agent's own terminals get tabs in the shell panel.
-
-**Editing, files and terminal:** a file browser, a recursive content search with include and exclude patterns, a syntax-highlighted editor with deep links to a line (`#L<n>`), diffs against the last save or against git `HEAD`, a merge-conflict resolver that takes ours, theirs or both per hunk, and a PTY shell (via [web-terminal-engine](https://github.com/cplieger/web-terminal-engine)) that survives sleep and network drops.
-
-**Version control and forges** for GitHub, GitLab, Codeberg, and Gitea/Forgejo: stage, commit, diff and switch branches; list, create, merge and close pull requests, with AI-written commit messages and descriptions; connect accounts by OAuth device flow or a token, driven by the `gh` / `glab` / `tea` CLIs.
-
-**Safety nets** around the agent's file edits:
-
-- Rewind: send the conversation back to an earlier message of yours. The agent's file edits roll back with the transcript, from snapshots the agent runtime takes independently of git.
-- Supervised mode: hold the whole turn for review instead of approving each write. One approval lists every file the turn touched, renames and deletes included, and you keep or discard each one.
-- Permissions: a Cedar policy editor (allow/deny/ask per capability, with path scoping) and a "test a decision" explainer. One policy governs every tool call, shell commands included.
-- Scope: rewind and supervised review cover the agent's file-write channel. Changes made through shell commands or terminals go through the policy but are not snapshotted, so use git for those. A held write does land on disk while you review it, so a watcher or dev server sees it before you decide.
-
-**MCP:** add, edit and remove servers (local, or remote over HTTP/SSE), with per-server auto-approve, live reconnect, and prompt and resource browsing. For a server that needs OAuth, marotte registers itself automatically or takes a client id and secret you already have, then shows a sign-in link.
-
-**Workspace tools:** install runtimes, language servers and CLIs from a catalog of ~700 (compiled from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog)), in the background, pinned to a version or with an install command of your own. When you enable a language server, marotte also activates kiro-cli [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace: LSP-backed navigation, rename and diagnostics, live chats included, no restart. It freezes the detected-language set into `/workspace/.kiro/settings/lsp.json` at first activation, so after you add a language to the workspace, delete that file; marotte re-initializes it on the next boot.
-
-**Workspace configuration** on the `/docs` page: the whole `.kiro` inventory with its front-matter (steering docs, skills, agents, specs, hooks), knowledge bases you index, hooks you enable, and workflow runs you launch, pause, resume, cancel or schedule. Settings holds global custom instructions, per-device layout with light and dark themes, account usage, a context and credit meter, and a copyable diagnostics report.
-
-**Notifications:** installable as a PWA, with web-push notifications when a turn finishes, a pull request's checks settle, or the agent needs permission, even with the tab closed. The turn and pull-request kinds each have their own switch; the permission notice has none, because nothing else tells you off-screen that a turn waits on you. A device still receiving the live stream gets no push; an ask raised inside 45 s of locking a phone is held and delivered once the stream goes quiet, or dropped if it is answered elsewhere or its window passes first.
-
-## Knowledge bases
-
-The agent can search local directories you index for it in **Settings → Custom instructions → Knowledge bases**. The field takes a directory path, never a URL: absolute, or relative to `/workspace`. Clone the repository first, then index the subdirectory that holds its markdown.
-
-```sh
-git clone --depth 1 https://github.com/rust-lang/book /workspace/refs/rust-book
-```
-
-Then add `refs/rust-book/src`. Trees like these index well, because every page is a plain markdown file:
-
-| Project | Directory | Pages |
-| --- | --- | --- |
-| [rust-lang/book](https://github.com/rust-lang/book) | `src` | 112 |
-| [astral-sh/uv](https://github.com/astral-sh/uv) | `docs` | 81 |
-| [prometheus/docs](https://github.com/prometheus/docs) | `docs` | 71 |
-| [reactjs/react.dev](https://github.com/reactjs/react.dev) | `src/content` | 223 |
-| [kubernetes/website](https://github.com/kubernetes/website) | `content/en/docs` | 1709 |
-
-Index a subdirectory, not a repository root, so the build skips code and assets. Indexing runs in the background and the row shows a percentage: a few hundred pages take minutes, and a tree the size of [mdn/content](https://github.com/mdn/content) (14,000 pages) takes far longer.
+Open the same address in your phone's browser and add it to the home screen to install it as an app. Notifications for a finished turn or workflow run, a pull request's checks, or a permission request then arrive with the tab closed. Browsers allow both only over HTTPS or on `localhost`, so a phone needs the reverse proxy from [Security](#security). The other features are in [Features](docs/features.md).
 
 ## Configuration reference
 
-The image ships working defaults; most setups only choose the volumes and how to expose the port.
-
-- **Port:** `9847` (HTTP + SSE + the shell WebSocket).
-- **Volumes:** `/config` persists chats, kiro-cli auth and state, installed tools, and settings; `/workspace` is your repositories; `/uploads` holds the files you attach in the composer.
-- **User:** the compose above runs as `1000:1000`; see the first-boot ownership note.
-- **Health:** `GET /api/health` reports healthy once the server is up **and** the pinned `kiro-cli` is installed, runnable at that exact version, and has its auto-update switched off. Anything short of that answers `503` with a reason naming the state: installing, install retrying, unavailable once the attempts are exhausted, or required settings not enforced. The UI still starts in every one of those states and shows a banner; only chats wait, and the install retries itself with backoff. To repair one by hand, fix `/config/tools/kiro-cli-versions` inside the container and `curl -X POST localhost:9847/api/kiro-cli/rescan` (loopback only) to pick it up without a restart.
-
-### Uploaded files (`/uploads`)
-
-Files you attach in the composer, by drag-drop, paste, or the `+` menu, are written to `/uploads`, and the agent reads them back from there. The image creates that directory itself, so attaching works with no volume mounted on it. Nothing inside the image survives a container recreate though, so without a volume the files go, and a saved draft that still lists them points at paths that no longer exist. Mount a volume to keep them, owned by the same UID as the other mounts:
-
-```yaml
-volumes:
-  - "./uploads:/uploads"
-```
-
-The file browser lists `/uploads` beside the other granted roots, so you can rename and delete there without granting anything.
-
-### Behind a reverse proxy (`TRUSTED_PROXIES`)
-
-The access log and the login/logout audit logs record a `client_ip`. Leave `TRUSTED_PROXIES` unset when marotte is directly exposed: `client_ip` is then the connecting socket's address, which a client cannot forge, and any `X-Forwarded-For` header it sends is ignored. Behind a reverse proxy, set it to the address range of every hop, comma-separated CIDRs (a bare IP counts as a single host), so `client_ip` shows the real client:
-
-```yaml
-environment:
-  TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
-```
-
-`X-Forwarded-For` is honored **only** when the connecting peer falls inside the list, so an empty, unset, or malformed value is spoof-safe.
-
-### Host allowlist (`ALLOWED_HOSTS`)
-
-Set `ALLOWED_HOSTS` to the exact hostnames and IPs you browse marotte at (comma-separated, for example `ALLOWED_HOSTS: "localhost,192.168.1.5,marotte.example.com"`); a request with any other `Host` header is rejected with 403.
-
-Set it for any long-running deployment, because it is what blocks **DNS rebinding**: an attacker's page makes its own hostname resolve to your marotte address, `Origin` and `Host` then agree, and the same-origin check passes. That attack rides your own browser, so it reaches even a loopback- or LAN-bound deployment. Requests from the container itself are always admitted, so the image's healthcheck keeps working. Unset accepts every `Host` and warns at startup.
-
-### Trusted install uids (`TRUSTED_INSTALL_UIDS`)
-
-Before it installs kiro-cli, marotte checks who can write each directory on the way to its install tree under `/config/tools`, and refuses the install when another identity can, because this container later executes what lands there. Leave this **unset** (the default) for almost every deployment, and set it only when the check refuses a volume you know is safe, typically a shared or network mount whose permissions grant an account you control:
-
-```yaml
-environment:
-  TRUSTED_INSTALL_UIDS: "3000"
-```
-
-Each uid you list is an assertion that the account is **already at least as privileged as this server**, so its write access gains it nothing. That is true of an administrator who already holds root on the host; it is false of an unprivileged account, and listing one of those hands it a way in instead of closing one. A malformed entry is skipped with a warning.
-
-### Extra browse roots (`MAROTTE_BROWSE_ROOTS`)
-
-The file browser sees the granted roots (`/workspace`, `/config` and `/uploads` by default) and nothing else in the container. To browse another mount, grant it with a colon-separated list of absolute paths:
-
-```yaml
-environment:
-  MAROTTE_BROWSE_ROOTS: "/tmp:/data"
-```
-
-Mount each grant with `volumes:` first. Credential and internal state files under `/config` (SSH keys, cloud tokens, chat store, MCP config) stay blocked whatever you grant.
-
-### Extra kiro-cli launch flags (`MAROTTE_KIRO_ACP_ARGS`)
-
-An escape hatch for a `kiro-cli acp` flag marotte does not pass yet, whitespace-separated and appended to every chat's launch command. Five flags are refused with a logged reason, `--model` and `--effort` among them (pick those per chat in the composer). Flags are logged by count only, never by value. See [Launch flags](docs/launch-flags.md).
-
-### Agent-launched workflow runs (`MAROTTE_AGENT_WORKFLOWS`)
-
-The chat agent can start a workflow run itself: it holds the workflow tools, so a request like "run the publish workflow" starts the run instead of describing it. Runs you launch yourself from **Workflows** on `/docs` are unaffected.
-
-An agent-launched run has one rough edge: pause, resume and retry work only on a run you started from the Workflows tab, though Stop always works.
-
-To switch the capability off, set the variable to `false` (also `0`, `no`, or `off`):
-
-```yaml
-environment:
-  MAROTTE_AGENT_WORKFLOWS: "false"
-```
-
-The agent then loses the workflow tools and answers about workflows in prose; everything you launch yourself keeps working. The change takes effect on the next chat, so restart the container to apply it everywhere.
-
-### Agent environment variables (`MAROTTE_ALLOW_AGENT_ENV`)
-
-When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary (`CGO_ENABLED`, `GOFLAGS`, `TERM`), but a few carry no data and instead change what a program _executes_: `LD_PRELOAD`, `GIT_SSH_COMMAND` and `BASH_ENV` each redirect execution. marotte refuses those, because approving a command must approve **that** command, and the agent's variables take precedence over marotte's own. A harmless value is still accepted (`GIT_PAGER=cat` keeps working), and the refusal names the variable so the agent can retry without it.
-
-If you genuinely need one (a profiler that preloads a library, a vendored `NODE_PATH`), name it:
-
-```yaml
-environment:
-  MAROTTE_ALLOW_AGENT_ENV: "LD_PRELOAD,NODE_PATH"
-```
-
-Comma-separated, granting only the names you list. It applies to what the **agent** asks for, not to variables you set on the container yourself.
-
-### Credentials in the container environment (`MAROTTE_ALLOW_BRIDGE_ENV`)
-
-The other direction: kiro-cli and everything it runs inherit whatever you put in the container's `environment:`, so a `GITHUB_TOKEN` you added for some unrelated reason is a credential every agent turn can read and use.
-
-marotte drops credential-shaped names on the way down and logs which ones, by name only: a name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Ordinary variables are untouched, `AWS_REGION` and `AWS_PROFILE` included. Keep credentials out of the container environment anyway: forge tokens belong in `gh` / `glab` / `tea`'s own stores, which is where the git panel puts them. If a variable's name merely reads like a credential, name it:
-
-```yaml
-environment:
-  MAROTTE_ALLOW_BRIDGE_ENV: "BUILDKITE_AGENT_TOKEN"
-```
-
-### OS packages
-
-The tools engine installs OS packages, so there is no separate variable for them. Add one from **Settings → Tools**, or by name with an explicit `apt:` source. Two cases need it: Go work that runs `go test -race` needs a C compiler the image does not ship, and a runtime the engine installs can link a shared library the image lacks. See [OS packages](docs/os-packages.md) for the manifest form and what the rules refuse.
-
-### Environment variable reference
-
-Every knob, the ones detailed above included. A malformed duration warns and falls back to its default.
+Settings in the compose `environment:` block are read at start, so recreate the container after a change. Models, permissions, tools, notifications and chat retention are set on the page under **Settings** instead. No variable is required.
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `TRUSTED_PROXIES` | Reverse-proxy CIDRs whose `X-Forwarded-For` resolves `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy-trusted_proxies). | _(unset)_ |
-| `ALLOWED_HOSTS` | Exact hostnames/IPs marotte answers for; anything else is rejected (anti-DNS-rebinding). See [Host allowlist](#host-allowlist-allowed_hosts). | _(unset)_ |
-| `TRUSTED_INSTALL_UIDS` | Numeric uids whose write access to the kiro-cli install tree does not refuse the install. See [Trusted install uids](#trusted-install-uids-trusted_install_uids). | _(unset)_ |
-| `MAROTTE_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-marotte_browse_roots). | _(unset)_ |
-| `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-marotte_kiro_acp_args). | _(unset)_ |
-| `MAROTTE_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. See [Agent-launched workflow runs](#agent-launched-workflow-runs-marotte_agent_workflows). | `true` |
-| `MAROTTE_ALLOW_AGENT_ENV` | Execution-redirecting variable names the agent can set for its own commands, comma-separated. See [Agent environment variables](#agent-environment-variables-marotte_allow_agent_env). | _(unset)_ |
-| `MAROTTE_ALLOW_BRIDGE_ENV` | Credential-shaped names to inherit into kiro-cli anyway, comma-separated. See [Credentials in the container environment](#credentials-in-the-container-environment-marotte_allow_bridge_env). | _(unset)_ |
-| `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
-| `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
-| `KIRO_HOME` | Where marotte resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
-| `MAROTTE_TOOLS_DIR` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
-| `MAROTTE_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a fetched catalog replaces it. | `/opt/marotte/tool-catalog.json` |
-| `MAROTTE_TOOL_CATALOG_URL` | Where catalog refreshes fetch from; point it at a fork or mirror to leave the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
-| `MAROTTE_TOOL_CATALOG_REFRESH` | Catalog refresh cadence (Go duration, clamped to 1h-30d); `off` or `0` disables the schedule and keeps the manual refresh. | `24h` |
-| `MAROTTE_BUNDLED_TOOLS` | Image-internal file naming the tools marotte bundles and recommends, merged over every loaded catalog. A path that does not resolve warns and is skipped, which leaves the seeded language servers unresolvable. | `/opt/marotte/bundled-tools.json` |
-| `VAPID_SUBJECT` | Contact URI embedded in the Web Push (VAPID) keys used for chat notifications. | `mailto:marotte@noreply.invalid` |
-| `MAROTTE_AUTH_LOGIN_URL_TIMEOUT` | How long to wait for `kiro-cli login` to print the sign-in URL. | `10s` |
-| `MAROTTE_AUTH_LOGIN_TIMEOUT` | Wall-clock timeout for a whole login attempt, device-flow confirmation included. | `16m` |
-| `MAROTTE_AUTH_LOGOUT_TIMEOUT` | Timeout for `kiro-cli logout`. | `10s` |
-| `MAROTTE_AUTH_WHOAMI_TIMEOUT` | Timeout for the `kiro-cli whoami` sign-in status probe. | `5s` |
+| `ALLOWED_HOSTS` | Hostnames and IPs you open marotte at, comma-separated. Any other address gets `403`. | _(unset)_ |
+| `TRUSTED_PROXIES` | Address ranges of your reverse proxy, so the logs record the real client address. | _(unset)_ |
+| `TRUSTED_INSTALL_UIDS` | User IDs that may write to `/config/tools` without marotte refusing to install kiro-cli. Only for shared or network volumes. | _(unset)_ |
+| `MAROTTE_BROWSE_ROOTS` | Extra folders the file browser shows, colon-separated absolute paths. | _(unset)_ |
+| `MAROTTE_AGENT_WORKFLOWS` | Whether the agent can start workflow runs itself. | `true` |
+| `MAROTTE_ALLOW_AGENT_ENV` | Program-changing variables, such as `LD_PRELOAD`, the agent may set for its commands. | _(unset)_ |
+| `MAROTTE_ALLOW_BRIDGE_ENV` | Variable names that look like credentials but should still reach kiro-cli, comma-separated. | _(unset)_ |
+| `MAROTTE_KIRO_ACP_ARGS` | Extra `kiro-cli acp` flags for every chat. | _(unset)_ |
+
+Every setting, with what each one checks, is in [Configuration](docs/configuration.md).
+
+| Mount | Description |
+| --- | --- |
+| `/config` | Chats, the kiro-cli sign-in and install, installed tools and settings |
+| `/workspace` | Your repositories, and where chats and the terminal start |
+| `/uploads` | Files you attach to a message. Without a volume they are lost when the container is recreated |
+
+| Port | Description |
+| --- | --- |
+| `9847` | The web page, its live updates and the terminal |
 
 ## Security
 
-- **No built-in authentication**: see the warning above.
-- **Installing a tool is a root install, triggered from a page.** The container runs as root by design and the warning above already gives anyone who reaches the port a root shell, so the Add-tool button adds no privilege and no new principal. The two sources differ in what backs them. An `apt:` entry can only ever be a literal Debian package name ([OS packages](docs/os-packages.md)), and its integrity is Debian's signed archive metadata. A `release:` entry is the weaker one: most of the catalog's release-sourced repositories publish no checksum, so those installs are an unverified download of an asset picked by heuristic. Three things bound it: the owner and repository come from the pinned upstream registry rather than from anything typed into the box, nothing is reported installed until the probe runs the binary, and the row says `no checksum`.
-- **No outbound telemetry.** Every outbound request marotte makes is one you asked for: the AI provider `kiro-cli` is signed in to, any MCP server you configure, the forge APIs (`gh` / `glab` / `tea`) when you use the git panel, and the public MCP registry when you search it. `kiro-cli`'s own telemetry is seeded **off** and is a toggle in Settings → General.
-- Web push uses an SSRF-hardened transport.
-- Debian base: a shell and the `kiro-cli` subprocess are required, so this is intentionally not distroless.
-- Images are published with cosign signatures and SBOM attestations.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and edits files under `/workspace`, and the Kiro sign-in stored in `/config`. Keep the port on your private network, or put marotte behind a reverse proxy that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page signs kiro-cli in to your Kiro account and does not protect marotte itself.
 
-## kiro-cli
+Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so a harmful website cannot use your own browser to reach it.
 
-`kiro-cli` is downloaded and pinned on first boot rather than baked into the image (the AWS Customer Agreement governs redistribution, so you accept it by booting the container). Upgrades arrive by pulling a newer image tag; there is no in-place self-update.
+The agent can read the container's `environment:`. marotte drops names ending in `_TOKEN` or `_SECRET` and the AWS key pair, so keep other credentials out of it.
 
-The server owns that install. It verifies the pinned archive's SHA-256 against the digest for your architecture, installs it under `/config/tools/kiro-cli-versions/<version>/`, and re-probes it on every boot, so a replaced or half-restored install is rejected rather than run. The previous version stays on the volume as the fallback for a broken new one. `docker exec <container> kiro-cli --version` keeps working, because `/config/tools/bin/kiro-cli` is a symlink to the active version.
+marotte sends no telemetry, and kiro-cli's own telemetry starts switched off. [Security](docs/security.md) covers the container user, tool installs and how kiro-cli is verified.
 
-## Related projects
+## Troubleshooting
 
-- [web-terminal-kiro](https://github.com/cplieger/web-terminal-kiro): the sister app, a raw browser terminal that drives kiro-cli's own TUI instead of this chat-first UI.
-- [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind marotte's shell.
+Docker checks `/api/health` every 30 seconds. The container shows healthy once marotte is up and kiro-cli is installed and working, and the first start gets five minutes for the download. While it shows unhealthy the page still works and only chats wait. Docker does not restart a container because it is unhealthy.
+
+- The container restarts in a loop with `failed to create required directories`. The host folders are missing or belong to another user. Repeat steps 1 and 2 of the quick start.
+- Health stays at `kiro-cli install retrying` or `kiro-cli unavailable`. The download failed. marotte tries four times, then waits for a container restart.
+- The logs say a folder under `/config` "can be modified by" another account. This happens on shared or network volumes. See `TRUSTED_INSTALL_UIDS` in [Configuration](docs/configuration.md#trusted-install-accounts-trusted_install_uids).
+- The page answers `403`. The address you typed is not in `ALLOWED_HOSTS`.
+
+## Documentation
+
+- [Features](docs/features.md) describes every part of the page, knowledge bases included.
+- [Configuration](docs/configuration.md) lists every setting and what it checks.
+- [Security](docs/security.md) covers tool installs, the image and the kiro-cli install.
+- [How marotte works](docs/how-it-works.md) explains syncing across devices and how kiro-cli is installed and repaired.
+- [Launch flags](docs/launch-flags.md) and [OS packages](docs/os-packages.md) cover two less common setups.
 
 ## Contributing
 
-Architecture, the invariants you must not break, and local build/test instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Architecture, the rules a change must keep, and how to build and test are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 

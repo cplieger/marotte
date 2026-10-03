@@ -17,18 +17,9 @@
   <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167.png">
   <link rel="manifest" href="/manifest.json">
   <title>Marotte for Kiro</title>
-  <!-- Anti-FOUC theme init: applies <html data-theme> before stylesheets parse.
-       Verbatim output of @cplieger/ui-primitives themeInitSnippetFromJSON(
-       "marotte.ui-state", "theme") — reads the theme field of the
-       marotte.ui-state localStorage blob, JSON-parses it, and applies the
-       resolved theme (OS fallback when the field is absent or "system"). Kept
-       byte-identical to the library by theme-init-snippet.test.ts and hashed
-       into the CSP by internal/server/security.go (the data-theme-init marker).
-       requires @cplieger/ui-primitives >= 2.1.0 (createTheme storage adapter +
-       themeInitSnippetFromJSON); verified locally via node_modules overlay until
-       released. -->
-  <!-- prettier-ignore -->
-  <script data-theme-init>(function(){try{var raw=localStorage.getItem("marotte.ui-state");var o=raw?JSON.parse(raw):null;var c=o&&typeof o==="object"?o["theme"]:null;if(c!=="light"&&c!=="dark"&&c!=="system"){c="system";}var r=c==="system"?(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):c;document.documentElement.setAttribute("data-theme",r);}catch(e){document.documentElement.setAttribute("data-theme",window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");}})();</script>
+  <!-- Blocking and ahead of the stylesheet: it sets the theme, sidebar width,
+       pointer tier and shell panel the first frame paints with. -->
+  <script src="/prepaint.js"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -185,6 +176,7 @@
           </button>
         </div>
       </div>
+      <div id="sidebar-resize" class="sidebar-resize"></div>
     </nav>
 
     <main id="chat-area">
@@ -1073,10 +1065,10 @@
             <div class="view-toolbar-inner">
               <span id="editor-filename" class="editor-filename"></span>
               <div class="editor-actions">
-                <!-- Deliberately EMPTY: the glyph is injected from icons.ts in
+                <!-- Deliberately EMPTY: the glyphs are injected from icons.ts in
                      initEditor, because a concept with a registry entry may not be
-                     redrawn here. Its four neighbours below predate that rule and
-                     are pinned by menu-icons.test.ts instead. -->
+                     redrawn here. -->
+                <button type="button" id="editor-preview-btn" class="icon-btn hidden" aria-label="Open preview" data-tooltip="Open preview"></button>
                 <button type="button" id="editor-git-diff-btn" class="icon-btn hidden" aria-pressed="false" aria-label="View diff vs HEAD" data-tooltip="View diff vs HEAD"></button>
                 <button type="button" id="editor-diff-btn" class="icon-btn" data-tooltip="View as diff (vs saved)" aria-label="View as diff (vs saved)">
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M12 4v16"/></svg>
@@ -1119,6 +1111,7 @@
                 <button type="button" id="fb-add-to-chat" class="icon-btn" data-tooltip="Add selection to chat" aria-label="Add selection to chat" disabled>
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
                 </button>
+                <button type="button" id="fb-preview" class="icon-btn" data-tooltip="Open preview" aria-label="Open preview" disabled></button>
                 <button type="button" id="fb-upload" class="icon-btn" data-tooltip="Upload files" aria-label="Upload files">
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 </button>
@@ -1146,6 +1139,22 @@
                 <button type="button" id="fb-delete" class="icon-btn danger" data-tooltip="Delete" aria-label="Delete" disabled>
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="web-view" class="hidden" data-tab-view>
+        <div class="web-page">
+          <div id="web-stage" class="web-stage"></div>
+          <div class="editor-toolbar bottom-bar">
+            <div class="view-toolbar-inner">
+              <span id="web-path" class="web-path"></span>
+              <div class="web-actions">
+                <div id="web-viewport" class="seg-bar web-viewport" role="radiogroup" aria-label="Preview width"></div>
+                <button type="button" id="web-scale-btn" class="icon-btn web-scale-btn" aria-pressed="true" aria-label="Scale to fit" data-tooltip="Scale to fit"><span class="web-scale-readout">100%</span></button>
+                <button type="button" id="web-reload-btn" class="icon-btn" aria-label="Reload preview" data-tooltip="Reload preview"></button>
               </div>
             </div>
           </div>

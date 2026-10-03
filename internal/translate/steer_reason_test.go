@@ -7,9 +7,9 @@ package translate
 // a dropped row carrying no reason at all leaves the note's label saying only that
 // the words were not read, with nothing about what ended the turn first.
 //
-// Both constructions in steeringCleared write it: the HELD rows (the ones the
-// buffer still carried, so the reader's own text is in reach) and the TEXT-LESS
-// agent note. Writing it at one of the two is the cycle-5 mutant.
+// Both constructions in steeringCleared write it: the HELD agent rows (the ones
+// the buffer still carried, so the note's text is in reach) and the TEXT-LESS
+// agent note.
 
 import (
 	"testing"
@@ -17,21 +17,20 @@ import (
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// The reader's own correction, cleared unread. The note's label words the clause
-// from this field, so the row has to carry it rather than leaving the reason empty.
-func TestSteeringCleared_TheHeldUsersDropWordsItsBoundaryReason(t *testing.T) {
+// An agent note the buffer still held, cleared unread. The note's label words the
+// clause from this field, so the row has to carry it rather than leaving it empty.
+func TestSteeringCleared_TheHeldAgentNoteWordsItsBoundaryReason(t *testing.T) {
 	deps, _, _ := depsWithStore(t, "c1")
-	deps.userSteers = map[string]bool{"steer-1": true}
 	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
-			"messageId": "steer-1",
-			"content":   "use tabs",
+			"messageId": "notify-wf-1",
+			"content":   "a run finished",
 		}), FrameAttribution{})
 	tr.HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
-			"messageIds": []string{"steer-1"},
+			"messageIds": []string{"notify-wf-1"},
 		}), FrameAttribution{})
 
 	rows := steerRows(t, deps, "c1")

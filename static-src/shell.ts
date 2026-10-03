@@ -33,10 +33,23 @@ import type { TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui"
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
-import { shellHeight, setShellHeight, setShellOpen as recordShellOpen } from "./device-view.js";
+import {
+  shellHeight,
+  shellOpen as storedShellOpen,
+  setShellHeight,
+  setShellOpen as recordShellOpen,
+} from "./device-view.js";
+import {
+  SHELL_MIN_H,
+  clampShellH,
+  releaseStoredShellPanel,
+  shellMaxH,
+  shellPanelPx,
+} from "./shell-height.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { restartShell } from "./actions/shell.js";
 import { refreshGitStatus } from "./git-status-store.js";
+import { attachSplitter, type Splitter } from "./splitter.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited before the first server resize so the PTY is sized on real cell
@@ -366,8 +379,6 @@ export function initShellPanel(): void {
 
 // --- Panel resize ---
 
-/** Smallest useful panel height (6rem): a few terminal rows + the header. */
-const SHELL_MIN_H = 96;
 /** Keyboard resize step (2rem) per ArrowUp/ArrowDown on the handle. */
 const SHELL_KEY_STEP = 32;
 
@@ -380,106 +391,45 @@ const SHELL_KEY_STEP = 32;
  *  pins this against that declaration's own fallback, so the two cannot drift. */
 const SHELL_DEFAULT_H = 256;
 
-/** Upper clamp: leave at least 20% of the viewport for the chat column. */
-function shellMaxH(): number {
-  return Math.round(window.innerHeight * 0.8);
-}
-
-function clampShellH(h: number): number {
-  return Math.min(Math.max(h, SHELL_MIN_H), shellMaxH());
-}
-
-/** The separator's VALUE, which ARIA requires of it and axe reports as a critical
- *  `aria-required-attr` without: `role="separator"` plus a tabindex is a focusable
- *  widget, so it is a splitter with a position rather than a decorative rule, and
- *  a screen-reader user resizing with the arrow keys otherwise hears no value at
- *  all. Written from the panel height in px, which is the number the reader is
- *  changing.
- *
- *  The bounds are `clampShellH`'s own, so the three attributes cannot disagree
- *  with the clamp. `aria-valuemax` follows the viewport and is therefore only as
- *  fresh as the last apply — which is exactly how fresh the panel's own height is,
- *  since nothing re-clamps it on a window resize either. Reporting a bound the app
- *  does not maintain would be the less honest half. */
-function syncResizeAria(h: number): void {
-  const bar = $.shellResize;
-  bar.setAttribute("aria-valuenow", String(h));
-  bar.setAttribute("aria-valuemin", String(SHELL_MIN_H));
-  bar.setAttribute("aria-valuemax", String(shellMaxH()));
-}
+let splitter: Splitter | undefined;
 
 /** Clamp (and round) a panel height, then apply it via the --shell-h custom
  *  property the panel's `height` consumes. Returns the applied value. */
 function applyShellH(h: number): number {
-  const clamped = Math.round(clampShellH(h));
+  const clamped = shellPanelPx(h);
   $.shellPanel.style.setProperty("--shell-h", `${String(clamped)}px`);
-  syncResizeAria(clamped);
+  splitter?.syncAria(clamped);
   return clamped;
 }
 
 /**
- * Drag-to-resize on the panel's top edge handle: one pointer-capture path for
- * mouse + touch (bottom-docked panel, so dragging up = smaller clientY =
- * taller panel). The height lands in --shell-h and persists per-device in
+ * Drag-to-resize on the panel's top edge handle (bottom-docked, so dragging up
+ * grows the panel). The height lands in --shell-h and persists per-device in
  * device-view (shell_h; 0 = CSS default). The handle is also a keyboard
  * separator: ArrowUp grows, ArrowDown shrinks (WCAG 2.1.1).
  */
 function initShellResize(): void {
-  const resizeEl = $.shellResize;
-
-  // The markup ships a bare div; the a11y contract is set here so index.html
-  // stays untouched.
-  resizeEl.setAttribute("role", "separator");
-  resizeEl.setAttribute("aria-orientation", "horizontal");
-  resizeEl.setAttribute("aria-label", "Resize shell");
-  resizeEl.tabIndex = 0;
-
-  let startY = 0;
-  let startH = 0;
-  let lastH = 0;
-
-  resizeEl.addEventListener("pointerdown", (e: PointerEvent) => {
-    if (!e.isPrimary) {
-      return;
-    }
-    startY = e.clientY;
-    startH = $.shellPanel.getBoundingClientRect().height;
-    lastH = Math.round(startH);
-    resizeEl.setPointerCapture(e.pointerId);
-    resizeEl.classList.add("dragging");
+  splitter = attachSplitter({
+    handle: $.shellResize,
+    axis: "y",
+    direction: -1,
+    orientation: "horizontal",
+    label: "Resize shell",
+    keys: { grow: "ArrowUp", shrink: "ArrowDown" },
+    step: () => SHELL_KEY_STEP,
+    measure: () => $.shellPanel.getBoundingClientRect().height,
+    limits: () => ({ min: SHELL_MIN_H, max: shellMaxH() }),
+    apply: applyShellH,
+    commit: setShellHeight,
+    frame: "immediate",
     // Suspend the panel's height transition so it tracks the pointer 1:1
     // instead of easing 200ms behind it (see .shell-panel.resizing).
-    $.shellPanel.classList.add("resizing");
-    e.preventDefault();
-  });
-
-  resizeEl.addEventListener("pointermove", (e: PointerEvent) => {
-    if (!resizeEl.hasPointerCapture(e.pointerId)) {
-      return;
-    }
-    lastH = applyShellH(startH + (startY - e.clientY));
-  });
-
-  const end = (e: PointerEvent): void => {
-    if (!resizeEl.hasPointerCapture(e.pointerId)) {
-      return;
-    }
-    resizeEl.releasePointerCapture(e.pointerId);
-    resizeEl.classList.remove("dragging");
-    $.shellPanel.classList.remove("resizing");
-    setShellHeight(lastH);
-  };
-  resizeEl.addEventListener("pointerup", end);
-  resizeEl.addEventListener("pointercancel", end);
-
-  resizeEl.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") {
-      return;
-    }
-    e.preventDefault();
-    const cur = $.shellPanel.getBoundingClientRect().height;
-    const next = applyShellH(cur + (e.key === "ArrowUp" ? SHELL_KEY_STEP : -SHELL_KEY_STEP));
-    setShellHeight(next);
+    onDragStart: () => {
+      $.shellPanel.classList.add("resizing");
+    },
+    onDragEnd: () => {
+      $.shellPanel.classList.remove("resizing");
+    },
   });
 
   // Restore the persisted height (re-clamped: the viewport may have changed
@@ -494,7 +444,7 @@ function initShellResize(): void {
   // needs a value. Seed it from the same number WITHOUT setting --shell-h: writing
   // that property would take the panel's height off CSS for the rest of the
   // session, which is a behaviour change this attribute does not need.
-  syncResizeAria(clampShellH(SHELL_DEFAULT_H));
+  splitter.syncAria(clampShellH(SHELL_DEFAULT_H));
 }
 
 /** Build the terminal exactly once, into the (empty) #shell-terminal root. The
@@ -551,7 +501,8 @@ let shellOpen = false;
 /** Open or close the shell slider.
  *
  *  Open: build the terminal on first use (opening its WebSocket), remove
- *  `shell-closed` (CSS slides the panel up), mark the toolbar button active,
+ *  `shell-closed` (CSS slides the panel up, or keeps it where prepaint.js already
+ *  painted it open) and release the pre-paint state, mark the toolbar button active,
  *  then focus the terminal via its handle (skipped with focus:false — the
  *  boot-time restore must not steal focus from the prompt input). Close:
  *  collapse the panel (the CSS animates height/opacity, then flips
@@ -565,7 +516,10 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     // space, so the same content stays in view once it opens.
     const prevHeight = getScrollEl().clientHeight;
     ensureTerminal();
+    // Same task as the class removal, so the pre-paint rule hands over to the base
+    // rule at an equal height and no transition starts.
     $.shellPanel.classList.remove("shell-closed");
+    releaseStoredShellPanel();
     $.shellBtn.classList.add("active");
     requestAnimationFrame(() => {
       if (opts.focus !== false) {
@@ -588,6 +542,7 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     if ($.shellPanel.contains(document.activeElement)) {
       $.shellBtn.focus({ preventScroll: true });
     }
+    releaseStoredShellPanel();
     $.shellPanel.classList.add("shell-closed");
     $.shellBtn.classList.remove("active");
     // Whatever the user typed in here may have written to the tree — a `git
@@ -604,10 +559,12 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
 
 /**
  * Restore the shell panel on page load when this device left it open. Runs the full
- * open path (build terminal + CSS slide), so the WebSocket only opens when the
- * shell was actually left open — but without focusing the terminal, so boot
- * doesn't steal focus from the prompt input.
+ * open path (build terminal; no slide, since prepaint.js already painted the panel
+ * open), so the WebSocket only opens when the shell was actually left open — but
+ * without focusing the terminal, so boot doesn't steal focus from the prompt input.
  */
 export function restoreShell(): void {
-  setShellOpen(true, { focus: false });
+  if (storedShellOpen()) {
+    setShellOpen(true, { focus: false });
+  }
 }

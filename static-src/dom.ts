@@ -115,6 +115,9 @@ class Elements {
   get sidebarClose(): HTMLButtonElement {
     return byId("sidebar-close");
   }
+  get sidebarResize(): HTMLDivElement {
+    return byId("sidebar-resize");
+  }
   get settingsBtn(): HTMLButtonElement {
     return byId("settings-btn");
   }
@@ -362,6 +365,9 @@ class Elements {
   get fbAddToChat(): HTMLButtonElement {
     return byId("fb-add-to-chat");
   }
+  get fbPreview(): HTMLButtonElement {
+    return byId("fb-preview");
+  }
   // Chat options (the composer's set-once switches menu)
   get chatOptionsBtn(): HTMLButtonElement {
     return byId("chat-options-btn");
@@ -441,6 +447,27 @@ class Elements {
    *  editor-core.ts; the mode renderers never touch it. */
   get editorGitDiffBtn(): HTMLButtonElement {
     return byId("editor-git-diff-btn");
+  }
+  get editorPreviewBtn(): HTMLButtonElement {
+    return byId("editor-preview-btn");
+  }
+  get webView(): HTMLDivElement {
+    return byId("web-view");
+  }
+  get webStage(): HTMLDivElement {
+    return byId("web-stage");
+  }
+  get webPath(): HTMLSpanElement {
+    return byId("web-path");
+  }
+  get webViewport(): HTMLDivElement {
+    return byId("web-viewport");
+  }
+  get webScaleBtn(): HTMLButtonElement {
+    return byId("web-scale-btn");
+  }
+  get webReloadBtn(): HTMLButtonElement {
+    return byId("web-reload-btn");
   }
   get editorMarkdown(): HTMLDivElement {
     return byId("editor-markdown");

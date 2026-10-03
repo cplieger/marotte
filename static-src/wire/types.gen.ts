@@ -20,6 +20,10 @@ export type ModeSwitchSource = "user" | "agent";
 
 export type PlanStatus = "pending" | "in_progress" | "completed";
 
+export type PreviewHintSource = "meta" | "viewport";
+
+export type PreviewPreset = "phone" | "tablet" | "desktop";
+
 export type ReadState = "ready" | "unavailable";
 
 export type RegistryFailureReason = "rate_limited" | "rejected" | "unavailable";
@@ -42,13 +46,15 @@ export type SpecDocRole = "requirements" | "design" | "tasks" | "other";
 
 export type SteerOrigin = "user" | "agent";
 
-export type SteerReason = "restart" | "boundary";
+export type SteerReason = "restart" | "boundary" | "deleted";
+
+export type SteerRowState = "queued" | "unsent" | "removed";
 
 export type SteerState = "read" | "dropped";
 
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal" | "unknown" | "error" | "content_filtered" | "max_tokens" | "max_turn_requests" | "unterminated";
 
-export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs" | "spec";
+export type TabKind = "chat" | "editor" | "run" | "subagent" | "settings" | "git" | "files" | "history" | "docs" | "spec" | "web";
 
 export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
@@ -1655,6 +1661,51 @@ export interface PollResult {
 }
 
 /**
+ * PreviewGrant is a capability to read one folder through /preview/. URL is the
+ * entry page and is used verbatim as the iframe src; Epoch changes when the
+ * server restarts, which invalidates every grant it minted. Hint is absent when
+ * the page states no size. Stamp is the folder's PreviewStamp.Stamp read before
+ * the grant was minted, so it is never newer than the document URL serves.
+ */
+export interface PreviewGrant {
+  expires_at: string;
+  hint?: PreviewHint;
+  url: string;
+  base: string;
+  epoch: string;
+  stamp: string;
+}
+
+/**
+ * PreviewGrantRequest is POST /api/preview/grant's body: the absolute path of
+ * the HTML page to preview.
+ */
+export interface PreviewGrantRequest {
+  path: string;
+}
+
+/**
+ * PreviewHint is the width a page asks to be previewed at. Exactly one of
+ * Preset and Width is set.
+ */
+export interface PreviewHint {
+  preset?: PreviewPreset;
+  source: PreviewHintSource;
+  width?: number;
+}
+
+/**
+ * PreviewStamp is GET /api/preview/stamp's reply: a digest of the previewed
+ * folder's tree, which changes when any file in it is written.
+ */
+export interface PreviewStamp {
+  stamp: string;
+  epoch: string;
+  entries: number;
+  truncated: boolean;
+}
+
+/**
  * Recipe is one launchable workflow definition, projected from
  * `_kiro/workflow/listRecipes` for GET /api/recipes.
  */
@@ -2552,6 +2603,14 @@ export interface SteerQueuedPayload {
  * workflow's report.
  */
   origin: SteerOrigin;
+  /** State is the row's dock state; a batch frame is always queued. */
+  state: SteerRowState;
+  /**
+ * Replaces is set on a BATCH frame: SteerID is an id KAS holds several rows (or one
+ * re-sent row) under, and these are the rows' keys. A batch frame adds no row, so
+ * a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
+ */
+  replaces?: string[];
 }
 
 /**

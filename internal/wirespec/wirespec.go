@@ -101,6 +101,10 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.TabSubject](),
 	wiregen.TypeRef[marotte.TabsChangedPayload](),
 	wiregen.TypeRef[marotte.TabList](),
+	wiregen.TypeRef[marotte.PreviewGrantRequest](),
+	wiregen.TypeRef[marotte.PreviewHint](),
+	wiregen.TypeRef[marotte.PreviewGrant](),
+	wiregen.TypeRef[marotte.PreviewStamp](),
 	// Leaves before the documents that hold them; SpecTaskNode references itself.
 	wiregen.TypeRef[marotte.SpecProgress](),
 	wiregen.TypeRef[marotte.SpecTruncated](),
@@ -261,7 +265,9 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// state, so the note reads as if nothing had gone wrong. A generated union is
 	// what makes `Record<SteerReason, string>` fail to compile on a reason nobody
 	// worded, which a hand-written union of one language cannot do.
-	"SteerReason":     {},
+	"SteerReason": {},
+	// The dock's row controls branch on it, so the branch must be total.
+	"SteerRowState":   {},
 	"RunProgressKind": {},
 	// Registered for the same reason: the client folds over both status
 	// vocabularies, and every fold must stay total.
@@ -301,6 +307,9 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// strict, so a kind the client has no arm for fails the reply rather than
 	// rendering a row nothing can open.
 	"FileMatchKind": {},
+	// The preview toolbar maps a hint onto its width radios, so the map is total.
+	"PreviewPreset":     {},
+	"PreviewHintSource": {},
 }
 
 // enumTSNames renames an enum on the TypeScript side.

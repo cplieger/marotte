@@ -186,6 +186,12 @@ func TestWriteUIGuide_NamesEveryTab(t *testing.T) {
 		"`/files`",
 		"`/run/<id>`",
 		`(tooltip "Cancel this turn")`,
+		"history, web.",
+		"`/web/<path>`",
+		"(Fill, Phone, Tablet, Desktop)",
+		`"Scale to fit"`,
+		`"Reload preview"`,
+		`"Open preview"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeUIGuide output missing %q:\n%s", want, out)
@@ -287,5 +293,23 @@ func TestWriteCapabilities(t *testing.T) {
 	// edit tools, and the one user affordance is Rewind.
 	if strings.Contains(out, "checkpointed server-side") {
 		t.Errorf("writeCapabilities repeated the retired per-turn checkpoint claim:\n%s", out)
+	}
+}
+
+func TestWriteAttachments_TeachesTheHTMLPreview(t *testing.T) {
+	var b strings.Builder
+	writeAttachments(&b, "/workspace/.uploads", "/workspace")
+	out := b.String()
+	for _, want := range []string{
+		"`[Demo](/workspace/demo/index.html)`",
+		"its own folder under `/workspace`",
+		"is refused",
+		"starting with `.`",
+		"--base=./`",
+		`<meta name="marotte-preview" content="phone">`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeAttachments output missing %q:\n%s", want, out)
+		}
 	}
 }

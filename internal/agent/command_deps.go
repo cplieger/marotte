@@ -43,6 +43,7 @@ func (b bridgeRole) BridgeLive(chatID marotte.ChatID) bool { return b.coord.brid
 // DeleteChatState tears down all in-memory state for a chat being permanently deleted,
 // cancelling its runs and reaping its durable KAS session.
 func (rt *Runtime) DeleteChatState(ctx context.Context, chatID marotte.ChatID) {
+	rt.beginSteerTeardown(ctx, chatID, false)
 	rt.runs.CancelForChat(ctx, chatID)
 	rt.cleanupChatState(ctx, chatID, true)
 }
@@ -51,6 +52,7 @@ func (rt *Runtime) DeleteChatState(ctx context.Context, chatID marotte.ChatID) {
 // the close escalation deletes the record inside its commit, so the session chain is
 // captured beforehand rather than re-read from a record that would silently no-op.
 func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.ChatID, sessionChain []string) {
+	rt.beginSteerTeardown(ctx, chatID, false)
 	rt.runs.CancelForSessions(ctx, chatID, sessionChain)
 	rt.cleanupChatState(ctx, chatID, false)
 	rt.reapSessions(sessionChain)
@@ -59,6 +61,7 @@ func (rt *Runtime) DeleteChatStateByChain(ctx context.Context, chatID marotte.Ch
 // CloseChatState tears down a chat's in-memory state WITHOUT touching its durable KAS
 // session, so the record survives and reopening it session/loads the history back.
 func (rt *Runtime) CloseChatState(ctx context.Context, chatID marotte.ChatID) {
+	rt.beginSteerTeardown(ctx, chatID, true)
 	rt.runs.CancelForChat(ctx, chatID)
 	rt.cleanupChatState(ctx, chatID, false)
 }
@@ -132,12 +135,6 @@ func (rt *Runtime) TurnOpenedAfter(chatID marotte.ChatID, turnID string) bool {
 // when one is open, else the reservation.
 func (rt *Runtime) AdmissionHolderSource(chatID marotte.ChatID) (marotte.TurnOpenSource, bool) {
 	return rt.coord.AdmissionHolderSource(chatID)
-}
-
-// RecordDroppedSteer writes the dropped-steer entry for a parked steer KAS refused
-// or never received.
-func (rt *Runtime) RecordDroppedSteer(ctx context.Context, chatID marotte.ChatID, steer command.ParkedSteer) {
-	rt.coord.recordDroppedSteer(ctx, chatID, steer)
 }
 
 // FinalizeLocalShellTurn closes a `!cmd` turn marotte ran itself, appending its

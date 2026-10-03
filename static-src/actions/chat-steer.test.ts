@@ -47,7 +47,7 @@ import { error as toastError } from "../toast.js";
 import { recordSteerSent, recordSteerQueued, forgetSteer } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { IDEMPOTENCY_COMMAND_FIELD } from "./index.js";
-import { steerChat } from "./chat.js";
+import { removeSteer, steerChat } from "./chat.js";
 
 const mockSend = vi.mocked(transportSend);
 
@@ -71,6 +71,7 @@ describe("steerChat — the POST body confirms the chip", () => {
       // this device's own POST, and the server has just recorded the same id in
       // the ledger its own `steer_queued` frame is stamped from.
       origin: "user",
+      state: "queued",
     });
   });
 
@@ -158,28 +159,47 @@ describe("steerChat — the command on the wire", () => {
     expect(key).not.toBe("");
     expect(opts).toMatchObject({ reportSendState: false });
   });
+});
 
-  // A steer converted from a resend by a busy chat has to name the same ids the prompt
-  // would have, or the record states a resend on the idle path only. `SteerCommand.Resends`
-  // has been on the wire (commands.go:281-283) with the ledger reading it at steer.go:99
-  // and :150 and nothing sending it.
-  it("names the re-sent steers in the body's `resends`", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
+describe("removeSteer — one row out of the buffer", () => {
+  it("sends steer_remove naming the row, with transport's own failure notice off", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
 
-    await steerChat.dispatch({ ...args, resends: ["steer-4"] });
+    await removeSteer.dispatch({ chatID: "c1", steerID: "steer-m2" }).outcome;
 
-    const [cmd] = mockSend.mock.calls[0] ?? [];
-    expect((cmd as { payload?: { resends?: readonly string[] } }).payload?.resends).toEqual([
-      "steer-4",
-    ]);
+    const [cmd, opts] = mockSend.mock.calls[0] ?? [];
+    expect(cmd).toEqual({
+      type: "steer_remove",
+      chat_id: "c1",
+      payload: { steer_id: "steer-m2" },
+    });
+    expect(opts).toMatchObject({ reportSendState: false });
   });
 
-  it("omits the field for an empty list, so `[]` never travels", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
+  it("carries a refusal's status and reason, keeping the server's words", async () => {
+    mockSend.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "That message is being delivered",
+      reason: "settling",
+    });
 
-    await steerChat.dispatch({ ...args, messageID: "m2", resends: [] });
+    const outcome = await removeSteer.dispatch({ chatID: "c1", steerID: "steer-m2" }).outcome;
 
-    const [cmd] = mockSend.mock.calls[0] ?? [];
-    expect((cmd as { payload?: { resends?: readonly string[] } }).payload?.resends).toBeUndefined();
+    expect(outcome).toMatchObject({
+      status: "error",
+      error: { status: 409, code: "settling", message: "That message is being delivered" },
+    });
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("draws and un-draws nothing itself: the rows follow the stream", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200, body: {} });
+
+    await removeSteer.dispatch({ chatID: "c1", steerID: "steer-m2" }).outcome;
+
+    expect(recordSteerSent).not.toHaveBeenCalled();
+    expect(forgetSteer).not.toHaveBeenCalled();
+    expect(recordSteerQueued).not.toHaveBeenCalled();
   });
 });

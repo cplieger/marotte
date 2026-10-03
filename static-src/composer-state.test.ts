@@ -36,6 +36,8 @@ import {
   restoreComposerState,
   retargetComposer,
   restoreFailedSend,
+  restoreRefusedEdit,
+  composerDraft,
   seedComposerState,
   adoptRemoteComposerState,
   dropComposerState,
@@ -383,6 +385,36 @@ describe("restoring a send that the server refused", () => {
     restoreFailedSend("", "the refused message");
     restoreFailedSend("c1", "");
     expect(input().value).toBe("");
+  });
+});
+
+// The Edit-side races (typing, a chat switch) are driven through the real dock in
+// pending-steers-edit-rollback.test.ts; these are the two states only the map shows.
+describe("undoing a refused Edit", () => {
+  it("leaves a history preview in the box while restoring the draft behind it", () => {
+    restoreComposerState("c1");
+    type("the taken-back steer");
+    input().value = "a prompt recalled from history";
+    mockDispatch.mockClear();
+
+    restoreRefusedEdit("c1", "the taken-back steer", "half a draft");
+
+    expect(input().value).toBe("a prompt recalled from history");
+    expect(mockDispatch).toHaveBeenLastCalledWith({ chatID: "c1", text: "half a draft" });
+  });
+
+  it("does not bring back the draft of a chat that was closed", () => {
+    restoreComposerState("c1");
+    type("the taken-back steer");
+    dropComposerState("c1");
+    restoreComposerState("c2");
+    mockDispatch.mockClear();
+
+    restoreRefusedEdit("c1", "the taken-back steer", "half a draft");
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockFlush).not.toHaveBeenCalled();
+    expect(composerDraft("c1")).toBe("");
   });
 });
 

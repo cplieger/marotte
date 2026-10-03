@@ -7,17 +7,8 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import {
-  appendEntry,
-  setWorkingLabel,
-  get,
-  getActiveId,
-  setTurnOpen,
-  dropSteers,
-  pendingSteerCarry,
-} from "../store.js";
+import { appendEntry, setWorkingLabel, get, getActiveId, setTurnOpen } from "../store.js";
 import { payloadOf } from "../turns.js";
-import { noteBoundaryDrop, runArmedResend } from "../steer-resend.js";
 import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
 import { askTarget } from "../push-subject.js";
 import { noteAgentFinished } from "../agent-finished-cue.js";
@@ -115,16 +106,6 @@ onSSE("turn_closed", (chatID, p) => {
   void refreshTurnRail(chatID);
   clearAgentDown();
   refreshGitBadge();
-  // Anything still in the dock at a boundary was never read, and this is the leave a bridge
-  // death owes: KAS writes no `steer{dropped}` entry for a steer it was holding. A row whose
-  // entry DID arrive already left inside `appendEntry`, so the two leaves cannot double up.
-  // Ordering is load-bearing — the capture reads the rows `dropSteers` removes, and the fire
-  // comes last so it sends against a settled turn.
-  if (settles) {
-    noteBoundaryDrop(chatID, pendingSteerCarry(chatID));
-    dropSteers(chatID);
-    runArmedResend(chatID);
-  }
 
   // Inside the `settles` branch and AFTER the writes above: the cue is a statement about a
   // turn this handler settled, and `chatSettled` reads the turn state those writes produce.

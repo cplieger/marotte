@@ -362,6 +362,20 @@ describe("reorder_tabs", () => {
     expect(idempotencyKeys()[0]).not.toBe(idempotencyKeys()[2]);
   });
 
+  it("returns the committed version", async () => {
+    mockSend.mockResolvedValue(okWith({ version: 7 }) as never);
+    expect(await reorderTabsCommand.dispatch({ order: ["a"], opID: "op-1" })).toEqual({
+      version: 7,
+    });
+  });
+
+  it("reads a missing version as 0, which every watermark already covers", async () => {
+    mockSend.mockResolvedValue(okWith({}) as never);
+    expect(await reorderTabsCommand.dispatch({ order: ["a"], opID: "op-1" })).toEqual({
+      version: 0,
+    });
+  });
+
   it("reports a 409 as stale rather than as a failure", async () => {
     // The exact-set check refused the order because the SET moved under the drag.
     // Nothing is broken and nothing is lost, so this must not reach the error

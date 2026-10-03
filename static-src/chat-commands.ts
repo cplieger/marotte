@@ -51,10 +51,6 @@ export interface SendPromptOpts {
    *  The prompt queue passes the id the prompt was FIRST sent under so
    *  a drained re-send is idempotent server-side (no duplicate bubble). */
   messageID?: string;
-  /** The steer entries whose text this prompt re-sends, in the order they were
-   *  joined into it. Lands on `turn_open.prompt.resends`, so the dropped steer's
-   *  own note can state the resend instead of implying one. */
-  resends?: readonly string[];
 }
 
 /** Every answer `sendPromptTo` gives; a caller's branch over it should be total. */
@@ -82,7 +78,6 @@ export async function sendPromptTo(
     messageID: opts.messageID ?? newMessageID(),
     model: opts.model ?? getCurrentModel(),
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
-    ...(opts.resends !== undefined ? { resends: opts.resends } : {}),
   });
   return result ?? "failed";
 }

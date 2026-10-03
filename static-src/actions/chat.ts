@@ -13,6 +13,7 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
   API_TIMEOUT_MS,
 } from "./index.js";
+import { join as joinKey } from "@cplieger/keyenc";
 
 import type {
   ChatHeader,
@@ -278,7 +279,7 @@ export const compactChat = transportAction<{ chatID: string }>({
  *
  *  `error: false`: submit.ts owns the failure surface. */
 export const steerChat = defineAction<
-  { chatID: string; text: string; messageID: string; resends?: readonly string[] },
+  { chatID: string; text: string; messageID: string },
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- run consumes the POST body itself, no result for a caller
   void,
   { chatID: string; steerID: string }
@@ -288,20 +289,11 @@ export const steerChat = defineAction<
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
   error: false,
-  run: async ({ chatID, text, messageID, resends }, signal, ctx) => {
+  run: async ({ chatID, text, messageID }, signal, ctx) => {
     const cmd: Parameters<typeof transportSend>[0] = {
       type: "steer",
       chat_id: chatID,
-      payload: {
-        text,
-        message_id: messageID,
-        // A conditional spread rather than `: undefined`, because this literal is
-        // checked against the TYPED command (the prompt's is checked against the loose
-        // `Command`, whose payload takes an undefined value) and
-        // `exactOptionalPropertyTypes` refuses one there. Same bytes on the wire:
-        // an empty batch sends no field at all.
-        ...(resends !== undefined && resends.length > 0 ? { resends } : {}),
-      },
+      payload: { text, message_id: messageID },
     };
     if (ctx?.idempotencyKey !== undefined) {
       (cmd as Record<string, unknown>)[IDEMPOTENCY_COMMAND_FIELD] = ctx.idempotencyKey;
@@ -320,7 +312,7 @@ export const steerChat = defineAction<
       // `user` is a fact on this path, not a guess: this is the reply to THIS
       // device's own POST, and the server has just recorded the same id in the
       // ledger its own `steer_queued` frame will be stamped from.
-      recordSteerQueued(chatID, { id: steerID, text, origin: "user" });
+      recordSteerQueued(chatID, { id: steerID, text, origin: "user", state: "queued" });
     }
   },
   optimistic: ({ chatID, text, messageID }) => {
@@ -367,6 +359,36 @@ export const clearSteers = transportAction<
     }
   },
   error: "Couldn't discard",
+});
+
+/** Delete ONE dock row. The wire has no per-steer removal, so the SERVER clears KAS's
+ *  buffer and resends the kept rows as one combined steer; the deleted row leaves on its
+ *  own frame or entry, and the kept rows keep their elements, so nothing is drawn or
+ *  undrawn here. A refusal is an `ActionError` carrying the server's sentence, its status
+ *  and its `reason`, which is what lets Edit tell a definite refusal from a lost reply.
+ *
+ *  Deduped per row: two clicks on one × are one delete. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for an action with no result
+export const removeSteer = defineAction<{ chatID: string; steerID: string }, void>({
+  name: "chat.remove_steer",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  dedupe: ({ chatID, steerID }) => joinKey("chat.remove_steer", chatID, steerID),
+  error: false,
+  run: async ({ chatID, steerID }, signal) => {
+    const r: SendResult = await transportSend(
+      { type: "steer_remove", chat_id: chatID, payload: { steer_id: steerID } },
+      { signal, reportSendState: false },
+    );
+    if (!r.ok) {
+      const opts: { status: number; code?: string } = { status: r.status };
+      const code = r.reason ?? r.code;
+      if (code !== undefined) {
+        opts.code = code;
+      }
+      throw new ActionError(r.error ?? `delete failed (${String(r.status)})`, opts);
+    }
+  },
 });
 
 // --- chat.set_mode ---
@@ -493,18 +515,26 @@ export const forkChat = defineAction<
 // No scope: cancel must fire immediately, not queue behind an in-flight
 // sendPrompt in the same chat. Idempotent server-side.
 // Named "cancel_turn" rather than "cancel" to avoid confusion with the
-// Action.cancel() method.
+// Action.cancel() method. `lead` is the send-now arrow's row: the turn-end resend
+// orders it first.
 
-export const cancelTurn = transportAction<string, { wasThinking: boolean }>({
+export const cancelTurn = transportAction<
+  { chatID: string; lead?: string },
+  { wasThinking: boolean }
+>({
   name: "chat.cancel_turn",
-  command: (chatID) => ({ type: "cancel", chat_id: chatID }),
-  optimistic: (chatID) => {
+  command: ({ chatID, lead }) => ({
+    type: "cancel",
+    chat_id: chatID,
+    ...(lead !== undefined && lead !== "" ? { payload: { lead } } : {}),
+  }),
+  optimistic: ({ chatID }) => {
     const session = get(chatID);
     const wasThinking = session?.thinking ?? false;
     setThinking(chatID, false);
     return { wasThinking };
   },
-  rollback: (chatID, op) => {
+  rollback: ({ chatID }, op) => {
     if (op !== undefined) {
       setThinking(chatID, op.wasThinking);
     }
@@ -587,7 +617,6 @@ interface SendPromptArgs {
   messageID: string;
   model: string;
   attachments?: readonly unknown[];
-  resends?: readonly string[];
 }
 
 export const sendPrompt = defineAction<
@@ -608,7 +637,7 @@ export const sendPrompt = defineAction<
     }
   },
   run: async (args, signal, ctx) => {
-    const { chatID, text, messageID, model, attachments, resends } = args;
+    const { chatID, text, messageID, model, attachments } = args;
     const r = await transportSend(
       {
         type: "prompt",
@@ -624,7 +653,6 @@ export const sendPrompt = defineAction<
           model,
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
-          resends: resends !== undefined && resends.length > 0 ? resends : undefined,
         },
       },
       { signal, reportSendState: true, timeoutMs: API_TIMEOUT_MS },

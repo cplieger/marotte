@@ -18,7 +18,7 @@
 // and that turns on the RUN's own `parentSessionId`, never on a door.
 // ---------------------------------------------------------------------------
 
-import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
 import type * as RunStore from "./run-store.js";
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 
@@ -2176,5 +2176,105 @@ describe("showRun and refreshRun", () => {
     const runOrder = vi.mocked(invalidateRun).mock.invocationCallOrder[0] ?? 0;
     const controlsOrder = vi.mocked(invalidateRunControls).mock.invocationCallOrder[0] ?? 0;
     expect(runOrder).toBeLessThan(controlsOrder);
+  });
+});
+
+// `.page-content` is ONE scroller for every run tab, so each run keeps its own offset.
+describe("the page's scroll position", () => {
+  function steps(id: string): unknown {
+    return {
+      nodeId: id,
+      type: "sequence",
+      status: "completed",
+      children: Array.from({ length: 40 }, (_, i) => ({
+        nodeId: `${id}-step-${String(i)}`,
+        type: "step",
+        status: "completed",
+        agentName: "wf-coder",
+        children: [],
+      })),
+    };
+  }
+
+  function scroller(): HTMLElement {
+    const el = document.querySelector<HTMLElement>("[id='run-view'] > .page-content");
+    if (el === null) {
+      throw new Error("no .page-content");
+    }
+    return el;
+  }
+
+  /** Two frames: the scroll event is dispatched in the rendering step, and the
+   *  offset is recorded from it. */
+  async function frames(): Promise<void> {
+    for (let i = 0; i < 2; i++) {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    }
+  }
+
+  /** Activate a run tab the way the factory does, and wait for its page. */
+  async function activate(id: string): Promise<void> {
+    showRun(id);
+    // Stands in for `rerenderDocks`, which the dock mock replaces: in production that
+    // bump is what re-runs the one view effect for the newly shown run.
+    stepTranscriptVersion.value = stepTranscriptVersion.peek() + 1;
+    refreshRun(id);
+    await vi.waitFor(() => {
+      expect(document.querySelector(`.ev-row[data-path*="${id}-step-0"]`)).not.toBeNull();
+    });
+  }
+
+  beforeEach(() => {
+    document.body.replaceChildren();
+    const view = document.createElement("div");
+    view.id = "run-view";
+    view.style.cssText = "display:flex;flex-direction:column;height:300px;width:900px";
+    const content = document.createElement("div");
+    content.className = "page-content";
+    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
+    const body = document.createElement("div");
+    body.id = "run-body";
+    content.appendChild(body);
+    view.appendChild(content);
+    const dock = document.createElement("div");
+    dock.id = "run-dock";
+    document.body.append(view, dock);
+    const replies = new Map(
+      ["wf_scroll_a", "wf_scroll_b"].map((id) => [
+        `/api/runs/${id}`,
+        { workflowId: id, state: { workflowId: id, status: "completed", root: steps(id) } },
+      ]),
+    );
+    vi.mocked(apiGetOrError).mockImplementation((path: string) => {
+      const data = replies.get(path);
+      return Promise.resolve(
+        data === undefined
+          ? { ok: false, status: 0, data: null, error: "" }
+          : { ok: true, status: 200, data, error: "" },
+      );
+    });
+  });
+
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it("is per run: A, then B, then A lands each where it was left", async () => {
+    await activate("wf_scroll_a");
+    expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight + 800);
+    scroller().scrollTop = 700;
+    await frames();
+    await activate("wf_scroll_b");
+    expect(scroller().scrollTop).toBe(0);
+    scroller().scrollTop = 300;
+    await frames();
+    await activate("wf_scroll_a");
+    expect(scroller().scrollTop).toBe(700);
+    await activate("wf_scroll_b");
+    expect(scroller().scrollTop).toBe(300);
   });
 });

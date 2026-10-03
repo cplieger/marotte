@@ -98,19 +98,19 @@ func TestPendingRunAsks_EveryMutationMovesTheSharedCounter(t *testing.T) {
 	mustHold(t, v, "ClearChat with nothing to drop", func() { r.ClearChat("c1") })
 }
 
-func TestSteerBuffer_EveryMutationMovesTheSharedCounter(t *testing.T) {
+func TestSteerRecords_EveryMutationMovesTheSharedCounter(t *testing.T) {
 	v := &subject.Versions{}
-	b := newSteerBuffer()
+	b := newSteerRecords()
 	b.versions = v
-	mustMove(t, v, "SteerWaiting", func() { b.SteerWaiting("c1", marotte.SteerQueuedPayload{SteerID: "s1"}) })
-	mustHold(t, v, "SteerWaiting with no id", func() { b.SteerWaiting("c1", marotte.SteerQueuedPayload{}) })
+	mustMove(t, v, "SteerWaiting", func() { b.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "s1"}) })
+	mustHold(t, v, "SteerWaiting with no id", func() { b.SteerWaiting("c1", &marotte.SteerQueuedPayload{}) })
 	mustMove(t, v, "SteerRead", func() { b.SteerRead("c1", "s1") })
 	mustHold(t, v, "SteerForgotten with nothing held", func() { b.SteerForgotten("c1", []string{"s1"}) })
-	b.SteerWaiting("c1", marotte.SteerQueuedPayload{SteerID: "s2"})
+	b.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "s2"})
 	mustMove(t, v, "SteerForgotten", func() { b.SteerForgotten("c1", []string{"s2"}) })
-	b.SteerWaiting("c1", marotte.SteerQueuedPayload{SteerID: "s3"})
-	mustMove(t, v, "ClearForChat", func() { b.ClearForChat("c1") })
-	mustHold(t, v, "ClearForChat with nothing to drop", func() { b.ClearForChat("c1") })
+	b.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "s3"})
+	mustMove(t, v, "TakeAgentRows", func() { b.TakeAgentRows("c1") })
+	mustHold(t, v, "TakeAgentRows with nothing to drop", func() { b.TakeAgentRows("c1") })
 }
 
 // TestPendingStores_ShareOneCounter pins that the three stores bump ONE subject:
@@ -122,11 +122,11 @@ func TestPendingStores_ShareOneCounter(t *testing.T) {
 	tr.versions = v
 	var r pendingRunAsks
 	r.versions = v
-	b := newSteerBuffer()
+	b := newSteerRecords()
 	b.versions = v
 	tr.Add(1, marotte.NewEvent(marotte.EventPermissionNeeded, "c1", marotte.PermissionNeededPayload{RequestID: 1}))
 	r.Add(askOf("c1", "wf-1", "a1", "n1"))
-	b.SteerWaiting("c1", marotte.SteerQueuedPayload{SteerID: "s1"})
+	b.SteerWaiting("c1", &marotte.SteerQueuedPayload{SteerID: "s1"})
 	if got := pendingVersion(t, v); got != "3" {
 		t.Errorf("pending version after one mutation per store = %q, want \"3\"", got)
 	}

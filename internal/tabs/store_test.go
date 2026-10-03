@@ -73,6 +73,7 @@ func TestOpen_RefusesASpecItCannotHold(t *testing.T) {
 		{desc: "plan, deleted from the client on 2026-08-25", spec: marotte.OpenTab{Kind: "plan"}, want: ErrBadKind},
 		{desc: "a chat with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindChat}, want: ErrBadRef},
 		{desc: "an editor with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindEditor}, want: ErrBadRef},
+		{desc: "a web preview with no ref", spec: marotte.OpenTab{Kind: marotte.TabKindWeb}, want: ErrBadRef},
 		{desc: "a singleton carrying a ref", spec: marotte.OpenTab{Kind: marotte.TabKindSettings, Ref: "general"}, want: ErrBadRef},
 		{desc: "a ref one byte over the bound", spec: marotte.OpenTab{Kind: marotte.TabKindEditor, Ref: strings.Repeat("p", MaxRefBytes+1)}, want: ErrBadRef},
 	}
@@ -633,4 +634,12 @@ func labels(tabs []marotte.TabSubject, names map[string]string) []string {
 		out = append(out, t.ID)
 	}
 	return out
+}
+
+func TestOpen_AcceptsAWebPreviewByPath(t *testing.T) {
+	s, _ := newTestStore(t)
+	sub := mustOpen(t, s, marotte.OpenTab{Kind: marotte.TabKindWeb, Ref: "/workspace/demo/index.html"})
+	if sub.Kind != marotte.TabKindWeb || sub.Ref != "/workspace/demo/index.html" {
+		t.Errorf("Open(web) = %+v, want kind web with the page path as its ref", sub)
+	}
 }

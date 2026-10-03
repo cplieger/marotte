@@ -421,6 +421,52 @@ func TestBundleScripts_InjectsTheHashedWorkerURL(t *testing.T) {
 	}
 }
 
+// TestBundlePrepaint_EmitsAClassicScript: index.html loads /prepaint.js as a
+// blocking classic <script src> in <head>, so the build must be ONE self-contained
+// IIFE at that fixed name. A module format, an unbundled import or a hashed chunk
+// name each leave the page with no pre-paint state, and nothing else reports it.
+func TestBundlePrepaint_EmitsAClassicScript(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, srcDir)
+	for _, d := range []string{src, filepath.Join(dir, outDir)} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"prepaint.ts": "import { marker } from \"./dep.js\";\ndocument.title = marker();\n",
+		"dep.ts":      "export function marker(): string {\n  return \"prepaint-marker-7f3a\";\n}\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+
+	if err := bundlePrepaint(); err != nil {
+		t.Fatalf("bundlePrepaint() = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, outDir, "chunks", "prepaint.js")); !os.IsNotExist(err) {
+		t.Errorf("static/chunks/prepaint.js exists (err %v), want the fixed top-level name only", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, outDir, "prepaint.js"))
+	if err != nil {
+		t.Fatalf("read static/prepaint.js: %v", err)
+	}
+	code := string(body)
+	iife := regexp.MustCompile(`^("use strict";)?\(\(\)=>\{[\s\S]*\}\)\(\);\n(//# sourceMappingURL=prepaint\.js\.map\n)?$`)
+	if !iife.MatchString(code) {
+		t.Errorf("static/prepaint.js is not one IIFE plus an optional sourcemap line:\n%s", code)
+	}
+	if regexp.MustCompile(`\bimport\s*[{("]|\bexport\s*[{*]|\brequire\(`).MatchString(code) {
+		t.Errorf("static/prepaint.js still references a module instead of inlining it:\n%s", code)
+	}
+	if !strings.Contains(code, "prepaint-marker-7f3a") {
+		t.Errorf("static/prepaint.js does not inline its dependency's marker:\n%s", code)
+	}
+}
+
 // TestEmittedEntry_RefusesAnAmbiguousMetafile: the page needs ONE worker URL, so a
 // metafile naming two entry scripts (or none) is refused rather than picked from.
 func TestEmittedEntry_RefusesAnAmbiguousMetafile(t *testing.T) {

@@ -150,9 +150,8 @@ vi.mock("./router.js", () => ({
 }));
 // Type-only, for the `importOriginal` below.
 import type * as TabsDrag from "./tabs-drag.js";
-// The three FUNCTIONS are stubbed and nothing else is: `DRAG_THRESHOLD_PX` is the
-// strip's drag slop and `tabs.ts` reads it, so a partial factory would fail this
-// whole file at link time.
+// `exceedsSlop` stays real: `tabs.ts` reads it, so a partial factory would fail
+// this whole file at link time.
 vi.mock("./tabs-drag.js", async (importOriginal) => ({
   ...(await importOriginal<typeof TabsDrag>()),
   attachDrag: vi.fn(),

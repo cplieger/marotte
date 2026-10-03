@@ -30,7 +30,9 @@ import { confirm as confirmDialog } from "./confirm.js";
 // a walk through four directories costs one round trip and a repeat of the same
 // path costs none.
 import { patchSettings } from "./persist.js";
-import { fileIcon, FILE_ICONS } from "./icons.js";
+import { fileIcon, FILE_ICONS, ICON_TAB_WEB } from "./icons.js";
+import { isWorkspacePage } from "./preview-card.js";
+import { openWebPreview } from "./web-open.js";
 import { iconEl } from "./icon-el.js";
 import { attachPathsToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
@@ -144,19 +146,39 @@ function recordBrowsePath(path: string): void {
 
 /** Bind the shared browser DOM to one files tab, WITHOUT loading.
  *
- *  The early return is what makes a repeat activation of the SAME browser a pure
- *  load rather than a re-paint of rows the fetch is about to replace. */
+ *  Skipping the repaint for the SAME browser is what makes a repeat activation a
+ *  pure load rather than a re-paint of rows the fetch is about to replace. */
 export function bindFilesTab(ref: string): void {
-  if (boundRef === ref) {
-    return;
+  if (boundRef !== ref) {
+    const st = stateFor(ref);
+    boundRef = ref;
+    renameTab(filesTabIdFor(ref), filesRowName(st.currentPath));
+    updateNavButtons();
+    // From the state's cached entries, so the switch paints instantly and the fetch
+    // that follows corrects it.
+    renderList({ transition: false });
   }
-  const st = stateFor(ref);
-  boundRef = ref;
-  renameTab(filesTabIdFor(ref), filesRowName(st.currentPath));
-  updateNavButtons();
-  // From the state's cached entries, so the switch paints instantly and the fetch
-  // that follows corrects it.
-  renderList({ transition: false });
+  // On the same-tab path too: the view was hidden in between, and a hidden box
+  // keeps no offset an engine is obliged to give back.
+  const wrap = $.fbList.parentElement;
+  if (wrap !== null) {
+    wrap.scrollTop = cur().scrollTop;
+  }
+}
+
+/** Record the bound browser's offset as the reader scrolls. A box with no layout
+ *  reads 0, so nothing is recorded while the view is hidden. */
+function trackListScroll(): void {
+  const wrap = $.fbList.parentElement;
+  wrap?.addEventListener(
+    "scroll",
+    () => {
+      if (boundRef !== "" && wrap.getClientRects().length > 0) {
+        cur().scrollTop = wrap.scrollTop;
+      }
+    },
+    { passive: true },
+  );
 }
 
 /** Bind and load — what a files tab's activation means. The factory's `refresh`. */
@@ -229,8 +251,16 @@ export function initFileBrowser(): void {
   $.fbDownload.addEventListener("click", downloadSelected);
   $.fbUpload.addEventListener("click", uploadViaDialog);
   $.fbAddToChat.addEventListener("click", addSelectedToChat);
+  $.fbPreview.replaceChildren(iconEl(ICON_TAB_WEB));
+  $.fbPreview.addEventListener("click", () => {
+    const path = selectedPreviewPath();
+    if (path !== null) {
+      openWebPreview(path);
+    }
+  });
 
   initPathInput();
+  trackListScroll();
   initBrowserDragDrop({
     getCurrentPath: () => cur().currentPath,
     getEntryMap: () => cur().entryMap,
@@ -504,7 +534,19 @@ function updateActionButtons(): void {
   $.fbRename.disabled = !single || !cur().dirWritable;
   $.fbDelete.disabled = !any || !cur().dirWritable;
   $.fbAddToChat.disabled = !any;
+  $.fbPreview.disabled = selectedPreviewPath() === null;
   updateWriteButtons();
+}
+
+function selectedPreviewPath(): string | null {
+  const state = cur();
+  if (state.selected.size !== 1) {
+    return null;
+  }
+  const name = [...state.selected][0] ?? "";
+  const entry = state.entries.find((e) => e.name === name);
+  const path = joinPath(state.currentPath, name);
+  return entry !== undefined && !entry.isDir && isWorkspacePage(path) ? path : null;
 }
 
 /** State the mobile toolbar's priority: navigation while browsing, selection

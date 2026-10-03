@@ -70,6 +70,7 @@ var commandDischarges = map[marotte.CommandType]dischargeVerdict{
 	marotte.CmdCreateHook:        dischargeNo,
 	marotte.CmdSetSupervisedMode: dischargeNo,
 	marotte.CmdSteerClear:        dischargeNo,
+	marotte.CmdSteerRemove:       dischargeNo,
 	marotte.CmdOpenTab:           dischargeNo,
 	marotte.CmdCloseTab:          dischargeNo,
 	marotte.CmdReorderTabs:       dischargeNo,

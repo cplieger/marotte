@@ -199,6 +199,35 @@ describe("a gap and then the connect replay", () => {
 
     expect(get("c1")?.steers?.map((e) => e.id)).toEqual(["steer-waiting"]);
   });
+
+  // A reload brings the rows the server persisted back as frames carrying their state, so
+  // a row no turn could read returns Not sent rather than as a plain waiting row.
+  it("brings a persisted row back as not sent, from the state its frame carries", () => {
+    fireSSE("steer_queued", "c1", {
+      steer_id: "steer-1",
+      text: "use tabs",
+      origin: "user",
+      state: "unsent",
+    });
+    expect(get("c1")?.steers).toEqual([
+      { id: "steer-1", text: "use tabs", origin: "user", unsent: true },
+    ]);
+  });
+
+  it("passes a batch frame's members through, adding no row", () => {
+    fireSSE("steer_queued", "c1", { steer_id: "steer-1", text: "one", origin: "user" });
+    fireSSE("steer_queued", "c1", { steer_id: "steer-2", text: "two", origin: "user" });
+    fireSSE("steer_queued", "c1", {
+      steer_id: "steer-b1",
+      text: "one\n\ntwo",
+      origin: "user",
+      replaces: ["steer-1", "steer-2"],
+    });
+    expect(get("c1")?.steers?.map((e) => [e.id, e.kas])).toEqual([
+      ["steer-1", "steer-b1"],
+      ["steer-2", "steer-b1"],
+    ]);
+  });
 });
 
 // The agent's own notices. They arrive on KAS's steering channel because that buffer is the

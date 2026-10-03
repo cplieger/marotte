@@ -7,6 +7,7 @@ import { renderDiffPane } from "./diff-pane.js";
 import type { FileState } from "./editor-types.js";
 import { getCachedDiff } from "./editor-types.js";
 import { renderEditModeUI, showDiffMode } from "./editor-ui.js";
+import { bindDiffView } from "./editor-scroll.js";
 
 export function renderDiffModeUI(state: FileState): void {
   const m = state.mode.value;
@@ -42,6 +43,8 @@ export function renderDiffModeUI(state: FileState): void {
   $.editorDiffPane.appendChild(pane);
   // showDiffMode inline
   showDiffMode();
+  // After the pane is visible: a scroll offset written to a box with no layout is dropped.
+  bindDiffView(state, pane, src);
 
   // Each button owns its own diff KIND, so a fromGit diff is exited by
   // #editor-git-diff-btn (which entered it) and this one stays hidden. Offering

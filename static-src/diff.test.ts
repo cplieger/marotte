@@ -1097,6 +1097,29 @@ describe("wordDiff", () => {
     expect(wordDiff(oldLine, newLine)).toBeNull();
   });
 
+  it("declines a pair past the token budget, so a pathological line keeps the row tint", () => {
+    // `splitWords` emits one token per identifier run AND one per whitespace run, so 201
+    // words separated by single spaces is 401 tokens — one past MAX_WORD_TOKENS. The pair
+    // shares 400 of them, so without the budget the answer would be a perfectly good
+    // single-range mark; the point is that the line-level tint is cheaper than the table.
+    const words = Array.from({ length: 201 }, (_, i) => `w${String(i)}`);
+    const oldLine = words.join(" ");
+    const newLine = words.map((w, i) => (i === 100 ? "CHANGED" : w)).join(" ");
+    expect(wordDiff(oldLine, newLine)).toBeNull();
+  });
+
+  it("marks the removed tail when the new line is a prefix of the old", () => {
+    // The main walk ends with the NEW side exhausted and old tokens left over, which is
+    // the only way the trailing-deletion drain runs: dropping an argument marks exactly
+    // the text that went, not the call that kept it.
+    const oldLine = "alpha beta";
+    const newLine = "alpha";
+    const wd = wordDiff(oldLine, newLine);
+    expect(wd).not.toBeNull();
+    expect(marked(oldLine, wd!.del)).toEqual([" beta"]);
+    expect(wd!.add).toEqual([]);
+  });
+
   it("declines an identical or empty line", () => {
     expect(wordDiff("same", "same")).toBeNull();
     expect(wordDiff("", "text")).toBeNull();

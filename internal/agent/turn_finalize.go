@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/cplieger/marotte/internal/command"
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/sanitize"
@@ -166,6 +167,13 @@ func (bc *BridgeCoordinator) closeTurn(ctx context.Context, t *Turn, stop marott
 	statusDesc := bc.turns.statusDescription(t)
 	sealed, err := t.Log.Close(ctx, c)
 	translate.PublishSealed(ctx, broadcastFunc(bc.broadcast), chatID, "", sealed)
+	if bc.steerTurnEnded != nil {
+		end := command.SteerTurnEnd{TurnID: t.ID, Source: t.Source, BridgeDeath: closer == closerBridgeDeath}
+		if end.BridgeDeath {
+			end.Exit = bc.turns.forwardExit(chatID)
+		}
+		bc.steerTurnEnded(chatID, end)
+	}
 	switch {
 	case errors.Is(err, turnlog.ErrClosed):
 		// The store-open closer or a between-turns synthesis wrote the turn_close

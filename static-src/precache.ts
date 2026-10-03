@@ -37,6 +37,13 @@ export function isShellPath(pathname: string): boolean {
   return CONTENT_HASHED_CHUNK.test(pathname);
 }
 
+/** A web preview's document or asset. The worker stays out of these entirely:
+ *  a preview frame's load must not trigger a precache sync, and its bytes are
+ *  never the worker's to cache. */
+export function isPreviewPath(pathname: string): boolean {
+  return pathname.startsWith("/preview/");
+}
+
 /** The manifest a document just served, or null when it is unusable.
  *
  *  Every field is checked rather than cast — a half-written or foreign document

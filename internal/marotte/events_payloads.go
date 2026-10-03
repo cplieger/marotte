@@ -503,7 +503,29 @@ type SteerQueuedPayload struct {
 	// lets the client invent a fallback, and the one it would pick is wrong for a
 	// workflow's report.
 	Origin SteerOrigin `json:"origin"`
+	// State is the row's dock state; a batch frame is always queued.
+	State SteerRowState `json:"state"`
+	// Replaces is set on a BATCH frame: SteerID is an id KAS holds several rows (or one
+	// re-sent row) under, and these are the rows' keys. A batch frame adds no row, so
+	// a resubmit repaints nothing; a ROW frame (SteerID is the row's key) leaves it empty.
+	Replaces []string `json:"replaces,omitempty"`
 }
+
+// SteerRowState is a dock row's state as the dock draws it. Every row that is or may
+// be in KAS, or whose fate a turn end has not decided, reads queued, so a row moving
+// between the server's finer states repaints nothing.
+type SteerRowState string
+
+const (
+	// SteerRowQueued is a row waiting to be read.
+	SteerRowQueued SteerRowState = "queued"
+	// SteerRowUnsent is an unread row the server holds with no turn to deliver it to:
+	// its bridge died, its buffer was cleared with no turn running, or a turn-end resend
+	// failed. The chat's next prompt carries it; a server restart discards it.
+	SteerRowUnsent SteerRowState = "unsent"
+	// SteerRowRemoved retires a row that leaves with no steer entry to leave on.
+	SteerRowRemoved SteerRowState = "removed"
+)
 
 // AgentNoticePayload is the payload for type="agent_notice": a progress notice a workflow step
 // or subagent reported into the session that launched it. KAS decides this by sniffing the text

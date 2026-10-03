@@ -330,8 +330,8 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
     // arithmetic error hides and a surface change has to be re-derived rather
     // than re-guessed. `check` re-derives and diffs against 01-tokens.css, so an
     // edit made without re-running the generator is this failure. Same shape as
-    // theme-init-snippet.test.ts's drift guard and cmd/wire-codegen's determinism
-    // check: the generator is the source, the file is its output.
+    // cmd/wire-codegen's determinism check: the generator is the source, the file
+    // is its output.
     const out = execFileSync("python3", [generator, "check"], { encoding: "utf8" });
     expect(out.trim(), "01-tokens.css drifted from scripts/css-ansi-palette.py").toBe("0 drifted");
   });

@@ -125,6 +125,7 @@
 [id="git-view"],
 [id="editor-view"],
 [id="files-view"],
+[id="web-view"],
 [id="history-view"],
 [id="run-view"],
 [id="subagent-view"],
@@ -142,7 +143,7 @@
   }
 }
 
-/* #files-view, #editor-view and #run-view are deliberately absent: each pins an
+/* #files-view, #editor-view, #web-view and #run-view are deliberately absent: each pins an
    inner element as its scroller and keeps a toolbar or bar pinned outside it. */
 [id="settings-view"],
 [id="git-view"],

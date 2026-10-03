@@ -89,6 +89,7 @@ import {
 import { subagentToExec } from "./subagent-exec-source.js";
 import { parseSubagentRef, subagentRef } from "./tab-materialize.js";
 import type { TurnState } from "./types.js";
+import { SharedScroll } from "./view-scroll.js";
 
 /** A detached render is addressed by `(turn, lane)`, which is `messages-blocks.ts`'s
  *  own render key: the transcript holds that same turn under the EMPTY lane, so the two
@@ -175,6 +176,19 @@ interface MountedPage {
 }
 let mounted: MountedPage | undefined;
 
+/** `.page-content` is shared by every subagent tab, so each TAB keeps its own offset.
+ *  Keyed by the tab's ref rather than the page: sibling stages of one pipeline share
+ *  a page, and each shows a different transcript. */
+const pageScroll = new SharedScroll(
+  () => document.querySelector<HTMLElement>("[id='subagent-view'] > .page-content"),
+  () => (mounted === undefined ? "" : shownRef()),
+);
+
+function shownRef(): string {
+  const { chatID, subtaskID } = shown.peek();
+  return subagentRef(chatID, subtaskID);
+}
+
 /** Whether a `view.render` is on the stack. NOT a field of the record: it is a
  *  re-entrancy flag scoped to ONE synchronous `view.render()` call rather than a
  *  resource, so a record field for it would have a lifetime of a single statement.
@@ -193,6 +207,10 @@ let inPaint = false;
 export function showSubagent(chatID: string, subtaskID: string): void {
   shown.value = { chatID, subtaskID };
   installEffects();
+  // A re-show of the page already mounted mounts nothing, so the paint restores nothing.
+  if (mounted !== undefined) {
+    pageScroll.restore(shownRef());
+  }
 }
 
 /** A subagent tab's `refresh`. The page is a projection of the launching chat's
@@ -266,6 +284,9 @@ function installEffects(): void {
     // have the launching chat's next transcript delta re-mount the page for a tab that
     // no longer exists, which the demand effect could not notice because the tab set
     // did not move.
+    for (const id of m.projection.slices.keys()) {
+      pageScroll.forget(subagentRef(m.chatID, id));
+    }
     shown.value = { chatID: "", subtaskID: "" };
   });
 
@@ -346,6 +367,9 @@ function paint(chatID: string, subtaskID: string, projection: SubagentProjection
     m.view.render(subagentToExec(subtaskID, projection, chatTurnLive(chatID)));
   } finally {
     inPaint = false;
+  }
+  if (kept === undefined) {
+    pageScroll.restore(subagentRef(chatID, subtaskID));
   }
   syncBodies(m);
 }

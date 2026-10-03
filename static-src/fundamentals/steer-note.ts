@@ -55,6 +55,7 @@ const LABELS: Record<SteerOrigin, { read: string; dropped: string }> = {
 const REASONS: Record<SteerReason, string> = {
   restart: "the session restarted",
   boundary: "the turn ended first",
+  deleted: "you deleted it",
 };
 
 /** The second channel, never a hue (WCAG 1.4.1 would forbid one as the only

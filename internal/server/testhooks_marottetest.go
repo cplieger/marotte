@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/marotte"
+	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/push"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -67,9 +68,10 @@ type closeAfterRequest struct {
 }
 
 // registerTestHooks mounts the SSE control surface the browser-mode suite drives:
-// the connection census with the presence table, and the close-after cut. Test
-// builds only.
+// the connection census with the presence table, and the close-after cut, plus the
+// preview token minter. Test builds only.
 func (s *Server) registerTestHooks(mux *http.ServeMux) {
+	s.registerPreviewTestHook(mux)
 	probe, ok := s.agent.(sseProbe)
 	if !ok {
 		return
@@ -110,4 +112,73 @@ func (s *Server) registerTestHooks(mux *http.ServeMux) {
 		probe.CloseNextSSEAfter(req.After)
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+type previewGranter interface {
+	Grant(path string, exp time.Time) (marotte.PreviewGrant, error)
+}
+
+type previewTokenRequest struct {
+	ExpiresAt time.Time `json:"expires_at"`
+	Path      string    `json:"path"`
+}
+
+// registerPreviewTestHook mounts the preview controls a browser check needs: a
+// grant with a chosen expiry, a resolver answering ENOSYS or EAGAIN, and a file
+// growing after its size check. Independent of the SSE probe.
+func (s *Server) registerPreviewTestHook(mux *http.ServeMux) {
+	g, ok := s.preview.(previewGranter)
+	if !ok {
+		return
+	}
+	mux.HandleFunc("POST /api/test/preview-token", func(w http.ResponseWriter, r *http.Request) {
+		var req previewTokenRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+			httpreply.BadRequest(w, "body must be {path, expires_at}")
+			return
+		}
+		grant, err := g.Grant(req.Path, req.ExpiresAt)
+		if err != nil {
+			httpreply.BadRequest(w, err.Error())
+			return
+		}
+		webhttp.WriteJSON(w, grant)
+	})
+	mux.HandleFunc("POST /api/test/preview-resolver", func(w http.ResponseWriter, r *http.Request) {
+		var req previewResolverRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+			httpreply.BadRequest(w, "body must be {unavailable}")
+			return
+		}
+		preview.SetResolverUnavailable(req.Unavailable)
+		preview.SetResolverBusy(req.Busy)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /api/test/preview-grow", func(w http.ResponseWriter, r *http.Request) {
+		var req previewGrowRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+			httpreply.BadRequest(w, "body must be {path, bytes}")
+			return
+		}
+		if req.Bytes < 1 || req.Bytes > 1<<20 {
+			httpreply.BadRequest(w, "bytes must be 1 to 1048576")
+			return
+		}
+		if st, err := os.Lstat(req.Path); err != nil || !st.Mode().IsRegular() {
+			httpreply.BadRequest(w, "path must name a regular file")
+			return
+		}
+		preview.GrowAfterNextSizeCheck(req.Path, req.Bytes)
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+type previewResolverRequest struct {
+	Unavailable bool `json:"unavailable"`
+	Busy        bool `json:"busy"`
+}
+
+type previewGrowRequest struct {
+	Path  string `json:"path"`
+	Bytes int    `json:"bytes"`
 }

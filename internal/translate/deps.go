@@ -83,24 +83,24 @@ type SentSteers interface {
 	SteerResends(chatID marotte.ChatID, steerID string) []string
 }
 
-// SteerBuffer is the host's projection of KAS's own steering buffer: which steers are
-// still WAITING, so a client that reconnects can be re-offered them. The host needs
-// telling because nothing can read that buffer back.
+// SteerBuffer is the host's record of KAS's steering buffer and of the user's own
+// steers. The host needs telling because nothing can read that buffer back.
 //
 // A SECOND narrow role beside SentSteers rather than a widening of it: an origin is
 // TTL'd, while a waiting steer's lifetime is KAS's buffer, which no clock this process
 // holds can predict, so one type answering both would have to pick one lifetime.
 type SteerBuffer interface {
-	// SteerWaiting records a steer KAS has buffered and the model has not read.
-	// Idempotent by id: a reconnect replays the queued frame.
-	SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload)
-	// SteerForgotten drops every named steer: KAS's buffer no longer holds them,
-	// whether the model read them or a turn boundary cleared them unread. It
-	// returns the ones it WAS holding, with their payloads, which is the only
-	// evidence anywhere that those were never read — see the host's own doc.
+	// SteerWaiting folds steering_queued; true means an agent row the caller broadcasts.
+	SteerWaiting(chatID marotte.ChatID, p *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
+	// SteerForgotten folds an acknowledgement-evidenced read and answers what was
+	// read, with its text, which no frame carries here.
 	SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload
-	// SteerRead is SteerForgotten for the one id an injected frame names.
+	// SteerRead folds steering_injected for the one id it names.
 	SteerRead(chatID marotte.ChatID, steerID string)
+	// SteerCleared folds steering_cleared and answers the AGENT rows it named. A
+	// user row gets no entry at a clear: the host writes one at the row's own
+	// terminal transition, so a row resent after the clear is never noted unread.
+	SteerCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload
 }
 
 // ChatRecords is the chat store's HEADER as this package uses it. Every write

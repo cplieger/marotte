@@ -19,6 +19,9 @@ func TestTestHooks_AbsentWithoutTheBuildTag(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/api/test/sse"},
 		{http.MethodPost, "/api/test/sse/close-after"},
+		{http.MethodPost, "/api/test/preview-token"},
+		{http.MethodPost, "/api/test/preview-resolver"},
+		{http.MethodPost, "/api/test/preview-grow"},
 	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, http.NoBody))

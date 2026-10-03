@@ -32,8 +32,8 @@
 
 /* Collapsed for the duration of a drag: children fold up into their parent so
    the strip being reordered is top-level rows only, then redeploy on drop. A
-   child left in place would sit between two parents and make the drop indicator
-   point at a position that cannot be dropped into. */
+   child left in place would sit between two parents and offer the dragged row a
+   slot that cannot be dropped into. */
 .tab.tab-child[data-drag-collapsed] {
   display: none;
 }
@@ -967,6 +967,11 @@
   border-radius: var(--menu-radius);
 }
 
-.tab-context-item:hover {
+.tab-context-item:not([aria-disabled="true"]):hover {
   background: var(--c-bg-tertiary);
+}
+
+.tab-context-item[aria-disabled="true"] {
+  color: var(--c-text-tertiary);
+  cursor: default;
 }

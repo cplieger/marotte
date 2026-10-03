@@ -38,7 +38,10 @@ type fakeBridge struct {
 	// stamps its own id, so it can only produce frames the own-session screen drops.
 	notifsOnCall map[string][]*marotte.RPCResponse
 	// blockOn parks Call, after recording it, until the method's channel is closed.
-	blockOn   map[string]chan struct{}
+	blockOn map[string]chan struct{}
+	// onCall, when set, answers a Call instead of the scripted result: its frames
+	// are delivered before the Call returns, as KAS emits them before replying.
+	onCall    func(method string, params map[string]any) (json.RawMessage, []*marotte.RPCResponse, bool)
 	sessionID string
 	modelID   string
 	effort    string
@@ -227,7 +230,14 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*maro
 	frames := b.notifsOnCall[method]
 	blocker := b.blockOn[method]
 	sessionID := b.sessionID
+	hook := b.onCall
 	b.mu.Unlock()
+	if hook != nil {
+		p, _ := params.(map[string]any)
+		if r, hooked, ok := hook(method, p); ok {
+			res, frames = r, hooked
+		}
+	}
 	// Blocked OUTSIDE the mutex so concurrent Calls on other methods proceed, which is
 	// the real bridge's per-request behaviour.
 	if blocker != nil {

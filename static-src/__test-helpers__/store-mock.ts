@@ -88,13 +88,11 @@ export const storeMock = {
   // shape rather than a placeholder.
   steerIDFor: vi.fn((messageID: string) => `steer-${messageID}`),
   steerCount: vi.fn(() => 0),
-  pendingSteerCarry: vi.fn(() => []),
   markSteersCompacted: vi.fn(),
   recordSteerSent: vi.fn(),
   recordSteerQueued: vi.fn(),
   forgetSteer: vi.fn(),
   forgetSteers: vi.fn(),
-  dropSteers: vi.fn(),
   dropConfirmedSteers: vi.fn(() => []),
   restoreSteers: vi.fn(),
 

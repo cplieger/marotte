@@ -11,7 +11,13 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import { initPointerTier, currentTier, resolveTier, setPointerMode } from "./pointer-tier.js";
+import {
+  applyStoredTier,
+  initPointerTier,
+  currentTier,
+  resolveTier,
+  setPointerMode,
+} from "./pointer-tier.js";
 import {
   cachePointerTier,
   cachedPointerTier,
@@ -148,8 +154,8 @@ describe("initPointerTier", () => {
   it("keeps the theme in the blob it shares", () => {
     // `device-view.ts` is the ONE owner of this key precisely because every write
     // is a read-modify-write of one JSON object, so a writer that forgets to merge
-    // drops a sibling field. The theme is the field with a second reader (the
-    // inline pre-paint snippet), so losing it costs a wrong-theme flash.
+    // drops a sibling field. The theme is the field with a second reader
+    // (prepaint.js), so losing it costs a wrong-theme flash.
     writeBlob({ theme: "dark" });
     initPointerTier();
     pointer("touch");
@@ -347,5 +353,62 @@ describe("setPointerMode", () => {
     document.documentElement.removeAttribute("data-pointer");
     initPointerTier();
     expect(currentTier()).toBe("coarse");
+  });
+});
+
+describe("applyStoredTier (the pre-paint half)", () => {
+  const root = document.documentElement;
+
+  it.each([
+    ["a stated choice", (): void => setPointerModeChoice("coarse"), "coarse"],
+    ["an observed tier", (): void => cachePointerTier("coarse"), "coarse"],
+    ["the capability guess", (): void => undefined, "fine"],
+  ] as const)("lays out %s exactly as resolveTier answers it", (_rung, seed, want) => {
+    seed();
+    applyStoredTier();
+    expect(root.getAttribute("data-pointer")).toBe(resolveTier());
+    expect(root.getAttribute("data-pointer")).toBe(want);
+  });
+
+  it("raises the touched floor for a seen coarse pointer with no stated choice", () => {
+    markCoarseSeen();
+    applyStoredTier();
+    expect(root.hasAttribute("data-touched")).toBe(true);
+  });
+
+  it("raises the touched floor for a cached coarse tier with no stated choice", () => {
+    cachePointerTier("coarse");
+    applyStoredTier();
+    expect(root.hasAttribute("data-touched")).toBe(true);
+  });
+
+  it("gives no touched floor once the reader stated a tier", () => {
+    markCoarseSeen();
+    setPointerModeChoice("fine");
+    root.setAttribute("data-touched", "");
+    applyStoredTier();
+    expect(root.hasAttribute("data-touched")).toBe(false);
+  });
+
+  it("writes nothing to storage, the sticky flag included", () => {
+    cachePointerTier("coarse");
+    const before = localStorage.getItem(LS_UI_STATE_KEY);
+    applyStoredTier();
+    expect(coarseEverSeen()).toBe(false);
+    expect(localStorage.getItem(LS_UI_STATE_KEY)).toBe(before);
+  });
+
+  it("leaves initPointerTier nothing to change on <html> after it ran", () => {
+    markCoarseSeen();
+    cachePointerTier("coarse");
+    applyStoredTier();
+    const seen = new MutationObserver(() => undefined);
+    seen.observe(root, { attributes: true, attributeFilter: ["data-pointer", "data-touched"] });
+    initPointerTier();
+    const records = seen.takeRecords();
+    seen.disconnect();
+    expect(records.map((r) => r.attributeName)).toEqual([]);
+    expect(root.getAttribute("data-pointer")).toBe("coarse");
+    expect(root.hasAttribute("data-touched")).toBe(true);
   });
 });

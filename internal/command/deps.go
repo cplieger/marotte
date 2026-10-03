@@ -163,6 +163,10 @@ type ChatTeardown interface {
 	// cleanup, but it leaves the durable KAS session on disk so the chat can
 	// be reopened and so History can still list it.
 	CloseChatState(ctx context.Context, chatID marotte.ChatID)
+	// BeginChatTeardown marks the chat as going away BEFORE the teardown's cancel,
+	// so the turn end that cancel causes resends nothing. keep is a close, whose
+	// record survives and keeps a note per unread steer. Idempotent.
+	BeginChatTeardown(chatID marotte.ChatID, keep bool)
 }
 
 // PendingPermAccess provides the pending-permission bookkeeping handlers
@@ -334,47 +338,153 @@ type TurnOutcomeAccess interface {
 	// reason is the user-facing account of it, which the turn_close carries. It
 	// waits for no read loop position.
 	AbandonInFlightTurn(ctx context.Context, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string)
-	// RecordDroppedSteer writes steer{state: dropped, origin: user} for a parked
-	// steer KAS refused or never received: into the chat's open turn, sealing
-	// every lane first, else after the newest turn's close.
-	RecordDroppedSteer(ctx context.Context, chatID marotte.ChatID, steer ParkedSteer)
 }
 
-// SteerRecorder is what CmdSteer and the prompt's drain need of the steer ledger:
-// record that THIS server sent a steer, take that back when the send turns out
-// to have been refused, and hold the steers parked for a prompt whose bridge is
-// still spawning. Write-only on purpose — the read is the translate layer's, on
-// its own role — and the record-then-forget pair is what lets the record be
-// written BEFORE the RPC, which is the only ordering that beats KAS's own
-// notification (see CmdSteer).
+// SteerRecorder is what the steer commands need of the steer ledger: record that
+// THIS server sent a steer under an id, and the rows it carries, before the RPC,
+// which is the only ordering that beats KAS's own notification (see CmdSteer).
 type SteerRecorder interface {
-	// RecordUserSteer records a steer this server sent, with the dropped steers it
-	// re-sends (nil for an ordinary one).
+	// RecordUserSteer records a steer this server sent, with the row keys it
+	// carries when the id is not a row's own (nil for an ordinary one).
 	RecordUserSteer(chatID marotte.ChatID, steerID string, resends []string)
-	ForgetUserSteer(chatID marotte.ChatID, steerID string)
-	// ParkSteer holds a steer for the chat's admitted prompt until its bridge is
-	// live, mirrored into the dock; false when the chat's parked set is full.
-	ParkSteer(chatID marotte.ChatID, steerID, text string, resends []string) bool
-	// HasParkedSteers reports an undelivered parked steer, read under the same
-	// lock the drain's exit test takes, so a steer arriving mid-drain joins the
-	// tail rather than overtaking it.
-	HasParkedSteers(chatID marotte.ChatID) bool
-	// NextParkedSteer is the oldest parked steer still undelivered.
-	NextParkedSteer(chatID marotte.ChatID) (ParkedSteer, bool)
-	// ForgetParkedSteer drops one delivered or refused row from the parked set;
-	// its dock row stays for KAS's own steering_queued dedupe.
-	ForgetParkedSteer(chatID marotte.ChatID, steerID string)
-	// TakeParkedSteers drains the chat's whole parked set, for a prompt that never
-	// reaches StartTurn.
-	TakeParkedSteers(chatID marotte.ChatID) []ParkedSteer
 }
 
-// ParkedSteer is one steer held for a spawning prompt: KAS's id for it and its
-// text, in arrival order.
-type ParkedSteer struct {
-	ID      string
-	Text    string
-	Resends []string
+// The refusal classes a steer operation answers with; the client branches on them.
+const (
+	SteerRefuseNoTurn     = "no_turn"
+	SteerRefuseFull       = "full"
+	SteerRefuseNotWaiting = "not_waiting"
+	SteerRefuseNotUser    = "not_user"
+	SteerRefuseAgentRows  = "agent_rows_waiting"
+	SteerRefuseStarting   = "starting"
+	SteerRefuseSettling   = "settling"
+	SteerRefuseChatGone   = "chat_gone"
+	// SteerRefuseNoReply is a clear that got no reply: nothing changed.
+	SteerRefuseNoReply = "no_reply"
+	// SteerRefuseConsumed is a delete whose target the agent read first.
+	SteerRefuseConsumed = "consumed"
+)
+
+// SteerTurnEnd is a turn's end as the steer record saw it.
+type SteerTurnEnd struct {
+	// Exit closes when the closing bridge's forward goroutine has drained, for a
+	// bridge death: a resend admitted earlier would reach the dying process.
+	Exit   <-chan struct{}
+	TurnID string
+	// Lead is the row the send-now arrow named, resent first.
+	Lead        string
+	Source      marotte.TurnOpenSource
+	BridgeDeath bool
+}
+
+// SteerJob is work a frame fold or a turn end hands to the command side, which runs
+// it under the chat's steer lock. A turn-end job carries End and the Owner its rows
+// are marked with; a flush carries neither.
+type SteerJob struct {
+	End   *SteerTurnEnd
+	Chat  marotte.ChatID
+	Owner string
+}
+
+// SteerSend is one _session/steer the record decided on, state already written.
+// Keys names the rows it carries when ID is not a row's own key.
+type SteerSend struct {
+	ID   string
+	Text string
+	Keys []string
+}
+
+// SteerHolder is what admission says about a chat when a steer is routed.
+type SteerHolder struct {
+	Held        bool
+	PromptClass bool
+	Live        bool
+	// Delivering is the parked drain itself, which must not re-park its head row.
+	Delivering bool
+}
+
+// SteerOpResult is what an op learns when it re-reads the record after its clear.
+type SteerOpResult struct {
+	// Resend is the kept rows' combined send, state already written; nil when
+	// nothing is kept or their turn closed under the op.
+	Resend *SteerSend
+	// Reason is a refusal class: chat gone, the clear had no reply, or the target
+	// was read before the clear landed.
+	Reason string
+}
+
+// SteerRow is one row a turn-end job holds.
+type SteerRow struct {
+	Key   string
+	Text  string
+	InKAS bool
+}
+
+// SteerQueue is the server's record of the user's mid-turn steers and of what
+// KAS's buffer holds, as the steer commands drive it. Every method decides under
+// the record's lock and writes state before the caller's RPC; the caller holds the
+// chat's steer lock across the whole operation.
+type SteerQueue interface {
+	// LockSteerOps serializes every operation on the chat's steering buffer;
+	// different chats never wait on each other. The error is the context's.
+	LockSteerOps(ctx context.Context, chatID marotte.ChatID) (unlock func(), err error)
+	// AwaitReadLoop parks until the bridge's read loop has folded every frame that
+	// preceded a response at seq, reporting whether it got there.
+	AwaitReadLoop(ctx context.Context, chatID marotte.ChatID, seq uint64) bool
+	// RouteSteer answers the sends to issue, in order, or the refusal class.
+	RouteSteer(chatID marotte.ChatID, key, text string, h SteerHolder) (sends []SteerSend, refuse string)
+	SteerSent(chatID marotte.ChatID, s SteerSend, queued bool, err error)
+	// BeginRemove decides a delete. A row KAS does not hold is deleted at once and
+	// needsClear is false; otherwise the op owns its rows until EndOp.
+	BeginRemove(chatID marotte.ChatID, key, opID string) (needsClear bool, refuse string)
+	// RemoveCleared re-reads after the delete's clear (landed false: no reply).
+	RemoveCleared(chatID marotte.ChatID, opID string, cleared []string, landed bool) SteerOpResult
+	// BeginDiscard decides a Discard all; needsClear is false when nothing is in KAS.
+	BeginDiscard(chatID marotte.ChatID, opID string) (needsClear bool, refuse string)
+	// DiscardCleared re-reads after the discard's clear, or settles it with none.
+	DiscardCleared(chatID marotte.ChatID, opID string, landed bool) SteerOpResult
+	OpSent(chatID marotte.ChatID, opID string, s SteerSend, queued bool, err error)
+	// EndOp releases every row the op still owns, or, when their turn closed under
+	// the op, answers that end with the rows still the op's, for the caller to
+	// resolve before it lets go of the steer lock.
+	EndOp(chatID marotte.ChatID, opID string) *SteerTurnEnd
+	OnSteerJob(run func(SteerJob))
+	// SetSteerLead records the send-now arrow's row for the next turn end; undo
+	// takes it back when the stop could not be sent.
+	SetSteerLead(chatID marotte.ChatID, key string) (undo func())
+}
+
+// SteerJobs is the record as the turn-end routine and the prompt's drain drive it.
+type SteerJobs interface {
+	// JobRows re-reads a job's rows in resend order; gone is the chat's teardown.
+	JobRows(chatID marotte.ChatID, owner, lead string) (rows []SteerRow, gone bool)
+	// StraysCleared marks the job's in-KAS rows named by a clear (all of them for a
+	// dead bridge) as not in KAS; a row read before the clear leaves the set.
+	StraysCleared(chatID marotte.ChatID, owner string, cleared []string, all bool)
+	// Release hands the job's remaining rows, or only its in-KAS ones, back.
+	Release(chatID marotte.ChatID, owner string, inKASOnly bool)
+	// Unsent parks the job's rows as unsent, for the chat's next prompt.
+	Unsent(chatID marotte.ChatID, owner string)
+	// Resent writes each of the job's rows its boundary entry and answers their keys
+	// and joined text in order; the rows stay the job's until Delivered or Unsent.
+	Resent(chatID marotte.ChatID, owner, lead string) (keys []string, text string)
+	// Delivered retires the job's rows once the prompt carrying them has opened.
+	Delivered(chatID marotte.ChatID, owner string)
+	// PlanFlush answers the sends the record owes after a read or a clear.
+	PlanFlush(chatID marotte.ChatID) []SteerSend
+	// NeedsPostLoadClear: KAS may re-inject steers this server also holds, and
+	// nothing is reading yet.
+	NeedsPostLoadClear(chatID marotte.ChatID) bool
+	// PostLoadCleared: a row of this record's the clear named goes back to parked,
+	// to be sent again in order.
+	PostLoadCleared(chatID marotte.ChatID, cleared []string, landed bool)
+	// AgentRowsWaiting reports an agent row in KAS's buffer, which a clear would
+	// drop with no re-wake.
+	AgentRowsWaiting(chatID marotte.ChatID) bool
+	// NextParked answers the oldest parked row after turning every unsent row
+	// into a parked one, so the chat's next prompt carries them; unsent rows stay
+	// unsent while KAS may still hold their copies.
+	NextParked(chatID marotte.ChatID) (key, text string, ok bool)
 }
 
 // RunCutter is what a rewind needs of the run registry: which of the runs a cut
@@ -467,6 +577,10 @@ type Roles struct {
 	// Steers records the steers this server sent, so the translate layer can
 	// tell the user's own words from a workflow reporting into the same buffer.
 	Steers SteerRecorder
+	// SteerQueue is the server's record of the user's steers and KAS's buffer,
+	// and SteerJobs the same record as the turn-end routine drives it.
+	SteerQueue SteerQueue
+	SteerJobs  SteerJobs
 	// Status ends a chat's retained waiting_on_user claim after a command that IS
 	// the user answering.
 	Status ChatStatus
@@ -492,8 +606,9 @@ type promptRoles struct {
 	mcp         MCPAccess
 	admission   TurnAdmission
 	turnOutcome TurnOutcomeAccess
-	// steers is the parked-steer ledger the prompt drains once its bridge is live.
-	steers    SteerRecorder
-	auth      *AuthReadiness
-	workspace Workspace // last for fieldalignment, as in Roles
+	steers      SteerRecorder
+	queue       SteerQueue
+	jobs        SteerJobs
+	auth        *AuthReadiness
+	workspace   Workspace // last for fieldalignment, as in Roles
 }

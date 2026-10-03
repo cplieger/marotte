@@ -9,7 +9,7 @@
 // left registered under a key nothing disposes outlives its DOM.
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { signal, touch } from "@cplieger/reactive";
 import type { Session } from "./types.js";
 import type { Entry, EntryToolCall } from "./wire/types.gen.js";
@@ -814,5 +814,115 @@ describe("the page's own door", () => {
     release();
     await opening;
     expect(settled).toBe(true);
+  });
+});
+
+// `.page-content` is ONE scroller for every subagent tab, so each TAB keeps its own
+// offset. Sibling stages of one pipeline share a page, which is the case the offset
+// cannot be keyed by the page for.
+describe("the page's scroll position", () => {
+  const long = Array.from({ length: 150 }, (_, i) => `Paragraph ${String(i)}.`).join("\n\n");
+
+  function scroller(): HTMLElement {
+    const el = document.querySelector<HTMLElement>("[id='subagent-view'] > .page-content");
+    if (el === null) {
+      throw new Error("no .page-content");
+    }
+    return el;
+  }
+
+  /** Two frames: the scroll event is dispatched in the rendering step, and the
+   *  offset is recorded from it. */
+  async function frames(): Promise<void> {
+    for (let i = 0; i < 2; i++) {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    }
+  }
+
+  // The production shape: `#subagent-body` inside the view's scrolling `.page-content`.
+  // Unwrapped afterwards, because Browser Mode keeps the body across cases.
+  let view: HTMLElement;
+  beforeEach(() => {
+    view = document.createElement("div");
+    view.id = "subagent-view";
+    view.style.cssText = "display:flex;flex-direction:column;height:300px;width:600px";
+    const content = document.createElement("div");
+    content.className = "page-content";
+    content.style.cssText = "flex:1 1 0;min-height:0;overflow-y:auto";
+    content.appendChild(body());
+    view.appendChild(content);
+    document.body.appendChild(view);
+  });
+  afterEach(() => {
+    closeSubagentTabs();
+    document.body.appendChild(body());
+    view.remove();
+  });
+
+  it("is per delegate: A, then B, then A lands each where it was left", async () => {
+    const chat = "c-scroll";
+    const turn = "t-scroll";
+    seedChats({ chat, turn });
+    delegate(chat, turn, "sc-A", `first ${long}`);
+    push(chat, turn, "tool_call", invocation("tc-sc-B", "sc-B"), { id: "tc-sc-B" });
+    push(chat, turn, "text", { text: `second ${long}` }, { lane: "sc-B" });
+    setSubagentTabs([subagentRef(chat, "sc-A"), subagentRef(chat, "sc-B")]);
+
+    showSubagent(chat, "sc-A");
+    await vi.waitFor(() => {
+      expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight + 800);
+    });
+    scroller().scrollTop = 700;
+    await frames();
+    showSubagent(chat, "sc-B");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("second Paragraph 0.");
+    });
+    expect(scroller().scrollTop).toBe(0);
+    scroller().scrollTop = 300;
+    await frames();
+    showSubagent(chat, "sc-A");
+    await vi.waitFor(() => {
+      expect(body().textContent).toContain("first Paragraph 0.");
+    });
+    expect(scroller().scrollTop).toBe(700);
+  });
+
+  it("is per stage: two sibling stages of one pipeline keep separate offsets", async () => {
+    const chat = "c-scroll-pipe";
+    const turn = "t-scroll-pipe";
+    seedChats({ chat, turn });
+    pipeline(chat, turn, { reviewText: long });
+    laneText(chat, turn, PLAN, long);
+    setSubagentTabs([subagentRef(chat, PLAN), subagentRef(chat, REVIEW)]);
+
+    showSubagent(chat, PLAN);
+    await vi.waitFor(() => {
+      expect(scroller().scrollHeight).toBeGreaterThan(scroller().clientHeight + 800);
+    });
+    scroller().scrollTop = 700;
+    await frames();
+    showSubagent(chat, REVIEW);
+    await vi.waitFor(() => {
+      expect(body().querySelector<HTMLElement>(`.ev-d-body[data-path="${REVIEW}"]`)?.hidden).toBe(
+        false,
+      );
+    });
+    expect(scroller().scrollTop).toBe(0);
+    scroller().scrollTop = 300;
+    await frames();
+    showSubagent(chat, PLAN);
+    await vi.waitFor(() => {
+      expect(body().querySelector<HTMLElement>(`.ev-d-body[data-path="${PLAN}"]`)?.hidden).toBe(
+        false,
+      );
+    });
+    expect(scroller().scrollTop).toBe(700);
+    showSubagent(chat, REVIEW);
+    expect(scroller().scrollTop).toBe(300);
   });
 });

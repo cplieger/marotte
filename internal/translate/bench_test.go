@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/marotte/internal/buffer"
@@ -82,6 +83,9 @@ type baseDeps struct {
 	// because what a test asserts is the SET a reconnect would replay, and the
 	// three arms of the cascade reach it as add / remove / remove-each.
 	waiting map[marotte.ChatID][]marotte.SteerQueuedPayload
+	// queuedAnswer, when set, is the frame SteerWaiting answers, standing in for
+	// the record rewriting a user row's frame or refusing a chat that is going.
+	queuedAnswer func(marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool)
 }
 
 // termRendered is one terminal's rendered output in the stub registry.
@@ -103,26 +107,47 @@ func newBaseDeps() *baseDeps {
 	}
 }
 
-// SteerWaiting / SteerRead / SteerForgotten stand in for the runtime's steering
-// buffer tracker, holding what a reconnect would re-offer.
-func (d *baseDeps) SteerWaiting(chatID marotte.ChatID, p marotte.SteerQueuedPayload) {
+// SteerWaiting / SteerRead / SteerForgotten / SteerCleared stand in for the
+// runtime's steering buffer tracker, holding what a reconnect would re-offer.
+func (d *baseDeps) SteerWaiting(chatID marotte.ChatID, in *marotte.SteerQueuedPayload) (marotte.SteerQueuedPayload, bool) {
+	p := *in
+	p.State = marotte.SteerRowQueued
+	if d.queuedAnswer != nil {
+		var ok bool
+		if p, ok = d.queuedAnswer(p); !ok {
+			return p, false
+		}
+	}
 	for i, e := range d.waiting[chatID] {
 		if e.SteerID == p.SteerID {
 			d.waiting[chatID][i] = p
-			return
+			return p, true
 		}
 	}
 	d.waiting[chatID] = append(d.waiting[chatID], p)
+	return p, true
+}
+
+// SteerCleared answers the agent rows alone, like the record: a user row's entry
+// is written at its own terminal transition.
+func (d *baseDeps) SteerCleared(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
+	return slices.DeleteFunc(d.forget(chatID, steerIDs), func(p marotte.SteerQueuedPayload) bool {
+		return p.Origin == marotte.SteerOriginUser
+	})
 }
 
 func (d *baseDeps) SteerRead(chatID marotte.ChatID, steerID string) {
-	d.SteerForgotten(chatID, []string{steerID})
+	d.forget(chatID, []string{steerID})
 }
 
-// Returns the entries it HELD, like the real buffer: that subset is the steers
-// nothing read, and the only place their text survives once the cleared frame
-// (which carries ids alone) arrives.
 func (d *baseDeps) SteerForgotten(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
+	return d.forget(chatID, steerIDs)
+}
+
+// forget returns the entries it HELD, like the real buffer: that subset is the
+// steers nothing read, and the only place their text survives once the cleared
+// frame (which carries ids alone) arrives.
+func (d *baseDeps) forget(chatID marotte.ChatID, steerIDs []string) []marotte.SteerQueuedPayload {
 	gone := make(map[string]bool, len(steerIDs))
 	for _, id := range steerIDs {
 		gone[id] = true

@@ -253,7 +253,7 @@ func TestLiveRunRows_AnswersIdenticallyToTheEndpoint(t *testing.T) {
 func TestConnect_V3CarriesTheWholePendingSetAsOneStampedFrame(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
-	rt.bus.steers.SteerWaiting(ids[1], marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
+	rt.bus.steers.SteerWaiting(ids[1], &marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
 
 	frames := connectFrames(t, rt, false)
 
@@ -372,7 +372,7 @@ func TestConnect_V3StatusSnapshotCarriesTheWaitingSetMinusBusyChats(t *testing.T
 func TestConnect_LegacyKeepsThePerItemReplayAndNumericBounds(t *testing.T) {
 	rt := newBudgetRuntime(t)
 	ids := busyChatsWithHugeTurns(t, rt, 2)
-	rt.bus.steers.SteerWaiting(ids[1], marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
+	rt.bus.steers.SteerWaiting(ids[1], &marotte.SteerQueuedPayload{SteerID: "s1", Text: "steer text"})
 	rt.bus.chatStatus.MergeStamped("c-waiting", marotte.ChatStatusPayload{Status: marotte.ChatStatusWaitingOnUser})
 	rt.bus.emit(marotte.ServerEvent{Type: marotte.EventChatUpdated, ChatID: "c1"})
 

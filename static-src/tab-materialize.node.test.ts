@@ -183,13 +183,19 @@ const CASES: readonly { kind: TabKind; ref: string; view: string; route: Route }
     view: "#spec-view",
     route: { kind: "spec", dir: "repo/.kiro/specs/feature-x" },
   },
+  {
+    kind: "web",
+    ref: "/workspace/demo/index.html",
+    view: "#web-view",
+    route: { kind: "web", path: "/workspace/demo/index.html" },
+  },
 ];
 
 /** The kinds hardcoded `owns: false`: subpage VIEWS of work owned elsewhere, so
  *  their × closes a view and stops nothing. */
 const VIEW_KINDS: readonly TabKind[] = ["run", "subagent", "spec"];
 
-describe("materializeTab is total over the ten kinds", () => {
+describe("materializeTab is total over the eleven kinds", () => {
   // The view selector is asserted against a LITERAL rather than against
   // TAB_VIEWS[kind], which would be tautological: reading the table to check the
   // table cannot see a kind pointing at another kind's view.
@@ -558,6 +564,16 @@ describe("names", () => {
   it("names a files tab after the folder it was opened at", () => {
     register();
     expect(materializeTab(subject({ kind: "files", ref: "/workspace/x" })).name).toBe("x");
+  });
+
+  it("names a web tab after its page, or its folder for an index page", () => {
+    register();
+    expect(materializeTab(subject({ kind: "web", ref: "/workspace/demo/index.html" })).name).toBe(
+      "demo",
+    );
+    expect(materializeTab(subject({ kind: "web", ref: "/workspace/demo/about.html" })).name).toBe(
+      "about.html",
+    );
   });
 
   it("names a files tab at the mounts listing", () => {

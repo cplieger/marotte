@@ -11,7 +11,7 @@
 // boot issues its reads in and the branches it takes over their answers — none of
 // which involves what any of them does.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type * as BootModule from "./boot.js";
 import type * as RoutePath from "./route-path.js";
 import type { Route } from "./route-path.js";
@@ -72,6 +72,8 @@ const m = vi.hoisted(() => {
     listTabs: vi.fn(),
     renderIdentity: vi.fn(),
     restoreAll: vi.fn(),
+    restoreShell: vi.fn(),
+    shellPanel: document.createElement("div"),
     adoptThemeFromSettings: vi.fn(),
     initPostAuthUI: vi.fn(),
     showLoginModal: vi.fn(),
@@ -240,11 +242,16 @@ vi.mock("./boot-snapshot.js", () => ({
   clearBootSnapshot: m.clearBootSnapshot,
   startBootSnapshot: m.startBootSnapshot,
 }));
-vi.mock("./ls-keys.js", () => ({ clearDeviceKeys: m.clearDeviceKeys }));
+vi.mock("./ls-keys.js", () => ({
+  clearDeviceKeys: m.clearDeviceKeys,
+  LS_UI_STATE_KEY: "marotte.ui-state",
+}));
 vi.mock("./fold-state.js", () => ({ resetFoldState: m.resetFoldState }));
 vi.mock("./banner-stack.js", () => ({ GLOBAL_BANNER: "*", showBanner: m.showBanner }));
-// The composer, reached for one call only: a reduced boot blurs it.
-vi.mock("./dom.js", () => ({ $: { promptInput: { blur: m.blur } } }));
+// The composer, reached for one call only: a reduced boot blurs it. And the shell
+// panel, which a signed-out boot shuts.
+vi.mock("./dom.js", () => ({ $: { promptInput: { blur: m.blur }, shellPanel: m.shellPanel } }));
+vi.mock("./shell.js", () => ({ restoreShell: m.restoreShell }));
 vi.mock("./reload-guard.js", () => ({
   bootMode: m.bootMode,
   reloadCount: m.reloadCount,
@@ -1220,5 +1227,59 @@ describe("the run-state demands", () => {
     m.hasTab.mockReturnValue(true);
     expect(tabDemand?.("wf_1")).toBe(true);
     expect(m.hasTab).toHaveBeenCalledWith("run", "wf_1");
+  });
+});
+
+describe("the shell panel is restored whatever the settings read answers", () => {
+  const root = document.documentElement;
+
+  beforeEach(() => {
+    root.setAttribute("data-shell-open", "");
+    root.style.setProperty("--shell-h", "300px");
+  });
+
+  afterEach(() => {
+    root.removeAttribute("data-shell-open");
+    root.style.removeProperty("--shell-h");
+  });
+
+  it.each([
+    ["the read answers null", (): void => void m.loadSettings.mockResolvedValue(null)],
+    ["the read answers settings", (): void => undefined],
+    ["the read rejects", (): void => void m.loadSettings.mockRejectedValue(new Error("down"))],
+  ])("restores it and ends the pre-paint state when %s", async (_name, arrange) => {
+    arrange();
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.restoreShell).toHaveBeenCalledTimes(1);
+    expect(root.hasAttribute("data-shell-open")).toBe(false);
+    expect(root.style.getPropertyValue("--shell-h")).toBe("");
+  });
+
+  it("restores without waiting for the settings read", async () => {
+    const settings = deferred<EffectiveSettings>();
+    m.loadSettings.mockReturnValue(settings.promise);
+    const { startBoot } = await freshBoot();
+    const booted = startBoot({ applyRoute: m.applyRoute });
+    // A task boundary, so everything already answered (identity included) has landed.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(m.restoreShell).toHaveBeenCalledTimes(1);
+    expect(root.hasAttribute("data-shell-open")).toBe(false);
+    settings.resolve(settingsPayload());
+    await booted;
+    expect(m.restoreShell).toHaveBeenCalledTimes(1);
+  });
+
+  it("shuts it at once instead of restoring it on a signed-out boot", async () => {
+    m.resolveIdentity.mockResolvedValue({ state: "signed_out" });
+    const setStyle = vi.spyOn(m.shellPanel.style, "setProperty");
+    const { startBoot } = await freshBoot();
+    await startBoot({ applyRoute: m.applyRoute });
+    expect(m.restoreShell).not.toHaveBeenCalled();
+    expect(root.hasAttribute("data-shell-open")).toBe(false);
+    // The panel is shut with its transition off (shell-prepaint-css.test.ts pins
+    // what that does to the paint), and left with no inline override behind it.
+    expect(setStyle).toHaveBeenCalledWith("transition", "none");
+    expect(m.shellPanel.style.getPropertyValue("transition")).toBe("");
   });
 });

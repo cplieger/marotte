@@ -26,6 +26,7 @@ const KINDS: readonly TabKind[] = [
   "history",
   "docs",
   "spec",
+  "web",
 ];
 
 describe("TAB_VIEWS", () => {

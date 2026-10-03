@@ -39,13 +39,27 @@ const listeners = new Set<() => void>();
  *  repeats on each one, and a listener that rebuilds an index must not be woken
  *  by a frame that told it nothing new. */
 export function setWorkspaceRoot(abs: string): void {
-  if (abs === root) {
+  const next = cleanRoot(abs);
+  if (next === root) {
     return;
   }
-  root = abs;
+  root = next;
   for (const fn of [...listeners]) {
     fn();
   }
+}
+
+/** The configured root may carry trailing slashes; "/" is the one clean root
+ *  that ends in one. */
+function cleanRoot(abs: string): string {
+  const trimmed = abs.replace(/\/+$/, "");
+  return trimmed === "" && abs !== "" ? "/" : trimmed;
+}
+
+/** `abs` relative to the clean root `base`, or null when it is not beneath it. */
+export function relBeneath(base: string, abs: string): string | null {
+  const prefix = base === "/" ? "/" : `${base}/`;
+  return abs.startsWith(prefix) ? abs.slice(prefix.length) : null;
 }
 
 /** The absolute workspace root, or "" when the handshake has not landed. */
@@ -80,7 +94,7 @@ export function absPath(path: string): string {
   if (path === "" || path.startsWith("/") || root === "") {
     return path;
   }
-  return `${root}/${path}`;
+  return root === "/" ? `/${path}` : `${root}/${path}`;
 }
 
 /** Strip the workspace root from an absolute path, giving the RELATIVE form the
@@ -91,10 +105,10 @@ export function absPath(path: string): string {
  *  The separator test is what stops a sibling mount whose name merely begins
  *  with the root ("/workspace-old/x") reporting as "-old/x". */
 export function relToWorkspace(abs: string): string {
-  if (root === "" || !abs.startsWith(root + "/")) {
+  if (root === "") {
     return abs;
   }
-  return abs.slice(root.length + 1);
+  return relBeneath(root, abs) ?? abs;
 }
 
 /** @internal Test seam: reset the root between cases.

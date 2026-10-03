@@ -163,13 +163,11 @@ function hirschbergDiff(
   const m = aHi - aLo;
   const n = bHi - bLo;
 
-  if (m === 0) {
-    const out: DiffLine[] = [];
-    for (let j = bLo; j < bHi; j++) {
-      out.push({ kind: "add", oldNo: 0, newNo: bOffset + j + 1, text: bOrig[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    }
-    return out;
-  }
+  // There is deliberately no `m === 0` base case, and its absence is an invariant of the
+  // two call sites rather than an oversight. `lineDiff` enters only when
+  // `m * n > SPACE_THRESHOLD`, which forces `m >= 1`; the split below is reached only past
+  // `m === 1`, so `m >= 2` there and `aMid = aLo + floor(m / 2)` leaves both halves with
+  // `m >= 1`. `n === 0` IS reachable, because `bestJ` may land on either end of `bLo..bHi`.
   if (n === 0) {
     const out: DiffLine[] = [];
     for (let i = aLo; i < aHi; i++) {

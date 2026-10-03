@@ -372,6 +372,12 @@ function wireHorizontalScroll(
       viewport.style.removeProperty("--diff-hspan");
     } else {
       viewport.style.setProperty("--diff-hspan", `${String(span)}px`);
+      // The bar's range arrives only now, so a column position set before it (a
+      // restored one) was clamped out of the bar; the bar drives both from here.
+      const at = Math.max(left.scrollLeft, right.scrollLeft);
+      if (bar.scrollLeft !== at) {
+        bar.scrollLeft = at;
+      }
     }
   };
   // Deferred one animation frame, behind a single slot: `--diff-hspan` is written on

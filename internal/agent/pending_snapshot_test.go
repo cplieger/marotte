@@ -17,7 +17,7 @@ func pendingFixture() *Runtime {
 	v := &subject.Versions{}
 	rt := &Runtime{
 		versions: v,
-		bus:      &bus{pendingPerms: newPendingPermsTracker(), steers: newSteerBuffer()},
+		bus:      &bus{pendingPerms: newPendingPermsTracker(), steers: newSteerRecords()},
 		runs:     &Runs{},
 	}
 	rt.bus.pendingPerms.versions = v
@@ -74,7 +74,7 @@ func TestPendingSnapshot_CounterFirstNeverCertifiesASetItLacks(t *testing.T) {
 			rt.bus.pendingPerms.Add(id, permNeeded("c1", id))
 		}
 		rt.runs.asks.Add(askOf("c2", "wf", "a1", "n1"))
-		rt.bus.steers.SteerWaiting("c3", marotte.SteerQueuedPayload{SteerID: "s1"})
+		rt.bus.steers.SteerWaiting("c3", &marotte.SteerQueuedPayload{SteerID: "s1"})
 
 		addAt := rapid.IntRange(-1, 3).Draw(t, "addAfterRead")
 		resolveAt := rapid.IntRange(-1, 3).Draw(t, "resolveAfterRead")

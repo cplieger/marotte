@@ -1,0 +1,188 @@
+.web-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* `safe center`, so a 100% frame wider than the stage starts at the stage's
+   left edge and every column of it is reachable by scrolling. */
+.web-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: safe center;
+  align-items: flex-start;
+  overflow: hidden;
+  scrollbar-gutter: stable;
+
+  &[data-overflow] {
+    overflow: auto;
+  }
+}
+
+/* A transform leaves the iframe's layout box at its unscaled size, so this
+   box is what the stage lays out and what clips the overhang. */
+.web-frame {
+  flex: none;
+  position: relative;
+  inline-size: calc(var(--web-frame-w, 100%) * var(--web-scale, 1));
+  block-size: calc(var(--web-frame-h, 100%) * var(--web-scale, 1));
+  overflow: hidden;
+
+  &[hidden] {
+    display: none;
+  }
+
+  &:not([data-mode="fill"]) {
+    outline: 1px solid var(--c-border);
+  }
+
+  & > iframe {
+    display: block;
+    border: 0;
+    inline-size: var(--web-frame-w, 100%);
+    block-size: var(--web-frame-h, 100%);
+    background: var(--c-preview-canvas);
+    transform: scale(var(--web-scale, 1));
+    transform-origin: 0 0;
+  }
+}
+
+.web-frame-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  block-size: 100%;
+  padding: var(--sp-4);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* The path truncates from its START so the file name stays visible: an RTL
+   block puts the ellipsis on the left, and the inner <bdi> keeps the path's
+   own left-to-right order. */
+.web-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-block-size: var(--btn-h);
+  padding: 0 var(--sp-3);
+  line-height: calc(var(--btn-h) - 2px);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-primary);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  direction: rtl;
+  text-align: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* The bar's outer box is `--btn-h`, like the icon buttons beside it. The
+   painted segment is shorter than the hit floor, so `::after` grows each
+   TARGET on the block axis only, never into its neighbour; `overflow: visible`
+   is what keeps `.seg`'s own clip from cutting the expander away. */
+.web-viewport {
+  flex-wrap: nowrap;
+
+  & .seg {
+    flex: none;
+    min-block-size: calc(var(--btn-h) - 2 * (var(--seg-inset) + 1px));
+    min-inline-size: var(--hit-floor);
+    padding-block: 0;
+    position: relative;
+    overflow: visible;
+
+    &::after {
+      content: "";
+      position: absolute;
+      /* Anchored to the segment's PADDING box, so the bar's border and the
+         segment's own reserved border are both crossed to reach the bar's edge. */
+      inset-block: calc(-1 * (var(--seg-inset) + 2px));
+      inset-inline: 0;
+    }
+  }
+}
+
+.web-scale-readout {
+  min-inline-size: 4ch;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Phone-shaped: the preview is always Fill there, so the controls that
+   choose a width have nothing to choose. */
+@media (width <= 48rem), (height <= 30rem) {
+  .web-actions > :is(.web-viewport, .web-scale-btn) {
+    display: none;
+  }
+}
+
+/* The transcript card a markdown link to a workspace page becomes. A button,
+   so it is phrasing content and legal inside the paragraph it replaces a link in. */
+.preview-card {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-inline-size: 100%;
+  padding: var(--sp-1) var(--sp-2);
+  vertical-align: middle;
+  font: inherit;
+  color: var(--c-text-primary);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  cursor: pointer;
+  text-align: start;
+
+  @media (any-hover: hover) {
+    &:hover {
+      background-image: var(--layer-hover);
+    }
+  }
+}
+
+.preview-card-icon {
+  display: flex;
+  flex: none;
+  color: var(--c-accent);
+}
+
+.preview-card-label {
+  font-weight: var(--fw-medium);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-card-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.preview-card-open {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--c-link);
+}

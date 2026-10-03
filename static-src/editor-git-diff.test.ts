@@ -68,6 +68,7 @@ vi.mock("./editor-openers.js", () => ({
 }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn(() => Promise.resolve(true)) }));
 vi.mock("./git.js", () => ({ markGitDirty: vi.fn() }));
+vi.mock("./web-open.js", () => ({ openWebPreview: vi.fn() }));
 
 const { initEditor } = await import("./editor-core.js");
 const { renderDiffModeUI } = await import("./editor-diff.js");
@@ -78,6 +79,7 @@ const { _setReposForTest, refreshGitStatus } = await import("./git-status-store.
 const { setWorkspaceRoot, _resetForTest: resetWorkspace } = await import("./workspace.js");
 const { $ } = await import("./dom.js");
 const { parseConflicts } = await import("./conflict.js");
+const { openWebPreview } = await import("./web-open.js");
 
 import type { GitRepoStatus } from "./git-types.js";
 
@@ -403,5 +405,33 @@ describe("the Edit button in a diff", () => {
     renderDiffModeUI(state);
     expect($.editorEditBtn.classList.contains("hidden")).toBe(true);
     expect($.editorEditBtn.disabled).toBe(true);
+  });
+});
+
+describe("the Preview button", () => {
+  const preview = (): boolean => !$.editorPreviewBtn.classList.contains("hidden");
+
+  it("stays hidden for a non-HTML file", () => {
+    stage(PATH);
+    expect(preview()).toBe(false);
+  });
+
+  it("appears for an HTML page in the workspace and opens its preview", () => {
+    stage("/workspace/demo/index.html");
+    expect(preview()).toBe(true);
+    $.editorPreviewBtn.click();
+    expect(openWebPreview).toHaveBeenCalledWith("/workspace/demo/index.html");
+  });
+
+  it("stays hidden for an HTML file outside the workspace", () => {
+    stage("/config/page.html");
+    expect(preview()).toBe(false);
+  });
+
+  it("reads a slash-less path from a cold-loaded /file/ URL from the root", () => {
+    stage("workspace/demo/index.html");
+    expect(preview()).toBe(true);
+    $.editorPreviewBtn.click();
+    expect(openWebPreview).toHaveBeenCalledWith("/workspace/demo/index.html");
   });
 });

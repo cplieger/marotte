@@ -44,6 +44,7 @@ import { refreshRunDots, trackRun } from "./run-dots.js";
 import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
+import { SharedScroll } from "./view-scroll.js";
 
 /** Verb → its action. Separate from run-controls.ts on purpose: that module is
  *  the pure RULE and must stay importable without the actions framework; this is
@@ -143,6 +144,11 @@ export function showRun(workflowID: string): void {
     mountRunDecisionDock(dock, () => shownRun);
   }
   rerenderDocks();
+  pageScroll.track();
+  // A different run's page is restored by the paint that mounts it.
+  if (pageRun === workflowID) {
+    pageScroll.restore(workflowID);
+  }
   // ONE effect for the life of the module, installed on the first show. It reads
   // `shownRun` through the store, so a tab switch re-points it with no teardown:
   // the previous run's cell simply stops being read. Installing one per show would
@@ -270,6 +276,12 @@ let focusRequest: { workflowID: string; path: string } | undefined;
  *  tab is a second adapter into this same page rather than a second page. */
 let page: ExecPageView | undefined;
 let pageRun = "";
+
+/** `.page-content` is shared by every run tab, so each run keeps its own offset. */
+const pageScroll = new SharedScroll(
+  () => document.querySelector<HTMLElement>("[id='run-view'] > .page-content"),
+  () => (page?.root.isConnected === true ? pageRun : ""),
+);
 
 /** The step transcript, LAZILY loaded — ONE stream now, because there is one source.
  *
@@ -625,6 +637,9 @@ function paint(
   const focus = focusRequest?.workflowID === workflowID ? focusRequest.path : "";
   const run = runToExec(workflowID, state, runPlan(workflowID), runPendingAsks(workflowID), focus);
   view.render(run);
+  if (!mounted) {
+    pageScroll.restore(workflowID);
+  }
   // Spent only once the page could actually honour it — the plan has to CONTAIN the
   // path, since `page.ts` ignores a focus naming an absent node. Clearing on the
   // render alone would drop a pick made before `inspect` arrived; leaving it forever

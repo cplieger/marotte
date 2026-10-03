@@ -47,12 +47,10 @@ export type TypedCommand =
         attachments?: readonly unknown[];
         message_id?: string;
         model?: string;
-        // The steer entries whose text this prompt re-sends; lands on
-        // `turn_open.prompt.resends` (PromptCommand.Resends).
-        resends?: readonly string[];
       };
     }
-  | { type: "cancel"; chat_id: string }
+  // `lead` is the send-now arrow's row, ordered first by the turn-end resend.
+  | { type: "cancel"; chat_id: string; payload?: { lead: string } }
   | { type: "delete_chat"; chat_id: string }
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
@@ -83,11 +81,9 @@ export type TypedCommand =
   | {
       type: "steer";
       chat_id: string;
-      // `resends` names the steer entries this one re-sends (SteerCommand.Resends),
-      // so a resend a busy chat converted into a steer records the same provenance
-      // the prompt would have.
-      payload: { text: string; message_id: string; resends?: readonly string[] };
+      payload: { text: string; message_id: string };
     }
+  | { type: "steer_remove"; chat_id: string; payload: { steer_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.
   | { type: "rewind_chat"; chat_id: string; payload: { message_id: string } }

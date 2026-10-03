@@ -265,6 +265,31 @@ export function restoreFailedSend(chatID: string, text: string): void {
   }
 }
 
+/** The draft recorded for `chatID`: the map, never the box, which can hold history. */
+export function composerDraft(chatID: string): string {
+  return drafts.get(chatID) ?? "";
+}
+
+/** Undo an Edit the server refused: put `before` back as `chatID`'s draft, but only
+ *  while that draft is still the `taken` text the Edit wrote. Anything typed since,
+ *  or a closed chat, is newer and wins; the box is touched only for the live chat. */
+export function restoreRefusedEdit(chatID: string, taken: string, before: string): void {
+  if (chatID === "" || drafts.get(chatID) !== taken) {
+    return;
+  }
+  drafts.set(chatID, before);
+  if (chatID === liveChatID) {
+    debouncedSave?.({ chatID, text: before });
+    if ($.promptInput.value === taken) {
+      $.promptInput.value = before;
+    }
+    return;
+  }
+  // One debounce slot serves every chat, so a pending live save must go out first.
+  flushComposerDraft();
+  void debouncedSave?.flush({ chatID, text: before });
+}
+
 /** Adopt a `draft_changed` frame for a chat this device is NOT typing in.
  *
  *  The LOCAL map is authoritative for the live chat — see this module's header —

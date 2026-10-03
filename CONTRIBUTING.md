@@ -40,8 +40,8 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   (identifier minting and validation), `internal/rpcerr` (JSON-RPC error text),
   `internal/modeltext` (model tag policy, markdown fences), `internal/procout`,
   `internal/ansitext`.
-- `internal/chat/`: persistence, one JSON file per chat, written atomically.
-  `Mutate` is the only write path.
+- `internal/chat/`: persistence, one directory per chat: `chat.json`, the header,
+  rewritten atomically, and `entries.jsonl`, the append-only turn log.
 - `internal/agent/`: command dispatch, SSE broadcast, ACP-to-domain event
   translation, bridge buffer aggregation, and the global PTY shell. Named for the
   per-chat agent runtime it coordinates; the type is `agent.Runtime`.
@@ -57,7 +57,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   last, selects the active version (re-probing `--version` before trusting any
   directory), re-asserts the settings the pin depends on, and keeps exactly one
   predecessor. What this file owns is the deployment: the pins, the tools tree, the
-  required/optional artifact split, the eight experimental settings, the
+  required/optional artifact split, the seeded kiro-cli settings, the
   trusted-writer declaration, and the purge data for the layout marotte's own
   shell installer used to promote into `$TOOLS/bin`. The trusted-writer
   declaration is the one that can withhold readiness: the library refuses to
@@ -89,7 +89,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   `httpapi` projection mounted under marotte's middleware; only
   `/api/tools/status` (feature-gating PATH probes) is app code.
 - `internal/buffer/`, `internal/settings/`, `internal/steering/`,
-  `internal/workspace/`, `internal/kiroauth/`, `internal/version/`, and the
+  `internal/workspace/`, `internal/version/`, and the
   other small packages: focused helpers.
 
 Server dependencies flow one direction: composition root → agent runtime → wire

@@ -31,6 +31,7 @@ import { initSegmentedBar } from "./segmented-bar.js";
 import { editorDocSkeleton } from "./skeleton.js";
 import { get, isThinking, watchSession } from "./store.js";
 import { openChatRefs, openSpecRefs, parentChatRef, setTabParent, tabIdFor } from "./tabs.js";
+import { SharedScroll } from "./view-scroll.js";
 import { swapViews } from "./view-swap.js";
 import { decodeSpec } from "./wire/decoders.gen.js";
 import type { Spec, SpecDoc, SpecDocRole, SpecTaskNode } from "./wire/types.gen.js";
@@ -136,6 +137,12 @@ const states = new Map<string, SpecPageState>();
 /** The ref on screen, or "". */
 let shown = "";
 
+/** `.page-content` is shared by every spec tab, so each spec keeps its own offset. */
+const pageScroll = new SharedScroll(
+  () => document.querySelector<HTMLElement>("[id='spec-view'] > .page-content"),
+  () => shown,
+);
+
 /** Bumped whenever `shown` moves, and TOUCHED at the top of the one effect below
  *  before its early returns, so pointing the page at a ref re-runs that effect.
  *  It has to: the effect subscribes to the TARGET CHAT's session, which is a
@@ -202,6 +209,7 @@ function release(ref: string): void {
   }
   st.page?.root.remove();
   states.delete(ref);
+  pageScroll.forget(ref);
   if (shown === ref) {
     shown = "";
   }
@@ -232,6 +240,7 @@ export function showSpec(dir: string): void {
   shown = dir;
   shownVersion.value++;
   paint(dir);
+  pageScroll.restore(dir);
   void refetch(dir);
 }
 

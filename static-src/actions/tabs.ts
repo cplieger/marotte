@@ -163,37 +163,44 @@ export interface ReorderTabsArgs {
  *  re-list, never re-send. */
 export const REORDER_STALE = "stale" as const;
 
-export const reorderTabsCommand = defineAction<ReorderTabsArgs, "ok" | typeof REORDER_STALE | null>(
-  {
-    name: "tabs.reorder",
-    networkMode: "always",
-    idempotencyKey: true,
-    retryable: retryNetwork,
-    retry: RETRY_STANDARD,
-    run: async ({ order, opID }, signal, ctx) => {
-      const r = await transportSend(
-        {
-          type: "reorder_tabs",
-          payload: { order: [...order], op_id: opID },
-          ...(ctx?.idempotencyKey === undefined
-            ? {}
-            : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
-        },
-        { signal, reportSendState: false },
-      );
-      if (r.status === 409) {
-        // Not an error to the reader: the strip reflects a set this device
-        // had not caught up with. Caller re-lists and the drag snaps back.
-        return REORDER_STALE;
-      }
-      if (!r.ok) {
-        throw sendFailure(r, "reorder the tabs");
-      }
-      return "ok";
-    },
-    error: "Couldn't reorder the tabs",
+/** The version the reorder committed, for the pending-op machine. */
+interface ReorderTabsReply {
+  version: number;
+}
+
+export const reorderTabsCommand = defineAction<
+  ReorderTabsArgs,
+  ReorderTabsReply | typeof REORDER_STALE | null
+>({
+  name: "tabs.reorder",
+  networkMode: "always",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  run: async ({ order, opID }, signal, ctx) => {
+    const r = await transportSend(
+      {
+        type: "reorder_tabs",
+        payload: { order: [...order], op_id: opID },
+        ...(ctx?.idempotencyKey === undefined
+          ? {}
+          : { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }),
+      },
+      { signal, reportSendState: false },
+    );
+    if (r.status === 409) {
+      // Not an error to the reader: the strip reflects a set this device
+      // had not caught up with. The caller rolls the drop back and re-lists.
+      return REORDER_STALE;
+    }
+    if (!r.ok) {
+      throw sendFailure(r, "reorder the tabs");
+    }
+    const body = asObject(r.body);
+    return { version: body === null ? 0 : numberField(body, "version") };
   },
-);
+  error: "Couldn't reorder the tabs",
+});
 
 export interface PinTabArgs {
   id: string;

@@ -97,6 +97,7 @@ func (d *benchDeps) DeleteChatState(context.Context, marotte.ChatID) {}
 func (d *benchDeps) DeleteChatStateByChain(context.Context, marotte.ChatID, []string) {
 }
 func (d *benchDeps) CloseChatState(context.Context, marotte.ChatID)   {}
+func (d *benchDeps) BeginChatTeardown(marotte.ChatID, bool)           {}
 func (d *benchDeps) KillForTurn(marotte.ChatID)                       {}
 func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool { return true }
 func (d *benchDeps) PendingSummary(context.Context) MCPPendingSummary { return MCPPendingSummary{} }
@@ -141,8 +142,6 @@ func (d *benchDeps) FinalizeLocalShellTurn(context.Context, marotte.ChatID, stri
 
 func (d *benchDeps) AbandonInFlightTurn(context.Context, marotte.ChatID, string, marotte.StopReason, string) {
 }
-
-func (d *benchDeps) RecordDroppedSteer(context.Context, marotte.ChatID, ParkedSteer) {}
 
 // The mode recorder is a sink here: the tests that assert on the entry a mode
 // switch leaves carry their own spy (mode_switched_test.go).
@@ -296,6 +295,7 @@ var _ hostDouble = (*benchDeps)(nil)
 // promptRolesOf wires one double into the prompt path's role set, the way
 // RegisterDefaults wires the Runtime into it.
 func promptRolesOf(d hostDouble) *promptRoles {
+	stub := newStubSteerQueue()
 	return &promptRoles{
 		bridges:     d,
 		chats:       d,
@@ -306,5 +306,7 @@ func promptRolesOf(d hostDouble) *promptRoles {
 		admission:   d,
 		turnOutcome: d,
 		steers:      NewSteerLedger(),
+		queue:       stub,
+		jobs:        stub,
 	}
 }

@@ -225,36 +225,3 @@ describe("sendPrompt — rollback retracts the optimistic thinking", () => {
     expect(vi.mocked(setThinking).mock.calls).not.toContainEqual(["c1", false]);
   });
 });
-
-/** The payload of the command the transport was handed on the Nth send. */
-function payloadOf(call = 0): { resends?: readonly string[] } {
-  const cmd = mockSend.mock.calls[call]?.[0] as
-    { payload?: { resends?: readonly string[] } } | undefined;
-  return cmd?.payload ?? {};
-}
-
-// THE BODY IS THE GATE, NOT THE ARGS TYPE. `SendPromptArgs` is a closed interface and
-// `run` builds the POST body from NAMED fields, so a field that types but is never
-// copied into the payload reaches nobody — `turn_open.resent_steer_ids` would stay
-// producer-less with the whole client carry in place. So these assert over the
-// transport's captured body; a dispatch-level assertion passes with the payload build
-// untouched and is the shape that cannot see this.
-describe("sendPrompt — the resend ids reach the POST BODY", () => {
-  it("names the re-sent steers in the body's `resends`, in the order given", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-
-    await sendPrompt.dispatch({ ...args, resends: ["steer-2", "steer-1"] });
-
-    expect(payloadOf().resends).toEqual(["steer-2", "steer-1"]);
-  });
-
-  it("omits the field for an empty list, so `[]` never travels", async () => {
-    // The shape `attachments` already uses: an empty array on the wire is a positive
-    // claim that this prompt re-sent nothing, which is not what an absent carry means.
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-
-    await sendPrompt.dispatch({ ...args, messageID: "m7", resends: [] });
-
-    expect(payloadOf().resends).toBeUndefined();
-  });
-});

@@ -19,7 +19,7 @@ import type {
   ToolStatus,
 } from "./types.js";
 // From the generated wire rather than turns.ts, for one spelling of the enum.
-import type { RefusalInfo, TurnOutcome } from "./wire/types.gen.js";
+import type { RefusalInfo, SteerRowState, TurnOutcome } from "./wire/types.gen.js";
 import type { ClassifiedRunStatus } from "./run-status.js";
 // turns.ts is a pure leaf that reaches nothing here, so this edge is one-way.
 import { payloadOf } from "./turns.js";
@@ -715,8 +715,8 @@ export function setWorkingLabel(id: string, label: string): void {
 }
 
 // --- Mid-turn steers (the dock's waiting rows) ---
-// `session.steers` is what the agent has NOT read: the bottom dock's rows, whose lifetime
-// is the turn. A row that has left the dock is a `steer` ENTRY of the turn it landed in,
+// `session.steers` is what the agent has NOT read: the bottom dock's rows. A row that
+// has left the dock is a `steer` ENTRY of the turn it landed in,
 // so this field is the dock and nothing else. The client writes INTENT (`recordSteerSent`,
 // un-written by `forgetSteer`) and every other mutator here adopts a server FACT.
 
@@ -731,30 +731,6 @@ export function steerIDFor(messageID: string): string {
 /** Number of steers waiting for the agent, confirmed or still in flight. */
 export function steerCount(id: string): number {
   return get(id)?.steers?.length ?? 0;
-}
-
-/** The waiting steers a boundary must CARRY, in arrival order. Entries rather than
- *  texts, because the arrow names its lead row by id. `steerIDs` narrows to a named set
- *  the caller already holds; the order stays the store's own.
- *
- *  Both filters stop the resend DUPLICATING a message: a `pending` row's POST is
- *  unresolved and `submit.ts` already converts a refusal into a prompt, and KAS
- *  re-wakes an undelivered workflow notification itself. An agent row still earns
- *  its `dropped` mark. Measurements: `marotte-client.md`. */
-export function pendingSteerCarry(
-  id: string,
-  steerIDs?: readonly string[],
-): readonly { id: string; text: string }[] {
-  const steers = get(id)?.steers;
-  if (steers === undefined) {
-    return [];
-  }
-  const named = steerIDs === undefined || steerIDs.length === 0 ? undefined : new Set(steerIDs);
-  return steers
-    .filter(
-      (e) => e.pending !== true && e.origin === "user" && (named === undefined || named.has(e.id)),
-    )
-    .map((e) => ({ id: e.id, text: e.text }));
 }
 
 /** Record a steer this client has just POSTed, before any server frame. `pending` says the
@@ -796,56 +772,84 @@ export function forgetSteer(id: string, steerID: string): void {
   scheduleMessages(id, "fact");
 }
 
-/** Adopt KAS's own confirmation of a steer into the dock. Three branches, one outcome —
- *  exactly one row per message: the id matches (adopt the text, clear `pending`); no id
- *  match but the OLDEST pending row carries the same text (adopt the server's id, the
- *  fallback if the prefix convention drifts); neither (append it confirmed — another
- *  device, or this one before a reload). Idempotent in all three. The log is checked FIRST
- *  because a reconnect replays the queued frame for a steer the agent has since read, and
- *  branch 3 would otherwise put a delivered message back in the dock. */
+/** Adopt one `steer_queued` frame. A ROW frame upserts the row its id names, exactly
+ *  one row per message: the id matches (adopt the text and state, clear `pending`); no
+ *  id match but the OLDEST pending row carries the same text (adopt the server's id, the
+ *  fallback if the prefix convention drifts); neither (append it — another device, or
+ *  this one before a reload). A BATCH frame (`replaces`) adds no row: it records the id
+ *  KAS now holds the named rows under, so a resubmit repaints nothing. The log is
+ *  checked FIRST because a reconnect replays the frame for a steer the agent has since
+ *  read, which would otherwise put a delivered message back in the dock. */
 export function recordSteerQueued(
   id: string,
-  steer: { id: string; text: string; origin: SteerOrigin },
+  steer: {
+    id: string;
+    text: string;
+    origin: SteerOrigin;
+    replaces?: readonly string[] | undefined;
+    /** Absent reads as `queued`, the plain row a direct POST reply describes. */
+    state?: SteerRowState | undefined;
+  },
 ): void {
   const s = get(id);
   if (s === undefined || steer.id === "") {
     return;
   }
-  if (holdsSteerEntry(s, steer.id)) {
+  if (steer.replaces !== undefined && steer.replaces.length > 0) {
+    adoptSteerBatch(id, s, steer.id, steer.replaces);
+    return;
+  }
+  if (steer.state === "removed" || holdsSteerEntry(s, steer.id)) {
+    forgetSteer(id, steer.id);
     return;
   }
   const existing = s.steers ?? [];
   const at = existing.findIndex((e) => e.id === steer.id);
   const adoptAt =
     at >= 0 ? at : existing.findIndex((e) => e.pending === true && e.text === steer.text);
+  const prev = adoptAt >= 0 ? existing[adoptAt] : undefined;
   // The frame's origin wins in every branch: the server resolved it against the ledger of
   // what it sent, where the optimistic row's `user` was this device's claim.
-  const entry: PendingSteer = { id: steer.id, text: steer.text, origin: steer.origin };
+  const entry: PendingSteer = {
+    id: steer.id,
+    text: steer.text,
+    origin: steer.origin,
+    ...(prev?.kas !== undefined && { kas: prev.kas }),
+    ...(prev?.compacted === true && { compacted: true as const }),
+    ...(steer.state === "unsent" && { unsent: true as const }),
+  };
   const next =
     adoptAt >= 0 ? existing.map((e, i) => (i === adoptAt ? entry : e)) : [...existing, entry];
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
   scheduleMessages(id, "fact");
 }
 
-/** Drop dock rows at a turn boundary. Named ids drop just those; an empty or absent list
- *  drops the chat's whole set.
- *
- *  ROW REMOVAL AND NOTHING ELSE: the transcript fact is the `steer` ENTRY the server
- *  appends, so this writes no transcript state of its own. `steer-resend.ts` captures the
- *  text from `pendingSteerCarry` BEFORE this runs, which is why the ordering at both call
- *  sites is load-bearing. */
-export function dropSteers(id: string, steerIDs?: readonly string[]): void {
-  const s = get(id);
-  if (s?.steers === undefined) {
+/** Record that KAS holds `keys` under `batchID`. The rows keep their element and their
+ *  words; only the id their read will arrive under moves. A batch the log already shows
+ *  read retires its members instead. */
+function adoptSteerBatch(
+  chatID: string,
+  s: Session,
+  batchID: string,
+  keys: readonly string[],
+): void {
+  if (s.steers === undefined) {
     return;
   }
-  const named = steerIDs === undefined || steerIDs.length === 0 ? undefined : new Set(steerIDs);
-  const rest = s.steers.filter((e) => named !== undefined && !named.has(e.id));
-  if (rest.length === s.steers.length) {
+  const members = new Set(keys);
+  if (holdsSteerEntry(s, batchID)) {
+    const rest = s.steers.filter((e) => !members.has(e.id));
+    if (rest.length !== s.steers.length) {
+      sessions.update(chatID, (cur) => withSteers(cur, rest));
+      scheduleMessages(chatID, "fact");
+    }
     return;
   }
-  sessions.update(id, (cur) => withSteers(cur, rest));
-  scheduleMessages(id, "fact");
+  if (!s.steers.some((e) => members.has(e.id) && e.kas !== batchID)) {
+    return;
+  }
+  const next = s.steers.map((e) => (members.has(e.id) ? { ...e, kas: batchID } : e));
+  sessions.update(chatID, (cur) => withSteers(cur, next));
 }
 
 /** Remove every CONFIRMED waiting steer, returning a snapshot to restore from. The
@@ -1232,10 +1236,9 @@ export function appendEntry(chatID: string, entry: Entry): void {
     state.closeAt = entry.seq;
   }
   if (entry.kind === "steer") {
-    // The dock row leaves HERE, in the same store update that seats the note, so no render
-    // frame exists in which the steer is in neither place. A `steer` entry's id IS KAS's
-    // steer id, which is the dock row's key.
-    forgetSteerRow(chatID, entry.id);
+    // The dock rows leave HERE, in the same store update that seats the note, so no render
+    // frame exists in which the steer is in neither place.
+    retireSteerRows(chatID, entry);
   }
   if (entry.kind === "tool_result") {
     publishSettledCall(chatID, state, entry);
@@ -1266,25 +1269,34 @@ function publishSettledCall(chatID: string, state: TurnState, entry: Entry): voi
   republishToolCall(chatID, entry.turn, settledToolCall(call, result));
 }
 
-/** Remove one dock row without a bump of its own: the caller publishes. */
-function forgetSteerRow(chatID: string, steerID: string): void {
+/** Remove the dock rows a `steer` entry settles, without a bump of its own: the caller
+ *  publishes. The entry's id is a row's own, or the id KAS held a batch of rows under;
+ *  `resends` names the rows its words carried. */
+function retireSteerRows(chatID: string, entry: Entry): void {
   const s = get(chatID);
   if (s?.steers === undefined) {
     return;
   }
-  const rest = s.steers.filter((e) => e.id !== steerID);
+  const rest = s.steers.filter((e) => !steerEntrySettles(entry, e.id, e.kas));
   if (rest.length !== s.steers.length) {
     sessions.update(chatID, (cur) => withSteers(cur, rest));
   }
 }
 
-/** Whether a resident turn already holds the `steer` entry for this id. What a reconnect
- *  needs: KAS replays the queued frame for a steer the agent has since READ, and without
+function steerEntrySettles(entry: Entry, rowID: string, kas: string | undefined): boolean {
+  if (entry.id === rowID || (kas !== undefined && entry.id === kas)) {
+    return true;
+  }
+  return payloadOf(entry, "steer")?.resends?.includes(rowID) === true;
+}
+
+/** Whether a resident turn already holds a `steer` entry settling this id. What a reconnect
+ *  needs: the replay carries the frame for a steer the agent has since READ, and without
  *  this the dock would take a delivered message back. */
 function holdsSteerEntry(s: Session, steerID: string): boolean {
   for (const state of s.turns.values()) {
     for (const e of state.entries) {
-      if (e.kind === "steer" && e.id === steerID) {
+      if (e.kind === "steer" && steerEntrySettles(e, steerID, undefined)) {
         return true;
       }
     }

@@ -1,14 +1,10 @@
 package server
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -23,19 +19,8 @@ func helloMux() http.Handler {
 	})
 }
 
-// fallbackCSPPolicy assembles the CSP with the script-src hash slot relaxed to
-// 'unsafe-inline' instead of a pinned hash. It lives in the TEST file by design:
-// production always goes through buildCSPPolicy against the real embedded
-// index.html and never relaxes script-src, so a relaxed builder must not be
-// reachable from — or even compiled into — the production binary. Tests that
-// assert structural properties of the middleware (origin checks, headers set)
-// rather than the inline-script hashing use it as their policy stand-in.
-func fallbackCSPPolicy() string {
-	return fmt.Sprintf(cspTemplate, "'unsafe-inline'")
-}
-
 func TestSecurityMiddleware_SetsCSP(t *testing.T) {
-	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
+	h := securityMiddleware(baseCSPPolicy, nil, helloMux())
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -71,7 +56,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 		{"DELETE cross-origin blocked", http.MethodDelete, "http://attacker.example", http.StatusForbidden},
 	}
 
-	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
+	h := securityMiddleware(baseCSPPolicy, nil, helloMux())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var body *strings.Reader
@@ -115,7 +100,7 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
 	}
-	h := securityMiddleware(fallbackCSPPolicy(), policy, helloMux())
+	h := securityMiddleware(baseCSPPolicy, policy, helloMux())
 
 	do := func(method, host, origin, remoteAddr string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "http://"+host+"/x", strings.NewReader(""))
@@ -172,7 +157,7 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	})
 
 	t.Run("nil policy is a pass-through", func(t *testing.T) {
-		open := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
+		open := securityMiddleware(baseCSPPolicy, nil, helloMux())
 		req := httptest.NewRequest(http.MethodGet, "http://anything.example/x", http.NoBody)
 		rec := httptest.NewRecorder()
 		open.ServeHTTP(rec, req)
@@ -183,7 +168,7 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 }
 
 func BenchmarkSecurityMiddleware(b *testing.B) {
-	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
+	h := securityMiddleware(baseCSPPolicy, nil, helloMux())
 
 	b.Run("GET_headers_only", func(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
@@ -207,78 +192,75 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 	})
 }
 
-// TestBuildCSPPolicy: against a synthetic FS, the produced CSP contains
-// the expected sha256 token derived from the page's one inline <head>
-// script (the anti-FOUC theme-init; the importmap died with the
-// pre-bundler pipeline). Covers the whole startup path used by
-// ListenAndServe. The importmap-free fixture also pins the new
-// contract: HTML with no importmap builds a valid policy.
-func TestBuildCSPPolicy(t *testing.T) {
-	themeInit := `(function(){document.documentElement.setAttribute("data-theme","dark");})();`
-	html := []byte(`<html>` +
-		`<script data-theme-init>` + themeInit + `</script>` +
+// scriptSrc returns the script-src directive's source list, or fails the test
+// when the policy has none.
+func scriptSrc(t *testing.T, policy string) string {
+	t.Helper()
+	for part := range strings.SplitSeq(policy, "; ") {
+		if v, ok := strings.CutPrefix(part, "script-src "); ok {
+			return v
+		}
+	}
+	t.Fatalf("policy %q has no script-src directive", policy)
+	return ""
+}
+
+// TestBuildCSPPolicy_ScriptSrcIsSelfOnly: a page whose only scripts are
+// external files gets script-src 'self' exactly — no hash token and no
+// 'unsafe-inline', either of which would admit an inline script.
+func TestBuildCSPPolicy_ScriptSrcIsSelfOnly(t *testing.T) {
+	html := []byte(`<html><head><script src="/prepaint.js"></script></head>` +
 		`<script type="module" src="/app.js"></script></html>`)
 	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
 
 	policy, err := buildCSPPolicy(staticFS)
 	if err != nil {
-		t.Fatalf("buildCSPPolicy: %v", err)
+		t.Fatalf("buildCSPPolicy(external scripts only) = %v, want nil", err)
 	}
-	sum := sha256.Sum256([]byte(themeInit))
-	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-	if !strings.Contains(policy, want) {
-		t.Errorf("policy missing computed hash.\n  policy: %s\n  want token: %s", policy, want)
+	if got := scriptSrc(t, policy); got != "'self'" {
+		t.Errorf("script-src = %q, want exactly 'self'", got)
+	}
+	if strings.Contains(policy, "sha256-") {
+		t.Errorf("policy %q carries a hash token, want none", policy)
+	}
+	if strings.Contains(scriptSrc(t, policy), "'unsafe-inline'") {
+		t.Errorf("script-src %q allows inline scripts", scriptSrc(t, policy))
 	}
 }
 
-// TestBuildCSPPolicy_NoInlineScript: index.html with no inline script at all
-// fails construction — the required theme-init block is missing, and a CSP
-// built anyway would block it at runtime.
-func TestBuildCSPPolicy_NoInlineScript(t *testing.T) {
-	html := []byte(`<html><script type="module" src="/app.js"></script></html>`)
+// TestBuildCSPPolicy_RefusesAnInlineScript: script-src 'self' would block an
+// inline script at runtime, so construction fails and names the count rather
+// than serving a page whose script never runs.
+func TestBuildCSPPolicy_RefusesAnInlineScript(t *testing.T) {
+	html := []byte(`<html><script>console.log("unreviewed")</script>` +
+		`<script src="/prepaint.js"></script></html>`)
 	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
-	if _, err := buildCSPPolicy(staticFS); err == nil {
-		t.Error("expected error when the page carries no inline script, got nil")
+	_, err := buildCSPPolicy(staticFS)
+	if err == nil {
+		t.Fatal("buildCSPPolicy(one inline script) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "1 inline script") {
+		t.Errorf("buildCSPPolicy error = %q, want it to name the inline-script count", err)
 	}
 }
 
-// TestBuildCSPPolicy_MultipleInlineScripts: a second inline script fails
-// construction. The page carries exactly one inline script by contract; a
-// new one must be consciously reviewed (and the exactly-one check updated)
-// rather than silently granted CSP allowance.
-func TestBuildCSPPolicy_MultipleInlineScripts(t *testing.T) {
-	html := []byte(`<html>` +
-		`<script data-theme-init>(function(){})();</script>` +
-		`<script>console.log("unreviewed")</script></html>`)
-	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
-	if _, err := buildCSPPolicy(staticFS); err == nil {
-		t.Error("expected error when the page carries two inline scripts, got nil")
-	}
-}
-
-// TestBuildCSPPolicy_RealEmbeddedHTML: builds the policy from the real
-// committed index.html and verifies the token against an independent
-// recomputation (regex extraction + manual sha256), guarding the library
-// delegation end-to-end rather than any hardcoded literal.
+// TestBuildCSPPolicy_RealEmbeddedHTML: the committed index.html carries no
+// inline script, so the real startup path builds the policy.
 func TestBuildCSPPolicy_RealEmbeddedHTML(t *testing.T) {
 	html, err := os.ReadFile(filepath.Join("..", "..", "static", "index.html"))
 	if err != nil {
 		t.Fatalf("read static/index.html: %v", err)
+	}
+	if n := len(webhttp.InlineScriptHashes(html)); n != 0 {
+		t.Fatalf("static/index.html carries %d inline script(s), want 0", n)
 	}
 	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
 	policy, err := buildCSPPolicy(staticFS)
 	if err != nil {
 		t.Fatalf("buildCSPPolicy over the real index.html: %v", err)
 	}
-	re := regexp.MustCompile(`(?s)<script data-theme-init>(.*?)</script>`)
-	m := re.FindSubmatch(html)
-	if m == nil {
-		t.Fatal("no theme-init block in static/index.html")
-	}
-	sum := sha256.Sum256(m[1])
-	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-	if !strings.Contains(policy, want) {
-		t.Errorf("policy missing the theme-init hash.\n  policy: %s\n  want token: %s", policy, want)
+	if got := scriptSrc(t, policy); got != "'self'" {
+		t.Errorf("script-src = %q, want exactly 'self'", got)
 	}
 }
 
@@ -297,7 +279,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 	f.Add("PUT", "null", "example.com")
 	f.Add("PATCH", "http://example.com", "example.com:443")
 
-	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
+	h := securityMiddleware(baseCSPPolicy, nil, helloMux())
 
 	f.Fuzz(func(t *testing.T, method, origin, host string) {
 		if method == "" {
@@ -337,7 +319,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 }
 
 func TestCSPPolicy_StructuralInvariants(t *testing.T) {
-	policy := fallbackCSPPolicy()
+	policy := baseCSPPolicy
 	directives := make(map[string]string)
 	for part := range strings.SplitSeq(policy, "; ") {
 		fields := strings.SplitN(part, " ", 2)
@@ -365,5 +347,9 @@ func TestCSPPolicy_StructuralInvariants(t *testing.T) {
 
 	if ds := directives["default-src"]; ds != "'self'" {
 		t.Errorf("default-src = %q, want 'self'", ds)
+	}
+
+	if ss := directives["script-src"]; ss != "'self'" {
+		t.Errorf("script-src = %q, want 'self'", ss)
 	}
 }

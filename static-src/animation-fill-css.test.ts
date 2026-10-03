@@ -100,6 +100,7 @@ const ENTRY: readonly Fixture[] = [
   { what: "a model picker card", el: "button.picker-btn" },
   { what: "a transcript boundary", el: "div.boundary" },
   { what: "a file browser row", el: "div.fb-row" },
+  { what: "a tab row taking the drag's slot", el: "div.tab.tab-slotted" },
   { what: "the shell entering fullscreen", el: "div.shell-panel.shell-fullscreen" },
   // A no-fill entry, as the control that says these assertions are not vacuous:
   // it detaches for a reason that has nothing to do with the sweep.
@@ -129,7 +130,6 @@ const UNBOUNDED: readonly Fixture[] = [
 const EXIT: readonly Fixture[] = [
   { what: "a tab leaving the strip", el: "div.tab.exiting" },
   { what: "a sub-tab merging into its parent", el: "div.tab.exiting.exiting-merge" },
-  { what: "the tab drag indicator opening its gap", el: "div.tab-drag-indicator" },
   {
     what: "a dismissed dock card",
     el: "div.dock-outgoing",

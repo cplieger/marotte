@@ -109,11 +109,22 @@ describe("chat.cancel_turn", () => {
   it("sends cancel command via transport", async () => {
     mockSend.mockResolvedValue({ ok: true, status: 200 });
     const { cancelTurn } = await import("./chat.js");
-    await cancelTurn.dispatch("c1");
+    await cancelTurn.dispatch({ chatID: "c1" });
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({ type: "cancel", chat_id: "c1" }),
       expect.anything(),
     );
+    const [cmd] = mockSend.mock.calls[0] ?? [];
+    expect((cmd as { payload?: unknown }).payload).toBeUndefined();
+  });
+
+  // The send-now arrow's row rides the cancel, so the turn-end resend can order it first.
+  it("names the lead row in the payload when one is given", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { cancelTurn } = await import("./chat.js");
+    await cancelTurn.dispatch({ chatID: "c1", lead: "steer-m2" });
+    const [cmd] = mockSend.mock.calls[0] ?? [];
+    expect((cmd as { payload?: unknown }).payload).toEqual({ lead: "steer-m2" });
   });
 });
 

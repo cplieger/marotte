@@ -48,6 +48,7 @@ import type { Route } from "./route-path.js";
 import { initModelPicker } from "./picker.js";
 import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
+import { initSidebarResize } from "./sidebar-resize.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
 import { activateFile, closeEditorFile, refreshFile } from "./editor-openers.js";
@@ -57,6 +58,8 @@ import { showSubagent, refreshSubagent } from "./subagent-view.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initLinkifyCallbacks } from "./linkify.js";
+import { setPreviewOpener } from "./preview-card.js";
+import { openWebPreview } from "./web-open.js";
 import { initFileBrowser } from "./files.js";
 import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
@@ -123,16 +126,15 @@ import { registerCleanup, subscribeToActions } from "./actions/index.js";
 import { initActions } from "./actions/boot.js";
 import { initBeatPhase } from "./beat-phase.js";
 import { initIconCrisp } from "./icon-crisp.js";
+
 // Init
 
 function init(): void {
   // FIRST, before anything measures or renders: `data-pointer` on <html> decides
-  // every control height, hit target and icon size, so a consumer that reads a box
-  // before it is set reads the wrong tier. The tier is decided HERE and nothing
-  // after this line moves it — see pointer-tier.ts for the three rungs. The reveal
-  // is registered with it rather than after it, so a coarse pointer arriving during
-  // boot cannot be the one event nobody was listening for; the button is authored
-  // HTML, so revealing it needs no wiring of its own.
+  // every control height, hit target and icon size. prepaint.js has already set
+  // it from storage; this re-applies it (a no-op when unchanged, the only apply
+  // when prepaint.js failed) and nothing after this line moves it. The reveal is
+  // registered with it so a coarse pointer arriving during boot is not missed.
   initPointerTier({ onCoarseSeen: revealPointerModeToggle });
   initPointerModeToggle();
 
@@ -268,6 +270,7 @@ function init(): void {
   setupInput();
   initUI();
   initShellPanel();
+  initSidebarResize();
   setCopyCallback((text) => void copyClipboard.dispatch(text, { silent: true }));
   initEditor();
   initFileBrowser();
@@ -280,6 +283,7 @@ function init(): void {
   // reason one rung out: the markdown renderer reaches linkify, and `editor-markdown`
   // reaches the renderer, so linkify importing the opener closed a ring.
   initLinkifyCallbacks({ open: openAtLine });
+  setPreviewOpener(openWebPreview);
   initTaskListPill();
   // Through the same dispatcher as Ctrl-F, so the two cannot mean different things. A
   // direct find-in-chat call made this a dead control on /files and /file/{path}.
@@ -490,7 +494,7 @@ function setupInput(): void {
       if (!isThinking(getActiveId())) {
         return;
       }
-      void cancelTurn.dispatch(getActiveId());
+      void cancelTurn.dispatch({ chatID: getActiveId() });
     },
   );
 

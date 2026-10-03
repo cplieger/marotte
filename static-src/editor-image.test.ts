@@ -100,6 +100,11 @@ vi.mock("./actions/editor.js", () => ({
 vi.mock("./editor-scroll.js", () => ({
   scrollToEditorLine: () => undefined,
   flashEditorLine: () => undefined,
+  // Present so real-ESM linking succeeds; editor-diff and editor-openers import them.
+  trackEditorView: () => undefined,
+  captureSelection: () => undefined,
+  restoreEditorView: () => undefined,
+  bindDiffView: () => undefined,
 }));
 vi.mock("./tabs.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this

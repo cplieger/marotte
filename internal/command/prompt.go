@@ -201,7 +201,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 	params[marotte.KeySessionID] = sb2.SessionID()
 	// The retry is a turn of its own, closed on every path out of here, since
 	// the turn it replaces is already closed.
-	retryTurn, err := roles.turnOutcome.OpenTurn(ctx, chatID, marotte.TurnSourceEmptyRetry, promptEntry(p), nil)
+	retryTurn, err := roles.turnOutcome.OpenTurn(ctx, chatID, marotte.TurnSourceEmptyRetry, promptEntry(p, nil), nil)
 	if err != nil {
 		// A dead ctx refused the open before anything was written, so no turn
 		// exists to close; the reader's surface is the empty turn's own footer.
@@ -217,6 +217,7 @@ func retryEmptyTurnPrompt(ctx context.Context, roles *promptRoles, chatID marott
 		roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, retryTurn, stop, reason)
 		return
 	}
+	deliverParkedSteers(ctx, roles, chatID)
 	reply, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
@@ -255,22 +256,22 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 // promptEntry is the turn_open's prompt for a prompt or an empty retry: the
 // client's id, the text and the attachments, which for an image or document are
 // the only record of what was attached, since the path never reaches the text.
-func promptEntry(p *marotte.PromptCommand) *marotte.EntryPrompt {
-	return &marotte.EntryPrompt{ID: p.MessageID, Text: p.Text, Attachments: p.Attachments, Resends: p.Resends}
+func promptEntry(p *marotte.PromptCommand, resends []string) *marotte.EntryPrompt {
+	return &marotte.EntryPrompt{ID: p.MessageID, Text: p.Text, Attachments: p.Attachments, Resends: resends}
 }
 
 // openPromptTurn appends the prompt's turn_open at admission and creates its
 // registry record. The header fallback names, models and supervises a chat no
 // record exists for, the shape membership's create writes; a record that exists
 // is left alone here and named below.
-func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand) (string, error) {
+func openPromptTurn(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand, resends []string) (string, error) {
 	supervisedDefault := supervisedDefaultSetting(ctx, roles.workspace.ConfigDir)
 	init := func(c *marotte.Chat) {
 		c.Name = marotte.DefaultChatName
 		c.Model = p.Model
 		c.SupervisedMode = supervisedDefault
 	}
-	return roles.turnOutcome.OpenTurn(ctx, chatID, marotte.TurnSourcePrompt, promptEntry(p), init)
+	return roles.turnOutcome.OpenTurn(ctx, chatID, marotte.TurnSourcePrompt, promptEntry(p, resends), init)
 }
 
 // settleComposerOnPrompt is the header write a sent prompt owes: the draft that
@@ -364,15 +365,27 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	if err := reservePromptAdmission(ctx, roles, cmd.ChatID); err != nil {
 		return nil, err
 	}
-	turnID, err := openPromptTurn(ctx, roles, cmd.ChatID, &p)
-	if err != nil {
-		roles.admission.ReleaseTurnReservation(cmd.ChatID)
-		if errors.Is(err, chat.ErrTombstoned) {
-			return nil, StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
-		}
-		return nil, StatusError(http.StatusInternalServerError, err)
+	if err := launchPrompt(ctx, roles, cmd.ChatID, &p, nil, true); err != nil {
+		return nil, err
 	}
-	settleComposerOnPrompt(ctx, roles.chats, roles.bus, cmd.ChatID, &p)
+	return promptAck{Accepted: true, MessageID: p.MessageID}, nil
+}
+
+// launchPrompt opens an admitted prompt's turn and starts it, owning the
+// reservation its caller took. A turn-end resend passes the steers it carries and
+// no composer: its text is the server's, not the composer's.
+func launchPrompt(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, p *marotte.PromptCommand, resends []string, composer bool) error {
+	turnID, err := openPromptTurn(ctx, roles, chatID, p, resends)
+	if err != nil {
+		roles.admission.ReleaseTurnReservation(chatID)
+		if errors.Is(err, chat.ErrTombstoned) {
+			return StatusErrorReason(http.StatusConflict, reasonChatGone, ErrChatNotFound)
+		}
+		return StatusError(http.StatusInternalServerError, err)
+	}
+	if composer {
+		settleComposerOnPrompt(ctx, roles.chats, roles.bus, chatID, p)
+	}
 
 	// Register the turn in-flight before the ack goes out, so a shutdown
 	// arriving between the ack and the goroutine's first step still waits
@@ -380,8 +393,8 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *marotte.ClientComma
 	// which returns at the ack; the goroutine owns the cancel.
 	roles.lifecycle.InflightAdd(1)
 	turnCtx, cancel := roles.lifecycle.TurnContext(ctx)
-	go runPromptTurn(turnCtx, cancel, roles, cmd.ChatID, turnID, &p)
-	return promptAck{Accepted: true, MessageID: p.MessageID}, nil
+	go runPromptTurn(turnCtx, cancel, roles, chatID, turnID, p)
+	return nil
 }
 
 // reservePromptAdmission takes the chat's admission slot for a prompt: a
@@ -430,14 +443,9 @@ func runPromptTurn(ctx context.Context, cancel context.CancelFunc, roles *prompt
 }
 
 // closeBeforeStart runs the turn end rule on a prompt's turn that never reached
-// StartTurn, and drops the steers parked for it: KAS never held them and no
-// replay will return them, so each is written dropped after the turn's close.
+// StartTurn. Its parked steers are the turn end's to resend, like any turn's.
 func closeBeforeStart(ctx context.Context, roles *promptRoles, chatID marotte.ChatID, turnID string, stop marotte.StopReason, reason string) {
 	roles.turnOutcome.AbandonInFlightTurn(ctx, chatID, turnID, stop, reason)
-	for _, parked := range roles.steers.TakeParkedSteers(chatID) {
-		roles.steers.ForgetUserSteer(chatID, parked.ID)
-		roles.turnOutcome.RecordDroppedSteer(ctx, chatID, parked)
-	}
 }
 
 // promptAdmittedTurn runs the turn with both holds owned: MCP wait, StartTurn
@@ -485,7 +493,7 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 		}
 		return
 	}
-	deliverParkedSteers(ctx, roles, sb, chatID)
+	deliverParkedSteers(ctx, roles, chatID)
 	slog.Info("prompt", "chat_id", chatID, "len", len(p.Text))
 	start := time.Now()
 	promptParams, inlinedImage := BuildPromptParams(ctx, roles.workspace, sb, p, historyInlineImages(ctx, roles.chats, chatID))
@@ -519,26 +527,32 @@ func promptAdmittedTurn(ctx context.Context, roles *promptRoles, sb Bridge, chat
 	recoverEmptyTurn(ctx, roles, chatID, turnID, result, p, promptParams)
 }
 
-// deliverParkedSteers issues the steers parked for this chat while its bridge
-// was spawning, in arrival order, right after StartTurn has the bridge live: the
-// head row is read under the ledger's lock, the Call runs outside it, and the row
-// leaves the set when the Call returns, so a steer arriving mid-drain joins the
-// tail and the loop exits only on a set found empty. A steer KAS refuses has no
-// client left to answer, so it is logged, forgotten and written dropped into
-// this turn, which takes the dock row down and offers the text back.
-func deliverParkedSteers(ctx context.Context, roles *promptRoles, sb Bridge, chatID marotte.ChatID) {
+// deliverParkedSteers runs between StartTurn and the turn's session/prompt, under
+// the chat's steer lock: a delete that decided before StartTurn ends before this
+// turn's execution can read, and one deciding after sees the start and refuses. A
+// clear owed for KAS's load re-injection goes first, while nothing reads; one that
+// is skipped or does not land leaves those rows unsent, never sent beside KAS's
+// copies.
+func deliverParkedSteers(ctx context.Context, roles *promptRoles, chatID marotte.ChatID) {
+	unlock, err := roles.queue.LockSteerOps(ctx, chatID)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if roles.jobs.NeedsPostLoadClear(chatID) {
+		cleared, landed := clearSteerBuffer(ctx, roles, chatID)
+		roles.jobs.PostLoadCleared(chatID, cleared, landed)
+	}
+	seen := map[string]bool{}
 	for {
-		parked, ok := roles.steers.NextParkedSteer(chatID)
-		if !ok {
+		key, text, ok := roles.jobs.NextParked(chatID)
+		if !ok || seen[key] {
 			return
 		}
-		reply, err := sendSteer(ctx, sb, parked.ID, parked.Text)
-		roles.steers.ForgetParkedSteer(chatID, parked.ID)
-		if err != nil || !reply.Queued {
-			slog.Warn("steer: a parked steer was refused at delivery",
-				"chat_id", chatID, "steer_id", parked.ID, "dropped", reply.Dropped, keyError, err)
-			roles.steers.ForgetUserSteer(chatID, parked.ID)
-			roles.turnOutcome.RecordDroppedSteer(ctx, chatID, parked)
+		seen[key] = true
+		if refuse, _ := steerOne(ctx, roles, chatID, key, text, true); refuse != "" {
+			slog.Warn("steer: a parked steer could not be delivered", "chat_id", chatID, "steer_id", key, "reason", refuse)
+			return
 		}
 	}
 }

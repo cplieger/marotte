@@ -53,8 +53,8 @@ describe("clearDeviceKeys", () => {
   });
 
   it("leaves a key it does not own alone", () => {
-    // The theme-init snippet inlined in index.html reads LS_UI_STATE_KEY and
-    // nothing else, but this origin is shared with whatever else is stored here.
+    // prepaint.js reads LS_UI_STATE_KEY and nothing else, but this origin is
+    // shared with whatever else is stored here.
     localStorage.setItem("marotte.something-else", "keep me");
     localStorage.setItem(LS_UI_STATE_KEY, "{}");
 

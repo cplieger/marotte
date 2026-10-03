@@ -19,6 +19,10 @@ export class FileBrowserState {
   entryMap = new Map<string, FileEntry>();
   dirWritable = true;
   sortedNames: string[] = [];
+  /** Where the reader left this browser's list. Every files tab paints into one
+   *  shared scroller, so the offset has to live here or B's carries into A. It
+   *  belongs to the folder shown, so every directory change starts it at 0. */
+  scrollTop = 0;
 
   /** True until this browser's ORIGIN folder loads, so an unreachable one falls back
    *  to the mounts listing ONCE and a later failure keeps the error row. Per browser
@@ -37,6 +41,7 @@ export class FileBrowserState {
   navigate(path: string): void {
     this.currentPath = path;
     this.answered = false;
+    this.scrollTop = 0;
     this.selected.clear();
     this.lastClickedName = "";
     this.history.length = this.historyIdx + 1;
@@ -50,6 +55,7 @@ export class FileBrowserState {
     }
     this.historyIdx--;
     this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    this.scrollTop = 0;
     this.selected.clear();
     this.lastClickedName = "";
     return true;
@@ -61,6 +67,7 @@ export class FileBrowserState {
     }
     this.historyIdx++;
     this.currentPath = this.history[this.historyIdx]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    this.scrollTop = 0;
     this.selected.clear();
     this.lastClickedName = "";
     return true;
@@ -94,6 +101,7 @@ export class FileBrowserState {
     this.history.length = 0;
     this.history.push(FB_ROOT);
     this.historyIdx = 0;
+    this.scrollTop = 0;
     this.selected.clear();
     this.lastClickedName = "";
     this.entries = [];

@@ -18,14 +18,9 @@ import (
 	"github.com/cplieger/webhttp/v3"
 )
 
-// cspTemplate is the CSP applied to every response, with a single %s
-// placeholder for the sha256 hash of the page's one inline <head> script:
-// the anti-FOUC theme-init IIFE (@cplieger/ui-primitives'
-// themeInitSnippetFromJSON output, marked with data-theme-init). The hash is
-// computed at Server construction from the embedded index.html, so edits to
-// the block "just work" without anyone hand-updating a constant — and
-// script-src stays locked to 'self' + that exact hash (never
-// 'unsafe-inline').
+// baseCSPPolicy is the CSP applied to every response. script-src is 'self' alone:
+// the page carries no inline script (its pre-paint step is /prepaint.js), so no
+// hash and never 'unsafe-inline'.
 //
 // Other directives, briefly:
 //
@@ -42,29 +37,22 @@ import (
 //	img-src 'self' data:        Seti UI file-type icons (data URIs)
 //	connect-src 'self'          HTTP + WebSocket to the same origin
 //	                           (the shell PTY is at /api/shell/ws)
-const cspTemplate = "default-src 'self'; " +
+const baseCSPPolicy = "default-src 'self'; " +
 	"connect-src 'self'; " +
 	"img-src 'self' data:; " +
 	"style-src 'self' 'unsafe-inline'; " +
-	"script-src 'self' %s; " +
+	"script-src 'self'; " +
 	"font-src 'self'; " +
 	"object-src 'none'; " +
 	"frame-ancestors 'none'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'"
 
-// buildCSPPolicy reads index.html from staticFS, hashes its inline <head>
-// script via webhttp.InlineScriptHashes (byte-precise and quote-aware — the
-// exact bytes a browser hashes for a script-src token), and assembles the
-// full CSP string. Called once at Server construction.
-//
-// The page carries exactly ONE inline script today (the anti-FOUC theme-init
-// marked data-theme-init); the exactly-one assertion preserves the old
-// targeted extraction's strictness: zero hashes means the required block is
-// missing (a build defect — startup fails rather than serving a CSP that
-// would block it), and more than one means an unreviewed inline script was
-// added (update this check consciously instead of silently granting it CSP
-// allowance).
+// buildCSPPolicy returns the CSP after checking that staticFS's index.html
+// carries no inline script, which baseCSPPolicy would block. It refuses rather than
+// granting one a hash, because a new inline script needs a CSP decision, and
+// startup failing is how that decision gets made. Called once at Server
+// construction.
 func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if staticFS == nil {
 		return "", errors.New("buildCSPPolicy: nil staticFS")
@@ -73,12 +61,10 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
 	}
-	hashes := webhttp.InlineScriptHashes(html)
-	if len(hashes) != 1 {
-		return "", fmt.Errorf("buildCSPPolicy: expected exactly one inline script in index.html, found %d (a new inline script must be reviewed and this check updated)", len(hashes))
+	if n := len(webhttp.InlineScriptHashes(html)); n != 0 {
+		return "", fmt.Errorf("buildCSPPolicy: index.html carries %d inline script(s), which script-src 'self' blocks; move it to a file or change the CSP deliberately", n)
 	}
-	// script-src 'self' <theme-init-hash>
-	return fmt.Sprintf(cspTemplate, hashes[0]), nil
+	return baseCSPPolicy, nil
 }
 
 // securityMiddleware sets the response security-header baseline via

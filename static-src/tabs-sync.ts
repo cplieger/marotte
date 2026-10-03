@@ -41,7 +41,8 @@
 //
 //   4. THE PENDING-OP MACHINE, which owns op correlation. Every mutation this
 //      device dispatches optimistically (an adopt painted from its response, a
-//      remove applied at gesture time) is a PendingOp keyed by the dispatch's
+//      remove applied at gesture time, a reorder shown at the drop) is a
+//      PendingOp keyed by the dispatch's
 //      `op_id`, and the machine reconciles the three answers that can arrive for
 //      it — the response, the echo frame, and an authoritative snapshot — in
 //      whichever order the network delivers them. It is the ONE consumer of
@@ -162,11 +163,13 @@ function sweepOps(): void {
 // The pending-op machine (mechanism 4).
 //
 // One record per optimistic mutation, keyed by the dispatch's opID — the one
-// identifier that exists before the server has minted anything. Three states:
+// identifier that exists before the server has minted anything. Three kinds
+// (adopt, remove, reorder) and three states:
 //
 //   awaiting-response        dispatched; neither the response nor the frame has
 //                            arrived. An adopt has no id yet (server-minted);
-//                            a remove knows its id and captured subtree.
+//                            a remove knows its id and captured subtree; a
+//                            reorder knows the whole order it showed.
 //   confirmed-awaiting-frame the response committed (id/committedVersion known)
 //                            and the echo frame has not landed.
 //   verifying                REMOVE-ONLY. The dispatch got NO answer, so the
@@ -192,13 +195,17 @@ function sweepOps(): void {
 //      mutation is in what the projection now holds even when correlation was
 //      lost. onConfirm(), retire.
 //   5. DEFINITIVE response failure — the server answered an error, so nothing
-//      committed: rollback(), retire.
+//      committed: retire, then rollback().
 //   6. TIMEOUT — no answer: the op enters verifying. It settles by the FIRST of
 //      a matching frame (transition 2) or an authoritative list/snapshot: row
 //      PRESENT → rollback(), retire; ABSENT → onConfirm(), retire. A failed or
 //      stale list keeps it verifying. Restore happens ONLY on authoritative
 //      presence, because a conservative restore could resurrect a family whose
 //      records a committed close already deleted.
+//
+// A PENDING REORDER is an overlay rather than a capture: every frame order and
+// every snapshot that could predate its commit is permuted by it (overlayOrder),
+// so a render between the drop and the confirming frame keeps the dropped order.
 //
 // A RETIRED OP IGNORES EVERY LATER SIGNAL. Retiring deletes the record, and
 // every entry point looks the op up first — so a frame-confirmed op whose
@@ -259,7 +266,20 @@ interface PendingRemove {
   verifyTimer: ReturnType<typeof setTimeout> | null;
 }
 
-type PendingOp = PendingAdopt | PendingRemove;
+interface PendingReorder {
+  kind: "reorder";
+  opID: string;
+  state: "awaiting-response" | "confirmed-awaiting-frame";
+  /** Gesture order, so two pending reorders overlay in the order they were made. */
+  seq: number;
+  /** The whole expanded order the drop showed. */
+  order: readonly string[];
+  /** Put the projection back. Runs exactly once, on definitive failure. */
+  rollback: () => void;
+  committedVersion?: number;
+}
+
+type PendingOp = PendingAdopt | PendingRemove | PendingReorder;
 
 const pendingOps = new Map<string, PendingOp>();
 
@@ -294,6 +314,55 @@ export function beginRemove(opID: string, spec: PendingRemoveSpec): void {
     verifyAttempts: 0,
     verifyTimer: null,
   });
+}
+
+/** Transition 1 for a reorder: record the dispatch. The caller has already
+ *  applied `order` to the projection, as a remove's caller has already removed
+ *  the row. */
+export function beginReorder(
+  opID: string,
+  spec: { order: readonly string[]; rollback: () => void },
+): void {
+  pendingOps.set(opID, {
+    kind: "reorder",
+    opID,
+    state: "awaiting-response",
+    seq: ++opSeq,
+    order: [...spec.order],
+    rollback: spec.rollback,
+  });
+}
+
+/** Transition 3 for a reorder: the response committed at `committedVersion`. It
+ *  retires once the watermark covers that version and waits for the frame
+ *  otherwise; it never writes the watermark itself. */
+export function reorderCommitted(opID: string, committedVersion: number): void {
+  const op = pendingOps.get(opID);
+  if (op?.kind !== "reorder") {
+    return;
+  }
+  op.committedVersion = committedVersion;
+  if (localVersion >= committedVersion) {
+    confirmOp(op);
+    return;
+  }
+  op.state = "confirmed-awaiting-frame";
+}
+
+/** `ids` permuted by every pending reorder that may postdate `version` (all of them
+ *  when `version` is omitted), in gesture order. An id a pending order does not
+ *  name sorts last and is never dropped. */
+export function overlayOrder(ids: readonly string[], version?: number): string[] {
+  let out = [...ids];
+  for (const op of pendingOps.values()) {
+    if (
+      op.kind === "reorder" &&
+      (version === undefined || op.committedVersion === undefined || op.committedVersion > version)
+    ) {
+      out = permute(out, (id) => id, op.order);
+    }
+  }
+  return out;
 }
 
 /** Transition 3 for an open: the response committed `subject` at
@@ -408,6 +477,8 @@ function failOp(op: PendingOp): void {
   if (op.kind === "remove") {
     op.rollback();
     noteRemoveSettled();
+  } else if (op.kind === "reorder") {
+    op.rollback();
   }
 }
 
@@ -488,14 +559,19 @@ function suppressChanged(changed: TabSubject): boolean {
 }
 
 /** The delta as the projection should see it: `changed` stripped when a pending
- *  remove suppresses it. `removed_ids` and `order` always pass — a removal of a
- *  row the projection no longer holds is already a no-op there, and an order is
- *  a permutation over what it holds. */
+ *  remove suppresses it, and `order` permuted by every pending reorder the frame
+ *  may predate, so a frame from before this device's drop cannot overwrite the
+ *  order it shows. `removed_ids` always passes — a removal of a row the
+ *  projection no longer holds is already a no-op there. */
 function overlayFrame(delta: TabsChangedPayload): TabsChangedPayload {
-  if (delta.changed === undefined || !suppressChanged(delta.changed)) {
-    return delta;
+  let out = delta;
+  if (out.order !== undefined) {
+    out = { ...out, order: overlayOrder(out.order, out.version) };
   }
-  const { changed: _suppressed, ...rest } = delta;
+  if (out.changed === undefined || !suppressChanged(out.changed)) {
+    return out;
+  }
+  const { changed: _suppressed, ...rest } = out;
   return rest;
 }
 
@@ -529,10 +605,10 @@ function absorbCommitted(): void {
 
 /** A snapshot with the pending overlay applied: rows a pending remove took out
  *  are filtered (the visual removal must survive a re-list that raced the
- *  close), and a pending adopt's subject is merged back (a stale-but-adoptable
- *  list must not unpaint a row this device committed). Both overlays apply only
- *  while the list can predate the mutation — committedVersion unknown, or past
- *  the list's version. */
+ *  close), a pending adopt's subject is merged back (a stale-but-adoptable list
+ *  must not unpaint a row this device committed), and a pending reorder permutes
+ *  what is left. Every overlay applies only while the list can predate the
+ *  mutation — committedVersion unknown, or past the list's version. */
 function overlayList(tabs: readonly TabSubject[], version: number): TabSubject[] {
   let out = [...tabs];
   for (const op of pendingOps.values()) {
@@ -553,7 +629,14 @@ function overlayList(tabs: readonly TabSubject[], version: number): TabSubject[]
       out.push(subject);
     }
   }
-  return out;
+  return permute(
+    out,
+    (t) => t.id,
+    overlayOrder(
+      out.map((t) => t.id),
+      version,
+    ),
+  );
 }
 
 /** Hand one `tabs_changed` frame to the queue.

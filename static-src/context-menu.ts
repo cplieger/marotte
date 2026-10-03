@@ -25,6 +25,9 @@ import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 export interface ContextMenuItem {
   label: string;
   action: () => void;
+  /** A disabled item stays in the menu and in its roving focus (the WAI-ARIA menu
+   *  pattern), and a click on it does nothing and leaves the menu open. */
+  disabled?: boolean;
 }
 
 export interface ContextMenuPosition {
@@ -54,7 +57,13 @@ export function showContextMenu(
 
   for (const item of items) {
     const btn = el("button", { className: "tab-context-item", role: "menuitem" }, item.label);
+    if (item.disabled === true) {
+      btn.setAttribute("aria-disabled", "true");
+    }
     btn.addEventListener("click", () => {
+      if (item.disabled === true) {
+        return;
+      }
       pop.hide();
       item.action();
     });

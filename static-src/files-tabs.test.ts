@@ -106,6 +106,7 @@ vi.mock("./icons.js", () => ({
   FILE_ICONS: {},
   ICON_SAVE_OK: "",
   ICON_SAVE_FAIL: "",
+  ICON_TAB_WEB: "",
 }));
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));
@@ -142,7 +143,13 @@ vi.mock("./store.js", () => ({
 import { $ } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { FB_CHECK, FB_NAME } from "./files-shared.js";
-import { bindFilesTab, releaseFilesTab, showFilesTab } from "./files.js";
+import {
+  bindFilesTab,
+  initFileBrowser,
+  pointFilesTab,
+  releaseFilesTab,
+  showFilesTab,
+} from "./files.js";
 
 /** The listing every fetch answers: one folder, one file. */
 function listing(): { files: { name: string; isDir: boolean }[]; writable: boolean } {
@@ -348,5 +355,70 @@ describe("middle-click opens in the background", () => {
     bindFilesTab("/a");
     middleClick(rowFor("sub"));
     expect(h.openTab).toHaveBeenCalledWith({ kind: "files", ref: "/a/sub", activate: false });
+  });
+});
+
+describe("each browser keeps its own scroll position over the shared list", () => {
+  /** A real scroller around the registry's list, so offsets mean something. */
+  function mountScroller(): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "fb-list-wrap";
+    wrap.style.cssText = "height:200px;overflow-y:auto";
+    wrap.appendChild($.fbList);
+    document.body.appendChild(wrap);
+    return wrap;
+  }
+
+  function tall(): { files: { name: string; isDir: boolean }[]; writable: boolean } {
+    return {
+      files: Array.from({ length: 120 }, (_, i) => ({ name: `f${String(i)}.txt`, isDir: false })),
+      writable: true,
+    };
+  }
+
+  async function frame(): Promise<void> {
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  }
+
+  it("lands A, then B, then A each where it was left", async () => {
+    vi.mocked(apiGet).mockImplementation(() => Promise.resolve(tall()));
+    const wrap = mountScroller();
+    initFileBrowser();
+    try {
+      await show("/a");
+      expect(wrap.scrollHeight).toBeGreaterThan(wrap.clientHeight);
+      wrap.scrollTop = 600;
+      await frame();
+      await show("/b");
+      expect(wrap.scrollTop, "a browser opened for the first time starts at the top").toBe(0);
+      wrap.scrollTop = 250;
+      await frame();
+      await show("/a");
+      expect(wrap.scrollTop).toBe(600);
+      await show("/b");
+      expect(wrap.scrollTop).toBe(250);
+    } finally {
+      wrap.remove();
+    }
+  });
+
+  // The offset is the FOLDER's, so a browser moved to another folder the reader then
+  // never scrolls must not come back at the old folder's depth.
+  it("brings a browser back at the top of a folder it moved to and was not scrolled in", async () => {
+    vi.mocked(apiGet).mockImplementation(() => Promise.resolve(tall()));
+    const wrap = mountScroller();
+    initFileBrowser();
+    try {
+      await show("/a");
+      wrap.scrollTop = 600;
+      await frame();
+      pointFilesTab("/a", "/a/deeper");
+      await new Promise((r) => setTimeout(r, 0));
+      await show("/b");
+      await show("/a");
+      expect(wrap.scrollTop).toBe(0);
+    } finally {
+      wrap.remove();
+    }
   });
 });

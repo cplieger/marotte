@@ -133,10 +133,10 @@ type bus struct {
 	// presence receives the hub's connect/disconnect feed and the client
 	// acknowledgements (alive_route.go). nil drops both; WithPresence fills it.
 	presence presenceTable `wiring:"optional"`
-	// steers is the projection of KAS's steering buffer the connect replay serves
-	// from. Beside pendingPerms rather than folded into it: the two answer for
-	// different wire objects and neither removal path can settle the other's.
-	steers *steerBuffer
+	// steers is the record of the user's mid-turn steers and KAS's buffer, which
+	// the connect replay serves from. Beside pendingPerms rather than folded into
+	// it: the two answer for different wire objects.
+	steers *steerRecords
 	// chatStatus holds each chat's last self-declared status, the one status_snapshot
 	// input that lives on no message and in no replay (chat_status.go).
 	chatStatus *chatStatusCache
@@ -233,6 +233,8 @@ type Runtime struct {
 	// thing that tells the user's own words from a workflow reporting into the same
 	// KAS buffer.
 	steerLedger *command.SteerLedger
+	// steerQueue is the steer record as the steer commands and their jobs drive it.
+	steerQueue steerQueue
 
 	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
 	ciGate func() bool
@@ -354,7 +356,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// options fill bus.presence before anything can connect.
 	sseP := &bus{
 		pendingPerms: newPendingPermsTracker(),
-		steers:       newSteerBuffer(),
+		steers:       newSteerRecords(),
 		chatStatus:   newChatStatusCache(),
 	}
 	// MustNew rather than New: every option is a constant, so an incoherent set is
@@ -478,6 +480,8 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 
 	// Before both consumers: the steer command writes it and the translator reads it.
 	h.steerLedger = command.NewSteerLedger()
+	h.steerQueue = steerQueue{recs: sseP.steers, coord: h.coord, locks: newChatLocks()}
+	h.wireSteerRecords()
 	h.translator = translate.New(h.translateRoles())
 	runs.translate = h.translator
 	h.dispatcher = command.New()

@@ -179,20 +179,21 @@ func TestCloseTurnOnBridgeDeath_ACancelledOutcomeConcludesCancelled(t *testing.T
 
 // TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow is the death
 // closer's third step, and the only thing that records a loss nothing else can see:
-// a bridge that dies while KAS holds steers it queued and never delivered leaves
+// a bridge that dies while KAS holds AGENT rows it queued and never delivered leaves
 // the log short of words KAS persisted. One steer entry per queued id, with EMPTY
 // text, is that record — an empty text says "KAS holds words this process never
 // received", which is what the resume-time reconcile predicate reads to decide the
 // projection must not be discarded silently. The text is dropped on purpose even
-// when the buffered row carried one, so the arming rows here carry text.
+// when the buffered row carried one, so the arming rows here carry text. A user
+// row is the steer record's, resent by its turn end.
 func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testing.T) {
 	h, cs, _ := newTestHub()
 	streamingPromptTurn(t, h, "c1", "the model was mid-reply when the pipe died")
-	h.bus.steers.SteerWaiting("c1", marotte.SteerQueuedPayload{
-		SteerID: "s-1", Text: "use tabs", Origin: marotte.SteerOriginUser,
+	h.bus.steers.SteerWaiting("c1", &marotte.SteerQueuedPayload{
+		SteerID: "s-1", Text: "use tabs", Origin: marotte.SteerOriginAgent,
 	})
-	h.bus.steers.SteerWaiting("c1", marotte.SteerQueuedPayload{
-		SteerID: "s-2", Text: "and rename it", Origin: marotte.SteerOriginUser,
+	h.bus.steers.SteerWaiting("c1", &marotte.SteerQueuedPayload{
+		SteerID: "s-2", Text: "and rename it", Origin: marotte.SteerOriginAgent,
 	})
 
 	h.coord.closeTurnOnBridgeDeath(t.Context(), "c1", marotte.TurnOutcomeInterrupted)
@@ -221,8 +222,8 @@ func TestCloseTurnOnBridgeDeath_RecordsOneTextlessSteerPerKASQueuedRow(t *testin
 		if s.Text != "" {
 			t.Errorf("steer %q text = %q, want empty: the empty text is the whole record of what KAS kept and this process lost", id, s.Text)
 		}
-		if s.Origin != marotte.SteerOriginUser || s.State != marotte.SteerStateDropped {
-			t.Errorf("steer %q = origin %q state %q, want user/dropped", id, s.Origin, s.State)
+		if s.Origin != marotte.SteerOriginAgent || s.State != marotte.SteerStateDropped {
+			t.Errorf("steer %q = origin %q state %q, want agent/dropped", id, s.Origin, s.State)
 		}
 	}
 }

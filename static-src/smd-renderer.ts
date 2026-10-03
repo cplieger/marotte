@@ -61,6 +61,7 @@ import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
 import { isSafeUrl, rewriteServedImageSrc } from "./utils-url.js";
 import { mediaElementFor } from "./media-block.js";
+import { buildPreviewCard, isPreviewHref } from "./preview-card.js";
 import { latexToMathML } from "./mathml.js";
 import { el } from "@cplieger/reactive";
 
@@ -233,6 +234,8 @@ function add_token_dom(data: DomRendererData, type: Token): void {
       data.nodes[++data.index] = parent.appendChild(slot);
       return;
     }
+    default:
+      break;
   }
 
   const tag = TOKEN_TAG_MAP[type];
@@ -366,6 +369,22 @@ function add_text_dom(data: DomRendererData, text: string): void {
   parent.appendChild(document.createTextNode(text));
 }
 
+/** A bracket link's href arrives after its label, so the label's nodes exist
+ *  and are MOVED into the card; the node stack and the caret follow them. */
+function swapForPreviewCard(data: DomRendererData, link: Element, href: string): void {
+  for (const span of link.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
+    span.setAttribute(CHUNK_SETTLED_ATTR, "");
+  }
+  const card = buildPreviewCard(href, [...link.childNodes]);
+  link.replaceWith(card);
+  data.nodes[data.index] = card;
+  if (data.caretEl === link) {
+    const label = card.querySelector(".preview-card-label") ?? card;
+    label.setAttribute(CARET_ATTR, "");
+    data.caretEl = label;
+  }
+}
+
 function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   if (attr === UNCLOSED) {
     data.unclosedDelim = value;
@@ -385,6 +404,14 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   }
   if ((attrName === "href" || attrName === "src") && !isSafeUrl(value)) {
     node.setAttribute(attrName, "#");
+    return;
+  }
+  if (attrName === "href" && node.tagName === "A" && isPreviewHref(value)) {
+    swapForPreviewCard(data, node, value);
+    return;
+  }
+  if (attrName === "title" && node.classList.contains("preview-card")) {
+    node.setAttribute("data-tooltip", value);
     return;
   }
   // An agent-written workspace path is a real file, not a URL the SPA can serve.

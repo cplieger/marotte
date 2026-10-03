@@ -21,6 +21,7 @@ import { isPending, registerCleanup } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
 import { showEditMode, updateGutter, renderReadSurface, renderEditModeUI } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
+import { trackEditorView } from "./editor-scroll.js";
 import { fetchGitDiffSources, openFileGitDiff } from "./editor-openers.js";
 import {
   fileStates,
@@ -31,9 +32,11 @@ import {
 } from "./editor-types.js";
 import type { FileState } from "./editor-types.js";
 import { markGitDirty } from "./git.js";
-import { relToWorkspace } from "./workspace.js";
+import { onWorkspaceRoot, relToWorkspace } from "./workspace.js";
+import { isWorkspacePage } from "./preview-card.js";
+import { openWebPreview } from "./web-open.js";
 import { iconEl } from "./icon-el.js";
-import { ICON_GIT_COMMIT } from "./icons.js";
+import { ICON_GIT_COMMIT, ICON_TAB_WEB } from "./icons.js";
 import { isViewableImage } from "./file-extensions.js";
 import { onGitStatusChange, statusForPath } from "./git-status-store.js";
 
@@ -83,6 +86,7 @@ export function initEditor(): void {
   $.editorContent.addEventListener("scroll", () => {
     $.editorGutter.scrollTop = $.editorContent.scrollTop;
   });
+  trackEditorView();
 
   // Sole owner of the save button's disabled state: disabled when the
   // active file is clean OR a save is in flight; enabled exactly when the
@@ -119,6 +123,27 @@ export function initEditor(): void {
     }
     paintGitDiffBtn();
   });
+
+  $.editorPreviewBtn.replaceChildren(iconEl(ICON_TAB_WEB));
+  $.editorPreviewBtn.addEventListener("click", () => {
+    openWebPreview(previewPath());
+  });
+  effect(() => {
+    paintPreviewBtn();
+  });
+  registerCleanup(onWorkspaceRoot(paintPreviewBtn));
+}
+
+function paintPreviewBtn(): void {
+  $.editorPreviewBtn.classList.toggle("hidden", !isWorkspacePage(previewPath()));
+}
+
+/** The server's ServeMux collapses `/file//workspace/x` to `/file/workspace/x` on a
+ *  cold load, so an editor path can lack its leading slash; `/api/file` reads it
+ *  from the root, and so does this. */
+function previewPath(): string {
+  const path = getActiveFilePath();
+  return path === "" || path.startsWith("/") ? path : `/${path}`;
 }
 
 /** Whether the git-status store is being watched for this surface yet. */
