@@ -43,6 +43,7 @@ function forge(over: Partial<ConfiguredForge> = {}): ConfiguredForge {
     kind: "github",
     host: "github.com",
     connected: true,
+    reconnect_required: false,
     ...over,
   };
 }

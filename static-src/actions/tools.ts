@@ -155,8 +155,8 @@ export const deleteTool = apiAction<{ name: string; force?: boolean }, DeleteToo
   error: false, // 409 cascade is a normal flow, handled by the caller
 });
 
-// ensureTool: install-by-name for feature banners (forge CLIs, MCP's
-// node runtime). Creates the tool from the catalog; when it already
+// ensureTool: install-by-name for a feature banner (MCP's node
+// runtime). Creates the tool from the catalog; when it already
 // exists in the manifest (400), falls back to a plain (re)install.
 // error: false — the banners render their own inline progress/errors.
 async function runEnsure(

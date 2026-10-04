@@ -41,7 +41,7 @@ func TestKiroDocsGuard_RefusesASymlinkOutOfTheScannedTree(t *testing.T) {
 	}
 	symlinkOr(t, outside, filepath.Join(kiro, "steering"))
 
-	guard := newRootGuard(kiro, "ws/.kiro")
+	guard := newRootGuard(kiro, "ws/.kiro", filebrowse.Sensitive{})
 	if guard.allows("steering") {
 		t.Error("the symlinked category directory was admitted; the walk would enumerate its target")
 	}
@@ -174,7 +174,7 @@ func TestKiroDocsGuard_RefusesASymlinkedFlatCategoryDirectory(t *testing.T) {
 	if err := os.MkdirAll(kiro, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	guard := newRootGuard(kiro, "ws/.kiro")
+	guard := newRootGuard(kiro, "ws/.kiro", filebrowse.Sensitive{})
 	for _, category := range []string{"skills", "agents", "hooks"} {
 		symlinkOr(t, outside, filepath.Join(kiro, category))
 		if guard.allows(category) {
@@ -263,8 +263,8 @@ func TestKiroDocsGuard_ASymlinkedRootIsItsOwnBoundary(t *testing.T) {
 //
 // It is driven through the predicate rather than a fixture under /config, because
 // the entries are absolute container paths a test cannot create. What this pins
-// is that the guard consults filebrowse.IsSensitive on the RESOLVED path — the
-// only form that can match — which is the half a naive "call IsSensitive on the
+// is that the guard consults the shared deny list on the RESOLVED path, the
+// only form that can match, which is the half a naive "check the deny list on the
 // walk path" implementation gets wrong while looking correct.
 func TestKiroDocsGuard_ConsultsTheSharedSensitiveDenylist(t *testing.T) {
 	for _, sensitive := range []string{
@@ -272,7 +272,7 @@ func TestKiroDocsGuard_ConsultsTheSharedSensitiveDenylist(t *testing.T) {
 		"/config/chats/abc.md",
 		"/config/mcp.json",
 	} {
-		if !filebrowse.IsSensitive(sensitive) {
+		if !(filebrowse.Sensitive{}).Blocks(sensitive) {
 			t.Fatalf("fixture wrong: %q is not on the shared denylist", sensitive)
 		}
 	}
@@ -287,11 +287,26 @@ func TestKiroDocsGuard_ConsultsTheSharedSensitiveDenylist(t *testing.T) {
 	}
 }
 
+// The guard refuses by the deny list composition hands it, so a config root other
+// than /config moves the refusal with it.
+func TestKiroDocsGuard_UsesTheConfiguredRoot(t *testing.T) {
+	cfg := t.TempDir()
+	writeFile(t, cfg, "forge-store/notes.md", "---\ndescription: x\n---\n")
+	writeFile(t, cfg, "steering/ok.md", "---\ndescription: ok\n---\n")
+	guard := newRootGuard(cfg, "test", filebrowse.NewSensitive(cfg))
+	if guard.allows("forge-store/notes.md") {
+		t.Error("a file in the configured root's forge-store was admitted")
+	}
+	if !guard.allows("steering/ok.md") {
+		t.Error("an ordinary document under the configured root was refused")
+	}
+}
+
 // A root the scan cannot resolve refuses everything rather than admitting it.
 // The alternative — treating an unnameable root as permissive — is the failure
 // mode a guard exists to prevent.
 func TestKiroDocsGuard_UnresolvableRootRefusesEverything(t *testing.T) {
-	guard := newRootGuard(filepath.Join(t.TempDir(), "nope"), "ws/.kiro")
+	guard := newRootGuard(filepath.Join(t.TempDir(), "nope"), "ws/.kiro", filebrowse.Sensitive{})
 	if guard.allows("steering/a.md") {
 		t.Error("an unresolvable root admitted a path")
 	}

@@ -176,6 +176,10 @@ const (
 	// refetches the subject through its action and observes on commit. The
 	// payload is empty; the stamp rides the envelope's Subject.
 	EventSubjectChanged EventType = "subject_changed"
+	// EventForgeInventory carries one forge connection's pull-request inventory
+	// entry each time a cycle writes it, stamped with its forge_inventory version.
+	// Workspace-global; the payload type is forges.InventoryChangedPayload.
+	EventForgeInventory EventType = "forge_inventory"
 	// EventTabsChanged is ONE aggregate frame per committed mutation of the
 	// open-tab set: what changed, what was removed, and the order the set is now
 	// in, stamped with the version that mutation produced.

@@ -8,6 +8,8 @@ github.com/cplieger/envx/v2 v2.0.3 h1:5FPj605yQWeYxGsKd1ZDisLfrOPIFRuLq6le2dNoYd
 github.com/cplieger/envx/v2 v2.0.3/go.mod h1:f01hl0r7CXNpFQvzV4CrSFYTZJjCJxsjOEKaBwcc2iw=
 github.com/cplieger/envx/yamlenv/v2 v2.0.1 h1:LaSXybVEdse3kY6R6J1lPM2Vz9buOaB3t77w9euCp6Y=
 github.com/cplieger/envx/yamlenv/v2 v2.0.1/go.mod h1:p8oTtOKztygo0hhupVD1H+NRfQo37pnONPZlcdrCo34=
+github.com/cplieger/forgeapi v1.0.1 h1:3CTnkkaLmh67Nsm0MFumm56UQXbPDNFigopBrbvB5OQ=
+github.com/cplieger/forgeapi v1.0.1/go.mod h1:1lUHN31AI+wyGY9VKeA7+Eo5nlL6+RrRQgGHMzNRpIw=
 github.com/cplieger/httpx/v5 v5.0.3 h1:bMtqn9nQXCD/0AdS2eEsl4K7QjYdANyM3ZyksDxKSug=
 github.com/cplieger/httpx/v5 v5.0.3/go.mod h1:3LKMRNjhTYJM9lwDfGpyjtpL4umH6wSMpeD2vanUYlk=
 github.com/cplieger/jsoncap/v2 v2.0.1 h1:22SjgtumpOmYet3Uc5Dvb0e557ffyfLGkJmp27h4e1o=
@@ -30,6 +32,8 @@ github.com/cplieger/ssrf/v4 v4.1.3 h1:vW32FzbwVUmCGh18qG7g9pDumU7UK121INo40NSU+S
 github.com/cplieger/ssrf/v4 v4.1.3/go.mod h1:aoFkA+rp5MjLn3HSwxN8XltHUYGyJhLIqT4JAmFdgRE=
 github.com/cplieger/toolbelt/v3 v3.6.2 h1:YFOsMayoyn10Xgm12ubCTfBqANjzV4BfUYFuXFfAENc=
 github.com/cplieger/toolbelt/v3 v3.6.2/go.mod h1:DC6/vorclUxsbF3EWkY8NnUj81xBw8d6gCQld4SIKq8=
+github.com/cplieger/urlform v1.3.5 h1:ruGheV4i94sGUkpdWqvk/p52vA8Lapd0/gj380E6vZo=
+github.com/cplieger/urlform v1.3.5/go.mod h1:MBHIP8QYgO4th+l9h/npCyIN0Fe/d6WFRswoRnDAMxI=
 github.com/cplieger/web-terminal-engine/v6 v6.0.5 h1:Iwdmtw2C5IYpVZcxHLPzhRKJLMpY252HSTst1MFAwOI=
 github.com/cplieger/web-terminal-engine/v6 v6.0.5/go.mod h1:nAZFfUJwNCXGtf9k2MhjfKXNsx7JklOQvCKxsBn+ShM=
 github.com/cplieger/webhttp/v3 v3.0.0 h1:CHA5wZyGXVb9wb6VYEbxrhQRIwDpiJs42AVulR4WCns=

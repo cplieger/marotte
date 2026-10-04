@@ -98,6 +98,36 @@ func TestParseRemoteSlug(t *testing.T) {
 	}
 }
 
+// TestRemoteWebBase is what a connection's web base is compared with, so an ssh
+// remote must answer nothing and an http one must keep its port: a plaintext
+// loopback instance is addressed by both.
+func TestRemoteWebBase(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "HTTPS", raw: "https://github.com/cplieger/marotte.git", want: "https://github.com"},
+		{name: "SchemeAndHostLowerCased", raw: "HTTPS://GitHub.COM/a/b", want: "https://github.com"},
+		{name: "PortKept", raw: "http://127.0.0.1:3000/alice/app.git", want: "http://127.0.0.1:3000"},
+		{name: "UserinfoDropped", raw: "https://bob:secret@gitlab.com/group/sub/project.git", want: "https://gitlab.com"},
+		{name: "SpaceTrimmed", raw: "  https://git.example.test/team/thing.git\n", want: "https://git.example.test"},
+		{name: "SCPStyle", raw: "git@github.com:cplieger/marotte.git", want: ""},
+		{name: "SSHURL", raw: "ssh://git@gitlab.com/group/project.git", want: ""},
+		{name: "GitProtocol", raw: "git://git.example.test/team/thing.git", want: ""},
+		{name: "LocalPath", raw: "/srv/git/thing.git", want: ""},
+		{name: "RemoteHelper", raw: "ext::sh -c whoami", want: ""},
+		{name: "ControlCharInHost", raw: "https://git\x01hub.com/a/b", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := remoteWebBase(tc.raw); got != tc.want {
+				t.Errorf("remoteWebBase(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 // FuzzParseRemoteSlug pins the invariant that matters at this boundary: whatever a
 // remote URL contains, an ACCEPTED slug is a plain multi-segment path holding no
 // traversal, no C0 control, no DEL, no space, no backslash and no URL delimiter —

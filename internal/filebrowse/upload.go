@@ -51,9 +51,9 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	// Upload-target-directory gate: without this, an agent-triggered
 	// upload with dir=/config would silently land files inside the
-	// sensitive container. IsSensitive on the final per-file path (in
+	// sensitive container. Sensitive.Blocks on the final per-file path (in
 	// writeUploads) is the second layer.
-	if isProtectedDir(dirLoc.abs) {
+	if h.sensitive.protectedDir(dirLoc.abs) {
 		slog.Warn("filebrowse: upload blocked on protected dir", "dir", dirLoc.abs)
 		httpreply.Forbidden(w, "upload target is protected")
 		return
@@ -91,7 +91,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 			uploadErrorJSON(errNoSpaceLeft, nil))
 		return
 	}
-	uploaded, totalBytes, err := writeUploads(r.Context(), dirLoc, formFiles)
+	uploaded, totalBytes, err := writeUploads(r.Context(), dirLoc, formFiles, h.sensitive)
 	if err != nil {
 		respondUploadError(w, dirLoc.abs, uploaded, err)
 		return
@@ -160,7 +160,7 @@ var errInvalidFilename = errors.New("invalid filename")
 // files written earlier in the batch remain on disk, and their names ride
 // the error response. The context lets a client disconnect abort the
 // remaining files in a batch upload.
-func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader) (uploaded []string, total int64, err error) {
+func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader, sensitive Sensitive) (uploaded []string, total int64, err error) {
 	uploaded = make([]string, 0, len(files))
 	for _, fh := range files {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -173,11 +173,11 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 			return uploaded, total, fmt.Errorf("%w: %q", errInvalidFilename, fh.Filename)
 		}
 		dest := filepath.Join(dirLoc.abs, name)
-		// Per-file sensitive-path gate: isProtectedDir on the target
+		// Per-file sensitive-path gate: protectedDir on the target
 		// directory catches container-level drops, this blocks file-level
 		// overwrites of sensitive exact-match entries when the target
 		// directory itself is not sensitive.
-		if IsSensitive(dest) {
+		if sensitive.Blocks(dest) {
 			slog.Warn("filebrowse: upload rejected: sensitive dest",
 				"raw_name", logsafe.Field(fh.Filename), "dest", logsafe.Field(dest))
 			return uploaded, total, fmt.Errorf("%w: %q (protected)", errInvalidFilename, fh.Filename)

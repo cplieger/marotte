@@ -1,239 +1,277 @@
 package forges
 
-// The production PRSource's two rules: whose PRs (the author filter, which is
-// client-side because no CLI takes an author filter in the shape marotte calls
-// them), and which repos (the host-to-forge match).
+// The production PRSource's three rules: one ListMyPRs per connection per sweep
+// whatever the repository count, the rows kept to the repositories a workspace
+// clone tracks, and the clone join that decides which repository a clone is.
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/forgeapi"
+	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// newStubSource wires a managerPRSource whose every forge id resolves to one stub,
-// so a case exercises the source's own rules with no CLI on PATH.
-func newStubSource(ops ForgeOps, repos []PRRepo) PRSource {
-	return &managerPRSource{
-		provider: func(string) (ForgeOps, error) { return ops, nil },
-		repos:    func(context.Context) []PRRepo { return repos },
+// repoIDOf is the canonical repository id of selector, spelled out here rather
+// than through RepoRef.Encode so the join is checked against the rule itself.
+func repoIDOf(selector string) string {
+	return forgeapi.RepoIDPrefix + hex.EncodeToString([]byte(strings.ToLower(selector)))
+}
+
+// prIn is an open pull request in the repository selector names.
+func prIn(family forgeapi.Family, selector string, number int, check forgeapi.CheckState) forgeapi.PullRequest {
+	return forgeapi.PullRequest{
+		Ref:    forgeapi.PRRef{Number: number},
+		Repo:   forgeapi.RepoRef{Family: family, Selector: selector, DisplayPath: selector},
+		Title:  "PR " + selector,
+		State:  forgeapi.PRStateOpen,
+		Action: forgeapi.ActionState{Checks: check},
 	}
 }
 
-func TestMatchRepos(t *testing.T) {
-	configured := []ConfiguredForge{
-		{ID: "github:github.com", Kind: KindGitHub, Host: "GitHub.com", Connected: true},
-		{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", Connected: true},
-		{ID: "gitea:git.example", Kind: KindGitea, Host: "git.example", Connected: false},
-		{ID: "github:ghe.example", Kind: KindGitHub, Host: "ghe.example", Connected: true, CLIMissing: true},
-	}
-	cases := []struct {
-		name    string
-		origins []RepoOrigin
-		want    []PRRepo
-	}{
-		{
-			name:    "MatchesCaseInsensitively",
-			origins: []RepoOrigin{{Host: "github.com", Slug: "cplieger/marotte"}},
-			want:    []PRRepo{{ForgeID: "github:github.com", Slug: "cplieger/marotte"}},
-		},
-		{
-			name:    "KeepsAGitLabSubgroupSlugWhole",
-			origins: []RepoOrigin{{Host: "gitlab.com", Slug: "group/sub/project"}},
-			want:    []PRRepo{{ForgeID: "gitlab:gitlab.com", Slug: "group/sub/project"}},
-		},
-		{
-			name:    "DropsAnUnconnectedForge",
-			origins: []RepoOrigin{{Host: "git.example", Slug: "a/b"}},
-			want:    []PRRepo{},
-		},
-		{
-			// A cli_missing row is never probed anywhere else either, so polling
-			// through it would be the one place that tries.
-			name:    "DropsAForgeWhoseCLIIsGone",
-			origins: []RepoOrigin{{Host: "ghe.example", Slug: "a/b"}},
-			want:    []PRRepo{},
-		},
-		{
-			name:    "DropsAHostWithNoForgeAtAll",
-			origins: []RepoOrigin{{Host: "codeberg.org", Slug: "a/b"}},
-			want:    []PRRepo{},
-		},
-		{
-			name: "KeepsEveryMatchingRepo",
-			origins: []RepoOrigin{
-				{Host: "github.com", Slug: "a/one"},
-				{Host: "nowhere.test", Slug: "a/two"},
-				{Host: "gitlab.com", Slug: "a/three"},
-			},
-			want: []PRRepo{
-				{ForgeID: "github:github.com", Slug: "a/one"},
-				{ForgeID: "gitlab:gitlab.com", Slug: "a/three"},
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := MatchRepos(configured, tc.origins)
-			if len(got) != len(tc.want) {
-				t.Fatalf("got %d repos, want %d: %+v", len(got), len(tc.want), got)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Errorf("repo[%d] = %+v, want %+v", i, got[i], tc.want[i])
-				}
-			}
-		})
-	}
+// myPRsCore serves ListMyPRs from pages keyed by the cursor asked for and counts
+// every other read, which the poller must not make.
+type myPRsCore struct {
+	forgeapi.Core
+	pages  map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]
+	afters []forgeapi.Cursor
+	others int
 }
 
-// prStubOps is a ForgeOps whose only live methods are the two the source uses.
-type prStubOps struct {
-	ForgeOps // embedded so the unused methods are nil and a call to one panics loudly
-	login    string
-	loginErr error
-	prs      []PR
-	prsErr   error
-	listed   []string
-}
-
-func (s *prStubOps) Whoami(context.Context) (*User, error) {
-	if s.loginErr != nil {
-		return nil, s.loginErr
-	}
-	return &User{Login: s.login}, nil
-}
-
-func (s *prStubOps) ListPRs(_ context.Context, repo string, state ListState) ([]PR, error) {
-	s.listed = append(s.listed, repo+":"+string(state))
-	return s.prs, s.prsErr
-}
-
-// TestManagerPRSource_FiltersByAuthor is the rule that makes the notification
-// "a PR you opened" rather than "a PR in a repo you have".
-func TestManagerPRSource_FiltersByAuthor(t *testing.T) {
-	ops := &prStubOps{
-		login: "cplieger",
-		prs: []PR{
-			{Number: 1, Author: "cplieger", CheckStatus: checkPassing, Title: "mine"},
-			{Number: 2, Author: "renovate[bot]", CheckStatus: checkFailing, Title: "not mine"},
-			{Number: 3, Author: "CPlieger", CheckStatus: checkFailing, Title: "mine, other case"},
-		},
-	}
-	src := newStubSource(ops, []PRRepo{{ForgeID: "github:github.com", Slug: "cplieger/marotte"}})
-
-	got, err := src.OpenAuthoredPRs(t.Context())
+func (c *myPRsCore) ListMyPRs(_ context.Context, opts ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
+	set, err := forgeapi.ResolveList(opts...)
 	if err != nil {
-		t.Fatalf("OpenAuthoredPRs: %v", err)
+		return forgeapi.Page[forgeapi.PullRequest]{}, err
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d watched PRs, want 2 (own PRs only): %+v", len(got), got)
+	c.afters = append(c.afters, set.After)
+	return c.pages[set.After], nil
+}
+
+func (*myPRsCore) BudgetState() forgeapi.BudgetState {
+	return forgeapi.BudgetState{Remaining: forgeapi.BudgetRemainingUnknown}
+}
+
+func (c *myPRsCore) Whoami(context.Context) (forgeapi.Account, error) {
+	c.others++
+	return forgeapi.Account{Login: "bob"}, nil
+}
+
+func (c *myPRsCore) ListPRs(context.Context, forgeapi.RepoRef, ...forgeapi.ListOption) (forgeapi.Page[forgeapi.PullRequest], error) {
+	c.others++
+	return forgeapi.Page[forgeapi.PullRequest]{}, nil
+}
+
+// sourceManager is a manager over recs, each connected as bob with the client
+// cores names for its id.
+func sourceManager(t *testing.T, cores map[string]forgeapi.Core, recs ...connectionRecord) *Manager {
+	t.Helper()
+	// The boot Refresh registers a helper for every record in the global git
+	// config, which a package-wide config would accumulate test after test.
+	isolateGit(t)
+	stubPath(t)
+	cfg := t.TempDir()
+	for i := range recs {
+		seedStoreRecord(t, cfg, recs[i].ID, "bob")
 	}
-	// Case-insensitive, because git forges are inconsistent about the case they
-	// report a login in and a mismatch would silently watch nothing.
-	if got[0].Number != 1 || got[1].Number != 3 {
-		t.Errorf("watched the wrong PRs: %+v", got)
+	m := NewManager(cfg)
+	saveRecords(t, m.conns, recs...)
+	m.clients.newCore = func(rec *connectionRecord, _ []forgeapi.Option) (forgeapi.Core, error) {
+		if c, ok := cores[rec.ID]; ok {
+			return c, nil
+		}
+		return nil, errNoClient
 	}
-	if len(ops.listed) != 1 || !strings.HasSuffix(ops.listed[0], ":open") {
-		t.Errorf("listed %v, want one open-state listing", ops.listed)
+	if err := m.Refresh(t.Context()); err != nil {
+		t.Fatalf("Setup: Refresh() = %v", err)
+	}
+	return m
+}
+
+func gitlabRecord() connectionRecord {
+	return connectionRecord{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com"}
+}
+
+func localGiteaRecord() connectionRecord {
+	return connectionRecord{
+		ID: "gitea:127.0.0.1:3000", Kind: KindGitea, Host: "127.0.0.1:3000",
+		WebBaseURL: "http://127.0.0.1:3000", PlaintextHTTP: true, PrivateAddresses: true,
 	}
 }
 
-// TestManagerPRSource_NoLoginWatchesNothing: without an identity there is no author
-// to filter on, so watching everything would notify about other people's PRs.
-func TestManagerPRSource_NoLoginWatchesNothing(t *testing.T) {
-	ops := &prStubOps{login: "", prs: []PR{{Number: 1, Author: "someone", CheckStatus: checkPassing}}}
-	src := newStubSource(ops, []PRRepo{{ForgeID: "github:github.com", Slug: "a/b"}})
-	got, err := src.OpenAuthoredPRs(t.Context())
-	if err != nil {
-		t.Fatalf("OpenAuthoredPRs: %v", err)
+func fixedOrigins(origins ...RepoOrigin) func(context.Context) []RepoOrigin {
+	return func(context.Context) []RepoOrigin { return origins }
+}
+
+// errNoClient is the failure of a connection sourceManager names no core for.
+var errNoClient = errors.New("no client for this connection")
+
+// firstPage is the cursor of a walk that has not started.
+func firstPage(PRConnection, Scope) forgeapi.Cursor { return "" }
+
+// trackedVerdicts sweeps a push-only poller over src once and answers the
+// verdict it holds per subject key.
+func trackedVerdicts(t *testing.T, src PRSource) map[string]string {
+	t.Helper()
+	p := NewPRStatusPoller(src, &fakeNotifier{}, (&fakeGate{push: true}).Open)
+	p.sweep(t.Context())
+	got := make(map[string]string, len(p.seen))
+	for key, tr := range p.seen {
+		got[key] = tr.check
 	}
-	if len(got) != 0 {
-		t.Errorf("watched %d PRs with no resolved identity: %+v", len(got), got)
+	return got
+}
+
+func subjectKey(forgeID, selector string, number int) string {
+	return marotte.PRSubject(forgeID, repoIDOf(selector), number).Key
+}
+
+func TestCloneRepos_AnswersDirForgeAndCanonicalRepoID(t *testing.T) {
+	rows := []ConfiguredForge{
+		{ID: "github:github.com", Kind: KindGitHub, Host: "github.com", webBase: "https://github.com", Connected: true},
+		{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", webBase: "https://gitlab.com", Connected: true},
+		{ID: "gitea:127.0.0.1:3000", Kind: KindGitea, Host: "127.0.0.1:3000", webBase: "http://127.0.0.1:3000"},
 	}
-	if len(ops.listed) != 0 {
-		t.Errorf("listed PRs before resolving an identity: %v", ops.listed)
+	origins := []RepoOrigin{
+		{Dir: "sandbox", WebBase: "https://gitlab.com", Slug: "forgeapi-live/nested/sandbox"},
+		{Dir: "marotte-ssh", WebBase: "", Slug: "cplieger/marotte"},
+		{Dir: "upper", WebBase: "https://GitHub.com:443", Slug: "Bob/App"},
+		{Dir: "local", WebBase: "http://127.0.0.1:3000", Slug: "alice/app"},
+		{Dir: "other-instance", WebBase: "http://127.0.0.1:4000", Slug: "alice/app"},
+		{Dir: "elsewhere", WebBase: "https://codeberg.org", Slug: "a/b"},
+		{Dir: "plaintext-github", WebBase: "http://github.com", Slug: "bob/app"},
+		{Dir: "too-deep", WebBase: "https://github.com", Slug: "a/b/c"},
+	}
+	want := []CloneRepo{
+		{Dir: "sandbox", ForgeID: "gitlab:gitlab.com", RepoID: repoIDOf("forgeapi-live/nested/sandbox")},
+		{Dir: "upper", ForgeID: "github:github.com", RepoID: repoIDOf("bob/app")},
+		{Dir: "local", ForgeID: "gitea:127.0.0.1:3000", RepoID: repoIDOf("alice/app")},
+	}
+	if got := CloneRepos(rows, origins); !slices.Equal(got, want) {
+		t.Errorf("CloneRepos() =\n%+v\nwant\n%+v\n(an ssh remote, another port, another forge's origin, another scheme and a path the family refuses join nothing)",
+			got, want)
 	}
 }
 
-// TestManagerPRSource_NoReposIsOneCheapAnswer: an empty repo set must not reach a
-// provider at all.
-func TestManagerPRSource_NoReposIsOneCheapAnswer(t *testing.T) {
-	ops := &prStubOps{login: "cplieger"}
-	src := newStubSource(ops, nil)
-	got, err := src.OpenAuthoredPRs(t.Context())
-	if err != nil || len(got) != 0 {
-		t.Fatalf("got (%v, %v), want (nil, nil)", got, err)
+func TestSource_KeepsOnlyRowsInATrackedClone(t *testing.T) {
+	core := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {Items: []forgeapi.PullRequest{
+		prIn(forgeapi.FamilyGitHub, "bob/app", 1, forgeapi.CheckPassing),
+		prIn(forgeapi.FamilyGitHub, "bob/elsewhere", 2, forgeapi.CheckFailing),
+		prIn(forgeapi.FamilyGitHub, "carol/app", 3, forgeapi.CheckFailing),
+	}}}}
+	m := sourceManager(t, map[string]forgeapi.Core{"github:github.com": core}, githubRecord())
+	src := NewManagerPRSource(m, fixedOrigins(
+		RepoOrigin{Dir: "app", WebBase: "https://github.com", Slug: "bob/app"},
+		RepoOrigin{Dir: "ssh-clone", WebBase: "", Slug: "carol/app"},
+	))
+
+	reads := src.Read(t.Context(), false, firstPage)
+	wantConn := PRConnection{ID: "github:github.com", Account: "bob", WebBase: "https://github.com"}
+	if len(reads) != 1 || reads[0].Conn != wantConn {
+		t.Fatalf("Read() = %+v, want one read of %+v", reads, wantConn)
 	}
-	if len(ops.listed) != 0 {
-		t.Errorf("consulted a provider with no repos in scope: %v", ops.listed)
+	got := trackedVerdicts(t, src)
+	want := map[string]string{subjectKey("github:github.com", "bob/app", 1): checkPassing}
+	if !maps.Equal(got, want) {
+		t.Errorf("tracked verdicts = %v, want %v: only the tracked repository's, and an ssh clone tracks none", got, want)
 	}
 }
 
-// TestManagerPRSource_ResolvesWhoamiOncePerForge: several watched repos usually
-// share one connection, and Whoami is a subprocess.
-func TestManagerPRSource_ResolvesWhoamiOncePerForge(t *testing.T) {
-	ops := &whoamiCountingOps{login: "cplieger"}
-	src := newStubSource(ops, []PRRepo{
-		{ForgeID: "github:github.com", Slug: "a/one"},
-		{ForgeID: "github:github.com", Slug: "a/two"},
-		{ForgeID: "github:github.com", Slug: "a/three"},
+func TestSource_MatchesAMixedCaseRemoteToTheCanonicalRepoID(t *testing.T) {
+	core := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {Items: []forgeapi.PullRequest{
+		prIn(forgeapi.FamilyGitHub, "Bob/App", 1, forgeapi.CheckPending),
+		prIn(forgeapi.FamilyGitHub, "carol/tool", 2, forgeapi.CheckPending),
+	}}}}
+	m := sourceManager(t, map[string]forgeapi.Core{"github:github.com": core}, githubRecord())
+	src := NewManagerPRSource(m, fixedOrigins(
+		RepoOrigin{Dir: "app", WebBase: "https://github.com", Slug: "bob/app"},
+		RepoOrigin{Dir: "tool", WebBase: "https://github.com", Slug: "Carol/Tool"},
+	))
+
+	got := trackedVerdicts(t, src)
+	want := map[string]string{
+		subjectKey("github:github.com", "bob/app", 1):    checkPending,
+		subjectKey("github:github.com", "carol/tool", 2): checkPending,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("tracked verdicts = %v, want %v: a remote and the forge spelling one repository differently are one repository",
+			got, want)
+	}
+}
+
+func TestSource_OneListMyPRsPerConnectionPerSweep(t *testing.T) {
+	github := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{
+		"":   {Items: []forgeapi.PullRequest{prIn(forgeapi.FamilyGitHub, "bob/one", 1, forgeapi.CheckPending)}, Next: "n2"},
+		"n2": {Items: []forgeapi.PullRequest{prIn(forgeapi.FamilyGitHub, "bob/two", 2, forgeapi.CheckPending)}},
+	}}
+	gitlab := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
+	gitea := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
+	codeberg := &myPRsCore{pages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{"": {}}}
+	codebergRec := connectionRecord{ID: "codeberg:codeberg.org", Kind: KindCodeberg, Host: "codeberg.org"}
+	m := sourceManager(t, map[string]forgeapi.Core{
+		"github:github.com": github, "gitlab:gitlab.com": gitlab, "gitea:127.0.0.1:3000": gitea,
+		"codeberg:codeberg.org": codeberg,
+	}, githubRecord(), gitlabRecord(), localGiteaRecord(), codebergRec)
+	// Codeberg keeps its record and loses its credential, so its row is not connected.
+	if err := m.store.Delete(codebergRec.ID); err != nil {
+		t.Fatalf("Setup: delete the codeberg credential: %v", err)
+	}
+	m.Invalidate()
+	src := NewManagerPRSource(m, fixedOrigins(
+		RepoOrigin{Dir: "one", WebBase: "https://github.com", Slug: "bob/one"},
+		RepoOrigin{Dir: "two", WebBase: "https://github.com", Slug: "bob/two"},
+		RepoOrigin{Dir: "three", WebBase: "https://github.com", Slug: "bob/three"},
+		RepoOrigin{Dir: "group-a", WebBase: "https://gitlab.com", Slug: "group/a"},
+		RepoOrigin{Dir: "group-b", WebBase: "https://gitlab.com", Slug: "group/sub/b"},
+		RepoOrigin{Dir: "berg", WebBase: "https://codeberg.org", Slug: "bob/berg"},
+	))
+	p := NewPRStatusPoller(src, &fakeNotifier{}, (&fakeGate{push: true}).Open)
+
+	p.sweep(t.Context())
+	p.sweep(t.Context())
+
+	if !slices.Equal(github.afters, []forgeapi.Cursor{"", "n2"}) {
+		t.Errorf("GitHub ListMyPRs cursors over two sweeps = %q, want one call a sweep, the second from the first's Next",
+			github.afters)
+	}
+	if len(gitlab.afters) != 2 {
+		t.Errorf("GitLab ListMyPRs calls over two sweeps = %d, want 2, one a sweep whatever its two tracked repositories",
+			len(gitlab.afters))
+	}
+	if len(gitea.afters) != 0 {
+		t.Errorf("Gitea ListMyPRs calls = %d, want 0: no clone tracks a repository there", len(gitea.afters))
+	}
+	if len(codeberg.afters) != 0 {
+		t.Errorf("Codeberg ListMyPRs calls = %d, want 0: a connection with no credential is not read", len(codeberg.afters))
+	}
+	if n := github.others + gitlab.others + gitea.others; n != 0 {
+		t.Errorf("the sweeps made %d identity or per-repository reads, want none", n)
+	}
+}
+
+func TestSource_NothingConnectedReadsNoOrigins(t *testing.T) {
+	stubPath(t)
+	m := NewManager(t.TempDir())
+	saveRecords(t, m.conns, githubRecord())
+	if err := m.Refresh(t.Context()); err != nil {
+		t.Fatalf("Setup: Refresh() = %v", err)
+	}
+	read := 0
+	src := NewManagerPRSource(m, func(context.Context) []RepoOrigin {
+		read++
+		return []RepoOrigin{{Dir: "app", WebBase: "https://github.com", Slug: "bob/app"}}
 	})
-	if _, err := src.OpenAuthoredPRs(t.Context()); err != nil {
-		t.Fatalf("OpenAuthoredPRs: %v", err)
-	}
-	if ops.whoamis != 1 {
-		t.Errorf("resolved the identity %d times for one forge, want 1", ops.whoamis)
-	}
-	if len(ops.listed) != 3 {
-		t.Errorf("listed %d repos, want 3: %v", len(ops.listed), ops.listed)
-	}
-}
 
-// TestManagerPRSource_APerRepoFailureIsSkipped: one archived repo or one permission
-// wall must not stop the other repos' PRs from being watched.
-func TestManagerPRSource_APerRepoFailureIsSkipped(t *testing.T) {
-	ops := &failFirstOps{
-		login: "cplieger",
-		prs:   []PR{{Number: 4, Author: "cplieger", CheckStatus: checkPassing}},
+	for _, present := range []bool{false, true} {
+		if reads := src.Read(t.Context(), present, firstPage); len(reads) != 0 {
+			t.Errorf("Read(present %v) with no stored credential = %+v, want no read", present, reads)
+		}
 	}
-	src := newStubSource(ops, []PRRepo{
-		{ForgeID: "github:github.com", Slug: "a/broken"},
-		{ForgeID: "github:github.com", Slug: "a/fine"},
-	})
-	got, err := src.OpenAuthoredPRs(t.Context())
-	if err != nil {
-		t.Fatalf("a per-repo failure became a total failure: %v", err)
+	if read != 0 {
+		t.Errorf("the clones' origins were read %d times with nothing connected, want 0", read)
 	}
-	if len(got) != 1 {
-		t.Errorf("got %d watched PRs, want 1 from the healthy repo: %+v", len(got), got)
-	}
-}
-
-// whoamiCountingOps counts identity resolutions, which is how the once-per-forge
-// rule is asserted rather than assumed.
-type whoamiCountingOps struct {
-	prStubOps
-	whoamis int
-}
-
-func (o *whoamiCountingOps) Whoami(ctx context.Context) (*User, error) {
-	o.whoamis++
-	return o.prStubOps.Whoami(ctx)
-}
-
-// failFirstOps fails the FIRST ListPRs and serves the rest, which is the shape of
-// one archived repo among several healthy ones.
-type failFirstOps struct {
-	prStubOps
-	failed bool
-}
-
-func (o *failFirstOps) ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error) {
-	if !o.failed {
-		o.failed = true
-		o.listed = append(o.listed, repo+":failed")
-		return nil, errors.New("repository not found")
-	}
-	return o.prStubOps.ListPRs(ctx, repo, state)
 }

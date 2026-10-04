@@ -1,5 +1,6 @@
-// Actions for the Forge auth panel: sign-out, device flow start,
-// clone repo, delete local repo. Batch operations (clone_all,
+// Actions for the Forge auth panel: sign-out, probe, owner scopes, device grant
+// start and cancel, forge detection, token connect, a repository page, clone
+// repo, delete local repo. Batch operations (clone_all,
 // delete_all) live in forge-auth.ts — they fan out per-repo
 // action.dispatch() calls with button progress and aggregate toast.
 // ---------------------------------------------------------------------------
@@ -13,9 +14,51 @@ import {
   classifyFetchError,
 } from "./index.js";
 
-import type { DeviceFlowResponse, ForgeKind } from "../wire/types.gen.js";
+import {
+  decodeDetection,
+  decodeOwnerScopes,
+  decodeProbeResult,
+  decodeRepoList,
+} from "../wire/decoders.gen.js";
+import type {
+  Detection,
+  DeviceFlowResponse,
+  ForgeKind,
+  OwnerScopes,
+  ProbeResult,
+  RepoList,
+} from "../wire/types.gen.js";
 
 // --- Types local to this slice ---
+
+/** The per-connection fields a token connect and a device-grant start carry
+ *  beside the credential. An unset field is absent, so the server's default
+ *  applies. */
+export interface ConnectionOptions {
+  web_base_url?: string;
+  proxy?: string;
+  private_addresses?: boolean;
+  plaintext_http?: boolean;
+  ca_pem?: string;
+  client_cert_pem?: string;
+  client_key_pem?: string;
+}
+
+/** The two families with a device grant. */
+export type DeviceKind = Extract<ForgeKind, "github" | "gitlab">;
+
+interface StartDeviceFlowArgs {
+  kind: DeviceKind;
+  host: string;
+  /** Empty on the public instance, which signs in with Marotte's own application. */
+  clientId: string;
+  options: ConnectionOptions;
+}
+
+interface CancelDeviceFlowArgs {
+  kind: DeviceKind;
+  grantId: string;
+}
 
 interface CloneArgs {
   url: string;
@@ -27,39 +70,104 @@ interface DeleteLocalArgs {
   repoName: string;
 }
 
-interface SignOutArgs {
+interface ConnectionArgs {
   forgeId: string;
 }
 
 // --- Actions ---
 
-/** Start the GitHub OAuth device flow. Returns the device flow
- *  response on success or null on failure. Error toast suppressed —
- *  the callsite renders inline status instead. */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const startDeviceFlow = apiAction<void, DeviceFlowResponse>({
+/** Start a device grant. Error toast suppressed: the callsite renders the
+ *  refusal inline. */
+export const startDeviceFlow = apiAction<StartDeviceFlowArgs, DeviceFlowResponse>({
   name: "forge.start_device_flow",
   dedupe: true,
   retryable: retryNetwork,
-  request: () => ({
+  request: ({ kind, host, clientId, options }) => ({
     method: "POST",
-    path: "/api/forges/oauth/github/start",
-    body: {},
+    path: `/api/forges/oauth/${kind}/start`,
+    body: { host, ...(clientId === "" ? {} : { client_id: clientId }), ...options },
   }),
   error: false,
 });
 
-/** Sign out of a forge account (delete the token).
- *  Not retryable: a timed-out DELETE may have succeeded server-side;
- *  retrying would hit 404 and surface a misleading error toast. */
+/** Withdraw a started grant from polling. Retryable: the server answers 204
+ *  whether or not it still holds the grant. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no result
+export const cancelDeviceFlow = apiAction<CancelDeviceFlowArgs, void>({
+  name: "forge.cancel_device_flow",
+  retryable: retryNetwork,
+  request: ({ kind, grantId }) => ({
+    method: "POST",
+    path: `/api/forges/oauth/${kind}/cancel`,
+    body: { grant_id: grantId },
+  }),
+  error: false,
+});
+
+/** Sign out of a forge account (delete the token). Not retryable: a timed-out
+ *  DELETE may have succeeded server-side, and a retry would answer 404. Error
+ *  toast suppressed: the account row renders the refusal. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const signOut = apiAction<SignOutArgs, void>({
+export const signOut = apiAction<ConnectionArgs, void>({
   name: "forge.sign_out",
   request: ({ forgeId }) => ({
     method: "DELETE",
     path: `/api/forges/${encodeURIComponent(forgeId)}`,
   }),
-  error: "Could not sign out",
+  error: false,
+});
+
+/** Read the account behind a connection; the answer is the row as the probe
+ *  left it. Error toast suppressed: the account row renders the outcome. */
+export const probeForge = apiAction<ConnectionArgs, ProbeResult>({
+  name: "forge.probe",
+  retryable: retryNetwork,
+  request: ({ forgeId }) => ({
+    method: "POST",
+    path: `/api/forges/${encodeURIComponent(forgeId)}/probe`,
+    body: {},
+  }),
+  decode: (data) => decodeProbeResult(data),
+  error: false,
+});
+
+interface RepoPageArgs {
+  forgeId: string;
+  /** The cursor the previous page answered. */
+  after: string;
+}
+
+/** Read the page of a connection's repositories after the one that named
+ *  `after`. Error toast suppressed: the repository list renders the refusal. */
+export const listRepoPage = apiAction<RepoPageArgs, RepoList>({
+  name: "forge.list_repo_page",
+  dedupe: true,
+  retryable: retryNetwork,
+  request: ({ forgeId, after }) => ({
+    method: "GET",
+    path: `/api/forges/${encodeURIComponent(forgeId)}/repos?${new URLSearchParams({ after }).toString()}`,
+  }),
+  decode: (data) => decodeRepoList(data),
+  error: false,
+});
+
+interface SetOwnersArgs {
+  forgeId: string;
+  owners: readonly string[];
+}
+
+/** Replace a connection's owner scopes with the whole list. Error toast
+ *  suppressed: the owners form renders the refusal. */
+export const setOwners = apiAction<SetOwnersArgs, OwnerScopes>({
+  name: "forge.set_owners",
+  retryable: retryNetwork,
+  request: ({ forgeId, owners }) => ({
+    method: "PUT",
+    path: `/api/forges/${encodeURIComponent(forgeId)}/owners`,
+    body: { owners },
+  }),
+  decode: (data) => decodeOwnerScopes(data),
+  error: false,
 });
 
 /** How long the clone may go without the server streaming anything before
@@ -204,6 +312,7 @@ interface ConnectPATArgs {
   kind: ForgeKind;
   host: string;
   token: string;
+  options: ConnectionOptions;
 }
 
 /** Connect a forge account via PAT. Error toast suppressed — the
@@ -213,10 +322,30 @@ export const connectPAT = apiAction<ConnectPATArgs, { status?: string; error?: s
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: ({ kind, host, token }) => ({
+  request: ({ kind, host, token, options }) => ({
     method: "POST",
     path: `/api/forges/${encodeURIComponent(`${kind}:${host}`)}/login/pat`,
-    body: { token },
+    body: { token, ...options },
   }),
+  error: false,
+});
+
+interface DetectArgs {
+  host: string;
+  token: string;
+  options: ConnectionOptions;
+}
+
+/** Ask the server at `host` which forge family it runs, with the token the
+ *  connect after it sends. Error toast suppressed: the form renders the
+ *  refusal, and `family_undetected` is its own sentence there. */
+export const detectForge = apiAction<DetectArgs, Detection>({
+  name: "forge.detect",
+  request: ({ host, token, options }) => ({
+    method: "POST",
+    path: "/api/forges/detect",
+    body: { token, ...options, web_base_url: options.web_base_url ?? `https://${host}` },
+  }),
+  decode: (data) => decodeDetection(data),
   error: false,
 });

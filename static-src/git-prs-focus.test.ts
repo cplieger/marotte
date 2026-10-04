@@ -19,12 +19,17 @@ import { prIdentity } from "./push-subject.js";
  *  `pendingFocus` slot. */
 let bootSeq = 0;
 
-const apiGet = vi.fn();
+const apiGetTyped = vi.fn();
 const ensureForges = vi.fn();
 
-vi.mock("./api-client.js", () => ({ apiGet, apiPost: vi.fn() }));
+vi.mock("./api-client.js", () => ({ apiGetTyped, apiPost: vi.fn() }));
 vi.mock("./forge-store.js", () => ({ ensureForges }));
-vi.mock("./bus.js", () => ({ onSSE: vi.fn() }));
+vi.mock("./bus.js", () => ({
+  BUS_RECONCILE: "transport:reconcile",
+  onSSE: vi.fn(),
+  onBus: vi.fn(),
+}));
+vi.mock("./sse-adapter.js", () => ({ presentedTag: () => "" }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn(async () => true) }));
 vi.mock("./merge-dialog.js", () => ({ openMergeMethodDialog: vi.fn(async () => "rebase") }));
 vi.mock("./actions/index.js", () => ({
@@ -40,7 +45,12 @@ vi.mock("./actions/git-prs.js", () => {
     armAutoMerge: stub,
     reopenPR: stub,
     rerunChecks: stub,
+    readCapabilities: { dispatch: vi.fn(() => Promise.resolve(null)), cancel: vi.fn() },
+    readMergeStatus: { dispatch: vi.fn(() => Promise.resolve(null)), cancel: vi.fn() },
     refreshPRs: stub,
+    requestPRCycle: stub,
+    sendCloseOnUnload: vi.fn(),
+    watchPRView: stub,
   };
 });
 vi.mock("./search-popup.js", () => ({
@@ -57,34 +67,87 @@ vi.mock("@cplieger/ui-primitives/dialog", () => ({
 
 const FORGE_ID = "github:github.com";
 
-const forge = { id: FORGE_ID, kind: "github" as const, host: "github.com", connected: true };
-const repos = [
-  { owner: "cplieger", name: "one", full_name: "cplieger/one" },
-  { owner: "cplieger", name: "two", full_name: "cplieger/two" },
+/** The canonical ids of cplieger/one, cplieger/two and cplieger/three. */
+const REPO_IDS = {
+  one: "v1.63706c69656765722f6f6e65",
+  two: "v1.63706c69656765722f74776f",
+  three: "v1.63706c69656765722f7468726565",
+} as const;
+
+interface RepoRow {
+  repo_id: string;
+  full_name: string;
+}
+
+const forge = {
+  id: FORGE_ID,
+  kind: "github" as const,
+  host: "github.com",
+  connected: true,
+  reconnect_required: false,
+};
+const repos: RepoRow[] = [
+  { repo_id: REPO_IDS.one, full_name: "cplieger/one" },
+  { repo_id: REPO_IDS.two, full_name: "cplieger/two" },
 ];
 
-function pr(number: number): Record<string, unknown> {
+function pr(number: number, repo: RepoRow): Record<string, unknown> {
   return {
+    repo_id: repo.repo_id,
+    repo: repo.full_name,
     number,
     title: `change ${String(number)}`,
     state: "open",
     source_branch: "feat",
     target_branch: "main",
     url: `https://example.test/pr/${String(number)}`,
+    action: {
+      mergeable: "yes",
+      checks: "unknown",
+      checks_passing: 0,
+      checks_failing: 0,
+      checks_pending: 0,
+      checks_neutral: 0,
+      checks_unknown: 0,
+      checks_total: 0,
+      auto_merge_armed: "no",
+      queue_state: "none",
+      queue_position: -1,
+      merge_blocked: "none",
+    },
   };
 }
 
-/** Answer the whole fan-out immediately: one PR per repo, numbered 1 and 2. */
-function routeAPI(): void {
+/** Answer the inventory read immediately: one PR per repo, #1 in cplieger/one and
+ *  #2 in every other. */
+function routeAPI(rows: readonly RepoRow[] = repos): void {
   ensureForges.mockImplementation(() =>
     Promise.resolve({ forges: [forge], kinds: ["github"] as const }),
   );
-  apiGet.mockImplementation((url: string) => {
-    if (url.includes("/repos?") || url.endsWith("/repos")) {
-      return Promise.resolve({ repos });
-    }
-    return Promise.resolve({ prs: [pr(url.includes("/one/") ? 1 : 2)] });
-  });
+  const list = {
+    entries: [
+      {
+        forge_id: FORGE_ID,
+        state: "ready",
+        cycle_id: "1",
+        credential: "valid",
+        scopes: [
+          {
+            scope: "owner",
+            owner: "cplieger",
+            rows: rows.map((r) => pr(r.repo_id === REPO_IDS.one ? 1 : 2, r)),
+          },
+        ],
+        clones: [],
+        fetched_at: 1,
+      },
+    ],
+    subject: [],
+    viewing: false,
+  };
+  apiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
+    Promise.resolve(decode(list)),
+  );
 }
 
 async function load(): Promise<typeof ModPRs> {
@@ -94,9 +157,10 @@ async function load(): Promise<typeof ModPRs> {
   )) as typeof ModPRs;
 }
 
-/** The identity a row of `repo` carries, built the way the tab builds it. */
-function identityFor(repo: string, number: number): string {
-  return prIdentity(FORGE_ID, `cplieger/${repo}`, number);
+/** The identity a row of cplieger/`repo` carries, keyed on its repository id as
+ *  the server mints the subject. */
+function identityFor(repo: keyof typeof REPO_IDS, number: number): string {
+  return prIdentity(FORGE_ID, REPO_IDS[repo], number);
 }
 
 async function frames(n: number): Promise<void> {
@@ -116,6 +180,17 @@ async function until(check: () => boolean, what: string, max = 30): Promise<void
     if (check()) {
       break;
     }
+    await frames(1);
+  }
+  expect(check(), what).toBe(true);
+}
+
+/** Poll `check` once a frame until it answers or `ms` pass. A smooth scroll moves
+ *  on the compositor's clock, and with the frame-rate limit lifted thirty frames
+ *  can be over before it has moved a pixel. */
+async function untilMs(check: () => boolean, what: string, ms: number): Promise<void> {
+  const deadline = performance.now() + ms;
+  while (!check() && performance.now() < deadline) {
     await frames(1);
   }
   expect(check(), what).toBe(true);
@@ -147,9 +222,11 @@ function rowFor(identity: string): HTMLElement | null {
   return mount().querySelector<HTMLElement>(`[data-pr="${CSS.escape(identity)}"]`);
 }
 
-beforeEach(() => {
-  apiGet.mockReset();
+beforeEach(async () => {
+  apiGetTyped.mockReset();
   ensureForges.mockReset();
+  const { _resetForTest } = await import("./git-prs-state.js");
+  _resetForTest();
   // The real `#git-view` scroll container, tall content above the mount, so a
   // scroll into view has somewhere to go and `preserveGitScroll` has a scrollTop
   // to save and restore.
@@ -181,20 +258,20 @@ describe("requestPRFocus", { timeout: testTimeoutFor(framesBudgetMs(30)) }, () =
     expect(mount().querySelectorAll(".deep-link-flash")).toHaveLength(1);
   });
 
-  it("compares case-insensitively, because the two sides come from two sources", async () => {
-    // The subject's repo slug is parsed from the LOCAL origin URL while the tab's
-    // `full_name` is the forge's own listing field, so a case difference is a real
-    // arrival rather than a hypothetical.
-    routeAPI();
+  it("keys the row on the repository id, whatever the listing's display path", async () => {
+    // The server names the repository by its canonical id, so a listing that spells
+    // the path differently from the clone's remote still holds the notified row.
+    routeAPI([{ repo_id: REPO_IDS.two, full_name: "CPlieger/Two" }]);
     const { refreshPRs, requestPRFocus } = await load();
     await refreshPRs();
 
     const identity = identityFor("two", 2);
-    requestPRFocus(identity.toUpperCase());
+    requestPRFocus(identity);
     await until(
       () => rowFor(identity)?.classList.contains("deep-link-flash") === true,
-      "the differently-cased identity found its row",
+      "the identity keyed on the repository id found its row",
     );
+    expect(rowFor(prIdentity(FORGE_ID, "CPlieger/Two", 2))).toBeNull();
   });
 
   it("force-opens a reader-collapsed section and leaves their collapse standing", async () => {
@@ -270,6 +347,6 @@ describe("requestPRFocus", { timeout: testTimeoutFor(framesBudgetMs(30)) }, () =
     view().scrollTop = 0;
 
     requestPRFocus(identityFor("two", 2));
-    await until(() => view().scrollTop > 0, "the scroll into view survived the restore");
+    await untilMs(() => view().scrollTop > 0, "the scroll into view survived the restore", 2_000);
   });
 });

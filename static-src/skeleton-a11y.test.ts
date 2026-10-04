@@ -96,7 +96,7 @@ describe("every painter's root is hidden from the accessibility tree", () => {
     ["loadMoreSkeleton", () => loadMoreSkeleton()],
     ["editorDocSkeleton", () => editorDocSkeleton()],
     ["fileRowsSkeleton", () => fileRowsSkeleton()],
-    ["gitRepoSkeleton", () => gitRepoSkeleton({ widths: ["40%"] }).wrap],
+    ["gitRepoSkeleton", () => gitRepoSkeleton({ widths: ["40%"] })],
     ["skeletonRows", () => skeletonRows("list-row", [[{ w: "50%" }]])],
     ["skeletonField", () => skeletonField()],
   ];

@@ -14,7 +14,7 @@ import (
 func TestWriteWorkspace_Empty(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
-	writeWorkspace(t.Context(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir)
 	if !strings.Contains(b.String(), "Empty.") {
 		t.Error("expected 'Empty.' for empty workspace")
 	}
@@ -26,7 +26,7 @@ func TestWriteWorkspace_WithFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch"), 0o644)
 
 	var b strings.Builder
-	writeWorkspace(t.Context(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir)
 	out := b.String()
 	if !strings.Contains(out, "go.mod") {
 		t.Error("missing go.mod in notable files")
@@ -42,7 +42,7 @@ func TestWriteWorkspace_WithGitRepo(t *testing.T) {
 	os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(t.Context(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir)
 	out := b.String()
 	if !strings.Contains(out, "myrepo") {
 		t.Error("missing git repo")
@@ -58,7 +58,7 @@ func TestWriteWorkspace_WithDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "docs"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(t.Context(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir)
 	out := b.String()
 	if !strings.Contains(out, "src") {
 		t.Error("missing src directory")
@@ -75,7 +75,7 @@ func TestWriteWorkspace_OmitsEmptySectionHeaders(t *testing.T) {
 			t.Fatal(err)
 		}
 		var b strings.Builder
-		writeWorkspace(t.Context(), &b, dir, nil)
+		writeWorkspace(t.Context(), &b, dir)
 		out := b.String()
 		if strings.Contains(out, "### Git repositories") {
 			t.Errorf("Git repositories header emitted with zero repos:\n%s", out)
@@ -89,7 +89,7 @@ func TestWriteWorkspace_OmitsEmptySectionHeaders(t *testing.T) {
 		// Only a README (a file, not a dir) -> dirs empty, isRoot false.
 		mustWriteFile(t, filepath.Join(dir, "README.md"), "A workspace readme line\n")
 		var b strings.Builder
-		writeWorkspace(t.Context(), &b, dir, nil)
+		writeWorkspace(t.Context(), &b, dir)
 		out := b.String()
 		if strings.Contains(out, "### Directories") {
 			t.Errorf("Directories header emitted with zero dirs:\n%s", out)
@@ -124,7 +124,7 @@ func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writeWorkspace(t.Context(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir)
 	out := b.String()
 	checks := []string{
 		"Always-loaded steering",
@@ -152,7 +152,7 @@ func TestWriteWorkspace_ScratchGuidance(t *testing.T) {
 		dir := t.TempDir()
 		mustWriteFile(t, filepath.Join(dir, "myrepo", ".git", "HEAD"), "ref: refs/heads/main\n")
 		var b strings.Builder
-		writeWorkspace(t.Context(), &b, dir, nil)
+		writeWorkspace(t.Context(), &b, dir)
 		out := b.String()
 		for _, want := range []string{
 			"### Scratch files",
@@ -174,7 +174,7 @@ func TestWriteWorkspace_ScratchGuidance(t *testing.T) {
 			t.Fatal(err)
 		}
 		var b strings.Builder
-		writeWorkspace(t.Context(), &b, dir, nil)
+		writeWorkspace(t.Context(), &b, dir)
 		if out := b.String(); strings.Contains(out, "### Scratch files") {
 			t.Errorf("scratch guidance emitted with zero repos:\n%s", out)
 		}
@@ -186,7 +186,7 @@ func TestWriteWorkspace_ScratchGuidance(t *testing.T) {
 		mustWriteFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
 		mustWriteFile(t, filepath.Join(dir, "nested", ".git", "HEAD"), "ref: refs/heads/main\n")
 		var b strings.Builder
-		writeWorkspace(t.Context(), &b, dir, nil)
+		writeWorkspace(t.Context(), &b, dir)
 		if out := b.String(); strings.Contains(out, "### Scratch files") {
 			t.Errorf("scratch guidance emitted with the root itself a repo:\n%s", out)
 		}
@@ -201,7 +201,7 @@ func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
 	}
 	// Repo exists but has no .kiro/steering/.
 	var b strings.Builder
-	writeWorkspace(t.Context(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir)
 	out := b.String()
 	if strings.Contains(out, "Per-repo .kiro protocol") {
 		t.Errorf("protocol section emitted with no per-repo steering\n--- output ---\n%s", out)
@@ -229,7 +229,7 @@ func TestWriteRepoEntry_RendersAllFields(t *testing.T) {
 		`{"version":"v1","hooks":[{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}]}`)
 
 	var b strings.Builder
-	writeRepoEntry(&b, work, "myrepo", nil)
+	writeRepoEntry(&b, work, "myrepo")
 	out := b.String()
 
 	checks := map[string]string{
@@ -249,27 +249,45 @@ func TestWriteRepoEntry_RendersAllFields(t *testing.T) {
 	}
 }
 
-// TestWriteRepoEntry_ForgeCLIAndHookFields verifies the forge-CLI guidance
-// line (gated on the connected forge kinds) and the per-hook name +
-// trigger label + command preview render for a repo with a recognised
-// origin and a v1 hook document.
-func TestWriteRepoEntry_ForgeCLIAndHookFields(t *testing.T) {
+// TestWriteRepoEntry_NamesNoForgeCLI pins the origin annotation to the bare
+// host for every forge kind: no forge CLI is offered for PRs, issues or CI.
+func TestWriteRepoEntry_NamesNoForgeCLI(t *testing.T) {
+	origins := map[string]string{
+		"github.com":   "https://github.com/acme/widget.git",
+		"gitlab.com":   "git@gitlab.com:acme/widget.git",
+		"codeberg.org": "https://codeberg.org/acme/widget.git",
+		"gitea.io":     "https://gitea.io/acme/widget.git",
+	}
+	for host, url := range origins {
+		t.Run(host, func(t *testing.T) {
+			work := t.TempDir()
+			mustWriteFile(t, filepath.Join(work, "myrepo", ".git", "config"),
+				"[remote \"origin\"]\n\turl = "+url+"\n")
+			var b strings.Builder
+			writeRepoEntry(&b, work, "myrepo")
+			out := b.String()
+			if !strings.Contains(out, "("+host+")") {
+				t.Errorf("writeRepoEntry(origin %s) omitted the bare host annotation:\n%s", url, out)
+			}
+			if cli := forgeCLIName.FindString(out); cli != "" {
+				t.Errorf("writeRepoEntry(origin %s) names the forge CLI %q:\n%s", url, cli, out)
+			}
+		})
+	}
+}
+
+// TestWriteRepoEntry_HookFields verifies the per-hook name, trigger label and
+// command preview render for a repo carrying a v1 hook document.
+func TestWriteRepoEntry_HookFields(t *testing.T) {
 	work := t.TempDir()
 	repo := filepath.Join(work, "myrepo")
-	mustWriteFile(t, filepath.Join(repo, ".git", "config"),
-		"[remote \"origin\"]\n\turl = https://github.com/acme/widget.git\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"),
 		`{"version":"v1","hooks":[{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}]}`)
 
 	var b strings.Builder
-	writeRepoEntry(&b, work, "myrepo", map[string]bool{"github": true})
+	writeRepoEntry(&b, work, "myrepo")
 	out := b.String()
 
-	// A recognised github origin with github CONNECTED renders the
-	// "use `gh`" guidance, not the bare "(github.com)" fallback.
-	if !strings.Contains(out, "use `gh` for PRs") {
-		t.Errorf("missing forge-CLI guidance for connected github origin:\n%s", out)
-	}
 	// The hook renders its name and PascalCase trigger, not "unknown".
 	if !strings.Contains(out, "Guard [PreToolUse]") {
 		t.Errorf("hook name+trigger not rendered as Guard [PreToolUse]:\n%s", out)
@@ -280,18 +298,6 @@ func TestWriteRepoEntry_ForgeCLIAndHookFields(t *testing.T) {
 	// A hook with a command renders the command preview.
 	if !strings.Contains(out, "echo hi") {
 		t.Errorf("hook command preview not rendered:\n%s", out)
-	}
-
-	// The same repo WITHOUT its forge kind connected gets the bare host —
-	// advertising `gh` would point the agent at an absent binary.
-	var b2 strings.Builder
-	writeRepoEntry(&b2, work, "myrepo", nil)
-	out2 := b2.String()
-	if strings.Contains(out2, "use `gh`") {
-		t.Errorf("forge-CLI guidance rendered without a connected github forge:\n%s", out2)
-	}
-	if !strings.Contains(out2, "(github.com)") {
-		t.Errorf("bare host fallback missing for unconnected forge kind:\n%s", out2)
 	}
 }
 
@@ -304,7 +310,7 @@ func TestWriteRepoEntry_OmitsAgentAndHookHeadersWhenEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writeRepoEntry(&b, work, "bare", nil)
+	writeRepoEntry(&b, work, "bare")
 	out := b.String()
 	if strings.Contains(out, "**Custom agents**") {
 		t.Errorf("Custom agents header emitted with zero agents:\n%s", out)
@@ -363,7 +369,7 @@ func TestReadGitBranch_ReturnsBranchOnSuccessfulRead(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// hostFromGitURL / kindFromHost
+// hostFromGitURL
 // ---------------------------------------------------------------------------
 
 // TestHostFromGitURL_HTTPS covers the https credential-stripping logic:
@@ -405,27 +411,6 @@ func TestHostFromGitURL_SCP(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := hostFromGitURL(tc.url); got != tc.want {
 				t.Errorf("hostFromGitURL(%q) = %q, want %q", tc.url, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestKindFromHost pins the host->forge-kind classification, including the
-// empty-host and unrecognised-host ("") cases.
-func TestKindFromHost(t *testing.T) {
-	tests := []struct {
-		host string
-		want string
-	}{
-		{"github.com", "github"},
-		{"gitlab.com", "gitlab"},
-		{"codeberg.org", "codeberg"},
-		{"example.com", ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.host, func(t *testing.T) {
-			if got := kindFromHost(tc.host); got != tc.want {
-				t.Errorf("kindFromHost(%q) = %q, want %q", tc.host, got, tc.want)
 			}
 		})
 	}

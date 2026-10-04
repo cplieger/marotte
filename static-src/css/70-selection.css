@@ -343,6 +343,7 @@
 .fb-row.fb-row-selected .fb-meta,
 .repo-picker-row-selected .repo-picker-row-meta,
 .repo-picker-row-selected .repo-picker-row-age,
+.pr-merge-method:has(input:checked) .pr-merge-method-desc,
 
 /* The exec view's tree row and timeline lane. Every one of these children sets its
    own `--c-text-tertiary`, so the fill's inherited ink never reaches them: axe

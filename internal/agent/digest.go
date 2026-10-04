@@ -52,7 +52,8 @@ func (rt *Runtime) resolveOne(ctx context.Context, h *sse.Held) sse.State {
 			return st
 		}
 		st.Version, _ = rt.versions.Current(subject.KindChat, h.Ref)
-	case subject.KindChats, subject.KindPending, subject.KindRuns, subject.KindCatalog, subject.KindStatus:
+	case subject.KindChats, subject.KindPending, subject.KindRuns, subject.KindCatalog, subject.KindStatus,
+		subject.KindForgeInventory:
 		st.Version, _ = rt.versions.Current(subject.Kind(h.Kind), h.Ref)
 	case subject.KindLiveTurn:
 		// The ref is a turn id; the registry says which chat still holds it open and

@@ -45,6 +45,12 @@ export function sigChanged(host: Element, parts: readonly string[]): boolean {
   return true;
 }
 
+/** Drop `host`'s recorded signature, for a caller that changed the subtree in
+ *  place: the next guard then repaints it. */
+export function forgetSig(host: Element): void {
+  host.removeAttribute(SIG_ATTR);
+}
+
 /**
  * A whole DECODED wire value as one signature part.
  *

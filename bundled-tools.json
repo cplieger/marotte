@@ -10,11 +10,11 @@
     "of the two it is:",
     "",
     "  essential: true   NECESSARY. A marotte feature stops working without",
-    "                    it (gh/glab/tea back the Sources tab, node runs",
-    "                    npx-based MCP servers, uv runs the Python ones).",
-    "                    The engine refuses to delete the row and the UI",
-    "                    offers no delete control. Disabling is still",
-    "                    allowed, which is the escape hatch.",
+    "                    it (node runs npx-based MCP servers, uv runs the",
+    "                    Python ones). The engine refuses to delete the",
+    "                    row and the UI offers no delete control.",
+    "                    Disabling is still allowed, which is the escape",
+    "                    hatch.",
     "  featured: true    RECOMMENDED. Surfaced first in the Add-tool modal",
     "                    as the starter set, and removable like anything",
     "                    else.",
@@ -36,11 +36,10 @@
     "",
     "upstream: {...} is read by cplieger/.github's Renovate customManager",
     "to bump a hand-pinned version, and only a manual entry can need one.",
-    "tea is the last entry that does. glab carries no pin because it is",
-    "sourceless, so the catalog owns its version; clangd,",
-    "kotlin-language-server and java carry none because a release: source",
-    "resolves its own latest tag on every update; rust tracks a rustup",
-    "channel and jdtls a -latest URL, so neither has a version to compare.",
+    "No entry carries one today: clangd, kotlin-language-server and java",
+    "need none because a release: source resolves its own latest tag on",
+    "every update; rust tracks a rustup channel and jdtls a -latest URL,",
+    "so neither has a version to compare.",
     "",
     "release: {...} is toolbelt's asset-selection hint, and a release that",
     "publishes more than one plausible archive needs it. Adoptium ships 313",
@@ -68,16 +67,6 @@
       "essential": true,
       "description": "Python package runner (uv). Provides uvx for Python MCP servers and installs pip-sourced tools."
     },
-    "github-cli": {
-      "featured": true,
-      "essential": true,
-      "description": "GitHub CLI. Installed automatically when you connect a GitHub account in Sources."
-    },
-    "glab": {
-      "featured": true,
-      "essential": true,
-      "description": "GitLab CLI. Installed automatically when you connect a GitLab account in Sources."
-    },
     "yq": {
       "featured": true,
       "description": "YAML/JSON/XML processor."
@@ -95,20 +84,6 @@
     "rust-analyzer": {
       "featured": true,
       "lsp": true
-    },
-    "tea": {
-      "source": "manual",
-      "version": "v0.16.0",
-      "upstream": {
-        "datasource": "gitea-releases",
-        "depName": "gitea/tea",
-        "registryUrl": "https://gitea.com"
-      },
-      "featured": true,
-      "essential": true,
-      "description": "Gitea/Codeberg CLI. Installed automatically when you connect a Gitea account in Sources.",
-      "install": "curl -fsSL -o \"${BIN}/tea\" \"https://dl.gitea.com/tea/${VERSION_NOPFX}/tea-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}\" && chmod 755 \"${BIN}/tea\"",
-      "probe": "tea"
     },
     "typescript": {
       "source": "npm:typescript",

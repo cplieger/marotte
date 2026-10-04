@@ -28,6 +28,7 @@ import {
 
 import { registerCleanup } from "./actions/index.js";
 import { BUS_PAGE_RESUMED, BUS_RECONCILE, decodeEnvelope, emitBus } from "./bus.js";
+import { inventoryHeld } from "./git-prs-state.js";
 import {
   invalidateCachedRuns,
   peekRunState,
@@ -216,7 +217,8 @@ function deliver(evt: ServerEvent): void {
  *  resident, because a frame for a chat with no window was applied to nothing, and
  *  recording its version would make the digest report `changed` for — and the action
  *  refetch — a transcript nobody is looking at, refilling what the eviction sweep
- *  bounded. A run's step turn is held while the run store holds that run's state. */
+ *  bounded. A run's step turn is held while the run store holds that run's state, and a
+ *  connection's pull-request inventory once the PR tab has read it. */
 function projectionHeld(stamp: SubjectStamp): boolean {
   switch (stamp.kind) {
     case "chat":
@@ -227,6 +229,8 @@ function projectionHeld(stamp: SubjectStamp): boolean {
     }
     case "run_turn":
       return peekRunState(runTurnWorkflow(stamp.ref)) !== undefined;
+    case "forge_inventory":
+      return inventoryHeld();
     default:
       return true;
   }
@@ -391,6 +395,14 @@ function runStampAction(
       return rebuildLiveRuns(token, signal).then(() => false);
     case "catalog":
       return fetchCatalog(signal === undefined ? {} : { signal }).then(() => false);
+    case "forge_inventory":
+      // One read answers every connection's entry; the git view is a lazy chunk.
+      return import("./git-prs-tab.js")
+        .then(({ refreshPRs }) => refreshPRs(signal))
+        .then(
+          () => false,
+          () => false,
+        );
     case "pending":
     case "status":
       return Promise.resolve(true);

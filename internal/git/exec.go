@@ -60,7 +60,7 @@ var resolveGitBinary = func() (string, bool) { return systembin.Resolve("git") }
 // closes rather than merely being deferred: every path that DETACHES from the
 // request carries its own budget instead of inheriting nothing — the status scan
 // (`statusScanBudget`), pull-all (`pullAllBudget`) and the forge list cache
-// (`forges.ListTimeout`) each wrap `context.WithoutCancel` in a `WithTimeout`. So
+// (its `listRevalidateBudget`) each wrap `context.WithoutCancel` in a `WithTimeout`. So
 // there is no unbounded plumbing path to close, and a per-command budget added
 // here would be a second bound over paths that already have one.
 type gitTimeouts struct {
@@ -308,16 +308,12 @@ func firstSubcommand(args []string) string {
 // malicious parent process can't inject inline gitconfig.
 //
 // IMPORTANT: this DOES allow the user's ~/.gitconfig and the
-// system /etc/gitconfig to load. That's deliberate. The forge
-// CLIs (gh auth setup-git, glab auth git-credential, etc.) write
-// `credential.helper` lines into ~/.gitconfig so HTTPS clones of
-// private repos can authenticate. A previous version of this
-// function pinned GIT_CONFIG_GLOBAL=/dev/null which disabled the
-// credential helper alongside the ext:: hardening — clones of
-// public repos worked, but private clones failed with "terminal
-// prompts disabled". The cmdline -c approach is a more surgical
-// fix: it blocks ext:: explicitly without throwing out the rest
-// of the user's git config.
+// system /etc/gitconfig to load. That's deliberate: the
+// `credential.<url>.helper` entries marotte registers for each
+// connected forge live in ~/.gitconfig, so GIT_CONFIG_GLOBAL=/dev/null
+// would disable them alongside the ext:: hardening and every private
+// HTTPS clone would fail with "terminal prompts disabled". The -c
+// flags block ext:: without discarding the rest of the user's config.
 //
 // # What git will still execute for a repo nobody here wrote, and why
 //

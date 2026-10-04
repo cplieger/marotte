@@ -46,7 +46,7 @@ func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	defer zw.Close()
 
 	flusher, _ := w.(http.Flusher)
-	z := &zipStream{zw: zw, flusher: flusher, ctx: r.Context()}
+	z := &zipStream{zw: zw, flusher: flusher, ctx: r.Context(), sensitive: h.sensitive}
 	for _, p := range paths {
 		if !z.add(p, filepath.Base(p.abs)) {
 			break
@@ -78,6 +78,7 @@ type zipStream struct {
 	zw         *zip.Writer
 	flusher    http.Flusher
 	ctx        context.Context
+	sensitive  Sensitive
 	totalBytes int64
 	fileCount  int
 }
@@ -99,7 +100,7 @@ func (z *zipStream) add(l loc, zipName string) bool {
 	}
 	// Sensitive paths are hidden from listings; keep them out of
 	// archives too when a directory walk reaches one.
-	if IsSensitive(l.abs) {
+	if z.sensitive.Blocks(l.abs) {
 		return true
 	}
 	f, err := l.m.root.Open(l.rel())

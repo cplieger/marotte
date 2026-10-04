@@ -272,6 +272,16 @@ func (s *Service) HasSubscribers() bool {
 	return len(s.subs) > 0
 }
 
+// Wants reports whether a send of kind would pass the service's own gates: the
+// service is healthy, the kind is registered and enabled, and a subscription exists
+// to receive it. The presence filter is not consulted, because a profile that reads
+// present is a reader rather than a reason to withhold the event.
+func (s *Service) Wants(kind marotte.PushKind) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.healthy && kind.Valid() && s.prefs[kind] && len(s.subs) > 0
+}
+
 // kindRegistry is the single source of truth for push notification kinds.
 // init() below validates every entry against marotte.PushKind.Valid() so the
 // two cannot drift.

@@ -1,6 +1,7 @@
 // The dashboard's status answer is a SNAPSHOT, not a scan: a scan publishes into a
 // holder and a read answers from what the holder has plus its age. Only the FIRST
-// read of a process and a user-initiated `?fetch=1` still wait for a scan.
+// read of a process, a user-initiated `?fetch=1` and a scoped read, which names
+// repositories that just moved, wait for a scan.
 
 package git
 
@@ -38,6 +39,10 @@ type statusSlot struct {
 	// done is closed when the refresh in flight publishes, nil when none is. A fresh
 	// channel per refresh, so a waiter holds the one it was handed.
 	done chan struct{}
+	// next is the channel of the pass that will drain pending, handed to the reads
+	// that recorded it: the pass in flight may have read their repository before the
+	// write that triggered them, so its own `done` would release them too early.
+	next chan struct{}
 	// pending and pendingFull are what reads asked for while the refresh in flight
 	// was running, and they stop the one-at-a-time rule LOSING work rather than
 	// merely delaying it. `finish` drains them. One row per join direction:
@@ -80,9 +85,10 @@ func (c *statusCache) read(key string) (snap *statusSnapshot, running chan struc
 
 // claim reserves the refresh slot for a scan of `only`, nil meaning the whole tree —
 // the same contract scanRepos takes. started is false when a refresh is already in
-// flight; either way the returned channel closes when that refresh publishes. A
-// joining read's intent is RECORDED for it to drain; the statusSlot comment maps all
-// four join directions.
+// flight. The returned channel closes when a pass covering the read has published:
+// the started pass, the running one for a read it already covers, else the pass that
+// drains the intent this read RECORDED (the statusSlot comment maps all four join
+// directions).
 func (c *statusCache) claim(key string, only map[string]struct{}) (done chan struct{}, started bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -99,10 +105,14 @@ func (c *statusCache) claim(key string, only map[string]struct{}) (done chan str
 		case slot.full:
 			// Nothing, on purpose: this read wants the sweep already running, and
 			// chaining a second costs the subprocesses the holder exists to pay once.
+			return slot.done, false
 		default:
 			slot.pendingFull = true
 		}
-		return slot.done, false
+		if slot.next == nil {
+			slot.next = make(chan struct{})
+		}
+		return slot.next, false
 	}
 	slot.done = make(chan struct{})
 	slot.full = only == nil
@@ -135,9 +145,9 @@ func (c *statusCache) finish(key string, rows []allRepoStatus) (next map[string]
 	slot.pending, slot.pendingFull = nil, false
 	done := slot.done
 	if run {
-		// Still claimed, under a channel the next pass will close. Swapping it under
+		// Still claimed, under the channel the recording reads hold. Swapping it under
 		// the lock is what stops a read between the two passes starting a second scan.
-		slot.done = make(chan struct{})
+		slot.done, slot.next = slot.next, nil
 	} else {
 		slot.done = nil
 	}

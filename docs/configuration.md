@@ -71,7 +71,7 @@ environment:
   MAROTTE_BROWSE_ROOTS: "/tmp:/data"
 ```
 
-Mount each folder with `volumes:` first. Credential and internal files under `/config` stay hidden whatever you add. That covers SSH keys, cloud tokens, the chat store and the MCP configuration.
+Mount each folder with `volumes:` first. Credential and internal files under `/config` stay hidden whatever you add. That covers SSH keys, cloud tokens, forge credentials, the chat store and the MCP configuration.
 
 ## Agent-started workflow runs (`MAROTTE_AGENT_WORKFLOWS`)
 
@@ -107,7 +107,7 @@ kiro-cli and everything it runs inherit the container's `environment:`. A `GITHU
 
 marotte therefore drops credential-looking names before kiro-cli starts and logs which ones, by name only. That covers any name ending in `_TOKEN` or `_SECRET`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Other variables pass unchanged, `AWS_REGION` and `AWS_PROFILE` included.
 
-Keep credentials out of the container environment anyway. Forge tokens belong in the credential stores of `gh`, `glab` and `tea`, which is where the git panel puts them. If a variable only looks like a credential, name it:
+Keep credentials out of the container environment anyway. Forge credentials belong in the git panel's Sources tab, which keeps them in marotte's own store. If a variable only looks like a credential, name it:
 
 ```yaml
 environment:

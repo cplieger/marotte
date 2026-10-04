@@ -1,163 +1,320 @@
 package forges
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 
+	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/webhttp/v3"
 )
 
-// repoLister is what handleRepos needs at the collection level: the account's
-// own repositories. Declared here rather than in provider.go because this is the
-// one function that asks for them.
-type repoLister interface {
-	// ListRepos returns repositories accessible to the authenticated
-	// account (owned + member).
-	ListRepos(ctx context.Context) ([]Repo, error)
-}
+// The action segment and query parameter the repository routes read.
+const (
+	stateClose   = "close"
+	fieldHeadSHA = "head_sha"
+)
 
-// providerFor resolves the forge and decides whether its listings may come from
-// the cache. `?refresh=1` means the reader pressed a refresh control and is
-// asking for the truth, mirroring `/api/git/status-all?fetch=1`, the same
-// distinction on the local-git side. Anything else reads through the cache, so
-// arriving at a view costs no subprocess when the answer is already known.
-func (h *HTTPHandler) providerFor(r *http.Request, id string) (ForgeOps, error) {
-	if r.URL.Query().Get("refresh") == "1" {
-		return h.manager.ProviderFresh(id)
-	}
-	return h.manager.Provider(id)
-}
-
-// handleRepos dispatches /api/forges/{id}/repos/* paths.
+// handleRepos dispatches /api/forges/{id}/repos/* paths. A repository is the
+// {repo_id} segment, decoded once on the connection's family.
+//
+// `?refresh=1` means the reader pressed a refresh control and is asking for the
+// truth, mirroring `/api/git/status-all?fetch=1`, the same distinction on the
+// local-git side: a list's first page comes from the forge and replaces what is
+// cached. Anything else reads through the cache.
 func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
-	provider, err := h.providerFor(r, id)
-	if err != nil {
-		httpreply.NotFound(w, err.Error())
+	fc, ok := h.connectionClient(w, id)
+	if !ok {
 		return
 	}
+	force := r.URL.Query().Get("refresh") == "1"
 	if rest == "" {
-		if r.Method != http.MethodGet {
-			httpreply.MethodNotAllowed(w, http.MethodGet)
-			return
-		}
-		repos, err := provider.ListRepos(r.Context())
-		if err != nil {
-			writeOpsError(w, err)
-			return
-		}
-		webhttp.WriteJSON(w, map[string]any{"repos": repos})
+		h.handleRepoList(w, r, fc, force)
 		return
 	}
-	owner, after, ok := splitFirst(rest)
-	if !ok || owner == "" {
-		httpreply.BadRequest(w, "missing repo owner")
+	segment, sub, _ := splitFirst(rest)
+	// The library accepts only the canonical encoding, so ref.ID is the id this
+	// server mints and keys every cache entry on.
+	ref, err := forgeapi.DecodeRepoRef(segment, fc.family)
+	if err != nil {
+		writeOpsError(w, r, err)
 		return
 	}
-	name, after2, _ := splitFirst(after)
-	if name == "" {
-		httpreply.BadRequest(w, "missing repo name")
+	if sub == "" {
+		httpreply.BadRequest(w, "missing sub-resource (prs/issues/checks/releases/labels/affordances)")
 		return
 	}
-	repo := owner + "/" + name
-	if after2 == "" {
-		httpreply.BadRequest(w, "missing sub-resource (prs/issues/checks/releases/labels)")
-		return
-	}
-	op, tail, _ := splitFirst(after2)
+	op, tail, _ := splitFirst(sub)
 	switch op {
 	case "prs":
-		handlePRs(w, r, provider, repo, tail)
+		if tail == "" {
+			h.handlePRCollection(w, r, fc, ref, force)
+			return
+		}
+		if !strings.Contains(tail, "/") {
+			handlePRDetail(w, r, fc.core, ref, tail)
+			return
+		}
+		if numStr, op, _ := splitFirst(tail); op == "merge" {
+			h.handleMerge(w, r, fc, ref, numStr)
+			return
+		}
+		h.handlePRAction(w, r, fc, ref, tail)
 	case "issues":
-		handleIssues(w, r, provider, repo, tail)
+		h.handleIssues(w, r, fc, ref, tail)
 	case "checks":
-		handleChecks(w, r, provider, repo)
+		handleChecks(w, r, fc.core, ref)
 	case "releases":
-		handleReleases(w, r, provider, repo)
+		h.handleReleases(w, r, fc, ref)
 	case "labels":
-		handleLabels(w, r, provider, repo)
+		handleLabels(w, r, fc.core, ref)
+	case "affordances":
+		h.handleAffordances(w, r, fc, ref, force)
 	default:
 		httpreply.NotFound(w, "unknown repo sub-resource")
 	}
 }
 
-// prOps is the pull-request surface: everything under
-// /api/forges/{id}/repos/{owner}/{name}/prs and nothing else. Six methods, which
-// is what handlePRs and its four action helpers actually reach for.
-type prOps interface {
-	// ListPRs lists pull/merge requests for repo.
-	ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error)
-
-	// CreatePR opens a new pull/merge request.
-	CreatePR(ctx context.Context, repo string, p *CreatePRParams) (*PR, error)
-
-	// MergePR merges an open PR, or arms the forge's own auto-merge
-	// when opts.Auto is set.
-	MergePR(ctx context.Context, repo string, number int, opts MergeOptions) error
-
-	// ClosePR closes (without merging) an open PR.
-	ClosePR(ctx context.Context, repo string, number int) error
-
-	// ReopenPR reopens a closed PR.
-	ReopenPR(ctx context.Context, repo string, number int) error
-
-	// RerunFailedChecks re-runs the failed CI of a PR's CURRENT head.
-	// Returns an ErrNotSupported-wrapped error on a forge with no re-run
-	// verb.
-	//
-	// headSHA is the commit the caller's row was rendered from, and it is
-	// a PRECONDITION exactly like MergeOptions.HeadSHA: an implementation
-	// must refuse rather than re-run when the PR has moved since, because
-	// a re-run can carry deployment side effects and a row displaying one
-	// commit's red status must not act on another's. Empty means the
-	// caller had no head to pin (the forge reported none), and the re-run
-	// proceeds against whatever the PR's head is now.
-	RerunFailedChecks(ctx context.Context, repo string, number int, headSHA string) error
+// mutated follows a successful mutation of ref: its cached lists go, and the
+// inventory is asked to read the connection again. It answers the id of the
+// cycle that reads the change.
+func (h *HTTPHandler) mutated(fc forgeClient, ref forgeapi.RepoRef) string {
+	h.manager.evictRepo(fc.id, ref.ID)
+	return h.askCycle()
 }
 
-func handlePRs(w http.ResponseWriter, r *http.Request, p prOps, repo, tail string) {
-	if tail == "" {
-		handlePRCollection(w, r, p, repo)
+// askCycle asks for a cycle that begins after any in flight, which may have
+// read the repository before the change, and answers its id. A handler no
+// poller was wired to has no inventory and answers "0".
+func (h *HTTPHandler) askCycle() string {
+	if h.poller == nil {
+		return "0"
+	}
+	return strconv.FormatUint(h.poller.cycles.ask(), 10)
+}
+
+// routeListStates are the filters `?state=` names, in the library's spellings.
+var routeListStates = []forgeapi.ListState{
+	forgeapi.ListStateOpen, forgeapi.ListStateClosed, forgeapi.ListStateMerged, forgeapi.ListStateAll,
+}
+
+// listRequestOf reads a list route's `?state=` and `?after=`. An absent state is
+// the library's default, open; any other text is the unknown member, which the
+// library refuses as list_state_invalid.
+func listRequestOf(q url.Values) (listRequest, error) {
+	var opts []forgeapi.ListOption
+	if raw := q.Get("state"); raw != "" {
+		state := forgeapi.ListStateUnknown
+		for _, s := range routeListStates {
+			if s.String() == raw {
+				state = s
+				break
+			}
+		}
+		opts = append(opts, forgeapi.WithState(state))
+	}
+	if after := q.Get("after"); after != "" {
+		opts = append(opts, forgeapi.WithAfter(forgeapi.Cursor(after)))
+	}
+	return resolveList(opts...)
+}
+
+func (h *HTTPHandler) handleRepoList(w http.ResponseWriter, r *http.Request, fc forgeClient, force bool) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	handlePRAction(w, r, p, repo, tail)
+	req, err := listRequestOf(r.URL.Query())
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	page, err := h.manager.repoPage(r.Context(), fc, &req, force)
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	webhttp.WriteJSON(w, page)
 }
 
-// handlePRCollection serves the repo-level PR endpoints: list (GET) and
-// create (POST).
-func handlePRCollection(w http.ResponseWriter, r *http.Request, p prOps, repo string) {
+// createPRBody is a pull request as the client asks for one.
+type createPRBody struct {
+	Title        string   `json:"title"`
+	Body         string   `json:"body,omitempty"`
+	SourceBranch string   `json:"source_branch"`
+	TargetBranch string   `json:"target_branch"`
+	Labels       []string `json:"labels,omitempty"`
+	Draft        bool     `json:"draft,omitempty"`
+}
+
+// handlePRCollection serves the repo-level PR endpoints: list (GET) and create
+// (POST), which answers the new row.
+func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, force bool) {
 	switch r.Method {
 	case http.MethodGet:
-		state := ListState(r.URL.Query().Get("state"))
-		prs, err := p.ListPRs(r.Context(), repo, state)
+		req, err := listRequestOf(r.URL.Query())
 		if err != nil {
-			writeOpsError(w, err)
+			writeOpsError(w, r, err)
 			return
 		}
-		webhttp.WriteJSON(w, map[string]any{"prs": prs})
+		page, err := h.manager.prPage(r.Context(), fc, ref, &req, force)
+		if err != nil {
+			writeOpsError(w, r, err)
+			return
+		}
+		webhttp.WriteJSON(w, page)
 	case http.MethodPost:
-		var params CreatePRParams
+		var params createPRBody
 		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			httpreply.BadRequest(w, "invalid json")
 			return
 		}
-		pr, err := p.CreatePR(r.Context(), repo, &params)
+		created, err := fc.core.CreatePR(r.Context(), ref, forgeapi.NewPullRequest{
+			Title: params.Title, Body: params.Body, SourceBranch: params.SourceBranch,
+			TargetBranch: params.TargetBranch, Labels: params.Labels, Draft: params.Draft,
+		})
 		if err != nil {
-			writeOpsError(w, err)
+			writeOpsError(w, r, err)
 			return
 		}
-		webhttp.WriteJSON(w, pr)
+		h.mutated(fc, ref)
+		webhttp.WriteJSON(w, prWire(&created))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
-// handlePRAction serves the per-PR action endpoints: merge, close,
-// reopen and rerun. All four are POST-only.
-func handlePRAction(w http.ResponseWriter, r *http.Request, p prOps, repo, tail string) {
+// handlePRDetail answers one pull request with its description and its head
+// commit's checks. It is read on every open rather than cached, because it is
+// the read a person makes to see the current state. A non-positive number is
+// the library's to refuse.
+func handlePRDetail(w http.ResponseWriter, r *http.Request, core forgeapi.Core, ref forgeapi.RepoRef, numStr string) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	number, err := strconv.Atoi(numStr)
+	if err != nil {
+		httpreply.BadRequest(w, "invalid PR number")
+		return
+	}
+	pr, err := core.ReadPR(r.Context(), ref, forgeapi.PRRef{Number: number})
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	detail := PRDetail{PR: prWire(&pr)}
+	if pr.HeadSHA != "" {
+		checks, statusErr := core.CommitStatus(r.Context(), ref, pr.HeadSHA)
+		if statusErr != nil {
+			writeOpsError(w, r, statusErr)
+			return
+		}
+		folded := commitChecksWire(&checks)
+		detail.Checks = &folded
+	}
+	webhttp.WriteJSON(w, detail)
+}
+
+// Marotte's own refusals on the merge route, in the forge error envelope.
+const (
+	// codeMergeInvalid answers a body that is not JSON of the merge's shape, or
+	// whose intent is not one of the library's spellings.
+	codeMergeInvalid = "merge_invalid"
+	// codeStrategyRequired answers a merge naming no strategy on a family whose
+	// default intent is a merge commit.
+	codeStrategyRequired = "strategy_required"
+)
+
+// mergeBody is one merge as the client sends it.
+type mergeBody struct {
+	Intent       string `json:"intent"`
+	Strategy     string `json:"strategy"`
+	HeadSHA      string `json:"head_sha"`
+	Auto         bool   `json:"auto"`
+	DeleteBranch bool   `json:"delete_branch"`
+}
+
+// mergeIntents are the intents a merge body may name, in the library's spellings.
+var mergeIntents = []forgeapi.MergeIntent{forgeapi.IntentDefault, forgeapi.IntentSquash, forgeapi.IntentNoSquash}
+
+// handleMerge serves one pull request's merge: POST merges it and answers the
+// outcome, GET reads its merge state back, the read that follows an accepted or
+// queued merge. Neither is cached.
+func (h *HTTPHandler) handleMerge(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, numStr string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		return
+	}
+	number, err := strconv.Atoi(numStr)
+	if err != nil {
+		httpreply.BadRequest(w, "invalid PR number")
+		return
+	}
+	pr := forgeapi.PRRef{Number: number}
+	if r.Method == http.MethodGet {
+		status, statusErr := fc.core.MergeStatus(r.Context(), ref, pr)
+		if statusErr != nil {
+			writeOpsError(w, r, statusErr)
+			return
+		}
+		webhttp.WriteJSON(w, mergeStatusWire(&status))
+		return
+	}
+	req, ok := mergeRequestOf(w, r, fc.family)
+	if !ok {
+		return
+	}
+	outcome, err := fc.core.MergePR(r.Context(), ref, pr, req)
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	cycle := h.mutated(fc, ref)
+	webhttp.WriteJSON(w, MergeResult{Outcome: mergeOutcomeWire(&outcome), CycleID: cycle})
+}
+
+// mergeRequestOf reads the merge body, answering the refusal itself and false
+// when the body does not say what to merge. The head pin and the strategy's
+// spelling are the library's to check.
+func mergeRequestOf(w http.ResponseWriter, r *http.Request, family forgeapi.Family) (forgeapi.MergeRequest, bool) {
+	var body mergeBody
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeMergeRefusal(w, http.StatusBadRequest, codeMergeInvalid,
+			"the body must be {intent, strategy?, head_sha, auto?, delete_branch?}")
+		return forgeapi.MergeRequest{}, false
+	}
+	i := slices.IndexFunc(mergeIntents, func(in forgeapi.MergeIntent) bool { return in.String() == body.Intent })
+	if i < 0 {
+		writeMergeRefusal(w, http.StatusBadRequest, codeMergeInvalid, "intent must be default, squash or no_squash")
+		return forgeapi.MergeRequest{}, false
+	}
+	// The default intent is a merge commit on GitHub and the Gitea family, so a
+	// merge there always names its strategy rather than inheriting one.
+	if family != forgeapi.FamilyGitLab && body.Strategy == "" {
+		writeMergeRefusal(w, http.StatusBadRequest, codeStrategyRequired,
+			"a merge on this forge must name its strategy (squash, merge or rebase)")
+		return forgeapi.MergeRequest{}, false
+	}
+	return forgeapi.MergeRequest{
+		Intent: mergeIntents[i], Strategy: body.Strategy, HeadSHA: body.HeadSHA,
+		DeleteBranch: body.DeleteBranch, AutoMerge: body.Auto,
+	}, true
+}
+
+func writeMergeRefusal(w http.ResponseWriter, status int, code, msg string) {
+	webhttp.WriteJSONStatus(w, status, httpreply.ErrorJSONWithCode(msg, code))
+}
+
+// handlePRAction serves the per-PR mutations, all POST-only: close and reopen
+// answer the row as the forge left it, rerun answers ok.
+func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
@@ -168,230 +325,233 @@ func handlePRAction(w http.ResponseWriter, r *http.Request, p prOps, repo, tail 
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
+	pr := forgeapi.PRRef{Number: number}
+	var row forgeapi.PullRequest
 	switch op {
-	case "merge":
-		handlePRMerge(w, r, p, repo, number)
 	case stateClose:
-		writeOpResult(w, p.ClosePR(r.Context(), repo, number))
+		row, err = fc.core.ClosePR(r.Context(), ref, pr)
 	case "reopen":
-		writeOpResult(w, p.ReopenPR(r.Context(), repo, number))
+		row, err = fc.core.ReopenPR(r.Context(), ref, pr)
 	case "rerun":
-		handlePRRerun(w, r, p, repo, number)
+		h.handlePRRerun(w, r, fc, ref, pr)
+		return
 	default:
 		httpreply.NotFound(w, "unknown PR action")
-	}
-}
-
-// handlePRMerge merges a PR. The merge strategy, the head-commit pin and
-// the auto-merge arm all travel as query parameters, following the
-// ?method= convention this route already carried.
-func handlePRMerge(w http.ResponseWriter, r *http.Request, p prOps, repo string, number int) {
-	q := r.URL.Query()
-	headSHA, ok := headPinOrBadRequest(w, q.Get(fieldHeadSHA))
-	if !ok {
 		return
 	}
-	opts := MergeOptions{
-		Method:  MergeMethod(q.Get(fieldMethod)),
-		HeadSHA: headSHA,
-		Auto:    queryTrue(q.Get(fieldAuto)),
-	}
-	writeOpResult(w, p.MergePR(r.Context(), repo, number, opts))
-}
-
-// handlePRRerun re-runs a PR's failed CI, pinned to the head commit the
-// caller's row displayed.
-//
-// The pin travels and is validated exactly as the merge's does, because it
-// serves the same purpose on an action with comparable consequences: a re-run
-// can trigger a deployment, so acting on a commit other than the one whose red
-// status the caller was looking at is a wrong action rather than a slow one.
-func handlePRRerun(w http.ResponseWriter, r *http.Request, p prOps, repo string, number int) {
-	headSHA, ok := headPinOrBadRequest(w, r.URL.Query().Get(fieldHeadSHA))
-	if !ok {
-		return
-	}
-	writeOpResult(w, p.RerunFailedChecks(r.Context(), repo, number, headSHA))
-}
-
-// headPinOrBadRequest validates a head_sha query parameter, answering 400 and
-// returning false when it is present but not an object id. Absent stays legal:
-// a forge that reported no head SHA leaves the action unpinned.
-//
-// The pin reaches a subprocess argv and a JSON body, so it is checked at this
-// one boundary rather than at each provider.
-func headPinOrBadRequest(w http.ResponseWriter, raw string) (headSHA string, ok bool) {
-	if raw != "" && !isHexSHA(raw) {
-		httpreply.BadRequest(w, "invalid head_sha")
-		return "", false
-	}
-	return raw, true
-}
-
-// writeOpResult answers a mutation: 200 {"ok":true} or the mapped error.
-func writeOpResult(w http.ResponseWriter, err error) {
 	if err != nil {
-		writeOpsError(w, err)
+		writeOpsError(w, r, err)
 		return
 	}
+	cycle := h.mutated(fc, ref)
+	webhttp.WriteJSON(w, PRChanged{PR: prWire(&row), CycleID: cycle})
+}
+
+// handlePRRerun re-runs a PR's failed CI pinned to `?head_sha=`, the head the
+// caller's row displayed: a re-run can trigger a deployment, so the library
+// refuses one for any other commit. No pin re-runs the head as it is now. A
+// re-run changes no forge object, so it evicts nothing; the checks it restarts
+// are the cycle's to read.
+func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, pr forgeapi.PRRef) {
+	if err := fc.core.RerunFailedChecks(r.Context(), ref, pr, r.URL.Query().Get(fieldHeadSHA)); err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	if h.poller != nil {
+		h.poller.refill(fc.id, ref.ID, pr.Number)
+	}
+	h.askCycle()
 	webhttp.Ok(w)
 }
 
-// queryTrue reads a boolean query parameter. Both spellings the client
-// could plausibly send count as true; everything else is false.
-func queryTrue(v string) bool {
-	return v == "1" || v == "true"
-}
-
-// issueOps is the issue surface: three methods, and the row the C19 audit
-// measured — handleIssues used to take all fifteen to call these.
-type issueOps interface {
-	// ListIssues lists issues for repo.
-	ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error)
-
-	// CreateIssue files a new issue.
-	CreateIssue(ctx context.Context, repo string, p CreateIssueParams) (*Issue, error)
-
-	// CloseIssue closes an open issue.
-	CloseIssue(ctx context.Context, repo string, number int) error
-}
-
-func handleIssues(w http.ResponseWriter, r *http.Request, p issueOps, repo, tail string) {
+func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, tail string) {
 	if tail == "" {
-		handleIssueCollection(w, r, p, repo)
+		h.handleIssueCollection(w, r, fc, ref)
 		return
 	}
-	handleIssueAction(w, r, p, repo, tail)
+	h.handleIssueAction(w, r, fc, ref, tail)
 }
 
-// handleIssueCollection serves the repo-level issue endpoints: list (GET)
-// and create (POST).
-func handleIssueCollection(w http.ResponseWriter, r *http.Request, p issueOps, repo string) {
+// createIssueBody is an issue as the client asks for one.
+type createIssueBody struct {
+	Title  string   `json:"title"`
+	Body   string   `json:"body,omitempty"`
+	Labels []string `json:"labels,omitempty"`
+}
+
+// handleIssueCollection serves the repo-level issue endpoints: list (GET) and
+// create (POST), which answers the new issue.
+func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef) {
 	switch r.Method {
 	case http.MethodGet:
-		state := ListState(r.URL.Query().Get("state"))
-		issues, err := p.ListIssues(r.Context(), repo, state)
+		req, err := listRequestOf(r.URL.Query())
 		if err != nil {
-			writeOpsError(w, err)
+			writeOpsError(w, r, err)
 			return
 		}
-		webhttp.WriteJSON(w, map[string]any{"issues": issues})
+		page, err := fc.core.ListIssues(r.Context(), ref, req.opts...)
+		if err != nil {
+			writeOpsError(w, r, err)
+			return
+		}
+		webhttp.WriteJSON(w, issueListWire(&page))
 	case http.MethodPost:
-		var params CreateIssueParams
+		var params createIssueBody
 		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			httpreply.BadRequest(w, "invalid json")
 			return
 		}
-		issue, err := p.CreateIssue(r.Context(), repo, params)
+		created, err := fc.core.CreateIssue(r.Context(), ref, forgeapi.NewIssue{
+			Title: params.Title, Body: params.Body, Labels: params.Labels,
+		})
 		if err != nil {
-			writeOpsError(w, err)
+			writeOpsError(w, r, err)
 			return
 		}
-		webhttp.WriteJSON(w, issue)
+		h.mutated(fc, ref)
+		webhttp.WriteJSON(w, issueWire(&created))
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
-// handleIssueAction serves the per-issue action endpoints: close.
-func handleIssueAction(w http.ResponseWriter, r *http.Request, p issueOps, repo, tail string) {
+// handleIssueAction serves the per-issue action endpoints: close, which answers
+// the issue as the forge left it.
+func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
 		httpreply.BadRequest(w, "invalid issue number")
 		return
 	}
-	if op == stateClose {
-		if r.Method != http.MethodPost {
-			httpreply.MethodNotAllowed(w, http.MethodPost)
-			return
-		}
-		if err := p.CloseIssue(r.Context(), repo, number); err != nil {
-			writeOpsError(w, err)
-			return
-		}
-		webhttp.Ok(w)
+	if op != stateClose {
+		httpreply.NotFound(w, "unknown issue action")
 		return
 	}
-	httpreply.NotFound(w, "unknown issue action")
+	if r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	closed, err := fc.core.CloseIssue(r.Context(), ref, forgeapi.IssueRef{Number: number})
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	h.mutated(fc, ref)
+	webhttp.WriteJSON(w, issueWire(&closed))
 }
 
-// checkOps is the CI-status read: one method, one handler.
-type checkOps interface {
-	// CommitStatus returns CI checks for a commit ref (branch / SHA).
-	CommitStatus(ctx context.Context, repo, ref string) ([]Check, error)
-}
-
-func handleChecks(w http.ResponseWriter, r *http.Request, p checkOps, repo string) {
+// handleChecks answers the folded CI verdict of `?ref=`, a branch or a SHA. The
+// library refuses an empty or malformed ref as ref_invalid before any request.
+func handleChecks(w http.ResponseWriter, r *http.Request, core forgeapi.Checks, ref forgeapi.RepoRef) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	ref := r.URL.Query().Get("ref")
-	if ref == "" {
-		httpreply.BadRequest(w, "ref query parameter required")
-		return
-	}
-	checks, err := p.CommitStatus(r.Context(), repo, ref)
+	checks, err := core.CommitStatus(r.Context(), ref, r.URL.Query().Get("ref"))
 	if err != nil {
-		writeOpsError(w, err)
+		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, map[string]any{"checks": checks})
+	webhttp.WriteJSON(w, commitChecksWire(&checks))
 }
 
-// releaseOps is the release surface: list and cut.
-type releaseOps interface {
-	// ListReleases returns recent releases for repo.
-	ListReleases(ctx context.Context, repo string) ([]Release, error)
-
-	// CreateRelease cuts a new release.
-	CreateRelease(ctx context.Context, repo string, p CreateReleaseParams) (*Release, error)
-}
-
-func handleReleases(w http.ResponseWriter, r *http.Request, p releaseOps, repo string) {
-	switch r.Method {
-	case http.MethodGet:
-		releases, err := p.ListReleases(r.Context(), repo)
-		if err != nil {
-			writeOpsError(w, err)
-			return
-		}
-		webhttp.WriteJSON(w, map[string]any{"releases": releases})
-	case http.MethodPost:
-		var params CreateReleaseParams
-		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
-		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			httpreply.BadRequest(w, "invalid json")
-			return
-		}
-		release, err := p.CreateRelease(r.Context(), repo, params)
-		if err != nil {
-			writeOpsError(w, err)
-			return
-		}
-		webhttp.WriteJSON(w, release)
-	default:
+// handleReleases serves the release list (GET) and the cut (POST), which
+// answers the new release. Releases is an optional role, so a client without it
+// answers ErrNotSupported.
+func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		return
 	}
+	rel, ok := fc.core.(forgeapi.Releases)
+	if !ok {
+		writeOpsError(w, r, ErrNotSupported)
+		return
+	}
+	if r.Method == http.MethodPost {
+		h.createRelease(w, r, fc, rel, ref)
+		return
+	}
+	req, err := listRequestOf(r.URL.Query())
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	page, err := rel.ListReleases(r.Context(), ref, req.opts...)
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	webhttp.WriteJSON(w, releaseListWire(&page))
 }
 
-// labelOps is the label read: one method, one handler.
-type labelOps interface {
-	// ListLabels returns labels defined on repo.
-	ListLabels(ctx context.Context, repo string) ([]Label, error)
+// createReleaseBody is a release as the client asks for one.
+type createReleaseBody struct {
+	TagName    string `json:"tag_name"`
+	Name       string `json:"name,omitempty"`
+	Body       string `json:"body,omitempty"`
+	Target     string `json:"target,omitempty"` // commit SHA or branch
+	Draft      bool   `json:"draft,omitempty"`
+	Prerelease bool   `json:"prerelease,omitempty"`
 }
 
-func handleLabels(w http.ResponseWriter, r *http.Request, p labelOps, repo string) {
+func (h *HTTPHandler) createRelease(w http.ResponseWriter, r *http.Request, fc forgeClient, rel forgeapi.Releases, ref forgeapi.RepoRef) {
+	var params createReleaseBody
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		httpreply.BadRequest(w, "invalid json")
+		return
+	}
+	created, err := rel.CreateRelease(r.Context(), ref, forgeapi.NewRelease{
+		TagName: params.TagName, Name: params.Name, Body: params.Body, Target: params.Target,
+		Draft: params.Draft, Prerelease: params.Prerelease,
+	})
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	h.mutated(fc, ref)
+	webhttp.WriteJSON(w, releaseWire(&created))
+}
+
+// handleAffordances answers what the repository allows. A mutation of the
+// repository evicts the cached answer with its lists.
+func (h *HTTPHandler) handleAffordances(w http.ResponseWriter, r *http.Request, fc forgeClient, ref forgeapi.RepoRef, force bool) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	labels, err := p.ListLabels(r.Context(), repo)
+	aff, err := h.manager.repoAffordances(r.Context(), fc, ref, force)
 	if err != nil {
-		writeOpsError(w, err)
+		writeOpsError(w, r, err)
 		return
 	}
-	webhttp.WriteJSON(w, map[string]any{"labels": labels})
+	webhttp.WriteJSON(w, aff)
+}
+
+// handleLabels serves the label list. Labels is an optional role, so a client
+// without it answers ErrNotSupported.
+func handleLabels(w http.ResponseWriter, r *http.Request, core forgeapi.Core, ref forgeapi.RepoRef) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	lab, ok := core.(forgeapi.Labels)
+	if !ok {
+		writeOpsError(w, r, ErrNotSupported)
+		return
+	}
+	req, err := listRequestOf(r.URL.Query())
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	page, err := lab.ListLabels(r.Context(), ref, req.opts...)
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	webhttp.WriteJSON(w, labelListWire(&page))
 }

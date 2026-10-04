@@ -43,8 +43,9 @@ type EffectiveSettings struct {
 	// One level for the whole app cannot express that: a pick on any chat retracts
 	// every other model's remembered level (settings.KeyLastEffortByModel).
 	LastEffortByModel map[string]string `json:"last_effort_by_model"`
-	// LastMergeMethod is the PR merge method picked last ("squash" or "rebase"),
-	// the merge dialog's default. Empty means nothing picked yet.
+	// LastMergeMethod is the PR merge method picked last, in the forge's own
+	// spelling, the merge dialog's default where the repository offers it. Empty
+	// means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
 	// AgentIgnoreFiles is the ignore-FILE basename list marotte sends kiro-cli,
 	// which is what enforces it; marotte runs no matcher of its own. The default is

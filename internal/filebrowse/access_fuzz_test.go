@@ -9,9 +9,9 @@ import (
 // enforce must deny exactly the paths the policy blocks — anything
 // outside the granted mounts (allow-list, deny-by-default) or a
 // sensitive path — and allow everything else. The oracle reuses the
-// real mountFor and IsSensitive functions (the policy sources of
+// real mountFor and Sensitive.Blocks functions (the policy sources of
 // truth), so the property catches a broken composition (wrong combine,
-// inverted check, missing IsSensitive call, wrong prefix match) rather
+// inverted check, missing deny-list call, wrong prefix match) rather
 // than restating a single copied expression.
 func FuzzEnforce(f *testing.F) {
 	f.Add("/workspace/file.txt")
@@ -39,12 +39,12 @@ func FuzzEnforce(f *testing.F) {
 		m, err := h.enforce(path)
 
 		granted := h.mountFor(path) != nil
-		blocked := !granted || IsSensitive(path)
+		blocked := !granted || h.sensitive.Blocks(path)
 
 		// Security invariant: anything the policy blocks must be denied.
 		if blocked && err == nil {
 			t.Fatalf("enforce(%q) = nil, want denial (granted=%v sensitive=%v)",
-				path, granted, IsSensitive(path))
+				path, granted, h.sensitive.Blocks(path))
 		}
 		// No-over-block invariant: a denial must be backed by the policy.
 		if !blocked && err != nil {
@@ -74,12 +74,12 @@ func FuzzIsProtectedDir(f *testing.F) {
 	f.Add("/config/chats///")
 
 	f.Fuzz(func(t *testing.T, path string) {
-		got := isProtectedDir(path)
-		if trimmed := isProtectedDir(strings.TrimRight(path, "/")); trimmed != got {
-			t.Fatalf("isProtectedDir(%q)=%v but trailing-slash-trimmed form=%v", path, got, trimmed)
+		got := (Sensitive{}).protectedDir(path)
+		if trimmed := (Sensitive{}).protectedDir(strings.TrimRight(path, "/")); trimmed != got {
+			t.Fatalf("protectedDir(%q)=%v but trailing-slash-trimmed form=%v", path, got, trimmed)
 		}
-		if slashed := isProtectedDir(path + "/"); slashed != got {
-			t.Fatalf("isProtectedDir(%q)=%v but trailing-slash-added form=%v", path, got, slashed)
+		if slashed := (Sensitive{}).protectedDir(path + "/"); slashed != got {
+			t.Fatalf("protectedDir(%q)=%v but trailing-slash-added form=%v", path, got, slashed)
 		}
 	})
 }

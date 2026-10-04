@@ -135,6 +135,63 @@ func TestSubscribe_HostLogging(t *testing.T) {
 	}
 }
 
+// TestService_WantsNeedsKindEnabledAndASubscription pins the arm of the PR-status
+// poller's gate that is about notifications: a send of the kind would reach
+// someone. A subscription alone is not enough while the kind is off, which is the
+// default for pull-request checks, and neither is the kind alone.
+func TestService_WantsNeedsKindEnabledAndASubscription(t *testing.T) {
+	sub := marotte.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/1"}
+	cases := []struct {
+		name    string
+		kind    marotte.PushKind
+		enable  bool
+		sub     bool
+		healthy bool
+		want    bool
+	}{
+		{name: "EnabledWithASubscription", kind: marotte.PushKindPRStatus, enable: true, sub: true, healthy: true, want: true},
+		{name: "SubscriptionButKindOff", kind: marotte.PushKindPRStatus, enable: false, sub: true, healthy: true},
+		{name: "KindOnButNoSubscription", kind: marotte.PushKindPRStatus, enable: true, sub: false, healthy: true},
+		{name: "UnhealthyService", kind: marotte.PushKindPRStatus, enable: true, sub: true, healthy: false},
+		{name: "UnknownKind", kind: marotte.PushKind("not_a_kind"), enable: true, sub: true, healthy: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(t.Context(), t.TempDir(), testSubject)
+			defer s.Close()
+			s.SetPreferences(map[marotte.PushKind]bool{tc.kind: tc.enable})
+			if tc.sub {
+				s.Subscribe(sub)
+			}
+			s.mu.Lock()
+			s.healthy = tc.healthy
+			s.mu.Unlock()
+			if got := s.Wants(tc.kind); got != tc.want {
+				t.Errorf("Wants(%q) with enabled=%v subscribed=%v healthy=%v = %v, want %v",
+					tc.kind, tc.enable, tc.sub, tc.healthy, got, tc.want)
+			}
+		})
+	}
+	t.Run("DefaultPreferenceIsOffForPRStatus", func(t *testing.T) {
+		s := New(t.Context(), t.TempDir(), testSubject)
+		defer s.Close()
+		s.Subscribe(sub)
+		if s.Wants(marotte.PushKindPRStatus) {
+			t.Error("Wants(pr_status) on a fresh install with a subscription = true, want false (the kind defaults off)")
+		}
+	})
+	t.Run("UnsubscribingClosesIt", func(t *testing.T) {
+		s := New(t.Context(), t.TempDir(), testSubject)
+		defer s.Close()
+		s.SetPreferences(map[marotte.PushKind]bool{marotte.PushKindPRStatus: true})
+		s.Subscribe(sub)
+		s.Unsubscribe(sub.Endpoint)
+		if s.Wants(marotte.PushKindPRStatus) {
+			t.Error("Wants(pr_status) after the last subscription left = true, want false")
+		}
+	})
+}
+
 func TestSetPreferences(t *testing.T) {
 	dir := t.TempDir()
 	s := New(t.Context(), dir, "mailto:test@example.com")

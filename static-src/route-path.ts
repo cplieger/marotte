@@ -43,8 +43,8 @@ interface RouteGit {
    *  `push-subject.ts` `prIdentity` spells.
    *
    *  A fragment rather than a path segment, for `RouteRun.node`'s two reasons: the
-   *  identity contains `/` and `#`, and the tab's identity is `(kind: git, ref: "")`,
-   *  which must not gain a second shape. */
+   *  identity contains `#`, and the tab's identity is `(kind: git, ref: "")`, which
+   *  must not gain a second shape. */
   pr?: string;
 }
 interface RouteFiles {

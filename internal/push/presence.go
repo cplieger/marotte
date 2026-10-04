@@ -111,6 +111,20 @@ func (p *Presence) Gone(tag string) bool {
 	return p.judge(row, p.now())
 }
 
+// AnyPresent reports whether a page behind any tag is receiving the stream, by the
+// verdict Gone reads.
+func (p *Presence) AnyPresent() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.now()
+	for _, row := range p.rows {
+		if !p.judge(row, now) {
+			return true
+		}
+	}
+	return false
+}
+
 // Rows returns every row with its current verdict, sorted by tag.
 func (p *Presence) Rows() []PresenceRow {
 	p.mu.Lock()

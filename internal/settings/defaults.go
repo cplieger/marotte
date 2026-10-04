@@ -59,12 +59,11 @@ const (
 	// not offer falls through to that model's default rather than being sent.
 	KeyLastEffortByModel = "last_effort_by_model"
 
-	// KeyLastMergeMethod is the PR merge method the user picked last (squash or
-	// rebase), and the merge dialog's default on the next merge. A seed like
-	// KeyLastEffortByModel: pure memory, never a per-repo policy — the forge
-	// refuses a method a repo disallows, and that refusal reaches the user through
-	// the merge error. Empty means nothing picked yet; the client falls back to
-	// rebase (the method every cplieger repo allows).
+	// KeyLastMergeMethod is the PR merge method the user picked last, in the
+	// forge's own spelling, and the merge dialog's default on the next merge when
+	// that repository offers it. A seed like KeyLastEffortByModel: pure memory,
+	// never a per-repo policy. Empty means nothing picked yet; the dialog then
+	// defaults to the first method the repository lists.
 	KeyLastMergeMethod = "last_merge_method"
 
 	KeyNotifyAgentFinished = "notify_agent_finished"

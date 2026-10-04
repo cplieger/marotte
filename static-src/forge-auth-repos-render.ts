@@ -7,13 +7,22 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import { chevronEl } from "./chevron.js";
 import { ICON_DOWNLOAD, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
+import { confirm as confirmDialog } from "./confirm.js";
+import { partialWhy } from "./forge-types.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
-import { cloneAllForAccount, deleteAllForAccount, type RepoDeps } from "./forge-auth-repos.js";
+import {
+  cloneAllForAccount,
+  deleteAllForAccount,
+  listedRepos,
+  type RepoDeps,
+  type RepoListing,
+} from "./forge-auth-repos.js";
 
 export interface ReposRenderDeps {
   lastLocalNames: Set<string>;
@@ -21,75 +30,85 @@ export interface ReposRenderDeps {
   bumpState: () => void;
   repoDeps: RepoDeps;
   repoSpec: ReconcileSpec<Repo>;
+  /** Read the next page of an account's list; rejects when it was refused. */
+  loadMore: (forgeId: string) => Promise<void>;
+  /** Why an account's last list-wide press (Load more, Clone all, Delete all)
+   *  fell short, by forge id, until the next one. */
+  listNotes: Map<string, string>;
 }
 
+const disclosures = new WeakMap<HTMLElement, DisclosureController>();
+
+/** The list's toggle and its batch buttons are siblings in one header row: a
+ *  button inside a `<summary>` is flattened or dropped by a screen reader. */
 export function buildAccountReposDetails(
   a: ConfiguredForge,
-  repos: Repo[],
+  l: RepoListing,
   deps: ReposRenderDeps,
 ): HTMLElement {
-  const details = el("details", {
-    className: "forge-account-repos",
-    "data-account-id": a.id,
-  }) as HTMLDetailsElement;
-  if (deps.expandOnNextPaint.has(a.id)) {
-    details.open = true;
-    deps.expandOnNextPaint.delete(a.id);
-  }
-
+  const block = el("div", { className: "forge-account-repos", "data-account-id": a.id });
   const chevron = chevronEl();
   chevron.classList.add("forge-account-repos-chevron");
-  const summary = el(
-    "summary",
-    { className: "forge-account-repos-summary" },
+  const toggle = el(
+    "button",
+    { type: "button", className: "forge-account-repos-summary" },
     chevron,
     el("span", { className: "forge-account-repos-icon", "aria-hidden": "true" }, iconEl(ICON_REPO)),
     el("span", { className: "forge-account-repos-label" }),
   );
-  setAccountSummaryLabel(summary, repos, deps);
-  refreshAccountSummaryButtons(summary, repos, deps);
-  details.appendChild(summary);
-
-  if (repos.length === 0) {
-    details.appendChild(
-      el(
-        "div",
-        { className: "forge-account-repos-empty" },
-        "No repositories accessible to this account.",
-      ),
-    );
-    return details;
-  }
-
-  const list = el("ul", { className: "forge-account-repos-list" });
-  details.appendChild(list);
-  reconcile(list, sortRepos(repos, deps), deps.repoSpec);
-  return details;
+  const body = el(
+    "div",
+    { className: "forge-account-repos-body" },
+    el("div", { className: "forge-account-repos-more" }),
+  );
+  block.append(
+    el(
+      "div",
+      { className: "forge-account-repos-head" },
+      toggle,
+      el("div", { className: "forge-account-repos-actions" }),
+    ),
+    body,
+  );
+  disclosures.set(block, createDisclosure(toggle, body));
+  updateAccountReposDetails(block, a, l, deps);
+  return block;
 }
 
 export function updateAccountReposDetails(
-  details: HTMLElement,
+  block: HTMLElement,
   a: ConfiguredForge,
-  repos: Repo[],
+  l: RepoListing,
   deps: ReposRenderDeps,
 ): void {
   if (deps.expandOnNextPaint.has(a.id)) {
-    (details as HTMLDetailsElement).open = true;
+    disclosures.get(block)?.open();
     deps.expandOnNextPaint.delete(a.id);
   }
-  const summary = details.querySelector<HTMLElement>(":scope > .forge-account-repos-summary");
-  if (summary !== null) {
-    setAccountSummaryLabel(summary, repos, deps);
-    refreshAccountSummaryButtons(summary, repos, deps);
+  const repos = listedRepos(l);
+  const head = block.querySelector<HTMLElement>(":scope > .forge-account-repos-head");
+  const actions = head?.querySelector<HTMLElement>(":scope > .forge-account-repos-actions");
+  if (head !== null && actions !== null && actions !== undefined) {
+    setAccountSummaryLabel(head, l, repos, deps);
+    refreshAccountSummaryButtons(actions, a, repos, deps);
+  }
+  const body = block.querySelector<HTMLElement>(":scope > .forge-account-repos-body");
+  const foot = body?.querySelector<HTMLElement>(":scope > .forge-account-repos-more") ?? null;
+  if (body === null || foot === null) {
+    return;
   }
 
-  // Empty-state placeholder vs list <ul>.
-  const emptyEl = details.querySelector<HTMLElement>(":scope > .forge-account-repos-empty");
-  let list = details.querySelector<HTMLElement>(":scope > .forge-account-repos-list");
+  // The empty state is a whole list's answer: one still paging, cut short or
+  // never read says something else, in the footer.
+  const emptyEl = body.querySelector<HTMLElement>(":scope > .forge-account-repos-empty");
+  let list = body.querySelector<HTMLElement>(":scope > .forge-account-repos-list");
   if (repos.length === 0) {
     list?.remove();
-    if (emptyEl === null) {
-      details.appendChild(
+    const whole = !l.unread && !l.stale && l.next === "" && l.partial === undefined;
+    if (!whole) {
+      emptyEl?.remove();
+    } else if (emptyEl === null) {
+      foot.before(
         el(
           "div",
           { className: "forge-account-repos-empty" },
@@ -97,14 +116,98 @@ export function updateAccountReposDetails(
         ),
       );
     }
-    return;
+  } else {
+    emptyEl?.remove();
+    if (list === null) {
+      list = el("ul", { className: "forge-account-repos-list" });
+      foot.before(list);
+    }
+    reconcile(list, sortRepos(repos, deps), deps.repoSpec);
   }
-  emptyEl?.remove();
-  if (list === null) {
-    list = el("ul", { className: "forge-account-repos-list" });
-    details.appendChild(list);
+  refreshFooter(foot, a, l, deps);
+}
+
+/** What the list says beneath its rows: that it was never read, why it stopped
+ *  short, the Load more that reads its next page, and why its last list-wide
+ *  press fell short. The status line and a Load more still reading are kept
+ *  across paints. */
+function refreshFooter(
+  foot: HTMLElement,
+  a: ConfiguredForge,
+  l: RepoListing,
+  deps: ReposRenderDeps,
+): void {
+  let status = foot.querySelector<HTMLElement>(":scope > .forge-account-repos-status");
+  if (status === null) {
+    status = el("span", {
+      className: "forge-account-repos-status forge-account-error",
+      role: "status",
+    });
+    foot.appendChild(status);
   }
-  reconcile(list, sortRepos(repos, deps), deps.repoSpec);
+  status.textContent = deps.listNotes.get(a.id) ?? "";
+
+  for (const line of foot.querySelectorAll(":scope > p")) {
+    line.remove();
+  }
+  const lines: HTMLElement[] = [];
+  if (l.unread) {
+    lines.push(
+      el(
+        "p",
+        { className: "forge-account-error" },
+        "Could not list the repositories on this account.",
+      ),
+    );
+  } else if (l.stale) {
+    lines.push(
+      el(
+        "p",
+        { className: "forge-account-error" },
+        "Could not refresh the repositories on this account. The list is from the last read.",
+      ),
+    );
+  }
+  const why = partialWhy(l.partial, l.next);
+  if (why !== "") {
+    lines.push(
+      el(
+        "p",
+        { className: "section-hint" },
+        `Not every repository on this account was read: ${why}.`,
+      ),
+    );
+  }
+  foot.prepend(...lines);
+
+  let more = foot.querySelector<HTMLButtonElement>(":scope > .forge-account-repos-load-more");
+  if (l.next === "" && more?.getAttribute("aria-busy") !== "true") {
+    more?.remove();
+    more = null;
+  } else if (more === null) {
+    more = makeLoadMoreButton(a.id, status, deps);
+    status.before(more);
+  }
+  foot.classList.toggle("hidden", lines.length === 0 && more === null && status.textContent === "");
+}
+
+function makeLoadMoreButton(
+  forgeId: string,
+  status: HTMLElement,
+  deps: ReposRenderDeps,
+): HTMLButtonElement {
+  const btn = el(
+    "button",
+    { type: "button", className: "btn-small forge-account-repos-load-more" },
+    "Load more repositories",
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    status.textContent = "";
+    void withAsyncFeedback(btn, () => deps.loadMore(forgeId), { keepLabel: true }).then(() => {
+      deps.bumpState();
+    });
+  });
+  return btn;
 }
 
 function sortRepos(repos: Repo[], deps: ReposRenderDeps): Repo[] {
@@ -122,21 +225,33 @@ function sortRepos(repos: Repo[], deps: ReposRenderDeps): Repo[] {
   });
 }
 
-function setAccountSummaryLabel(summary: HTMLElement, repos: Repo[], deps: ReposRenderDeps): void {
+function setAccountSummaryLabel(
+  head: HTMLElement,
+  l: RepoListing,
+  repos: Repo[],
+  deps: ReposRenderDeps,
+): void {
+  const label = head.querySelector<HTMLElement>(".forge-account-repos-label");
+  if (label === null) {
+    return;
+  }
+  if (l.unread) {
+    label.textContent = "Repositories not read";
+    return;
+  }
   const total = repos.length;
   const cloned = repos.filter((r) => deps.lastLocalNames.has(r.name)).length;
-  const label = summary.querySelector<HTMLElement>(".forge-account-repos-label");
-  if (label !== null) {
-    label.textContent = `${total} repo${total === 1 ? "" : "s"}, ${cloned} cloned locally`;
-  }
+  const sofar = l.next === "" ? "" : " so far";
+  label.textContent = `${String(total)} repo${total === 1 ? "" : "s"}${sofar}, ${String(cloned)} cloned locally`;
 }
 
-/** Rebuild cloneAll/deleteAll buttons in the summary. Skips a button
- *  that is currently mid-async (`aria-busy="true"`) so a
+/** Rebuild cloneAll/deleteAll buttons in the header row's group. Skips a
+ *  button that is currently mid-async (`aria-busy="true"`) so a
  *  withAsyncFeedback loop's textContent updates don't get clobbered;
  *  the next bumpState after the action completes will refresh it. */
 function refreshAccountSummaryButtons(
-  summary: HTMLElement,
+  actions: HTMLElement,
+  a: ConfiguredForge,
   repos: Repo[],
   deps: ReposRenderDeps,
 ): void {
@@ -146,67 +261,93 @@ function refreshAccountSummaryButtons(
   );
   const clonedRepos = repos.filter((r) => deps.lastLocalNames.has(r.name));
 
-  const oldCloneAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all");
+  const oldCloneAll = actions.querySelector<HTMLButtonElement>(".forge-account-repos-clone-all");
   if (oldCloneAll?.getAttribute("aria-busy") !== "true") {
     oldCloneAll?.remove();
     if (cloneable.length > 0) {
-      summary.appendChild(makeCloneAllButton(cloneable, deps));
+      actions.prepend(makeCloneAllButton(a, cloneable, deps));
     }
   }
 
-  const oldDeleteAll = summary.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all");
+  const oldDeleteAll = actions.querySelector<HTMLButtonElement>(".forge-account-repos-delete-all");
   if (oldDeleteAll?.getAttribute("aria-busy") !== "true") {
     oldDeleteAll?.remove();
     if (clonedRepos.length > 0) {
-      summary.appendChild(makeDeleteAllButton(clonedRepos, deps));
+      actions.appendChild(makeDeleteAllButton(a, clonedRepos, deps));
     }
   }
 }
 
-function makeCloneAllButton(cloneable: Repo[], deps: ReposRenderDeps): HTMLButtonElement {
+/** Run one list-wide batch with `btn`'s feedback. A sentence it answers is the
+ *  list's, and opens the list so the rows that fell short are in view. */
+async function runBatch(
+  a: ConfiguredForge,
+  btn: HTMLButtonElement,
+  deps: ReposRenderDeps,
+  batch: () => Promise<string>,
+): Promise<void> {
+  deps.listNotes.delete(a.id);
+  await withAsyncFeedback(btn, async () => {
+    const sentence = await batch();
+    if (sentence !== "") {
+      deps.listNotes.set(a.id, sentence);
+      deps.expandOnNextPaint.add(a.id);
+      throw new Error(sentence);
+    }
+  });
+  deps.bumpState();
+}
+
+function makeCloneAllButton(
+  a: ConfiguredForge,
+  cloneable: Repo[],
+  deps: ReposRenderDeps,
+): HTMLButtonElement {
   const btn = el(
     "button",
     {
       type: "button",
       className: "btn-small forge-account-repos-clone-all",
-      "data-tooltip": `Clone every uncloned repo on this account (${cloneable.length})`,
+      "data-tooltip": `Clone every uncloned repo listed here (${cloneable.length})`,
       "aria-label": `Clone ${cloneable.length} uncloned repos`,
     },
     iconEl(ICON_DOWNLOAD),
     el("span", null, String(cloneable.length)),
   ) as HTMLButtonElement;
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    void withAsyncFeedback(btn, () => cloneAllForAccount(cloneable, btn, deps.repoDeps)).then(
-      () => {
-        deps.bumpState();
-      },
-    );
+  btn.addEventListener("click", () => {
+    void runBatch(a, btn, deps, () => cloneAllForAccount(cloneable, btn, deps.repoDeps));
   });
   return btn;
 }
 
-function makeDeleteAllButton(clonedRepos: Repo[], deps: ReposRenderDeps): HTMLButtonElement {
+function makeDeleteAllButton(
+  a: ConfiguredForge,
+  clonedRepos: Repo[],
+  deps: ReposRenderDeps,
+): HTMLButtonElement {
   const btn = el(
     "button",
     {
       type: "button",
       className: "btn-small btn-danger forge-account-repos-delete-all",
-      "data-tooltip": `Remove every locally-cloned repo on this account (${clonedRepos.length})`,
+      "data-tooltip": `Remove every locally-cloned repo listed here (${clonedRepos.length})`,
       "aria-label": `Delete ${clonedRepos.length} local clones`,
     },
     iconEl(ICON_TRASH),
     el("span", null, String(clonedRepos.length)),
   ) as HTMLButtonElement;
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    void withAsyncFeedback(btn, () => deleteAllForAccount(clonedRepos, btn, deps.repoDeps)).then(
-      () => {
-        deps.bumpState();
-      },
-    );
+  btn.addEventListener("click", () => {
+    void (async () => {
+      const n = clonedRepos.length;
+      const ok = await confirmDialog(
+        `Delete the local copy of ${String(n)} repo${n === 1 ? "" : "s"}? The remotes stay intact. You can re-clone any of them later.`,
+        "Delete all",
+        "destructive",
+      );
+      if (ok) {
+        await runBatch(a, btn, deps, () => deleteAllForAccount(clonedRepos, btn, deps.repoDeps));
+      }
+    })();
   });
   return btn;
 }

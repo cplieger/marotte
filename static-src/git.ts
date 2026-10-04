@@ -26,7 +26,6 @@ import { initChangesTab, refreshChanges, changesFind } from "./git-changes-tab.j
 import { initPRsTab, prsFind } from "./git-prs-tab.js";
 import { refreshPRs } from "./actions/git-prs.js";
 import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
-import { initStatusBanner } from "./git-status-banner.js";
 import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
 import { refreshGitStatus } from "./git-status-store.js";
 import { registerFind } from "./find-registry.js";
@@ -83,30 +82,6 @@ export function initGitPanel(): void {
     // find-dispatch here would drag find-in-chat and scroll.ts's
     // self-initialising singleton into the git view.
     registerFind("git", gitFind);
-    initStatusBanner({
-      // Connect-forge CTA from the banner: switch to the Sources tab,
-      // which holds the per-forge account UI.
-      onConnectForge: () => {
-        void (async () => {
-          const { setGitTab } = await import("./git-tabs.js");
-          setGitTab("sources");
-        })().catch(() => {
-          /* noop */
-        });
-      },
-      // Authenticate-gh CTA: deferred for now (the new multi-repo
-      // model handles auth via per-forge "Add account" buttons in
-      // the Sources tab; the legacy `gh auth login` device-flow
-      // wrapper isn't wired through this banner any more).
-      onAuthenticateGh: () => {
-        void (async () => {
-          const { setGitTab } = await import("./git-tabs.js");
-          setGitTab("sources");
-        })().catch(() => {
-          /* noop */
-        });
-      },
-    });
 
     // The reader switched sub-tabs. The WHOLE callback is gated on `painted`,
     // including the two closes: `subscribe` fires immediately on attach, and that
@@ -143,10 +118,9 @@ function refreshGitTab(tab: GitTab): void {
     case "prs":
       // NOT the force the Changes tab passes above, and the asymmetry is the point.
       // `?fetch=1` there runs a local `git fetch`, the only way to learn remote state
-      // at all. Here every row is already remote and the server caches the listings,
-      // so arriving at the tab should cost no subprocess when the answer is known.
-      // The refresh button forces.
-      void refreshPRs.dispatch({ force: false });
+      // at all. Here the rows are the poller's inventory, so arriving reads memory and
+      // costs no forge request; the refresh button asks for a cycle.
+      void refreshPRs.dispatch();
       break;
     case "sources":
       void refreshSources();

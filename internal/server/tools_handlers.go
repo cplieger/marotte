@@ -17,14 +17,13 @@ import (
 
 // statusBinaries is the set of binaries /api/tools/status probes. Each
 // key is a name kiro-cli or a marotte feature panel expects on PATH
-// (the MCP add modal gates on node/npx/uv, Sources on the forge CLIs).
+// (the MCP add modal gates on node/npx/uv).
 var statusBinaries = []string{
 	"node", "npm", "npx",
 	"go", "gofmt",
 	"java",
 	"cargo", "rustc",
 	"uv", "uvx",
-	"gh", "glab", "tea",
 	"typescript-language-server", "tsc",
 	"pyright", "pyrefly",
 	"gopls", "rust-analyzer", "clangd",

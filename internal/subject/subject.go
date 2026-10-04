@@ -32,6 +32,9 @@ const (
 	KindTabs    Kind = "tabs"
 	KindCatalog Kind = "catalog"
 	KindStatus  Kind = "status"
+	// KindForgeInventory is one forge connection's pull-request inventory entry,
+	// ref the connection id.
+	KindForgeInventory Kind = "forge_inventory"
 )
 
 // Unminted is the version a counter reports before its first bump this

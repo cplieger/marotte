@@ -50,7 +50,7 @@ func TestNew_SkipsUnusableRoots_FailsOnZero(t *testing.T) {
 	good := t.TempDir()
 	// A missing dir and a "/" grant are both skipped with a warning;
 	// the good mount survives.
-	h, err := New("/does-not-exist-marotte-test", "/", good)
+	h, err := New(Sensitive{}, "/does-not-exist-marotte-test", "/", good)
 	if err != nil {
 		t.Fatalf("New with one good root: %v", err)
 	}
@@ -58,14 +58,14 @@ func TestNew_SkipsUnusableRoots_FailsOnZero(t *testing.T) {
 		t.Fatalf("mounts = %+v, want exactly the good root", h.mounts)
 	}
 	// Zero usable roots is a hard error.
-	if _, err := New("/does-not-exist-marotte-test"); err == nil {
+	if _, err := New(Sensitive{}, "/does-not-exist-marotte-test"); err == nil {
 		t.Fatal("New with zero usable roots = nil error, want failure")
 	}
 }
 
 func TestNew_DedupesGrants(t *testing.T) {
 	dir := t.TempDir()
-	h, err := New(dir, dir, dir+"/")
+	h, err := New(Sensitive{}, dir, dir, dir+"/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestMountFor_NestedGrantWins(t *testing.T) {
 	if err := os.Mkdir(inner, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(outer, inner)
+	h, err := New(Sensitive{}, outer, inner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestListFiles_Root_NestedGrantName(t *testing.T) {
 	if err := os.Mkdir(inner, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(inner) // grant ONLY the nested dir
+	h, err := New(Sensitive{}, inner) // grant ONLY the nested dir
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestListFiles_Root_NestedGrantName(t *testing.T) {
 func TestResolvePath_SymlinkAcrossGrantedMounts(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
-	h, err := New(dirA, dirB)
+	h, err := New(Sensitive{}, dirA, dirB)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -185,10 +185,10 @@ func TestWriteMCP_InputSnapshotNotMutated(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestWriteForges_PerProviderFields verifies a populated provider renders
-// its email, CLI line, and accessible-repositories block, while a bare
-// provider (no email, unknown kind, no repos) omits all three.
+// its email and accessible-repositories block, while a bare provider (no
+// email, no repos) omits both.
 func TestWriteForges_PerProviderFields(t *testing.T) {
-	t.Run("populated provider renders email, CLI and repo list", func(t *testing.T) {
+	t.Run("populated provider renders email and repo list", func(t *testing.T) {
 		var b strings.Builder
 		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
 			Kind:  "github",
@@ -201,18 +201,15 @@ func TestWriteForges_PerProviderFields(t *testing.T) {
 		if !strings.Contains(out, "alice@example.com") {
 			t.Errorf("missing authenticated email:\n%s", out)
 		}
-		if !strings.Contains(out, "CLI: `gh`") {
-			t.Errorf("missing CLI line for github:\n%s", out)
-		}
 		if !strings.Contains(out, "Accessible repositories") || !strings.Contains(out, "acme/widget") {
 			t.Errorf("missing accessible-repositories block:\n%s", out)
 		}
 	})
 
-	t.Run("bare provider omits email, CLI and repo list", func(t *testing.T) {
+	t.Run("bare provider omits email and repo list", func(t *testing.T) {
 		var b strings.Builder
 		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
-			Kind: "mysteryforge", // forgeCLI() returns "" -> no CLI line
+			Kind: "gitea",
 			Host: "git.example.com",
 			User: "bob",
 			// Email empty, Repos nil.
@@ -220,9 +217,6 @@ func TestWriteForges_PerProviderFields(t *testing.T) {
 		out := b.String()
 		if strings.Contains(out, "bob <") {
 			t.Errorf("rendered an empty <email> for a provider without an email:\n%s", out)
-		}
-		if strings.Contains(out, "- CLI:") {
-			t.Errorf("rendered a CLI line for an unknown forge kind:\n%s", out)
 		}
 		if strings.Contains(out, "Accessible repositories") {
 			t.Errorf("rendered accessible-repositories header with zero repos:\n%s", out)
@@ -387,6 +381,35 @@ func TestGenerate_RendersForgeSection(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("Generate with forge snapshot omitted %q\n--- output ---\n%s", want, got)
 		}
+	}
+}
+
+// TestGenerate_GitPanelFollowsTheForgeSnapshot pins which closing paragraph the
+// git panel gets: the connected-account one with a provider in the snapshot,
+// the Sources pointer with none.
+func TestGenerate_GitPanelFollowsTheForgeSnapshot(t *testing.T) {
+	const connected, none = "the account the Sources tab holds", "No forge account is connected"
+	for _, tc := range []struct {
+		name      string
+		providers []ForgeProvider
+		want, not string
+	}{
+		{"one provider", []ForgeProvider{{Kind: "gitlab", Host: "gitlab.com", User: "alice"}}, connected, none},
+		{"no provider", nil, none, connected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			steeringPath := setupKiroHome(t)
+			g := New(t.TempDir(), t.TempDir())
+			g.SetForgeSnapshot(func() ForgeSnapshot { return ForgeSnapshot{Providers: tc.providers} })
+			g.Generate(t.Context())
+			out, err := os.ReadFile(steeringPath)
+			if err != nil {
+				t.Fatalf("steering file not written: %v", err)
+			}
+			if got := string(out); !strings.Contains(got, tc.want) || strings.Contains(got, tc.not) {
+				t.Errorf("Generate(%s) git panel: want %q and not %q\n--- output ---\n%s", tc.name, tc.want, tc.not, got)
+			}
+		})
 	}
 }
 
@@ -569,43 +592,61 @@ func TestWriteForges_RepoListTruncatesAtTwenty(t *testing.T) {
 	})
 }
 
-// TestWriteForges_ScopeBoundaryIsGitHubOnly pins the three claims the
-// scope paragraph exists to make: the boundary is stated at all, the
-// advice is withheld from a forge whose CLI it does not apply to, and
-// the unqualified sentence it replaced does not come back. That last one
-// is the defect being guarded: "no auth login or token setup needed"
-// told the agent not to worry about a real boundary.
-func TestWriteForges_ScopeBoundaryIsGitHubOnly(t *testing.T) {
+// connectedEverywhere is one provider of every forge kind Sources connects.
+var connectedEverywhere = ForgeSnapshot{Providers: []ForgeProvider{
+	{Kind: "github", Host: "github.com", User: "alice"},
+	{Kind: "gitlab", Host: "gitlab.com", User: "alice"},
+	{Kind: "gitea", Host: "git.example.com", User: "alice"},
+	{Kind: "codeberg", Host: "codeberg.org", User: "alice"},
+}}
+
+// TestWriteForges_ClaimsNoForgeCLI pins the forge section to the one path
+// Marotte authenticates for the agent: git over HTTPS through its own helper.
+// No forge CLI is offered as a way in, for any connected kind.
+func TestWriteForges_ClaimsNoForgeCLI(t *testing.T) {
+	var b strings.Builder
+	writeForges(&b, connectedEverywhere)
+	out := b.String()
+	if cli := forgeCLIName.FindString(out); cli != "" {
+		t.Errorf("writeForges(every kind) names the forge CLI %q:\n%s", cli, out)
+	}
+	for _, want := range []string{
+		"authenticated for each connected forge by marotte's own git credential helper",
+		"marotte installs and signs in no forge CLI and exports no forge token to agent sessions",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("writeForges(every kind) output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestWriteForges_StatesSSHIsNotCovered pins the boundary of the helper: an
+// SSH remote never reaches it, so the agent must not expect one to push.
+func TestWriteForges_StatesSSHIsNotCovered(t *testing.T) {
+	var b strings.Builder
+	writeForges(&b, connectedEverywhere)
+	out := b.String()
+	if !strings.Contains(out, "SSH remotes are not covered") {
+		t.Errorf("writeForges(every kind) does not state that SSH remotes are not covered:\n%s", out)
+	}
+}
+
+// TestWriteForges_ARefusalIsTheConnectedCredentialsLimit pins the remedy the
+// agent is given for a refused push on every kind, and keeps out the
+// unqualified sentence that once told it there was no boundary to worry about.
+func TestWriteForges_ARefusalIsTheConnectedCredentialsLimit(t *testing.T) {
 	const retired = "no auth login or token setup needed"
-
-	t.Run("github connected states the boundary and the live check", func(t *testing.T) {
-		var b strings.Builder
-		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
-			Kind: "github", Host: "github.com", User: "alice",
-		}}})
-		out := b.String()
-		if !strings.Contains(out, "x-oauth-scopes") {
-			t.Errorf("missing the live scope check:\n%s", out)
-		}
-		if !strings.Contains(out, "gh auth refresh") {
-			t.Errorf("missing the remedy the 404 names:\n%s", out)
-		}
-		if strings.Contains(out, retired) {
-			t.Errorf("the unqualified pre-authenticated claim came back:\n%s", out)
-		}
-	})
-
-	t.Run("non-github forge gets no gh-specific scope advice", func(t *testing.T) {
-		var b strings.Builder
-		writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{{
-			Kind: "gitlab", Host: "gitlab.com", User: "alice",
-		}}})
-		out := b.String()
-		if strings.Contains(out, "x-oauth-scopes") || strings.Contains(out, "gh auth refresh") {
-			t.Errorf("gitlab-only install was given gh scope advice:\n%s", out)
-		}
-		if !strings.Contains(out, "pre-authenticated for git") {
-			t.Errorf("lost the generic pre-authenticated claim:\n%s", out)
-		}
-	})
+	for _, p := range connectedEverywhere.Providers {
+		t.Run(p.Kind, func(t *testing.T) {
+			var b strings.Builder
+			writeForges(&b, ForgeSnapshot{Providers: []ForgeProvider{p}})
+			out := b.String()
+			if !strings.Contains(out, "reconnecting the account in Sources") {
+				t.Errorf("writeForges(%s) does not name reconnecting in Sources as the remedy:\n%s", p.Kind, out)
+			}
+			if strings.Contains(out, retired) {
+				t.Errorf("writeForges(%s) brought back %q:\n%s", p.Kind, retired, out)
+			}
+		})
+	}
 }

@@ -1,32 +1,3 @@
-// HTTP handlers for the forges package.
-//
-// Routes:
-//   GET    /api/forges                          — list configured forges
-//   POST   /api/forges/refresh                  — re-read CLI configs
-//   POST   /api/forges/oauth/github/start       — start GH device flow
-//   POST   /api/forges/oauth/github/poll        — poll GH device flow
-//   POST   /api/forges/{id}/login/pat           — login via PAT (any kind: github/gitlab/gitea/codeberg)
-//   POST   /api/forges/{id}/probe               — verify auth still works
-//   DELETE /api/forges/{id}                     — disconnect (remove from CLI)
-//
-//   GET    /api/forges/{id}/repos               — list accessible repos
-//   GET    /api/forges/{id}/repos/{owner}/{name}/prs    — list PRs
-//   POST   /api/forges/{id}/repos/{owner}/{name}/prs    — create PR
-//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/merge — merge
-//            ?method=merge|squash|rebase  merge strategy
-//            ?head_sha=<sha>              refuse the merge if the head moved
-//            ?auto=1                      arm the forge's auto-merge instead
-//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/close — close
-//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/reopen — reopen
-//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/rerun — re-run failed CI
-//   GET    /api/forges/{id}/repos/{owner}/{name}/issues       — list issues
-//   POST   /api/forges/{id}/repos/{owner}/{name}/issues       — create issue
-//   POST   /api/forges/{id}/repos/{owner}/{name}/issues/{n}/close — close
-//   GET    /api/forges/{id}/repos/{owner}/{name}/checks?ref=… — CI checks
-//   GET    /api/forges/{id}/repos/{owner}/{name}/releases     — list releases
-//   POST   /api/forges/{id}/repos/{owner}/{name}/releases     — create release
-//   GET    /api/forges/{id}/repos/{owner}/{name}/labels       — list labels
-
 package forges
 
 import (
@@ -35,40 +6,40 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/webhttp/v3"
 )
 
-// ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.
-type ForgeErrCode string
+// codeNotSupported answers an optional role the connection's client lacks.
+const codeNotSupported = "not_supported"
 
-// ForgeErrCLINotInstalled and the following constants define the ForgeErrCode values for machine-readable HTTP error responses.
-const (
-	ForgeErrCLINotInstalled ForgeErrCode = "cli_not_installed"
-	ForgeErrNotLoggedIn     ForgeErrCode = "not_logged_in"
-	ForgeErrNotSupported    ForgeErrCode = "not_supported"
-)
-
-// broadcaster is the SSE fan-out a forge connection change is announced on, so
-// every client's forge UI refetches /api/forges. *agent.Runtime satisfies it.
+// broadcaster is the SSE fan-out a forge connection change and an inventory
+// entry are announced on. *agent.Runtime satisfies it.
 //
 // Declared HERE, at the consumer, rather than in a shared contract package.
 // 1 method against a *agent.Runtime exporting well over a hundred; this package fires
-// exactly one event kind and needs nothing else from the runtime at all.
+// two event kinds and needs nothing else from the runtime at all.
 type broadcaster interface {
 	Broadcast(ctx context.Context, evt marotte.ServerEvent)
 }
 
 // HTTPHandler exposes the forges package over HTTP.
 type HTTPHandler struct {
-	manager      *Manager
-	broadcaster  broadcaster
-	onChange     func()
+	manager     *Manager
+	broadcaster broadcaster
+	onChange    func()
+	// grants are the device grants in progress, which only this process can
+	// poll: a restart loses them and the sign-in starts again.
+	grants *grantRegistry
+	// poller holds the pull-request inventory and runs its cycles.
+	poller       *PRStatusPoller
 	probeTimeout time.Duration
 }
 
@@ -79,6 +50,7 @@ func NewHTTPHandler(m *Manager, b broadcaster) *HTTPHandler {
 		manager:      m,
 		broadcaster:  b,
 		probeTimeout: 20 * time.Second,
+		grants:       newGrantRegistry(),
 	}
 }
 
@@ -90,10 +62,14 @@ func NewHTTPHandler(m *Manager, b broadcaster) *HTTPHandler {
 // context (composition kicks its work onto the app-lifetime context).
 func (h *HTTPHandler) SetOnChange(fn func()) { h.onChange = fn }
 
-// notifyChanged broadcasts a forges_changed event so the UI's repo
-// picker (and any other listeners) refresh, then fires the onChange
-// callback. No-op parts are skipped when unwired.
-func (h *HTTPHandler) notifyChanged(ctx context.Context) {
+// SetPoller wires the poller whose inventory the inventory routes answer from.
+// Called once at composition, before the routes serve.
+func (h *HTTPHandler) SetPoller(p *PRStatusPoller) { h.poller = p }
+
+// NotifyChanged broadcasts a forges_changed event so the forge panels
+// refresh, then fires the onChange callback. No-op parts are skipped when
+// unwired.
+func (h *HTTPHandler) NotifyChanged(ctx context.Context) {
 	if h.broadcaster != nil {
 		h.broadcaster.Broadcast(ctx, marotte.NewEvent(marotte.EventForgesChanged, "", marotte.ForgesChangedPayload{}))
 	}
@@ -102,13 +78,101 @@ func (h *HTTPHandler) notifyChanged(ctx context.Context) {
 	}
 }
 
+// Detection and a device-grant start share one bucket: any caller can send
+// either, and each sends requests to a forge.
+const (
+	outboundBurst    = 6
+	outboundInterval = 10 * time.Second
+)
+
 // RegisterRoutes installs the /api/forges/* mux entries.
 func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
+	outbound := webhttp.RateLimiter(outboundBurst, outboundInterval,
+		webhttp.WithRateLimitWhen(sendsOutbound),
+		webhttp.WithRateLimitError("rate_limited", "Too many sign-ins or detections were started. Wait a moment and try again"))
 	mux.HandleFunc("/api/forges", h.handleForgesList)
 	mux.HandleFunc("/api/forges/", h.handleForgeItem)
-	mux.HandleFunc("/api/forges/refresh", h.handleRefresh)
-	mux.HandleFunc("/api/forges/oauth/github/start", handleGitHubDeviceStart)
-	mux.HandleFunc("/api/forges/oauth/github/poll", h.handleGitHubDevicePoll)
+	mux.Handle("/api/forges/detect", outbound(http.HandlerFunc(h.handleDetect)))
+	mux.HandleFunc("/api/forges/inventory", h.handleInventory)
+	mux.HandleFunc("/api/forges/inventory/refresh", h.handleInventoryRefresh)
+	mux.HandleFunc("/api/forges/inventory/watch", h.handleInventoryWatch)
+	mux.Handle("/api/forges/oauth/", outbound(http.HandlerFunc(h.handleDeviceGrant)))
+}
+
+// sendsOutbound is a detection or a device-grant start.
+func sendsOutbound(r *http.Request) bool {
+	return r.Method == http.MethodPost &&
+		(r.URL.Path == "/api/forges/detect" || strings.HasSuffix(r.URL.Path, "/start"))
+}
+
+const (
+	// clientTagHeader is the stream's client tag, the presence table's key.
+	clientTagHeader = "SSE-Client"
+	// codeWatchInvalid answers a watch whose tag or body is not one.
+	codeWatchInvalid = "watch_invalid"
+)
+
+// watchBody is a page saying whether it shows the pull-request view.
+type watchBody struct {
+	Watching *bool  `json:"watching"`
+	Page     string `json:"page"`
+}
+
+// handleInventoryWatch is POST /api/forges/inventory/watch {watching}: the
+// client behind the SSE-Client tag shows the pull-request view or stopped. The
+// tag is held to the grammar the stream's presence table keys on.
+func (h *HTTPHandler) handleInventoryWatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.poller == nil {
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
+		return
+	}
+	tag := r.Header.Get(clientTagHeader)
+	if !webhttp.ValidRequestID(tag) {
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+			httpreply.ErrorJSONWithCode("SSE-Client header absent or outside [A-Za-z0-9_-]{1,64}", codeWatchInvalid))
+		return
+	}
+	var body watchBody
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Watching == nil ||
+		(body.Page != "" && !webhttp.ValidRequestID(body.Page)) {
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+			httpreply.ErrorJSONWithCode("the body must be {watching: true|false, page?: [A-Za-z0-9_-]{1,64}}", codeWatchInvalid))
+		return
+	}
+	h.poller.viewers.watch(tag, body.Page, *body.Watching)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// errNoInventory answers an inventory route on a handler no poller was wired to.
+const errNoInventory = "the pull-request inventory is not running"
+
+func (h *HTTPHandler) handleInventory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if h.poller == nil {
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
+		return
+	}
+	webhttp.WriteJSON(w, h.poller.inventoryFor(h.manager.List(r.Context())))
+}
+
+func (h *HTTPHandler) handleInventoryRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpreply.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.poller == nil {
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(errNoInventory))
+		return
+	}
+	webhttp.WriteJSONStatus(w, http.StatusAccepted, InventoryRefresh{CycleID: h.poller.refresh()})
 }
 
 // handleForgesList returns all configured forges.
@@ -118,23 +182,14 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	forges := h.manager.List(r.Context())
+	_, github := h.grants.apps(forgeapi.FamilyGitHub)
+	_, gitlab := h.grants.apps(forgeapi.FamilyGitLab)
 	webhttp.WriteJSON(w, map[string]any{
 		"forges": forges,
 		"kinds":  AllKinds(),
-		"oauth":  map[string]bool{string(KindGitHub): true}, // device flow is built-in
+		// Device sign-in with Marotte's own application, per public instance.
+		"oauth": map[string]bool{string(KindGitHub): github, string(KindGitLab): gitlab},
 	})
-}
-
-func (h *HTTPHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		httpreply.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	if err := h.manager.Refresh(r.Context()); err != nil {
-		httpreply.ServerError(w, "refresh failed", err)
-		return
-	}
-	webhttp.Ok(w)
 }
 
 // handleForgeItem dispatches to per-forge sub-resources.
@@ -147,6 +202,12 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	// ID is "kind:host" — the colon could be percent-encoded but we
 	// keep it literal.
 	id, sub, _ := splitFirst(tail)
+	op, rest, _ := splitFirst(sub)
+	// A login is how a forge that has no row yet gets one.
+	if op == "login" {
+		h.handleLogin(w, r, id, rest)
+		return
+	}
 	if h.manager.Get(id) == nil {
 		httpreply.NotFound(w, "unknown forge id")
 		return
@@ -163,12 +224,13 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	op, rest, _ := splitFirst(sub)
 	switch op {
 	case "probe":
 		h.handleProbe(w, r, id)
-	case "login":
-		h.handleLogin(w, r, id, rest)
+	case "capabilities":
+		h.handleCapabilities(w, r, id)
+	case "owners":
+		h.handleOwners(w, r, id)
 	case "repos":
 		h.handleRepos(w, r, id, rest)
 	default:
@@ -182,14 +244,124 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 		httpreply.NotFound(w, "unknown forge")
 		return
 	}
-	if err := Logout(r.Context(), f.Kind, f.Host); err != nil {
+	if err := h.manager.disconnect(r.Context(), f); err != nil {
+		if errors.Is(err, errConnectionUnusable) {
+			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+			return
+		}
 		httpreply.ServerError(w, "disconnect failed", err)
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
-	h.notifyChanged(r.Context())
+	h.NotifyChanged(r.Context())
 	webhttp.Ok(w)
+}
+
+const (
+	// codeOwnersInvalid answers an owners body that is not a list of strings.
+	codeOwnersInvalid = "owners_invalid"
+	// codeOwnersTooMany answers more distinct owners than maxOwnerScopes.
+	codeOwnersTooMany = "owners_too_many"
+)
+
+// ownersBody replaces a connection's owner scopes; an empty list clears them.
+type ownersBody struct {
+	Owners *[]string `json:"owners"`
+}
+
+// handleOwners is PUT /api/forges/{id}/owners {owners}: the stored list is
+// replaced whole, every owner checked before anything is stored.
+func (h *HTTPHandler) handleOwners(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPut {
+		httpreply.MethodNotAllowed(w, http.MethodPut)
+		return
+	}
+	var body ownersBody
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Owners == nil {
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
+			httpreply.ErrorJSONWithCode("the body must be {owners: [string, ...]}", codeOwnersInvalid))
+		return
+	}
+	f := h.manager.Get(id)
+	if f == nil {
+		httpreply.NotFound(w, "unknown forge")
+		return
+	}
+	stored, err := h.manager.setOwnerScopes(r.Context(), f, *body.Owners)
+	if err != nil {
+		writeOwnersError(w, r, err)
+		return
+	}
+	h.NotifyChanged(r.Context())
+	// The inventory's added scopes are the stored owners, so the change shows at
+	// the next cycle rather than a poll interval later.
+	h.askCycle()
+	webhttp.WriteJSON(w, OwnerScopes{Owners: stored})
+}
+
+// writeOwnersError answers a refused owners write. An owner the library refuses
+// is its own envelope, with the message naming which owner it was.
+func writeOwnersError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		return
+	}
+	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
+		env := envelopeFor(ferr)
+		env.Error = logsafe.Field(err.Error())
+		webhttp.WriteJSONStatus(w, statusFor(ferr), env)
+		return
+	}
+	switch {
+	case errors.Is(err, errTooManyOwners):
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeOwnersTooMany))
+	case errors.Is(err, errConnectionUnusable):
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+	case errors.Is(err, errNoRecord):
+		httpreply.NotFound(w, err.Error())
+	default:
+		httpreply.ServerError(w, "storing the owners failed", err)
+	}
+}
+
+// connectionClient answers connection id's client, or writes why there is none:
+// a record file or store the server cannot use is a 503, anything else a 404.
+func (h *HTTPHandler) connectionClient(w http.ResponseWriter, id string) (forgeClient, bool) {
+	fc, err := h.manager.client(id)
+	if errors.Is(err, errConnectionUnusable) {
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+		return forgeClient{}, false
+	}
+	if err != nil {
+		httpreply.NotFound(w, err.Error())
+		return forgeClient{}, false
+	}
+	return fc, true
+}
+
+// handleCapabilities is GET /api/forges/{id}/capabilities. A failed read of
+// either scope answers its envelope, never a partial verdict.
+func (h *HTTPHandler) handleCapabilities(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		httpreply.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	fc, ok := h.connectionClient(w, id)
+	if !ok {
+		return
+	}
+	conn, err := fc.core.ConnectionCaps(r.Context())
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	grant, err := fc.core.GrantCaps(r.Context())
+	if err != nil {
+		writeOpsError(w, r, err)
+		return
+	}
+	webhttp.WriteJSON(w, capabilitiesOf(conn, grant))
 }
 
 func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
@@ -201,18 +373,15 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	defer cancel()
 	err := h.manager.Probe(ctx, id)
 	f := h.manager.Get(id)
-	if err != nil {
-		webhttp.WriteJSONStatus(w, http.StatusOK, map[string]any{
-			"connected": false,
-			statusError: err.Error(),
-			"forge":     f,
-		})
-		return
+	res := ProbeResult{Forge: f, Connected: err == nil}
+	switch {
+	case err == nil:
+	case f != nil && f.LastError != "":
+		res.Error = f.LastError
+	default:
+		res.Error = logsafe.Field(err.Error())
 	}
-	webhttp.WriteJSON(w, map[string]any{
-		"connected": true,
-		"forge":     f,
-	})
+	webhttp.WriteJSON(w, res)
 }
 
 // handleLogin handles POST /api/forges/{id}/login/pat — the user-
@@ -233,50 +402,152 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		httpreply.BadRequest(w, "invalid forge id")
 		return
 	}
-	var body struct {
-		Token string `json:"token"`
-	}
+	var body patBody
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
 	}
-	if err := LoginWithPAT(r.Context(), LoginPATParams{
-		Kind:  kind,
-		Host:  host,
-		Token: body.Token,
-	}); err != nil {
-		// Return the validation failure as a 2xx {error} envelope (marotte
-		// convention): the client's apiPost/action layer collapses any non-2xx
-		// to null → a generic "Network error.", hiding the real reason (bad
-		// credentials, missing scope, wrong host). On a 2xx the PAT form's
-		// inline error branch surfaces err. (Malformed JSON above stays 400.)
-		webhttp.WriteJSON(w, httpreply.ErrorJSON(err.Error()))
+	if err := h.loginPAT(r.Context(), kind, host, &body); err != nil {
+		writeLoginError(w, r, err)
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
-	h.notifyChanged(r.Context())
+	h.NotifyChanged(r.Context())
 	webhttp.WriteJSON(w, map[string]string{"status": stateComplete})
 }
 
-// writeOpsError maps ForgeOps errors to HTTP status codes.
-func writeOpsError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, ErrNotInstalled):
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
-	case errors.Is(err, ErrNotLoggedIn):
-		webhttp.WriteJSONStatus(w, http.StatusUnauthorized,
-			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
-	case errors.Is(err, ErrNotSupported):
-		webhttp.WriteJSONStatus(w, http.StatusNotImplemented,
-			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
-	default:
-		slog.Debug("forges: ops error", "error", logsafe.Field(err.Error()))
-		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpreply.ErrorJSON(err.Error()))
+// patBody is a token connect: the token and, for a self-managed instance, how
+// to reach it.
+type patBody struct {
+	Token string `json:"token"`
+	connectionFields
+}
+
+// connectionFields are how a connect reaches a self-managed instance.
+type connectionFields struct {
+	WebBaseURL string `json:"web_base_url"`
+	APIBaseURL string `json:"api_base_url"`
+	trustFields
+}
+
+// trustFields are what a connection trusts and which addresses it may reach.
+type trustFields struct {
+	CAPEM            string `json:"ca_pem"`
+	ClientCertPEM    string `json:"client_cert_pem"`
+	ClientKeyPEM     string `json:"client_key_pem"`
+	Proxy            string `json:"proxy"`
+	PrivateAddresses bool   `json:"private_addresses"`
+	PlaintextHTTP    bool   `json:"plaintext_http"`
+}
+
+func (h *HTTPHandler) loginPAT(ctx context.Context, kind Kind, host string, body *patBody) error {
+	rec, err := body.record(kind, host)
+	if err != nil {
+		return err
 	}
+	return h.manager.connect(ctx, &rec, body.Token)
+}
+
+// codeWebBaseInvalid answers a web base URL that is not the scheme and host the
+// connection id names.
+const codeWebBaseInvalid = "web_base_url_invalid"
+
+var (
+	// errWebBaseInvalid is the refusal coded codeWebBaseInvalid.
+	errWebBaseInvalid = errors.New("forges: web_base_url must be the scheme and host:port the forge id names")
+	errHostInvalid    = errors.New("forges: the forge id's host is not a host[:port]")
+)
+
+// record is the connection record body describes for kind on host. The id's
+// host, and the web base URL when one is given, must each be a bare origin on
+// that host and port, so a token is never sent to an instance the id does not
+// name.
+func (b *connectionFields) record(kind Kind, host string) (connectionRecord, error) {
+	if host == "" {
+		host = kind.DefaultHost()
+	}
+	if !originOn("https://"+host, host) {
+		return connectionRecord{}, errHostInvalid
+	}
+	rec := b.recordOn(host)
+	rec.ID, rec.Kind, rec.APIBaseURL = MakeID(kind, host), kind, b.APIBaseURL
+	if b.WebBaseURL == "" {
+		return rec, nil
+	}
+	if !originOn(b.WebBaseURL, host) {
+		return connectionRecord{}, errWebBaseInvalid
+	}
+	u, _ := url.Parse(b.WebBaseURL)
+	rec.WebBaseURL = u.Scheme + "://" + host
+	return rec, nil
+}
+
+// recordOn is a record for host carrying f.
+func (f *trustFields) recordOn(host string) connectionRecord {
+	return connectionRecord{
+		Host: host, CAPEM: f.CAPEM, ClientCertPEM: f.ClientCertPEM, ClientKeyPEM: f.ClientKeyPEM, Proxy: f.Proxy,
+		PrivateAddresses: f.PrivateAddresses, PlaintextHTTP: f.PlaintextHTTP,
+	}
+}
+
+// originOn reports whether raw is a scheme and host:port, the host being host,
+// with no userinfo, path, query or fragment.
+func originOn(raw, host string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && host != "" && strings.EqualFold(u.Host, host) && u.User == nil && u.Opaque == "" &&
+		(u.Path == "" || u.Path == "/") && !u.ForceQuery && u.RawQuery == "" && u.Fragment == ""
+}
+
+// writeLoginError answers a refused login. A refusal of the credential or of
+// the address is a 2xx {error, code} envelope: the client's action layer
+// collapses any non-2xx to a generic network error, which would hide the reason
+// from the PAT form. A store or record file the server cannot write is a 503.
+func writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		return
+	}
+	if errors.Is(err, errConnectionUnusable) {
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(err.Error()))
+		return
+	}
+	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
+		webhttp.WriteJSON(w, envelopeFor(ferr))
+		return
+	}
+	if errors.Is(err, errWebBaseInvalid) {
+		webhttp.WriteJSON(w, httpreply.ErrorJSONWithCode(err.Error(), codeWebBaseInvalid))
+		return
+	}
+	if errors.Is(err, errHostInvalid) {
+		httpreply.BadRequest(w, err.Error())
+		return
+	}
+	webhttp.WriteJSON(w, httpreply.ErrorJSON(err.Error()))
+}
+
+// writeOpsError answers a forge route's failure. A request whose own context
+// ended is answered with nothing: nobody is left to read it.
+func writeOpsError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		return
+	}
+	if ferr, ok := errors.AsType[*forgeapi.Error](err); ok {
+		writeForgeAPIError(w, ferr)
+		return
+	}
+	if writeContextError(w, err) {
+		return
+	}
+	if errors.Is(err, ErrNotSupported) {
+		webhttp.WriteJSONStatus(w, http.StatusNotImplemented,
+			httpreply.ErrorJSONWithCode(err.Error(), codeNotSupported))
+		return
+	}
+	slog.Debug("forges: ops error", "error", logsafe.Field(err.Error()))
+	webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
+		httpreply.ErrorJSON(err.Error()))
 }
 
 // splitID parses "kind:host" → (kind, host). Returns ("", "") for

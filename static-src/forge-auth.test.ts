@@ -1,24 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// `tools.ts` reaches the editor openers, which drag the whole editor graph in
-// behind them. Cut it at that edge rather than widening every partial mock the
-// subgraph would need; no case here opens a file.
-vi.mock("./editor-openers.js", () => ({
-  openFile: vi.fn(),
-  openFileDiff: vi.fn(),
-  openFileInBackground: vi.fn(),
-  openFileGitDiff: vi.fn(),
-  fetchGitDiffSources: vi.fn(),
-  activateFile: vi.fn(),
-  refreshFile: vi.fn(),
-  closeEditorFile: vi.fn(),
-}));
-vi.mock("./api-client.js", () => ({
-  // Present-but-undefined so real-ESM linking succeeds: another module in this
-  // graph imports the name, and Browser Mode links for real rather than reading
-  // properties off a namespace object. `undefined` is what the node runner gave
-  // these, so no path under test changes behavior.
-  apiPostTyped: undefined,
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   apiGet: vi.fn(),
   apiGetTyped: vi.fn(() => Promise.resolve(null)),
   apiPost: vi.fn(() => Promise.resolve(null)),
@@ -36,27 +19,27 @@ vi.mock("./api-client.js", () => ({
   API_TIMEOUT_MS: 30000,
 }));
 
-vi.mock("./toast.js", () => ({
+vi.mock("./toast.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   info: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
   showToast: vi.fn(),
 }));
 
-vi.mock("./confirm.js", () => ({
+vi.mock("./confirm.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
-// forge-auth.ts reads the forge list through the shared store now
-// (forge-store.ts) rather than with an apiGetTyped call of its own — three
-// modules used to fetch /api/forges independently. Route the store's read back
-// through the mocked client so every case below still drives the payload with
-// mockResolvedValueOnce, in the same order: the forge list first, then the repo
-// and local-clone reads forge-auth still owns.
-vi.mock("./forge-store.js", async () => {
+// The forge list is the shared store's; routed through the mocked client so each
+// case answers it with mockResolvedValueOnce, the forge list first.
+vi.mock("./forge-store.js", async (importOriginal) => {
+  const orig = await importOriginal<Record<string, unknown>>();
   const { apiGetTyped } = await import("./api-client.js");
   const forgeRead = (): unknown => apiGetTyped("/api/forges", (v: unknown) => v);
   return {
+    ...orig,
     refreshForges: forgeRead,
     ensureForges: forgeRead,
     initForgeStore: vi.fn(),
@@ -64,23 +47,6 @@ vi.mock("./forge-store.js", async () => {
     currentForges: vi.fn(() => []),
     oauthByKind: vi.fn(() => ({})),
     forgeLoadFailed: vi.fn(() => false),
-  };
-});
-// The add-pane tests click [data-forge-add], which runs gateAddPaneOnCLI →
-// getToolsStatus.dispatch(). That action fetches directly through the actions
-// framework (bypassing the mocked api-client), so without this mock the probe
-// issues a real fetch that is still in flight at teardown —
-// the "DOMException [AbortError]" teardown noise. Report every CLI installed:
-// no network, and no install banner in the pane (the DOM the tests assert).
-vi.mock("./actions/tools.js", async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const orig = await importOriginal<typeof import("./actions/tools.js")>();
-  return {
-    ...orig,
-    getToolsStatus: {
-      ...orig.getToolsStatus,
-      dispatch: vi.fn(() => Promise.resolve({ gh: true, glab: true, tea: true })),
-    },
   };
 });
 
@@ -123,6 +89,7 @@ describe("forge-auth: race condition guards", () => {
           host: "gitlab.com",
           username: "fast",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -143,6 +110,7 @@ describe("forge-auth: race condition guards", () => {
           host: "github.com",
           username: "stale",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -162,16 +130,16 @@ describe("forge-auth: 4-section layout", () => {
     vi.clearAllMocks();
   });
 
-  it("renders one section per supported forge kind", async () => {
+  it("renders one section per supported forge kind, then Another server", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
     const sections = panel().querySelectorAll<HTMLElement>(".forge-kind-section");
-    expect(sections.length).toBe(4);
     const kinds = [...sections].map((s) => s.dataset["kind"]);
-    expect(kinds).toEqual(["github", "gitlab", "codeberg", "gitea"]);
+    expect(kinds).toEqual(["github", "gitlab", "codeberg", "gitea", "other"]);
+    expect(sections[4]!.querySelector(".forge-kind-title")?.textContent).toBe("Another server");
   });
 
   it("each section renders an Add account button (no empty-state filler)", async () => {
@@ -198,6 +166,7 @@ describe("forge-auth: 4-section layout", () => {
           username: "alice",
           email: "a@x.io",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -242,6 +211,7 @@ describe("forge-auth: 4-section layout", () => {
           username: "alice",
           email: "alice@example.com",
           connected: true,
+          reconnect_required: false,
         },
         {
           id: "gitlab:gitlab.com",
@@ -249,6 +219,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "gitlab.com",
           username: "bob",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -279,6 +250,7 @@ describe("forge-auth: 4-section layout", () => {
           username: "alice",
           email: "a@x.io",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -304,6 +276,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           connected: false,
+          reconnect_required: false,
           last_error: "token expired",
         },
       ],
@@ -313,69 +286,6 @@ describe("forge-auth: 4-section layout", () => {
     const row = panel().querySelector<HTMLElement>(".forge-account-row")!;
     expect(row.classList.contains("forge-account-row-error")).toBe(true);
     expect(row.querySelector(".forge-account-error")?.textContent).toBe("token expired");
-  });
-
-  it("cli_missing row: warning class, static label (no skeleton), no actions, reinstall pointer", async () => {
-    mockedApiGet.mockResolvedValueOnce({
-      forges: [
-        {
-          // Kind-level row as the server emits it when the gh binary is
-          // gone but ~/.config/gh/hosts.yml survives: no host, no
-          // username, never connected.
-          id: "github:cli-missing",
-          kind: "github",
-          host: "",
-          connected: false,
-          cli_missing: true,
-          last_error: "gh CLI is not installed. Reinstall it in Settings, then Tools",
-        },
-      ],
-      kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
-    await renderForgesPanel();
-    const row = panel().querySelector<HTMLElement>(".forge-account-row")!;
-    expect(row.classList.contains("forge-account-row-missing")).toBe(true);
-    // Identity renders a terminal label, not the loading shimmer.
-    const primary = row.querySelector<HTMLElement>(".forge-account-primary")!;
-    expect(primary.textContent).toBe("Saved connection");
-    // Both shapes a shimmer can take on this row: a class on the host, and a nested
-    // placeholder inside it. A terminal state carries neither.
-    expect(primary.classList.contains("skeleton")).toBe(false);
-    expect(primary.querySelector(".skeleton")).toBeNull();
-    // The reinstall pointer rides the standard error line.
-    expect(row.querySelector(".forge-account-error")?.textContent).toContain(
-      "Settings, then Tools",
-    );
-    // No Manage link, no Sign out: both act through the absent CLI.
-    expect(row.querySelector(".forge-account-manage")).toBeNull();
-    const signOut = [...row.querySelectorAll<HTMLButtonElement>("button")].find(
-      (b) => b.textContent === "Sign out",
-    );
-    expect(signOut).toBeUndefined();
-  });
-
-  it("cli_missing row is never probed on page open", async () => {
-    mockedApiGet.mockResolvedValueOnce({
-      forges: [
-        {
-          id: "gitea:cli-missing",
-          kind: "gitea",
-          host: "",
-          connected: false,
-          cli_missing: true,
-          last_error: "tea CLI is not installed",
-        },
-      ],
-      kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
-    await renderForgesPanel();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const probeCalls = mockedApiPost.mock.calls.filter(
-      ([path]) => typeof path === "string" && path.includes("/probe"),
-    );
-    expect(probeCalls.length).toBe(0);
   });
 
   it("renders a list error message when /api/forges fails", async () => {
@@ -403,14 +313,12 @@ describe("forge-auth: 4-section layout", () => {
     }
   });
 
-  it("PAT form hides the host field for github + codeberg, shows it for gitlab + gitea", async () => {
+  it("the host is fixed for codeberg and editable elsewhere, defaulting to the public instance", async () => {
     mockedApiGet.mockResolvedValueOnce({
       forges: [],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
     await renderForgesPanel();
-    // Open the unified add pane on every section via the single
-    // "+" button. The pane includes a PAT form for every kind.
     for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
       const add = panel().querySelector<HTMLButtonElement>(
         `.forge-kind-section[data-kind='${k}'] [data-forge-add]`,
@@ -419,17 +327,17 @@ describe("forge-auth: 4-section layout", () => {
     }
     const inputs: Record<string, HTMLInputElement | null> = {};
     for (const k of ["github", "gitlab", "codeberg", "gitea"]) {
-      const form = panel().querySelector<HTMLFormElement>(
-        `.forge-kind-section[data-kind='${k}'] form.forge-pat-form`,
+      inputs[k] = panel().querySelector<HTMLInputElement>(
+        `.forge-kind-section[data-kind='${k}'] [data-forge-host]`,
       );
-      expect(form, `${k} PAT form should be open`).not.toBeNull();
-      inputs[k] = form!.querySelector<HTMLInputElement>("input");
+      expect(inputs[k], `${k} host field`).not.toBeNull();
     }
-    expect(inputs["github"]!.type).toBe("hidden");
-    expect(inputs["github"]!.value).toBe("github.com");
     expect(inputs["codeberg"]!.type).toBe("hidden");
     expect(inputs["codeberg"]!.value).toBe("codeberg.org");
+    expect(inputs["github"]!.type).toBe("text");
+    expect(inputs["github"]!.value).toBe("github.com");
     expect(inputs["gitlab"]!.type).toBe("text");
+    expect(inputs["gitlab"]!.value).toBe("gitlab.com");
     expect(inputs["gitea"]!.type).toBe("text");
     expect(inputs["gitea"]!.value).toBe("");
     expect(inputs["gitea"]!.placeholder).toBe("your-host.example.com");
@@ -457,6 +365,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "cplieger",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -496,6 +405,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           connected: true,
+          reconnect_required: false,
         },
         {
           id: "codeberg:codeberg.org",
@@ -503,6 +413,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "codeberg.org",
           username: "bob",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -537,6 +448,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           connected: false,
+          reconnect_required: false,
           last_error: "expired",
         },
       ],
@@ -562,15 +474,18 @@ describe("forge-auth: 4-section layout", () => {
           username: "alice",
           email: "a@x.io",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
     });
-    // Empty re-fetch after delete.
-    mockedApiGet.mockResolvedValue({
-      forges: [],
-      kinds: ["github", "gitlab", "codeberg", "gitea"],
-    });
+    // Empty re-fetch after delete; every other read answers nothing.
+    mockedApiGet.mockImplementation(((url: string) =>
+      Promise.resolve(
+        url === "/api/forges"
+          ? { forges: [], kinds: ["github", "gitlab", "codeberg", "gitea"] }
+          : null,
+      )) as typeof apiGetTyped);
     mockedConfirm.mockResolvedValueOnce(true);
     // Mock fetch for the action framework's DELETE call.
     const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
@@ -606,6 +521,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "github.com",
           username: "alice",
           connected: true,
+          reconnect_required: false,
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],

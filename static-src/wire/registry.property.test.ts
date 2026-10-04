@@ -10,26 +10,56 @@ import * as decoders from "./decoders.gen.js";
 // Register all decoders so lookupSSEDecoder works.
 registerAllSSEDecoders();
 
-// Expected event names from registry.gen.ts.
+// Every event the client decodes. A registration removed from both the Go
+// binding and registry.gen.ts passes the drift gate, so this list is what
+// notices it.
 const registeredEvents = [
+  "agent_notice",
   "chat_created",
   "chat_deleted",
   "chat_updated",
+  "code_references",
   "connected",
+  "decision_settled",
+  "draft_changed",
   "elicitation_needed",
+  "entry_appended",
+  "entry_delta",
+  "entry_opened",
+  "entry_sealed",
   "error",
+  "forge_inventory",
+  "governance_state",
   "mcp_connected",
   "mcp_disconnected",
   "mcp_failed",
   "mcp_oauth_needed",
+  "open_external_url",
+  "pending_snapshot",
   "permission_needed",
-  "turn_opened",
-  "entry_opened",
-  "entry_delta",
-  "entry_sealed",
-  "entry_appended",
+  "permissions_changed",
+  "policy_error",
+  "run_finished",
+  "run_input_needed",
+  "run_input_settled",
+  "run_progress",
+  "run_started",
+  "safety_properties",
+  "safety_status",
+  "spec_approved",
+  "spec_changed",
+  "status_snapshot",
+  "steer_queued",
+  "tabs_changed",
+  "terminal_created",
+  "terminal_exited",
+  "terminal_output",
+  "tool_job_changed",
+  "tool_job_output",
   "tool_progress",
   "turn_closed",
+  "turn_opened",
+  "user_input_needed",
 ] as const;
 
 describe("wire registry completeness", () => {

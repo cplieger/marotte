@@ -1,51 +1,9 @@
 package forges
 
 import (
-	"maps"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// FuzzLoadGLabConfig feeds arbitrary bytes through the read-only glab
-// discovery parser and asserts no panic, deterministic re-parse, and
-// no blank host keys. (The marshal round-trip half died with the config
-// writers — the parser is discovery-only now; see glab_config.go.)
-func FuzzLoadGLabConfig(f *testing.F) {
-	f.Add([]byte("hosts:\n    gitlab.com:\n        token: tok\n        user: alice\n        git_protocol: https\n        api_host: gitlab.com\n"))
-	f.Add([]byte(""))
-	f.Add([]byte("hosts:\n"))
-	f.Add([]byte("editor: vim\nhosts:\n    self.host:\n        token: tk\n"))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		tmp := t.TempDir()
-		path := filepath.Join(tmp, "config.yml")
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		cfg, err := loadGLabConfig(path)
-		if err != nil {
-			return
-		}
-		// Invariant 1: the parser never emits a blank host key (blank
-		// names clear the current-host cursor instead).
-		for k := range cfg.Hosts {
-			if k == "" {
-				t.Errorf("parser produced a blank host key: %+v", cfg.Hosts)
-			}
-		}
-		// Invariant 2: parsing is deterministic — the same bytes parse
-		// to the same map.
-		cfg2, err := loadGLabConfig(path)
-		if err != nil {
-			t.Fatalf("re-parse of identical input failed: %v", err)
-		}
-		if !maps.Equal(cfg.Hosts, cfg2.Hosts) {
-			t.Errorf("re-parse mismatch:\n  first:  %+v\n  second: %+v", cfg.Hosts, cfg2.Hosts)
-		}
-	})
-}
 
 // FuzzMakeID asserts MakeID always produces a non-empty "kind:host"
 // string whose prefix is the requested kind.

@@ -95,12 +95,13 @@ func ChatSubject(id ChatID) PushSubject { return PushSubject{ChatID: id} }
 // TypeScript.
 const PRSubjectPrefix = "pr:"
 
-// PRSubject is the subject of a notification about one pull request. `repo` is
-// the forge's own owner/name slug and `number` the PR number, which together are
-// unique per PR — so two PRs flipping inside one debounce window still occupy
-// their own tray slots.
-func PRSubject(forgeID, repo string, number int) PushSubject {
-	return PushSubject{Key: PRSubjectPrefix + forgeID + ":" + repo + "#" + strconv.Itoa(number)}
+// PRSubject is the subject of a notification about one pull request. `repoID` is
+// the repository's canonical id on that connection, the one the PRs tab's rows
+// carry, so the client finds the row by comparing keys byte for byte; with the
+// number it is unique per PR, so two PRs flipping inside one debounce window
+// still occupy their own tray slots.
+func PRSubject(forgeID, repoID string, number int) PushSubject {
+	return PushSubject{Key: PRSubjectPrefix + forgeID + ":" + repoID + "#" + strconv.Itoa(number)}
 }
 
 // RunSubjectPrefix marks a subject key naming a workflow run. Declared here for

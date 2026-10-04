@@ -155,6 +155,7 @@ export type {
   TabsChangedPayload,
   SpecApprovedPayload,
   SpecChangedPayload,
+  InventoryChangedPayload,
   TextSpan,
   TerminalCreatedPayload,
   TerminalOutputPayload,

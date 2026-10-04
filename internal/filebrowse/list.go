@@ -64,7 +64,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
-	files := listEntries(r.Context(), entries, l.abs)
+	files := listEntries(r.Context(), entries, l.abs, h.sensitive)
 	webhttp.WriteJSON(w, map[string]any{
 		respPath:   reqPath,
 		"files":    files,
@@ -97,14 +97,14 @@ func (h *Handler) listMounts(w http.ResponseWriter) {
 }
 
 // listEntries filters DirEntries: sensitive paths are hidden.
-func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []fileEntry {
+func listEntries(ctx context.Context, entries []os.DirEntry, resolved string, sensitive Sensitive) []fileEntry {
 	files := make([]fileEntry, 0, len(entries))
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			break
 		}
 		name := e.Name()
-		if IsSensitive(filepath.Join(resolved, name)) {
+		if sensitive.Blocks(filepath.Join(resolved, name)) {
 			continue
 		}
 		info, err := e.Info()

@@ -54,7 +54,6 @@ vi.mock("./git-sources-tab.js", () => ({
   initSourcesTab: vi.fn(),
   refreshSources: H.refreshSources,
 }));
-vi.mock("./git-status-banner.js", () => ({ initStatusBanner: vi.fn() }));
 vi.mock("./git-badge.js", () => ({ initGitBadge: vi.fn(), refreshGitBadge: vi.fn() }));
 vi.mock("./git-status-store.js", () => ({ refreshGitStatus: vi.fn() }));
 vi.mock("./find-registry.js", () => ({ registerFind: vi.fn() }));
@@ -105,7 +104,8 @@ describe("initGitPanel", () => {
 
     H.listener.fn?.("prs");
 
-    expect(H.refreshPRsDispatch).toHaveBeenCalledWith({ force: false });
+    // Arriving reads what the poller holds; only the refresh button asks for a cycle.
+    expect(H.refreshPRsDispatch).toHaveBeenCalledWith();
     expect(H.changesClose).toHaveBeenCalledTimes(1);
     expect(H.prsClose).toHaveBeenCalledTimes(1);
   });
@@ -123,9 +123,7 @@ describe("refreshGitView", () => {
     expect(H.refreshSources).not.toHaveBeenCalled();
   });
 
-  it("forces the Changes tab and does not force the PRs fan-out", async () => {
-    // `?fetch=1` on Changes runs a local `git fetch`, the only way to learn remote
-    // state; every PR row is already remote and the server caches the listings.
+  it("forces the Changes tab, whose local fetch is the only way to learn remote state", async () => {
     const { refreshGitView } = await load();
 
     refreshGitView();

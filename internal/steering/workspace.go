@@ -12,7 +12,7 @@ import (
 	"github.com/cplieger/marotte/internal/sanitize"
 )
 
-func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, forgeKinds map[string]bool) {
+func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 	entries, err := os.ReadDir(workDir)
 	if err != nil || len(entries) == 0 {
 		b.WriteString("## Workspace\n\nEmpty.\n\n")
@@ -33,7 +33,7 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, for
 		b.WriteString("File paths like `myrepo/src/main.go` work with the file tools ")
 		b.WriteString("(read_file, read_code, grep_search).\n\n")
 		for _, r := range repos {
-			writeRepoEntry(b, workDir, r, forgeKinds)
+			writeRepoEntry(b, workDir, r)
 		}
 		b.WriteString("\n")
 		// Add a top-level instruction so the agent has unambiguous
@@ -92,7 +92,7 @@ func writeScratchGuidance(b *strings.Builder, workDir string) {
 	b.WriteString("`git status` next, and it can end up in a commit.\n\n")
 }
 
-func writeRepoEntry(b *strings.Builder, workDir, r string, forgeKinds map[string]bool) {
+func writeRepoEntry(b *strings.Builder, workDir, r string) {
 	repoDir := filepath.Join(workDir, r)
 	// One defusal per repo, threaded into every writer below, rather than one
 	// per interpolation: a directory name is arbitrary bytes (the agent creates
@@ -107,18 +107,8 @@ func writeRepoEntry(b *strings.Builder, workDir, r string, forgeKinds map[string
 	if branch != "" {
 		fmt.Fprintf(b, " on `%s`", branch)
 	}
-	if origin != "" {
-		host := hostFromGitURL(origin)
-		kind := kindFromHost(host)
-		// Only advertise the forge CLI when that forge kind is
-		// connected — the CLI binary is installed and authenticated
-		// at forge login, so an unconnected kind's CLI isn't on PATH.
-		cli := forgeCLI(kind)
-		if cli != "" && cliKindConnected(forgeKinds, kind) {
-			fmt.Fprintf(b, " (%s — use `%s` for PRs/issues/CI)", host, cli)
-		} else if host != "" {
-			fmt.Fprintf(b, " (%s)", host)
-		}
+	if host := hostFromGitURL(origin); host != "" {
+		fmt.Fprintf(b, " (%s)", host)
 	}
 	if desc != "" {
 		fmt.Fprintf(b, " — %s", desc)
@@ -225,8 +215,7 @@ func readGitBranch(repoDir string) string {
 // hostFromGitURL extracts the host from a git remote URL. Handles
 // both https:// and scp-style git@host:path forms. Returns "" for
 // shapes we don't recognise (file://, ext::, etc) and for anything that is not
-// SHAPED like a host — see isHostShaped, which is what makes the two callers'
-// downstream reasoning sound.
+// SHAPED like a host (see isHostShaped).
 func hostFromGitURL(url string) string {
 	url = strings.TrimSpace(url)
 	var host string
@@ -242,19 +231,11 @@ func hostFromGitURL(url string) string {
 }
 
 // isHostShaped reports whether s could be a DNS host or an IPv4 literal with an
-// optional port: ASCII letters, digits, dot, dash, underscore and colon only.
-//
-// Two reasons this refusal is load-bearing. A `.git/config` url comes from a
-// file the agent writes, so without this gate a backtick or bracket could
-// reach environment.md inside the host annotation. And kindFromHost lowercases
-// this value before matching against `github`/`gitlab`/`gitea` — a fold that
-// fails open under Unicode simple case mapping (U+0130/U+212A lowercase to
-// ASCII `i`/`k`, measured to make `g\u0130thub.com` match `github.com`).
-// Restricting the alphabet upstream makes strings.ToLower provably an ASCII
-// fold, which is why the order matters (TestHostGateGuardsTheFold pins it).
-//
-// Cost: an IPv6-literal remote loses its host annotation (`[`/`]` are
-// markdown-significant); the repo still renders, without the parenthesis.
+// optional port: ASCII letters, digits, dot, dash, underscore and colon only. A
+// `.git/config` url comes from a file the agent writes, so without this gate a
+// backtick or bracket could reach environment.md inside the host annotation,
+// and a homoglyph host (`g\u0130thub.com`) could read as a forge it is not.
+// Cost: an IPv6-literal remote loses its annotation (`[`/`]` are markdown).
 func isHostShaped(s string) bool {
 	if s == "" {
 		return false
@@ -313,46 +294,6 @@ func hostFromSCPURL(url string) string {
 		return ""
 	}
 	return host
-}
-
-// kindFromHost maps a git host to its forge kind. Uses suffix
-// matching for self-hosted variants: gitlab.example.com → gitlab,
-// gitea.example.com → gitea. Returns "" for unrecognised hosts.
-func kindFromHost(host string) string {
-	host = strings.ToLower(host)
-	if host == "" {
-		return ""
-	}
-	if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasPrefix(host, "github.") {
-		return kindGitHub
-	}
-	if host == "gitlab.com" || strings.HasSuffix(host, ".gitlab.com") || strings.Contains(host, "gitlab") {
-		return kindGitLab
-	}
-	if host == "codeberg.org" {
-		return kindCodeberg
-	}
-	if strings.Contains(host, "gitea") || strings.Contains(host, "forgejo") {
-		return kindGitea
-	}
-	return ""
-}
-
-// cliKindConnected reports whether the forge CLI serving `kind` is
-// available: the kind itself is connected, or — for the shared tea
-// CLI — its sibling kind is (codeberg is a named gitea shortcut; one
-// login makes `tea` available for both).
-func cliKindConnected(forgeKinds map[string]bool, kind string) bool {
-	if forgeKinds[kind] {
-		return true
-	}
-	switch kind {
-	case kindGitea:
-		return forgeKinds[kindCodeberg]
-	case kindCodeberg:
-		return forgeKinds[kindGitea]
-	}
-	return false
 }
 
 // classifyEntries splits workspace entries into git repos and plain

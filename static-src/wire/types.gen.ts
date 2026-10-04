@@ -141,6 +141,17 @@ export interface AccountUsageBreakdown {
 }
 
 /**
+ * Affordance is whether one thing can be done, and what said so: something a
+ * repository allows, or a capability of a connection or of its credential.
+ */
+export interface Affordance {
+  /** Support is "yes", "no" or "unknown". */
+  support: string;
+  source: string;
+  detail: string;
+}
+
+/**
  * AgentNoticePayload is the payload for type="agent_notice": a progress notice a workflow step
  * or subagent reported into the session that launched it. KAS decides this by sniffing the text
  * for a `[notification/<severity>]` prefix and delivers it through the steering buffer, and
@@ -186,6 +197,16 @@ export interface AptPackage {
 export interface Attachment {
   path: string;
   name: string;
+}
+
+/**
+ * Capabilities is what a connection's instance and its credential can do, by
+ * capability. Each scope carries every capability forgeapi names for it, so a
+ * verdict nothing answered arrives as "unknown" rather than as an absent key.
+ */
+export interface Capabilities {
+  connection: Record<string, Affordance>;
+  grant: Record<string, Affordance>;
 }
 
 /**
@@ -290,12 +311,21 @@ export interface ChatHeader {
   supervised_mode?: boolean;
 }
 
-/** Check is a single CI status check for a commit. */
+/** Check is one commit-status context. */
 export interface Check {
   name: string;
-  status: string;
-  conclusion: string;
+  /** State is "unknown", "passing", "failing", "pending" or "neutral". */
+  state: string;
+  description?: string;
   url?: string;
+}
+
+/** CloneRepo is one workspace clone joined to the connection that serves it. */
+export interface CloneRepo {
+  dir: string;
+  forge_id: string;
+  /** RepoID is the canonical id of the clone's repository on that connection. */
+  repo_id: string;
 }
 
 /**
@@ -323,6 +353,24 @@ export interface CodeReference {
 export interface CodeReferencesPayload {
   turn: string;
   references: CodeReference[];
+}
+
+/**
+ * CommitChecks is a commit's folded CI verdict and the contexts it was folded
+ * from. The verdict and every count are required, as on PRAction.
+ */
+export interface CommitChecks {
+  partial?: PartialResult;
+  successor?: RepoSuccessor;
+  /** State is the fold, spelled as Check.State. */
+  state: string;
+  checks: Check[];
+  checks_passing: number;
+  checks_failing: number;
+  checks_pending: number;
+  checks_neutral: number;
+  checks_unknown: number;
+  checks_total: number;
 }
 
 /**
@@ -362,10 +410,7 @@ export interface ConfigTemplateResponse {
   effort_levels: SessionEffortLevel[];
 }
 
-/**
- * ConfiguredForge is one connected forge backend, discovered through
- * the CLIs' own status subcommands (see discover.go).
- */
+/** ConfiguredForge is one connected forge backend: a connection record's row. */
 export interface ConfiguredForge {
   id: string;
   kind: ForgeKind;
@@ -373,16 +418,30 @@ export interface ConfiguredForge {
   username?: string;
   email?: string;
   last_error?: string;
+  /**
+ * ErrorCode and ErrorKind are LastError's code and kind in the error
+ * envelope's terms. The code connection_unusable marks a row no request can
+ * serve until the record file or the credential store is repaired.
+ */
+  error_code?: string;
+  error_kind?: string;
+  /**
+ * OwnerScopes are the owners a present cycle reads beside the connection's
+ * own pull requests.
+ */
+  owner_scopes?: string[];
   last_probed?: number;
+  /**
+ * RetryAfterS is the wait the refusal behind LastError asked for, counted
+ * from LastProbed.
+ */
+  retry_after_s?: number;
   connected: boolean;
   /**
- * CLIMissing marks a connection whose backing CLI binary is absent
- * (uninstalled/disabled in Settings → Tools, or a fresh tools volume
- * against a kept config volume) while a configuration for it still
- * exists. The row renders as a warning with a reinstall pointer; it
- * is never probed and cannot be disconnected until the CLI returns.
+ * ReconnectRequired says the stored credential can be neither used nor
+ * renewed: only a new sign-in revives the connection.
  */
-  cli_missing?: boolean;
+  reconnect_required: boolean;
 }
 
 /**
@@ -462,11 +521,20 @@ export interface DecisionSettledPayload {
   request_id: number;
 }
 
-/** DeviceFlowResponse describes a started OAuth device flow. */
+/** Detection is the forge kind whose API answers at an address. */
+export interface Detection {
+  kind: ForgeKind;
+}
+
+/**
+ * DeviceFlowResponse is a started device grant as a client renders it. The
+ * grant is named by an id the server minted; the device code never leaves the
+ * server.
+ */
 export interface DeviceFlowResponse {
   user_code: string;
   verification_uri: string;
-  device_code: string;
+  grant_id: string;
   interval: number;
   expires_in: number;
 }
@@ -535,8 +603,9 @@ export interface EffectiveSettings {
  */
   last_effort_by_model: Record<string, string>;
   /**
- * LastMergeMethod is the PR merge method picked last ("squash" or "rebase"),
- * the merge dialog's default. Empty means nothing picked yet.
+ * LastMergeMethod is the PR merge method picked last, in the forge's own
+ * spelling, the merge dialog's default where the repository offers it. Empty
+ * means nothing picked yet.
  */
   last_merge_method: string;
   /**
@@ -1002,6 +1071,27 @@ export interface ErrorPayload {
   turn_scoped?: boolean;
 }
 
+/**
+ * FieldFill is why an inventory row holds the value it does for one field its
+ * family's list does not carry.
+ */
+export interface FieldFill {
+  /**
+ * Field is "checks", "check_counts" (the per-state counts and whether the
+ * fold stopped short), "mergeable", "merge_blocked", "auto_merge_armed",
+ * "head_sha", "source_branch" or "target_branch".
+ */
+  field: string;
+  /**
+ * Reason is "filled" (by a read of the row), "not_on_list" (no read yet),
+ * "unread" (the last read failed) or "not_supplied" (not even a read
+ * supplies it on this family).
+ */
+  reason: string;
+  /** AsOf is the filling read's unix ms, present when filled. */
+  as_of?: number;
+}
+
 /** FileChange tracks per-file change stats during a turn. */
 export interface FileChange {
   lines_added: number;
@@ -1165,17 +1255,116 @@ export interface Inventory {
   apt_packages?: AptPackage[];
 }
 
-/** Issue represents a forge issue. */
+/** InventoryBudget is a connection's request budget as its client last read it. */
+export interface InventoryBudget {
+  /** Remaining is -1 where the family reports none. */
+  remaining: number;
+  /** Reset is unix ms, absent where the family reports none. */
+  reset?: number;
+  last_cost: number;
+}
+
+/**
+ * InventoryChangedPayload is the forge_inventory event: one connection's entry
+ * as the cycle that wrote it left it.
+ */
+export interface InventoryChangedPayload {
+  entry: InventoryEntry;
+}
+
+/**
+ * InventoryEntry is one connection's pull requests as the poller's last
+ * present cycle read them.
+ */
+export interface InventoryEntry {
+  error?: InventoryError;
+  budget?: InventoryBudget;
+  forge_id: string;
+  /** State is "loading", "ready", "partial" or "failed". */
+  state: string;
+  /**
+ * CycleID is the decimal id of the cycle that produced the entry, "0" while
+ * loading. Cycles count from 1.
+ */
+  cycle_id: string;
+  /**
+ * Credential is "unknown", "valid", "refresh_due", "refreshing" or
+ * "reconnect_required".
+ */
+  credential: string;
+  scopes: InventoryScope[];
+  clones: CloneRepo[];
+  fetched_at: number;
+}
+
+/**
+ * InventoryError is the last failed list call of an entry's cycle, in the
+ * error envelope's terms.
+ */
+export interface InventoryError {
+  code: string;
+  kind: string;
+  diag_id?: string;
+  retry_after_s?: number;
+}
+
+/**
+ * InventoryList is every connected connection's entry, ordered by connection
+ * id, and one forge_inventory stamp per entry in the same order.
+ */
+export interface InventoryList {
+  entries: InventoryEntry[];
+  subject: SubjectStamp[];
+  /**
+ * Viewing is a client showing the pull-request view, which holds the cycle
+ * at PRPollInterval.
+ */
+  viewing: boolean;
+}
+
+/**
+ * InventoryRefresh names the cycle that answers a refresh: an entry whose
+ * cycle id is at or past it was read after the press.
+ */
+export interface InventoryRefresh {
+  cycle_id: string;
+}
+
+/**
+ * InventoryScope is one list a connection's cycle reads. Next is present while
+ * its walk has more pages; Partial is the last page's own.
+ */
+export interface InventoryScope {
+  partial?: PartialResult;
+  /** Scope is "owner", "authored" or "added". */
+  scope: string;
+  owner?: string;
+  next?: string;
+  /** Rows carry no body. */
+  rows: PR[];
+}
+
+/** Issue is one issue row. */
 export interface Issue {
   title: string;
   body?: string;
+  /** State is "open", "closed" or "unknown". */
   state: string;
   author?: string;
   url?: string;
+  /** Labels are the label names. */
   labels?: string[];
   number: number;
   created_at?: number;
   updated_at?: number;
+}
+
+/** IssueList is one page of a repository's issues. */
+export interface IssueList {
+  partial?: PartialResult;
+  successor?: RepoSuccessor;
+  next?: string;
+  issues: Issue[];
 }
 
 /** Job is one queued/running/finished unit of engine work. */
@@ -1301,11 +1490,19 @@ export interface KiroDocsResponse {
   truncated: boolean;
 }
 
-/** Label is a forge label (used on PRs and issues). */
+/** Label is a label a repository defines. */
 export interface Label {
   name: string;
   color?: string;
   description?: string;
+}
+
+/** LabelList is one page of a repository's labels. */
+export interface LabelList {
+  partial?: PartialResult;
+  successor?: RepoSuccessor;
+  next?: string;
+  labels: Label[];
 }
 
 /**
@@ -1403,6 +1600,33 @@ export interface Match {
 }
 
 /**
+ * MergeOutcome is what happened to one merge request. Code is set on the two
+ * states that carry no verdict yet, accepted and in_flight, which the merge
+ * status read follows up.
+ */
+export interface MergeOutcome {
+  state: string;
+  code?: string;
+  queue_state: string;
+  queue_position: number;
+}
+
+/** MergeResult is the merge route's answer. */
+export interface MergeResult {
+  /** CycleID names the cycle that reads the merge, as PRChanged's does. */
+  cycle_id: string;
+  outcome: MergeOutcome;
+}
+
+/** MergeStatus is one pull request's merge state as read back after a merge. */
+export interface MergeStatus {
+  successor?: RepoSuccessor;
+  merged: string;
+  queue_state: string;
+  web_url?: string;
+}
+
+/**
  * MeteringItem is one usage dimension from kiro-cli's meteringUsage array.
  * UnitPlural is the canonical identifier ("credits", "tokens", "requests").
  */
@@ -1440,49 +1664,117 @@ export interface OpenExternalURLPayload {
 }
 
 /**
- * PR represents a pull/merge request. CheckStatus and MergeBlocked carry
- * no omitempty: their empty value is meaningful (the forge reported no CI
- * state / nothing blocks this merge), so the client must receive it
- * rather than infer it from an absent field.
+ * OwnerScopes is the owners a present cycle reads beside a connection's own
+ * pull requests, as stored.
  */
+export interface OwnerScopes {
+  owners: string[];
+}
+
+/** PR is one pull request row. */
 export interface PR {
+  partial?: PartialResult;
+  /** RepoID is the canonical repository id the row's routes take. */
+  repo_id: string;
+  /**
+ * SourceRepoID is the canonical id of the repository the head branch lives
+ * in: RepoID's for a branch inside it, the fork's for a fork, and absent
+ * where the read does not name it (a deleted fork).
+ */
+  source_repo_id?: string;
+  /** Repo is the repository's display path. */
+  repo: string;
   title: string;
   body?: string;
+  /**
+ * State is "open", "closed", "merged" or "unknown"; a draft says so in
+ * Draft, never here.
+ */
   state: string;
   author?: string;
   source_branch: string;
   target_branch: string;
   url?: string;
-  /**
- * HeadSHA is the head commit of the source branch: the value a merge
- * pins itself to, so a push landing between the read and the click
- * fails the merge instead of landing unreviewed code.
- */
+  /** HeadSHA is the commit a merge pins itself to. */
   head_sha?: string;
   /**
- * CheckStatus is the folded CI state of HeadSHA. One of "" (the forge
- * reported no checks), "pending", "passing", "failing".
+ * Fill is present on an inventory row of a family whose list lacks fields,
+ * one entry per such field.
  */
-  check_status: string;
-  /**
- * MergeBlocked names why the forge refuses a merge, or "" when
- * nothing does. One of "draft", "conflicts", "checks_failing",
- * "checks_running", "behind", "blocked", "unknown".
- */
-  merge_blocked: string;
+  fill?: FieldFill[];
+  action: PRAction;
   number: number;
-  checks_total?: number;
-  checks_failing?: number;
   created_at?: number;
   updated_at?: number;
-  mergeable?: boolean;
   draft?: boolean;
-  /**
- * AutoMergeArmed reports that the forge will merge this PR itself
- * once its requirements are met, so the row offers a read-out
- * rather than arming it twice.
+}
+
+/**
+ * PRAction is what one pull request's controls read. Every member is required,
+ * so an absent field can never read as a verdict.
  */
-  auto_merge_armed?: boolean;
+export interface PRAction {
+  /** Mergeable is "yes", "no" or "unknown". */
+  mergeable: string;
+  /** Checks is "unknown", "passing", "failing", "pending" or "neutral". */
+  checks: string;
+  /** AutoMergeArmed is "yes", "no" or "unknown". */
+  auto_merge_armed: string;
+  queue_state: string;
+  /**
+ * MergeBlocked is "unknown", "none", "draft", "conflicts",
+ * "checks_failing", "checks_running", "behind" or "blocked".
+ */
+  merge_blocked: string;
+  checks_passing: number;
+  checks_failing: number;
+  checks_pending: number;
+  checks_neutral: number;
+  checks_unknown: number;
+  checks_total: number;
+  /** QueuePosition is -1 unless QueueState places the row in a queue. */
+  queue_position: number;
+}
+
+/**
+ * PRChanged is the pull request a close or a reopen answered, and the cycle
+ * that reads the change: an inventory entry at or past it was read after it,
+ * while an earlier one may have read the row before it.
+ */
+export interface PRChanged {
+  cycle_id: string;
+  pr: PR;
+}
+
+/**
+ * PRDetail is one pull request as a person opens it: the row with its
+ * description, and the folded checks of its head commit. Checks is absent
+ * exactly when the row names no head commit.
+ */
+export interface PRDetail {
+  checks?: CommitChecks;
+  pr: PR;
+}
+
+/**
+ * PRList is one page of a repository's pull requests. Successor names where a
+ * moved repository went.
+ */
+export interface PRList {
+  partial?: PartialResult;
+  successor?: RepoSuccessor;
+  next?: string;
+  prs: PR[];
+}
+
+/**
+ * PartialResult says a list or a row is incomplete: why, how much arrived, and
+ * at least how much did not.
+ */
+export interface PartialResult {
+  reason: string;
+  fetched: number;
+  omitted_at_least: number;
 }
 
 /**
@@ -1645,13 +1937,14 @@ export interface PolicyView {
 }
 
 /**
- * PollResult is the per-poll status of the GitHub device flow. Deliberately
- * tokenless: the access token never leaves the server. pollDeviceToken carries
- * it as far as `gh auth login --with-token` and no further.
+ * PollResult is one poll of a device grant: pending, complete, expired, denied
+ * or error, with the refusal's code where there is one. It never carries a
+ * token.
  */
 export interface PollResult {
   status: string;
   error?: string;
+  code?: string;
 }
 
 /**
@@ -1697,6 +1990,16 @@ export interface PreviewStamp {
   epoch: string;
   entries: number;
   truncated: boolean;
+}
+
+/**
+ * ProbeResult is a probe's answer: the row as the probe left it, and the
+ * refusal's sentence when the identity read failed.
+ */
+export interface ProbeResult {
+  forge?: ConfiguredForge;
+  error?: string;
+  connected: boolean;
 }
 
 /**
@@ -1836,7 +2139,7 @@ export interface RegistrySearchResult {
   truncated: boolean;
 }
 
-/** Release represents a tagged release. */
+/** Release is one tagged release. */
 export interface Release {
   tag_name: string;
   name?: string;
@@ -1845,6 +2148,14 @@ export interface Release {
   published_at?: number;
   draft?: boolean;
   prerelease?: boolean;
+}
+
+/** ReleaseList is one page of a repository's releases. */
+export interface ReleaseList {
+  partial?: PartialResult;
+  successor?: RepoSuccessor;
+  next?: string;
+  releases: Release[];
 }
 
 /**
@@ -1857,19 +2168,53 @@ export interface RemoveResponse {
   dependents?: string[];
 }
 
-/** Repo is a remote repository accessible via the authenticated forge. */
+/** Repo is a repository the connection reaches. */
 export interface Repo {
+  /** RepoID is the canonical repository id the repository's routes take. */
+  repo_id: string;
+  /**
+ * Owner is everything before the display path's last "/", a namespace
+ * path on GitLab.
+ */
   owner: string;
   name: string;
+  /** FullName is the display path. */
   full_name: string;
   default_branch?: string;
   url?: string;
   clone_url?: string;
   description?: string;
+  affordances: RepoAffordances;
+  updated_at?: number;
   private?: boolean;
   archived?: boolean;
   fork?: boolean;
-  updated_at?: number;
+}
+
+/** RepoAffordances is what a repository allows. */
+export interface RepoAffordances {
+  has_issues: Affordance;
+  can_push: Affordance;
+  merge_train: Affordance;
+  default_branch: string;
+  /** MergeStrategies are the family's own spellings, empty when none was read. */
+  merge_strategies: string[];
+}
+
+/**
+ * RepoList is one page of a connection's repositories. Next is the opaque
+ * cursor `?after=` takes, absent when the list is complete.
+ */
+export interface RepoList {
+  partial?: PartialResult;
+  next?: string;
+  repos: Repo[];
+}
+
+/** RepoSuccessor is the repository a stale one moved to. */
+export interface RepoSuccessor {
+  repo_id: string;
+  display_path: string;
 }
 
 /**
@@ -3183,14 +3528,6 @@ export interface Usage {
   credits: number;
   last_turn_ms: number;
   has_real_data: boolean;
-}
-
-/** User represents the authenticated forge account. */
-export interface User {
-  login: string;
-  name?: string;
-  email?: string;
-  url?: string;
 }
 
 /**

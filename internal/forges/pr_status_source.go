@@ -1,170 +1,214 @@
-// The production PRSource: whose PRs, in which repos.
-//
-// # The repo set, and why it is the WORKSPACE's rather than the account's
-//
-// ListPRs takes one repo and there is no cross-repo listing on any of the three
-// CLIs, so a poller needs a repo SET. ListRepos would give the account's whole
-// accessible list — owned plus member, capped at 300 on GitHub — and polling that
-// every 60 seconds would be hundreds of subprocesses a minute to learn about
-// repositories this box has never checked out.
-//
-// The workspace's own clones are the right set and the cheap one: this is a dev
-// box, a PR the user opened was opened from here, and the count is a handful. The
-// cost of that choice, stated: a PR opened from another machine in a repo not
-// cloned here is not watched. That is the trade, and it is the one that keeps the
-// decision's "costs zero with nothing pending" claim true.
+// The production PRSource. ListMyPRs answers the credential's own open pull
+// requests in every repository it reaches, or every open one under an owner, so
+// there is no author to filter on. A notice is only for a row whose target or
+// source repository a workspace clone tracks, the scope the setting's copy
+// promises (a clone of a fork tracks the pull requests opened from it), so a
+// cycle with nobody present does not read a connection no clone tracks.
+// CloneRepos is the one answer to which repository a clone is; a clone's origin
+// must name a connection's web base, so an ssh clone joins nothing.
 
 package forges
 
 import (
 	"context"
-	"log/slog"
+	"net"
+	"net/url"
 	"strings"
+
+	"github.com/cplieger/forgeapi"
 )
 
-// PRRepo is one repo the poller watches, in the coordinates a forge addresses.
-type PRRepo struct {
-	// ForgeID is the `kind:host` id of the connection that serves this repo.
-	ForgeID string
-	// Slug is the owner/name path (whole, so a GitLab subgroup survives).
-	Slug string
-}
-
-// managerPRSource resolves the poller's question through a provider lookup and a
-// repo resolver.
-type managerPRSource struct {
-	// provider is Manager.Provider in production. A FUNCTION rather than the
-	// manager, so this is testable with a stub ForgeOps and no CLI on PATH — the
-	// same reason the poller takes a PRSource instead of building one.
-	provider func(id string) (ForgeOps, error)
-	// repos is injected rather than computed here: the answer is git knowledge
-	// (which repositories are checked out and where their origins point), and this
-	// package must not grow a second copy of repo discovery.
-	repos func(context.Context) []PRRepo
-}
-
-// NewManagerPRSource returns the production PRSource over a forge manager and a
-// repo resolver.
-func NewManagerPRSource(mgr *Manager, repos func(context.Context) []PRRepo) PRSource {
-	return &managerPRSource{provider: mgr.Provider, repos: repos}
-}
-
-// OpenAuthoredPRs lists the open pull requests the connected identity authored
-// across the watched repos.
-//
-// The author filter is CLIENT-side because there is no author filter on the wire:
-// none of `gh pr list`, `glab mr list` or `tea` takes one in the shape marotte
-// calls them, so the identity comes from Whoami and the comparison happens here.
-// Whoami is resolved once per forge per sweep and cached for that sweep, since
-// several watched repos usually share one connection.
-//
-// A per-repo failure is skipped rather than returned: one archived repo, one
-// permission wall or one CLI that lost its token must not stop the other repos'
-// PRs from being watched. A total failure surfaces as an empty list, which the
-// poller treats as "nothing pending" — the safe direction, since the alternative
-// would be to notify on stale state.
-func (s *managerPRSource) OpenAuthoredPRs(ctx context.Context) ([]WatchedPR, error) {
-	repos := s.repos(ctx)
-	if len(repos) == 0 {
-		return nil, nil
-	}
-	logins := make(map[string]string, 2)
-	var out []WatchedPR
-	for _, r := range repos {
-		provider, err := s.provider(r.ForgeID)
-		if err != nil {
-			slog.Debug("pr status: no provider for forge", "forge", r.ForgeID, "error", err)
-			continue
-		}
-		login, resolved := logins[r.ForgeID]
-		if !resolved {
-			login = whoamiLogin(ctx, provider, r.ForgeID)
-			logins[r.ForgeID] = login
-		}
-		if login == "" {
-			continue // not logged in, or the CLI could not say who we are
-		}
-		prs, err := provider.ListPRs(ctx, r.Slug, StateOpen)
-		if err != nil {
-			slog.Debug("pr status: list open PRs failed",
-				"forge", r.ForgeID, "repo", r.Slug, "error", err)
-			continue
-		}
-		for i := range prs {
-			pr := &prs[i]
-			if !strings.EqualFold(pr.Author, login) {
-				continue
-			}
-			out = append(out, WatchedPR{
-				ForgeID: r.ForgeID,
-				Repo:    r.Slug,
-				Number:  pr.Number,
-				Title:   pr.Title,
-				Check:   pr.CheckStatus,
-			})
-		}
-	}
-	return out, nil
-}
-
-// whoamier is the identity read. Declared here because this is the only
-// consumer: the author filter for open PRs is client-side (no forge CLI takes an
-// author filter in the shape marotte calls them), so the connected login has to
-// be resolved before the listing can be filtered.
-type whoamier interface {
-	// Whoami returns the authenticated account, or an error if not
-	// logged in (or the CLI is not installed).
-	Whoami(ctx context.Context) (*User, error)
-}
-
-// whoamiLogin resolves a forge's connected login, answering "" when it cannot.
-// Logged at Debug: a forge the user disconnected is an ordinary state here, not a
-// fault, and a Warn per tick would fill the log for a box with one stale config.
-func whoamiLogin(ctx context.Context, provider whoamier, forgeID string) string {
-	user, err := provider.Whoami(ctx)
-	if err != nil || user == nil {
-		slog.Debug("pr status: whoami failed", "forge", forgeID, "error", err)
-		return ""
-	}
-	return user.Login
-}
-
-// RepoOrigin is one checked-out repo's forge coordinates as the caller resolved
-// them. It mirrors git.RepoRemote's two load-bearing fields rather than importing
-// that type: this package knows about forges, and the repo-discovery direction
-// belongs to the caller that owns both.
+// RepoOrigin is one workspace clone's origin as the caller resolved it: the git
+// panel's directory name, the remote's web base ("" for an ssh remote) and the
+// repository path on the forge.
 type RepoOrigin struct {
-	Host string
-	Slug string
+	Dir     string
+	WebBase string
+	Slug    string
 }
 
-// MatchRepos pairs each checked-out repo with the configured forge that
-// serves its host.
-//
-// It lives here rather than in the composition root because it joins two of this
-// package's own vocabularies — a forge's host and its `kind:host` id — and a wiring
-// file doing the match would be a second place for that id rule to be spelled.
-// Hosts compare case-insensitively: git config carries whatever the user typed,
-// and a forge records what its CLI reported.
-//
-// A repo whose host has no CONNECTED forge is dropped, which is also the gate that
-// keeps the poller quiet on a box with a stale CLI config: a `cli_missing` row is
-// never probed elsewhere either.
-func MatchRepos(configured []ConfiguredForge, origins []RepoOrigin) []PRRepo {
-	byHost := make(map[string]string, len(configured))
-	for _, f := range configured {
-		if !f.Connected || f.CLIMissing {
-			continue
-		}
-		byHost[strings.ToLower(f.Host)] = f.ID
+// CloneRepos joins each clone to the connection whose web base its origin
+// names. The repository id is the canonical one of the remote's path on that
+// connection's family, so a mixed-case remote and the forge's own spelling are
+// one repository; a path the family refuses joins nothing. It sends no request.
+func CloneRepos(rows []ConfiguredForge, origins []RepoOrigin) []CloneRepo {
+	byOrigin := make(map[string]*ConfiguredForge, len(rows))
+	for i := range rows {
+		byOrigin[originKey(rows[i].webBase)] = &rows[i]
 	}
-	out := make([]PRRepo, 0, len(origins))
+	out := make([]CloneRepo, 0, len(origins))
 	for _, o := range origins {
-		id, ok := byHost[strings.ToLower(o.Host)]
+		f, ok := byOrigin[originKey(o.WebBase)]
 		if !ok {
 			continue
 		}
-		out = append(out, PRRepo{ForgeID: id, Slug: o.Slug})
+		family := f.Kind.family()
+		if forgeapi.ValidateSelector(family, o.Slug) != nil {
+			continue
+		}
+		ref := forgeapi.RepoRef{Family: family, Selector: o.Slug}
+		out = append(out, CloneRepo{Dir: o.Dir, ForgeID: f.ID, RepoID: ref.Encode()})
 	}
 	return out
+}
+
+// originKey is a web base reduced to what two spellings of one origin share:
+// the scheme and authority lower-cased, the scheme's default port dropped. A
+// connection's web base always names a host, so the empty web base of an ssh
+// remote matches none.
+func originKey(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	scheme, host := strings.ToLower(u.Scheme), strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" && port != defaultPorts[scheme] {
+		host = net.JoinHostPort(host, port)
+	}
+	return scheme + "://" + host
+}
+
+var defaultPorts = map[string]string{"https": "443", "http": "80"}
+
+// managerPRSource reads each connection's scopes through the manager's forgeapi
+// clients.
+type managerPRSource struct {
+	mgr *Manager
+	// origins is injected rather than computed here: which repositories are
+	// checked out and where their origins point is git knowledge.
+	origins func(context.Context) []RepoOrigin
+}
+
+// NewManagerPRSource returns the production PRSource over a forge manager and
+// the workspace clones' origins.
+func NewManagerPRSource(mgr *Manager, origins func(context.Context) []RepoOrigin) PRSource {
+	return &managerPRSource{mgr: mgr, origins: origins}
+}
+
+// Read answers every connected connection with the clones it serves. Present,
+// it reads each one's scopes; otherwise only the ones a clone tracks, by the
+// authored call alone. Every call starts from the cursor after gives its scope,
+// and a failed call answers its error alone, so one broken scope or connection
+// does not stop the others being read.
+func (s *managerPRSource) Read(ctx context.Context, present bool, after func(PRConnection, Scope) forgeapi.Cursor) []ConnectionRead {
+	rows := s.mgr.List(ctx)
+	if !anyConnected(rows) {
+		return nil
+	}
+	clones := make(map[string][]CloneRepo)
+	for _, c := range CloneRepos(rows, s.origins(ctx)) {
+		clones[c.ForgeID] = append(clones[c.ForgeID], c)
+	}
+	var out []ConnectionRead
+	for i := range rows {
+		f := &rows[i]
+		if !f.Connected {
+			continue
+		}
+		r := ConnectionRead{
+			Conn:   PRConnection{ID: f.ID, Account: f.Username, WebBase: f.webBase},
+			Clones: clones[f.ID], Family: f.Kind.family(),
+		}
+		if present || len(r.Clones) > 0 {
+			s.read(ctx, f, &r, present, after)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// read makes r's calls on f's client: present, the account probe and then one
+// ListMyPRs per scope; otherwise the authored call alone.
+func (s *managerPRSource) read(ctx context.Context, f *ConfiguredForge, r *ConnectionRead, present bool,
+	after func(PRConnection, Scope) forgeapi.Cursor,
+) {
+	fc, err := s.mgr.clientOf(f)
+	login := f.Username
+	if err == nil && present {
+		if acct, perr := s.mgr.probe(ctx, fc); perr == nil && acct.Login != "" {
+			login = acct.Login
+		}
+	}
+	for _, sc := range cycleScopes(f, login, present) {
+		if err != nil {
+			r.Pages = append(r.Pages, ScopePage{Scope: sc, Err: err})
+			continue
+		}
+		r.Pages = append(r.Pages, listScope(ctx, fc.core, sc, after(r.Conn, sc)))
+	}
+	if err != nil {
+		r.Credential = forgeapi.CredUnknown.String()
+		return
+	}
+	b := fc.core.BudgetState()
+	r.Budget = &InventoryBudget{Remaining: b.Remaining, Reset: unixMilli(b.Reset), LastCost: b.LastCost}
+	r.Credential = fc.cred.State().String()
+	r.ReadPR = readerOf(fc.core, r.Family)
+}
+
+// readerOf reads one pull request on core by a row's canonical repository id.
+func readerOf(core forgeapi.Core, family forgeapi.Family) func(context.Context, string, int) (PR, error) {
+	return func(ctx context.Context, repoID string, number int) (PR, error) {
+		ref, err := forgeapi.DecodeRepoRef(repoID, family)
+		if err != nil {
+			return PR{}, err
+		}
+		got, err := core.ReadPR(ctx, ref, forgeapi.PRRef{Number: number})
+		if err != nil {
+			return PR{}, err
+		}
+		return listRow(&got), nil
+	}
+}
+
+// cycleScopes are the lists a cycle reads for f, in the order it reads them.
+// GitLab's owner scope takes a group only and refuses the user's own namespace,
+// so its authored rows stand in for the login's.
+func cycleScopes(f *ConfiguredForge, login string, present bool) []Scope {
+	if !present {
+		return []Scope{authoredScope}
+	}
+	scopes := make([]Scope, 0, 2+len(f.OwnerScopes))
+	if login != "" && f.Kind.family() != forgeapi.FamilyGitLab {
+		scopes = append(scopes, Scope{Kind: scopeOwner, Owner: login})
+	}
+	scopes = append(scopes, authoredScope)
+	for _, o := range f.OwnerScopes {
+		scopes = append(scopes, Scope{Kind: scopeAdded, Owner: o})
+	}
+	return scopes
+}
+
+// listScope is one ListMyPRs call for sc from after.
+func listScope(ctx context.Context, core forgeapi.Core, sc Scope, after forgeapi.Cursor) ScopePage {
+	page := ScopePage{Scope: sc}
+	opts := []forgeapi.ListOption{forgeapi.WithAfter(after)}
+	if sc.Owner != "" {
+		opts = append(opts, forgeapi.WithOwner(sc.Owner))
+	}
+	got, err := core.ListMyPRs(ctx, opts...)
+	if err != nil {
+		page.Err = err
+		return page
+	}
+	page.Rows = rowsOf(got.Items, listRow)
+	page.Next = got.Next
+	page.Partial = partialOf(got.Partial)
+	return page
+}
+
+// listRow is p's row without its body, which the detail reads on demand.
+func listRow(p *forgeapi.PullRequest) PR {
+	row := prWire(p)
+	row.Body = ""
+	return row
+}
+
+func anyConnected(rows []ConfiguredForge) bool {
+	for i := range rows {
+		if rows[i].Connected {
+			return true
+		}
+	}
+	return false
 }

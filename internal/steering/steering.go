@@ -4,8 +4,8 @@
 // registry changes, and when the composition-layer forge snapshot
 // cache observes a change (login/disconnect or TTL revalidation). The
 // generator itself must stay fast and network-free: it runs
-// synchronously on the session-start path, so anything slow (forge CLI
-// repo listings) is cached upstream and handed in via snapshot
+// synchronously on the session-start path, so anything slow (forge
+// repository listings) is cached upstream and handed in via snapshot
 // callbacks.
 package steering
 
@@ -47,12 +47,6 @@ const (
 	inclusionFileMatch = "fileMatch"
 	inclusionManual    = "manual"
 	inclusionAuto      = "auto"
-
-	// Forge kinds, mirroring forges.Kind values without the import.
-	kindGitHub   = "github"
-	kindGitLab   = "gitlab"
-	kindGitea    = "gitea"
-	kindCodeberg = "codeberg"
 )
 
 // MCPSnapshot is the subset of the MCP runtime registry the steering
@@ -194,9 +188,8 @@ func (g *Generator) render(ctx context.Context, mcp MCPSnapshot, hasMCP bool, fo
 	if hasForges {
 		writeForges(&b, forges)
 	}
-	kinds := connectedKinds(forges)
-	writeWorkspace(ctx, &b, g.workDir, kinds)
-	writeGitPanel(&b, g.workDir, kinds)
+	writeWorkspace(ctx, &b, g.workDir)
+	writeGitPanel(&b, g.workDir, len(forges.Providers) > 0)
 	writeUIGuide(&b)
 	writeAttachments(&b, marotte.DefaultUploadDir, g.workDir)
 	writeLimitations(&b)
@@ -317,77 +310,37 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 	b.WriteString("\n")
 }
 
-// writeForges renders the connected forge providers section with
-// actionable context for the agent. The CLI hint list is scoped to the
-// kinds actually connected: a forge CLI (gh/glab/tea) is installed and
-// authenticated only when its forge kind is logged in, so advertising
-// the full three-CLI catalog would point the agent at binaries that
-// don't exist on this install.
-//
-// The GitHub paragraph names the live scope ORACLE rather than the scope
-// list, because this doc regenerates on a connection change and the 30s
-// manager TTL while `gh auth refresh` inside the container is neither —
-// so a printed list would go stale and read as authoritative. The
-// sentence it replaced ("no auth login or token setup needed") was
-// unqualified and false: it told the agent not to worry about a boundary
-// that is real, and the obvious probe for it — running the operation's
-// read half — succeeds unscoped, because a public-resource read needs no
-// scope.
+// writeForges renders the connected forge providers section. Git over HTTPS
+// through marotte's own credential helper is the one forge path it
+// authenticates for the agent, so the section offers no forge CLI and no scope
+// list (a connection's grant is not in the snapshot). The sentence "no auth
+// login or token setup needed" must not come back: it told the agent a real
+// boundary did not exist, and a public read succeeding unscoped hides it.
 func writeForges(w io.Writer, snap ForgeSnapshot) {
 	if len(snap.Providers) == 0 {
 		return
 	}
-	kinds := connectedKinds(snap)
 	fmt.Fprintf(w, "## Connected forges\n\n")
-	fmt.Fprintf(w, "Git operations (clone, push, pull, fetch) are pre-authenticated for all connected forges via git credential helpers configured at login. Just use plain `git` commands.\n\n")
-	fmt.Fprintf(w, "For PRs, issues, releases, and CI status, prefer the official CLI tools — they expose the richest feature set per forge:\n\n")
-	if kinds[kindGitHub] {
-		fmt.Fprintf(w, "- GitHub: `gh pr|issue|release|run` (e.g. `gh pr create --title ... --body ...`)\n")
-	}
-	if kinds[kindGitLab] {
-		fmt.Fprintf(w, "- GitLab: `glab mr|issue|release|ci`\n")
-	}
-	if kinds[kindGitea] || kinds[kindCodeberg] {
-		fmt.Fprintf(w, "- Gitea / Codeberg: `tea pulls|issues|releases`\n")
-	}
-	fmt.Fprintf(w, "\nThese CLIs are pre-authenticated for git and for the API surface above.\n")
-	if kinds[kindGitHub] {
-		fmt.Fprintf(w, "\nThat covers the scopes marotte requests at login plus any added out of band, which a reconnect preserves. An operation needing a scope outside that set fails with a 404 naming the scope and the `gh auth refresh` command that adds it; a scope-free read succeeding proves nothing, so read the live set with `gh api -i user | grep -i '^x-oauth-scopes'`.\n")
-	}
-	fmt.Fprintf(w, "\n")
+	fmt.Fprintf(w, "Git over HTTPS (clone, push, pull, fetch) is authenticated for each connected forge by marotte's own git credential helper, which connecting the account in the Sources tab registers in `$HOME/.gitconfig`. Use plain `git` with an `https://` remote. SSH remotes are not covered: an `ssh://` or `git@host:` remote authenticates with whatever SSH key the user set up, if any.\n\n")
+	fmt.Fprintf(w, "The helper answers with the connected account's own credential, so a push or fetch the forge refuses for a missing permission is that credential's limit. The user changes it by reconnecting the account in Sources with a token or sign-in that has the permission.\n\n")
+	fmt.Fprintf(w, "marotte installs and signs in no forge CLI and exports no forge token to agent sessions. A forge CLI under Installed tools was installed by the user and carries only its own login, if any, which can belong to a different account.\n\n")
 	for i := range snap.Providers {
 		writeForgeProvider(w, &snap.Providers[i])
 	}
 }
 
-// connectedKinds returns the set of forge kinds with a connected
-// provider. Used to scope CLI hints (both the section above and the
-// per-repo hints in writeRepoEntry) to CLIs that are actually
-// installed and authenticated.
-func connectedKinds(snap ForgeSnapshot) map[string]bool {
-	kinds := make(map[string]bool, len(snap.Providers))
-	for i := range snap.Providers {
-		kinds[snap.Providers[i].Kind] = true
-	}
-	return kinds
-}
-
-// writeForgeProvider renders one connected forge: its auth line, CLI tool,
-// clone hint, and (capped) accessible-repository list. p is taken by
-// pointer to avoid copying the ~88-byte ForgeProvider value.
+// writeForgeProvider renders one connected forge: its auth line, clone hint,
+// and (capped) accessible-repository list. p is taken by pointer to avoid
+// copying the ~88-byte ForgeProvider value.
 func writeForgeProvider(w io.Writer, p *ForgeProvider) {
-	// Every field below is a forge CLI's report of a remote system's state, so
-	// it is defused like any other input marotte did not author.
+	// Every field below is a remote forge's report, so it is defused like any
+	// other input marotte did not author.
 	user := cmp.Or(defuse(p.User), "(authenticated)")
 	fmt.Fprintf(w, "### %s (%s)\n\n", defuse(p.Kind), defuse(p.Host))
 	if p.Email != "" {
 		fmt.Fprintf(w, "- Authenticated as: %s <%s>\n", user, defuse(p.Email))
 	} else {
 		fmt.Fprintf(w, "- Authenticated as: %s\n", user)
-	}
-	cli := forgeCLI(p.Kind)
-	if cli != "" {
-		fmt.Fprintf(w, "- CLI: `%s`\n", cli)
 	}
 	fmt.Fprintf(w, "- Clone via: `git clone https://%s/<owner>/<repo>.git`\n", defuse(p.Host))
 	if len(p.Repos) > 0 {
@@ -401,18 +354,4 @@ func writeForgeProvider(w io.Writer, p *ForgeProvider) {
 		}
 	}
 	fmt.Fprintln(w)
-}
-
-// forgeCLI returns the CLI tool for the kind. Mirrors forges.Kind.CLI()
-// without requiring a dependency on the forges package.
-func forgeCLI(kind string) string {
-	switch kind {
-	case kindGitHub:
-		return "gh"
-	case kindGitLab:
-		return "glab"
-	case kindGitea, kindCodeberg:
-		return "tea"
-	}
-	return ""
 }

@@ -185,6 +185,27 @@ func TestResolveDigest_TabsIsTheStoresCollectionVersion(t *testing.T) {
 	}
 }
 
+func TestResolveDigest_ForgeInventorySubjectResolves(t *testing.T) {
+	h, _, _ := newTestHub()
+	h.versions.BumpCounter(subject.KindForgeInventory, "github:github.com")
+	h.versions.BumpCounter(subject.KindForgeInventory, "github:github.com")
+	states, err := h.resolveDigest(t.Context(), []sse.Held{
+		held(subject.KindForgeInventory, "github:github.com"), held(subject.KindForgeInventory, "gitlab:gitlab.com"),
+	})
+	if err != nil {
+		t.Fatalf("resolveDigest: %v", err)
+	}
+	for _, tc := range []struct{ ref, want string }{
+		{"github:github.com", "2"},
+		{"gitlab:gitlab.com", subject.Unminted},
+	} {
+		if st := stateFor(t, states, subject.KindForgeInventory, tc.ref); st.Version != tc.want || st.Status != sse.StatusCurrent {
+			t.Errorf("forge_inventory:%s = {%q %q}, want {%q current}: the inventory's version is the registry's",
+				tc.ref, st.Version, st.Status, tc.want)
+		}
+	}
+}
+
 func TestResolveDigest_UnknownKindIsGone(t *testing.T) {
 	h, _, _ := newTestHub()
 	states, err := h.resolveDigest(t.Context(), []sse.Held{{Kind: "weather", Ref: "x"}})

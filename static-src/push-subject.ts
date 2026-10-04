@@ -71,13 +71,14 @@ export function settleableTag(tag: string): boolean {
 }
 
 /** A pull request's identity as both halves of the app spell it: the subject key
- *  minus its prefix. Twin of the composition in marotte.PRSubject.
+ *  minus its prefix. Twin of the composition in marotte.PRSubject, keyed on the
+ *  repository's canonical `repo_id` rather than its display path.
  *
  *  OPAQUE, and never parsed: `forgeID` is itself `<kind>:<host>` (forges.MakeID), so
  *  the key contains a colon and is not self-delimiting. The PRs tab COMPARES the
  *  identity it builds for each of its own rows against the one that travelled. */
-export function prIdentity(forgeID: string, repo: string, number: number): string {
-  return `${forgeID}:${repo}#${String(number)}`;
+export function prIdentity(forgeID: string, repoID: string, number: number): string {
+  return `${forgeID}:${repoID}#${String(number)}`;
 }
 
 export function chatTarget(chatID: string): PushTarget {

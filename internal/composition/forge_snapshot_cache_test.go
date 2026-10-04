@@ -29,14 +29,14 @@ func newCacheForTest(t *testing.T, build func(context.Context) steering.ForgeSna
 
 // TestForgeSnapshotCache_SnapshotNeverBlocksOnBuild pins the core
 // contract: snapshot() returns immediately even while the build
-// function (a network-bound CLI call in production) is stuck. This is
-// what keeps steering.Generate safe on the pre-bridge-spawn path.
+// function (a network-bound forge API listing in production) is stuck.
+// This is what keeps steering.Generate safe on the pre-bridge-spawn path.
 func TestForgeSnapshotCache_SnapshotNeverBlocksOnBuild(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
 	c, _ := newCacheForTest(t, func(context.Context) steering.ForgeSnapshot {
 		started <- struct{}{}
-		<-release // simulate a slow gh repo list
+		<-release // simulate a slow forge repository listing
 		return steering.ForgeSnapshot{}
 	})
 

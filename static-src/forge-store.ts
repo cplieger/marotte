@@ -3,7 +3,7 @@
 //
 // Before this, THREE modules fetched that endpoint and each kept its answer
 // private: git-badge.ts polled it every 15s and reduced the response to a badge
-// colour, git-prs-tab.ts fetched it again at the head of every PR fan-out, and
+// colour, git-prs-tab.ts fetched it again at the head of every PR list read, and
 // forge-auth.ts fetched it twice more on its own gestures. The same answer was
 // on the wire up to three times, and nothing a consumer learned was readable by
 // another — the shape git-status-store.ts exists to end.
@@ -91,11 +91,11 @@ export async function refreshForges(): Promise<ForgesListResponse | null> {
 
 /** The forge list, fetching once if nothing has landed yet.
  *
- *  For a consumer that cannot proceed without a list: the PR fan-out reads the
- *  connected forges to know which repos to ask about, and an empty answer would
- *  render as "no connected forges" rather than as "not loaded yet". A payload
- *  already in hand is returned as-is, which is the whole point — the fan-out is
- *  the expensive caller and it should not add a round trip of its own. */
+ *  For a consumer that cannot proceed without a list: the PR tab names each
+ *  inventory entry's connection from it, and an empty answer would render as "no
+ *  connected forges" rather than as "not loaded yet". A payload already in hand
+ *  is returned as-is, so a read that pairs it with the inventory adds no round
+ *  trip of its own. */
 export async function ensureForges(): Promise<ForgesListResponse | null> {
   const current = state.peek();
   if (current !== null) {

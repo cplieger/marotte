@@ -63,8 +63,8 @@ func writeRuntime(b *strings.Builder, configDir string) {
 	b.WriteString("`/etc/profile.d/10-marotte-path.sh` (rewritten by the entrypoint each boot), so an ")
 	b.WriteString("installed tool resolves by bare name there too. If a user still gets `command not found`, ")
 	b.WriteString("the boot log carries a WARNING that the drop-in was not written: hand them the absolute ")
-	b.WriteString("path (`" + configDir + "/tools/bin/gh`). Pin `HOME=" + configDir + "/home` on any command a ")
-	b.WriteString("user runs that reads or writes per-user state (`gh auth …`, `git config --global`): a shell ")
+	b.WriteString("path (`" + configDir + "/tools/bin/<tool>`). Pin `HOME=" + configDir + "/home` on any command a ")
+	b.WriteString("user runs that reads or writes per-user state (`git config --global`, a tool's own login): a shell ")
 	b.WriteString("reached another way can carry `HOME=/root`, and a token written there is one no agent ")
 	b.WriteString("session reads\n\n")
 }
@@ -95,7 +95,7 @@ func writeToolsEngine(b *strings.Builder, configDir string) {
 	b.WriteString("on the same tab\n\n")
 }
 
-func writeGitPanel(b *strings.Builder, workDir string, kinds map[string]bool) {
+func writeGitPanel(b *strings.Builder, workDir string, connected bool) {
 	b.WriteString("## Git panel\n\n")
 	b.WriteString("The Git panel (toolbar \"Toggle git\", Ctrl+Shift+G, routes `/git`, `/git/prs`, ")
 	b.WriteString("`/git/sources`) has three tabs:\n\n")
@@ -111,28 +111,30 @@ func writeGitPanel(b *strings.Builder, workDir string, kinds map[string]bool) {
 	b.WriteString("from the shell first; Pull is `--ff-only`. Amend, rebase, merge, tags, cherry-pick and ")
 	b.WriteString("force-push have no button: use the shell. Commit identity is `$HOME/.gitconfig` ")
 	b.WriteString("(`user.name`/`user.email`); marotte never writes it\n")
-	b.WriteString("- **Pull requests**: per connected forge and cloned repo, open PRs with their CI status; ")
-	b.WriteString("\"+ New PR\" (Base branch, Head branch, Title, a description drafted for you with ")
+	b.WriteString("- **Pull requests**: per connected forge, the open PRs of the account's own repositories and ")
+	b.WriteString("its other owners' (on GitLab, the account's own PRs in them), grouped by repository with their ")
+	b.WriteString("CI status; \"+ New PR\" (Base branch, Head branch, Title, a description drafted for you with ")
 	b.WriteString("\"Regenerate description\"), Merge (method + confirm), \"Merge when green\", \"Re-run\" ")
-	b.WriteString("the failed checks, \"Close\"\n")
+	b.WriteString("the failed checks, \"Close\" (the row turns into an \"Undo\" bar and the close is sent a ")
+	b.WriteString("few seconds later); a collapsed \"Contributions elsewhere\" group at the end lists, ")
+	b.WriteString("read only, the PRs the account opened in other repositories, each linking to the forge\n")
 	b.WriteString("- **Sources**: connected forge accounts (GitHub by OAuth device flow or a personal access ")
-	b.WriteString("token; GitLab, Gitea and Codeberg by token) with \"Add an account\" / \"Sign out\", and each ")
-	b.WriteString("account's repo list with \"Clone into workspace\" per repo; a clone lands under ")
+	b.WriteString("token; GitLab, Gitea and Codeberg by token) with \"Add an account\". Each account row has ")
+	b.WriteString("\"Check\" (re-reads the account), \"Reconnect\" when the stored credential needs a new sign-in, ")
+	b.WriteString("\"Sign out\", a list of other owners (\"No other owners\" until one is added with \"Owner\" and ")
+	b.WriteString("\"Add\") whose pull requests the Pull requests tab also lists, and the account's repo list with ")
+	b.WriteString("\"Clone into workspace\" per repo and \"Load more repositories\" while the forge has more; ")
+	b.WriteString("a clone lands under ")
 	b.WriteString("`" + workDir + "/<name>`\n\n")
-	if len(kinds) == 0 {
+	if !connected {
 		b.WriteString("No forge account is connected: the Pull requests and Sources tabs list nothing until ")
-		b.WriteString("the user adds one under Sources → \"Add an account\", which is also what installs the git ")
-		b.WriteString("credential helper `git push` needs\n\n")
+		b.WriteString("the user adds one under Sources → \"Add an account\", which is also what registers marotte's ")
+		b.WriteString("git credential helper `git push` needs over HTTPS\n\n")
 		return
 	}
-	b.WriteString("Your own git and forge access is the same token the Sources tab holds: a forge login runs ")
-	b.WriteString("that forge's CLI login and installs its git credential helper, so plain `git` and the CLI ")
-	b.WriteString("are authenticated")
-	if kinds[kindGitHub] {
-		b.WriteString(" (for GitHub that is `gh auth login` plus `gh auth setup-git`; the Connected forges ")
-		b.WriteString("section above states the scopes caveat)")
-	}
-	b.WriteString("\n\n")
+	b.WriteString("Your own git access over HTTPS is the account the Sources tab holds: connecting it ")
+	b.WriteString("registers marotte's git credential helper for that forge, so plain `git` against an ")
+	b.WriteString("`https://` remote is authenticated with no login step\n\n")
 }
 
 // Quoted words are exact on-screen labels from static/index.html and the client
