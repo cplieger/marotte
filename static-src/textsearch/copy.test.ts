@@ -108,12 +108,14 @@ describe("emptyNote", () => {
 
   it("names the scan's reach for a partial when it has one, and says so without it", () => {
     expect(emptyNote({ kind: "partial", scanned: 173 }, CHATS)).toBe(
-      "No matches in 173 conversations; not everything was searched",
+      "No matches in 173 conversations, but not everything was searched",
     );
     expect(emptyNote({ kind: "partial", scanned: 1 }, FILES)).toBe(
-      "No matches in 1 file; not everything was searched",
+      "No matches in 1 file, but not everything was searched",
     );
-    expect(emptyNote({ kind: "partial" }, FILES)).toBe("No matches; not everything was searched");
+    expect(emptyNote({ kind: "partial" }, FILES)).toBe(
+      "No matches, but not everything was searched",
+    );
   });
 
   it("says where a withheld match is when it knows, and only that it is not here otherwise", () => {
@@ -126,7 +128,7 @@ describe("emptyNote", () => {
   it("names the retry interval for a failure that carries one", () => {
     expect(emptyNote({ kind: "failed" }, FILES)).toBe("Could not search");
     expect(emptyNote({ kind: "failed", retryAfterS: 37 }, FILES)).toBe(
-      "Could not search; try again in 37s",
+      "Could not search. Try again in 37s",
     );
   });
 

@@ -25,7 +25,7 @@ import (
 // The coordinator's own refusals.
 var (
 	// errTabsFull is the 409 for an open at MaxOpenTabs.
-	errTabsFull = errors.New("too many tabs are open; close a tab first")
+	errTabsFull = errors.New("too many tabs are open. Close a tab first")
 	// ErrTabsUnavailable is the 503 for a build with no tab store wired; every
 	// HTTP door adds the status.
 	ErrTabsUnavailable = errors.New("the tab store is unavailable")

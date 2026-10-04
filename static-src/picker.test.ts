@@ -220,7 +220,7 @@ describe("the model picker with no models", () => {
   it("says the fetch failed once the bounded refresh is exhausted", () => {
     setCatalogPhase("unavailable");
 
-    expect(grid().textContent).toContain("Couldn't load the model list.");
+    expect(grid().textContent).toContain("Could not load the model list.");
     expect(grid().hasAttribute("aria-busy")).toBe(false);
   });
 
@@ -271,7 +271,7 @@ describe("the model picker with no models", () => {
     await vi.waitFor(() => {
       expect(announced.said).toEqual([
         "Reloading the model list…",
-        "Couldn't load the model list.",
+        "Could not load the model list.",
       ]);
     });
   });

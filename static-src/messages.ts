@@ -2424,7 +2424,7 @@ function mountRewind(card: HTMLElement, t: Turn): void {
   btn.setAttribute(
     "data-tooltip",
     busy
-      ? "Can't rewind while the agent is running \u2014 cancel the turn first"
+      ? "Cannot rewind while the agent is running. Cancel the turn first"
       : "Rewind to right after this turn, discarding everything that follows",
   );
 }

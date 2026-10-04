@@ -568,7 +568,7 @@ describe("the steer stack", () => {
     clickAction(firstRow(), "Edit");
 
     await vi.waitFor(() => {
-      expect(errorToastMock).toHaveBeenCalledWith("Couldn't confirm the message was taken back");
+      expect(errorToastMock).toHaveBeenCalledWith("Could not confirm the message was taken back");
     });
     expect(restoreRefusedEditMock).not.toHaveBeenCalled();
     expect(setComposerValueMock.mock.calls).toEqual([["actually target main"]]);

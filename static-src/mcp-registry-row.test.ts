@@ -289,7 +289,7 @@ describe("a registry row whose server is already configured", () => {
     // name is the row this option would land on.
     state.configured = [server({ name: "cf", headers: pairs("Authorization") })];
     expect(label(renderRegistryResult(remote))).toBe(
-      "Already configured — all required headers set",
+      "Already configured. All required headers set",
     );
   });
 
@@ -300,7 +300,7 @@ describe("a registry row whose server is already configured", () => {
       server({ name: "my-own-name", url: "https://mcp.ex.com/mcp", headers: pairs("X-Tenant") }),
     ];
     expect(label(renderRegistryResult(remote))).toBe(
-      "Already configured — 1 of 1 required headers still missing",
+      "Already configured. 1 of 1 required headers still missing",
     );
   });
 
@@ -350,7 +350,7 @@ describe("a registry row whose server is already configured", () => {
           ],
         }),
       ),
-    ).toBe("Already configured — all required headers set");
+    ).toBe("Already configured. All required headers set");
     expect(
       label(
         renderRegistryResult({
@@ -364,7 +364,7 @@ describe("a registry row whose server is already configured", () => {
           ],
         }),
       ),
-    ).toBe("Already configured — 1 of 1 required environment variables still missing");
+    ).toBe("Already configured. 1 of 1 required environment variables still missing");
   });
 
   it("never satisfies a declared header from an env var of the same name", () => {
@@ -374,7 +374,7 @@ describe("a registry row whose server is already configured", () => {
     // the assertion is about the satisfaction check rather than about the match.
     state.configured = [server({ name: "cf", env: pairs("Authorization") })];
     expect(label(renderRegistryResult(remote))).toBe(
-      "Already configured — 1 of 1 required headers still missing",
+      "Already configured. 1 of 1 required headers still missing",
     );
   });
 
@@ -390,8 +390,8 @@ describe("a registry row whose server is already configured", () => {
       ],
     });
     expect([...row.querySelectorAll(".mcp-requires-label")].map((p) => p.textContent)).toEqual([
-      "Already configured — all required environment variables set",
-      "Already configured — 1 of 1 required headers still missing",
+      "Already configured. All required environment variables set",
+      "Already configured. 1 of 1 required headers still missing",
     ]);
   });
 });

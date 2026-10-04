@@ -236,7 +236,7 @@ const clientRequestBudget = 30 * time.Second
 // errRetryEngineSlow reports that the retry could not be handed off inside
 // retryTimeout. Its own class so the REST layer can answer 503 "try again".
 var errRetryEngineSlow = errors.New(
-	"the run's engine did not start in time, so nothing was retried; try again",
+	"the run's engine did not start in time, so nothing was retried. Try again",
 )
 
 // errRetryOutcomeUnreadable reports that KAS ACCEPTED the retry and its report
@@ -247,7 +247,7 @@ var errRetryEngineSlow = errors.New(
 // Refreshing is what the reader can act on.
 var errRetryOutcomeUnreadable = errors.New(
 	"the retry was accepted but its report could not be read, so which steps it reset " +
-		"is unknown; refresh the run to see where it is",
+		"is unknown. Refresh the run to see where it is",
 )
 
 // kasRetryOutcome is `_kiro/workflow/retry`'s reply in KAS's own spelling, the

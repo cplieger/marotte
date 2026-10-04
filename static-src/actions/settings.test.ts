@@ -61,7 +61,7 @@ describe("saveSteering", () => {
     const r = await saveSteering.dispatch({ content: "x", etag: "" });
     expect(r).toBeNull();
     expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining("Couldn't save steering"),
+      expect.stringContaining("Could not save steering"),
       undefined,
     );
   });

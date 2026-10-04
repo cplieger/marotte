@@ -76,7 +76,7 @@ const setEffortAction = transportAction<{ chatID: string; level: string }, { pre
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Couldn't set reasoning effort",
+  error: "Could not set reasoning effort",
 });
 
 /** Model-aware effort gating lives in effort.ts (`modelHasEffort`), because the

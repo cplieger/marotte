@@ -91,7 +91,7 @@ function buildSectionScaffold(): void {
   const hint = el(
     "p",
     { className: "section-hint" },
-    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Changes apply immediately, including to chats already running. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a local package (pip, npm, a binary), install it from the Tools section above first (Add tool), then fill in credentials here.",
+    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Changes apply immediately, including to chats already running. Disabled servers are kept on disk but do not consume context tokens or spawn subprocesses. For servers that need a local package, such as a pip or npm package or a binary, install it first with Add tool in the Tools section above, then fill in credentials here.",
   );
 
   const btn = el("button", {
@@ -302,7 +302,7 @@ function applyStatusDotForeign(dot: HTMLSpanElement, name: string, st: RuntimeSt
   dot.classList.add(meta.css);
   if (isFailedWithError(st)) {
     dot.dataset["tooltip"] = `Failed to initialise: ${st.error}`;
-    dot.setAttribute("aria-label", `${name}: failed — ${st.error}`);
+    dot.setAttribute("aria-label", `${name} failed. ${st.error}`);
     return;
   }
   dot.dataset["tooltip"] = meta.title;
@@ -312,15 +312,15 @@ function applyStatusDotForeign(dot: HTMLSpanElement, name: string, st: RuntimeSt
 /** Meta text for a read-only row. Exported for testing. */
 export function renderForeignMeta(st: RuntimeStatus): string {
   if (isFailedWithError(st)) {
-    return `Failed to start — ${st.error}`;
+    return `Failed to start. ${st.error}`;
   }
   switch (st.state) {
     case "connected":
-      return "Connected — its tools are available to the agent";
+      return "Connected. Its tools are available to the agent";
     case "needs_auth":
       return "Waiting for sign-in";
     case "disabled":
-      return "Disabled — the agent is not using it";
+      return "Disabled. The agent is not using it";
     default:
       return "Not connected";
   }
@@ -458,7 +458,7 @@ function mountRow(s: Server, id: string): HTMLElement {
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
   needs_auth: { css: "oauth", title: "Needs authentication" },
-  idle: { css: "idle", title: "Not connected — no chat is running" },
+  idle: { css: "idle", title: "Not connected because no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
   disabled: { css: "disabled", title: "Disabled" },
 };
@@ -470,7 +470,7 @@ const ORIGIN_META: Readonly<Record<Exclude<Origin, "user">, { label: string; tit
   power: {
     label: "from a Power",
     title:
-      "An installed Power contributed this server. Manage it where the Power is installed — this page cannot edit or remove it.",
+      "An installed Power contributed this server. Manage it where the Power is installed. This page cannot edit or remove it.",
   },
   unknown: {
     label: "not managed here",
@@ -518,7 +518,7 @@ function applyStatusDot(dot: HTMLSpanElement, s: Server, st: RuntimeStatus): voi
   dot.classList.add(meta.css);
   if (isFailedWithError(st)) {
     dot.dataset["tooltip"] = `Failed to initialise: ${st.error}`;
-    dot.setAttribute("aria-label", `${s.name}: failed — ${st.error}`);
+    dot.setAttribute("aria-label", `${s.name} failed. ${st.error}`);
   } else {
     dot.dataset["tooltip"] = meta.title;
     dot.setAttribute("aria-label", `${s.name}: ${meta.title.toLowerCase()}`);
@@ -562,7 +562,7 @@ export function credentialSummary(s: Server): string {
  *  push the credential summary and the source out of the ellipsised track. */
 function statePhrase(st: RuntimeStatus): string {
   if (st.state === "failed") {
-    return st.error === "" ? "Failed to start" : `Failed to start — ${st.error}`;
+    return st.error === "" ? "Failed to start" : `Failed to start. ${st.error}`;
   }
   if (st.state === "needs_auth") {
     return "Waiting for sign-in";
@@ -619,9 +619,9 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
       rel: "noopener noreferrer",
       title: safe
         ? "Open the server's authorisation page in a new tab."
-        : "The server sent an unsafe URL (not http or https).",
+        : "The server sent an unsafe URL that is not http or https.",
     },
-    safe ? "Finish sign-in →" : "Invalid OAuth URL",
+    safe ? "Finish sign-in" : "Invalid OAuth URL",
   ) as HTMLAnchorElement;
 }
 
@@ -784,7 +784,7 @@ function renderReconnectBtn(id: string, initial: Server): HTMLButtonElement {
             // every bridge; refetch to pull the refreshed dot + discovery.
             mcpState.refetchStatus();
             if (res.reconnected === 0) {
-              showToast("No active chat to reconnect through — open a chat first.", "info");
+              showToast("No active chat to reconnect through. Open a chat first.", "info");
             }
           },
         },

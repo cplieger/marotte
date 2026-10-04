@@ -108,7 +108,7 @@ export const toggleServer = apiAction<ToggleArgs, void, Server>({
       updateConfiguredEntry(op.id, { enabled: op.enabled });
     }
   },
-  error: "Couldn't toggle integration",
+  error: "Could not toggle integration",
 });
 
 // --- mcp.delete_server ---
@@ -137,7 +137,7 @@ export const deleteServer = apiAction<DeleteArgs, void, [Server, number]>({
       insertConfiguredEntry(entry, atIndex);
     }
   },
-  error: "Couldn't remove integration",
+  error: "Could not remove integration",
 });
 
 // --- mcp.open_edit ---
@@ -151,7 +151,7 @@ export const openEdit = apiAction<string, Server>({
     method: "GET",
     path: `${MCP_API}/${encodeURIComponent(id)}`,
   }),
-  error: "Couldn't load integration details",
+  error: "Could not load integration details",
 });
 
 // --- mcp.save_server ---
@@ -313,7 +313,7 @@ export const reconnectServer = apiAction<{ server: string }, ReconnectResult>({
     path: `${MCP_API}/reconnect`,
     body: { server },
   }),
-  error: "Couldn't reconnect integration",
+  error: "Could not reconnect integration",
 });
 
 // --- mcp.get_prompt / mcp.get_resource ---
@@ -354,7 +354,7 @@ export const getPromptContent = apiAction<GetPromptArgs, MCPPromptResult>({
     path: `${MCP_API}/prompt`,
     body: { server, prompt, arguments: args ?? {} },
   }),
-  error: "Couldn't load prompt",
+  error: "Could not load prompt",
 });
 
 export const getResourceContent = apiAction<{ server: string; uri: string }, MCPResourceResult>({
@@ -366,7 +366,7 @@ export const getResourceContent = apiAction<{ server: string; uri: string }, MCP
     path: `${MCP_API}/resource`,
     body: { server, uri },
   }),
-  error: "Couldn't load resource",
+  error: "Could not load resource",
 });
 
 // --- mcp.relay_oauth_callback ---

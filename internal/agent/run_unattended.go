@@ -84,8 +84,8 @@ const logMsgRunOverran = "scheduled run still going when its next slot came due;
 // outcomeOverran is what the schedule's row reads afterwards. Written for the
 // person looking at the Workflows tab, not for a matcher: it has to say what
 // happened AND what to do, because the row is where they will look first.
-const outcomeOverran = "failed: still running when its next slot came due, so it was cancelled — " +
-	"give the schedule a longer interval, or make the workflow finish inside it"
+const outcomeOverran = "failed: still running when its next slot came due, so it was cancelled. " +
+	"Give the schedule a longer interval, or make the workflow finish inside it"
 
 // permissionWithUnattendedFloor wraps the ordinary permission handler.
 //
@@ -177,9 +177,9 @@ func (rs *Runs) answerUnattended(chatID marotte.ChatID, requestID int64, schedul
 	// Surface it. Without this the schedule row still reads "started" while the
 	// run fails the same way every night, which is exactly the silent-repeat
 	// failure this floor exists to make visible.
-	reason := "failed: needed approval for " + tool + " with nobody watching — add a permission rule to allow it"
+	reason := "failed: needed approval for " + tool + " with nobody watching. Add a permission rule to allow it"
 	if tool == "" {
-		reason = "failed: needed an approval with nobody watching — add a permission rule to allow it"
+		reason = "failed: needed an approval with nobody watching. Add a permission rule to allow it"
 	}
 	rs.recordScheduleOutcome(ctx, scheduleID, reason)
 }

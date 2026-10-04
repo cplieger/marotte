@@ -85,7 +85,7 @@ describe("the permission card's Always-allow row", () => {
     const n = note(c);
     expect(n).not.toBeNull();
     expect(n?.textContent).toBe(
-      "Always allow is unavailable: kiro-cli can't parse this command, so a saved rule would never match it.",
+      "Always allow is unavailable. kiro-cli cannot parse this command, so a saved rule would never match it.",
     );
   });
 

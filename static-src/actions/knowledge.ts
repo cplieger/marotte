@@ -52,7 +52,7 @@ export const removeKnowledge = apiAction<RemoveArgs, void>({
     method: "DELETE",
     path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}`,
   }),
-  error: "Couldn't remove knowledge base",
+  error: "Could not remove knowledge base",
 });
 
 // --- knowledge.reindex ---
@@ -73,5 +73,5 @@ export const reindexKnowledge = apiAction<ReindexArgs, { message?: string }>({
     method: "POST",
     path: `${KNOWLEDGE_API}/${encodeURIComponent(name)}/reindex`,
   }),
-  error: "Couldn't re-index knowledge base",
+  error: "Could not re-index knowledge base",
 });

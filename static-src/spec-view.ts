@@ -932,7 +932,7 @@ async function approvePhase(ref: string, phase: string, hash: string): Promise<v
   if (out.status === "error") {
     live.failure =
       out.error.code === "doc_changed"
-        ? `${phase} changed since you read it \u2014 reload before approving`
+        ? `${phase} changed since you read it. Reload before approving`
         : `The approval could not be recorded: ${out.error.message}`;
   } else if (out.status === "cancelled") {
     live.failure = "The approval was cancelled before it ran";

@@ -128,7 +128,7 @@ var (
 	errInvalidHash          = errors.New("hash must be a sha256 hex digest")
 	errSpecNotFound         = errors.New("spec not found")
 	errSpecUnreadable       = errors.New("the spec could not be read")
-	errDocChanged           = errors.New("the document changed since you reviewed it — reload before approving")
+	errDocChanged           = errors.New("the document changed since you reviewed it. Reload before approving")
 	errApprovalNotRecorded  = errors.New("the approval could not be recorded")
 	errApprovalsUnavailable = errors.New("spec approvals are unavailable on this server")
 )

@@ -123,7 +123,7 @@ func stepRefusalNoteText(recipe, nodePath string, r *marotte.RefusalInfo) string
 		b.WriteString(r.Category)
 		b.WriteString(")")
 	}
-	b.WriteString(". Re-running it unchanged will be declined again; the step's prompt or the model it runs on has to change.")
+	b.WriteString(". Re-running it unchanged will be declined again. Change the step's prompt or the model it runs on.")
 	if r != nil && r.Explanation != "" {
 		b.WriteString(" The model said: ")
 		b.WriteString(r.Explanation)

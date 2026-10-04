@@ -31,12 +31,12 @@ var (
 	errRewindNoBridge = errors.New("this chat's agent session could not be started, so the rewind was not attempted")
 	// errRewindTurnOpen is the 409 for a rewind while a turn is running or admitted:
 	// KAS refuses a mid-turn revert, and the log's cut must not race a fold.
-	errRewindTurnOpen = errors.New("a turn is still running in this chat — wait for it to finish, then rewind")
+	errRewindTurnOpen = errors.New("a turn is still running in this chat. Wait for it to finish, then rewind")
 	// Appended to a refused revert whose target carries no agent-side id: a turn from
 	// before the id was recorded, one whose assignment frame never arrived, and one whose
 	// id was dropped when the chat retired the session that minted it. One sentence serves
 	// all three — the remedy is identical and marotte cannot tell which it was.
-	errRewindNoAgentID = errors.New("marotte has no id for this turn in the agent's current session, so the agent may not be able to locate it; turns sent from now on can be rewound")
+	errRewindNoAgentID = errors.New("marotte has no id for this turn in the agent's current session, so the agent may not be able to locate it. Turns sent from now on can be rewound")
 	errBusy            = errors.New("busy")
 	// errAlreadyAnswered is the 409 for a decision another surface settled
 	// first. A code rather than prose: the client keys off it.

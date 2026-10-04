@@ -64,9 +64,9 @@ function withConstraints(headline: string, p: SafetyStatusPayload, chatID: strin
   if (list.length === 0) {
     return headline;
   }
-  const shown = list.slice(0, MAX_PROPS_SHOWN).join("; ");
-  const more = list.length > MAX_PROPS_SHOWN ? ` (+${list.length - MAX_PROPS_SHOWN} more)` : "";
-  return `${headline} \u2014 ${shown}${more}`;
+  const shown = list.slice(0, MAX_PROPS_SHOWN).join(" · ");
+  const more = list.length > MAX_PROPS_SHOWN ? ` · ${list.length - MAX_PROPS_SHOWN} more` : "";
+  return `${headline}: ${shown}${more}`;
 }
 
 onSSE("safety_properties", (chatID, p) => {

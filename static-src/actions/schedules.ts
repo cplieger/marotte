@@ -16,7 +16,7 @@ export const loadSchedules = apiAction<
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/schedules" }),
-  error: "Couldn't load schedules",
+  error: "Could not load schedules",
 });
 
 /** Insert or replace one recipe's schedule. */
@@ -30,12 +30,12 @@ export const saveSchedule = apiAction<
     path: "/api/schedules",
     body: { source: a.source, spec: a.spec, enabled: a.enabled },
   }),
-  error: "Couldn't save the schedule",
+  error: "Could not save the schedule",
 });
 
 /** Remove a recipe's schedule. */
 export const deleteSchedule = apiAction<string, { ok: boolean }>({
   name: "schedules.delete",
   request: (id) => ({ method: "DELETE", path: `/api/schedules/${encodeURIComponent(id)}` }),
-  error: "Couldn't remove the schedule",
+  error: "Could not remove the schedule",
 });

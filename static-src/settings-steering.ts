@@ -137,7 +137,7 @@ export function initSteeringEditor(): void {
     showError(STEERING_SAVE_KEY);
     if (inst.error?.status === 409) {
       showToast(
-        "Your global instructions were not saved — the file changed elsewhere. The box now shows the current version.",
+        "Your global instructions were not saved because the file changed elsewhere. The box now shows the current version.",
         "error",
       );
       // Force the re-seed: the reader's text lost, and leaving it in the box over

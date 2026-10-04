@@ -259,7 +259,7 @@ describe("PRs tab loading state", () => {
     // record of the failure.
     const err = mount().querySelector(".git-multirepo-error");
     expect(err).not.toBeNull();
-    expect(err?.textContent).toContain("Couldn't load pull requests");
+    expect(err?.textContent).toContain("Could not load pull requests");
   });
 });
 

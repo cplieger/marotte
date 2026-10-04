@@ -115,7 +115,7 @@ function renderOrgPolicy(g: GovernanceStatePayload): void {
     el(
       "p",
       { className: "section-hint" },
-      "Controlled by your organization or account \u2014 shown here for transparency and not changeable from Marotte.",
+      "Controlled by your organization or account. Shown here for transparency, and Marotte cannot change it.",
     ),
     grid,
   ];

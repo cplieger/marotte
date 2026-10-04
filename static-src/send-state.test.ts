@@ -172,10 +172,10 @@ describe("send-state refused-send face", () => {
     setActive(id);
     setSSEStatus("connected");
 
-    reportSendRefused("The chat is busy right now — send again to retry");
+    reportSendRefused("The chat is busy right now. Send again to retry");
     expect(lastPushed()).toEqual({
       kind: "error",
-      reason: "The chat is busy right now — send again to retry",
+      reason: "The chat is busy right now. Send again to retry",
     });
   });
 
@@ -190,7 +190,7 @@ describe("send-state refused-send face", () => {
     setThinking(id, true);
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    reportSendRefused("The chat is busy right now — send again to retry");
+    reportSendRefused("The chat is busy right now. Send again to retry");
     expect(lastPushed()?.kind).toBe("error");
   });
 
@@ -199,7 +199,7 @@ describe("send-state refused-send face", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    reportSendRefused("The chat is busy right now — send again to retry");
+    reportSendRefused("The chat is busy right now. Send again to retry");
 
     // What submitPrompt does at the top of every attempt.
     clearAgentDown();
@@ -210,7 +210,7 @@ describe("send-state refused-send face", () => {
     setSessions([makeSession("c1"), makeSession("c2")]);
     setActive("c1");
     setSSEStatus("connected");
-    reportSendRefused("The chat is busy right now — send again to retry");
+    reportSendRefused("The chat is busy right now. Send again to retry");
     expect(lastPushed()?.kind).toBe("error");
 
     setActive("c2");

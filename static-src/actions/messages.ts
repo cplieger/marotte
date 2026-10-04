@@ -17,7 +17,7 @@ export const copyClipboard = defineAction<string, void>({
     }
   },
   success: "Copied",
-  error: "Couldn't copy",
+  error: "Could not copy",
 });
 
 /** Ask the utility bridge to explain a tool error. */
@@ -29,7 +29,7 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
     path: "/api/utility/explain-error",
     body: { error: errorText.slice(0, 2000), context },
   }),
-  error: "Couldn't explain error",
+  error: "Could not explain error",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });

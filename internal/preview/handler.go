@@ -178,7 +178,7 @@ func (h *Handler) resolveError(err error, notFound string) error {
 		return refuse(http.StatusServiceUnavailable, "previews are unavailable on this kernel")
 	}
 	if errors.Is(err, errResolveBusy) {
-		return refuse(http.StatusServiceUnavailable, "the folder kept changing while it was opened; reload the preview")
+		return refuse(http.StatusServiceUnavailable, "the folder kept changing while it was opened. Reload the preview")
 	}
 	return refuse(http.StatusNotFound, notFound)
 }

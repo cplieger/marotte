@@ -228,7 +228,7 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	// command-independent shell decision). Refuse it here with a clear
 	// reason instead of forwarding a request that can only fail.
 	if req.Capability == capShell && strings.TrimSpace(req.Resource) == "" {
-		httpreply.BadRequest(w, "the shell capability needs a resource (the command) to evaluate")
+		httpreply.BadRequest(w, "the shell capability needs a resource, the command, to evaluate")
 		return
 	}
 	res, err := s.policy.PolicyExplain(r.Context(), req)
@@ -340,7 +340,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	f, err := policyfile.Load(path)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
+			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
 		return
 	}
 	changed, err := f.Upsert(&rule)
@@ -371,7 +371,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *policyfile.Rule, resource string) bool {
 	if s.policy == nil {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			httpreply.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
+			httpreply.ErrorJSON("cannot verify the rule against the live policy, so the rule was not written"))
 		return false
 	}
 	res, err := s.policy.PolicyExplain(r.Context(), marotte.PolicyExplainRequest{
@@ -380,12 +380,12 @@ func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *po
 	if err != nil {
 		slog.Warn("policy rule add: guard explain failed", "error", err)
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
-			httpreply.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
+			httpreply.ErrorJSON("cannot verify the rule against the live policy, so the rule was not written"))
 		return false
 	}
 	if res.IsExplicitAsk {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("an explicit ask rule covers this command; the new allow rule would be shadowed and was not written"))
+			httpreply.ErrorJSON("an explicit ask rule covers this command. The new allow rule would be shadowed and was not written"))
 		return false
 	}
 	return true
@@ -400,7 +400,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	// explicit confirm so it can't happen by accident.
 	if body.Effect == policyfile.EffectDeny && !body.Confirm {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("removing a deny rule widens access; resend with confirm=true"))
+			httpreply.ErrorJSON("removing a deny rule widens access. Resend with confirm=true"))
 		return
 	}
 	rule, err := policyfile.SanitizeRule(&policyfile.Rule{
@@ -414,7 +414,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	f, err := policyfile.Load(path)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
+			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
 		return
 	}
 	if !f.Remove(&rule) {
@@ -446,7 +446,7 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	}
 	if effectRank[body.NewEffect] < effectRank[body.Effect] && !body.Confirm {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("changing "+body.Effect+" to "+body.NewEffect+" widens access; resend with confirm=true"))
+			httpreply.ErrorJSON("changing "+body.Effect+" to "+body.NewEffect+" widens access. Resend with confirm=true"))
 		return
 	}
 	rule, err := policyfile.SanitizeRule(&policyfile.Rule{
@@ -460,7 +460,7 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 	f, err := policyfile.Load(path)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusConflict,
-			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
+			httpreply.ErrorJSON("existing policy file could not be parsed. Edit it manually"))
 		return
 	}
 	if !f.ReplaceEffect(&rule, body.NewEffect) {
@@ -471,7 +471,7 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 			webhttp.Ok(w)
 			return
 		}
-		httpreply.NotFound(w, "rule not found; refresh the policy view")
+		httpreply.NotFound(w, "rule not found. Refresh the policy view")
 		return
 	}
 	if err := policyfile.Save(r.Context(), path, f); err != nil {

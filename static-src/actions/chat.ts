@@ -78,7 +78,7 @@ export const createChat = defineAction<
     );
     return chatFromReply(r, signal, "create a chat");
   },
-  error: "Couldn't create a chat",
+  error: "Could not create a chat",
 });
 
 /** What a creating command committed: the chat, and the tab the coordinator
@@ -104,7 +104,7 @@ function chatFromReply(r: SendResult, signal: AbortSignal, what: string): Create
     if (r.code !== undefined) {
       errOpts.code = r.code;
     }
-    throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
+    throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, errOpts);
   }
   const body = r.body;
   if (typeof body !== "object" || body === null || !("chat" in body)) {
@@ -160,7 +160,7 @@ export const deleteChat = transportAction<string, { session: Session; atIndex: n
       reinsertSession(op.session, op.atIndex);
     }
   },
-  error: "Couldn't delete chat",
+  error: "Could not delete chat",
 });
 
 // --- chat.set_supervised ---
@@ -193,7 +193,7 @@ export const setSupervised = transportAction<
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Couldn't update supervised mode",
+  error: "Could not update supervised mode",
 });
 
 // --- chat.set_draft ---
@@ -305,7 +305,7 @@ export const steerChat = defineAction<
       if (code !== undefined) {
         opts.code = code;
       }
-      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, opts);
+      throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, opts);
     }
     const steerID = steerIDOf(r.body);
     if (steerID !== "") {
@@ -358,7 +358,7 @@ export const clearSteers = transportAction<
       restoreSteers(op.chatID, op.removed);
     }
   },
-  error: "Couldn't discard",
+  error: "Could not discard",
 });
 
 /** Delete ONE dock row. The wire has no per-steer removal, so the SERVER clears KAS's
@@ -420,7 +420,7 @@ export const setMode = transportAction<{ chatID: string; modeID: string }, { pre
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Couldn't switch mode",
+  error: "Could not switch mode",
 });
 
 // --- chat.restore ---
@@ -440,7 +440,7 @@ export const loadSessions = apiAction<
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/sessions" }),
   decode: decodeSessionListResponse,
-  error: "Couldn't load previous sessions",
+  error: "Could not load previous sessions",
 });
 
 // --- chat.resume_session ---
@@ -472,7 +472,7 @@ export const resumeSession = defineAction<
     );
     return chatFromReply(r, signal, "resume a session");
   },
-  error: "Couldn't resume that session",
+  error: "Could not resume that session",
 });
 
 // --- chat.fork ---
@@ -508,7 +508,7 @@ export const forkChat = defineAction<
     );
     return chatFromReply(r, signal, "start a tangent");
   },
-  error: "Couldn't start a tangent",
+  error: "Could not start a tangent",
 });
 
 // --- chat.cancel_turn ---
@@ -541,7 +541,7 @@ export const cancelTurn = transportAction<
   },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: "Couldn't cancel turn",
+  error: "Could not cancel turn",
 });
 
 // --- chat.switch_model ---
@@ -591,11 +591,11 @@ export const switchModel = defineAction<
       if (r.code !== undefined) {
         errOpts.code = r.code;
       }
-      throw new ActionError(r.error ?? `send failed (${String(r.status)})`, errOpts);
+      throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, errOpts);
     }
     return true;
   },
-  error: "Couldn't switch model",
+  error: "Could not switch model",
 });
 
 // --- chat.send_prompt ---
@@ -724,7 +724,7 @@ async function answerDecision(
   if (r.status === 409 && r.error === ALREADY_ANSWERED) {
     return "superseded";
   }
-  throw new ActionError(r.error ?? `send failed (${String(r.status)})`, {
+  throw new ActionError(r.error ?? `send failed with status ${String(r.status)}`, {
     status: r.status,
     ...(r.code !== undefined ? { code: r.code } : {}),
   });
@@ -761,7 +761,7 @@ export const respondPermission = defineAction<
       ctx?.idempotencyKey,
     ),
   // Reached only by a real failure: a superseded answer returns normally.
-  error: "Couldn't send permission response",
+  error: "Could not send permission response",
 });
 
 export const respondElicitation = defineAction<
@@ -791,7 +791,7 @@ export const respondElicitation = defineAction<
       signal,
       ctx?.idempotencyKey,
     ),
-  error: "Couldn't send elicitation response",
+  error: "Could not send elicitation response",
 });
 
 export const respondUserInput = defineAction<
@@ -821,5 +821,5 @@ export const respondUserInput = defineAction<
       signal,
       ctx?.idempotencyKey,
     ),
-  error: "Couldn't send your answer",
+  error: "Could not send your answer",
 });

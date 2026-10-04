@@ -3,7 +3,9 @@
 [![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/marotte/badges/size.json)](https://github.com/cplieger/marotte/pkgs/container/marotte) ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue) ![base: Debian](https://img.shields.io/badge/base-Debian-A81D33?logo=debian) [![Mutation](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/marotte/badges/mutation.json)](https://github.com/cplieger/marotte/issues?q=label%3Agremlins-tracker) [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/marotte/releases)
 
 <!-- hub-overview BEGIN -->
-marotte puts the Kiro coding agent, `kiro-cli`, in a browser tab on your own server, to chat with from a phone or a desktop. The same tab has a terminal, a file editor and git.
+marotte puts Kiro in your browser as a self-hosted agentic IDE. Chat with the Kiro agent, `kiro-cli`, from a phone or a desktop, with a file editor, a terminal and git in the same tab.
+
+![A marotte chat in a browser with three turns of conversation with the Kiro agent, the chat list on the left, and buttons for files, git, the terminal and settings along the top](docs/images/header.png)
 
 ## ⚠️ Alpha software
 
@@ -11,7 +13,9 @@ marotte is in alpha. Any update can change how it works, or how chats and settin
 
 ## What it does
 
-- Chat with the Kiro agent from any device, the same conversation on every screen.
+marotte lets you write and ship code with the Kiro agent from any device, while your repositories and chats stay on your own server.
+
+- Pick up the same conversation on every screen, your phone included.
 - Review a whole turn's file edits before you keep them, or rewind a chat and its edits.
 - Edit files, use a terminal, and commit and open pull requests on GitHub, GitLab, Codeberg or Gitea.
 - Install language servers and command-line tools from a catalog of about 700.
@@ -19,13 +23,11 @@ marotte is in alpha. Any update can change how it works, or how chats and settin
 
 ## Who it is for
 
-You need a Kiro account and an `amd64` or `arm64` Docker host. marotte has no login of its own, so keep it on your private network or behind a reverse proxy that asks for one. One container is one person's workspace.
+marotte is built for a developer who wants a full Kiro workspace on a server they run, in any browser. Start a task at your desk, then follow it and answer the agent from your phone. One container is one person's workspace.
 
-- [Kiro Crew](https://github.com/kirodotdev/KiroCrew) is Kiro's own workspace, with a desktop app, a web dashboard and a CLI. You install kiro-cli for it separately.
-- [Agent Cockpit](https://github.com/daronyondem/agent-cockpit) is a browser interface for several agents, Kiro among them. marotte drives only kiro-cli, and installs it.
-- [Web Terminal for Kiro](https://github.com/cplieger/web-terminal-kiro) shows kiro-cli's own terminal screen instead of a chat.
+You need a Kiro account and an `amd64` or `arm64` Docker host. marotte has no login of its own, so keep it on your private network or behind a reverse proxy with a login.
 
-Pick Kiro Crew for long unattended tasks, editable memory, Slack or Discord, or a dashboard with its own login, Agent Cockpit to switch agent vendors, and Web Terminal for Kiro for kiro-cli's own terminal screen.
+Consider [Web Terminal for Kiro](https://github.com/cplieger/web-terminal-kiro), by the same author, if you want kiro-cli's own terminal screen with no chat layer.
 
 marotte is free software under the AGPL-3.0-or-later license.
 <!-- hub-overview END -->
@@ -40,7 +42,6 @@ services:
     image: ghcr.io/cplieger/marotte:latest
     container_name: marotte
     restart: unless-stopped
-    init: true  # optional, because the image already runs tini
     # Create the three host folders below and run "sudo chown -R 1000:1000 /opt/appdata/marotte"
     # before the first start, or the container restarts in a loop. If .env sets PUID and PGID, use those numbers.
     user: "${PUID:-1000}:${PGID:-1000}"
@@ -97,13 +98,13 @@ Every setting, with what each one checks, is in [Configuration](docs/configurati
 
 ## Security
 
-marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and edits files under `/workspace`, and the Kiro sign-in stored in `/config`. Keep the port on your private network, or put marotte behind a reverse proxy that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page signs kiro-cli in to your Kiro account and does not protect marotte itself.
+marotte has no login of its own. Anyone who can reach port 9847 can use the agent, which runs commands and edits files under `/workspace`, and the Kiro sign-in in `/config`. Keep the port on your private network, or put marotte behind a reverse proxy that asks for a login, such as Caddy forward-auth, oauth2-proxy or Authentik. Signing in on the page signs kiro-cli in to your Kiro account, not marotte itself.
 
-Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so a harmful website cannot use your own browser to reach it.
+Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at the addresses you list, so another website cannot use your browser to reach it.
 
 The agent can read the container's `environment:`. marotte drops names ending in `_TOKEN` or `_SECRET` and the AWS key pair, so keep other credentials out of it.
 
-marotte sends no telemetry, and kiro-cli's own telemetry starts switched off. [Security](docs/security.md) covers the container user, tool installs and how kiro-cli is verified.
+marotte sends no telemetry, and kiro-cli's own telemetry starts off. [Security](docs/security.md) covers the container user, tool installs and how kiro-cli is verified.
 
 ## Troubleshooting
 
@@ -121,6 +122,10 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 - [Security](docs/security.md) covers tool installs, the image and the kiro-cli install.
 - [How marotte works](docs/how-it-works.md) explains syncing across devices and how kiro-cli is installed and repaired.
 - [Launch flags](docs/launch-flags.md) and [OS packages](docs/os-packages.md) cover two less common setups.
+
+## Credits
+
+marotte drives [kiro-cli](https://kiro.dev/docs/cli/), the Kiro agent, which the container downloads on first start. The terminal is built on [web-terminal-engine](https://github.com/cplieger/web-terminal-engine). Chat search ranking, the approval timeout for scheduled runs and the ladder of permission profiles follow [Kiro Crew](https://github.com/kirodotdev/KiroCrew).
 
 ## Contributing
 

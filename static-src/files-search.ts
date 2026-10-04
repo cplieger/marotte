@@ -56,9 +56,9 @@ const NOUNS: Nouns = {
  *  is why a pattern with no slash is matched against the file NAME. */
 const GLOB_HINT =
   "One or more patterns, comma separated. " +
-  "A pattern without a slash matches the file name at any depth (*.go); " +
-  "one with a slash matches the path under the folder searched (src/*.go). " +
-  "Exclude also skips a whole folder (node_modules).";
+  "A pattern without a slash matches the file name at any depth, for example *.go. " +
+  "A pattern with a slash matches the path under the folder searched, for example src/*.go. " +
+  "Exclude also skips a whole folder, for example node_modules.";
 
 export interface FilesSearchCtx {
   /** The folder the browser is showing, which is the search ROOT. */
@@ -157,8 +157,8 @@ function ensureBuilt(): void {
   if (barEl !== null) {
     return;
   }
-  includeEl = globField("fb-search-include", "Include (*.go)", "Include patterns");
-  excludeEl = globField("fb-search-exclude", "Exclude (node_modules)", "Exclude patterns");
+  includeEl = globField("fb-search-include", "Include: *.go", "Include patterns");
+  excludeEl = globField("fb-search-exclude", "Exclude: node_modules", "Exclude patterns");
   const globRow = el("div", { className: "fb-search-row fb-search-globs" }, includeEl, excludeEl);
 
   // The GLOB ROW is this surface's alone — a transcript has no paths to include

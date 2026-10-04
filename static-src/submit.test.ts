@@ -324,7 +324,7 @@ describe("submitPrompt during a turn", () => {
 // converts it into one instead of surfacing a failure the user must redo.
 describe("a steer refused with no_turn", () => {
   const noTurn = (): { outcome: Promise<unknown> } =>
-    steerRefused("nothing is running to steer — send this as a prompt instead", "no_turn");
+    steerRefused("nothing is running to steer, so send this as a prompt instead", "no_turn");
 
   it("is retried as the prompt it should have been", async () => {
     resetStore("c1");
@@ -404,7 +404,7 @@ describe("submitPrompt on a 409-starting refusal", () => {
 
     await submitPrompt("c1", "hello");
     expect(mockReportSendRefused).toHaveBeenCalledWith(
-      "The chat is busy right now — send again to retry",
+      "The chat is busy right now. Send again to retry",
     );
   });
 

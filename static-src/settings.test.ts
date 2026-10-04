@@ -294,7 +294,7 @@ describe("initDiagnostics", () => {
     // No version row for a non-JSON report.
     expect(document.querySelector<HTMLElement>(".diagnostics-version")?.hidden).toBe(true);
     expect(document.getElementById("diagnostics-status")?.textContent).toContain(
-      "copy it from the box below",
+      "Copy it from the box below",
     );
   });
 

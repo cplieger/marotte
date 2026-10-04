@@ -37,5 +37,5 @@ export const setHookEnabled = apiAction<SetEnabledArgs, void>({
     path: `${HOOKS_API}/${encodeURIComponent(id)}/enabled`,
     body: { enabled },
   }),
-  error: "Couldn't update hook",
+  error: "Could not update hook",
 });

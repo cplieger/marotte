@@ -59,7 +59,7 @@ function resultCount(shown: number, cut: boolean, matched?: number): string {
   const narrow = "narrow the query to see the rest";
   if (matched === undefined) {
     return cut
-      ? `${String(shown)} shown; more matched than shown, ${narrow}`
+      ? `${String(shown)} shown. More matched than shown, so ${narrow}`
       : `${String(shown)} shown`;
   }
   return matched > shown
@@ -651,7 +651,7 @@ class ToolsManager {
         el(
           "div",
           { className: "list-empty" },
-          "No tools installed yet — Add tool searches a catalog of ~700 runtimes, language servers, and CLIs.",
+          "No tools installed yet. Add tool searches a catalog of ~700 runtimes, language servers, and CLIs.",
         ),
       );
       return;
@@ -834,8 +834,8 @@ class ToolsManager {
       {
         className: "toggle toggle-inline tool-toggle",
         "data-tooltip": disabled
-          ? "Disabled template — switch on to install"
-          : "Enabled — switch off to uninstall (keeps the entry)",
+          ? "Disabled template. Switch on to install"
+          : "Enabled. Switch off to uninstall and keep the entry",
       },
       toggleInput,
       el("span", { className: "toggle-slider" }),
@@ -848,7 +848,7 @@ class ToolsManager {
         className: "list-row-btn list-row-pin",
         "aria-label": pinned ? `Unpin ${t.name}` : `Pin ${t.name} version`,
         "data-tooltip": pinned
-          ? "Pinned — won't auto-update. Click to resume auto-updates."
+          ? "Pinned, so it will not auto-update. Click to resume auto-updates."
           : "Auto-updating. Click to pin this version.",
       },
       iconEl(pinned ? ICON_PIN_FILLED : ICON_PIN),
@@ -1246,9 +1246,9 @@ function catalogMetaParts(info: CatalogInfo): (string | HTMLElement)[] {
   if (info.fetched_at !== undefined && info.fetched_at > 0) {
     bits.push(`checked ${relativeTime(info.fetched_at)}`);
   } else if (info.source === "baked") {
-    bits.push("from the image (not refreshed yet)");
+    bits.push("from the image, not refreshed yet");
   } else if (info.source === "cached") {
-    bits.push("from the last refresh (previous run)");
+    bits.push("from the last refresh in a previous run");
   }
   // Surface the engine's schedule state so "off" deployments can tell
   // why the catalog ages (only the Refresh button updates it). Skipped
@@ -1262,7 +1262,7 @@ function catalogMetaParts(info: CatalogInfo): (string | HTMLElement)[] {
       el(
         "span",
         { className: "catalog-meta-error" },
-        ` · last refresh failed (kept current catalog)`,
+        ` · last refresh failed, kept the current catalog`,
       ),
     );
   }
@@ -1277,7 +1277,7 @@ function stateDot(t: ToolInfo): HTMLElement {
     label = "installing";
   } else if (t.disabled === true) {
     cls = "tool-state-off";
-    label = "disabled template — switch on to install";
+    label = "disabled template, switch on to install";
   } else if (t.last_error !== undefined && t.last_error !== "") {
     cls = "tool-state-error";
     label = `failed: ${t.last_error}`;

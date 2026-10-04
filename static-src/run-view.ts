@@ -501,7 +501,7 @@ function stepEmptyNote(node: ExecNode): string {
     case "gone":
       return "This step's transcript is no longer stored. What the step CAPTURED is above, when it declared captureOutput.";
     case "unavailable":
-      return "This step's transcript could not be read just now.";
+      return "This step's transcript could not be read right now.";
     case "unaddressable":
       // The one arm that is not the endpoint's own verdict: the server refused the
       // ADDRESS with a 4xx, so unlike the line above it this must not read as

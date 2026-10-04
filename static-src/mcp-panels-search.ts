@@ -253,7 +253,7 @@ function resultNote(d: RegistrySearchResult): string | null {
     parts.push(`${d.filtered} more matched but cannot be installed here.`);
   }
   if (d.truncated) {
-    parts.push("More matched than shown; narrow the query to see the rest.");
+    parts.push("More matched than shown. Narrow the query to see the rest.");
   }
   return parts.length === 0 ? null : parts.join(" ");
 }
@@ -271,7 +271,7 @@ function registryEmptyNote(state: RegistryEmptyState, q: string): string {
     case "failed":
       return state.retryAfterS === undefined
         ? "Registry unreachable. Use the Remote URL or npm package forms instead."
-        : `The registry asked for a pause; retry in ${state.retryAfterS}s, or use the Remote URL or npm package forms instead.`;
+        : `The registry asked for a pause. Retry in ${state.retryAfterS}s, or use the Remote URL or npm package forms instead.`;
     case "tooShort":
       return emptyNote(state, NOUNS);
   }
@@ -573,8 +573,8 @@ function configuredLabel(
   }
   const missing = requiredFields.filter((f) => !fieldIsSet(configured, fieldKind, f.name)).length;
   return missing === 0
-    ? `Already configured — all required ${noun} set`
-    : `Already configured — ${missing} of ${requiredFields.length} required ${noun} still missing`;
+    ? `Already configured. All required ${noun} set`
+    : `Already configured. ${missing} of ${requiredFields.length} required ${noun} still missing`;
 }
 
 function renderInstallBtn(

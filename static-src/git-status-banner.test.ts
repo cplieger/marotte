@@ -43,7 +43,7 @@ describe("git-status-banner", () => {
     expect(visibleState()).toBe("forge-auth-failed");
     expect(bannerEl().textContent).toContain("Forge authentication issue");
     expect(bannerEl().querySelector<HTMLButtonElement>("[data-banner-cta]")?.textContent).toBe(
-      "Open Settings → Git",
+      "Open Settings, then Git",
     );
   });
 

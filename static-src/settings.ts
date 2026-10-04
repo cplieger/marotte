@@ -668,8 +668,8 @@ export function initDiagnostics(): void {
     // Clipboard copy is a convenience; the textarea below works regardless.
     const copied = await copyToClipboard(report);
     status.textContent = copied
-      ? `Report ready — copied ${report.length.toLocaleString()} characters to your clipboard.`
-      : "Report ready — copy it from the box below.";
+      ? `Report ready. Copied ${report.length.toLocaleString()} characters to your clipboard.`
+      : "Report ready. Copy it from the box below.";
   });
 }
 

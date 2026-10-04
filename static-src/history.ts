@@ -533,7 +533,7 @@ class HistoryController {
         chats,
         this.rows.filter((r) => r.kind === "chat"),
         d.sessions_state === "unavailable"
-          ? "Couldn't read previous conversations."
+          ? "Could not read previous conversations."
           : "No previous conversations in this workspace.",
       );
     }
@@ -555,7 +555,7 @@ class HistoryController {
       this.filterText !== ""
         ? "No workflow runs match the filter."
         : this.verdict.peek()?.runs_state === "unavailable"
-          ? "Couldn't read workflow runs."
+          ? "Could not read workflow runs."
           : "No previous workflow runs in this workspace.",
     );
   }
@@ -623,7 +623,7 @@ class HistoryController {
     return el(
       "div",
       { className: "list-empty history-error" },
-      el("span", {}, "Couldn't load previous sessions. Check your connection and try again."),
+      el("span", {}, "Could not load previous sessions. Check your connection and try again."),
       retry,
     );
   }

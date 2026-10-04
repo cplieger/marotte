@@ -329,8 +329,8 @@ function alertOf(state: RunState, asks: RunAsks, nodes: readonly ExecNode[]): Ex
     // dock beside the answer box.
     const bits = [
       isNeedInputPark(state)
-        ? "A step is waiting for your answer \u2014 Resume alone will park it again; " +
-          "answer or waive it in the dock"
+        ? "A step is waiting for your answer. Resume alone will park it again, " +
+          "so answer or waive it in the dock"
         : state.pauseReason === undefined || state.pauseReason === ""
           ? "Waiting"
           : `Waiting: ${state.pauseReason}`,

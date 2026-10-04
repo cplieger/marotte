@@ -239,7 +239,7 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 // generic message (details logged, not leaked).
 func writeFetchErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errNoLiveBridge) {
-		httpreply.Conflict(w, "no active chat session — open a chat to use MCP prompts and resources")
+		httpreply.Conflict(w, "no active chat session. Open a chat to use MCP prompts and resources")
 		return
 	}
 	slog.Warn("mcp fetch failed", "error", err)

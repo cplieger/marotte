@@ -116,7 +116,7 @@ function attachRow(): HTMLElement {
  *  next rather than what went wrong, because the row is unavailable before the
  *  user has done anything, not after a mistake. */
 const TANGENT_HINT = "Branch this conversation into a sub-chat that keeps its context";
-const TANGENT_HINT_EMPTY = "Send a message first; a tangent inherits the conversation";
+const TANGENT_HINT_EMPTY = "Send a message first. A tangent inherits the conversation";
 
 /** Start a tangent off the active chat.
  *
@@ -168,7 +168,7 @@ function tangentRow(): HTMLElement {
  *  disabled variants because the two refusals want different actions of the user,
  *  and `CmdCompact` answers them with different 409s. */
 const COMPACT_HINT = "Summarize the history so far to free up context";
-const COMPACT_HINT_EMPTY = "Send a message first; there is no session to compact yet";
+const COMPACT_HINT_EMPTY = "Send a message first. There is no session to compact yet";
 const COMPACT_HINT_BUSY = "Wait for this turn to finish, or cancel it, then compact";
 
 /** Compact this chat's context, a second door onto the action `/compact` dispatches.
@@ -288,7 +288,7 @@ function goalForm(): HTMLElement {
     "form",
     { className: "chat-opt-form" },
     el("label", { className: "chat-opt-input-label" }, "Goal", description),
-    el("label", { className: "chat-opt-input-label" }, "Max iterations (optional)", cap),
+    el("label", { className: "chat-opt-input-label" }, "Max iterations, optional", cap),
     el("button", { type: "submit", className: "btn-small" }, "Set goal"),
   );
 

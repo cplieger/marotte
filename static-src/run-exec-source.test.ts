@@ -406,8 +406,8 @@ describe("runToExec alert precedence", () => {
       );
       expect(run.alert?.kind, reason).toBe("paused");
       expect(run.alert?.text, reason).toBe(
-        "A step is waiting for your answer \u2014 Resume alone will park it again; " +
-          "answer or waive it in the dock",
+        "A step is waiting for your answer. Resume alone will park it again, " +
+          "so answer or waive it in the dock",
       );
       // The literal itself never reaches the reader: it names a tool and a node id
       // where the reader needs to know somebody owes an answer.
@@ -436,8 +436,8 @@ describe("runToExec alert precedence", () => {
     );
     expect(run.alert?.kind).toBe("paused");
     expect(run.alert?.text).toBe(
-      "A step is waiting for your answer \u2014 Resume alone will park it again; " +
-        "answer or waive it in the dock",
+      "A step is waiting for your answer. Resume alone will park it again, " +
+        "so answer or waive it in the dock",
     );
   });
 

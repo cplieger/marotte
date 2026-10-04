@@ -27,14 +27,14 @@ const steerRemoveBudget = 30 * time.Second
 const ResendBridgeWait = 10 * time.Second
 
 var (
-	errSteerRemoveNotWaiting = errors.New("that message is no longer waiting — the agent has read it or the turn ended")
+	errSteerRemoveNotWaiting = errors.New("that message is no longer waiting, because the agent has read it or the turn ended")
 	errSteerRemoveNotUser    = errors.New("only a message you sent can be deleted")
 	errSteerRemoveAgentRows  = errors.New("a workflow result is waiting beside it, so only discarding them all is possible")
-	errSteerRemoveSettling   = errors.New("the turn just ended and that message is being resent — try again in a moment")
+	errSteerRemoveSettling   = errors.New("the turn ended and that message is being resent. Try again in a moment")
 	errSteerRemoveConsumed   = errors.New("the agent read that message before it could be deleted")
-	errSteerStarting         = errors.New("the agent is starting to read these messages — try again in a moment")
+	errSteerStarting         = errors.New("the agent is starting to read these messages. Try again in a moment")
 	errSteerChatGone         = errors.New("this chat is closing")
-	errSteerNoReply          = errors.New("the agent did not answer the clear — nothing was changed")
+	errSteerNoReply          = errors.New("the agent did not answer the clear, so nothing was changed")
 )
 
 func steerRefusal(reason string) error {

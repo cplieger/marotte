@@ -928,7 +928,7 @@ function badgesFor(doc: KiroDoc, hook: HookState | undefined, gates: RowGates): 
     const badge = el("span", { className: "docs-badge docs-badge-link" }, LINK_LABEL);
     badge.setAttribute(
       "data-tooltip",
-      "A symlink. Editing it writes the file it points to; deleting it would remove that file, so delete is disabled here",
+      "A symlink. Editing it writes the file it points to. Deleting it would remove that file, so delete is disabled here",
     );
     out.push(badge);
   }
@@ -1130,7 +1130,7 @@ function hookBadges(h: HookState): HTMLElement[] {
     const badge = el("span", { className: "docs-badge docs-badge-global" }, GLOBAL_LABEL);
     badge.setAttribute(
       "data-tooltip",
-      `${h.file_path ?? "~/.kiro/hooks"} — applies in every workspace. Outside the workspace, so it cannot be opened or deleted here`,
+      `${h.file_path ?? "~/.kiro/hooks"} applies in every workspace. It is outside the workspace, so it cannot be opened or deleted here`,
     );
     out.push(badge);
   }

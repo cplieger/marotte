@@ -416,7 +416,7 @@ func TestCmdCreateChat_AtTheLimitLeavesNoOrphan(t *testing.T) {
 	if statusOf(err) != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (%s)", statusOf(err), errText(err))
 	}
-	if !strings.Contains(errText(err), "close a tab first") {
+	if !strings.Contains(errText(err), "Close a tab first") {
 		t.Errorf("the refusal reads %q, want it to name the remedy", errText(err))
 	}
 	if got := storedChatIDs(t, store); len(got) != len(before) {

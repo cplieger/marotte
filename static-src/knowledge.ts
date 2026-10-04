@@ -196,7 +196,7 @@ async function refreshHint(signal: AbortSignal): Promise<void> {
 function renderError(): void {
   const container = byId<HTMLDivElement>("knowledge-list");
   container.replaceChildren(
-    el("div", { className: "list-empty" }, "Couldn't load knowledge bases."),
+    el("div", { className: "list-empty" }, "Could not load knowledge bases."),
   );
 }
 
@@ -296,7 +296,7 @@ function progressEl(display: string | undefined, stalled: boolean): HTMLElement 
       el(
         "span",
         { className: "knowledge-progress-text" },
-        "Indexing stalled — reopen this tab to check again",
+        "Indexing stalled. Reopen this tab to check again",
       ),
     );
     return wrap;
@@ -391,14 +391,14 @@ function buildAddForm(): HTMLFormElement {
     type: "text",
     id: "knowledge-add-path",
     className: "tool-form-input",
-    placeholder: "Directory path (e.g. docs or /abs/path)…",
+    placeholder: "Directory path, for example docs or /abs/path…",
     "aria-label": "Knowledge base directory path",
   }) as HTMLInputElement;
   const nameInput = el("input", {
     type: "text",
     id: "knowledge-add-name",
     className: "tool-form-input",
-    placeholder: "Name (optional)…",
+    placeholder: "Name, optional…",
     "aria-label": "Knowledge base name",
   }) as HTMLInputElement;
   const submit = el(

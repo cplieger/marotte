@@ -23,7 +23,7 @@ import (
 const reasonRunsInCut = "runs_in_cut"
 
 // errRewindRunsInCut is the refusal's prose; the runs ride beside it.
-var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this conversation launched — confirm to stop them and rewind")
+var errRewindRunsInCut = errors.New("rewinding here stops workflow runs this conversation launched. Confirm to stop them and rewind")
 
 // CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint machinery,
 // then appends the turn_revert that records it. The record is not redundant: the merge

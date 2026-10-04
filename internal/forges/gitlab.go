@@ -317,7 +317,7 @@ func (p *gitlabProvider) RerunFailedChecks(ctx context.Context, repo string, num
 		return err
 	}
 	if headSHA != "" && !strings.EqualFold(headSHA, head) {
-		return fmt.Errorf("merge request !%d has moved to commit %s since this was read; refresh and look at the new pipeline before retrying", number, head)
+		return fmt.Errorf("merge request !%d has moved to commit %s since this was read. Refresh and look at the new pipeline before retrying", number, head)
 	}
 	endpoint := fmt.Sprintf("projects/%s/pipelines/%d/retry", project, pipelineID)
 	args := p.withHost("api", "--method", http.MethodPost, endpoint)

@@ -251,7 +251,7 @@ func addCLIMissingRow(kind Kind, out map[string]*ConfiguredForge) {
 
 // cliMissingError is the user-facing explanation on a cli_missing row.
 func cliMissingError(cli string) string {
-	return cli + " CLI is not installed — reinstall it in Settings → Tools to restore this connection"
+	return cli + " CLI is not installed. Reinstall it in Settings, then Tools, to restore this connection"
 }
 
 // mergeForges swaps in the freshly-read forge set, preserving Email +

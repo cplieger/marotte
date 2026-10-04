@@ -1,26 +1,11 @@
 // Package server — the canonical-request-path gate over the API surface.
 //
-// http.ServeMux canonicalizes a request path BEFORE it selects a pattern and
-// answers 307 with a Location when the cleaned path differs. No registered
-// pattern can intercept that, because the cleaning runs first. For a browser
-// the redirect is invisible and correct. For the two machine senders marotte
-// actually documents it is neither, because 307 is a SUCCESS status to a client
-// that does not follow redirects:
-//
-//   - the operator repair call in the README —
-//     `curl -X POST localhost:9847/api/kiro-cli/rescan`, no -L. The rescan
-//     never runs, curl exits 0, and the install the operator just repaired by
-//     hand stays unpublished.
-//   - the image's baked readiness probe —
-//     `curl -sf http://127.0.0.1:9847/api/health`, no -L. The probe never
-//     reaches the handler, so `docker ps` reads healthy while the kiro-cli
-//     verdict this endpoint exists to publish (installing / retrying /
-//     unavailable / settings-not-enforced) is never consulted.
-//
-// Both failures are silent in both directions: nothing says the URL was
-// malformed, and the caller's own exit status says success. So the API surface
-// refuses a non-canonical spelling itself rather than letting a redirect answer
-// for it.
+// http.ServeMux answers a non-canonical path with a 307 before any pattern
+// runs, and 307 is SUCCESS to a client that does not follow redirects: the
+// rescan call in docs/how-it-works.md (`curl -X POST .../api/kiro-cli/rescan`)
+// would exit 0 without rescanning, and the image's `curl -sf .../api/health`
+// probe would read healthy without consulting the kiro-cli verdict. So the API
+// surface refuses a non-canonical spelling itself.
 package server
 
 import (

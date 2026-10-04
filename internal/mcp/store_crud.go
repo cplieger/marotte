@@ -210,7 +210,7 @@ func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
 	if existing := s.findByNameLocked(sv.Name); existing != nil {
 		if !sameSpec(existing, sv) {
 			return ImportResult{}, fmt.Errorf(
-				"%w: %q is configured with a different command or url; rename the entry or edit the existing integration",
+				"%w. %q is configured with a different command or url. Rename the entry or edit the existing integration",
 				ErrNameConflict, existing.Name,
 			)
 		}

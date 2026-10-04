@@ -35,7 +35,7 @@ const leaseAbsenceOutcome = "unknown: no terminal signal was seen and the run st
 // orphanOutcome is what that row reports for a run the sweep cancelled because the
 // process running it died. It names the remedy, because there is no automatic
 // relaunch: the run is gone and the next slot is the recovery.
-const orphanOutcome = "stopped: the server restarted while it was running — run it again, or wait for the next slot"
+const orphanOutcome = "The run stopped because the server restarted while it was running. Run it again, or wait for the next slot"
 
 // SweepOrphaned clears every lease whose run a dead process left paused, so nothing reads
 // as live after boot unless it genuinely is. Best-effort: skipping an orphan costs one

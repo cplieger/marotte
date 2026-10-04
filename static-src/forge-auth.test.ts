@@ -327,7 +327,7 @@ describe("forge-auth: 4-section layout", () => {
           host: "",
           connected: false,
           cli_missing: true,
-          last_error: "gh CLI is not installed — reinstall it in Settings → Tools",
+          last_error: "gh CLI is not installed. Reinstall it in Settings, then Tools",
         },
       ],
       kinds: ["github", "gitlab", "codeberg", "gitea"],
@@ -343,7 +343,9 @@ describe("forge-auth: 4-section layout", () => {
     expect(primary.classList.contains("skeleton")).toBe(false);
     expect(primary.querySelector(".skeleton")).toBeNull();
     // The reinstall pointer rides the standard error line.
-    expect(row.querySelector(".forge-account-error")?.textContent).toContain("Settings → Tools");
+    expect(row.querySelector(".forge-account-error")?.textContent).toContain(
+      "Settings, then Tools",
+    );
     // No Manage link, no Sign out: both act through the absent CLI.
     expect(row.querySelector(".forge-account-manage")).toBeNull();
     const signOut = [...row.querySelectorAll<HTMLButtonElement>("button")].find(

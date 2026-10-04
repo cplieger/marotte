@@ -55,5 +55,5 @@ export const rewindChat = transportAction<RewindArgs>({
   onSuccess: (_result, { chatID }) => {
     void loadMessages(chatID);
   },
-  error: "Couldn't rewind chat",
+  error: "Could not rewind chat",
 });

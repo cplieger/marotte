@@ -82,28 +82,28 @@ interface RuntimeState {
 const STATES: Record<string, RuntimeState> = {
   "kiro-cli installing": {
     message:
-      "Agent runtime (kiro-cli) is downloading — chats can't start yet. " +
-      "This is normal on a first boot; it's a few hundred megabytes and this banner clears itself.",
+      "The kiro-cli agent runtime is downloading, so chats cannot start yet. " +
+      "This is normal on a first boot. It's a few hundred megabytes, and this banner clears itself.",
     level: "info",
   },
   "kiro-cli install retrying": {
     message:
-      "Agent runtime (kiro-cli) install failed and is being retried — chats can't start yet. " +
-      "No action needed unless it keeps failing (see container logs).",
+      "The kiro-cli agent runtime failed to install and is being retried, so chats cannot start yet. " +
+      "No action is needed unless it keeps failing. If it does, check the container logs.",
     level: "info",
   },
   "kiro-cli required settings not enforced": {
     message:
-      "Agent runtime (kiro-cli) is installed but its auto-update could not be switched off, " +
-      "so chats stay blocked — a self-replacing binary would break the pinned version. See container logs.",
+      "The kiro-cli agent runtime is installed, but its auto-update could not be switched off, " +
+      "so chats stay blocked. A self-replacing binary would break the pinned version. Check the container logs.",
     level: "error",
   },
 };
 
 const FALLBACK: RuntimeState = {
   message:
-    "Agent runtime (kiro-cli) is not installed — chats can't start. " +
-    "The install failed and its retries are exhausted (see container logs); restart the container to try again.",
+    "The kiro-cli agent runtime is not installed, so chats cannot start. " +
+    "The install failed and its retries are exhausted. Check the container logs, then restart the container to try again.",
   level: "error",
 };
 

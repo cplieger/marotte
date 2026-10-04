@@ -1541,7 +1541,7 @@ describe("server-hit navigation", () => {
     // The NARROWED region is what the flash and the jump land on, so the reader's
     // eye goes to the diff rather than to the whole card.
     expect(vi.mocked(scroll.jumpTo)).toHaveBeenLastCalledWith(preview, expect.anything());
-    expect(countText()).toBe("1 of 1 \u00b7 not in the shown hunks \u2014 open the diff");
+    expect(countText()).toBe("1 of 1 \u00b7 not in the shown hunks, so open the diff");
   });
 
   it("opens no disclosure and requests no bulk when the card already renders its diff", async () => {
@@ -1569,7 +1569,7 @@ describe("server-hit navigation", () => {
     typeAndEnter("retry");
 
     await vi.waitFor(() => {
-      expect(countText()).toBe("1 of 1 \u00b7 not in the shown hunks \u2014 open the diff");
+      expect(countText()).toBe("1 of 1 \u00b7 not in the shown hunks, so open the diff");
     });
     expect(card.querySelector<HTMLElement>(".tool-disclosure")?.ariaExpanded).toBe("false");
     expect(bulk.requests()).toBe(0);

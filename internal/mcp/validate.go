@@ -461,7 +461,7 @@ func validateRemoteURL(raw string) error {
 	if u.User != nil {
 		return &FieldError{
 			Field: fieldURL,
-			Msg:   "url must not contain userinfo; use Headers for auth",
+			Msg:   "url must not contain userinfo. Use Headers for auth",
 		}
 	}
 	return nil

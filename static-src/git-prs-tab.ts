@@ -524,7 +524,7 @@ function paintLoadError(root: HTMLElement, err: unknown): void {
     el(
       "div",
       { className: "git-multirepo-error" },
-      `Couldn't load pull requests: ${msg}`,
+      `Could not load pull requests. ${msg}`,
       el("br"),
       "Use the refresh button above to try again.",
     ),
@@ -918,7 +918,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     void (async () => {
       const method = await openMergeMethodDialog({
         title: "Merge pull request",
-        message: `PR #${pr.number} — ${pr.title}`,
+        message: `PR #${pr.number} "${pr.title}"`,
         confirmLabel: "Merge",
       });
       if (method === null) {
@@ -951,7 +951,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
       void (async () => {
         const method = await openMergeMethodDialog({
           title: "Merge when green",
-          message: `PR #${pr.number} — ${pr.title} — merges once its checks pass.`,
+          message: `PR #${pr.number} "${pr.title}" merges once its checks pass.`,
           confirmLabel: "Arm auto-merge",
         });
         if (method === null) {
@@ -1096,7 +1096,7 @@ export async function openNewPRForRepo(repoName: string, sourceBranch: string): 
           { className: "git-multirepo-error" },
           "No connected forge knows about ",
           el("strong", null, repoName),
-          " — connect one in Sources.",
+          ". Connect one in Sources.",
         ),
       );
     }

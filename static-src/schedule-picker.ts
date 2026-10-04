@@ -119,7 +119,7 @@ export function describeSpec(spec: ScheduleSpec): string {
     case "weekly": {
       const days = [...(spec.weekdays ?? [])].sort((a, b) => a - b);
       if (days.length === 0) {
-        return `Weekly at ${clock} — pick at least one day`;
+        return `Weekly at ${clock}. Pick at least one day`;
       }
       if (days.length === 7) {
         return `Every day at ${clock}`;
@@ -196,7 +196,7 @@ export function summaryLine(view: ScheduleView | undefined): string {
   let line = describeSpec(view.spec);
   const next = formatStamp(view.next_run_at);
   if (next !== "") {
-    line += ` — next ${next}`;
+    line += `, next ${next}`;
   }
   // The outcome trails the rule and the next run, separated by the app's own
   // middot: what will happen reads first, what happened last reads second, and a
@@ -231,7 +231,7 @@ export function buildUnattendedNote(
   const link = el(
     "button",
     { type: "button", className: "btn-small sched-note-link" },
-    "Open Settings → Permissions",
+    "Open Settings, then Permissions",
   );
   link.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
@@ -249,7 +249,7 @@ export function buildUnattendedNote(
     el(
       "div",
       { className: "sched-note-state" },
-      `Auto-approve is ${autoApprove ? "on" : "off"} for every scheduled run, not just this one.`,
+      `Auto-approve is ${autoApprove ? "on" : "off"} for every scheduled run, not only this one.`,
     ),
     link,
   );

@@ -96,8 +96,8 @@ export const openTabCommand = defineAction<OpenTabArgs, OpenTabReply | null>({
   // At the product limit the refusal has a remedy.
   error: (_args, err) =>
     err.status === 409
-      ? "Close a tab first — this workspace has too many open."
-      : "Couldn't open that tab",
+      ? "Close a tab first, because this workspace has too many open."
+      : "Could not open that tab",
 });
 
 export interface CloseTabArgs {
@@ -199,7 +199,7 @@ export const reorderTabsCommand = defineAction<
     const body = asObject(r.body);
     return { version: body === null ? 0 : numberField(body, "version") };
   },
-  error: "Couldn't reorder the tabs",
+  error: "Could not reorder the tabs",
 });
 
 export interface PinTabArgs {
@@ -232,7 +232,7 @@ export const pinTabCommand = defineAction<PinTabArgs, boolean>({
     }
     return true;
   },
-  error: "Couldn't pin that tab",
+  error: "Could not pin that tab",
 });
 
 export interface ReparentTabArgs {
@@ -270,7 +270,7 @@ export const reparentTabCommand = defineAction<ReparentTabArgs, TabSubject>({
     }
     return decodeTabSubject(body["subject"]);
   },
-  error: "Couldn't move that tab",
+  error: "Could not move that tab",
 });
 
 // --- Shared reply handling ---
@@ -290,7 +290,7 @@ function numberField(body: Record<string, unknown>, key: string): number {
  *  reads. `ActionError` is not imported: the framework normalizes a thrown
  *  Error and reads `status` off it when present. */
 function sendFailure(r: SendResult, what: string): Error & { status?: number } {
-  const err: Error & { status?: number } = new Error(r.error ?? `Couldn't ${what}`);
+  const err: Error & { status?: number } = new Error(r.error ?? `Could not ${what}`);
   err.status = r.status;
   return err;
 }

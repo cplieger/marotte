@@ -230,7 +230,7 @@ export async function deleteAllForAccount(
     return;
   }
   const ok = await confirmDialog(
-    `Delete the local copy of ${candidates.length} repo${candidates.length === 1 ? "" : "s"}? The remotes stay intact; you can re-clone any of them later.`,
+    `Delete the local copy of ${candidates.length} repo${candidates.length === 1 ? "" : "s"}? The remotes stay intact. You can re-clone any of them later.`,
     "Delete all",
     "destructive",
   );
@@ -252,7 +252,7 @@ export async function deleteAllForAccount(
 
 async function removeLocalRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   const ok = await confirmDialog(
-    `Delete the local copy of ${repo.name}? The remote stays intact; you can re-clone later.`,
+    `Delete the local copy of ${repo.name}? The remote stays intact. You can re-clone later.`,
     "Delete",
     "destructive",
   );
@@ -269,7 +269,7 @@ async function removeLocalRepo(repo: Repo, deps: RepoDeps): Promise<void> {
     // Rollback.
     deps.addCloned(repo.name);
     deps.bumpState();
-    const msg = res?.error ?? "Couldn't remove local repo";
+    const msg = res?.error ?? "Could not remove local repo";
     throw new Error(msg);
   }
 }

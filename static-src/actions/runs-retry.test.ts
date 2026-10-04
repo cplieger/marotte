@@ -147,7 +147,7 @@ describe("retrying a run", () => {
     m.result.err = { status: 500, body: {} };
     await retryRun.dispatch("wf_1");
 
-    expect(vi.mocked(toastError)).toHaveBeenCalledWith("Couldn't retry the run");
+    expect(vi.mocked(toastError)).toHaveBeenCalledWith("Could not retry the run");
   });
 
   // A 2xx whose body is not an outcome must fail at the boundary rather than
@@ -163,6 +163,6 @@ describe("retrying a run", () => {
     // unacceptable failure mode — a refusal the reader never sees — on the one path
     // where the HTTP reply is well-formed and its CONTENT is not. A decode failure
     // carries no server sentence, so the fallback has to name the verb.
-    expect(vi.mocked(toastError)).toHaveBeenCalledWith("Couldn't retry the run");
+    expect(vi.mocked(toastError)).toHaveBeenCalledWith("Could not retry the run");
   });
 });

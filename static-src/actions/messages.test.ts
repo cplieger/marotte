@@ -48,7 +48,7 @@ describe("ui.copy_clipboard", () => {
     const { copyClipboard } = await import("./messages.js");
     const r = await copyClipboard.dispatch("x");
     expect(r).toBeNull();
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Couldn't copy"), undefined);
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Could not copy"), undefined);
     expect(recentLog()[0]?.error?.code).toBe("clipboard");
   });
 });
