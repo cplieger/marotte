@@ -102,7 +102,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # @cplieger/web-terminal-engine is @cplieger/web-terminal-ui's peer; cmd/bundle
 # bundles both into app.js.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.0.3
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.0.4
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
