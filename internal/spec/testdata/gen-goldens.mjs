@@ -17,7 +17,7 @@ const inputsDir = join(here, "inputs");
 const goldensDir = join(here, "goldens");
 const MAX_NODES = 1000;
 const DEFAULT_KAS_VERSION = "2.21.4";
-const CRLF_TWINS = ["marotte-performance.tasks.md"];
+const CRLF_TWINS = ["greenhouse-controller.tasks.md"];
 
 const sha256 = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 

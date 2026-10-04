@@ -126,7 +126,7 @@ func TestParse_MatchesOracleGoldens(t *testing.T) {
 	if len(families) != 9 {
 		t.Errorf("goldens cover %d of the 9 mixed families M1-M9", len(families))
 	}
-	for _, corpus := range []string{"dead-code-suite.tasks", "subflux-performance.tasks", "marotte-performance.tasks", "marotte-performance.tasks.crlf"} {
+	for _, corpus := range []string{"seed-catalogue.tasks", "orchard-ledger.tasks", "greenhouse-controller.tasks", "greenhouse-controller.tasks.crlf"} {
 		if _, ok := goldens[corpus]; !ok {
 			t.Errorf("goldens lack the corpus fixture %s", corpus)
 		}
