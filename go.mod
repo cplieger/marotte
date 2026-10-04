@@ -27,9 +27,9 @@ require (
 	github.com/cplieger/sse v1.1.1
 	github.com/cplieger/ssrf/v4 v4.1.3
 	github.com/cplieger/toolbelt/v3 v3.6.2
-	github.com/cplieger/web-terminal-engine/v6 v6.0.3
+	github.com/cplieger/web-terminal-engine/v6 v6.0.4
 	github.com/cplieger/webhttp/v3 v3.0.0
-	github.com/cplieger/wiregen/v3 v3.1.1
+	github.com/cplieger/wiregen/v3 v3.1.2
 	github.com/evanw/esbuild v0.28.2
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/net v0.59.0
