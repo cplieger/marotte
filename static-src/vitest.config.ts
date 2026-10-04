@@ -29,10 +29,10 @@
 // `npx --no-install playwright install chromium`.
 //
 // Run: vitest --run (single pass) or vitest (watch mode)
-import { playwright } from "@vitest/browser-playwright";
 import { configDefaults, defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
+import { alwaysOnInterception } from "./__test-helpers__/always-on-interception.js";
 import { FRAME_BUDGET_MS, testTimeoutFor } from "./__test-helpers__/frame-budget.js";
 
 const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist/src");
@@ -167,25 +167,19 @@ export default defineConfig({
           // which the node project does not have, and a `ResizeObserver` loop is
           // an engine verdict only a real engine can produce.
           setupFiles: ["./ro-loop-gate.ts"],
-          // One test file at a time. Not a preference: the browser mocker
-          // registers its module-interception routes on the playwright browser
-          // CONTEXT, which is shared by the pages running in parallel, so two
-          // pages mocking the same module race and one request gets fulfilled
-          // twice — `route.fulfill: Route is already handled!`, thrown as an
-          // unhandled rejection that takes the whole run down. Intermittent
-          // under `vitest --run`; reproducible every time under Stryker, whose
-          // four concurrent runners multiply the contention. The suite costs
-          // ~57s serialized instead of ~17s.
-          //
-          // Separate race from the mock-route zero-crossing
-          // (vitest-dev/vitest#8339): this one is duplicate matchers on the same
-          // URL (#10819), so a fix for that one would not make this removable.
+          // One test file at a time. The browser mocker's interception routes
+          // live on the shared playwright CONTEXT and are unrouted at every file
+          // end, so the route count crosses zero there and Playwright
+          // auto-continues any mock still resolving (`route.fulfill: Route is
+          // already handled!`, https://github.com/vitest-dev/vitest/issues/8339);
+          // parallel pages make that likelier. The anchor route below closes the
+          // zero-crossing; dropping this needs a parallel run measured clean first.
           fileParallelism: false,
           browser: {
             enabled: true,
             headless: true,
             traceView,
-            provider: playwright({
+            provider: alwaysOnInterception({
               launchOptions: {
                 channel: "chromium",
                 // Past ~49 test files in one browser session Chromium drops animation-frame
@@ -260,22 +254,10 @@ export default defineConfig({
     // Fail fast on first suite error in CI; run all in watch mode.
     bail: process.env["CI"] ? 1 : 0,
 
-    // ONE retry in CI. It does NOT cover vitest-dev/vitest#8339, where a hoisted
-    // `vi.mock` silently does not apply: that links the real module for a whole
-    // FILE, so both attempts fail identically in the same hook and a retry never
-    // recovered it. What it still covers is the OTHER shared-context defect,
-    // `route.fulfill: Route is already handled!` (vitest-dev/vitest#10819, open),
-    // which `fileParallelism: false` reduces but has not eliminated — it was
-    // still seen in CI with parallelism already off.
-    //
-    // A retry does NOT hide a product flake: vitest reports a test that only
-    // passed on the retry as `flaky` in its own summary line, so the signal
-    // survives while the gate stops blocking on someone else's race.
-    //
-    // Dropping the provider's `mocker` to fall back to vitest's server-side
-    // interceptor was tried and rejected: it works, but it re-transforms the
-    // module graph per registration and the 195-file suite did not finish 4
-    // files in 28 minutes.
+    // ONE retry in CI, for a single test that misses a timing window on a loaded
+    // 4-CPU runner. It cannot recover a file-level failure (a hoisted `vi.mock`
+    // that never applied fails both attempts in the same hook). vitest reports a
+    // test that only passed on the retry as `flaky`, so the signal survives.
     retry: process.env["CI"] ? 1 : 0,
 
     // The per-test default may not sit BELOW a bound this suite has already
