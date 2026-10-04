@@ -129,7 +129,7 @@ marotte drives [kiro-cli](https://kiro.dev/docs/cli/), the Kiro agent, which the
 
 ## Contributing
 
-Architecture, the rules a change must keep, and how to build and test are in [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 
