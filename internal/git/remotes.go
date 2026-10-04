@@ -12,6 +12,7 @@ package git
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -19,16 +20,18 @@ import (
 // RepoRemote is one workspace repo's origin, resolved into the coordinates a
 // forge addresses it by.
 //
-// Host is what selects the forge connection (a configured forge is `kind:host`),
-// and Slug is the owner/name path the forge's CLI takes. A repo with no origin,
-// or one whose origin does not parse, is simply absent from the result: there is
-// no forge to ask about it.
+// WebBase is what selects the forge connection, compared with a connection's web
+// base URL, and Slug is the owner/name path the forge addresses the repository
+// by. A repo with no origin, or one whose origin does not parse, is simply absent
+// from the result: there is no forge to ask about it.
 type RepoRemote struct {
-	// Name is the workspace directory ("." for the workspace root itself),
-	// carried for logging — nothing keys on it.
+	// Name is the workspace directory ("." for the workspace root itself), the
+	// name the git panel addresses the repository by.
 	Name string
-	Host string
-	Slug string
+	// WebBase is the origin's scheme and authority when the remote is an http or
+	// https URL, and "" for an ssh or scp-like remote.
+	WebBase string
+	Slug    string
 }
 
 // RepoRemotes resolves every discovered workspace repo's `origin` remote.
@@ -54,9 +57,30 @@ func (h *Handler) RepoRemotes(ctx context.Context) []RepoRemote {
 				"repo", r.Name)
 			continue
 		}
-		out = append(out, RepoRemote{Name: r.Name, Host: host, Slug: slug})
+		out = append(out, RepoRemote{Name: r.Name, WebBase: remoteWebBase(raw), Slug: slug})
 	}
 	return out
+}
+
+// remoteWebBase is the scheme and authority of an http or https remote URL,
+// lower-cased and without userinfo, and "" for any other remote.
+func remoteWebBase(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return ""
+	}
+	host := strings.ToLower(sanitizeHost(u.Hostname()))
+	if host == "" {
+		return ""
+	}
+	if port := u.Port(); port != "" {
+		host = net.JoinHostPort(host, port)
+	}
+	return scheme + "://" + host
 }
 
 // ParseRemoteSlug splits a git remote URL into its host and its owner/name path.
@@ -104,8 +128,8 @@ func cleanSlug(path string) string {
 	if s == "" || !strings.Contains(s, "/") {
 		return ""
 	}
-	// A slug travels into a subprocess argv and a URL path, so refuse the shapes
-	// that would mean something other than a repository name there.
+	// A slug becomes a forge repository selector, so refuse the shapes that would
+	// mean something other than a repository name there.
 	for seg := range strings.SplitSeq(s, "/") {
 		if seg == "" || seg == "." || seg == ".." {
 			return ""
@@ -117,18 +141,11 @@ func cleanSlug(path string) string {
 	return s
 }
 
-// forbiddenInSlug reports whether r may not appear in an accepted slug.
-//
-// EVERY C0 control plus DEL, not the four whitespace characters an earlier version
-// listed. `url.Parse` percent-DECODES the path, so `%00` in a remote URL survives
-// into u.Path as a real NUL; a slug carrying one fails at os/exec argument
-// construction on every sweep, and the other controls reach forge CLI diagnostics
-// and this app's log stream as raw bytes. Backslash goes with them because it is not
-// a path separator in any forge slug vocabulary marotte talks to — accepting it only
-// widens the language for no address it could express. `?` and `#` stay refused as
-// URL delimiters that would change what the path means.
-//
-// The space case is covered by `r <= ' '`: SP is 0x20, one past the C0 range.
+// forbiddenInSlug reports whether r may not appear in an accepted slug: every C0
+// control plus DEL (`url.Parse` percent-DECODES the path, so `%00` survives into
+// u.Path as a real NUL and would reach a repository selector and the log stream),
+// backslash (a path separator in no forge slug vocabulary), and `?` and `#` (URL
+// delimiters that would change what the path means). SP is covered by `r <= ' '`.
 func forbiddenInSlug(r rune) bool {
 	return r <= ' ' || r == 0x7F || r == '\\' || r == '?' || r == '#'
 }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cplieger/marotte/internal/filebrowse"
 )
 
 // kiroDocsFixture is the envelope of testdata/kiro_docs.json: one real
@@ -53,7 +55,7 @@ func TestKiroDocsWireContract(t *testing.T) {
 	}
 	roots := []kiroRoot{{fsPath: filepath.Join(dir, ".kiro"), prefix: "ws/.kiro"}}
 
-	fx := kiroDocsFixture{Comment: kiroDocsFixtureComment, Result: scanKiroRoots(t.Context(), roots)}
+	fx := kiroDocsFixture{Comment: kiroDocsFixtureComment, Result: scanKiroRoots(t.Context(), roots, filebrowse.Sensitive{})}
 	for _, cat := range []string{catSteering, catSkill, catAgent, catSpec, catHook} {
 		if len(docsByCategory(fx.Result.Docs, cat)) == 0 {
 			t.Errorf("fixture carries no %q row; the TS side cannot pin a category that never occurs", cat)

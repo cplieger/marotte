@@ -1,33 +1,6 @@
-// A CLOSE OR REMOVE MARK IS `ICON_CLOSE`, NEVER A TEXT CHARACTER.
-//
-// THE RULE ALREADY EXISTED AND ITS GUARD WAS SCOPED TOO NARROWLY, which is why this
-// file is separate from the one the scan came out of. `search-shell.ts`'s
-// `searchIconButton` states the reason in its own doc, `search-centring.test.ts`
-// records the measurement at length, and `search-shell.test.ts` pins the DOM half —
-// and all three covered SEARCH BARS only, so five builders were held to a rule the
-// other seven were not. Measured across the app before this: four sites drew the mark
-// as text, in TWO different characters — `\u00d7` in banner-stack.ts, permissions-ui.ts
-// and attachment-pill.ts, `\u2715` in git-status-banner.ts — while `icons.ts` had owned
-// the drawing the whole time.
-//
-// THE REASON, quoted from the rule's original home rather than re-derived: a text node
-// inside a flex container is an anonymous flex item whose box is its LINE BOX, and a
-// line box is symmetric about the ink only when the ink happens to fill it. The
-// multiplication sign is drawn about the math axis, near half x-height and well below
-// the cap-band centre, so `align-items: center` centres the wrong box by a
-// font-dependent amount no authored offset corrects. An SVG is a replaced element whose
-// box IS its ink box.
-//
-// WHAT THE DUPLICATE WAS ACTUALLY CHARGING, which is what makes this mechanical rather
-// than a taste rule: `icon-btn` declares `line-height: 0` because its child is an SVG,
-// so every character site had to hand back a `line-height: 1` AND pick a `font-size` —
-// and all four picked differently. Converting them deleted those declarations outright:
-// `.banner-dismiss` and `.git-status-banner-dismiss` now have no rule at all,
-// `.native-rule-remove` went from 14 declarations to 3, `.attachment-close` 15 to 4.
-//
-// A SOURCE SCAN, deliberately, and for the reason the search-scoped original gave: the
-// failure mode is a NEW button rather than an edit to an existing one, so the population
-// is the builder FILES and a character appearing in any of them is the duplicate back.
+// A close or remove mark is `ICON_CLOSE`, never a text character: a text node
+// centres its line box, not its ink. A source scan over the builder files,
+// because the failure is a new button rather than an edit to an existing one.
 
 import { describe, it, expect } from "vitest";
 import attachmentPillSrc from "./attachment-pill.ts?raw";
@@ -36,7 +9,6 @@ import chipSrc from "./chip.ts?raw";
 import editorFindSrc from "./editor-find.ts?raw";
 import filesSearchSrc from "./files-search.ts?raw";
 import findInChatSrc from "./find-in-chat.ts?raw";
-import gitStatusBannerSrc from "./git-status-banner.ts?raw";
 import iconsSrc from "./icons.ts?raw";
 import mcpPairsSrc from "./mcp-pairs.ts?raw";
 import permissionsUISrc from "./permissions-ui.ts?raw";
@@ -61,7 +33,6 @@ const BUILDERS = [
   ["editor-find.ts", editorFindSrc],
   ["files-search.ts", filesSearchSrc],
   ["find-in-chat.ts", findInChatSrc],
-  ["git-status-banner.ts", gitStatusBannerSrc],
   ["mcp-pairs.ts", mcpPairsSrc],
   ["permissions-ui.ts", permissionsUISrc],
   ["search-popup.ts", searchPopupSrc],
@@ -73,14 +44,9 @@ const BUILDERS = [
  *  Written as escapes so the scan cannot match this list's own source. */
 const FORBIDDEN = ["\\u00d7", "\\u2715", "\\u2716", "\\u274c"] as const;
 
-/** The four sites the conversion touched. Named, so the scan above cannot be satisfied
- *  by deleting an affordance instead of converting it. */
-const CONVERTED = [
-  "attachment-pill.ts",
-  "banner-stack.ts",
-  "git-status-banner.ts",
-  "permissions-ui.ts",
-] as const;
+/** The sites the conversion touched that still build a close mark. Named, so the scan
+ *  above cannot be satisfied by deleting an affordance instead of converting it. */
+const CONVERTED = ["attachment-pill.ts", "banner-stack.ts", "permissions-ui.ts"] as const;
 
 describe("a close mark is the registry's drawing", () => {
   for (const [file, src] of BUILDERS) {

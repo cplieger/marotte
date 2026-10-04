@@ -2,8 +2,9 @@
 # by `toolcatalog verify` (a gap fails the build instead of a boot job
 # or an enable-time error in Settings -> Tools). Two groups:
 #
-# 1. The shipped seed templates (toolbelt.DefaultSeed): the disabled
-#    LSP quartet + gh that first-boot manifests carry.
+# 1. The shipped seed templates (toolbelt.DefaultSeed less gh, which
+#    composition drops): the disabled LSP quartet first-boot manifests
+#    carry.
 # 2. The backend runtimes the engine auto-adopts as dependencies
 #    (go: installs need go, npm: needs node, python tools need uv).
 #
@@ -13,7 +14,6 @@ typescript-language-server
 typescript
 pyright
 rust-analyzer
-gh
 # backend runtimes (auto-adopted dependencies)
 go
 node

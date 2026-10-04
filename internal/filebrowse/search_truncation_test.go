@@ -140,7 +140,7 @@ func TestReadCandidate_VanishedFileIsCoveredNotLost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sc := newFileScan(t.Context(), "needle", false, nil, nil)
+	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 	got := sc.readCandidate(dir, cand)
 	if got.unread {
 		t.Error("readCandidate reported a vanished file as unread; a file that is gone was not refused to the search")
@@ -237,7 +237,7 @@ func TestWalkDir_ReadDirFailureMarksTruncated(t *testing.T) {
 	}
 	// walkDir closes the handle on the way out.
 
-	sc := newFileScan(t.Context(), "needle", false, nil, nil)
+	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 	if !sc.walkDir(searchDir{f: f, abs: dir}) {
 		t.Error("walkDir returned false (stop the whole scan) on one unenumerable directory; the other roots must still answer")
 	}
@@ -258,7 +258,7 @@ func TestWalkDir_EndOfDirectoryIsNotTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sc := newFileScan(t.Context(), "needle", false, nil, nil)
+	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 	if !sc.walkDir(searchDir{f: f, abs: dir}) {
 		t.Fatal("walkDir stopped the scan on an ordinary directory")
 	}

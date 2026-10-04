@@ -2,8 +2,9 @@
 // commit, generateCommitMessage — including the HTTP-200 {error} envelope
 // guard (18-F1). The git server reports subprocess failure as HTTP 200 +
 // {"error": "<scrubbed git output>"} (internal/git/helpers.go writeCmdResult),
-// so a non-empty error body must reject the action (framework error toast,
-// NO success toast) and an {output}/{ok:true} body must resolve.
+// so a non-empty error body must reject the action (its outcome carries git's
+// words, and nothing toasts: the Changes tab says it in place) and an
+// {output}/{ok:true} body must resolve.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -45,30 +46,23 @@ describe("git.stage", () => {
     });
   });
 
-  it("toasts with file name on single-file failure", async () => {
+  it("answers a refusal in the server's words and toasts nothing", async () => {
     respondWith({ error: "no such file" }, 404);
     const { stage } = await import("./git-changes.js");
-    await stage.dispatch({ repo: "", files: ["README.md"] });
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("README.md"), undefined);
-  });
-
-  it("toasts with count on multi-file failure", async () => {
-    respondWith({ error: "err" }, 500);
-    const { stage } = await import("./git-changes.js");
-    await stage.dispatch({ repo: "", files: ["a.ts", "b.ts", "c.ts"] });
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("3 files"), undefined);
+    const o = await stage.dispatch({ repo: "", files: ["README.md"] }).outcome;
+    expect(o.status === "error" ? o.error.message : o.status).toBe("no such file");
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 
 describe("git.discard", () => {
-  it("is not retryable (destructive)", async () => {
+  it("is not retried (destructive)", async () => {
     respondWith({ error: "timeout" }, 500);
     const { discard } = await import("./git-changes.js");
     await discard.dispatch({ repo: "", files: ["x.ts"] });
-    const log = recentLog();
-    expect(log[0]?.status).toBe("error");
-    // No retry button (retryable: false)
-    expect(toast.error).toHaveBeenCalledWith(expect.any(String), undefined);
+    expect(recentLog()[0]?.status).toBe("error");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 
@@ -89,11 +83,13 @@ describe("git.push", () => {
     expect(toast.success).toHaveBeenCalledWith("Pushed");
   });
 
-  it("is not retryable (may have succeeded server-side)", async () => {
+  it("is not retried (may have succeeded server-side)", async () => {
     respondWith({ error: "rejected" }, 500);
     const { push } = await import("./git-changes.js");
-    await push.dispatch({ repo: "" });
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Push failed"), undefined);
+    const o = await push.dispatch({ repo: "" }).outcome;
+    expect(o.status === "error" ? o.error.message : o.status).toBe("rejected");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 
@@ -103,13 +99,6 @@ describe("git.commit", () => {
     const { commit } = await import("./git-changes.js");
     await commit.dispatch({ repo: "", message: "fix: typo" });
     expect(toast.success).toHaveBeenCalledWith("Committed");
-  });
-
-  it("error toast includes truncated commit message", async () => {
-    respondWith({ error: "nothing to commit" }, 400);
-    const { commit } = await import("./git-changes.js");
-    await commit.dispatch({ repo: "", message: "fix: typo" });
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("fix: typo"), undefined);
   });
 
   it("sends the Idempotency-Key header (server-side retry dedup)", async () => {
@@ -139,12 +128,9 @@ describe("git.generateCommitMessage", () => {
   it("rejects the 200 {error} envelope (no staged changes)", async () => {
     respondWith({ error: "no_staged_changes" });
     const { generateCommitMessage } = await import("./git-changes.js");
-    const r = await generateCommitMessage.dispatch({ repo: "main" });
-    expect(r).toBeNull();
-    expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining("no_staged_changes"),
-      undefined,
-    );
+    const o = await generateCommitMessage.dispatch({ repo: "main" }).outcome;
+    expect(o.status === "error" ? o.error.message : o.status).toBe("no_staged_changes");
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 
@@ -156,16 +142,15 @@ describe("git.generateCommitMessage", () => {
 // into a thrown ActionError inside run().
 
 describe("error envelope (HTTP 200 + {error})", () => {
-  it("pull: {error} body → error toast with git's message, no success toast, no retry", async () => {
+  it("pull: {error} body → git's message in the outcome, no toast, no retry", async () => {
     respondWith({ error: "fatal: Not possible to fast-forward, aborting." });
     const { pull } = await import("./git-changes.js");
-    const r = await pull.dispatch({ repo: "subflux" });
-    expect(r).toBeNull();
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining("Not possible to fast-forward"),
-      undefined,
+    const o = await pull.dispatch({ repo: "subflux" }).outcome;
+    expect(o.status === "error" ? o.error.message : o.status).toBe(
+      "fatal: Not possible to fast-forward, aborting.",
     );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
     expect(recentLog()[0]?.status).toBe("error");
     // A "git" envelope error is not transient: pull's retryNetwork
     // classifier must not re-run the command.
@@ -182,16 +167,13 @@ describe("error envelope (HTTP 200 + {error})", () => {
     expect(recentLog()[0]?.status).toBe("success");
   });
 
-  it("commit: {error} body → resolves null so the caller keeps the draft", async () => {
+  it("commit: {error} body → refused with the hook's words, so the caller keeps the draft", async () => {
     respondWith({ error: "pre-commit hook failed: lint" });
     const { commit } = await import("./git-changes.js");
-    const r = await commit.dispatch({ repo: "r", message: "feat: y" });
-    expect(r).toBeNull();
+    const o = await commit.dispatch({ repo: "r", message: "feat: y" }).outcome;
+    expect(o.status === "error" ? o.error.message : o.status).toBe("pre-commit hook failed: lint");
     expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining("pre-commit hook failed"),
-      undefined,
-    );
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("stage: {ok:true} body (staging success shape) → resolves non-null", async () => {

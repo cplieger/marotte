@@ -10,7 +10,7 @@ Signing in on the page signs kiro-cli in to your Kiro account. That is the agent
 
 Set `ALLOWED_HOSTS` on any server that stays up, and set `TRUSTED_PROXIES` when a proxy sits in front. [Configuration](configuration.md) explains both. Requests that change state from another website are refused with `403`.
 
-The file browser shows only the folders it is given, `/workspace`, `/config` and `/uploads` by default. Credential and internal files under `/config`, such as SSH keys, cloud tokens, the chat store and the MCP configuration, stay hidden.
+The file browser shows only the folders it is given, `/workspace`, `/config` and `/uploads` by default. Credential and internal files under `/config`, such as SSH keys, cloud tokens, forge credentials, the chat store and the MCP configuration, stay hidden.
 
 ## The container user
 
@@ -30,7 +30,7 @@ marotte sends no telemetry. Its outbound requests are these:
 
 - the AI provider kiro-cli is signed in to
 - any MCP server you add
-- the forge APIs, through `gh`, `glab` or `tea`, when you use the git panel
+- the API of each forge you connect in the git panel, never on a private address unless that connection allows it
 - the public MCP registry when you search it
 - the kiro-cli download on first start, the tools you install, and the tool catalog refresh, once a day by default
 

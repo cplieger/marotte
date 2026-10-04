@@ -1,21 +1,254 @@
-// Tests for renderDevicePrompt's CSP-safe el()-built DOM: the user_code
-// lands in a <code>, a verification_uri is only ever rendered as an
-// anchor when it is http(s), and an attacker-controlled uri is inert
-// text (never parsed as HTML).
-import { describe, it, expect, vi } from "vitest";
-import { renderDevicePrompt } from "./forge-auth-oauth.js";
+// Tests for the device sign-in: the start, the poll, Cancel, and
+// renderDevicePrompt's CSP-safe el()-built DOM (the user_code lands in a
+// <code>, a verification_uri is only ever an anchor when it is http(s), and an
+// attacker-controlled uri is inert text, never parsed as HTML).
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import type * as ForgeActions from "./actions/forge.js";
+import type * as ApiClient from "./api-client.js";
 import type { DeviceFlowResponse } from "./wire/types.gen.js";
+
+const mocks = vi.hoisted(() => ({ dispatch: vi.fn(), apiPostTyped: vi.fn() }));
+vi.mock("./actions/forge.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ForgeActions>()),
+  startDeviceFlow: { dispatch: mocks.dispatch },
+}));
+vi.mock("./api-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiClient>()),
+  apiPostTyped: mocks.apiPostTyped,
+}));
+
+const { resetActionFramework } = await import("@cplieger/actions/testing");
+const { renderDevicePrompt, renderDeviceSignIn, abortPoll, endGrantsIn } =
+  await import("./forge-auth-oauth.js");
 
 function start(over: Partial<DeviceFlowResponse> = {}): DeviceFlowResponse {
   return {
     user_code: "WXYZ-1234",
     verification_uri: "https://github.com/login/device",
-    device_code: "dev-code",
+    grant_id: "0123456789abcdef0123456789abcdef",
     interval: 5,
     expires_in: 900,
     ...over,
   };
 }
+
+/** A dispatch handle as the actions framework returns one: awaitable, with
+ *  the typed outcome beside it. */
+function started(value: DeviceFlowResponse): Promise<DeviceFlowResponse> & {
+  outcome: Promise<{ status: "success"; value: DeviceFlowResponse }>;
+} {
+  return Object.assign(Promise.resolve(value), {
+    outcome: Promise.resolve({ status: "success" as const, value }),
+  });
+}
+
+describe("renderDeviceSignIn", () => {
+  let body: HTMLElement;
+  let hostInput: HTMLInputElement;
+  let deps: {
+    expandOnNextPaint: ReturnType<typeof vi.fn<(id: string) => void>>;
+    renderForgesPanel: ReturnType<typeof vi.fn<() => void>>;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetActionFramework();
+    mocks.dispatch.mockReset();
+    mocks.apiPostTyped.mockReset();
+    body = document.createElement("div");
+    hostInput = document.createElement("input");
+    hostInput.value = "github.com";
+    document.body.append(hostInput, body);
+    deps = { expandOnNextPaint: vi.fn(), renderForgesPanel: vi.fn() };
+  });
+
+  afterEach(() => {
+    abortPoll();
+    body.remove();
+    hostInput.remove();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  async function signIn(kind: "github" | "gitlab" = "github"): Promise<void> {
+    renderDeviceSignIn(body, { kind, hostInput, options: () => ({}) }, deps);
+    body.querySelector<HTMLButtonElement>("[data-forge-device-start]")!.click();
+    await vi.advanceTimersByTimeAsync(0);
+  }
+
+  it("polls the grant by the id the start answered, never by a device code", async () => {
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({ status: "complete" });
+
+    await signIn();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(mocks.apiPostTyped).toHaveBeenCalledWith(
+      "/api/forges/oauth/github/poll",
+      { grant_id: "0123456789abcdef0123456789abcdef" },
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
+    expect(deps.renderForgesPanel).toHaveBeenCalledOnce();
+  });
+
+  it("says the sign-in ended when the grant is denied", async () => {
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({
+      status: "denied",
+      error: "the user declined the grant",
+    });
+
+    await signIn();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(body.querySelector(".forge-device-status")?.textContent).toBe(
+      "Error: the user declined the grant",
+    );
+  });
+
+  it("polls GitLab's route for a GitLab grant and expands that connection on completion", async () => {
+    hostInput.value = "gitlab.example.com";
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({ status: "complete" });
+    renderDeviceSignIn(body, { kind: "gitlab", hostInput, options: () => ({}) }, deps);
+    body.querySelector<HTMLInputElement>("[data-forge-client-id] input")!.value = "app-id";
+
+    body.querySelector<HTMLButtonElement>("[data-forge-device-start]")!.click();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(mocks.dispatch).toHaveBeenCalledWith({
+      kind: "gitlab",
+      host: "gitlab.example.com",
+      clientId: "app-id",
+      options: {},
+    });
+    expect(mocks.apiPostTyped).toHaveBeenCalledWith(
+      "/api/forges/oauth/gitlab/poll",
+      { grant_id: "0123456789abcdef0123456789abcdef" },
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
+    expect(deps.expandOnNextPaint).toHaveBeenCalledWith("gitlab:gitlab.example.com");
+  });
+
+  it("another host with no client id names what is missing and starts nothing", async () => {
+    hostInput.value = "ghe.example.com";
+
+    await signIn();
+
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(body.querySelector(".forge-card-status")?.textContent).toBe(
+      "Enter the OAuth client ID for this server.",
+    );
+  });
+
+  it("an empty host names what is missing and starts nothing", async () => {
+    hostInput.value = "  ";
+
+    await signIn();
+
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(body.querySelector(".forge-card-status")?.textContent).toBe("Enter the server's host.");
+  });
+
+  it("a start answered after the pane closed polls nothing", async () => {
+    let land!: (v: DeviceFlowResponse) => void;
+    const outcome = new Promise<{ status: "success"; value: DeviceFlowResponse }>((r) => {
+      land = (value) => {
+        r({ status: "success", value });
+      };
+    });
+    mocks.dispatch.mockReturnValue(
+      Object.assign(
+        outcome.then((o) => o.value),
+        { outcome },
+      ),
+    );
+    mocks.apiPostTyped.mockResolvedValue({ status: "pending" });
+
+    await signIn();
+    body.remove();
+    land(start());
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(mocks.apiPostTyped).not.toHaveBeenCalled();
+  });
+
+  it("Cancel posts the grant id, stops polling and restores the start state", async () => {
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({ status: "pending" });
+    let answer!: (r: Response) => void;
+    const fetchSpy = vi.fn<typeof fetch>(
+      () =>
+        new Promise<Response>((r) => {
+          answer = r;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    await signIn();
+    const cancel = body.querySelector<HTMLButtonElement>("[data-forge-device-cancel]")!;
+
+    cancel.click();
+    expect(cancel.disabled).toBe(true);
+    expect(cancel.getAttribute("aria-busy")).toBe("true");
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy.mock.calls[0]![0]).toBe("/api/forges/oauth/github/cancel");
+    expect(JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)).toEqual({
+      grant_id: "0123456789abcdef0123456789abcdef",
+    });
+
+    answer(new Response(null, { status: 204 }));
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(mocks.apiPostTyped).not.toHaveBeenCalled();
+    expect(body.querySelector(".forge-device-prompt")).toBeNull();
+    expect(body.querySelector("[data-forge-device-start]")).not.toBeNull();
+  });
+
+  it("closing the pane that holds the prompt stops the poll and cancels the grant once", async () => {
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({ status: "pending" });
+    const fetchSpy = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    await signIn();
+
+    endGrantsIn(document.body);
+    endGrantsIn(document.body);
+    body.replaceChildren();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(mocks.apiPostTyped).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy.mock.calls[0]![0]).toBe("/api/forges/oauth/github/cancel");
+    expect(JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string)).toEqual({
+      grant_id: "0123456789abcdef0123456789abcdef",
+    });
+  });
+
+  it("a failed Cancel names the failure in the prompt's status line", async () => {
+    mocks.dispatch.mockReturnValue(started(start()));
+    mocks.apiPostTyped.mockResolvedValue({ status: "pending" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "missing grant_id" }), { status: 400 }),
+        ),
+      ),
+    );
+    await signIn();
+
+    body.querySelector<HTMLButtonElement>("[data-forge-device-cancel]")!.click();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(body.querySelector(".forge-device-status")?.textContent).toBe(
+      "Could not cancel the sign-in. missing grant_id",
+    );
+  });
+});
 
 describe("renderDevicePrompt", () => {
   it("renders the user_code in a code element and an http(s) anchor for a valid uri", () => {

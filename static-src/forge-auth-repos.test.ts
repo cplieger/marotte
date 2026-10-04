@@ -28,24 +28,64 @@ vi.mock("./actions/forge.js", async (importOriginal) => {
   };
 });
 
-import { renderRepoActions, type RepoDeps } from "./forge-auth-repos.js";
+import {
+  batchFailure,
+  cloneAllForAccount,
+  listedRepos,
+  readFirstPage,
+  readNextPage,
+  renderRepoActions,
+  renderRepoIdentity,
+  renderRepoRow,
+  type RepoDeps,
+} from "./forge-auth-repos.js";
 import { error as toastError } from "./toast.js";
-import type { Repo } from "./wire/types.gen.js";
+import type { Repo, RepoList } from "./wire/types.gen.js";
+
+/** What a repository allows, with nothing read: these rows never consult it. */
+const NO_AFFORDANCES: Repo["affordances"] = {
+  has_issues: { support: "unknown", source: "unknown", detail: "" },
+  can_push: { support: "unknown", source: "unknown", detail: "" },
+  merge_train: { support: "unknown", source: "unknown", detail: "" },
+  default_branch: "",
+  merge_strategies: [],
+};
 
 const KIRO: Repo = {
+  repo_id: "v1.63706c69656765722f2e6b69726f",
   owner: "cplieger",
   name: ".kiro",
   full_name: "cplieger/.kiro",
   clone_url: "https://github.com/cplieger/.kiro.git",
+  affordances: NO_AFFORDANCES,
 };
 
 function deps(): RepoDeps {
+  const running = new Map<string, Promise<void>>();
   return {
     isCloned: vi.fn(() => false),
     addCloned: vi.fn(),
     removeCloned: vi.fn(),
     bumpState: vi.fn(),
+    start: (key, fn) => {
+      if (running.has(key)) {
+        return undefined;
+      }
+      const p = Promise.resolve().then(fn);
+      running.set(key, p);
+      const clear = (): void => {
+        running.delete(key);
+      };
+      void p.then(clear, clear);
+      return p;
+    },
+    running: (key) => running.get(key),
   };
+}
+
+/** A clone dispatch answering `outcome`. */
+function cloneAnswer(outcome: unknown): { outcome: Promise<unknown> } {
+  return { outcome: Promise.resolve(outcome) };
 }
 
 function cloneButton(cloned: boolean, d: RepoDeps): HTMLButtonElement {
@@ -58,6 +98,11 @@ function cloneButton(cloned: boolean, d: RepoDeps): HTMLButtonElement {
   return btn;
 }
 
+/** What KIRO's row says about its last press, as a repaint would build it. */
+function note(repo: Repo = KIRO): string {
+  return renderRepoIdentity(repo).querySelector(".forge-account-error")?.textContent ?? "";
+}
+
 describe("repo row clone feedback", () => {
   beforeEach(() => {
     document.body.replaceChildren();
@@ -66,40 +111,40 @@ describe("repo row clone feedback", () => {
     vi.mocked(toastError).mockReset();
   });
 
-  // The reported defect: /api/git/clone answers 200 with {"error": …}, and the
-  // reason reached nobody. withAsyncFeedback awaits without rethrowing, so the
-  // row showed a spinner, then a ✗ that the next repaint erased.
-  it("toasts the server's reason when the clone fails", async () => {
+  // /api/git/clone answers 200 with {"error": …}; the reason is the row's to say,
+  // beside the control that was pressed.
+  it("says the server's reason in the row when the clone fails, and toasts nothing", async () => {
     const reason = "fatal: destination path '.kiro' already exists and is not an empty directory.";
-    mocks.cloneDispatch.mockReturnValue({
-      outcome: Promise.resolve({ status: "success", value: { error: reason } }),
-    });
+    mocks.cloneDispatch.mockReturnValue(
+      cloneAnswer({ status: "success", value: { error: reason } }),
+    );
 
     const d = deps();
     cloneButton(false, d).click();
 
     await vi.waitFor(() => {
-      expect(toastError).toHaveBeenCalledWith(reason);
+      expect(note()).toBe(`Could not clone. ${reason}`);
     });
     expect(d.addCloned).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("toasts a dispatch-level failure", async () => {
-    mocks.cloneDispatch.mockReturnValue({
-      outcome: Promise.resolve({ status: "error", error: { message: "network down" } }),
-    });
+  it("says a dispatch-level failure in the row", async () => {
+    mocks.cloneDispatch.mockReturnValue(
+      cloneAnswer({ status: "error", error: { message: "network down" } }),
+    );
 
     cloneButton(false, deps()).click();
 
     await vi.waitFor(() => {
-      expect(toastError).toHaveBeenCalledWith("network down");
+      expect(note()).toBe("Could not clone. network down");
     });
   });
 
-  it("marks the repo cloned and toasts nothing on success", async () => {
-    mocks.cloneDispatch.mockReturnValue({
-      outcome: Promise.resolve({ status: "success", value: { output: "Cloning into '.kiro'..." } }),
-    });
+  it("marks the repo cloned and drops the row's last refusal on success", async () => {
+    mocks.cloneDispatch.mockReturnValue(
+      cloneAnswer({ status: "success", value: { output: "Cloning into '.kiro'..." } }),
+    );
 
     const d = deps();
     cloneButton(false, d).click();
@@ -107,11 +152,35 @@ describe("repo row clone feedback", () => {
     await vi.waitFor(() => {
       expect(d.addCloned).toHaveBeenCalledWith(".kiro");
     });
+    expect(note()).toBe("");
     expect(toastError).not.toHaveBeenCalled();
   });
 });
 
-describe("batch clone failure toast", () => {
+describe("a repository row's clone state", () => {
+  // ARIA forbids a name on a generic element, so a label on a bare span is dropped
+  // and every row would read the same to a screen reader.
+  it.each([
+    [true, "Cloned"],
+    [false, "Remote, not cloned"],
+  ])(
+    "names a row whose cloned state is %s as %j on an element that may carry a name",
+    (cloned, label) => {
+      const d = deps();
+      vi.mocked(d.isCloned).mockReturnValue(cloned);
+      const state = renderRepoRow(KIRO, d).querySelector(".forge-account-repo-state")!;
+      const named = [state, ...state.querySelectorAll("[aria-label]")].filter((e) =>
+        e.hasAttribute("aria-label"),
+      );
+
+      expect(named.map((e) => [e.getAttribute("role"), e.getAttribute("aria-label")])).toEqual([
+        ["img", label],
+      ]);
+    },
+  );
+});
+
+describe("batch clone outcome", () => {
   beforeEach(() => {
     document.body.replaceChildren();
     mocks.cloneDispatch.mockReset();
@@ -120,52 +189,132 @@ describe("batch clone failure toast", () => {
 
   function repo(name: string): Repo {
     return {
+      repo_id: `id:cplieger/${name}`,
       owner: "cplieger",
       name,
       full_name: `cplieger/${name}`,
       clone_url: `https://github.com/cplieger/${name}.git`,
+      affordances: NO_AFFORDANCES,
     };
   }
 
   // A bare count ("1 of 63 failed") left the user diffing 63 directories to
-  // find the one missing repo; the toast must NAME what failed.
+  // find the one missing repo; the sentence must NAME what failed.
   it("names the one repo that failed", async () => {
-    const { cloneAllForAccount } = await import("./forge-auth-repos.js");
     mocks.cloneDispatch.mockImplementation(({ url }: { url: string }) =>
-      Promise.resolve(url.includes("/loki.git") ? { error: "signal: killed" } : {}),
+      cloneAnswer({
+        status: "success",
+        value: url.includes("/loki.git") ? { error: "signal: killed" } : {},
+      }),
     );
     const btn = document.createElement("button");
-    await cloneAllForAccount([repo("alpha"), repo("loki"), repo("beta")], btn, deps());
-    expect(toastError).toHaveBeenCalledWith("Clone failed for loki (1 of 3 repos)");
+    const d = deps();
+    const sentence = await cloneAllForAccount([repo("alpha"), repo("loki"), repo("beta")], btn, d);
+    expect(sentence).toBe("Could not clone cplieger/loki (1 of 3 repos).");
+    expect(note(repo("loki"))).toBe("Could not clone. signal: killed");
+    expect(d.addCloned).toHaveBeenCalledTimes(2);
+    expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("caps the named repos at three and counts the rest", async () => {
-    const { cloneFailureToast } = await import("./forge-auth-repos.js");
-    expect(cloneFailureToast(["a", "b", "c", "d", "e"], 63)).toBe(
-      "Clone failed for a, b, c and 2 more (5 of 63 repos)",
+  it("caps the named repos at three and counts the rest", () => {
+    expect(batchFailure("clone", ["a", "b", "c", "d", "e"], 63)).toBe(
+      "Could not clone a, b, c and 2 more (5 of 63 repos).",
     );
   });
 
   it("shows git's percent on the button while a repo transfers", async () => {
-    const { cloneAllForAccount } = await import("./forge-auth-repos.js");
     const btn = document.createElement("button");
     let duringProgress = "";
     mocks.cloneDispatch.mockImplementation(
       ({ onProgress }: { onProgress?: (line: string) => void }) => {
         onProgress?.("Receiving objects:  42% (215/511)");
-        duringProgress = btn.textContent ?? "";
-        return Promise.resolve({});
+        duringProgress = btn.textContent;
+        return cloneAnswer({ status: "success", value: {} });
       },
     );
     await cloneAllForAccount([repo("loki")], btn, deps());
     expect(duringProgress).toBe("Cloning 1/1 (42%)…");
   });
 
-  it("toasts nothing when every clone lands", async () => {
-    const { cloneAllForAccount } = await import("./forge-auth-repos.js");
-    mocks.cloneDispatch.mockResolvedValue({});
+  it("says nothing when every clone lands", async () => {
+    mocks.cloneDispatch.mockReturnValue(cloneAnswer({ status: "success", value: {} }));
     const btn = document.createElement("button");
-    await cloneAllForAccount([repo("alpha"), repo("beta")], btn, deps());
-    expect(toastError).not.toHaveBeenCalled();
+    expect(await cloneAllForAccount([repo("alpha"), repo("beta")], btn, deps())).toBe("");
+  });
+});
+
+describe("an account's repository listing", () => {
+  function row(name: string): Repo {
+    return {
+      repo_id: `id:${name}`,
+      owner: "cplieger",
+      name,
+      full_name: `cplieger/${name}`,
+      affordances: NO_AFFORDANCES,
+    };
+  }
+
+  function page(names: string[], next = "", partial?: RepoList["partial"]): RepoList {
+    return { repos: names.map(row), next, ...(partial === undefined ? {} : { partial }) };
+  }
+
+  function names(repos: readonly Repo[]): string[] {
+    return repos.map((r) => r.name);
+  }
+
+  it("holds a first page's rows and the cursor it answered", () => {
+    const l = readFirstPage(undefined, page(["a", "b"], "c2"));
+    expect(names(listedRepos(l))).toEqual(["a", "b"]);
+    expect(l.next).toBe("c2");
+    expect(l.unread).toBe(false);
+  });
+
+  it("adds a later page's rows once each, taking its cursor and its partial", () => {
+    const l = readNextPage(
+      readFirstPage(undefined, page(["a", "b"], "c2")),
+      page(["b", "c"], "", { reason: "rate_limited", fetched: 2, omitted_at_least: 4 }),
+    );
+    expect(names(listedRepos(l))).toEqual(["a", "b", "c"]);
+    expect(l.next).toBe("");
+    expect(l.partial?.reason).toBe("rate_limited");
+  });
+
+  it("keeps the pages loaded past the first while a re-read first page names the cursor they continued from", () => {
+    const loaded = readNextPage(
+      readFirstPage(undefined, page(["a", "b"], "c2")),
+      page(["c"], "c3"),
+    );
+    const l = readFirstPage(loaded, page(["a", "b2"], "c2"));
+    expect(names(listedRepos(l))).toEqual(["a", "b2", "c"]);
+    expect(l.next).toBe("c3");
+  });
+
+  it("starts over from a re-read first page that names another cursor", () => {
+    const loaded = readNextPage(
+      readFirstPage(undefined, page(["a", "b"], "c2")),
+      page(["c"], "c3"),
+    );
+    const l = readFirstPage(loaded, page(["a", "d"], "x2"));
+    expect(names(listedRepos(l))).toEqual(["a", "d"]);
+    expect(l.next).toBe("x2");
+  });
+
+  it("keeps the rows it holds when a later read fails, and marks them stale until a read succeeds", () => {
+    const held = readFirstPage(undefined, page(["a"], "c2"));
+    const failed = readFirstPage(held, null);
+    expect(names(listedRepos(failed))).toEqual(["a"]);
+    expect(failed.next).toBe("c2");
+    expect(failed.unread).toBe(false);
+    expect(failed.stale).toBe(true);
+    expect(readNextPage(failed, page(["b"])).stale).toBe(true);
+    expect(readFirstPage(failed, page(["a"], "c2")).stale).toBe(false);
+  });
+
+  it("is unread with nothing held when a first read fails", () => {
+    const none = readFirstPage(undefined, null);
+    expect(none.unread).toBe(true);
+    expect(none.stale).toBe(false);
+    expect(listedRepos(none)).toEqual([]);
+    expect(none.next).toBe("");
   });
 });

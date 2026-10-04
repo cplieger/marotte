@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ForgeKind } from "./forge-types.js";
+import type { FieldFill } from "./wire/types.gen.js";
 
 /** A single file entry from git status.
  *
@@ -46,12 +47,11 @@ export type GitRepoStatusBadge = Pick<
 >;
 
 /** What one Pull-all pass did to one repository (`POST /api/git/pull-all`).
- *
  *  The server's four verdicts are mutually exclusive and cover every repo it
  *  looked at (`internal/git/handlers_pullall.go`): `pulled`, `blocked` (the
  *  pre-flight refused, `reason` names the hazard), `failed` (git refused,
  *  `detail` carries its words), `skipped` (nothing to do). `reason` and
- *  `detail` are plain strings for the reason `GitPR.check_status` is: the
+ *  `detail` are plain strings for the reason `GitPRAction.checks` is: the
  *  server's vocabulary can grow, and a union here would make this module's
  *  own fallbacks read as dead code while the wire still produces them. */
 export interface GitPullResult {
@@ -104,19 +104,46 @@ export function pullHeldWord(r: GitPullResult): string {
   return PULL_HELD_WORDS[r.reason ?? ""] ?? "not pulled";
 }
 
-/** A pull request from the forge API.
+/** What a PR row's controls read. Every member is always present.
  *
- *  `check_status` and `merge_blocked` are plain strings rather than
- *  unions on purpose: the server's vocabulary can grow, and a union here
- *  would make the unknown-value fallbacks in git-pr-status.ts read as
- *  dead code to the type checker while the wire still produces them. The
- *  canonical values are listed on each field. */
+ *  The enumerated members are plain strings rather than unions on purpose:
+ *  the server's vocabulary can grow, and a union here would make the
+ *  unknown-value fallbacks in git-pr-status.ts read as dead code to the
+ *  type checker while the wire still produces them. The canonical values
+ *  are listed on each field. */
+export interface GitPRAction {
+  /** "yes" | "no" | "unknown". */
+  mergeable: string;
+  /** "unknown" | "passing" | "failing" | "pending" | "neutral". */
+  checks: string;
+  checks_passing: number;
+  checks_failing: number;
+  checks_pending: number;
+  checks_neutral: number;
+  checks_unknown: number;
+  checks_total: number;
+  /** "yes" | "no" | "unknown": the forge will merge this itself once its
+   *  requirements are met. */
+  auto_merge_armed: string;
+  queue_state: string;
+  /** -1 when the row is in no known queue position. */
+  queue_position: number;
+  /** "unknown" | "none" | "draft" | "conflicts" | "checks_failing"
+   *  | "checks_running" | "behind" | "blocked". */
+  merge_blocked: string;
+}
+
+/** A pull request from the forge API. */
 export interface GitPR {
+  /** The repository's id, the segment its routes take. */
+  repo_id: string;
+  /** The repository's display path. */
+  repo: string;
   number: number;
   title: string;
+  /** "open" | "closed" | "merged" | "unknown"; a draft is `draft`, never a state. */
   state: string;
   draft?: boolean;
-  mergeable?: boolean;
   source_branch: string;
   target_branch: string;
   url?: string;
@@ -125,27 +152,26 @@ export interface GitPR {
   updated_at?: number;
   /** Head commit of the source branch; the merge pins itself to this. */
   head_sha?: string;
-  /** "" (forge reported none) | "pending" | "passing" | "failing". */
-  check_status?: string;
-  /** "" | "draft" | "conflicts" | "checks_failing" | "checks_running"
-   *  | "behind" | "blocked" | "unknown". */
-  merge_blocked?: string;
-  checks_total?: number;
-  checks_failing?: number;
-  /** The forge will merge this itself once its requirements are met. */
-  auto_merge_armed?: boolean;
+  action: GitPRAction;
+  /** Why each field this family's list lacks holds its value: present on an
+   *  inventory row of GitLab and the Gitea family. */
+  fill?: readonly FieldFill[];
 }
 
-/** A group of PRs for a single repo (used in the PRs tab). */
+/** One repository's open pull requests on one connection (the PRs tab's
+ *  section), derived from the inventory by git-prs-state.ts. */
 export interface GitRepoGroup {
   forge_id: string;
   forge_kind: ForgeKind;
   forge_host: string;
+  /** The repository's id, the segment its routes take. */
+  repo_id: string;
+  /** The display path before its last `/` (a GitLab namespace path). */
   owner: string;
   name: string;
+  /** The display path. */
   full_name: string;
   prs: GitPR[];
-  error?: string;
 }
 
 // --- Status label utilities (single source of truth) ---

@@ -14,15 +14,24 @@
   gap: var(--sp-2);
 }
 
-/* The refresh button and nothing else since the filter became a popup (24-find.css
-   `.page-find`), so the row is end-aligned rather than holding a field that
-   stretched across it. */
+/* Buttons only since the filter became a popup (24-find.css `.page-find`), so the
+   row is end-aligned rather than holding a field that stretched across it. */
 .git-tab-toolbar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--sp-2);
   padding-block: var(--sp-2);
+}
+
+/* Why the refresh or Pull all beside it did not finish; empty, it takes no gap. */
+.git-tab-toolbar-error {
+  font-size: var(--fs-xs);
+  color: color-mix(in srgb, var(--c-danger) 90%, var(--c-text-primary));
+
+  &:empty {
+    display: none;
+  }
 }
 
 .git-tab-toolbar .icon-btn {
@@ -246,6 +255,20 @@
   white-space: nowrap;
 }
 
+/* Beside "+ New PR" in a phone's column the repository's path is what yields, so
+   "N open" keeps its width: the run card's `.run-name` and `.run-count` shape. */
+.git-repo-section-header-toggle > .git-repo-section-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+
+.git-repo-section-header-toggle > .git-repo-section-meta {
+  flex: 1 0 auto;
+}
+
 /* Ahead and behind are COUNTS, and a count needs no hue — which is also how
    VS Code renders them (a colourless `↑N ↓M` label beside a sync icon, see
    extensions/git/src/statusbar.ts, where the entry sets no colour at all). The
@@ -464,7 +487,6 @@
 }
 
 .git-repo-row-clean,
-.git-repo-row-empty,
 .git-repo-row-error {
   padding: var(--sp-2) 0;
   font-size: var(--fs-sm);
@@ -503,11 +525,11 @@
   flex: 1;
 }
 
-/* The Pull-all note inside a repo section. Same shape as the Open-PR hint above
-   — both are a transient sentence about what just happened to this one repo —
-   tinted to its verdict rather than to the accent, since this one reports
-   something that did NOT happen. */
-.git-pull-flag-note {
+/* A note inside a repo section: why the last Pull all left it alone, or why its
+   last press was refused. Same shape as the Open-PR hint above, since both are a
+   transient sentence about what just happened to this one repo, tinted to its
+   verdict rather than to the accent: it reports something that did NOT happen. */
+.git-repo-note {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -518,27 +540,27 @@
   font-size: var(--fs-sm);
 }
 
-.git-pull-flag-note[data-verdict="failed"] {
+.git-repo-note[data-verdict="failed"] {
   background: color-mix(in srgb, var(--c-danger) 8%, var(--c-bg-primary));
   border-color: color-mix(in srgb, var(--c-danger) 35%, var(--c-border));
 }
 
-.git-pull-flag-icon {
+.git-repo-note-icon {
   display: inline-flex;
   flex-shrink: 0;
   color: color-mix(in srgb, var(--c-warning) 80%, var(--c-text-primary));
 }
 
-.git-pull-flag-note[data-verdict="failed"] .git-pull-flag-icon {
+.git-repo-note[data-verdict="failed"] .git-repo-note-icon {
   color: color-mix(in srgb, var(--c-danger) 85%, var(--c-text-primary));
 }
 
-.git-pull-flag-icon svg {
+.git-repo-note-icon svg {
   width: 14px;
   height: 14px;
 }
 
-.git-pull-flag-msg {
+.git-repo-note-msg {
   flex: 1;
   min-width: 0;
 }
@@ -866,12 +888,12 @@
  * rather than the `git-pr-` these rules were first named, which had become
  * misleading the moment the Changes tab took the same shape.
  *
- * A mount is empty until its load lands (the PRs tab fans out one request per
- * repository, each a `gh pr list` subprocess server-side; the Changes tab issues
- * one `status-all`), so this stands in for the per-repo sections the paint will
- * build. Geometry mirrors a real section header — forge icon, repo name, a
- * trailing count — because the placeholder's job is to reserve the shape the
- * content takes, not to draw attention. Painter: skeleton.ts `gitRepoSkeleton`. */
+ * A mount is empty until its load lands (the PRs tab's inventory read, then a
+ * connection still loading; the Changes tab's `status-all`), so this stands in
+ * for the per-repo sections the paint will build. Geometry mirrors a real section
+ * header (forge icon, repo name, a trailing count) because the placeholder's job
+ * is to reserve the shape the content takes, not to draw attention. Painter:
+ * skeleton.ts `gitRepoSkeleton`. */
 .git-repo-skeleton {
   display: flex;
   flex-direction: column;
@@ -1023,6 +1045,18 @@ a.git-pr-row-title:hover {
   border-color: color-mix(in oklch, var(--c-yellow), transparent 60%);
 }
 
+/* No colour of its own: a neutral verdict passes nothing and fails nothing, and
+   an unread one is not a verdict, so both read at the secondary text weight
+   rather than as a draft-like tag. */
+.git-pr-check-neutral,
+.git-pr-check-unknown {
+  color: var(--c-text-secondary);
+}
+
+.git-pr-check-unknown {
+  border-style: dashed;
+}
+
 /* Chips first, then the authorship read-out. It wraps, because a PR can carry
    three chips and a long branch pair and the honest answer at that width is a
    second line rather than a clipped one. */
@@ -1049,6 +1083,27 @@ a.git-pr-row-title:hover {
   display: flex;
   gap: var(--sp-1);
   align-items: center;
+}
+
+/* Why a control in the row is disabled, and the last press's outcome: each a
+   line of the text column, in implicit rows, so a row with neither keeps its
+   two-line height. */
+.git-pr-row-note,
+.git-pr-row-status {
+  grid-column: 1;
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+}
+
+.git-pr-row-status {
+  &:empty {
+    display: none;
+  }
+
+  &.err {
+    color: color-mix(in srgb, var(--c-danger) 90%, var(--c-text-primary));
+  }
 }
 
 /* The PRs tab's labelled buttons take the dense tier rather than --btn-h. At
@@ -1091,6 +1146,22 @@ a.git-pr-row-title:hover {
   .git-pr-row-actions {
     flex-wrap: wrap;
   }
+}
+
+/* A Contributions elsewhere row has no action cluster, and an empty actions
+   track would still take its gap at both widths. After the block above, so
+   source order wins at equal specificity. */
+.git-pr-row-readonly {
+  grid-template-columns: 1fr;
+  grid-template-areas: "title" "sub";
+}
+
+/* A row waiting out its close is one sentence and its Undo, on one line at both
+   widths; same placement rule as the block above. */
+.git-pr-row-closing {
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "title actions";
+  align-items: center;
 }
 
 /* Sources tab: bare mount, the rest of the layout comes from

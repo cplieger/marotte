@@ -37,7 +37,7 @@ func TestWriteRuntime_PrintsTheLiveEnv(t *testing.T) {
 		"`PATH=/a:/b`",
 		"`GOPATH=/g`, `GOBIN=/g/bin`, `LANG=C.UTF-8`",
 		"`/cfg` is the persistent volume",
-		"`/cfg/tools/bin/gh`",
+		"`/cfg/tools/bin/<tool>`",
 		"`HOME=/cfg/home`",
 		"/etc/profile.d/10-marotte-path.sh",
 	} {
@@ -104,7 +104,7 @@ func TestWriteToolsEngine(t *testing.T) {
 
 func TestWriteGitPanel(t *testing.T) {
 	var b strings.Builder
-	writeGitPanel(&b, "/w", map[string]bool{kindGitHub: true})
+	writeGitPanel(&b, "/w", true)
 	out := b.String()
 	for _, want := range []string{
 		"## Git panel",
@@ -115,38 +115,64 @@ func TestWriteGitPanel(t *testing.T) {
 		"--ff-only",
 		"$HOME/.gitconfig",
 		"`/w/<name>`",
-		"`gh auth login` plus `gh auth setup-git`",
-		"states the scopes caveat",
+		"against an `https://` remote is authenticated",
+		`"Check"`,
+		`"Reconnect"`,
+		`"Sign out"`,
+		`"No other owners"`,
+		"open PRs of the account's own repositories and its other owners'",
+		`"Contributions elsewhere"`,
+		`"Undo"`,
+		`"Load more repositories"`,
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("writeGitPanel(github) output missing %q:\n%s", want, out)
+			t.Errorf("writeGitPanel(connected) output missing %q:\n%s", want, out)
 		}
 	}
 }
 
-// The closing paragraph describes the connected forge's login; with none
-// connected it would name a caveat the forge section never emitted.
+// With no forge connected, the closing paragraph points at Sources instead of
+// describing an account that does not exist.
 func TestWriteGitPanel_NoForge(t *testing.T) {
 	var b strings.Builder
-	writeGitPanel(&b, "/w", nil)
+	writeGitPanel(&b, "/w", false)
 	out := b.String()
 	if !strings.Contains(out, `Sources → "Add an account"`) {
 		t.Errorf("writeGitPanel(none) does not point the user at Sources:\n%s", out)
 	}
-	for _, absent := range []string{"gh auth login", "scopes caveat"} {
-		if strings.Contains(out, absent) {
-			t.Errorf("writeGitPanel(none) mentions %q with no forge connected:\n%s", absent, out)
-		}
+	if strings.Contains(out, "the account the Sources tab holds") {
+		t.Errorf("writeGitPanel(none) describes a connected account:\n%s", out)
+	}
+}
+
+// TestStaticGuide_NamesMarottesHelperNotACLILogin pins how the static sections
+// say git is authenticated: connecting in Sources registers Marotte's own
+// helper, and no forge CLI login or tool path is offered.
+func TestStaticGuide_NamesMarottesHelperNotACLILogin(t *testing.T) {
+	var b strings.Builder
+	writeGitPanel(&b, "/w", true)
+	out := b.String()
+	if !strings.Contains(out, "registers marotte's git credential helper") {
+		t.Errorf("writeGitPanel(connected) does not name Marotte's git credential helper:\n%s", out)
+	}
+	if cli := forgeCLIName.FindString(out); cli != "" {
+		t.Errorf("writeGitPanel(connected) names the forge CLI %q:\n%s", cli, out)
+	}
+	if strings.Contains(out, "CLI login") {
+		t.Errorf("writeGitPanel(connected) describes a forge connect as a CLI login:\n%s", out)
 	}
 
 	b.Reset()
-	writeGitPanel(&b, "/w", map[string]bool{kindGitLab: true})
-	out = b.String()
-	if !strings.Contains(out, "are authenticated\n") {
-		t.Errorf("writeGitPanel(gitlab) lost the generic login sentence:\n%s", out)
+	writeGitPanel(&b, "/w", false)
+	if out := b.String(); !strings.Contains(out, "registers marotte's git credential helper") {
+		t.Errorf("writeGitPanel(none) does not name Marotte's git credential helper:\n%s", out)
 	}
-	if strings.Contains(out, "scopes caveat") {
-		t.Errorf("writeGitPanel(gitlab) cites the GitHub-only scopes caveat:\n%s", out)
+
+	fakeEnv(t, map[string]string{"HOME": "/h", "PATH": "/a:/b"})
+	b.Reset()
+	writeRuntime(&b, "/cfg")
+	if cli := forgeCLIName.FindString(b.String()); cli != "" {
+		t.Errorf("writeRuntime names the forge CLI %q:\n%s", cli, b.String())
 	}
 }
 

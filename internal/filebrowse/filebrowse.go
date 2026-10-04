@@ -13,7 +13,7 @@
 // route that takes a path runs it through resolveOrForbid so that the
 // symlink-aware resolvePath is applied uniformly. Operations that
 // touch a DIRECTORY (delete, upload target) additionally consult
-// isProtectedDir; operations with a secondary path argument (rename's
+// protectedDir; operations with a secondary path argument (rename's
 // name, copy/move's dest) re-run the full guard on the new path. The
 // two RECURSIVE routes (the zip download and the content search)
 // resolve their root once and then stay in that mount by
@@ -54,14 +54,15 @@ const (
 
 // Handler serves /api/file/* and /api/files/*.
 type Handler struct {
-	mounts []mount // sorted longest-dir-first (see openMounts)
+	mounts    []mount // sorted longest-dir-first (see openMounts)
+	sensitive Sensitive
 }
 
-// New creates a file handler whose browsable surface is exactly rootDirs.
-// Each granted directory gets its own os.Root (TOCTOU-free). A grant that
-// cannot be opened is skipped with a warning; zero usable mounts is a hard
-// error.
-func New(rootDirs ...string) (*Handler, error) {
+// New creates a file handler whose browsable surface is exactly rootDirs,
+// minus what sensitive blocks inside them. Each granted directory gets its
+// own os.Root (TOCTOU-free). A grant that cannot be opened is skipped with a
+// warning; zero usable mounts is a hard error.
+func New(sensitive Sensitive, rootDirs ...string) (*Handler, error) {
 	mounts, errs := openMounts(rootDirs)
 	for _, err := range errs {
 		slog.Warn("filebrowse: skipping browse root", "error", err)
@@ -69,7 +70,7 @@ func New(rootDirs ...string) (*Handler, error) {
 	if len(mounts) == 0 {
 		return nil, fmt.Errorf("filebrowse: no usable browse roots in %q", rootDirs)
 	}
-	return &Handler{mounts: mounts}, nil
+	return &Handler{mounts: mounts, sensitive: sensitive}, nil
 }
 
 // RegisterRoutes wires all /api/file* and /api/files* routes onto mux.

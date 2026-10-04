@@ -19,11 +19,11 @@
 // about a tool the toolbelt engine installs.
 //
 // It is therefore deliberately NOT a general resolver. A toolbelt-managed
-// binary (npm, gh, glab, tea) lives in the writable directory that leads PATH,
-// so pinning it to an absolute path would name the same file a PATH lookup
-// finds and would confine nothing. Those sites bind their probe's answer
-// instead and say so; closing that leg is custody on the toolbelt bin tree,
-// which is toolbelt's question.
+// binary (npm, which the MCP prewarm runs) lives in the writable directory
+// that leads PATH, so pinning it to an absolute path would name the same file
+// a PATH lookup finds and would confine nothing. That site binds its probe's
+// answer instead and says so; closing that leg is custody on the toolbelt bin
+// tree, which is toolbelt's question.
 //
 // # What it reads
 //

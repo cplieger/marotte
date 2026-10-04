@@ -15,6 +15,8 @@ const IDEMPOTENCY_HEADER = "idempotency-key";
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
 import { signOut, startDeviceFlow, cloneRepo, connectPAT } from "./forge.js";
 
+const GITHUB_START = { kind: "github", host: "github.com", clientId: "", options: {} } as const;
+
 beforeEach(() => {
   resetActionFramework();
   vi.clearAllMocks();
@@ -36,21 +38,22 @@ function networkError(): never {
 // ===========================================================================
 
 describe("forge.signOut retry", () => {
-  it("does NOT show Retry button on network error (destructive DELETE)", async () => {
+  it("does NOT auto-retry on network error (destructive DELETE)", async () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
-    await signOut.dispatch({ forgeId: "gh:user" });
+    const p = signOut.dispatch({ forgeId: "gh:user" });
+    // Give any (wrong) retry schedule room to fire.
+    await vi.advanceTimersByTimeAsync(1000);
+    await p;
 
-    // Only 1 attempt — no auto-retry for destructive DELETE
+    // One attempt: a timed-out DELETE may have succeeded server-side.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(toast.error).toHaveBeenCalledTimes(1);
-    const retryArg = vi.mocked(toast.error).mock.calls[0]![1];
-    // No retry button — a timed-out DELETE may have succeeded server-side
-    expect(retryArg).toBeUndefined();
+    // No toast and so no Retry button: the account row renders the refusal.
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("does NOT show Retry button on HTTP 403", async () => {
+  it("does NOT auto-retry or toast on HTTP 403", async () => {
     const fetchSpy = vi.fn<typeof fetch>(() =>
       Promise.resolve(new Response('{"error":"forbidden"}', { status: 403 })),
     );
@@ -58,9 +61,8 @@ describe("forge.signOut retry", () => {
 
     await signOut.dispatch({ forgeId: "gh:user" });
 
-    expect(toast.error).toHaveBeenCalledTimes(1);
-    const retryArg = vi.mocked(toast.error).mock.calls[0]![1];
-    expect(retryArg).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 
@@ -129,7 +131,12 @@ describe("forge.connectPAT retry", () => {
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const p = connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_xxx" });
+    const p = connectPAT.dispatch({
+      kind: "github",
+      host: "github.com",
+      token: "ghp_xxx",
+      options: {},
+    });
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     const result = await p;
@@ -150,7 +157,12 @@ describe("forge.connectPAT retry", () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
-    const p = connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_xxx" });
+    const p = connectPAT.dispatch({
+      kind: "github",
+      host: "github.com",
+      token: "ghp_xxx",
+      options: {},
+    });
     await vi.advanceTimersByTimeAsync(300);
     await vi.advanceTimersByTimeAsync(600);
     await p;
@@ -168,7 +180,7 @@ describe("forge.startDeviceFlow retry", () => {
     const fetchSpy = vi.fn<typeof fetch>(networkError);
     vi.stubGlobal("fetch", fetchSpy);
 
-    const result = await startDeviceFlow.dispatch(undefined);
+    const result = await startDeviceFlow.dispatch(GITHUB_START);
 
     // Only 1 attempt — no retry config
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -187,12 +199,12 @@ describe("forge.startDeviceFlow retry", () => {
       if (attempt === 1) {
         return Promise.reject(new TypeError("Failed to fetch"));
       }
-      return Promise.resolve(new Response('{"device_code":"abc"}', { status: 200 }));
+      return Promise.resolve(new Response('{"grant_id":"abc"}', { status: 200 }));
     });
     vi.stubGlobal("fetch", fetchSpy);
 
     const onError = vi.fn();
-    await startDeviceFlow.dispatch(undefined, { onError });
+    await startDeviceFlow.dispatch(GITHUB_START, { onError });
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0]![0]).toMatchObject({ code: "network" });

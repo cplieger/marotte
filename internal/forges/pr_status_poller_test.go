@@ -4,32 +4,57 @@ package forges
 //
 // The two gates are the decision's own cost claim ("costs zero with nothing
 // pending"), so they are asserted as ABSENCE OF WORK rather than as absence of a
-// notification: with no subscribers the source is never consulted at all, and with
+// notification: with the gate closed the source is never consulted at all, and with
 // no open PR the per-PR pass never runs.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
+	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/marotte/internal/marotte"
 )
 
-// fakeSource counts how often it was asked, which is what makes "no forge work"
-// assertable.
+// testConn is the one connection the poller's fakes answer for.
+var testConn = PRConnection{ID: "github:github.com", Account: "bob", WebBase: "https://github.com"}
+
+// rowOf is pr as the list row a source answers.
+func rowOf(pr *WatchedPR) PR {
+	return PR{RepoID: pr.RepoID, Repo: pr.Repo, Title: pr.Title, Number: pr.Number, Action: PRAction{Checks: pr.Check}}
+}
+
+// authoredRead is conn's read holding one authored page of prs, every one of
+// them in the cplieger/marotte clone the fakes track.
+func authoredRead(conn PRConnection, page ScopePage, prs []WatchedPR) ConnectionRead {
+	page.Scope = authoredScope
+	for i := range prs {
+		page.Rows = append(page.Rows, rowOf(&prs[i]))
+	}
+	clone := CloneRepo{Dir: "marotte", ForgeID: conn.ID, RepoID: repoIDOf("cplieger/marotte")}
+	return ConnectionRead{Conn: conn, Clones: []CloneRepo{clone}, Pages: []ScopePage{page}}
+}
+
+// fakeSource answers one complete page of prs (or err) for testConn and counts how
+// often it was asked, which is what makes "no forge work" assertable.
 type fakeSource struct {
 	err   error
 	prs   []WatchedPR
 	calls int
 }
 
-func (f *fakeSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
+func (f *fakeSource) Read(context.Context, bool, func(PRConnection, Scope) forgeapi.Cursor) []ConnectionRead {
 	f.calls++
-	return f.prs, f.err
+	return []ConnectionRead{authoredRead(testConn, ScopePage{Err: f.err}, f.prs)}
 }
 
 type sentPush struct {
@@ -38,24 +63,30 @@ type sentPush struct {
 	subject marotte.PushSubject
 }
 
-// fakeNotifier records every Send and reports a configurable subscriber state.
+// fakeNotifier records every Send.
 type fakeNotifier struct {
-	sent        []sentPush
-	subscribers bool
-	asked       int
-}
-
-func (f *fakeNotifier) HasSubscribers() bool {
-	f.asked++
-	return f.subscribers
+	sent []sentPush
 }
 
 func (f *fakeNotifier) Send(_ context.Context, _, body string, kind marotte.PushKind, subject marotte.PushSubject) {
 	f.sent = append(f.sent, sentPush{body: body, kind: kind, subject: subject})
 }
 
-func newTestPoller(src PRSource, n PRNotifier) *PRStatusPoller {
-	p := NewPRStatusPoller(src, n)
+// fakeGate is the poller's gate with a switch per arm, counting how often it was
+// asked.
+type fakeGate struct {
+	push    bool
+	present bool
+	asked   int
+}
+
+func (g *fakeGate) Open() Gate {
+	g.asked++
+	return Gate{Present: g.present, Push: g.push}
+}
+
+func newTestPoller(src PRSource, n PRNotifier, g *fakeGate) *PRStatusPoller {
+	p := NewPRStatusPoller(src, n, g.Open)
 	// Only Run reads these; sweep is driven directly.
 	p.tick = time.Millisecond
 	p.discovery = time.Millisecond
@@ -65,6 +96,7 @@ func newTestPoller(src PRSource, n PRNotifier) *PRStatusPoller {
 func pr(number int, check string) WatchedPR {
 	return WatchedPR{
 		ForgeID: "github:github.com",
+		RepoID:  repoIDOf("cplieger/marotte"),
 		Repo:    "cplieger/marotte",
 		Number:  number,
 		Title:   "A change",
@@ -72,34 +104,41 @@ func pr(number int, check string) WatchedPR {
 	}
 }
 
-// TestPoller_DoesNoForgeWorkWithoutSubscribers is gate 1, and the assertion is on
-// the SOURCE, not on the notifications: each forge call is a subprocess with a 60s
-// timeout, so a tick that listed first and checked subscribers second would spend
-// them on a box nobody subscribed from.
-func TestPoller_DoesNoForgeWorkWithoutSubscribers(t *testing.T) {
+// checkOf is the verdict the poller holds for number, "" when it tracks none.
+func checkOf(p *PRStatusPoller, number int) string {
+	w := pr(number, "")
+	return p.seen[marotte.PRSubject(w.ForgeID, w.RepoID, w.Number).Key].check
+}
+
+// TestPoller_DoesNoForgeWorkWithTheGateClosed is gate 1, and the assertion is on
+// the SOURCE, not on the notifications: each source call spends forge requests from
+// the user's shared quota, so a tick that listed first and consulted the gate second
+// would spend them while nobody is looking and nobody asked to be told.
+func TestPoller_DoesNoForgeWorkWithTheGateClosed(t *testing.T) {
 	src := &fakeSource{prs: []WatchedPR{pr(1, checkFailing)}}
-	n := &fakeNotifier{subscribers: false}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	g := &fakeGate{push: false}
+	p := newTestPoller(src, n, g)
 
 	p.sweep(t.Context())
 	p.sweep(t.Context())
 
 	if src.calls != 0 {
-		t.Errorf("the source was consulted %d times with no subscribers; the tick must cost nothing", src.calls)
+		t.Errorf("the source was consulted %d times with the gate closed; the tick must cost nothing", src.calls)
 	}
 	if len(n.sent) != 0 {
-		t.Errorf("pushed %d notifications with no subscribers", len(n.sent))
+		t.Errorf("pushed %d notifications with the gate closed", len(n.sent))
 	}
-	if n.asked == 0 {
-		t.Error("the subscriber gate was never consulted")
+	if g.asked != 2 {
+		t.Errorf("the gate was consulted %d times over two sweeps, want 2", g.asked)
 	}
 }
 
 // TestPoller_DoesNoPerPRWorkWithNoOpenPR is gate 2: one source call, then nothing.
 func TestPoller_DoesNoPerPRWorkWithNoOpenPR(t *testing.T) {
 	src := &fakeSource{prs: nil}
-	n := &fakeNotifier{subscribers: true}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	p := newTestPoller(src, n, &fakeGate{push: true})
 
 	p.sweep(t.Context())
 
@@ -119,15 +158,15 @@ func TestPoller_DoesNoPerPRWorkWithNoOpenPR(t *testing.T) {
 // down would arrive as a fresh alert hours late.
 func TestPoller_FirstSightingSeedsSilently(t *testing.T) {
 	src := &fakeSource{prs: []WatchedPR{pr(7, checkPassing)}}
-	n := &fakeNotifier{subscribers: true}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	p := newTestPoller(src, n, &fakeGate{push: true})
 
 	p.sweep(t.Context())
 
 	if len(n.sent) != 0 {
 		t.Errorf("a first sighting pushed %d notifications: %+v", len(n.sent), n.sent)
 	}
-	if got := p.seen[prSubjectKey(pr(7, ""))]; got != checkPassing {
+	if got := checkOf(p, 7); got != checkPassing {
 		t.Errorf("state after seeding = %q, want %q", got, checkPassing)
 	}
 }
@@ -148,8 +187,8 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := &fakeSource{prs: []WatchedPR{pr(42, tc.from)}}
-			n := &fakeNotifier{subscribers: true}
-			p := newTestPoller(src, n)
+			n := &fakeNotifier{}
+			p := newTestPoller(src, n, &fakeGate{push: true})
 			p.sweep(t.Context()) // seed
 
 			src.prs = []WatchedPR{pr(42, tc.to)}
@@ -173,15 +212,15 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 	}
 }
 
-// TestPoller_DoesNotPushIntoPendingOrNoChecks: a run STARTING is not news (the
-// user caused it seconds earlier by pushing) and "no checks at all" is not a
-// verdict, so neither interrupts.
-func TestPoller_DoesNotPushIntoPendingOrNoChecks(t *testing.T) {
-	for _, to := range []string{checkPending, ""} {
+// TestPoller_DoesNotPushIntoPendingOrNoVerdict: a run STARTING is not news (the
+// user caused it seconds earlier by pushing) and unknown or neutral is not a
+// verdict, so none of them interrupts.
+func TestPoller_DoesNotPushIntoPendingOrNoVerdict(t *testing.T) {
+	for _, to := range []string{checkPending, forgeapi.CheckUnknown.String(), forgeapi.CheckNeutral.String()} {
 		t.Run("to_"+to, func(t *testing.T) {
 			src := &fakeSource{prs: []WatchedPR{pr(3, checkPassing)}}
-			n := &fakeNotifier{subscribers: true}
-			p := newTestPoller(src, n)
+			n := &fakeNotifier{}
+			p := newTestPoller(src, n, &fakeGate{push: true})
 			p.sweep(t.Context())
 
 			src.prs = []WatchedPR{pr(3, to)}
@@ -192,7 +231,7 @@ func TestPoller_DoesNotPushIntoPendingOrNoChecks(t *testing.T) {
 			}
 			// The state still MOVES, so the next flip back to passing is a change
 			// rather than a repeat that gets swallowed.
-			if got := p.seen[prSubjectKey(pr(3, ""))]; got != to {
+			if got := checkOf(p, 3); got != to {
 				t.Errorf("state = %q, want %q", got, to)
 			}
 		})
@@ -203,8 +242,8 @@ func TestPoller_DoesNotPushIntoPendingOrNoChecks(t *testing.T) {
 // ticks and zero notifications.
 func TestPoller_UnchangedVerdictIsSilent(t *testing.T) {
 	src := &fakeSource{prs: []WatchedPR{pr(9, checkPending)}}
-	n := &fakeNotifier{subscribers: true}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
 	src.prs = []WatchedPR{pr(9, checkFailing)}
 	p.sweep(t.Context())
@@ -220,8 +259,8 @@ func TestPoller_UnchangedVerdictIsSilent(t *testing.T) {
 // flipping inside one window must occupy their own tray slots.
 func TestPoller_SubjectIsPerPR(t *testing.T) {
 	src := &fakeSource{prs: []WatchedPR{pr(1, checkPending), pr(2, checkPending)}}
-	n := &fakeNotifier{subscribers: true}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
 
 	src.prs = []WatchedPR{pr(1, checkPassing), pr(2, checkFailing)}
@@ -244,12 +283,54 @@ func TestPoller_SubjectIsPerPR(t *testing.T) {
 	}
 }
 
+// TestSweep_SubjectCarriesTheCanonicalRepoID: the subject is the repository's id,
+// the one the PRs tab's rows carry, so the notice's click lands on its row; the
+// display path names the repository in the body only, and a change to its
+// spelling between sweeps is the same subject.
+func TestSweep_SubjectCarriesTheCanonicalRepoID(t *testing.T) {
+	const wantKey = "pr:github:github.com:v1.63706c69656765722f6d61726f747465#42"
+	cases := []struct {
+		name       string
+		seedPath   string
+		flipPath   string
+		wantInBody string
+	}{
+		{name: "DisplayPathDiffersFromTheID", seedPath: "CPlieger/Marotte", flipPath: "CPlieger/Marotte", wantInBody: "CPlieger/Marotte #42"},
+		{name: "DisplayPathRespeltBetweenSweeps", seedPath: "cplieger/marotte", flipPath: "CPlieger/Marotte", wantInBody: "CPlieger/Marotte #42"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seed := pr(42, checkPending)
+			seed.Repo = tc.seedPath
+			src := &fakeSource{prs: []WatchedPR{seed}}
+			n := &fakeNotifier{}
+			p := newTestPoller(src, n, &fakeGate{push: true})
+			p.sweep(t.Context())
+
+			flip := pr(42, checkPassing)
+			flip.Repo = tc.flipPath
+			src.prs = []WatchedPR{flip}
+			p.sweep(t.Context())
+
+			if len(n.sent) != 1 {
+				t.Fatalf("sweep(seed %q, flip %q) sent %d notifications, want 1", tc.seedPath, tc.flipPath, len(n.sent))
+			}
+			if got := n.sent[0].subject.Key; got != wantKey {
+				t.Errorf("subject key = %q, want %q", got, wantKey)
+			}
+			if !strings.Contains(n.sent[0].body, tc.wantInBody) {
+				t.Errorf("body %q does not name %q", n.sent[0].body, tc.wantInBody)
+			}
+		})
+	}
+}
+
 // TestPoller_ForgetsAClosedPR keeps the state bounded by OPEN pull requests rather
 // than by every PR the process ever saw.
 func TestPoller_ForgetsAClosedPR(t *testing.T) {
 	src := &fakeSource{prs: []WatchedPR{pr(1, checkPassing), pr(2, checkPassing)}}
-	n := &fakeNotifier{subscribers: true}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
 	if len(p.seen) != 2 {
 		t.Fatalf("state entries = %d, want 2", len(p.seen))
@@ -261,25 +342,26 @@ func TestPoller_ForgetsAClosedPR(t *testing.T) {
 	}
 }
 
-// TestPoller_UnsubscribingResetsTheState: a device subscribing later must not be
-// told about every flip that happened while nobody could receive one.
-func TestPoller_UnsubscribingResetsTheState(t *testing.T) {
+// TestPoller_ClosedGateResetsTheState: a gate that opens later must not announce
+// every flip that happened while it was closed.
+func TestPoller_ClosedGateResetsTheState(t *testing.T) {
 	src := &fakeSource{prs: []WatchedPR{pr(5, checkPending)}}
-	n := &fakeNotifier{subscribers: true}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	g := &fakeGate{push: true}
+	p := newTestPoller(src, n, g)
 	p.sweep(t.Context())
 
-	n.subscribers = false
+	g.push = false
 	p.sweep(t.Context())
-	if len(p.seen) != 0 {
-		t.Errorf("state survived losing every subscriber: %+v", p.seen)
+	if len(p.seen) != 0 || len(p.walks) != 0 {
+		t.Errorf("state survived a closed gate: %+v, walks %+v", p.seen, p.walks)
 	}
 
-	n.subscribers = true
+	g.push = true
 	src.prs = []WatchedPR{pr(5, checkFailing)}
 	p.sweep(t.Context())
 	if len(n.sent) != 0 {
-		t.Errorf("re-subscribing announced a flip that happened while nobody listened: %+v", n.sent)
+		t.Errorf("reopening the gate announced a flip that happened while it was closed: %+v", n.sent)
 	}
 }
 
@@ -287,8 +369,8 @@ func TestPoller_UnsubscribingResetsTheState(t *testing.T) {
 // logged out must not silence the loop or lose the state it already holds.
 func TestPoller_SourceFailureIsSurvivable(t *testing.T) {
 	src := &fakeSource{prs: []WatchedPR{pr(1, checkPending)}}
-	n := &fakeNotifier{subscribers: true}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	p := newTestPoller(src, n, &fakeGate{push: true})
 	p.sweep(t.Context())
 
 	src.err = errors.New("gh: rate limited")
@@ -310,8 +392,8 @@ func TestPoller_SourceFailureIsSurvivable(t *testing.T) {
 // nothing else, with no goroutine left running.
 func TestPoller_RunStopsOnContextCancel(t *testing.T) {
 	src := &fakeSource{}
-	n := &fakeNotifier{subscribers: false}
-	p := newTestPoller(src, n)
+	n := &fakeNotifier{}
+	p := newTestPoller(src, n, &fakeGate{push: false})
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
@@ -331,11 +413,11 @@ func TestPoller_RunStopsOnContextCancel(t *testing.T) {
 //
 // The rate selector is `seen`, so this asserts the pairing rather than a wall clock:
 // a sweep that found PRs leaves the active rate armed, and one that found none (or
-// lost every subscriber) leaves the discovery rate armed.
+// met a closed gate) leaves the discovery rate armed.
 func TestPoller_TwoRates(t *testing.T) {
 	src := &fakeSource{}
-	n := &fakeNotifier{subscribers: true}
-	p := NewPRStatusPoller(src, n)
+	g := &fakeGate{push: true}
+	p := NewPRStatusPoller(src, &fakeNotifier{}, g.Open)
 
 	if got := p.nextDelay(); got != PRDiscoveryInterval {
 		t.Errorf("a fresh poller arms %v, want the discovery interval %v", got, PRDiscoveryInterval)
@@ -356,10 +438,10 @@ func TestPoller_TwoRates(t *testing.T) {
 
 	src.prs = []WatchedPR{pr(1, checkPending)}
 	p.sweep(t.Context())
-	n.subscribers = false
+	g.push = false
 	p.sweep(t.Context())
 	if got := p.nextDelay(); got != PRDiscoveryInterval {
-		t.Errorf("with every subscriber gone the poller arms %v, want discovery %v",
+		t.Errorf("with the gate closed the poller arms %v, want discovery %v",
 			got, PRDiscoveryInterval)
 	}
 
@@ -371,8 +453,8 @@ func TestPoller_TwoRates(t *testing.T) {
 }
 
 // slowSource records when each listing started and finished, and takes `delay` to
-// answer. The delay IS the fixture: it models several slow repos, each ListPRs
-// bounded at 60s, which is the case that turned the loop hot.
+// answer. The delay IS the fixture: it models a slow forge, which is the case that
+// turned the loop hot.
 type slowSource struct {
 	delay  time.Duration
 	mu     sync.Mutex
@@ -380,7 +462,7 @@ type slowSource struct {
 	ends   []time.Time
 }
 
-func (s *slowSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
+func (s *slowSource) Read(context.Context, bool, func(PRConnection, Scope) forgeapi.Cursor) []ConnectionRead {
 	s.mu.Lock()
 	s.starts = append(s.starts, time.Now())
 	s.mu.Unlock()
@@ -388,7 +470,7 @@ func (s *slowSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
 	s.mu.Lock()
 	s.ends = append(s.ends, time.Now())
 	s.mu.Unlock()
-	return []WatchedPR{pr(1, checkPending)}, nil
+	return []ConnectionRead{authoredRead(testConn, ScopePage{}, []WatchedPR{pr(1, checkPending)})}
 }
 
 // TestPoller_SchedulesFromCompletion is the anti-hot-loop rule. A ticker retains one
@@ -414,8 +496,7 @@ func TestPoller_SchedulesFromCompletion(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const interval = 40 * time.Millisecond
 		src := &slowSource{delay: 2 * interval}
-		n := &fakeNotifier{subscribers: true}
-		p := NewPRStatusPoller(src, n)
+		p := NewPRStatusPoller(src, &fakeNotifier{}, (&fakeGate{push: true}).Open)
 		p.tick = interval
 		p.discovery = interval
 
@@ -452,12 +533,12 @@ func TestPoller_SchedulesFromCompletion(t *testing.T) {
 }
 
 // TestPoller_RunDoesNotSweepOnEntry: the first sweep only seeds, so sweeping at
-// boot would spend a subprocess per repo during startup to learn what the next
+// boot would spend a call per connection during startup to learn what the next
 // sweep learns for free.
 func TestPoller_RunDoesNotSweepOnEntry(t *testing.T) {
 	src := &fakeSource{}
-	n := &fakeNotifier{subscribers: true}
-	p := NewPRStatusPoller(src, n)
+	g := &fakeGate{push: true}
+	p := NewPRStatusPoller(src, &fakeNotifier{}, g.Open)
 	// No sweep will fire inside this test, at either rate.
 	p.tick = time.Hour
 	p.discovery = time.Hour
@@ -469,92 +550,178 @@ func TestPoller_RunDoesNotSweepOnEntry(t *testing.T) {
 	}()
 	cancel()
 	<-done
-	if n.asked != 0 || src.calls != 0 {
-		t.Errorf("Run swept on entry (gate asked %d, source called %d)", n.asked, src.calls)
+	if g.asked != 0 || src.calls != 0 {
+		t.Errorf("Run swept on entry (gate asked %d, source called %d)", g.asked, src.calls)
 	}
 }
 
 // TestPRStatusBody covers the wording without a poller: the notice has to name the
 // repo, the number and the verdict, because a tray banner is all the reader gets.
 func TestPRStatusBody(t *testing.T) {
-	got := prStatusBody(WatchedPR{Repo: "cplieger/marotte", Number: 12, Title: "Fix the thing", Check: checkPassing})
+	got := prStatusBody(&WatchedPR{Repo: "cplieger/marotte", Number: 12, Title: "Fix the thing", Check: checkPassing})
 	for _, want := range []string{"cplieger/marotte", "#12", "checks passed", "Fix the thing"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("body %q missing %q", got, want)
 		}
 	}
 	// A PR with no title still says what happened.
-	bare := prStatusBody(WatchedPR{Repo: "a/b", Number: 1, Check: checkFailing})
+	bare := prStatusBody(&WatchedPR{Repo: "a/b", Number: 1, Check: checkFailing})
 	if !strings.Contains(bare, "checks failed") || strings.HasSuffix(bare, ": ") {
 		t.Errorf("titleless body = %q", bare)
 	}
 }
 
+// scopeRun connects id by token over wire, then sweeps twice push-only, the
+// wire answering each path first names and then each path second names, and
+// answers what was sent and the verdicts the poller held for the two pull
+// requests the bodies carry, #4 and #5.
+func scopeRun(t *testing.T, wire *pathWire, id, webBase string, first, second map[string]string) (sent []sentPush, held map[int]string) {
+	t.Helper()
+	h := newConnectHarness(t, wire)
+	if rec := h.do(t, http.MethodPost, patPath(id), `{"token":"scope-secret"}`); rec.Code != http.StatusOK {
+		t.Fatalf("Setup: POST %s = %d %s", patPath(id), rec.Code, rec.Body)
+	}
+	src := NewManagerPRSource(h.m, fixedOrigins(RepoOrigin{Dir: "app", WebBase: webBase, Slug: "alice/app"}))
+	n := &fakeNotifier{}
+	p := NewPRStatusPoller(src, n, (&fakeGate{push: true}).Open)
+	maps.Copy(wire.bodies, first)
+	p.sweep(t.Context())
+	maps.Copy(wire.bodies, second)
+	p.sweep(t.Context())
+	held = map[int]string{}
+	for _, tr := range p.seen {
+		held[len(held)] = tr.check
+	}
+	if len(p.seen) != 2 {
+		t.Fatalf("the poller tracked %d pull requests, want #4 and #5 (the forge saw %q)", len(p.seen), wire.requests())
+	}
+	return n.sent, held
+}
+
+// sortedBodies is each notice's body, sorted.
+func sortedBodies(sent []sentPush) []string {
+	out := make([]string, 0, len(sent))
+	for _, s := range sent {
+		out = append(out, s.body)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // TestProviderCheckVerdicts_MatchTheStatedScope ties the poller's documented
-// provider scope to the provider code that decides it.
+// scope to the library clients that decide it.
 //
-// The verdict comes from the LIST call only — no per-PR status fetch, no
-// compensating layer — so the feature is exactly as complete as each provider's list
-// response, and the settings copy promises exactly that. This is what stops the
-// promise and the providers drifting apart silently: a provider that gains or loses
+// The verdict is GitHub's ListMyPRs row, and on GitLab and the Gitea family a
+// ReadPR of each tracked row, so every family whose CI reports a result notifies
+// on both edges, which is what the settings copy promises. A family that loses
 // an edge fails here, next to the sentence that has to be rewritten.
 func TestProviderCheckVerdicts_MatchTheStatedScope(t *testing.T) {
-	t.Run("GitHubNotifiesBothEdges", func(t *testing.T) {
-		green, _, _ := summarizeGHRollup([]ghRollupEntry{
-			{Status: "COMPLETED", Conclusion: "SUCCESS"},
-		})
-		red, _, _ := summarizeGHRollup([]ghRollupEntry{
-			{Status: "COMPLETED", Conclusion: "FAILURE"},
-		})
-		if !isSettledCheck(green) || !isSettledCheck(red) {
-			t.Errorf("github verdicts (%q, %q) are not both settled; the copy promises both edges",
-				green, red)
+	want := []string{"alice/app #4 checks failed: PR 4", "alice/app #5 checks passed: PR 5"}
+	t.Run("GitHubNotifiesOnBothEdges", func(t *testing.T) {
+		row := func(n int, state string) string {
+			return fmt.Sprintf(`{"__typename":"PullRequest","number":%d,"title":"PR %d",`+
+				`"url":"https://github.com/alice/app/pull/%d","state":"OPEN","isDraft":false,`+
+				`"author":{"login":"alice"},"headRefName":"feat%d","baseRefName":"main",`+
+				`"repository":{"nameWithOwner":"alice/app"},"commits":{"nodes":[{"commit":{"oid":"abc1234",`+
+				`"statusCheckRollup":{"state":"%s","contexts":{"totalCount":1,"checkRunCountsByState":[],`+
+				`"statusContextCountsByState":[{"count":1,"state":"%s"}],`+
+				`"pageInfo":{"hasNextPage":false,"endCursor":"MQ"},"nodes":[]}}}}]}}`, n, n, n, n, state, state)
 		}
-		if green == red {
-			t.Errorf("github folds success and failure to the same verdict %q", green)
+		search := func(rows ...string) map[string]string {
+			return map[string]string{"/graphql": `{"data":{"rateLimit":{"cost":1,"limit":5000,"remaining":4990,` +
+				`"resetAt":"2026-01-02T00:00:00Z"},"search":{"issueCount":2,"pageInfo":{"hasNextPage":false,` +
+				`"endCursor":null},"nodes":[` + strings.Join(rows, ",") + `]}}}`}
 		}
-	})
-
-	t.Run("GitLabNotifiesAFailureAndNeverARecovery", func(t *testing.T) {
-		// Every value GitLab documents for detailed_merge_status that could
-		// plausibly be read as a CI statement, plus the one that tempts a green
-		// chip. `mergeable` must NOT become passing: a project that does not
-		// require pipelines is mergeable with a red pipeline.
-		vocabulary := []string{
-			"mergeable", "ci_still_running", "ci_must_pass", "checking", "unchecked",
-			"preparing", "draft_status", "conflict", "need_rebase", "not_approved",
-			"discussions_not_resolved", "broken_status", "",
-		}
-		sawFailing := false
-		for _, v := range vocabulary {
-			got := mapGLabCheckStatus(v)
-			if got == checkPassing {
-				t.Errorf("mapGLabCheckStatus(%q) = %q: GitLab cannot state a pass, so a "+
-					"recovery notification would be a guess", v, got)
-			}
-			if got == checkFailing {
-				sawFailing = true
-			}
-		}
-		if !sawFailing {
-			t.Error("no GitLab value maps to failing, so GitLab notifies on nothing at all " +
-				"and the copy overstates it")
+		wire := &pathWire{bodies: map[string]string{"/user": `{"login":"alice"}`}}
+		sent, _ := scopeRun(t, wire, "github:github.com", "https://github.com",
+			search(row(4, "PENDING"), row(5, "PENDING")), search(row(4, "FAILURE"), row(5, "SUCCESS")))
+		if got := sortedBodies(sent); !slices.Equal(got, want) {
+			t.Errorf("GitHub notices = %q, want %q: both edges arrive on the row", got, want)
 		}
 	})
-
-	t.Run("GiteaNotifiesNothing", func(t *testing.T) {
-		const payload = `[{"number":4,"title":"Ready","state":"open","mergeable":true,
-		  "head":{"ref":"feat","sha":"aaaaaaa1111"},"base":{"ref":"main"}}]`
-		prs, err := parsePRs([]byte(payload))
-		if err != nil {
-			t.Fatalf("parsePRs: %v", err)
+	t.Run("GitLabNotifiesOnBothEdges", func(t *testing.T) {
+		row := func(n int) string {
+			return fmt.Sprintf(`{"iid":%d,"state":"opened","title":"PR %d","author":{"username":"alice"},`+
+				`"web_url":"https://gitlab.com/alice/app/-/merge_requests/%d","draft":false,`+
+				`"source_branch":"feat%d","target_branch":"main","sha":"aaaaaaa%d","merge_status":"can_be_merged",`+
+				`"detailed_merge_status":"mergeable","references":{"full":"alice/app!%d"}}`, n, n, n, n, n, n)
 		}
-		if len(prs) != 1 {
-			t.Fatalf("parsePRs returned %d PRs, want 1", len(prs))
+		read := func(n int, pipeline string) string {
+			return fmt.Sprintf(`{"data":{"project":{"fullPath":"alice/app",`+
+				`"userPermissions":{"pushCode":true,"readMergeRequest":true},"mergeRequest":{"iid":"%d",`+
+				`"title":"PR %d","description":"","author":{"username":"alice"},"sourceBranch":"feat%d",`+
+				`"targetBranch":"main","webUrl":"https://gitlab.com/alice/app/-/merge_requests/%d",`+
+				`"diffHeadSha":"aaaaaaa%d","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z",`+
+				`"state":"opened","draft":false,"mergedAt":null,"mergeable":true,"detailedMergeStatus":"MERGEABLE",`+
+				`"autoMergeEnabled":false,"labels":{"pageInfo":{"hasNextPage":false},"nodes":[]},`+
+				`"headPipeline":{"status":"%s"}}},"queryComplexity":{"score":10,"limit":200}}}`, n, n, n, n, n, pipeline)
 		}
-		if isSettledCheck(prs[0].CheckStatus) {
-			t.Errorf("gitea reported a settled verdict %q; the copy says Gitea notifies nothing",
-				prs[0].CheckStatus)
+		bodies := func(four, five string) map[string]string {
+			return map[string]string{
+				"/api/v4/merge_requests": "[" + row(4) + "," + row(5) + "]",
+				"/api/graphql#4":         read(4, four),
+				"/api/graphql#5":         read(5, five),
+			}
+		}
+		// The PRRead document addresses one merge request by its variables, so the
+		// wire answers it by the iid it names.
+		wire := &pathWire{bodies: map[string]string{"/api/v4/user": `{"id":1,"username":"alice"}`}, key: func(r *http.Request) string {
+			if r.URL.Path != "/api/graphql" {
+				return r.URL.Path
+			}
+			var doc struct {
+				Variables struct {
+					IID string `json:"iid"`
+				} `json:"variables"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+				return r.URL.Path
+			}
+			return r.URL.Path + "#" + doc.Variables.IID
+		}}
+		sent, held := scopeRun(t, wire, "gitlab:gitlab.com", "https://gitlab.com",
+			bodies("RUNNING", "PENDING"), bodies("FAILED", "SUCCESS"))
+		if got := sortedBodies(sent); !slices.Equal(got, want) {
+			t.Errorf("GitLab notices = %q and verdicts %v, want %q: each tracked row's read carries its head pipeline (the forge saw %q)",
+				got, held, want, wire.requests())
+		}
+	})
+	t.Run("GiteaNotifiesOnBothEdges", func(t *testing.T) {
+		row := func(n int) string {
+			return fmt.Sprintf(`{"id":%d,"number":%d,"state":"open","title":"PR %d","user":{"login":"alice"},`+
+				`"html_url":"https://gitea.example/alice/app/pulls/%d","created_at":"2026-01-01T00:00:00Z",`+
+				`"updated_at":"2026-01-02T00:00:00Z","labels":[],"pull_request":{"draft":false,"merged":false},`+
+				`"repository":{"id":1,"name":"app","owner":"alice","full_name":"alice/app"}}`, n, n, n, n)
+		}
+		pull := func(n int) string {
+			repo := `{"id":1,"name":"app","full_name":"alice/app","owner":{"login":"alice"}}`
+			return fmt.Sprintf(`{"id":%d,"number":%d,"state":"open","title":"PR %d","user":{"login":"alice"},`+
+				`"html_url":"https://gitea.example/alice/app/pulls/%d","created_at":"2026-01-01T00:00:00Z",`+
+				`"updated_at":"2026-01-02T00:00:00Z","labels":[],"draft":false,"merged":false,"mergeable":true,`+
+				`"head":{"ref":"feat%d","sha":"head%d","repo":%s},"base":{"ref":"main","repo":%s}}`, n, n, n, n, n, n, repo, repo)
+		}
+		status := func(n int, state string) string {
+			return fmt.Sprintf(`{"sha":"head%d","state":"%s","total_count":1,`+
+				`"statuses":[{"context":"ci","state":"%s","status":"%s"}]}`, n, state, state, state)
+		}
+		bodies := func(four, five string) map[string]string {
+			return map[string]string{
+				"/api/v1/repos/issues/search":                  "[" + row(4) + "," + row(5) + "]",
+				"/api/v1/repos/alice/app/pulls/4":              pull(4),
+				"/api/v1/repos/alice/app/pulls/5":              pull(5),
+				"/api/v1/repos/alice/app/commits/head4/status": status(4, four),
+				"/api/v1/repos/alice/app/commits/head5/status": status(5, five),
+			}
+		}
+		wire := &pathWire{bodies: map[string]string{
+			"/api/v1/user":         `{"id":1,"login":"alice"}`,
+			"/api/v1/settings/api": `{"max_response_items":50}`,
+		}}
+		sent, held := scopeRun(t, wire, "gitea:gitea.example", "https://gitea.example",
+			bodies("pending", "pending"), bodies("failure", "success"))
+		if got := sortedBodies(sent); !slices.Equal(got, want) {
+			t.Errorf("Gitea notices = %q and verdicts %v, want %q: each tracked row's read folds its head's statuses (the forge saw %q)",
+				got, held, want, wire.requests())
 		}
 	})
 }

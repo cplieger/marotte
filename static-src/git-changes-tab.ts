@@ -1,13 +1,8 @@
 // ---------------------------------------------------------------------------
-// Git Changes tab: per-repo collapsible sections rendered into
-// #git-changes-mount. Each section shows branch + ahead/behind, the
-// list of file changes (staged + unstaged interleaved with their
-// status letters), an action bar (pull / stash / pop / stage all /
-// discard all), and a commit message + Commit button.
-//
-// Single fetch of /api/git/status-all produces the data; the section
-// rendering is purely data-driven so re-renders are cheap. Re-render
-// triggers: filter input, after a successful action, on tab activate.
+// Git Changes tab: one collapsible section per repo in #git-changes-mount,
+// painted from one /api/git/status-all read: branch and ahead/behind, the
+// sync actions, the staged and unstaged file groups, and the commit box.
+// Repainted on filter input, after every press, and on tab activate.
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
@@ -43,25 +38,15 @@ import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { escAttr as escapeHTML } from "./strings.js";
-import { renderRecentCommits, renderCommitArea, type CommitDeps } from "./git-changes-commit.js";
-
-// --- Helpers for withAsyncFeedback ---
-
-/** Throw if an action dispatch returned null or undefined (failure already toasted). */
-function assertOk<T>(result: T): asserts result is NonNullable<T> {
-  if (result === null || result === undefined) {
-    throw new Error("action failed");
-  }
-}
-
-/** Sentinel thrown when user cancels a confirm dialog. withAsyncFeedback
- *  treats it like any error (shows ✗); no toast fires because no action
- *  was dispatched. */
-class CancelledError extends Error {
-  constructor() {
-    super("cancelled");
-  }
-}
+import {
+  renderRecentCommits,
+  renderCommitArea,
+  refusalOf,
+  type CommitDeps,
+  type PressOpts,
+  type PressRun,
+  type Refusal,
+} from "./git-changes-commit.js";
 
 // --- Wire types ---
 
@@ -115,8 +100,18 @@ const RECENTLY_PUSHED_TTL_MS = 60_000;
 // Bug 1: Preserve commit message textarea values across re-renders.
 const commitMessages = new Map<string, string>();
 
-// Bug 2: Module-level discard-all guard to prevent concurrent discards.
-const discardPendingRepos = new Set<string>();
+/** The press each repository is running. Its git actions share one queue (the
+ *  `git:<repo>` scope), so the section's other controls wait while it runs, and
+ *  a repaint shows the press on the control that started it. */
+const repoPresses = new Map<string, { key: string; done: Promise<void> }>();
+
+/** Repositories with a press waiting on its confirm: a second press meanwhile
+ *  would confirm and send twice. */
+const confirmingRepos = new Set<string>();
+
+/** Why a repository's last press did not land, said at the top of its section
+ *  until its next press. */
+const pressNotes = new Map<string, Refusal>();
 
 // Bug 3: Track user-toggled collapse state (repos the user manually collapsed).
 const userCollapsedRepos = new Set<string>();
@@ -133,15 +128,12 @@ const userExpandedRepos = new Set<string>();
  *  next pass. */
 const pullFlags = new Map<string, GitPullResult>();
 
-// Per-paint cleanup: unbind functions from bindLoadingState calls.
-let bindingCleanups: (() => void)[] = [];
-
 // Deferred paint: set when paint bails due to focused textarea.
 let paintDeferred = false;
 
 /** Build the deps object for commit rendering functions. */
 function commitDeps(): CommitDeps {
-  return { commitMessages, bindingCleanups, diffAbort: diffAbortCtrl, refreshChanges, assertOk };
+  return { commitMessages, diffAbort: diffAbortCtrl, press: pressControl };
 }
 
 // --- Public API ---
@@ -209,20 +201,32 @@ export function initChangesTab(): void {
       // than the icon + spinner side-by-side variant.
       // Explicit user refresh → opt into the server-side git fetch
       // so ahead/behind reflects the real remote state (18-F3).
-      void withAsyncFeedback(refreshBtn, () => refreshChanges(true));
+      void withAsyncFeedback(refreshBtn, async () => {
+        if (!(await refreshChanges(true))) {
+          throw new Error("the status could not be read");
+        }
+      });
     });
   }
 
   const pullAllBtn = document.getElementById("git-pull-all-btn") as HTMLButtonElement | null;
   if (pullAllBtn !== null) {
     pullAllBtn.innerHTML = ICON_GIT_DOWN_ARROW;
+    const status = el("span", { className: "git-tab-toolbar-error", role: "status" });
+    pullAllBtn.before(status);
+    // The pass's refresh runs once the button settles, so the loading binding
+    // below and the button's own feedback end together.
     pullAllBtn.addEventListener("click", () => {
-      void withAsyncFeedback(pullAllBtn, runPullAll);
+      status.textContent = "";
+      let moved: string[] = [];
+      void withAsyncFeedback(pullAllBtn, async () => {
+        moved = await runPullAll(status);
+      }).then(() => refreshChanges(false, moved));
     });
-    // Bound once, NOT pushed into bindingCleanups: the toolbar sits outside the
-    // repaint cycle that array is drained by. `git.pull` is in the set so a
-    // single repo's Pull disables this button too — they are the same operation
-    // at two scopes, and running both at once serializes on the server anyway.
+    // Bound once: the toolbar sits outside the repaint cycle. `git.pull` is in
+    // the set so a single repo's Pull disables this button too: they are the
+    // same operation at two scopes, and running both at once serializes on the
+    // server anyway.
     bindLoadingState(["git.pull_all", "git.pull"], pullAllBtn);
   }
 
@@ -241,22 +245,28 @@ export function initChangesTab(): void {
   onSSE("forges_changed", debouncedRefresh);
 }
 
-/** Force a full /api/git/status-all refresh and repaint. Concurrent
- *  calls are safe: a generation counter ensures stale responses are
- *  discarded.
- *
- *  `doFetch=true` opts into a per-repo server-side `git fetch`
- *  (?fetch=1) so ahead/behind is measured against fresh origin refs —
- *  reserved for explicit user navigation (the Refresh-all button,
- *  git-tab activation). SSE-debounced and post-action refreshes stay
- *  fetch-free so agent turns never fan out N network fetches (18-F3). */
-export async function refreshChanges(doFetch = false): Promise<void> {
+/** Read /api/git/status-all and repaint; a newer call supersedes an older
+ *  one. Answers false when the status could not be read. `doFetch` adds a
+ *  per-repo `git fetch` (?fetch=1), reserved for explicit navigation (the
+ *  Refresh-all button, git-tab activation): SSE and post-press refreshes
+ *  stay fetch-free so agent turns never fan out N network fetches (18-F3).
+ *  `moved` names repositories a press just changed: the server answers that
+ *  read after rescanning them, where an unnamed read answers from its last
+ *  scan, which predates the press. */
+export async function refreshChanges(
+  doFetch = false,
+  moved: readonly string[] = [],
+): Promise<boolean> {
   refreshAbort?.abort();
   const ctrl = new AbortController();
   refreshAbort = ctrl;
   const gen = ++refreshGeneration;
   const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(15_000)]);
-  const url = doFetch ? "/api/git/status-all?fetch=1" : "/api/git/status-all";
+  const url = doFetch
+    ? "/api/git/status-all?fetch=1"
+    : moved.length > 0
+      ? `/api/git/status-all?paths=${encodeURIComponent(moved.join(","))}`
+      : "/api/git/status-all";
 
   // Gated on NOT-YET-ANSWERED, not on the container being empty: `status-all` is
   // polled, so an ungated skeleton would paint over real content several times a
@@ -266,17 +276,19 @@ export async function refreshChanges(doFetch = false): Promise<void> {
   try {
     const data = await apiGet<StatusAllResponse>(url, signal);
     if (gen < refreshGeneration) {
-      return;
+      return true;
     } // stale — a newer call supersedes
     if (data === null) {
-      if (!ctrl.signal.aborted) {
-        paintError("Failed to load git status.");
+      if (ctrl.signal.aborted) {
+        return true;
       }
-      return;
+      paintError("Failed to load git status.");
+      return false;
     }
     lastStatusAll = data.repos;
     statusAnswered = true;
     paint();
+    return true;
   } finally {
     skeleton?.cancel();
   }
@@ -285,35 +297,148 @@ export async function refreshChanges(doFetch = false): Promise<void> {
 /** Placeholder sections while `status-all` is in flight. Returns the teardown
  *  `skeletonTiming` calls. */
 function gitChangesSkeleton(): () => void {
-  // No `label`: this tab issues ONE request, so there is no fan-out count to
-  // report and a static line would be chrome that says nothing.
-  return paintPlaceholder(document.getElementById("git-changes-mount"), () => {
-    const { wrap } = gitRepoSkeleton({ widths: ["38%", "52%", "30%"] });
-    return wrap;
-  });
+  // No `label`: this tab issues ONE request, so a static line would be chrome
+  // that says nothing.
+  return paintPlaceholder(document.getElementById("git-changes-mount"), () =>
+    gitRepoSkeleton({ widths: ["38%", "52%", "30%"] }),
+  );
 }
 
-/** Pull every repo a fast-forward is safe for, and mark the ones it is not.
- *
- *  The verdicts drive two surfaces: the framework's own toast carries the
- *  summary (the action owns that), and the two verdicts a reader has to act on
- *  are recorded here so each lands as a mark on its own repo block. Nothing is
- *  decided client-side about what was safe — the pass judged that beside the
- *  pull it guards.
- *
- *  The follow-up refresh is deliberately fetch-FREE: the pass has just fetched
- *  every remote, so the refs are fresh and a second round of network fetches
- *  would only re-derive an answer already on disk. */
-async function runPullAll(): Promise<void> {
-  const results = await pullAll.dispatch();
-  assertOk(results);
+/** Pull every repo a fast-forward is safe for, recording the two verdicts a
+ *  reader has to act on as marks on their repo blocks (the action's toast
+ *  carries the summary; the pass judged what was safe). A refused pass rejects
+ *  after `status` says why. The caller's refresh is fetch-free: the pass has
+ *  just fetched every remote, so the refs on disk are already fresh. Answers
+ *  the repositories the pass pulled or held, the ones whose status it moved. */
+async function runPullAll(status: HTMLElement): Promise<string[]> {
+  const o = await pullAll.dispatch().outcome;
+  if (o.status !== "success") {
+    const why = o.status === "error" ? o.error.message : "it was cancelled";
+    status.textContent = `Could not pull every repository. ${why}`;
+    throw new Error(why);
+  }
   pullFlags.clear();
-  for (const r of results) {
+  for (const r of o.value) {
     if (isPullHeld(r)) {
       pullFlags.set(r.repo, r);
     }
   }
-  await refreshChanges();
+  return o.value.filter((r) => r.verdict !== "skipped").map((r) => r.repo);
+}
+
+/** `n` files, as a sentence counts them. */
+function files(n: number): string {
+  return `${String(n)} file${n === 1 ? "" : "s"}`;
+}
+
+function pressedSection(repo: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    `#git-changes-mount section[data-repo="${CSS.escape(repo)}"]`,
+  );
+}
+
+/** Hold `btn` while another press on its repository runs: disabled, and marked
+ *  so the release gives it back. */
+function hold(btn: HTMLButtonElement): void {
+  if (!btn.disabled) {
+    btn.disabled = true;
+    btn.dataset["pressHeld"] = "";
+  }
+}
+
+/** End `repo`'s press: forget it and give its section's held controls back. */
+function release(repo: string): void {
+  repoPresses.delete(repo);
+  const held = pressedSection(repo)?.querySelectorAll<HTMLButtonElement>("[data-press-held]");
+  for (const b of held ?? []) {
+    delete b.dataset["pressHeld"];
+    b.disabled = false;
+  }
+}
+
+/** Wire `btn` as the control that runs `run` on `repo` under `key`. A control
+ *  built while that press runs shows it; one built while another press on the
+ *  repository runs waits for it. */
+function pressControl(
+  btn: HTMLButtonElement,
+  repo: string,
+  key: string,
+  run: PressRun,
+  opts: PressOpts = {},
+): HTMLButtonElement {
+  btn.dataset["press"] = key;
+  const held = repoPresses.get(repo);
+  if (held?.key === key) {
+    void withAsyncFeedback(btn, () => held.done, { keepLabel: true });
+  } else if (held !== undefined) {
+    hold(btn);
+  }
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    void press(btn, repo, key, run, opts);
+  });
+  return btn;
+}
+
+/** One press: its confirm, then its request with the button busy and the
+ *  section's other controls held, then the section read again, with a refusal
+ *  said at its top. */
+async function press(
+  btn: HTMLButtonElement,
+  repo: string,
+  key: string,
+  run: PressRun,
+  opts: PressOpts,
+): Promise<void> {
+  if (repoPresses.has(repo) || confirmingRepos.has(repo)) {
+    return;
+  }
+  if (opts.confirm !== undefined) {
+    confirmingRepos.add(repo);
+    let ok: boolean;
+    try {
+      ok = await opts.confirm();
+    } finally {
+      confirmingRepos.delete(repo);
+    }
+    if (!ok || repoPresses.has(repo)) {
+      return;
+    }
+  }
+  pressNotes.delete(repo);
+  pressedSection(repo)?.querySelector("[data-press-note]")?.remove();
+  const record = { key, done: Promise.resolve() };
+  repoPresses.set(repo, record);
+  const others = pressedSection(repo)?.querySelectorAll<HTMLButtonElement>("[data-press]");
+  for (const b of others ?? []) {
+    if (b !== btn) {
+      hold(b);
+    }
+  }
+  // Registered and holding before the request starts, so a repaint the request
+  // causes shows it.
+  record.done = settlePress(repo, run, opts);
+  await withAsyncFeedback(btn, () => record.done, { keepLabel: true });
+}
+
+async function settlePress(repo: string, run: PressRun, opts: PressOpts): Promise<void> {
+  let refusal: Refusal | null;
+  try {
+    refusal = await run();
+  } finally {
+    release(repo);
+  }
+  if (refusal !== null) {
+    pressNotes.set(repo, refusal);
+  }
+  if (opts.refresh !== false) {
+    await refreshChanges(false, [repo]);
+  } else if (refusal !== null) {
+    paint();
+  }
+  if (refusal !== null) {
+    throw new Error(refusal.detail);
+  }
 }
 
 // --- Render ---
@@ -337,12 +462,6 @@ function paintInner(): void {
   }
   paintDeferred = false;
 
-  // Tear down previous bindLoadingState subscriptions before re-render.
-  for (const fn of bindingCleanups) {
-    fn();
-  }
-  bindingCleanups = [];
-
   // Smell fix: prune module-level Sets/Maps to keys present in lastStatusAll.
   const activeRepos = new Set(lastStatusAll.map((r) => r.repo));
   for (const k of userCollapsedRepos) {
@@ -358,6 +477,11 @@ function paintInner(): void {
   for (const k of commitMessages.keys()) {
     if (!activeRepos.has(k)) {
       commitMessages.delete(k);
+    }
+  }
+  for (const k of pressNotes.keys()) {
+    if (!activeRepos.has(k)) {
+      pressNotes.delete(k);
     }
   }
   // A pull flag reports what the last pass could not do, so it expires when the
@@ -596,7 +720,16 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   // wants to be read first.
   const flag = pullFlags.get(r.repo);
   if (flag !== undefined) {
-    inner.insertBefore(renderPullFlag(flag), inner.firstChild);
+    const lead = flag.verdict === "failed" ? "Pull failed." : "Not pulled.";
+    inner.insertBefore(renderRepoNote(flag.verdict, lead, flag.detail ?? ""), inner.firstChild);
+  }
+  // Why the last press did not land, above everything: it is the newest thing
+  // that happened to this repository.
+  const refusal = pressNotes.get(r.repo);
+  if (refusal !== undefined) {
+    const note = renderRepoNote("failed", refusal.lead, refusal.detail);
+    note.dataset["pressNote"] = "";
+    inner.insertBefore(note, inner.firstChild);
   }
 
   // Open-PR hint after a successful push (transient).
@@ -675,24 +808,19 @@ function renderHeaderHTML(r: RepoStatus): string {
   `;
 }
 
-/** The note inside a repo section saying why the last Pull all left it alone.
- *
- *  Inside the section as well as in the header, because the header has room for
- *  a word and the reason needs a sentence: which files, how many commits, which
- *  operation. Shaped like the post-push Open-PR hint, since both are a transient
- *  statement about what just happened to this one repo. The sentence is the
- *  server's — it is the side that knows what it found. */
-function renderPullFlag(f: GitPullResult): HTMLElement {
-  const box = el("div", { className: "git-pull-flag-note", "data-verdict": f.verdict });
-  const icon = el("span", { className: "git-pull-flag-icon", "aria-hidden": "true" });
+/** A note inside a repo section saying what did not happen to it: why the last
+ *  Pull all left it alone (the header has room for a word, the reason needs a
+ *  sentence), or why its last press was refused. The detail is the server's,
+ *  the side that knows what it found. */
+function renderRepoNote(verdict: string, lead: string, detail: string): HTMLElement {
+  const box = el("div", { className: "git-repo-note", "data-verdict": verdict });
+  const icon = el("span", { className: "git-repo-note-icon", "aria-hidden": "true" });
   icon.innerHTML = ICON_WARN;
-  const lead = f.verdict === "failed" ? "Pull failed." : "Not pulled.";
-  const detail = f.detail ?? "";
   box.append(
     icon,
     el(
       "span",
-      { className: "git-pull-flag-msg" },
+      { className: "git-repo-note-msg" },
       el("strong", null, lead),
       detail === "" ? "" : ` ${detail}`,
     ),
@@ -730,36 +858,29 @@ function renderActionBar(r: RepoStatus): HTMLElement {
 
   if (r.behind > 0) {
     const pullBtn = btn(`Pull ↓${r.behind}`, "git pull --ff-only");
-    pullBtn.addEventListener("click", () => {
-      void withAsyncFeedback(pullBtn, async () => {
-        assertOk(await pull.dispatch({ repo: r.repo }));
-        await refreshChanges();
-      });
-    });
-    bar.appendChild(pullBtn);
-    bindingCleanups.push(
-      bindLoadingState(["git.pull", "git.push", "git.stash", "git.stash_pop"], pullBtn),
+    bar.appendChild(
+      pressControl(pullBtn, r.repo, "pull", async () =>
+        refusalOf(await pull.dispatch({ repo: r.repo }).outcome, "pull"),
+      ),
     );
   }
 
   if (r.ahead > 0) {
     const pushBtn = btn("Push", `Push ${r.ahead} commit${r.ahead === 1 ? "" : "s"} to origin`);
     pushBtn.classList.add("btn-primary");
-    pushBtn.addEventListener("click", () => {
-      void withAsyncFeedback(pushBtn, async () => {
-        assertOk(await push.dispatch({ repo: r.repo }));
-        // Mark for "Open PR" hint surfacing on next renders.
-        recentlyPushed.add(r.repo);
-        setTimeout(() => {
-          recentlyPushed.delete(r.repo);
-          paint();
-        }, RECENTLY_PUSHED_TTL_MS);
-        await refreshChanges();
-      });
-    });
-    bar.appendChild(pushBtn);
-    bindingCleanups.push(
-      bindLoadingState(["git.push", "git.pull", "git.stash", "git.stash_pop"], pushBtn),
+    bar.appendChild(
+      pressControl(pushBtn, r.repo, "push", async () => {
+        const refusal = refusalOf(await push.dispatch({ repo: r.repo }).outcome, "push");
+        if (refusal === null) {
+          // Mark for "Open PR" hint surfacing on next renders.
+          recentlyPushed.add(r.repo);
+          setTimeout(() => {
+            recentlyPushed.delete(r.repo);
+            paint();
+          }, RECENTLY_PUSHED_TTL_MS);
+        }
+        return refusal;
+      }),
     );
   }
 
@@ -773,29 +894,19 @@ function renderActionBar(r: RepoStatus): HTMLElement {
 
   if (stashable > 0) {
     const stashBtn = btn("Stash", "Stash uncommitted changes to tracked files");
-    stashBtn.addEventListener("click", () => {
-      void withAsyncFeedback(stashBtn, async () => {
-        assertOk(await stash.dispatch({ repo: r.repo }));
-        await refreshChanges();
-      });
-    });
-    bar.appendChild(stashBtn);
-    bindingCleanups.push(
-      bindLoadingState(["git.stash", "git.pull", "git.push", "git.stash_pop"], stashBtn),
+    bar.appendChild(
+      pressControl(stashBtn, r.repo, "stash", async () =>
+        refusalOf(await stash.dispatch({ repo: r.repo }).outcome, "stash the changes"),
+      ),
     );
   }
 
   if (r.stashes > 0) {
     const pop = btn("Pop", "Pop the most recent stash");
-    pop.addEventListener("click", () => {
-      void withAsyncFeedback(pop, async () => {
-        assertOk(await stashPop.dispatch({ repo: r.repo }));
-        await refreshChanges();
-      });
-    });
-    bar.appendChild(pop);
-    bindingCleanups.push(
-      bindLoadingState(["git.stash_pop", "git.pull", "git.push", "git.stash"], pop),
+    bar.appendChild(
+      pressControl(pop, r.repo, "pop", async () =>
+        refusalOf(await stashPop.dispatch({ repo: r.repo }).outcome, "pop the stash"),
+      ),
     );
   }
 
@@ -902,17 +1013,17 @@ function groupBtn(label: string, title: string, danger = false): HTMLButtonEleme
  *  New capability. Staging every file was one click ("Stage all") and
  *  reversing it was N, one per row, with each row's Unstage button
  *  hidden until hovered. */
-function stagedGroupActions(r: RepoStatus, files: FileEntry[]): HTMLButtonElement[] {
-  const paths = distinctPaths(files);
+function stagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonElement[] {
+  const paths = distinctPaths(entries);
   const b = groupBtn("Unstage all", "Move every staged change out of the index");
-  b.addEventListener("click", () => {
-    void withAsyncFeedback(b, async () => {
-      assertOk(await unstage.dispatch({ repo: r.repo, files: paths }));
-      await refreshChanges();
-    });
-  });
-  bindingCleanups.push(bindLoadingState(["git.unstage", "git.commit"], b));
-  return [b];
+  return [
+    pressControl(b, r.repo, "unstage-all", async () =>
+      refusalOf(
+        await unstage.dispatch({ repo: r.repo, files: paths }).outcome,
+        `unstage ${files(paths.length)}`,
+      ),
+    ),
+  ];
 }
 
 /** The Changes group's bulk actions: Stage all, then Discard all.
@@ -925,59 +1036,50 @@ function stagedGroupActions(r: RepoStatus, files: FileEntry[]): HTMLButtonElemen
  *  A bulk action whose scope is invisible is one nobody can check before
  *  pressing it. Discarding staged work too is Unstage all followed by
  *  this, which is two clicks and shows its work. */
-function unstagedGroupActions(r: RepoStatus, files: FileEntry[]): HTMLButtonElement[] {
-  const paths = distinctPaths(files);
+function unstagedGroupActions(r: RepoStatus, entries: FileEntry[]): HTMLButtonElement[] {
+  const paths = distinctPaths(entries);
   const count = paths.length;
 
   const stageBtn = groupBtn("Stage all", "Add every change below to the index");
-  stageBtn.addEventListener("click", () => {
-    void withAsyncFeedback(stageBtn, async () => {
-      assertOk(await stage.dispatch({ repo: r.repo, files: paths }));
-      await refreshChanges();
-    });
-  });
-  bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageBtn));
+  pressControl(stageBtn, r.repo, "stage-all", async () =>
+    refusalOf(
+      await stage.dispatch({ repo: r.repo, files: paths }).outcome,
+      `stage ${files(count)}`,
+    ),
+  );
 
   const discardBtn = groupBtn(
     "Discard all",
     "Throw away every change below. This cannot be undone",
     true,
   );
-  discardBtn.addEventListener("click", () => {
-    // Module-level guard: a second click while the first confirm is open
-    // would dispatch two discards for one repo.
-    if (discardPendingRepos.has(r.repo)) {
-      return;
-    }
-    discardPendingRepos.add(r.repo);
-    void (async () => {
-      try {
-        // The scope is stated rather than implied. A reader who expects a
-        // clean tree afterwards has to be told the index is untouched,
-        // and this is the last moment to tell them.
+  pressControl(
+    discardBtn,
+    r.repo,
+    "discard-all",
+    async () =>
+      refusalOf(
+        await discard.dispatch({ repo: r.repo, files: paths }).outcome,
+        `discard ${files(count)}`,
+      ),
+    {
+      // The scope is stated rather than implied. A reader who expects a clean
+      // tree afterwards has to be told the index is untouched, and this is the
+      // last moment to tell them.
+      confirm: () => {
         const stagedCount = changedPathCount(r.files.filter((f) => f.staged));
         const keeps =
           stagedCount > 0
             ? ` Your ${String(stagedCount)} staged file${stagedCount === 1 ? "" : "s"} stay${stagedCount === 1 ? "s" : ""} untouched.`
             : "";
-        const ok = await confirmDialog(
+        return confirmDialog(
           `Discard ${String(count)} unstaged change${count === 1 ? "" : "s"} in ${r.repo}? This cannot be undone.${keeps}`,
           "Discard",
           "destructive",
         );
-        if (!ok) {
-          return;
-        }
-        await withAsyncFeedback(discardBtn, async () => {
-          assertOk(await discard.dispatch({ repo: r.repo, files: paths }));
-          await refreshChanges();
-        });
-      } finally {
-        discardPendingRepos.delete(r.repo);
-      }
-    })();
-  });
-  bindingCleanups.push(bindLoadingState(["git.discard", "git.commit"], discardBtn));
+      },
+    },
+  );
 
   return [stageBtn, discardBtn];
 }
@@ -1085,7 +1187,8 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
   const action = (
     label: string,
     title: string,
-    fn: () => Promise<unknown>,
+    run: PressRun,
+    opts: PressOpts = {},
     danger = false,
   ): HTMLButtonElement => {
     const b = el(
@@ -1097,42 +1200,43 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
       },
       label,
     ) as HTMLButtonElement;
-    b.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      void withAsyncFeedback(b, fn);
-    });
-    return b;
+    return pressControl(b, r.repo, `${label.toLowerCase()}:${f.path}`, run, opts);
   };
 
   if (f.staged) {
     actions.appendChild(
-      action("Unstage", "Move out of staged area", async () => {
-        assertOk(await unstage.dispatch({ repo: r.repo, files: [f.path] }));
-        await refreshChanges();
-      }),
+      action("Unstage", "Move out of staged area", async () =>
+        refusalOf(
+          await unstage.dispatch({ repo: r.repo, files: [f.path] }).outcome,
+          `unstage ${f.path}`,
+        ),
+      ),
     );
   } else {
     actions.appendChild(
-      action("Stage", "Add to staged area", async () => {
-        assertOk(await stage.dispatch({ repo: r.repo, files: [f.path] }));
-        await refreshChanges();
-      }),
+      action("Stage", "Add to staged area", async () =>
+        refusalOf(
+          await stage.dispatch({ repo: r.repo, files: [f.path] }).outcome,
+          `stage ${f.path}`,
+        ),
+      ),
     );
     actions.appendChild(
       action(
         "Discard",
         "Throw away this change",
-        async () => {
-          const ok = await confirmDialog(
-            `Discard changes to ${f.path}? This cannot be undone.`,
-            "Discard",
-            "destructive",
-          );
-          if (!ok) {
-            throw new CancelledError();
-          }
-          assertOk(await discard.dispatch({ repo: r.repo, files: [f.path] }));
-          await refreshChanges();
+        async () =>
+          refusalOf(
+            await discard.dispatch({ repo: r.repo, files: [f.path] }).outcome,
+            `discard ${f.path}`,
+          ),
+        {
+          confirm: () =>
+            confirmDialog(
+              `Discard changes to ${f.path}? This cannot be undone.`,
+              "Discard",
+              "destructive",
+            ),
         },
         true,
       ),

@@ -15,7 +15,7 @@
 //  3. The per-mount os.Root. Every filesystem operation goes through
 //     the matched mount's kernel-confined root handle, so a symlink
 //     swapped in AFTER layer 2 (TOCTOU) still cannot escape the mount.
-//  4. Per-action guards (actionDelete's isProtectedDir, actionRename's
+//  4. Per-action guards (actionDelete's protectedDir, actionRename's
 //     destination sensitive-path check, the mount-point refusals).
 //     Catch destructive operations aimed at sensitive paths that the
 //     lexical layer protects only as leaves, not as containers.
@@ -105,7 +105,7 @@ func (h *Handler) enforce(clean string) (*mount, error) {
 	if m == nil {
 		return nil, errOutsideRoots
 	}
-	if IsSensitive(clean) {
+	if h.sensitive.Blocks(clean) {
 		return nil, errors.New("access denied: protected path")
 	}
 	return m, nil

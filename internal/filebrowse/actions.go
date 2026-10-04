@@ -97,10 +97,10 @@ func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
 	return errHandled
 }
 
-func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
+func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
 	// Symmetric with the actionDelete/actionRename destination guards: a
 	// cold-boot mkdir on a sensitive dir must not pre-empt it.
-	if isProtectedDir(l.abs) {
+	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to mkdir protected directory")
 		return errHandled
@@ -117,10 +117,10 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	return nil
 }
 
-func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
-	// Mirror of actionMkdir; also checks IsSensitive so creating an
+func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
+	// Mirror of actionMkdir; also checks Sensitive.Blocks so creating an
 	// exact-match sensitive file is refused before it hits the filesystem.
-	if IsSensitive(l.abs) || isProtectedDir(l.abs) {
+	if h.sensitive.Blocks(l.abs) || h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: touch blocked on protected path", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to touch protected path")
 		return errHandled
@@ -151,23 +151,23 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	return nil
 }
 
-func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
+func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, h *Handler) error {
 	// Refuse to delete a granted root itself; everything INSIDE a mount is
 	// deletable.
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "delete", l)
 	}
 	// Layered guard: the mount-point check stops `/config` but would let
-	// `/config/chats` through, since IsSensitive only matches the files
-	// inside. isProtectedDir closes that gap.
-	if isProtectedDir(l.abs) {
+	// `/config/chats` through, since Sensitive.Blocks only matches the files
+	// inside. protectedDir closes that gap.
+	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: delete blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to delete protected directory")
 		return errHandled
 	}
 	// The mount's os.Root confines this unlink but does not PIN it: it
 	// deliberately follows an in-root symlink, so a multi-component rel can
-	// resolve to a different file than the one isProtectedDir judged —
+	// resolve to a different file than the one protectedDir judged:
 	// reachable through the sensitive-path check because that check is
 	// exact-prefix over the resolved path. OpenParentInRoot descends
 	// component by component, Lstat-ing each one and refusing a symlink
@@ -214,7 +214,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "rename", l)
 	}
-	if isProtectedDir(l.abs) {
+	if h.sensitive.protectedDir(l.abs) {
 		slog.Warn("filebrowse: rename blocked on protected dir", "path", l.abs)
 		httpreply.Forbidden(w, "refusing to rename protected directory")
 		return errHandled
@@ -243,9 +243,9 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	}
 	// Sensitive-path check on the DESTINATION: without this a
 	// touch→write→rename sequence could overwrite sensitive files.
-	// isProtectedDir layers on top for a decoy directory landing at a
+	// protectedDir layers on top for a decoy directory landing at a
 	// bare-directory sensitive prefix name.
-	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
+	if h.sensitive.Blocks(destLoc.abs) || h.sensitive.protectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: rename blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		httpreply.Forbidden(w, "rename target is protected")

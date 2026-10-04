@@ -70,20 +70,20 @@ describe("pushTargetTag", () => {
 });
 
 describe("prIdentity", () => {
-  it("is marotte.PRSubject's composition minus the prefix", () => {
-    // The Go side reads `PRSubjectPrefix + forgeID + ":" + repo + "#" + strconv.Itoa(number)`;
+  it("is marotte.PRSubject's composition minus the prefix, keyed on the repository id", () => {
+    // The Go side reads `PRSubjectPrefix + forgeID + ":" + repoID + "#" + strconv.Itoa(number)`;
     // this is the same key with the prefix stripped, which is what makes the identity
-    // comparable against one the PRs tab builds for its own rows.
+    // comparable against one the PRs tab builds for its own rows from their repo_id.
     const m =
       /func PRSubject\([^)]*\)[^{]*\{\s*return PushSubject\{Key: PRSubjectPrefix \+ ([^}]+)\}/.exec(
         pushTypesGo,
       );
     expect(m, "marotte.PRSubject's composition not found").not.toBeNull();
     expect((m?.[1] ?? "").replace(/\s+/g, " ").trim()).toBe(
-      'forgeID + ":" + repo + "#" + strconv.Itoa(number)',
+      'forgeID + ":" + repoID + "#" + strconv.Itoa(number)',
     );
-    expect(prIdentity("gh:github.com", "cplieger/marotte", 42)).toBe(
-      "gh:github.com:cplieger/marotte#42",
+    expect(prIdentity("github:github.com", "v1.63706c69656765722f6d61726f747465", 42)).toBe(
+      "github:github.com:v1.63706c69656765722f6d61726f747465#42",
     );
   });
 });

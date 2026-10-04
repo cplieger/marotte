@@ -123,14 +123,9 @@ method (ModelID).String
 method (ServerID).String
 
 # --- 6. error-interface machinery. Unwrap() is what makes errors.Is/As walk
-# the chain, so nothing calls it by name. Call sites:
-# internal/command/prompt.go errors.AsType[*marotte.TransportError], and
-# internal/forges/exec.go constructs &cmdError{Err: ...} as an error.
-# (*cmdError).Error needs no entry even though it sits beside Unwrap on the
-# same type: internal/forges/http.go calls err.Error() on that package's own
-# error values, and gopls counts those as references to it.
+# the chain, so nothing calls it by name. Call site:
+# internal/command/prompt.go errors.AsType[*marotte.TransportError].
 method (*TransportError).Unwrap
-method (*cmdError).Unwrap
 
 # --- 7. container/heap.Interface method sets. The stdlib calls Len/Less/
 # Swap/Push/Pop through the interface: internal/buffer/lines.go uses
@@ -316,6 +311,12 @@ method (*Bridge).AgentKiroCapabilities
 method (*EntryLog).Close
 method (*EntryLog).Counters
 method (*EntryLog).TurnRange
+
+# --- 22. forgeapi.CredentialSource. internal/forges's staticSource is handed to
+# forgeapi.WithCredentialSource for a connect's identity read, and the library
+# calls Kind through the interface, in another module, where no reference search
+# reaches. Removing it breaks the interface at compile time.
+method (staticSource).Kind
 
 
 

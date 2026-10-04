@@ -146,8 +146,8 @@ function mount(node: HTMLElement): HTMLElement {
 // SITE 1 — the tools-engine install-progress bar.
 // ---------------------------------------------------------------------------
 
-/** The bar as `forge-auth.ts` and `mcp-panels.ts` build it, inside the column
- *  flex container both put it in (`.inline-install-banner`, 18-pages.css). */
+/** The bar as `mcp-panels.ts` builds it, inside the column flex container it
+ *  puts it in (`.inline-install-banner`, 18-pages.css). */
 function installBanner(): { banner: HTMLElement; bar: HTMLDivElement } {
   const bar = document.createElement("div");
   bar.className = "rolling-output hidden";

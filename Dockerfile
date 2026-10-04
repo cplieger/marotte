@@ -297,7 +297,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Baked-in dependencies — the minimal stable runtime surface that
 # marotte and kiro-cli rely on. Everything else (Node, Python, Go,
-# Java, Rust, all LSPs, all forge CLIs) is installed on demand by the
+# Java, Rust, all LSPs) is installed on demand by the
 # in-process tools engine (the cplieger/toolbelt library, wired in
 # internal/composition) into the persistent /config/tools/ volume,
 # discovered through the compiled catalog.
@@ -308,7 +308,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #   - git: marotte's gitexec, file history, forge integrations
 #          (the checkpoint system does NOT use git — it is a
 #          content-addressed blob/event store)
-#   - openssh-client: git over ssh, gh ssh
+#   - openssh-client: git over ssh
 #   - unzip: kiro-cli installer (it's a zip) + zip-format tools
 #   - xz-utils: Node/shellcheck tarball extract (.tar.xz)
 #   - jq: entrypoint.sh JSON parsing + a generally useful agent tool
@@ -355,7 +355,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Every dev tool — Go, Node, Python, Java, Rust, LSPs, forge CLIs —
+# Every dev tool (Go, Node, Python, Java, Rust, LSPs)
 # is installed at runtime by the tools engine (internal/tools) into
 # the persistent /config/tools/ tree: versioned trees under
 # opt/<name>/, every binary symlinked (or shimmed) into the single

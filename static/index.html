@@ -514,7 +514,7 @@
                       <span class="section-option-label">Pull request checks</span>
                       <span class="settings-save-status hidden" data-save-status="notify_pr_status" aria-live="polite"></span>
                     </div>
-                    <p class="section-hint">Notify when CI on a pull request you opened turns green or red. Checked every minute while you have an open pull request in a repository checked out here, and every five minutes otherwise. Coverage follows what each host reports: GitHub sends both outcomes, GitLab reports a failure but cannot report a recovery, and Gitea or Codeberg report neither.</p>
+                    <p class="section-hint">Notify when CI on a pull request you opened turns green or red. Checked every minute while you have an open pull request in a repository checked out here over HTTPS, and every five minutes otherwise. Covers pull requests on every forge you connect, once their CI reports a result.</p>
                   </div>
                 </div>
                 <div class="section-option">
@@ -944,11 +944,6 @@
               </button>
             </nav>
           </header>
-          <!-- Source-control status banner: at most one of forge-auth-failed,
-               gh-cli-missing, forges-not-connected. Populated by
-               git-status-banner.ts. -->
-          <div id="git-status-banner" class="git-status-banner hidden" role="status" aria-live="polite"></div>
-
           <!-- Changes tab -->
           <div data-git-panel="changes" class="git-panel">
             <div class="git-tab-toolbar">
@@ -1014,7 +1009,7 @@
         </footer>
       </dialog>
 
-      <!-- PR merge modal: method chooser (squash/rebase) + confirm. -->
+      <!-- PR merge modal: the repository's own merge methods (merge-dialog.ts fills them) + confirm. -->
       <dialog id="pr-merge-dialog" class="pr-dialog pr-merge-dialog" aria-label="Merge pull request">
         <header class="pr-dialog-header">
           <h3 class="pr-dialog-title" id="pr-merge-title">Merge pull request</h3>
@@ -1024,23 +1019,10 @@
         </header>
         <div class="pr-dialog-body">
           <p id="pr-merge-message" class="pr-merge-message"></p>
-          <fieldset class="pr-merge-methods">
+          <fieldset id="pr-merge-methods" class="pr-merge-methods">
             <legend class="forge-field-label">Merge method</legend>
-            <label class="pr-merge-method">
-              <input type="radio" name="pr-merge-method" value="rebase">
-              <span class="pr-merge-method-text">
-                <span class="pr-merge-method-name">Rebase and merge</span>
-                <span class="pr-merge-method-desc">Replay the branch's commits onto the base, no merge commit.</span>
-              </span>
-            </label>
-            <label class="pr-merge-method">
-              <input type="radio" name="pr-merge-method" value="squash">
-              <span class="pr-merge-method-text">
-                <span class="pr-merge-method-name">Squash and merge</span>
-                <span class="pr-merge-method-desc">Fold the branch into one commit on the base.</span>
-              </span>
-            </label>
           </fieldset>
+          <div id="pr-merge-status" class="forge-status" role="status" hidden></div>
         </div>
         <footer class="pr-dialog-footer">
           <button type="button" class="btn-small" data-pr-merge-close>Cancel</button>

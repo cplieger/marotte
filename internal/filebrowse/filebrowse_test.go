@@ -28,7 +28,7 @@ func testDir(t *testing.T) (h *Handler, dir, prefix string) {
 	t.Helper()
 	dir = t.TempDir() // e.g. /tmp/TestXxx123 — the handler's single granted mount
 	var err error
-	h, err = New(dir)
+	h, err = New(Sensitive{}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,12 +232,10 @@ func TestReadFile_SymlinkToSensitive_Blocked(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	orig := sensitivePrefixes
-	t.Cleanup(func() { sensitivePrefixes = orig })
 	// Register the real target as sensitive — the lexical form of
 	// "peek" itself is not in the list, so without EvalSymlinks the
 	// read would succeed.
-	sensitivePrefixes = append([]sensitivePath{{Path: secret, IsDir: false}}, orig...)
+	h.sensitive = h.sensitive.with(sensitivePath{Path: secret, IsDir: false})
 
 	rec := getReq(t, h, "/api/file?path="+prefix+"/peek")
 	if rec.Code != 403 {
@@ -263,9 +261,9 @@ func TestWriteFile_SymlinkedParent_Blocked(t *testing.T) {
 	}
 }
 
-// --- IsSensitive tests (direct coverage) ---
+// --- Sensitive.Blocks tests (direct coverage) ---
 
-func TestIsSensitive(t *testing.T) {
+func TestSensitive_Blocks(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
@@ -294,14 +292,14 @@ func TestIsSensitive(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IsSensitive(tc.path); got != tc.want {
-				t.Errorf("IsSensitive(%q) = %v, want %v", tc.path, got, tc.want)
+			if got := (Sensitive{}).Blocks(tc.path); got != tc.want {
+				t.Errorf("Blocks(%q) = %v, want %v", tc.path, got, tc.want)
 			}
 		})
 	}
 }
 
-// isProtectedDir: blocks a container of any sensitive path, whether
+// protectedDir: blocks a container of any sensitive path, whether
 // the sensitive entry is a dir prefix (trailing /) or an exact file.
 func TestIsProtectedDir(t *testing.T) {
 	tests := []struct {
@@ -319,14 +317,14 @@ func TestIsProtectedDir(t *testing.T) {
 		{"/workspace", false},
 		{"/workspace/repo", false},
 		// Note: a path below a sensitive dir prefix still matches
-		// because callers already ran it through IsSensitive (which
-		// would also block it). isProtectedDir is the defense for
-		// the CONTAINER case, not a substitute for IsSensitive.
+		// because callers already ran it through Sensitive.Blocks (which
+		// would also block it). protectedDir is the defense for
+		// the CONTAINER case, not a substitute for Blocks.
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {
-			if got := isProtectedDir(tc.path); got != tc.want {
-				t.Errorf("isProtectedDir(%q) = %v, want %v", tc.path, got, tc.want)
+			if got := (Sensitive{}).protectedDir(tc.path); got != tc.want {
+				t.Errorf("protectedDir(%q) = %v, want %v", tc.path, got, tc.want)
 			}
 		})
 	}
@@ -486,7 +484,7 @@ func TestFile_MethodNotAllowed(t *testing.T) {
 func TestListFiles_Root_ListsMounts(t *testing.T) {
 	dirA := t.TempDir()
 	dirB := t.TempDir()
-	h, err := New(dirB, dirA) // deliberately unsorted
+	h, err := New(Sensitive{}, dirB, dirA) // deliberately unsorted
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,8 +729,6 @@ func TestAction_SecurityRejections(t *testing.T) {
 
 			// Inject sensitive prefix if specified.
 			if tc.sensitivePrefix != "" && tc.useTempDir {
-				orig := sensitivePrefixes
-				t.Cleanup(func() { sensitivePrefixes = orig })
 				var entry string
 				isDir := strings.HasSuffix(tc.sensitivePrefix, "/")
 				if isDir {
@@ -742,7 +738,7 @@ func TestAction_SecurityRejections(t *testing.T) {
 					// exact file
 					entry = filepath.Join("/", prefix, tc.sensitivePrefix)
 				}
-				sensitivePrefixes = append([]sensitivePath{{Path: entry, IsDir: isDir}}, orig...)
+				h.sensitive = h.sensitive.with(sensitivePath{Path: entry, IsDir: isDir})
 			}
 
 			// Create setup file/dir.
@@ -1290,7 +1286,7 @@ func TestHandleUpload_OutsideRootsDir(t *testing.T) {
 }
 
 // S5 regression: upload must refuse a dir= that names a protected
-// directory (or a container of one). Without isProtectedDir on the
+// directory (or a container of one). Without protectedDir on the
 // resolved target, dir=/config/chats would silently land arbitrary
 // files inside the chat store. Simulated via injected sensitive
 // prefix pointing inside the temp dir so we don't need a real
@@ -1300,9 +1296,7 @@ func TestHandleUpload_RefusesProtectedDir(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	orig := sensitivePrefixes
-	t.Cleanup(func() { sensitivePrefixes = orig })
-	sensitivePrefixes = append([]sensitivePath{{Path: filepath.Join("/", prefix, "chats") + "/", IsDir: true}}, orig...)
+	h.sensitive = h.sensitive.with(sensitivePath{Path: filepath.Join("/", prefix, "chats") + "/", IsDir: true})
 
 	if err := os.Mkdir(filepath.Join(dir, "chats"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1337,9 +1331,7 @@ func TestHandleUpload_RefusesSensitiveFilename(t *testing.T) {
 	// dir writable — mirrors /config/push-subs.json where /config is
 	// a mount point but push-subs.json is protected.
 	secret := filepath.Join(dir, "keys.json")
-	orig := sensitivePrefixes
-	t.Cleanup(func() { sensitivePrefixes = orig })
-	sensitivePrefixes = append([]sensitivePath{{Path: secret, IsDir: false}}, orig...)
+	h.sensitive = h.sensitive.with(sensitivePath{Path: secret, IsDir: false})
 
 	req := multipartUpload(t, prefix,
 		map[string][]byte{"keys.json": []byte("[]")})
@@ -1367,9 +1359,7 @@ func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
 	h, dir, prefix := testDir(t)
 
 	target := filepath.Join(dir, "protected.json")
-	orig := sensitivePrefixes
-	t.Cleanup(func() { sensitivePrefixes = orig })
-	sensitivePrefixes = append([]sensitivePath{{Path: target, IsDir: false}}, orig...)
+	h.sensitive = h.sensitive.with(sensitivePath{Path: target, IsDir: false})
 
 	link := filepath.Join(dir, "trojan")
 	if err := os.Symlink(target, link); err != nil {
@@ -1390,7 +1380,7 @@ func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
 // RELATIVE symlink swapped in AFTER resolvePath accepted a regular file.
 //
 // A symlink that already exists is not the exposure — resolvePath EvalSymlinks
-// the leaf, so it names the target and IsSensitive judges the target. The
+// the leaf, so it names the target and Sensitive.Blocks judges the target. The
 // exposure is the race, so the race is what this stages: resolve, swap, write.
 //
 // Measured on go1.27.0: os.Root.OpenFile ORs O_NOFOLLOW in itself and then
@@ -1581,9 +1571,7 @@ func TestAction_Mkdir_ThroughSymlinkedAncestor_Rejected(t *testing.T) {
 	if err := os.Symlink(sink, link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
-	orig := sensitivePrefixes
-	t.Cleanup(func() { sensitivePrefixes = orig })
-	sensitivePrefixes = append([]sensitivePath{{Path: sink + "/", IsDir: true}}, orig...)
+	h.sensitive = h.sensitive.with(sensitivePath{Path: sink + "/", IsDir: true})
 
 	rec := postReq(t, h, "/api/files/action",
 		`{"action":"mkdir","path":"`+prefix+`/evil/newdir/sub"}`)
@@ -1686,11 +1674,9 @@ func TestAction_Rename_DestRunsResolvePath(t *testing.T) {
 		[]byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	orig := sensitivePrefixes
-	t.Cleanup(func() { sensitivePrefixes = orig })
 	// Name `chats` would, after Join, resolve to <prefix>/chats which
-	// is a protected directory per the sensitivePrefixes injection.
-	sensitivePrefixes = append([]sensitivePath{{Path: filepath.Join("/", prefix, "chats") + "/", IsDir: true}}, orig...)
+	// is a protected directory per the injected deny-list entry.
+	h.sensitive = h.sensitive.with(sensitivePath{Path: filepath.Join("/", prefix, "chats") + "/", IsDir: true})
 
 	rec := postReq(t, h, "/api/files/action",
 		`{"action":"rename","path":"`+prefix+`/old.txt","name":"chats"}`)
@@ -1741,7 +1727,7 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	uploaded, _, wErr := writeUploads(ctx, locAt(h, dir), files)
+	uploaded, _, wErr := writeUploads(ctx, locAt(h, dir), files, h.sensitive)
 	if wErr == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -1765,7 +1751,7 @@ func BenchmarkResolvePath(b *testing.B) {
 	// Create a temp dir with a nested structure for the deep-path case.
 	dir := b.TempDir()
 	prefix := strings.TrimPrefix(dir, "/")
-	h, err := New(dir)
+	h, err := New(Sensitive{}, dir)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1814,7 +1800,7 @@ func FuzzResolvePath(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	h, err := New(dir)
+	h, err := New(Sensitive{}, dir)
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -1873,15 +1859,15 @@ func FuzzResolvePath(f *testing.F) {
 		}
 
 		// Assertion 4: the result is never a sensitive path.
-		if IsSensitive(result.abs) {
+		if (Sensitive{}).Blocks(result.abs) {
 			t.Errorf("resolvePath(%q) = %q is a sensitive path", input, result.abs)
 		}
 	})
 }
 
-// --- FuzzIsSensitive (security-critical sensitive-path predicate) ---
+// --- FuzzSensitiveBlocks (security-critical sensitive-path predicate) ---
 
-func FuzzIsSensitive(f *testing.F) {
+func FuzzSensitiveBlocks(f *testing.F) {
 	// Seed corpus: known sensitive paths, near-misses, and adversarial shapes.
 	seeds := []string{
 		"/config/home/.kiro/steering/marotte.md",
@@ -1911,13 +1897,13 @@ func FuzzIsSensitive(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		result := IsSensitive(input)
+		result := (Sensitive{}).Blocks(input)
 
-		// Assertion 1: if IsSensitive returns true, the input must match
-		// at least one sensitivePrefixes entry (directory prefix or exact file).
+		// Assertion 1: if Blocks returns true, the input must match
+		// at least one deny-list entry (directory prefix or exact file).
 		if result {
 			matched := false
-			for _, sp := range sensitivePrefixes {
+			for _, sp := range (Sensitive{}).entries() {
 				if sp.IsDir {
 					if strings.HasPrefix(input, sp.Path) {
 						matched = true
@@ -1929,19 +1915,19 @@ func FuzzIsSensitive(f *testing.F) {
 				}
 			}
 			if !matched {
-				t.Errorf("IsSensitive(%q) = true but no sensitivePrefixes entry matches", input)
+				t.Errorf("Blocks(%q) = true but no deny-list entry matches", input)
 			}
 		}
 
-		// Assertion 2: if no sensitivePrefixes entry matches, result must be false.
+		// Assertion 2: if no deny-list entry matches, result must be false.
 		if !result {
-			for _, sp := range sensitivePrefixes {
+			for _, sp := range (Sensitive{}).entries() {
 				if sp.IsDir {
 					if strings.HasPrefix(input, sp.Path) {
-						t.Errorf("IsSensitive(%q) = false but matches dir prefix %q", input, sp.Path)
+						t.Errorf("Blocks(%q) = false but matches dir prefix %q", input, sp.Path)
 					}
 				} else if input == sp.Path {
-					t.Errorf("IsSensitive(%q) = false but matches exact path %q", input, sp.Path)
+					t.Errorf("Blocks(%q) = false but matches exact path %q", input, sp.Path)
 				}
 			}
 		}
@@ -2111,17 +2097,13 @@ func TestListEntries_KeepsDotfiles_HidesSensitive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	orig := sensitivePrefixes
-	t.Cleanup(func() { sensitivePrefixes = orig })
-	sensitivePrefixes = append([]sensitivePath{
-		{Path: filepath.Join(tmp, "secret.json"), IsDir: false},
-	}, orig...)
+	sens := (Sensitive{}).with(sensitivePath{Path: filepath.Join(tmp, "secret.json"), IsDir: false})
 
 	entries, err := os.ReadDir(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := listEntries(t.Context(), entries, tmp)
+	got := listEntries(t.Context(), entries, tmp, sens)
 	names := map[string]bool{}
 	for _, f := range got {
 		names[f.Name] = true
@@ -2390,8 +2372,8 @@ func TestHandleFile_RejectionListsEveryPermittedMethod(t *testing.T) {
 // (~/.config/gh/hosts.yml), and ~/.gitconfig — and /config/mcp.json plus
 // /config/mcp-secrets.json hold MCP env/header/oauth secrets and the OAuth
 // refresh tokens and PKCE verifiers in cleartext. A prior audit found these
-// browsable/readable/downloadable because sensitivePrefixes omitted them.
-// Pins that every access path (IsSensitive predicate, resolvePath, HTTP
+// browsable/readable/downloadable because the deny list omitted them.
+// Pins that every access path (Sensitive.Blocks, resolvePath, HTTP
 // read, HTTP download) now refuses them. The handler mounts "/config"
 // at the POLICY level (temp-dir backed), so the rejection exercises
 // the sensitive layer — not the mount match — and fires on the lexical
@@ -2410,9 +2392,9 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 	for _, p := range credPaths {
 		t.Run(p, func(t *testing.T) {
 			abs := filepath.Clean("/" + p)
-			// IsSensitive is the predicate enforce relies on.
-			if !IsSensitive(abs) {
-				t.Errorf("IsSensitive(%q) = false, want true (credential store must be protected)", abs)
+			// Blocks is the predicate enforce relies on.
+			if !(Sensitive{}).Blocks(abs) {
+				t.Errorf("Blocks(%q) = false, want true (credential store must be protected)", abs)
 			}
 			// resolvePath gates every read/write/download/action.
 			if _, err := h.resolvePath(p); err == nil {
@@ -2447,7 +2429,7 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 // exists to catch.
 func TestWriteFile_StaleWriteGuard(t *testing.T) {
 	dir := t.TempDir()
-	h, err := New(dir)
+	h, err := New(Sensitive{}, dir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -2551,7 +2533,7 @@ func TestAction_Touch_ExistingFileSucceedsAndKeepsContent(t *testing.T) {
 // look plausible while carrying a zero timestamp.
 func TestListFiles_Root_MountEntriesCarryStattedMetadata(t *testing.T) {
 	dirA := t.TempDir()
-	h, err := New(dirA)
+	h, err := New(Sensitive{}, dirA)
 	if err != nil {
 		t.Fatal(err)
 	}

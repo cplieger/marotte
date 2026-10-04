@@ -38,15 +38,11 @@ function repoStatus(): GitRepoStatus {
 function deps(): Parameters<typeof renderRecentCommits>[1] {
   return {
     commitMessages: new Map<string, string>(),
-    bindingCleanups: [],
     diffAbort: null,
-    // The recent-commits section reads neither, so a stub that throws says so
+    // The recent-commits section presses nothing, so a stub that throws says so
     // and turns a future coupling into a loud failure instead of a silent pass.
-    refreshChanges: () => {
-      throw new Error("refreshChanges: not reached by the recent-commits section");
-    },
-    assertOk: () => {
-      throw new Error("assertOk: not reached by the recent-commits section");
+    press: () => {
+      throw new Error("press: not reached by the recent-commits section");
     },
   };
 }

@@ -1,22 +1,13 @@
-// Actions for the Git Changes tab. Each user-initiated mutation gets
-// its own action with typed args and a descriptive error prefix.
-//
-// All actions POST to /api/git/<op> with { repo, ...body }. The server
-// replies HTTP 200 for BOTH outcomes (internal/git/helpers.go
-// writeCmdResult): {"output": "..."} / {"ok": true} on success and
-// {"error": "<scrubbed git output>"} on failure — presence of a
-// non-empty `error` field is the failure signal, NOT the HTTP status.
-// decodeGitResult owns that envelope through apiAction's decode seam:
-// the error arm throws ActionError (code "git", never retried — the
-// command may have had side effects), so the framework's error toast
-// carries the server's scrubbed git message, the success toast never
-// fires on a failed mutation, and dispatch resolves null so callers'
-// assertOk guards fail closed.
+// Actions for the Git Changes tab. The server answers HTTP 200 for BOTH
+// outcomes (internal/git/helpers.go writeCmdResult): a non-empty `error`
+// field is the failure, NOT the status. decodeGitResult turns it into an
+// ActionError (code "git", never retried: the command may have had side
+// effects), so the outcome carries git's words. No action toasts a failure:
+// the Changes tab says it beside the control that was pressed.
 // ---------------------------------------------------------------------------
 
 import { apiAction, ActionError, hasErrorString, retryNetwork, RETRY_STANDARD } from "./index.js";
 
-import { truncate } from "../strings.js";
 import { summarizePullAll, type GitPullResult } from "../git-types.js";
 
 // --- Wire types ---
@@ -77,11 +68,7 @@ export const stage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
   decode: decodeGitResult,
-  error: (args, err) =>
-    args.files.length === 1
-      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
-        `Could not stage "${truncate(args.files[0]!)}". ${err.message}`
-      : `Could not stage ${String(args.files.length)} files. ${err.message}`,
+  error: false,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
@@ -92,11 +79,7 @@ export const discard = apiAction<GitRepoFilesArgs, GitCmdResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
   decode: decodeGitResult,
-  error: (args, err) =>
-    args.files.length === 1
-      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
-        `Could not discard "${truncate(args.files[0]!)}". ${err.message}`
-      : `Could not discard ${String(args.files.length)} files. ${err.message}`,
+  error: false,
   // Destructive: timed-out discard may have succeeded server-side
 });
 
@@ -106,11 +89,7 @@ export const unstage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
   decode: decodeGitResult,
-  error: (args, err) =>
-    args.files.length === 1
-      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
-        `Could not unstage "${truncate(args.files[0]!)}". ${err.message}`
-      : `Could not unstage ${String(args.files.length)} files. ${err.message}`,
+  error: false,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
@@ -121,7 +100,7 @@ export const pull = apiAction<GitRepoArgs, GitCmdResult>({
   request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
   decode: decodeGitResult,
   success: (args) => (args.repo !== "" ? `Pulled ${args.repo}` : "Pulled"),
-  error: "Pull failed",
+  error: false,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
@@ -171,7 +150,7 @@ export const pullAll = apiAction<void, GitPullResult[]>({
   request: () => ({ method: "POST", path: "/api/git/pull-all" }),
   decode: decodePullAll,
   success: (_args, result) => summarizePullAll(result),
-  error: "Pull all failed",
+  error: false,
 });
 
 export const push = apiAction<GitRepoArgs, GitCmdResult>({
@@ -180,7 +159,7 @@ export const push = apiAction<GitRepoArgs, GitCmdResult>({
   request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
   decode: decodeGitResult,
   success: (args) => (args.repo !== "" ? `Pushed ${args.repo}` : "Pushed"),
-  error: "Push failed",
+  error: false,
   // Not retryable: a timed-out push may have succeeded server-side.
 });
 
@@ -189,7 +168,7 @@ export const stash = apiAction<GitRepoArgs, GitCmdResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
   decode: decodeGitResult,
-  error: "Stash failed",
+  error: false,
   idempotencyKey: true,
   // Idempotent server-side via Idempotency-Key dedup; left non-retryable for now.
 });
@@ -199,7 +178,7 @@ export const stashPop = apiAction<GitRepoArgs, GitCmdResult>({
   scope: (args) => "git:" + args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
   decode: decodeGitResult,
-  error: "Stash pop failed",
+  error: false,
   idempotencyKey: true,
   // Idempotent server-side via Idempotency-Key dedup; left non-retryable for now.
 });
@@ -210,13 +189,7 @@ export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>
   request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
   decode: decodeGitResult,
   success: "Committed",
-  error: (args, err) => {
-    const line = args.message.split("\n")[0] ?? "";
-    const short = truncate(line);
-    return short !== ""
-      ? `Commit failed for "${short}". ${err.message}`
-      : `Commit failed. ${err.message}`;
-  },
+  error: false,
   idempotencyKey: true,
   // Not retryable: a timed-out commit may have succeeded server-side;
   // retrying would create a duplicate commit.
@@ -228,7 +201,7 @@ export const generateCommitMessage = apiAction<GitRepoArgs, GitCmdResult>({
   dedupe: (args) => args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   decode: decodeGitResult,
-  error: "Could not generate commit message",
+  error: false,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });

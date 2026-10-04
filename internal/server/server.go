@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/preview"
 	"github.com/cplieger/marotte/internal/specapproval"
@@ -68,6 +69,8 @@ type Server struct {
 	authUnavailable func() bool
 	configDir       string
 	workDir         string
+	// sensitive is the file browser's deny list; the zero value is the one rooted at /config.
+	sensitive filebrowse.Sensitive
 	// trustedProxies feeds webhttp.WithClientIP; nil logs the unspoofable socket peer.
 	trustedProxies []*net.IPNet
 	// hostPolicy is the ALLOWED_HOSTS allowlist; nil or inactive accepts any Host.
@@ -196,6 +199,12 @@ func WithKiroRescan(rescan func(context.Context) (bool, error)) Option {
 
 // WithConfigDir sets the configuration directory path used for chat files and settings.
 func WithConfigDir(d string) Option { return func(s *Server) { s.configDir = d } }
+
+// WithSensitive sets the deny list the `.kiro` docs scan refuses, the same value
+// the file browser holds.
+func WithSensitive(sensitive filebrowse.Sensitive) Option {
+	return func(s *Server) { s.sensitive = sensitive }
+}
 
 // WithTabs wires the open-tab set that GET /api/tabs reads. A nil store stays a
 // nil INTERFACE rather than an interface holding a nil pointer, or the handler's

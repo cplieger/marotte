@@ -150,7 +150,7 @@ func TestGenerate_DefusesEveryUntrustedChannel(t *testing.T) {
 		plant: func(_ *testing.T, _, _ string) (func() MCPSnapshot, func() ForgeSnapshot) {
 			return nil, func() ForgeSnapshot {
 				return ForgeSnapshot{Providers: []ForgeProvider{{
-					Kind:  kindGitHub,
+					Kind:  "github",
 					Host:  injPayload,
 					User:  injPayload,
 					Email: injPayload,
@@ -291,24 +291,14 @@ func TestReadFirstLine_RefusesASymlink(t *testing.T) {
 	}
 }
 
-// TestHostGateGuardsTheFold pins the ORDER that makes kindFromHost's
-// strings.ToLower provably ASCII on any Unicode version.
-//
-// Exactly two already-assigned runes lowercase into ASCII (U+0130 -> "i",
-// U+212A -> "k"), and three of kindFromHost's literals contain an `i`. It is a
-// MATCH list, so laundering fails OPEN: before isHostShaped, `gİthub.com`
-// resolved to kind "github" and the generator advertised `gh` for a host that is
-// not GitHub. The rune is still reachable at kindFromHost — the gate is upstream,
-// which is a property to pin rather than to observe.
-func TestHostGateGuardsTheFold(t *testing.T) {
-	const launder = "g\u0130thub.com" // lowercases to "github.com"
-	if got := kindFromHost(launder); got != kindGitHub {
-		t.Errorf("kindFromHost(%q) = %q, want %q: this test is only meaningful while the fold DOES launder here",
-			launder, got, kindGitHub)
-	}
-	for _, url := range []string{"https://" + launder + "/o/r.git", "git@" + launder + ":o/r.git"} {
+// TestHostGate_RefusesAHomoglyphHost pins the alphabet gate on the origin
+// annotation: `g\u0130thub.com` lowercases to "github.com", so a host carrying it
+// would read in environment.md as a forge it is not.
+func TestHostGate_RefusesAHomoglyphHost(t *testing.T) {
+	const homoglyph = "g\u0130thub.com"
+	for _, url := range []string{"https://" + homoglyph + "/o/r.git", "git@" + homoglyph + ":o/r.git"} {
 		if got := hostFromGitURL(url); got != "" {
-			t.Errorf("hostFromGitURL(%q) = %q, want %q: a non-ASCII host must not reach the fold", url, got, "")
+			t.Errorf("hostFromGitURL(%q) = %q, want %q: a non-ASCII host must not reach the annotation", url, got, "")
 		}
 	}
 	// The ordinary host still resolves, so the gate is not simply refusing

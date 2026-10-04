@@ -32,20 +32,41 @@ beforeEach(() => {
   vi.stubGlobal("fetch", mockFetch);
 });
 
+const GITHUB_START = { kind: "github", host: "github.com", clientId: "", options: {} } as const;
+
 describe("forge.start_device_flow", () => {
   it("POSTs to /api/forges/oauth/github/start", async () => {
     const resp = {
-      device_code: "abc",
+      grant_id: "abc",
       user_code: "1234",
       verification_uri: "https://github.com/login/device",
     };
     mockFetch.mockResolvedValue(new Response(JSON.stringify(resp), { status: 200 }));
     const { startDeviceFlow } = await import("./forge.js");
-    const r = await startDeviceFlow.dispatch(undefined);
+    const r = await startDeviceFlow.dispatch(GITHUB_START);
     expect(r).toEqual(resp);
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/forges/oauth/github/start");
     expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({ host: "github.com" });
+  });
+
+  it("starts a self-managed GitLab grant with its client id and connection fields", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    const { startDeviceFlow } = await import("./forge.js");
+    await startDeviceFlow.dispatch({
+      kind: "gitlab",
+      host: "gitlab.internal",
+      clientId: "app-id",
+      options: { private_addresses: true },
+    });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/forges/oauth/gitlab/start");
+    expect(JSON.parse(opts.body as string)).toEqual({
+      host: "gitlab.internal",
+      client_id: "app-id",
+      private_addresses: true,
+    });
   });
 
   it("dedupes concurrent dispatches", async () => {
@@ -59,8 +80,8 @@ describe("forge.start_device_flow", () => {
         ),
     );
     const { startDeviceFlow } = await import("./forge.js");
-    const p1 = startDeviceFlow.dispatch(undefined);
-    const p2 = startDeviceFlow.dispatch(undefined);
+    const p1 = startDeviceFlow.dispatch(GITHUB_START);
+    const p2 = startDeviceFlow.dispatch(GITHUB_START);
     await vi.advanceTimersByTimeAsync(50);
     await Promise.all([p1, p2]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -72,8 +93,20 @@ describe("forge.start_device_flow", () => {
       new Response(JSON.stringify({ error: "rate limited" }), { status: 429 }),
     );
     const { startDeviceFlow } = await import("./forge.js");
-    await startDeviceFlow.dispatch(undefined);
+    await startDeviceFlow.dispatch(GITHUB_START);
     expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("forge.cancel_device_flow", () => {
+  it("POSTs the grant id to the kind's cancel route", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    const { cancelDeviceFlow } = await import("./forge.js");
+    await cancelDeviceFlow.dispatch({ kind: "gitlab", grantId: "g-1" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/forges/oauth/gitlab/cancel");
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({ grant_id: "g-1" });
   });
 });
 
@@ -87,11 +120,13 @@ describe("forge.sign_out", () => {
     expect(opts.method).toBe("DELETE");
   });
 
-  it("is not retryable", async () => {
+  it("is not retryable, and leaves the refusal to the account row", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
     const { signOut } = await import("./forge.js");
-    await signOut.dispatch({ forgeId: "gh:1" });
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("sign out"), undefined);
+    const o = await signOut.dispatch({ forgeId: "gh:1" }).outcome;
+    expect(o.status === "error" && o.error.message).toBe("fail");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
     expect(recentLog()[0]?.status).toBe("error");
   });
 });
@@ -199,17 +234,42 @@ describe("forge.connect_pat", () => {
   it("POSTs to /api/forges/:id/login/pat with token", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
     const { connectPAT } = await import("./forge.js");
-    await connectPAT.dispatch({ kind: "github", host: "github.com", token: "ghp_abc" });
+    await connectPAT.dispatch({
+      kind: "github",
+      host: "github.com",
+      token: "ghp_abc",
+      options: {},
+    });
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/forges/github%3Agithub.com/login/pat");
     expect(opts.method).toBe("POST");
     expect(JSON.parse(opts.body as string)).toEqual({ token: "ghp_abc" });
   });
 
+  it("sends the connection fields beside the token", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ status: "complete" }), { status: 200 }),
+    );
+    const { connectPAT } = await import("./forge.js");
+    await connectPAT.dispatch({
+      kind: "gitea",
+      host: "127.0.0.1:3000",
+      token: "tok",
+      options: { web_base_url: "http://127.0.0.1:3000", plaintext_http: true },
+    });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/forges/gitea%3A127.0.0.1%3A3000/login/pat");
+    expect(JSON.parse(opts.body as string)).toEqual({
+      token: "tok",
+      web_base_url: "http://127.0.0.1:3000",
+      plaintext_http: true,
+    });
+  });
+
   it("includes Idempotency-Key header", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
     const { connectPAT } = await import("./forge.js");
-    await connectPAT.dispatch({ kind: "gitlab", host: "gitlab.com", token: "tok" });
+    await connectPAT.dispatch({ kind: "gitlab", host: "gitlab.com", token: "tok", options: {} });
     expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
   });
 
@@ -218,7 +278,7 @@ describe("forge.connect_pat", () => {
       new Response(JSON.stringify({ error: "invalid" }), { status: 401 }),
     );
     const { connectPAT } = await import("./forge.js");
-    await connectPAT.dispatch({ kind: "github", host: "github.com", token: "bad" });
+    await connectPAT.dispatch({ kind: "github", host: "github.com", token: "bad", options: {} });
     expect(toast.error).not.toHaveBeenCalled();
   });
 });

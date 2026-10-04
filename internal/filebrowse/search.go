@@ -3,7 +3,7 @@
 // two searches, on the same textsearch kernel.
 //
 // Confinement is inherited from the resolved ROOT and never re-derived: every open is
-// one NAME against the parent's descriptor with O_NOFOLLOW (openChild), IsSensitive
+// one NAME against the parent's descriptor with O_NOFOLLOW (openChild), Sensitive.Blocks
 // runs on EVERY entry because an os.Root cannot deny a sub-path, and resolvePath is
 // NOT re-run per entry — EvalSymlinks can return a different mount and re-root it.
 
@@ -155,7 +155,7 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	// `case=1` only when asked, and anything else reads as insensitive — the
 	// exact rule handleSearch already applies to the transcript search, so the
 	// two boxes cannot disagree about what the checkbox means.
-	sc := newFileScan(r.Context(), needle, q.Get("case") == "1", include, exclude)
+	sc := newFileScan(r.Context(), needle, q.Get("case") == "1", include, exclude, h.sensitive)
 	for _, root := range roots {
 		if !sc.addRoot(root) {
 			break
@@ -276,10 +276,11 @@ type searchCandidate struct {
 // a pre-sized local slice by index, so a worker touches no shared state and
 // the scan needs neither mutex nor atomic.
 type fileScan struct {
-	ctx     context.Context
-	include []string
-	exclude []string
-	matches []FileMatch
+	ctx       context.Context
+	include   []string
+	exclude   []string
+	matches   []FileMatch
+	sensitive Sensitive
 	// needle is the one kernel Needle both the name test and the line scan run,
 	// so the two cannot disagree about the fold.
 	needle textsearch.Needle
@@ -296,12 +297,13 @@ type fileScan struct {
 	truncated bool
 }
 
-func newFileScan(ctx context.Context, needle string, caseSensitive bool, include, exclude []string) *fileScan {
+func newFileScan(ctx context.Context, needle string, caseSensitive bool, include, exclude []string, sensitive Sensitive) *fileScan {
 	return &fileScan{
-		ctx:     ctx,
-		needle:  textsearch.NewNeedle(needle, caseSensitive),
-		include: include,
-		exclude: exclude,
+		ctx:       ctx,
+		sensitive: sensitive,
+		needle:    textsearch.NewNeedle(needle, caseSensitive),
+		include:   include,
+		exclude:   exclude,
 	}
 }
 
@@ -585,7 +587,7 @@ const (
 func (s *fileScan) classify(d searchDir, e fs.DirEntry) (verdict entryVerdict, name string) {
 	name = e.Name()
 	abs, srel := d.child(name)
-	if IsSensitive(abs) {
+	if s.sensitive.Blocks(abs) {
 		return entrySkip, name
 	}
 	if e.IsDir() {

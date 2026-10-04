@@ -38,7 +38,15 @@ afterEach(() => {
 });
 
 const forgesResp = {
-  forges: [{ id: "github:github.com", kind: "github", host: "github.com", connected: true }],
+  forges: [
+    {
+      id: "github:github.com",
+      kind: "github",
+      host: "github.com",
+      connected: true,
+      reconnect_required: false,
+    },
+  ],
   kinds: ["github", "gitlab", "codeberg", "gitea"],
   oauth: { github: true },
 };

@@ -388,16 +388,16 @@ function gitRepoSectionPRs(): {
   return { clipper: mount(clipper), head, newBtn };
 }
 
-/** One configured forge account, as `forge-auth.ts` paints its row. The repo-list
- *  `details` carries no padding and no inline border, so its `summary` — a focusable by
- *  construction — spans the clip box edge to edge and is the card's last box while it is
- *  closed. The `Manage` link is built and deliberately not returned: it carries no
- *  geometry of its own — same flex row, same control height, looser on the inline axis —
- *  so `Sign out`'s pinned 8px IS its clearance and a case of its own could only fail
- *  when that one does. */
+/** One configured forge account, as `forge-auth.ts` paints its row. The repo list's
+ *  toggle shares a `padding: 0` header row with Clone all and carries padding that
+ *  insets its text and not its box, so it is flush with the clip box on the inline-start
+ *  edge and, while the list is closed, is the card's last box. The `Manage` link is
+ *  built and deliberately not returned: it carries no geometry of its own (same flex
+ *  row, same control height, looser on the inline axis), so `Sign out`'s pinned 8px IS
+ *  its clearance and a case of its own could only fail when that one does. */
 function forgeAccountRow(): {
   clipper: HTMLElement;
-  details: HTMLDetailsElement;
+  open: () => void;
   summary: HTMLElement;
   signOut: HTMLElement;
   cloneAll: HTMLElement;
@@ -419,13 +419,19 @@ function forgeAccountRow(): {
 
   const cloneAll = node("button", "btn-small forge-account-repos-clone-all", { type: "button" });
   cloneAll.textContent = "Clone all";
-  const summary = node("summary", "forge-account-repos-summary");
+  const summary = node("button", "forge-account-repos-summary", {
+    type: "button",
+    "aria-expanded": "false",
+  });
   summary.append(
     node("span", "disclosure-chevron forge-account-repos-chevron", { "aria-hidden": "true" }),
     node("span", "forge-account-repos-icon", { "aria-hidden": "true" }),
     span("forge-account-repos-label", "3 repos, 1 cloned locally"),
-    cloneAll,
   );
+  const batch = node("div", "forge-account-repos-actions");
+  batch.appendChild(cloneAll);
+  const head = node("div", "forge-account-repos-head");
+  head.append(summary, batch);
   const repoBtn = node("button", "btn-small", { type: "button" });
   repoBtn.textContent = "Clone";
   const repoRow = node("li", "forge-account-repo-row");
@@ -436,17 +442,26 @@ function forgeAccountRow(): {
   );
   const list = node("ul", "forge-account-repos-list");
   list.appendChild(repoRow);
-  const details = node("details", "forge-account-repos", {
-    "data-account-id": "github:github.com",
-  }) as HTMLDetailsElement;
-  details.append(summary, list);
+  // Closed as `createDisclosure` leaves its region, without the height transition a
+  // measurement would land inside.
+  const body = node("div", "forge-account-repos-body");
+  body.style.cssText = "height:0px;overflow:hidden;";
+  body.inert = true;
+  body.appendChild(list);
+  const block = node("div", "forge-account-repos", { "data-account-id": "github:github.com" });
+  block.append(head, body);
+  const open = (): void => {
+    summary.setAttribute("aria-expanded", "true");
+    body.style.height = "";
+    body.inert = false;
+  };
 
   const clipper = node("li", "forge-account-row", { "data-id": "github:github.com" });
-  clipper.append(top, details);
+  clipper.append(top, block);
   const outer = node("ul", "forge-account-list");
   outer.appendChild(clipper);
   mount(outer);
-  return { clipper, details, summary, signOut, cloneAll, repoBtn };
+  return { clipper, open, summary, signOut, cloneAll, repoBtn };
 }
 
 /** The Changes tab's changed-file list: a clipper of its own, whose rows give their
@@ -796,29 +811,25 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("prs section toggle", head, clipper);
   });
 
-  it("on an account's repo-list summary, flush on both inline edges in either state", async () => {
-    // A `<summary>` is focusable by construction and the floor's first arm names it,
-    // and this one is a full-bleed child of a `padding: 0` `details` inside a
-    // `padding: 0` clipping card — so its padding insets its text and not its box,
-    // exactly like the PRs toggle. Closed it is also the card's last box, which takes
-    // the block-end edge as well.
-    const { clipper, details, summary } = forgeAccountRow();
+  it("on an account's repo-list toggle, flush on the inline-start edge in either state", async () => {
+    // A full-bleed child of a `padding: 0` row inside a `padding: 0` clipping card, so
+    // its padding insets its text and not its box, exactly like the PRs toggle. Closed
+    // it is also the card's last box, which takes the block-end edge as well.
+    const { clipper, open, summary } = forgeAccountRow();
     await focusByTab(summary);
     const closed = inset(summary, clipper);
     expect(closed.left).toBeLessThan(0.5);
-    expect(closed.right).toBeLessThan(0.5);
     expect(closed.bottom, "closed: a following box would take the block-end edge").toBeLessThan(
       0.5,
     );
-    expectRingInside("account repos summary (closed)", summary, clipper);
+    expectRingInside("account repos toggle (closed)", summary, clipper);
 
-    details.open = true;
+    open();
     await focusByTab(summary);
-    const open = inset(summary, clipper);
-    expect(open.left).toBeLessThan(0.5);
-    expect(open.right).toBeLessThan(0.5);
-    expect(open.bottom).toBeGreaterThan(0.5);
-    expectRingInside("account repos summary (open)", summary, clipper);
+    const opened = inset(summary, clipper);
+    expect(opened.left).toBeLessThan(0.5);
+    expect(opened.bottom).toBeGreaterThan(0.5);
+    expectRingInside("account repos toggle (open)", summary, clipper);
   });
 });
 
@@ -950,19 +961,19 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     expectClears("+ New PR", newBtn, clipper);
   });
 
-  it("pins the account row's own controls, which the summary beside them does not", async () => {
+  it("pins the account row's own controls, which the toggle beside them does not", async () => {
     // One clipper, two verdicts, decided per control rather than per card:
     // `.forge-account-row-top` and `.forge-account-repo-row` inset their controls with
-    // real padding (8px and 4px), while the `summary` between them carries padding that
-    // insets only its text.
-    const { clipper, details, signOut, cloneAll, repoBtn } = forgeAccountRow();
+    // real padding (8px and 4px) and so does Clone all's group, while the toggle
+    // beside it carries padding that insets only its text.
+    const { clipper, open, signOut, cloneAll, repoBtn } = forgeAccountRow();
     await focusByTab(signOut);
     expect(inset(signOut, clipper).top).toBe(8);
     expectClears("account Sign out", signOut, clipper);
     await focusByTab(cloneAll);
     expect(inset(cloneAll, clipper).bottom).toBe(8);
     expectClears("account Clone all", cloneAll, clipper);
-    details.open = true;
+    open();
     await focusByTab(repoBtn);
     expect(inset(repoBtn, clipper).bottom).toBe(reachOf(repoBtn) + 1);
     expectClears("account repo Clone", repoBtn, clipper);

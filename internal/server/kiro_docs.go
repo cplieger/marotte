@@ -47,6 +47,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cplieger/marotte/internal/filebrowse"
 	"github.com/cplieger/marotte/internal/httpreply"
 	"github.com/cplieger/marotte/internal/spec"
 	"github.com/cplieger/marotte/internal/steering"
@@ -209,14 +210,14 @@ func (s *Server) collectKiroDocs(ctx context.Context) KiroDocsResponse {
 	if s.kiroDocs == nil {
 		// No cache wired (the zero Server in the method-guard tests): scan
 		// directly rather than pretending a cache exists.
-		return scanKiroRoots(ctx, roots)
+		return scanKiroRoots(ctx, roots, s.sensitive)
 	}
 	s.kiroDocs.mu.Lock()
 	defer s.kiroDocs.mu.Unlock()
 	if s.kiroDocs.sig == sig && s.kiroDocs.res.Docs != nil {
 		return s.kiroDocs.res
 	}
-	res := scanKiroRoots(ctx, roots)
+	res := scanKiroRoots(ctx, roots, s.sensitive)
 	// A cancelled scan is partial; caching it would serve a truncated list for
 	// as long as the tree is unchanged.
 	if ctx.Err() != nil {
@@ -300,7 +301,7 @@ func dirSignature(roots []kiroRoot) string {
 // scanKiroRoots scans every root in category order, applying the total cap. A
 // root left unread because the cap was already reached counts as a cut, whatever
 // it would have held.
-func scanKiroRoots(ctx context.Context, roots []kiroRoot) KiroDocsResponse {
+func scanKiroRoots(ctx context.Context, roots []kiroRoot, sensitive filebrowse.Sensitive) KiroDocsResponse {
 	var sc docScan
 	for _, root := range roots {
 		if ctx.Err() != nil || len(sc.docs) >= maxDocsTotal {
@@ -308,7 +309,7 @@ func scanKiroRoots(ctx context.Context, roots []kiroRoot) KiroDocsResponse {
 			break
 		}
 		sc.absorb(scanKiroDocsFS(ctx, os.DirFS(root.fsPath), root.prefix,
-			newRootGuard(root.fsPath, root.prefix)))
+			newRootGuard(root.fsPath, root.prefix, sensitive)))
 	}
 	if len(sc.docs) > maxDocsTotal {
 		sc.docs = sc.docs[:maxDocsTotal]

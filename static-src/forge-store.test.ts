@@ -28,6 +28,7 @@ const payload = (username: string) => ({
       host: "github.com",
       username,
       connected: true,
+      reconnect_required: false,
     },
   ],
   kinds: ["github", "gitlab", "codeberg", "gitea"] as const,
@@ -57,8 +58,7 @@ describe("forge-store read-through", () => {
 
     expect(first?.forges[0]?.username).toBe("alice");
     expect(second).toEqual(first);
-    // The whole point: the PR fan-out is the expensive caller and must not add a
-    // round trip of its own once the list is known.
+    // The whole point: a second reader must not add a round trip once the list is known.
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 

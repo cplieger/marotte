@@ -58,6 +58,8 @@ type App struct {
 	stopOrphanSweep func()
 	// stopPRPoller stops the PR-status poller and waits for its goroutine.
 	stopPRPoller func()
+	// stopForgeKeeper stops the forge credential keeper and waits for its goroutine.
+	stopForgeKeeper func()
 	// stopApp ends the app's LIFETIME: what every process-bound component is parented on.
 	stopApp func()
 }
@@ -206,16 +208,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	forgesManager := forges.NewManager()
+	forgesManager := forges.NewManager(cfg.ConfigDir)
 	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
-		// Non-fatal with no CLIs installed yet; the manager starts with an empty list.
+		// Non-fatal: the manager serves an empty list until the next refresh.
 		_ = refreshErr
 	}
 
 	gitHandler := git.NewHandler(cfg.WorkDir)
 	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
 	ensureUploadDir()
-	fileHandler, err := filebrowse.New(cfg.BrowseRoots...)
+	sensitive := filebrowse.NewSensitive(cfg.ConfigDir)
+	fileHandler, err := filebrowse.New(sensitive, cfg.BrowseRoots...)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +236,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	forgesHTTP := forges.NewHTTPHandler(forgesManager, h)
 
 	// A cache, because steering.Generate runs synchronously on the pre-bridge-spawn path
-	// and forgeSnapshot shells out to the forge CLIs.
+	// and forgeSnapshot lists each connection's repositories from its forge.
 	forgeCache := newForgeSnapshotCache(appCtx, steer, func(bctx context.Context) steering.ForgeSnapshot {
 		return forgeSnapshot(bctx, forgesManager)
 	})
@@ -241,7 +244,12 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	go forgeCache.refresh()
 	forgesHTTP.SetOnChange(func() { go forgeCache.refresh() })
 
-	stopPRPoller := startPRStatusPoller(ctx, forgesManager, gitHandler, pushSvc)
+	prPoller := newPRStatusPoller(forgesManager, gitHandler, pushSvc, prPollGate(presence, pushSvc),
+		forges.WithInventoryPush(versions, h), forges.WithViewers(presence))
+	forgesHTTP.SetPoller(prPoller)
+	stopPRPoller := runBackground(ctx, "pr status poller", prPoller.Run)
+	stopForgeKeeper := runBackground(ctx, "forge credential keeper",
+		forges.NewKeeper(forgesManager, forgesHTTP.NotifyChanged).Run)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -307,6 +315,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithKiroRescan(kiro.rescan),
 		server.WithAuthUnavailable(authReadiness.Unavailable),
 		server.WithConfigDir(cfg.ConfigDir),
+		server.WithSensitive(sensitive),
 		server.WithTabs(tabStore),
 		server.WithSpecApprovals(approvalStore),
 		server.WithWorkDir(cfg.WorkDir),
@@ -326,6 +335,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		stopKiro:        kiro.stop,
 		stopOrphanSweep: stopOrphanSweep,
 		stopPRPoller:    stopPRPoller,
+		stopForgeKeeper: stopForgeKeeper,
 		stopApp:         stopApp,
 	}, nil
 }
@@ -350,6 +360,7 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	// First: the poller consults the push service the Runtime owns.
 	callIfSet(a.stopPRPoller)
+	callIfSet(a.stopForgeKeeper)
 	// Before stopKiro because this stop WAITS: a sweep reaches KAS over the utility bridge
 	// the kiro teardown is about to close, so the reverse order leaves one mid-inspect.
 	callIfSet(a.stopOrphanSweep)
@@ -482,11 +493,11 @@ func sweepStaleTemps(ctx context.Context, configDir, workDir string) {
 
 // forgeSnapshotTTL bounds how stale the cached forge snapshot may get before a read kicks
 // a background revalidation. Connections and repo lists change rarely, so five minutes
-// keeps the forge section honest with no CLI network call near the session-start path.
+// keeps the forge section honest with no forge request near the session-start path.
 const forgeSnapshotTTL = 5 * time.Minute
 
 // forgeSnapshotCache is a stale-while-revalidate cache around forgeSnapshot. snapshot()
-// NEVER blocks on the forge CLIs: it returns the current cache (zero-value before the boot
+// NEVER blocks on a forge request: it returns the current cache (zero-value before the boot
 // prime lands) and kicks an async refresh when stale. refresh() rebuilds in the calling
 // goroutine and regenerates the steering file only on a change.
 type forgeSnapshotCache struct {
@@ -524,8 +535,8 @@ func (c *forgeSnapshotCache) snapshot() steering.ForgeSnapshot {
 
 // refresh rebuilds the snapshot now, then regenerates the steering file if the data
 // changed. A request arriving mid-rebuild is COALESCED rather than dropped: that rebuild
-// may have read pre-change CLI config, so dropping it would strand a fresh login until the
-// TTL. Callers run refresh in their own goroutine.
+// may have read the connections before the change, so dropping it would strand a fresh
+// connect until the TTL. Callers run refresh in their own goroutine.
 func (c *forgeSnapshotCache) refresh() {
 	c.mu.Lock()
 	if c.busy {
@@ -576,7 +587,7 @@ func forgeSnapshot(ctx context.Context, forgesManager *forges.Manager) steering.
 			Host:  f.Host,
 			User:  f.Username,
 			Email: f.Email,
-			Repos: repoNamesFor(ctx, f.Kind, f.Host),
+			Repos: repoNamesFor(ctx, forgesManager, f.ID),
 		})
 	}
 	return steering.ForgeSnapshot{Providers: providers}
@@ -584,20 +595,12 @@ func forgeSnapshot(ctx context.Context, forgesManager *forges.Manager) steering.
 
 // repoNamesFor returns every repo reachable for the given forge, or nil. Best-effort: a
 // forge whose repos cannot be listed is still surfaced, just without a repo list.
-func repoNamesFor(ctx context.Context, kind forges.Kind, host string) []string {
-	ops, err := forges.New(kind, host)
-	if err != nil {
-		return nil
-	}
+func repoNamesFor(ctx context.Context, forgesManager *forges.Manager, id string) []string {
 	repoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	repos, err := ops.ListRepos(repoCtx)
+	names, err := forgesManager.RepoNames(repoCtx, id)
 	if err != nil {
 		return nil
-	}
-	names := make([]string, 0, len(repos))
-	for i := range repos {
-		names = append(names, repos[i].FullName)
 	}
 	return names
 }
@@ -612,8 +615,6 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*to
 	}
 	if toolsEngine != nil {
 		warnIfNoLSPEnabled(toolsEngine)
-		// A forge login needs its CLI installed synchronously.
-		forges.EnsureTool = toolsEngine.EnsureInstalled
 	}
 	return toolsEngine, nil
 }
@@ -637,7 +638,7 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 		CatalogPath:         cfg.ToolCatalogPath,
 		Refresh:             catalogRefresh,
 		CatalogOverlays:     cfg.ToolCatalogOverlays,
-		Seed:                toolbelt.DefaultSeed(),
+		Seed:                toolsSeed(),
 		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
 		OnJobChanged: func(j *toolbelt.Job) {
 			h.Broadcast(context.Background(), marotte.NewEvent(marotte.EventToolJobChanged, "",
@@ -685,6 +686,14 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 	return toolsEngine, nil
 }
 
+// toolsSeed is toolbelt's seed without its gh template: Marotte runs no forge CLI
+// (ADR-0003), so a fresh volume offers none.
+func toolsSeed() *toolbelt.Manifest {
+	seed := toolbelt.DefaultSeed()
+	delete(seed.Tools, "gh")
+	return seed
+}
+
 // toolsEngineFailure decides what a toolbelt.New failure costs marotte. A nil return is
 // the DEGRADED verdict and only the root-integrity refusal earns it; every other failure
 // stays fatal. Degraded rather than fatal because an unfit root is persistent-volume state
@@ -713,7 +722,7 @@ func logRootIntegrityRefusal(err error) {
 			"path", f.Path, "reason", f.Reason)
 	}
 	slog.Warn("tools engine disabled: marotte is running without the tools subsystem; "+
-		"Settings -> Tools is unavailable and forge CLIs will not auto-install",
+		"Settings -> Tools is unavailable",
 		"finding_count", len(refusal.Findings),
 		"hint", "the check reports only and never repairs: fix the paths above from inside the container "+
 			"(chmod g-w,o-w on a writable dir; replace a symlinked root with a real directory), then restart it")
@@ -854,26 +863,33 @@ func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Lau
 	go schedule.NewRunner(st, l).Run(ctx)
 }
 
-// startPRStatusPoller starts the CI-flip notifier and returns its stop function. The repo
-// resolver is the join this root owns: git answers which repos are checked out, forges
-// which hosts have an account, and neither package should reach into the other. The lookup
-// runs per SWEEP, so a repo or a login added after boot is watched without a restart.
-func startPRStatusPoller(ctx context.Context, mgr *forges.Manager,
-	gitHandler *git.Handler, notifier forges.PRNotifier,
-) (stop func()) {
-	repos := func(rctx context.Context) []forges.PRRepo {
+// newPRStatusPoller builds the CI-flip notifier that fills the pull-request
+// inventory. The origins are what this root hands across: git answers which repos are
+// checked out and where their origins point, forges joins them to its connections, and
+// neither package reaches into the other. The lookup runs per SWEEP, so a clone or a
+// connection added after boot is watched without a restart.
+func newPRStatusPoller(mgr *forges.Manager,
+	gitHandler *git.Handler, notifier forges.PRNotifier, gate func() forges.Gate, opts ...forges.PollerOption,
+) *forges.PRStatusPoller {
+	origins := func(rctx context.Context) []forges.RepoOrigin {
 		remotes := gitHandler.RepoRemotes(rctx)
-		if len(remotes) == 0 {
-			return nil
-		}
-		origins := make([]forges.RepoOrigin, 0, len(remotes))
+		out := make([]forges.RepoOrigin, 0, len(remotes))
 		for _, r := range remotes {
-			origins = append(origins, forges.RepoOrigin{Host: r.Host, Slug: r.Slug})
+			out = append(out, forges.RepoOrigin{Dir: r.Name, WebBase: r.WebBase, Slug: r.Slug})
 		}
-		return forges.MatchRepos(mgr.List(rctx), origins)
+		return out
 	}
-	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(mgr, repos), notifier)
-	return runBackground(ctx, "pr status poller", poller.Run)
+	return forges.NewPRStatusPoller(forges.NewManagerPRSource(mgr, origins), notifier, gate, opts...)
+}
+
+// prPollGate opens the PR-status poller's sweep while a client is connected on the
+// stream, or while the pull-request notice is enabled and a subscription exists to
+// receive it. A subscription alone keeps nothing open: a browser stays subscribed
+// with every tab closed, and the notice defaults off.
+func prPollGate(presence *push.Presence, svc *push.Service) func() forges.Gate {
+	return func() forges.Gate {
+		return forges.Gate{Present: presence.AnyPresent(), Push: svc.Wants(marotte.PushKindPRStatus)}
+	}
 }
 
 // backgroundStopGrace bounds how long a stop function waits for its goroutine. The WAIT is

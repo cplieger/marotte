@@ -1,20 +1,22 @@
-// A read-through cache over the two forge LISTING calls (repos, PRs):
-// the PRs tab aggregates client-side, so one visit forks a `gh`/`glab`/
-// `tea` subprocess per repository with no caching at all. There is no
-// background ticker; a fill happens only because a request asked for
+// A read-through cache over the forge LISTING routes: a connection's repositories,
+// a repository's pull requests and its affordances. Only a first page is cached.
+// There is no background ticker; a fill happens only because a request asked for
 // the data, and the one goroutine that exists is the revalidation of an
-// already-served stale value, bounded by ListTimeout. Mutations are
-// never cached — the decorator promotes them from the embedded
-// ForgeOps untouched.
+// already-served stale value, bounded by listFillBudget.
+// Mutations are never cached; a successful one evicts its repository's entries
+// (ARCHITECTURE.md "Cache coherence").
 
 package forges
 
 import (
 	"context"
 	"log/slog"
+	"maps"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/cplieger/forgeapi"
 	"github.com/cplieger/keyenc"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
@@ -27,33 +29,40 @@ import (
 const repoListTTL = 5 * time.Minute
 
 // prListTTL is deliberately much shorter than repoListTTL, and CI is the reason
-// rather than the PR set. A row carries the folded check verdict of its head
-// commit, so a stale entry can show a green chip for a commit whose checks have
-// since gone red. A merge cannot land the wrong COMMIT — MergeOptions.HeadSHA
-// pins it and the forge refuses when the branch moved — but nothing here stops
-// a merge of the right commit against a verdict that has changed, so the window
-// is kept to a minute and the UI's refresh control bypasses the cache entirely.
+// rather than the PR set: a row carries the folded check verdict of its head
+// commit, which moves far more often than the set of pull requests does.
 const prListTTL = time.Minute
 
-// maxListFills caps how many listing subprocesses may run at once, across both
-// caches and every forge. It exists to bound the SPIKE: a cold PRs tab asks for
-// one listing per cloned repository simultaneously, and this workspace has
-// dozens, so without a ceiling each visit forks that many `gh` processes at the
-// same instant and fires the same number of parallel API calls, which is what
-// upstream secondary rate limiting is for.
-//
-// 16 is a spike ceiling rather than a tuned value. It is set high enough that a
-// cold visit still completes in a handful of waves, because the client abandons
-// the fan-out after 20 seconds and a bound that serialises the cold path would
-// trade a slow first visit for a failed one.
+// affordancesTTL matches repoListTTL because both are read from the repository's
+// own record. A strategy disabled inside the window costs a merge the forge
+// refuses, never a merge of another kind, because the library sends the
+// strategy the caller named.
+const affordancesTTL = 5 * time.Minute
+
+// maxListFills caps how many cache fills may read a forge at once, across every
+// cache and every forge: a burst of cold requests is what upstream secondary rate
+// limiting is for. 16 is a spike ceiling rather than a tuned value.
 const maxListFills = 16
 
-// listEntry is one cached listing.
+// listFillBudget bounds a fill detached from the request that started it: a
+// revalidation, which no request waits on, or a shared fill whose first caller
+// may leave while others still wait.
+const listFillBudget = 60 * time.Second
+
+// generation is what a fill started under: epoch moves when the whole cache is
+// cleared, repo when the fill's scope is mutated. Zero is a live generation
+// (ADR-0065), so it is never read as "not recorded".
+type generation struct {
+	epoch, repo uint64
+}
+
+// listEntry is one cached listing and the generation it was filled under.
 type listEntry[T any] struct {
 	// at is the zero time until the first successful fill, which is what
 	// separates "nothing to serve" from "something stale to serve".
 	at   time.Time
 	val  T
+	gen  generation
 	busy bool // a revalidation is in flight; do not start a second
 }
 
@@ -62,37 +71,38 @@ type listEntry[T any] struct {
 // get: an instance holds entries of exactly one T, and a per-method parameter
 // would let a []Repo and a []PR share one map.
 type listCache[T any] struct {
-	entries map[string]*listEntry[T]
-	sf      singleflight.Group
-	fills   *semaphore.Weighted
-	ttl     time.Duration
-	// gen is bumped by clear(). A fill that started before an invalidation
-	// still RETURNS its value to the caller who asked for it, but does not
-	// store it: it may have read the forge before the change that invalidated
-	// the cache, and storing it would strand that change until the TTL.
-	gen int
-	mu  sync.Mutex
+	entries map[cacheKey]*listEntry[T]
+	// gens is each mutated scope's generation, an absent one reading zero, and
+	// epoch is bumped by clear(). A fill whose generation moved while it ran
+	// still RETURNS its value to the caller who asked for it, but does not store
+	// it: it may have read the forge before the change, and storing it would
+	// strand that change until the TTL.
+	gens  map[string]uint64
+	sf    singleflight.Group
+	fills *semaphore.Weighted
+	ttl   time.Duration
+	epoch uint64
+	mu    sync.Mutex
 }
 
 func newListCache[T any](ttl time.Duration, fills *semaphore.Weighted) *listCache[T] {
 	return &listCache[T]{
-		entries: make(map[string]*listEntry[T]),
+		entries: make(map[cacheKey]*listEntry[T]),
+		gens:    make(map[string]uint64),
 		fills:   fills,
 		ttl:     ttl,
 	}
 }
 
-// get serves key, filling through fill only when it must.
-//
-// Four cases, in the order they are tested:
-//
-//   - force: fill now and replace. What the UI's refresh control asks for.
-//   - nothing cached: fill now. A cold entry has nothing to serve.
-//   - fresh: return the cached value, touching no forge.
-//   - stale: return the cached value IMMEDIATELY and revalidate behind the
-//     caller, so a visit past the TTL paints at once rather than waiting on a
-//     subprocess.
-func (c *listCache[T]) get(ctx context.Context, key string, force bool,
+func (c *listCache[T]) genLocked(scope string) generation {
+	return generation{epoch: c.epoch, repo: c.gens[scope]}
+}
+
+// get serves key: force fills now and replaces (the UI's refresh), an empty
+// entry fills now, a fresh one is answered with no forge call, and a stale one
+// is answered at once and revalidated behind the caller, so a visit past the
+// TTL paints without waiting on the forge.
+func (c *listCache[T]) get(ctx context.Context, key cacheKey, force bool,
 	fill func(context.Context) (T, error),
 ) (T, error) {
 	if !force {
@@ -106,7 +116,7 @@ func (c *listCache[T]) get(ctx context.Context, key string, force bool,
 // serve answers from the cache when it can, reporting whether it did. A stale
 // hit also arms the revalidation, which is why this holds the lock across both
 // decisions rather than reading state and acting on it afterwards.
-func (c *listCache[T]) serve(ctx context.Context, key string,
+func (c *listCache[T]) serve(ctx context.Context, key cacheKey,
 	fill func(context.Context) (T, error),
 ) (T, bool) {
 	c.mu.Lock()
@@ -118,28 +128,31 @@ func (c *listCache[T]) serve(ctx context.Context, key string,
 	}
 	if time.Since(e.at) >= c.ttl && !e.busy {
 		e.busy = true
-		go c.revalidate(ctx, key, c.gen, fill)
+		go c.revalidate(ctx, key, e.gen, fill)
 	}
 	return e.val, true
 }
 
 // fillNow fetches key and caches the result. Concurrent callers for one key
-// share a single fetch: two browser tabs opening the PRs tab together, or a
-// reload landing on top of the tab-activation fetch, would otherwise each fork
-// their own subprocess per repository.
-func (c *listCache[T]) fillNow(ctx context.Context, key string,
+// share a single fetch, as two browser tabs opening one list together do. The
+// generation is part of the shared fetch's key, so a read after a mutation never
+// joins a fetch begun before it.
+func (c *listCache[T]) fillNow(ctx context.Context, key cacheKey,
 	fill func(context.Context) (T, error),
 ) (T, error) {
 	c.mu.Lock()
-	gen := c.gen
+	gen := c.genLocked(key.scope)
 	c.mu.Unlock()
 
-	ch := c.sf.DoChan(key, func() (any, error) {
-		if err := c.fills.Acquire(ctx, 1); err != nil {
+	flight := keyenc.Join(key.scope, key.page, strconv.FormatUint(gen.epoch, 10), strconv.FormatUint(gen.repo, 10))
+	ch := c.sf.DoChan(flight, func() (any, error) {
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), listFillBudget)
+		defer cancel()
+		if err := c.fills.Acquire(fctx, 1); err != nil {
 			return nil, err
 		}
 		defer c.fills.Release(1)
-		val, err := fill(ctx)
+		val, err := fill(fctx)
 		if err != nil {
 			return nil, err
 		}
@@ -168,11 +181,11 @@ func (c *listCache[T]) fillNow(ctx context.Context, key string,
 // response is written, so the fetch gets a detached one; the timeout is what
 // stops this goroutine. A failure is not reported anywhere: the caller already
 // has an answer, and the next request retries.
-func (c *listCache[T]) revalidate(ctx context.Context, key string, gen int,
+func (c *listCache[T]) revalidate(ctx context.Context, key cacheKey, gen generation,
 	fill func(context.Context) (T, error),
 ) {
 	defer c.clearBusy(key)
-	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), ListTimeout)
+	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), listFillBudget)
 	defer cancel()
 	if err := c.fills.Acquire(bg, 1); err != nil {
 		return
@@ -186,12 +199,12 @@ func (c *listCache[T]) revalidate(ctx context.Context, key string, gen int,
 	c.store(key, gen, val)
 }
 
-// store records a successful fill, unless the cache was invalidated while it
-// was in flight (see listCache.gen).
-func (c *listCache[T]) store(key string, gen int, val T) {
+// store records a successful fill, unless its generation moved while it was in
+// flight (see listCache.gens).
+func (c *listCache[T]) store(key cacheKey, gen generation, val T) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if gen != c.gen {
+	if gen != c.genLocked(key.scope) {
 		return
 	}
 	e, ok := c.entries[key]
@@ -200,10 +213,11 @@ func (c *listCache[T]) store(key string, gen int, val T) {
 		c.entries[key] = e
 	}
 	e.val = val
+	e.gen = gen
 	e.at = time.Now()
 }
 
-func (c *listCache[T]) clearBusy(key string) {
+func (c *listCache[T]) clearBusy(key cacheKey) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.entries[key]; ok {
@@ -215,51 +229,122 @@ func (c *listCache[T]) clearBusy(key string) {
 func (c *listCache[T]) clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = make(map[string]*listEntry[T])
-	c.gen++
+	c.entries = make(map[cacheKey]*listEntry[T])
+	clear(c.gens)
+	c.epoch++
 }
 
-// listCaches is the Manager's pair of listing caches. They share one fill
-// semaphore because the thing being bounded is concurrent subprocesses, which
-// both kinds of listing spawn.
+// evict drops scope's entries and moves its generation, so a fill in flight for
+// it stores nothing; every other scope's entries and fills are untouched.
+func (c *listCache[T]) evict(scope string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gens[scope]++
+	maps.DeleteFunc(c.entries, func(k cacheKey, _ *listEntry[T]) bool { return k.scope == scope })
+}
+
+// listCaches is the Manager's listing caches. They share one fill semaphore
+// because the thing being bounded is concurrent forge reads, which every
+// listing makes.
 type listCaches struct {
-	repos *listCache[[]Repo]
-	prs   *listCache[[]PR]
+	repos       *listCache[RepoList]
+	prs         *listCache[PRList]
+	affordances *listCache[RepoAffordances]
 }
 
 func newListCaches() *listCaches {
 	fills := semaphore.NewWeighted(maxListFills)
 	return &listCaches{
-		repos: newListCache[[]Repo](repoListTTL, fills),
-		prs:   newListCache[[]PR](prListTTL, fills),
+		repos:       newListCache[RepoList](repoListTTL, fills),
+		prs:         newListCache[PRList](prListTTL, fills),
+		affordances: newListCache[RepoAffordances](affordancesTTL, fills),
 	}
 }
 
 func (c *listCaches) clear() {
 	c.repos.clear()
 	c.prs.clear()
+	c.affordances.clear()
 }
 
-// cachedListings decorates a ForgeOps so its two listing calls read through the
-// cache. Every other method is promoted from the embedded interface unchanged.
-type cachedListings struct {
-	ForgeOps
-	caches  *listCaches
-	forgeID string
-	// force makes both listings bypass the cache and replace what is there.
-	force bool
+// cacheKey is a first page's key: the scope a mutation evicts, and the page
+// within it.
+type cacheKey struct{ scope, page string }
+
+// listKey is the key of one connection's first page of list under one state
+// filter, scoped to one canonical repository id (empty for a list no repository
+// addresses). keyenc rather than a separator: the id arrives in a URL.
+func listKey(forgeID, repoID, list, state string) cacheKey {
+	return cacheKey{scope: repoScope(forgeID, repoID), page: keyenc.Join(list, state)}
 }
 
-func (c cachedListings) ListRepos(ctx context.Context) ([]Repo, error) {
-	return c.caches.repos.get(ctx, c.forgeID, c.force, c.ForgeOps.ListRepos)
+func repoScope(forgeID, repoID string) string { return keyenc.Join(forgeID, repoID) }
+
+// evictRepo drops every cached entry of forgeID's repository repoID, its
+// canonical id, after a mutation changed it.
+func (m *Manager) evictRepo(forgeID, repoID string) {
+	scope := repoScope(forgeID, repoID)
+	m.lists.prs.evict(scope)
+	m.lists.affordances.evict(scope)
 }
 
-func (c cachedListings) ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error) {
-	// keyenc rather than a separator: `state` arrives as a raw query parameter
-	// and a repository name is upstream text, so a hand-joined key is forgeable
-	// by whichever field carries the separator.
-	key := keyenc.Join(c.forgeID, repo, string(state))
-	return c.caches.prs.get(ctx, key, c.force, func(ctx context.Context) ([]PR, error) {
-		return c.ForgeOps.ListPRs(ctx, repo, state)
+// listRequest is one list call's options and the settings the library resolved
+// them to.
+type listRequest struct {
+	opts []forgeapi.ListOption
+	set  forgeapi.ListSettings
+}
+
+// resolveList checks opts through the library, which refuses an unknown state
+// filter or a malformed cursor before any request.
+func resolveList(opts ...forgeapi.ListOption) (listRequest, error) {
+	set, err := forgeapi.ResolveList(opts...)
+	return listRequest{opts: opts, set: set}, err
+}
+
+// repoPage answers one page of fc's repositories. Only a first page with no
+// filter reads through the cache: a continuation is keyed by a caller's cursor,
+// so caching it would grow without bound and could answer for the first page,
+// and a named state must reach the library that refuses it.
+func (m *Manager) repoPage(ctx context.Context, fc forgeClient, req *listRequest, force bool) (RepoList, error) {
+	fill := func(ctx context.Context) (RepoList, error) {
+		page, err := fc.core.ListRepos(ctx, req.opts...)
+		if err != nil {
+			return RepoList{}, err
+		}
+		return repoListWire(&page), nil
+	}
+	if req.set.After != "" || req.set.StateSet {
+		return fill(ctx)
+	}
+	return m.lists.repos.get(ctx, listKey(fc.id, "", "repos", ""), force, fill)
+}
+
+// prPage answers one page of ref's pull requests, a first page through the
+// cache under ref's canonical id and a continuation from the forge.
+func (m *Manager) prPage(ctx context.Context, fc forgeClient, ref forgeapi.RepoRef, req *listRequest, force bool) (PRList, error) {
+	fill := func(ctx context.Context) (PRList, error) {
+		page, err := fc.core.ListPRs(ctx, ref, req.opts...)
+		if err != nil {
+			return PRList{}, err
+		}
+		return prListWire(&page), nil
+	}
+	if req.set.After != "" {
+		return fill(ctx)
+	}
+	return m.lists.prs.get(ctx, listKey(fc.id, ref.ID, "prs", req.set.State.String()), force, fill)
+}
+
+// repoAffordances answers what ref allows, through the cache under ref's
+// canonical id.
+func (m *Manager) repoAffordances(ctx context.Context, fc forgeClient, ref forgeapi.RepoRef, force bool) (RepoAffordances, error) {
+	key := cacheKey{scope: repoScope(fc.id, ref.ID), page: "affordances"}
+	return m.lists.affordances.get(ctx, key, force, func(ctx context.Context) (RepoAffordances, error) {
+		aff, err := fc.core.RepoAffordances(ctx, ref)
+		if err != nil {
+			return RepoAffordances{}, err
+		}
+		return affordancesOf(&aff), nil
 	})
 }

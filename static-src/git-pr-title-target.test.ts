@@ -1,36 +1,22 @@
-// ---------------------------------------------------------------------------
-// A PR row's title link keeps its hit TARGET on `--hit-floor` while its painted
-// box stays a line box.
-//
-// The floor is a zero-specificity rule in `61-mcp-tools.css` and it does NOT reach
-// this link: its WCAG 2.5.8 prose carve-out matches `:where(… li …) :where(a[href])`,
-// and every PR row is an `<li>`, so the anchor was left at 17px on a mouse and a
-// finger alike. `22-git-multirepo.css` takes the floor back with the expander idiom
-// instead of a `min-height`, because a `min-height` here grows every row.
-//
-// A REAL HIT TEST, never a style read: a declared `::after` that some ancestor's
-// `overflow` clips away reads identically in the cascade and hits nothing — which is
-// exactly why the ellipsis clip had to move off the anchor onto `.git-pr-row-text`,
-// the same trade `.tool-file-link` made (`tool-group-height.test.ts` carries the
-// sibling case).
-//
-// THE ROW IS BUILT BY THE PRODUCTION PATH (`refreshPRs` over a routed API), not by
-// hand-rolled markup: the property under test is a relationship between the anchor
-// and the span inside it, so a fixture that spelled that span itself would keep
-// passing after production stopped emitting it.
-// ---------------------------------------------------------------------------
+// A PR row's title link keeps its hit target on `--hit-floor` while its painted
+// box stays a line box. A real hit test over a row the production path built.
 
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import type * as ModPRs from "./git-prs-tab.js";
 
 let bootSeq = 0;
 
-const apiGet = vi.fn();
+const apiGetTyped = vi.fn();
 const ensureForges = vi.fn();
 
-vi.mock("./api-client.js", () => ({ apiGet, apiPost: vi.fn() }));
+vi.mock("./api-client.js", () => ({ apiGetTyped, apiPost: vi.fn() }));
 vi.mock("./forge-store.js", () => ({ ensureForges }));
-vi.mock("./bus.js", () => ({ onSSE: vi.fn() }));
+vi.mock("./bus.js", () => ({
+  BUS_RECONCILE: "transport:reconcile",
+  onSSE: vi.fn(),
+  onBus: vi.fn(),
+}));
+vi.mock("./sse-adapter.js", () => ({ presentedTag: () => "" }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn(async () => true) }));
 vi.mock("./merge-dialog.js", () => ({ openMergeMethodDialog: vi.fn(async () => "rebase") }));
 vi.mock("./actions/index.js", () => ({
@@ -46,7 +32,12 @@ vi.mock("./actions/git-prs.js", () => {
     armAutoMerge: stub,
     reopenPR: stub,
     rerunChecks: stub,
+    readCapabilities: { dispatch: vi.fn(() => Promise.resolve(null)), cancel: vi.fn() },
+    readMergeStatus: { dispatch: vi.fn(() => Promise.resolve(null)), cancel: vi.fn() },
     refreshPRs: stub,
+    requestPRCycle: stub,
+    sendCloseOnUnload: vi.fn(),
+    watchPRView: stub,
   };
 });
 vi.mock("./search-popup.js", () => ({
@@ -68,8 +59,10 @@ const forge = {
   kind: "github" as const,
   host: "github.com",
   connected: true,
+  reconnect_required: false,
 };
-const repos = [{ owner: "cplieger", name: "one", full_name: "cplieger/one" }];
+/** cplieger/one's id, the key its routes and its rows carry. */
+const REPO_ID = "v1.63706c69656765722f6f6e65";
 
 /** Long enough to ellipsise in the title column at any width this suite runs at,
  *  so the clip is doing real work rather than sitting inert. */
@@ -79,6 +72,8 @@ const LONG_TITLE =
 
 function pr(n: number) {
   return {
+    repo_id: REPO_ID,
+    repo: "cplieger/one",
     number: n,
     title: `${LONG_TITLE} #${n}`,
     url: `https://github.com/cplieger/one/pull/${n}`,
@@ -87,6 +82,20 @@ function pr(n: number) {
     source_branch: "feat/x",
     target_branch: "main",
     updated_at: Math.floor(Date.now() / 1000) - 3600,
+    action: {
+      mergeable: "yes",
+      checks: "unknown",
+      checks_passing: 0,
+      checks_failing: 0,
+      checks_pending: 0,
+      checks_neutral: 0,
+      checks_unknown: 0,
+      checks_total: 0,
+      auto_merge_armed: "no",
+      queue_state: "none",
+      queue_position: -1,
+      merge_blocked: "none",
+    },
   };
 }
 
@@ -105,11 +114,11 @@ afterAll(() => {
 
 beforeEach(async () => {
   vi.useFakeTimers();
-  apiGet.mockReset();
+  apiGetTyped.mockReset();
   ensureForges.mockReset();
   host.innerHTML = `<div id="git-prs-mount" class="git-multirepo-mount" aria-live="polite"></div>`;
-  const { setPRGroups } = await import("./git-prs-state.js");
-  setPRGroups([]);
+  const { _resetForTest } = await import("./git-prs-state.js");
+  _resetForTest();
 });
 
 afterEach(() => {
@@ -120,12 +129,24 @@ afterEach(() => {
  *  overhangs into its neighbour is the failure a single row cannot show. */
 async function rows(): Promise<HTMLElement[]> {
   ensureForges.mockImplementation(() => Promise.resolve({ forges: [forge], kinds: ["github"] }));
-  apiGet.mockImplementation((url: string) => {
-    if (url.includes("/repos?") || url.endsWith("/repos")) {
-      return Promise.resolve({ repos });
-    }
-    return Promise.resolve({ prs: [pr(101), pr(102)] });
-  });
+  const list = {
+    entries: [
+      {
+        forge_id: forge.id,
+        state: "ready",
+        cycle_id: "1",
+        credential: "valid",
+        scopes: [{ scope: "owner", owner: "cplieger", rows: [pr(101), pr(102)] }],
+        clones: [],
+        fetched_at: 1,
+      },
+    ],
+    subject: [],
+    viewing: false,
+  };
+  apiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
+    Promise.resolve(decode(list)),
+  );
   bootSeq += 1;
   const mod = (await import(
     /* @vite-ignore */ `./git-prs-tab.ts?target=${String(bootSeq)}`

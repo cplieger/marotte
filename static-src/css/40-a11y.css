@@ -65,8 +65,9 @@
  * distance is under the reach on an edge the clip applies to, which is a wider
  * condition than being FLUSH: seven members are flush on the edges they lose (0px in,
  * so the whole band falls outside), `.code-act-btn` sits 2px inside `.code-wrap` and
- * loses 1px of its top band, and `.forge-account-repos-summary` is flush on both
- * inline edges and on the block-end edge while its own `details` is closed. Without
+ * loses 1px of its top band, and `.forge-account-repos-summary` is flush on the
+ * inline-start edge, on the inline-end one unless a batch button sits beside it, and
+ * on the block-end edge while its list is closed. Without
  * this rule, measured: 3px lost per flush edge, leaving the bottom band alone where a
  * region follows the head, two edges of four on the PRs tab's toggle, and NOTHING
  * where the control is the whole card (a delegate as born, a run step) — 2.4.7 failing

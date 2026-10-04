@@ -33,7 +33,9 @@ Work handed to a subagent shows as a card you can open on its own page. The agen
 
 ## Git and forges
 
-marotte works with GitHub, GitLab, Codeberg, and Gitea or Forgejo. You can stage, commit, diff and switch branches, and list, create, merge and close pull requests. The agent can write commit messages and pull request descriptions. Accounts connect with a sign-in code or a token, and the work runs through the `gh`, `glab` and `tea` command-line tools.
+marotte works with GitHub, GitLab, Codeberg, and Gitea or Forgejo. You can stage, commit, diff and switch branches, and list, create, merge and close pull requests. The agent can write commit messages and pull request descriptions.
+
+An account connects by signing in on GitHub, or with an access token on any of them. marotte keeps the credential in its own store, uses it for the forge's API, and answers git over HTTPS with it through its own credential helper, so no forge command-line tool is needed. SSH remotes are not covered. A forge on a private or loopback address, such as one on your own network, needs **Allow private addresses** under **Connection options** when you connect it.
 
 ## Reviewing the agent's edits
 
@@ -83,6 +85,6 @@ Index a subfolder, not a repository root, so the index skips code and assets. In
 
 marotte can be installed as an app from the browser. It then sends notifications when a turn finishes, a pull request's checks settle, a workflow run ends, or the agent needs permission, even with the tab closed. Browsers allow this only over HTTPS or on `localhost`.
 
-The turn, pull request and workflow run notifications each have a switch on the **General** tab in **Settings**. Turns and workflow runs are on by default. Pull requests are off by default, because the forge already shows their checks. The permission notice has no switch, because nothing else tells you off-screen that a turn is waiting on you.
+The turn, pull request and workflow run notifications each have a switch on the **General** tab in **Settings**. Turns and workflow runs are on by default. Pull requests are off by default, because the forge already shows their checks. Pull request notifications work on GitHub, GitLab, Gitea, Forgejo and Codeberg, once the pull request's CI reports a result. The permission notice has no switch, because nothing else tells you off-screen that a turn is waiting on you.
 
 A device still receiving the live stream gets no notification. A request raised within about 30 seconds of locking a phone is held and sent once the stream goes quiet. It is dropped if someone answers it elsewhere or its time runs out first.

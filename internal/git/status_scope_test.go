@@ -89,6 +89,75 @@ func TestHandleStatusAll_ScopedReadRescansOnlyTheOwningRepo(t *testing.T) {
 	}
 }
 
+// A scoped read names repositories that just moved, so it answers once their scan has
+// published: an answer from before it shows the tree as it was before the write.
+func TestHandleStatusAll_AScopedReadAnswersWithItsOwnScan(t *testing.T) {
+	skipNoGit(t)
+	workDir := t.TempDir()
+	repo := mkRepo(t, workDir, "one")
+	h := NewHandler(workDir)
+	// Fresh and clean, so only this read's own scan can report the write.
+	seedSnapshot(&h.statusCache, statusKeyPoll, []allRepoStatus{repoRow("one")}, time.Now())
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("Setup: write: %v", err)
+	}
+
+	got := getStatusAll(t, h, "?paths=one/f.txt")
+
+	if len(got.Repos) != 1 || len(got.Repos[0].Files) == 0 {
+		t.Errorf("status-all?paths=one/f.txt repos = %+v, want `one` reporting f.txt: the "+
+			"read answered before its own scan published", got.Repos)
+	}
+}
+
+// isClosed reports whether ch is closed, without blocking.
+func isClosed(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// A read joining a running scan is released by the pass that covers it, not by the
+// one already running, which may have read the repository before the write.
+func TestStatusCache_AJoiningReadIsReleasedByThePassThatCoversIt(t *testing.T) {
+	for _, joining := range []struct {
+		name  string
+		scope map[string]struct{}
+	}{
+		{name: "scoped", scope: map[string]struct{}{"b": {}}},
+		{name: "whole tree", scope: nil},
+	} {
+		t.Run(joining.name, func(t *testing.T) {
+			var c statusCache
+			seedSnapshot(&c, statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")}, time.Now())
+			running, _ := c.claim(statusKeyPoll, map[string]struct{}{"a": {}})
+			joined, started := c.claim(statusKeyPoll, joining.scope)
+			if started {
+				t.Fatal("Setup: the second read started a scan instead of joining")
+			}
+
+			if _, run := c.finish(statusKeyPoll, []allRepoStatus{repoRow("a")}); !run {
+				t.Fatal("Setup: the joining read's pass was not chained")
+			}
+			if !isClosed(running) {
+				t.Error("the running pass's waiters stayed blocked after it published")
+			}
+			if isClosed(joined) {
+				t.Error("the joining read was released when the pass before its own published, " +
+					"so it answers with the repository as that earlier pass read it")
+			}
+
+			c.finish(statusKeyPoll, []allRepoStatus{repoRow("a"), repoRow("b")})
+			if !isClosed(joined) {
+				t.Error("the joining read is still blocked after the pass covering it published")
+			}
+		})
+	}
+}
+
 // The snapshot's timestamp does NOT move on a scoped merge: `at` answers "when was
 // the WHOLE tree last known", and moving it suppresses the periodic full refresh.
 func TestHandleStatusAll_AScopedMergeDoesNotFreshenTheSnapshot(t *testing.T) {
@@ -167,12 +236,8 @@ func TestStatusCache_AScopedReadJoiningAScanIsNotDropped(t *testing.T) {
 	if !started {
 		t.Fatal("Setup: the first scoped claim did not start")
 	}
-	second, started := c.claim(statusKeyPoll, map[string]struct{}{"b": {}})
-	if started {
+	if _, started := c.claim(statusKeyPoll, map[string]struct{}{"b": {}}); started {
 		t.Error("a second scoped claim started a concurrent scan; the subprocess bound is gone")
-	}
-	if second != first {
-		t.Error("the joining read got a different channel; it would wait on a refresh nobody runs")
 	}
 
 	next, run := c.finish(statusKeyPoll, []allRepoStatus{{Repo: "a", IsRepo: true, Files: []gitFile{{Path: "x"}}}})
@@ -405,6 +470,15 @@ func TestStatusScope(t *testing.T) {
 			snap:       warm,
 			wantScoped: true,
 			wantRepos:  []string{"alpha", "beta"},
+		},
+		{
+			// ownerOf answers for a path INSIDE a repository; its own directory is how
+			// a caller that thinks in repositories names one.
+			name:       "a repository's own directory names that repository",
+			query:      "?paths=alpha",
+			snap:       warm,
+			wantScoped: true,
+			wantRepos:  []string{"alpha"},
 		},
 		{
 			// Checked before ownerOf, or "." would own a path outside the tree.

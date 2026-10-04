@@ -60,6 +60,8 @@ const {
   mockRequestRunTurnRange,
   mockPeekRunState,
   mockFetchCatalog,
+  mockInventoryHeld,
+  mockRefreshPRs,
 } = vi.hoisted(() => ({
   mockLoadList: vi.fn((_signal?: AbortSignal) => Promise.resolve(true)),
   mockLoadMessages: vi.fn((_id: string, _before?: string, _signal?: AbortSignal) =>
@@ -73,6 +75,8 @@ const {
   mockRequestRunTurnRange: vi.fn((_id: string, _turn: string, _after?: number) => undefined),
   mockPeekRunState: vi.fn((_id: string): unknown => undefined),
   mockFetchCatalog: vi.fn((_opts?: { signal?: AbortSignal }) => Promise.resolve()),
+  mockInventoryHeld: vi.fn(() => false),
+  mockRefreshPRs: vi.fn((_signal?: AbortSignal) => Promise.resolve()),
 }));
 vi.mock("./store-load.js", () => ({
   loadList: mockLoadList,
@@ -88,6 +92,8 @@ vi.mock("./run-store.js", () => ({
 }));
 vi.mock("./run-turn-range.js", () => ({ requestRunTurnRange: mockRequestRunTurnRange }));
 vi.mock("./session-catalog.js", () => ({ fetchCatalog: mockFetchCatalog }));
+vi.mock("./git-prs-state.js", () => ({ inventoryHeld: mockInventoryHeld }));
+vi.mock("./git-prs-tab.js", () => ({ refreshPRs: mockRefreshPRs }));
 vi.mock("./send-state.js", () => ({ setSSEStatus: vi.fn() }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
 
@@ -201,6 +207,8 @@ beforeEach(() => {
   // No run held unless a case says so, which is what makes a `run_turn` stamp unheld.
   mockPeekRunState.mockReturnValue(undefined);
   mockFetchCatalog.mockResolvedValue(undefined);
+  mockInventoryHeld.mockReturnValue(false);
+  mockRefreshPRs.mockClear();
 });
 
 afterEach(() => {
@@ -383,6 +391,36 @@ describe("frames", () => {
     });
     await until(() => seen.length === 1);
     expect(hasSubject("chat", "c1")).toBe(false);
+  });
+
+  it("observes a forge_inventory stamp only while the PR tab holds the inventory", async () => {
+    const inventoryFrame = (version: string) => ({
+      type: "forge_inventory",
+      chat_id: "",
+      payload: {
+        entry: {
+          forge_id: "github:github.com",
+          state: "ready",
+          cycle_id: version,
+          credential: "valid",
+          scopes: [],
+          clones: [],
+          fetched_at: 1,
+        },
+      },
+      subject: { kind: "forge_inventory", ref: "github:github.com", version },
+    });
+    mockInventoryHeld.mockReturnValue(false);
+    const conn = await connect();
+    markHydrated();
+    conn?.frame(inventoryFrame("3"));
+    await until(() => seen.length === 1);
+    expect(hasSubject("forge_inventory", "github:github.com")).toBe(false);
+
+    mockInventoryHeld.mockReturnValue(true);
+    conn?.frame(inventoryFrame("4"));
+    await until(() => seen.length === 2);
+    expect(hasSubject("forge_inventory", "github:github.com")).toBe(true);
   });
 
   it("observes nothing when the decoder rejects the frame, and asks the digest instead", async () => {
@@ -677,6 +715,20 @@ describe("revalidate", () => {
     expect(mockRebuildLiveRuns).toHaveBeenCalledWith(expect.any(String), controller.signal);
     expect(mockInvalidate).toHaveBeenCalledWith(mockRebuildLiveRuns.mock.calls[0]?.[0]);
     expect(mockFetchCatalog).toHaveBeenCalledWith({ signal: controller.signal });
+  });
+
+  it("re-reads the pull-request inventory a moved forge_inventory subject names", async () => {
+    observeStamp({ kind: "forge_inventory", ref: "github:github.com", version: "3" });
+    scripted.respond(
+      "/api/sync",
+      digestAnswer([{ kind: "forge_inventory", ref: "github:github.com", version: "5" }]),
+    );
+    const controller = new AbortController();
+
+    await _revalidateForTest(ctx({ signal: controller.signal }));
+
+    expect(mockRefreshPRs).toHaveBeenCalledTimes(1);
+    expect(mockRefreshPRs).toHaveBeenCalledWith(controller.signal);
   });
 
   it("answers a chat and a live_turn with a window GET and a RANGE read, one each", async () => {

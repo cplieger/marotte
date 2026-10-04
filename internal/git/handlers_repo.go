@@ -37,6 +37,9 @@ const (
 	perRepoBudget    = 10 * time.Second
 	statusMaxAge     = 10 * time.Second
 	statusColdWait   = statusScanBudget
+	// statusScopedWait sits under the Changes tab's 15s read timeout, so a slow scan
+	// answers with the older snapshot rather than an error.
+	statusScopedWait = perRepoBudget
 	// scanConcurrency bounds fork+exec pressure, not CPU: each repo is two
 	// short-lived git subprocesses.
 	scanConcurrency = 8
@@ -46,9 +49,9 @@ const (
 )
 
 // handleStatusAll answers the multi-repo dashboard from the newest completed scan plus
-// its age, and refreshes behind the answer (status_cache.go says why). Only two callers
-// wait: the FIRST read of a process, and `?fetch=1`. `?paths=` narrows the refresh to
-// the repositories owning those paths, resolved server-side.
+// its age, and refreshes behind the answer (status_cache.go says why). Three reads
+// wait: the FIRST read of a process, `?fetch=1`, and `?paths=`, which narrows the
+// refresh to the repositories owning those paths, resolved server-side.
 func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	doFetch := r.URL.Query().Get("fetch") == "1"
 	key := statusKeyPoll
@@ -57,16 +60,19 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, running := h.statusCache.read(key)
 	scoped, only := h.statusScope(r, snap)
+	wait := h.coldWait(snap, doFetch)
 	switch {
 	case scoped && len(only) == 0:
 		// Paths named but unowned: rescanning everything would be the opposite of the
 		// request, so answer from the snapshot unchanged.
 	case scoped:
+		// The named repositories just moved, so the snapshot predates them.
 		running = h.refreshStatus(r, key, doFetch, only)
+		wait = statusScopedWait
 	case doFetch || snap.stale(statusMaxAge):
 		running = h.refreshStatus(r, key, doFetch, nil)
 	}
-	if wait := h.coldWait(snap, doFetch); wait > 0 {
+	if wait > 0 {
 		snap = h.awaitStatusAll(r, key, running, wait)
 		_, running = h.statusCache.read(key)
 	}
@@ -86,6 +92,7 @@ func (h *Handler) statusScope(r *http.Request, snap *statusSnapshot) (scoped boo
 	if raw == "" || snap == nil {
 		return false, nil
 	}
+	repos := h.cachedDiscoverRepos(r.Context())
 	only = make(map[string]struct{}, 4)
 	seen := 0
 	for p := range strings.SplitSeq(raw, ",") {
@@ -100,6 +107,12 @@ func (h *Handler) statusScope(r *http.Request, snap *statusSnapshot) (scoped boo
 		// Checked before ownerOf, which would otherwise resolve `../elsewhere` to the
 		// workspace-root repo — it owns every path no subdirectory repo claims.
 		if pathinside.RelEscapes(p) {
+			continue
+		}
+		// ownerOf answers for a path INSIDE a repository, so a repository's own
+		// directory is matched here.
+		if slices.ContainsFunc(repos, func(e repoEntry) bool { return e.Name == p }) {
+			only[p] = struct{}{}
 			continue
 		}
 		if repo, _, ok := h.ownerOf(r.Context(), p); ok {

@@ -448,7 +448,7 @@ func TestSearch_RootFansOutOverMounts(t *testing.T) {
 	b := t.TempDir()
 	writeTree(t, a, map[string]string{"in-a.txt": "needle\n"})
 	writeTree(t, b, map[string]string{"in-b.txt": "needle\n"})
-	h, err := New(a, b)
+	h, err := New(Sensitive{}, a, b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +539,7 @@ func TestExcerptLine(t *testing.T) {
 // The window is placed by rune index, which the fold preserves.
 func TestMatchLines_ExcerptWindowFollowsTheOriginalBytes(t *testing.T) {
 	line := strings.Repeat("\u212a", 300) + "needle" + strings.Repeat("z", 50)
-	sc := newFileScan(t.Context(), "NEEDLE", false, nil, nil)
+	sc := newFileScan(t.Context(), "NEEDLE", false, nil, nil, Sensitive{})
 
 	hits, matched := sc.matchLines("/x/kelvin.txt", line+"\n")
 	if matched != 1 || len(hits) != 1 {
@@ -587,7 +587,7 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		})
 		dir := searchDirAt(t, h, "/config/pub")
 
-		// The walk has read the dirent, applied IsSensitive("/config/pub/notes.txt")
+		// The walk has read the dirent, applied (Sensitive{}).Blocks("/config/pub/notes.txt")
 		// and the globs, and admitted it. This is that candidate.
 		cand := searchCandidate{name: "notes.txt", abs: "/config/pub/notes.txt"}
 
@@ -600,7 +600,7 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		sc := newFileScan(t.Context(), "needle", false, nil, nil)
+		sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 		got := sc.readCandidate(dir, cand)
 		hits := got.hits
 		if len(hits) != 0 {
@@ -629,7 +629,7 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		d := searchDir{f: dir, abs: "/config"}
 
 		// The walk has classified "pub" as a browsable directory. Now it becomes a
-		// link into the chat store, whose contents IsSensitive would have denied
+		// link into the chat store, whose contents Sensitive.Blocks would have denied
 		// under their own names but cannot deny under /config/pub/...
 		pub := filepath.Join(backing, "pub")
 		if err := os.Rename(pub, pub+".moved"); err != nil {
@@ -639,7 +639,7 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		sc := newFileScan(t.Context(), "needle", false, nil, nil)
+		sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 		if !sc.descend(d, "pub") {
 			t.Error("a refused descent must skip the entry, not stop the whole scan")
 		}
@@ -718,7 +718,7 @@ func TestSearch_HugeDirectoryIsNotReadBeforeCancellationIsChecked(t *testing.T) 
 	// Already gone: the walk must observe that before it reads the directory.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	sc := newFileScan(ctx, "needle", false, nil, nil)
+	sc := newFileScan(ctx, "needle", false, nil, nil, Sensitive{})
 
 	grew := allocatedBy(func() { sc.addRoot(loc{m: &h.mounts[0], abs: dir}) })
 
@@ -784,7 +784,7 @@ func TestSearch_BinaryIsRejectedBeforeItsBytesAreRead(t *testing.T) {
 
 	// allocatedBy collects first and TotalAlloc is cumulative, so the fixture's
 	// own 512 KiB is already behind the measurement window.
-	sc := newFileScan(t.Context(), "needle", false, nil, nil)
+	sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 	grew := allocatedBy(func() { sc.addRoot(loc{m: &h.mounts[0], abs: dir}) })
 
 	if sc.files != searchWorkers {
@@ -813,7 +813,7 @@ func TestSearch_TextFileIsReadIntoOneBuffer(t *testing.T) {
 	h, dir, _ := testDir(t)
 	writeTree(t, dir, map[string]string{"big.txt": atCeiling()})
 
-	sc := newFileScan(t.Context(), "needle", true, nil, nil)
+	sc := newFileScan(t.Context(), "needle", true, nil, nil, Sensitive{})
 	grew := allocatedBy(func() { sc.addRoot(loc{m: &h.mounts[0], abs: dir}) })
 
 	if sc.files != 1 || sc.matched != 1 {
@@ -937,7 +937,7 @@ func TestFileScan_ReplyBudgetIsInclusive(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			sc := newFileScan(t.Context(), "needle", false, nil, nil)
+			sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 			sc.matches = make([]FileMatch, tc.rows)
 
 			if got := sc.capped(); got != tc.wantCapped {
@@ -978,7 +978,7 @@ func TestWalkDir_DirectoryBudgetIsInclusive(t *testing.T) {
 			}
 			// walkDir closes the handle on the way out.
 
-			sc := newFileScan(t.Context(), "needle", false, nil, nil)
+			sc := newFileScan(t.Context(), "needle", false, nil, nil, Sensitive{})
 			sc.dirs = tc.dirs
 			if got := sc.walkDir(searchDir{f: f, abs: dir}); got != tc.wantWalked {
 				t.Errorf("walkDir() with dirs=%d = %v, want %v", tc.dirs, got, tc.wantWalked)
@@ -1515,7 +1515,7 @@ func TestSearch_SearchRootIsNotItsOwnNameMatch(t *testing.T) {
 			}
 			writeTree(t, root, map[string]string{"inner.txt": "no match inside\n"})
 		}
-		h, err := New(a, b)
+		h, err := New(Sensitive{}, a, b)
 		if err != nil {
 			t.Fatal(err)
 		}

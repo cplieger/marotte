@@ -297,36 +297,21 @@ export function loadMoreSkeleton(): HTMLDivElement {
   return wrap;
 }
 
-/** Placeholder per-repo sections for the git view's two tabs.
- *
- *  ONE painter for both, because both tabs answer the same question while they
- *  load — "a per-repo list is coming" — and both paint into the same
- *  `.git-repo-section` shape afterwards. Two copies of that would be two things
- *  to keep in step with a section header that has one definition.
- *
- *  Geometry mirrors a real section header (forge icon, repo name, a trailing
- *  count) because a placeholder's job is to reserve the shape the content takes
- *  rather than to draw attention. `aria-hidden` because both mounts are
- *  `aria-live="polite"`: announcing placeholder bars, and then a count that ticks
- *  once per repository, is pure noise.
- *
- *  `label` is the PR tab's fan-out counter and is what separates a slow refresh
- *  from a wedged one; the Changes tab issues ONE request, so it has no count to
- *  report and passes none. The returned `label` element is handed back rather
- *  than looked up again, because the caller updates it in place as the fan-out
- *  reports and a querySelector would tie that to the class name. */
-export function gitRepoSkeleton(opts: { readonly label?: string; readonly widths: string[] }): {
-  readonly wrap: HTMLDivElement;
-  readonly label: HTMLElement | null;
-} {
+/** Placeholder per-repo sections for the git view's two tabs, which both paint
+ *  into the same `.git-repo-section` shape afterwards, so its geometry has one
+ *  definition. `aria-hidden` because both mounts are `aria-live="polite"` and
+ *  announcing placeholder bars is noise. `label` names what the PR tab is
+ *  waiting on (the inventory, or one connection); the Changes tab passes none. */
+export function gitRepoSkeleton(opts: {
+  readonly label?: string;
+  readonly widths: string[];
+}): HTMLDivElement {
   const wrap = el("div", {
     className: "git-repo-skeleton",
     "aria-hidden": "true",
   }) as HTMLDivElement;
-  let label: HTMLElement | null = null;
   if (opts.label !== undefined) {
-    label = el("div", { className: "git-repo-skel-label" }, opts.label);
-    wrap.appendChild(label);
+    wrap.appendChild(el("div", { className: "git-repo-skel-label" }, opts.label));
   }
   for (const width of opts.widths) {
     const section = el("div", { className: "git-repo-section git-repo-skel-section" });
@@ -337,7 +322,7 @@ export function gitRepoSkeleton(opts: { readonly label?: string; readonly widths
     );
     wrap.appendChild(section);
   }
-  return { wrap, label };
+  return wrap;
 }
 
 /** Placeholder for the editor's document pane: the file's opening declaration

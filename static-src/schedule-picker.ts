@@ -273,9 +273,8 @@ interface PickerOptions {
   onRemove: () => void;
   onClose: () => void;
   /** Open Settings → Permissions, where the auto-approve choice lives. Injected
-   *  rather than imported, the git-status-banner.ts convention: it keeps this
-   *  module out of the tab/router graph, which is what lets it be unit-tested as
-   *  a form instead of as an app. */
+   *  rather than imported: it keeps this module out of the tab/router graph, which
+   *  is what lets it be unit-tested as a form instead of as an app. */
   onOpenPermissions: () => void;
 }
 

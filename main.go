@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/marotte/internal/composition"
+	"github.com/cplieger/marotte/internal/forges"
 	"github.com/cplieger/marotte/internal/workspace"
 	"github.com/cplieger/toolbelt/v3"
 )
@@ -50,6 +51,11 @@ func main() {
 // so that `defer app.Shutdown()` fires on normal exit paths (os.Exit
 // in main itself would skip the defer).
 func runMain() int {
+	// Ahead of ConfigFromEnv, whose warnings reach stderr: git shows a helper's
+	// stderr to the user as the reason a credential was declined.
+	if len(os.Args) > 1 && os.Args[1] == forges.HelperCommand {
+		return forges.RunCredentialHelper(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+	}
 	cfg := composition.ConfigFromEnv()
 	cfg.ToolCatalogRequire = toolbelt.ParseRequireList(requiredToolsList)
 

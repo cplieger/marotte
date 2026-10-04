@@ -175,9 +175,9 @@ function clearDismiss(chatID: string, code: string): void {
  *  dropped rather than rendered inert).
  *
  *  BOTH FLAVOURS CARRY `btn-small`, THE APP'S SHARED BUTTON, and `.banner-link` is
- *  layout only. That is what every other banner already does — `.git-status-banner`'s
- *  CTA is `btn-small git-status-banner-cta`, both `.inline-install-banner` producers
- *  are `btn-small`, and `elicitation.ts`'s external-URL card is the precedent for
+ *  layout only. That is what every other banner already does: the
+ *  `.inline-install-banner` producer is `btn-small`, and `elicitation.ts`'s
+ *  external-URL card is the precedent for
  *  the ANCHOR flavour (`<a class="elicitation-url btn-small …">`). It is also what
  *  the class was missing: this rule skinned an underlined text link, so when the
  *  `onClick` branch was added it emitted a `<button>` nothing reset, and all three

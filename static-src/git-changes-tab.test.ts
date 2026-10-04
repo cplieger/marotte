@@ -58,13 +58,21 @@ function applyFilter(q: string): void {
   filterSeam.render(result, q);
 }
 
+/** A dispatch handle answering `value`, as the action framework's does: the
+ *  panel reads its typed outcome. */
+function handle(value: unknown): Promise<unknown> & { outcome: Promise<unknown> } {
+  return Object.assign(Promise.resolve(value), {
+    outcome: Promise.resolve({ status: "success", value }),
+  });
+}
+
 /** A stand-in action that records what the panel asked for. Every git
- *  mutation resolves truthy, which is what `assertOk` requires. */
+ *  mutation lands. */
 function recorder(name: string): { dispatch: (args: unknown) => Promise<unknown> } {
   return {
-    dispatch: async (args: unknown) => {
+    dispatch: (args: unknown) => {
       dispatches.push({ name, args });
-      return { output: "" };
+      return handle({ output: "" });
     },
   };
 }
@@ -87,9 +95,9 @@ vi.mock("./actions/git-changes.js", () => ({
   discard: recorder("discard"),
   pull: recorder("pull"),
   pullAll: {
-    dispatch: async (args: unknown) => {
+    dispatch: (args: unknown) => {
       dispatches.push({ name: "pullAll", args });
-      return pullAllResult;
+      return handle(pullAllResult);
     },
   },
   push: recorder("push"),
@@ -107,8 +115,8 @@ vi.mock("./search-popup.js", () => ({
     return { open: vi.fn(), close: vi.fn(), toggle: vi.fn() };
   }),
 }));
-// Pass-through: the feedback wrapper's own ✓/✗ behaviour is not the subject, and
-// a cancelled confirm throws through it by design.
+// Pass-through: the feedback wrapper's own ✓/✗ behaviour is not the subject here
+// (git-changes-press-feedback.test.ts pins it), and a refused press rejects through it.
 vi.mock("./async-button.js", () => ({
   withAsyncFeedback: async (_b: HTMLElement, fn: () => Promise<unknown>) => {
     try {
@@ -902,7 +910,7 @@ describe("Pull all", () => {
     // The glyph as well as the hue, so the state does not rest on colour alone.
     expect(flag?.querySelector("svg")).not.toBeNull();
 
-    const note = mountEl().querySelector<HTMLElement>(".git-pull-flag-note");
+    const note = mountEl().querySelector<HTMLElement>(".git-repo-note");
     expect(note?.textContent).toContain("Not pulled.");
     expect(note?.textContent).toContain("1 local commit");
     // And the section is open, so that sentence is read without a click. Carried
@@ -924,7 +932,7 @@ describe("Pull all", () => {
     expect(mountEl().querySelector<HTMLElement>(".git-repo-pull-flag")?.textContent).toContain(
       "pull failed",
     );
-    const note = mountEl().querySelector<HTMLElement>(".git-pull-flag-note");
+    const note = mountEl().querySelector<HTMLElement>(".git-repo-note");
     expect(note?.dataset["verdict"]).toBe("failed");
     expect(note?.textContent).toContain("Pull failed.");
   });
@@ -945,7 +953,7 @@ describe("Pull all", () => {
     ]);
 
     expect(mountEl().querySelectorAll(".git-repo-pull-flag").length).toBe(0);
-    expect(mountEl().querySelectorAll(".git-pull-flag-note").length).toBe(0);
+    expect(mountEl().querySelectorAll(".git-repo-note").length).toBe(0);
   });
 
   it("drops the mark once the repo stops being behind", async () => {
@@ -1064,7 +1072,7 @@ describe("the loading placeholder", () => {
     // be announced.
     expect(skel?.getAttribute("aria-hidden")).toBe("true");
     expect(skel?.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
-    // No fan-out here, so no count line — the PRs tab owns that.
+    // No label: only the PRs tab names a connection on its skeleton.
     expect(mountEl().querySelector(".git-repo-skel-label")).toBeNull();
 
     settle?.({ repos: [] });

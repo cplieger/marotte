@@ -3,8 +3,13 @@ package steering
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
+
+// forgeCLIName matches a forge CLI named as a word, so a section that offers
+// one as a way in is caught however it is spelled around the name.
+var forgeCLIName = regexp.MustCompile(`\b(gh|glab|tea)\b`)
 
 // mustWriteFile writes content to path, creating any missing parent
 // directories. It fails the test on any error.

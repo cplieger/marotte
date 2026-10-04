@@ -1235,8 +1235,7 @@
 
 /* LAYOUT ONLY. THE SKIN IS `btn-small` (14-tools.css), THE APP'S SHARED BUTTON,
  * carried by both flavours from banner-stack.ts — which is what every other banner
- * in this app already does: `.git-status-banner-cta` is `btn-small` plus one
- * `flex-shrink`, both `.inline-install-banner` producers are `btn-small`, and
+ * in this app already does: the `.inline-install-banner` producer is `btn-small`, and
  * `.elicitation-url` is the ANCHOR precedent, `btn-small` plus `align-self` and
  * `text-decoration: none`. So this rule is those two declarations and nothing else;
  * a local skin here was the drift, not a missing feature.
@@ -1262,9 +1261,7 @@
  * 7.29:1 light at rest, 11.2 / 11.8 on hover) — where a severity-tinted skin cannot,
  * because ink and wash share a hue and every alpha closes the gap. And its 36px
  * takes the row from 52px to 54px, past the `--chat-toolbar-h` floor by the
- * banner's own two border edges — which is what a `min-` floor is for, and is
- * byte-identical to what `.git-status-banner-row` already renders with the same
- * button in it, so the two banner rows agree rather than the toolbar and this one.
+ * banner's own two border edges, which is what a `min-` floor is for.
  *
  * IT GIVES UP THE SEVERITY INK, deliberately: the banner states its level three ways
  * already (glyph, ink, wash) and the sibling banners all put neutral chrome in this

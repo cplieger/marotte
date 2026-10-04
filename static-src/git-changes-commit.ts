@@ -5,9 +5,8 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
-import { withAsyncFeedback } from "./async-button.js";
-import { bindLoadingState } from "./actions/index.js";
 import { commit as commitAction, generateCommitMessage } from "./actions/git-changes.js";
+import type { ActionOutcome } from "./actions/index.js";
 import { el } from "@cplieger/reactive";
 import { isSafeURL } from "./url-safety.js";
 import { iconEl } from "./icon-el.js";
@@ -50,13 +49,55 @@ function renderSha(sha: string, prefix: string, host: string): HTMLElement {
   );
 }
 
+/** Why a press on a repository did not land, as its section says it. */
+export interface Refusal {
+  lead: string;
+  detail: string;
+}
+
+/** A press's request: the refusal it met, or null once it landed. */
+export type PressRun = () => Promise<Refusal | null>;
+
+export interface PressOpts {
+  /** Asked before anything is sent; a "no" leaves the control as it was. */
+  confirm?: () => Promise<boolean>;
+  /** Read the repository's status again once the request lands; default true. */
+  refresh?: boolean;
+}
+
 /** Dependencies injected from git-changes-tab module state. */
 export interface CommitDeps {
   commitMessages: Map<string, string>;
-  bindingCleanups: (() => void)[];
   diffAbort: AbortController | null;
-  refreshChanges: () => Promise<void>;
-  assertOk: <T>(result: T) => asserts result is NonNullable<T>;
+  /** Wire a control that runs one request on a repository, with its busy
+   *  state and its refusal said in the section (git-changes-tab owns both). */
+  press: (
+    btn: HTMLButtonElement,
+    repo: string,
+    key: string,
+    run: PressRun,
+    opts?: PressOpts,
+  ) => HTMLButtonElement;
+}
+
+/** The refusal an action's outcome leaves, null when it landed: what the press
+ *  could not do, in git's words. */
+export function refusalOf(o: ActionOutcome<unknown>, could: string): Refusal | null {
+  if (o.status === "success") {
+    return null;
+  }
+  return {
+    lead: `Could not ${could}.`,
+    detail: o.status === "error" ? o.error.message : "It was cancelled.",
+  };
+}
+
+/** The commit message box on screen for `repo`: a repaint during a press
+ *  replaces the one the press was built with. */
+function liveBox(repo: string): HTMLTextAreaElement | null {
+  return document.querySelector<HTMLTextAreaElement>(
+    `.git-commit-input[data-repo="${CSS.escape(repo)}"]`,
+  );
 }
 
 /** Render the recent-commits collapsible section for a repo. */
@@ -157,47 +198,56 @@ export function renderCommitArea(
     iconEl(ICON_SPARKLE),
     "AI message",
   ) as HTMLButtonElement;
-  ai.addEventListener("click", () => {
-    void withAsyncFeedback(ai, async () => {
-      const msg = await generateCommitMessage.dispatch({ repo: r.repo });
-      deps.assertOk(msg);
-      // Server returns {output}; only fill when non-empty so a failed/empty
-      // generation never wipes a message the user already typed.
-      const generated = msg.output ?? "";
-      if (generated !== "") {
-        deps.commitMessages.set(r.repo, generated);
-        if (ta.isConnected) {
-          ta.value = generated;
+  row.appendChild(
+    deps.press(
+      ai,
+      r.repo,
+      "ai-message",
+      async () => {
+        const o = await generateCommitMessage.dispatch({ repo: r.repo }).outcome;
+        if (o.status !== "success") {
+          return refusalOf(o, "write a commit message");
         }
-      }
-    });
-  });
-  row.appendChild(ai);
-  deps.bindingCleanups.push(bindLoadingState("git.generate_message", ai));
+        // Server returns {output}; only fill when non-empty so a failed/empty
+        // generation never wipes a message the user already typed.
+        const generated = o.value.output ?? "";
+        if (generated !== "") {
+          deps.commitMessages.set(r.repo, generated);
+          const box = liveBox(r.repo);
+          if (box !== null) {
+            box.value = generated;
+          }
+        }
+        return null;
+      },
+      { refresh: false },
+    ),
+  );
 
   const commit = el(
     "button",
     { type: "button", className: "btn-small btn-primary" },
     `Commit ${String(stagedCount)} file${stagedCount === 1 ? "" : "s"}`,
   ) as HTMLButtonElement;
-  commit.addEventListener("click", () => {
-    void withAsyncFeedback(commit, async () => {
-      const message = ta.value.trim();
+  row.appendChild(
+    deps.press(commit, r.repo, "commit", async () => {
+      const box = liveBox(r.repo) ?? ta;
+      const message = box.value.trim();
       if (message === "") {
-        throw new Error("Commit message required");
+        return { lead: "Could not commit.", detail: "Write a commit message first." };
       }
-      // git.commit rejects the HTTP-200 {error} envelope (a hook or
-      // identity failure resolves null), so assertOk throws BEFORE the
-      // draft is cleared — the typed message survives a failed commit
-      // (18-F1). Only a genuinely successful commit clears it.
-      deps.assertOk(await commitAction.dispatch({ repo: r.repo, message }));
-      ta.value = "";
+      // A refused commit (a hook, an identity) leaves the typed message where it
+      // is (18-F1); only a commit that landed clears it.
+      const o = await commitAction.dispatch({ repo: r.repo, message }).outcome;
+      const refused = refusalOf(o, "commit");
+      if (refused !== null) {
+        return refused;
+      }
+      box.value = "";
       deps.commitMessages.delete(r.repo);
-      await deps.refreshChanges();
-    });
-  });
-  row.appendChild(commit);
-  deps.bindingCleanups.push(bindLoadingState("git.commit", commit));
+      return null;
+    }),
+  );
 
   wrap.appendChild(row);
   return wrap;

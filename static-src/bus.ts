@@ -24,6 +24,7 @@ import type {
   TabsChangedPayload,
   SpecApprovedPayload,
   SpecChangedPayload,
+  InventoryChangedPayload,
   PermissionNeeded,
   ErrorPayload,
   ConnectedPayload,
@@ -150,6 +151,7 @@ export interface SSEPayloads {
   readonly terminal_output: TerminalOutputPayload;
   readonly terminal_exited: TerminalExitedPayload;
   readonly forges_changed: undefined;
+  readonly forge_inventory: InventoryChangedPayload;
   readonly hooks_changed: undefined;
   readonly tool_job_changed: ToolJobChangedPayload;
   readonly tool_job_output: ToolJobOutputPayload;

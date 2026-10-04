@@ -1,6 +1,6 @@
 package forges
 
-// The listing cache exists so arriving at a view costs no forge subprocess when
+// The listing cache exists so arriving at a view costs no forge request when
 // the answer is already known, and every case here is about a CALL COUNT rather
 // than a returned value: the value was never in doubt, the work was.
 //
@@ -13,12 +13,16 @@ package forges
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/cplieger/forgeapi"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -50,11 +54,19 @@ func newTestCache(ttl time.Duration) *listCache[[]string] {
 	return newListCache[[]string](ttl, semaphore.NewWeighted(maxListFills))
 }
 
+// testForge is the connection the cache-key cases address.
+const testForge = "github:github.com"
+
+// testKey is page of one repository, the scope every single-scope case shares.
+func testKey(page string) cacheKey {
+	return listKey(testForge, "v1.6f2f72", page, "")
+}
+
 func TestListCache_ColdFillThenServesFromCache(t *testing.T) {
 	c := newTestCache(time.Hour)
 	f := &countingFill{}
 
-	first, err := c.get(t.Context(), "k", false, f.fill)
+	first, err := c.get(t.Context(), testKey("k"), false, f.fill)
 	if err != nil {
 		t.Fatalf("get(cold) error = %v, want nil", err)
 	}
@@ -66,7 +78,7 @@ func TestListCache_ColdFillThenServesFromCache(t *testing.T) {
 	}
 
 	// The whole point: a second read inside the TTL touches no forge.
-	second, err := c.get(t.Context(), "k", false, f.fill)
+	second, err := c.get(t.Context(), testKey("k"), false, f.fill)
 	if err != nil {
 		t.Fatalf("get(fresh) error = %v, want nil", err)
 	}
@@ -82,9 +94,9 @@ func TestListCache_KeysAreIndependent(t *testing.T) {
 	c := newTestCache(time.Hour)
 	f := &countingFill{}
 
-	for _, key := range []string{"a", "b"} {
+	for _, key := range []cacheKey{testKey("a"), testKey("b")} {
 		if _, err := c.get(t.Context(), key, false, f.fill); err != nil {
-			t.Fatalf("get(%q) error = %v, want nil", key, err)
+			t.Fatalf("get(%+v) error = %v, want nil", key, err)
 		}
 	}
 	if got := f.count(); got != 2 {
@@ -96,12 +108,12 @@ func TestListCache_ForceBypassesAFreshEntry(t *testing.T) {
 	c := newTestCache(time.Hour)
 	f := &countingFill{}
 
-	if _, err := c.get(t.Context(), "k", false, f.fill); err != nil {
+	if _, err := c.get(t.Context(), testKey("k"), false, f.fill); err != nil {
 		t.Fatalf("get(cold) error = %v, want nil", err)
 	}
 	// A refresh control asks for the truth, so a fresh entry is no reason to
 	// answer from it.
-	got, err := c.get(t.Context(), "k", true, f.fill)
+	got, err := c.get(t.Context(), testKey("k"), true, f.fill)
 	if err != nil {
 		t.Fatalf("get(force) error = %v, want nil", err)
 	}
@@ -130,7 +142,7 @@ func TestListCache_StaleEntryServesAtOnceThenRevalidates(t *testing.T) {
 			return v, err
 		}
 
-		if _, err := c.get(t.Context(), "k", false, fill); err != nil {
+		if _, err := c.get(t.Context(), testKey("k"), false, fill); err != nil {
 			t.Fatalf("get(cold) error = %v, want nil", err)
 		}
 		<-refreshed
@@ -138,7 +150,7 @@ func TestListCache_StaleEntryServesAtOnceThenRevalidates(t *testing.T) {
 
 		// Served from the stale copy: the caller gets the FIRST fill's value even
 		// though a second one is on its way.
-		got, err := c.get(t.Context(), "k", false, fill)
+		got, err := c.get(t.Context(), testKey("k"), false, fill)
 		if err != nil {
 			t.Fatalf("get(stale) error = %v, want nil", err)
 		}
@@ -153,7 +165,7 @@ func TestListCache_StaleEntryServesAtOnceThenRevalidates(t *testing.T) {
 		}
 		// And the revalidation landed, so the NEXT read is the fresh value with no
 		// further work.
-		next, err := c.get(t.Context(), "k", false, fill)
+		next, err := c.get(t.Context(), testKey("k"), false, fill)
 		if err != nil {
 			t.Fatalf("get(after revalidation) error = %v, want nil", err)
 		}
@@ -180,7 +192,7 @@ func TestListCache_OneRevalidationAtATime(t *testing.T) {
 		}
 
 		go func() { close(release) }()
-		if _, err := c.get(t.Context(), "k", false, fill); err != nil {
+		if _, err := c.get(t.Context(), testKey("k"), false, fill); err != nil {
 			t.Fatalf("get(cold) error = %v, want nil", err)
 		}
 		synctest.Sleep(ttl + time.Nanosecond)
@@ -190,7 +202,7 @@ func TestListCache_OneRevalidationAtATime(t *testing.T) {
 		release = make(chan struct{})
 		inFlight.Store(0)
 		for range 10 {
-			if _, err := c.get(t.Context(), "k", false, fill); err != nil {
+			if _, err := c.get(t.Context(), testKey("k"), false, fill); err != nil {
 				t.Fatalf("get(stale) error = %v, want nil", err)
 			}
 		}
@@ -200,6 +212,38 @@ func TestListCache_OneRevalidationAtATime(t *testing.T) {
 		}
 		close(release)
 		synctest.Wait()
+	})
+}
+
+// A caller leaving does not fail the others waiting on its shared fill.
+func TestListCache_ASharedFillSurvivesTheFirstCallerLeaving(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newTestCache(time.Hour)
+		release := make(chan struct{})
+		fill := func(ctx context.Context) ([]string, error) {
+			select {
+			case <-release:
+				return []string{"v"}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		first, cancel := context.WithCancel(t.Context())
+		var wg sync.WaitGroup
+		wg.Go(func() { _, _ = c.get(first, testKey("k"), false, fill) })
+		synctest.Wait()
+		var got []string
+		var err error
+		wg.Go(func() { got, err = c.get(t.Context(), testKey("k"), false, fill) })
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+
+		if err != nil || len(got) != 1 {
+			t.Errorf("get() of a caller still waiting after the first left = %v, %v; want the fill's value", got, err)
+		}
 	})
 }
 
@@ -217,7 +261,7 @@ func TestListCache_ConcurrentColdReadsShareOneFill(t *testing.T) {
 		var wg sync.WaitGroup
 		for range readers {
 			wg.Go(func() {
-				if _, err := c.get(t.Context(), "k", false, fill); err != nil {
+				if _, err := c.get(t.Context(), testKey("k"), false, fill); err != nil {
 					t.Errorf("get(concurrent cold) error = %v, want nil", err)
 				}
 			})
@@ -240,13 +284,13 @@ func TestListCache_FillErrorIsReturnedAndNotCached(t *testing.T) {
 	wantErr := errors.New("gh: exit status 1")
 	f := &countingFill{err: wantErr}
 
-	if _, err := c.get(t.Context(), "k", false, f.fill); !errors.Is(err, wantErr) {
+	if _, err := c.get(t.Context(), testKey("k"), false, f.fill); !errors.Is(err, wantErr) {
 		t.Fatalf("get(failing) error = %v, want %v", err, wantErr)
 	}
 	// A failure must not become a cached empty listing, or one bad round trip
 	// renders "no pull requests" until the TTL expires.
 	f.err = nil
-	got, err := c.get(t.Context(), "k", false, f.fill)
+	got, err := c.get(t.Context(), testKey("k"), false, f.fill)
 	if err != nil {
 		t.Fatalf("get(after failure) error = %v, want nil", err)
 	}
@@ -270,7 +314,7 @@ func TestListCache_CancelledReadDoesNotBlock(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() {
-			_, err := c.get(ctx, "k", false, fill)
+			_, err := c.get(ctx, testKey("k"), false, fill)
 			done <- err
 		}()
 		synctest.Wait()
@@ -278,6 +322,12 @@ func TestListCache_CancelledReadDoesNotBlock(t *testing.T) {
 
 		if err := <-done; !errors.Is(err, context.Canceled) {
 			t.Errorf("get(cancelled) error = %v, want context.Canceled", err)
+		}
+		// The fill runs on past the caller until its own budget ends it.
+		time.Sleep(listFillBudget)
+		synctest.Wait()
+		if calls := f.count(); calls != 1 {
+			t.Errorf("fills ended by the budget after the caller left = %d, want 1", calls)
 		}
 	})
 }
@@ -295,7 +345,7 @@ func TestListCache_ClearDropsEntriesAndInFlightFills(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			if _, err := c.get(t.Context(), "k", false, fill); err != nil {
+			if _, err := c.get(t.Context(), testKey("k"), false, fill); err != nil {
 				t.Errorf("get(cold) error = %v, want nil", err)
 			}
 		}()
@@ -308,10 +358,10 @@ func TestListCache_ClearDropsEntriesAndInFlightFills(t *testing.T) {
 		close(release)
 		<-done
 
-		if _, ok := c.entries["k"]; ok {
+		if _, ok := c.entries[testKey("k")]; ok {
 			t.Error("entry cached by a fill that started before clear(); want it dropped")
 		}
-		if _, err := c.get(t.Context(), "k", false, f.fill); err != nil {
+		if _, err := c.get(t.Context(), testKey("k"), false, f.fill); err != nil {
 			t.Fatalf("get(after clear) error = %v, want nil", err)
 		}
 		if calls := f.count(); calls != 2 {
@@ -341,10 +391,10 @@ func TestListCache_FillsAreBounded(t *testing.T) {
 
 		var wg sync.WaitGroup
 		for i := range limit * 4 {
-			key := string(rune('a' + i))
+			key := testKey(string(rune('a' + i)))
 			wg.Go(func() {
 				if _, err := c.get(t.Context(), key, false, fill); err != nil {
-					t.Errorf("get(%q) error = %v, want nil", key, err)
+					t.Errorf("get(%+v) error = %v, want nil", key, err)
 				}
 			})
 		}
@@ -357,178 +407,362 @@ func TestListCache_FillsAreBounded(t *testing.T) {
 	})
 }
 
-// fakeOps is a ForgeOps that counts the three calls these cases exercise.
-// Everything else is promoted from the embedded nil interface, which is what
-// makes an accidental call to an unlisted method a panic rather than a silent
-// zero value.
-type fakeOps struct {
-	ForgeOps
-	mu     sync.Mutex
-	repos  int
-	prs    int
-	merges int
-	seen   []string
+// heldFill blocks the first call on release, after it took fill 1, and answers
+// every later one at once, so a case can hold one fill in flight while others
+// complete.
+type heldFill struct {
+	release chan struct{}
+	countingFill
+	once sync.Once
 }
 
-func (f *fakeOps) ListRepos(context.Context) ([]Repo, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.repos++
-	return []Repo{{Owner: "o", Name: "n", FullName: "o/n"}}, nil
+func newHeldFill() *heldFill { return &heldFill{release: make(chan struct{})} }
+
+func (f *heldFill) fill(ctx context.Context) ([]string, error) {
+	v, err := f.countingFill.fill(ctx)
+	first := false
+	f.once.Do(func() { first = true })
+	if first {
+		<-f.release
+	}
+	return v, err
 }
 
-func (f *fakeOps) ListPRs(_ context.Context, repo string, state ListState) ([]PR, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.prs++
-	f.seen = append(f.seen, repo+" "+string(state))
-	return []PR{{Number: f.prs, Title: repo}}, nil
-}
-
-func (f *fakeOps) MergePR(context.Context, string, int, MergeOptions) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.merges++
-	return nil
-}
-
-func (f *fakeOps) counts() (repos, prs, merges int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.repos, f.prs, f.merges
-}
-
-func newDecorated(force bool) (cachedListings, *fakeOps) {
-	f := &fakeOps{}
-	return cachedListings{ForgeOps: f, caches: newListCaches(), forgeID: "github:github.com", force: force}, f
-}
-
-func TestCachedListings_ListingsAreCachedAndMutationsAreNot(t *testing.T) {
-	c, f := newDecorated(false)
-	ctx := t.Context()
-
-	for range 3 {
-		if _, err := c.ListRepos(ctx); err != nil {
-			t.Fatalf("ListRepos() error = %v, want nil", err)
+// getAsync starts a read of key and answers the channel its answer arrives on.
+func getAsync(t *testing.T, c *listCache[[]string], key cacheKey, fill func(context.Context) ([]string, error)) <-chan []string {
+	t.Helper()
+	out := make(chan []string, 1)
+	go func() {
+		v, err := c.get(t.Context(), key, false, fill)
+		if err != nil {
+			t.Errorf("get(%+v) error = %v, want nil", key, err)
 		}
-		if _, err := c.ListPRs(ctx, "o/n", StateOpen); err != nil {
-			t.Fatalf("ListPRs() error = %v, want nil", err)
-		}
-		// A merge is the reason the decorator overrides two methods rather than
-		// wrapping the interface: caching one would report a landed merge that
-		// never happened, or refuse a second one as already answered.
-		if err := c.MergePR(ctx, "o/n", 1, MergeOptions{}); err != nil {
-			t.Fatalf("MergePR() error = %v, want nil", err)
-		}
-	}
-
-	repos, prs, merges := f.counts()
-	if repos != 1 {
-		t.Errorf("ListRepos reached the forge %d times over 3 calls, want 1", repos)
-	}
-	if prs != 1 {
-		t.Errorf("ListPRs reached the forge %d times over 3 calls, want 1", prs)
-	}
-	if merges != 3 {
-		t.Errorf("MergePR reached the forge %d times over 3 calls, want 3 (never cached)", merges)
-	}
+		out <- v
+	}()
+	return out
 }
 
-func TestCachedListings_KeyedByRepoAndState(t *testing.T) {
-	c, f := newDecorated(false)
-	ctx := t.Context()
-
-	calls := []struct {
-		repo  string
-		state ListState
-	}{
-		{"o/one", StateOpen},
-		{"o/two", StateOpen},
-		{"o/one", StateClosed},
-		{"o/one", StateOpen}, // the only repeat
+func TestListCache_MutationEvictsItsRepo(t *testing.T) {
+	c := newTestCache(time.Hour)
+	f := &countingFill{}
+	const repo = "v1.6f2f72"
+	evicted := []cacheKey{listKey(testForge, repo, "prs", "open"), listKey(testForge, repo, "prs", "closed")}
+	kept := []cacheKey{
+		listKey(testForge, "v1.6f2f73", "prs", "open"),
+		listKey("gitlab:gitlab.com", repo, "prs", "open"),
+		listKey(testForge, "", "repos", ""),
 	}
-	for _, call := range calls {
-		if _, err := c.ListPRs(ctx, call.repo, call.state); err != nil {
-			t.Fatalf("ListPRs(%q, %q) error = %v, want nil", call.repo, call.state, err)
+	all := slices.Concat(evicted, kept)
+	before := make(map[cacheKey]string, len(all))
+	for _, key := range all {
+		v, err := c.get(t.Context(), key, false, f.fill)
+		if err != nil {
+			t.Fatalf("Setup: get(%+v) error = %v", key, err)
+		}
+		before[key] = v[1]
+	}
+
+	c.evict(repoScope(testForge, repo))
+
+	for _, key := range all {
+		v, err := c.get(t.Context(), key, false, f.fill)
+		if err != nil {
+			t.Fatalf("get(%+v) after the mutation error = %v, want nil", key, err)
+		}
+		if wantRefill := slices.Contains(evicted, key); (v[1] != before[key]) != wantRefill {
+			t.Errorf("get(%+v) after a mutation of %s on %s = fill %s (was %s), want refilled %v",
+				key, repo, testForge, v[1], before[key], wantRefill)
 		}
 	}
+}
 
-	_, prs, _ := f.counts()
-	// Three distinct listings, so a shared key would show as a count below 3 and
-	// a missing key as 4.
-	if prs != 3 {
-		t.Errorf("ListPRs reached the forge %d times for 3 distinct listings, want 3 (got %v)", prs, f.seen)
+func TestListCache_MutationOnOneRepoKeepsAnotherRepoFill(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newTestCache(time.Hour)
+		f := newHeldFill()
+		inFlight, cached := listKey(testForge, "v1.62", "prs", "open"), listKey(testForge, "v1.62", "prs", "closed")
+		got := getAsync(t, c, inFlight, f.fill)
+		synctest.Wait()
+		if _, err := c.get(t.Context(), cached, false, f.fill); err != nil {
+			t.Fatalf("Setup: get(%+v) error = %v", cached, err)
+		}
+
+		c.evict(repoScope(testForge, "v1.61"))
+		close(f.release)
+		<-got
+
+		for _, key := range []cacheKey{inFlight, cached} {
+			if _, err := c.get(t.Context(), key, false, f.fill); err != nil {
+				t.Fatalf("get(%+v) error = %v, want nil", key, err)
+			}
+		}
+		if calls := f.count(); calls != 2 {
+			t.Errorf("fill calls after a mutation of another repository = %d, want 2: "+
+				"this repository's in-flight fill and its cached entry are kept", calls)
+		}
+	})
+}
+
+func TestListCache_StaleFillAfterMutationDoesNotPublish(t *testing.T) {
+	scope := repoScope(testForge, "v1.6f2f72")
+	key := listKey(testForge, "v1.6f2f72", "prs", "open")
+
+	t.Run("a fill in flight answers its caller and stores nothing", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			c := newTestCache(time.Hour)
+			c.evict(scope)
+			f := newHeldFill()
+			got := getAsync(t, c, key, f.fill)
+			synctest.Wait()
+
+			c.evict(scope)
+			close(f.release)
+			if v := <-got; v[1] != "1" {
+				t.Errorf("the caller of the fill in flight got %v, want its own answer", v)
+			}
+			if v, err := c.get(t.Context(), key, false, f.fill); err != nil || v[1] != "2" || f.count() != 2 {
+				t.Errorf("get after the mutation = %v, %v after %d fills, want a refill (fill 2)", v, err, f.count())
+			}
+		})
+	})
+
+	t.Run("a revalidation in flight stores nothing", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const ttl = time.Minute
+			c := newTestCache(ttl)
+			f := &countingFill{}
+			if _, err := c.get(t.Context(), key, false, f.fill); err != nil {
+				t.Fatalf("Setup: get(cold) error = %v", err)
+			}
+			synctest.Sleep(ttl + time.Nanosecond)
+			release := make(chan struct{})
+			held := func(ctx context.Context) ([]string, error) {
+				<-release
+				return f.fill(ctx)
+			}
+			if v, err := c.get(t.Context(), key, false, held); err != nil || v[1] != "1" {
+				t.Fatalf("Setup: get(stale) = %v, %v, want the cached first value", v, err)
+			}
+			synctest.Wait()
+
+			c.evict(scope)
+			close(release)
+			synctest.Wait()
+			if v, err := c.get(t.Context(), key, false, f.fill); err != nil || v[1] != "3" {
+				t.Errorf("get after a mutation during the revalidation = %v, %v, want a refill (fill 3), "+
+					"not the revalidation that read the forge before the mutation", v, err)
+			}
+		})
+	})
+
+	t.Run("a read after the mutation joins no fill that began before it", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			c := newTestCache(time.Hour)
+			f := newHeldFill()
+			before := getAsync(t, c, key, f.fill)
+			synctest.Wait()
+
+			c.evict(scope)
+			after := getAsync(t, c, key, f.fill)
+			synctest.Wait()
+			select {
+			case v := <-after:
+				if v[1] != "2" {
+					t.Errorf("a read after the mutation got %v, want its own fill (fill 2)", v)
+				}
+			default:
+				t.Error("a read after the mutation is waiting on the fill that began before it")
+			}
+			close(f.release)
+			<-before
+			synctest.Wait()
+		})
+	})
+}
+
+// ADR-0065: zero is a live generation, so a record filled before its
+// repository's first mutation is served, and a fill in flight at zero is fenced
+// by that mutation like any later one.
+func TestListCache_GenerationZeroIsALiveGeneration(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newTestCache(time.Hour)
+		served := listKey(testForge, "v1.61", "prs", "open")
+		fenced := listKey(testForge, "v1.62", "prs", "open")
+		f := &countingFill{}
+		for range 2 {
+			if _, err := c.get(t.Context(), served, false, f.fill); err != nil {
+				t.Fatalf("get(%+v) error = %v", served, err)
+			}
+		}
+		if calls := f.count(); calls != 1 {
+			t.Errorf("two reads of a repository never mutated made %d fills, want 1: a generation-zero record is served", calls)
+		}
+
+		held := newHeldFill()
+		got := getAsync(t, c, fenced, held.fill)
+		synctest.Wait()
+		c.evict(repoScope(testForge, "v1.62"))
+		close(held.release)
+		<-got
+		if _, err := c.get(t.Context(), fenced, false, held.fill); err != nil || held.count() != 2 {
+			t.Errorf("get after the first mutation made %d fills (%v), want 2: the fill begun at generation zero stored nothing",
+				held.count(), err)
+		}
+	})
+}
+
+func TestListCache_ARecordFilledAfterAMutationRevalidates(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const ttl = time.Minute
+		c := newTestCache(ttl)
+		key := testKey("k")
+		c.clear()
+		c.evict(key.scope)
+		f := &countingFill{}
+		if _, err := c.get(t.Context(), key, false, f.fill); err != nil {
+			t.Fatalf("Setup: get(cold) error = %v", err)
+		}
+		synctest.Sleep(ttl + time.Nanosecond)
+		if _, err := c.get(t.Context(), key, false, f.fill); err != nil {
+			t.Fatalf("get(stale) error = %v, want nil", err)
+		}
+		synctest.Wait()
+
+		if v, err := c.get(t.Context(), key, false, f.fill); err != nil || v[1] != "2" || f.count() != 2 {
+			t.Errorf("get after the revalidation = %v, %v after %d fills, want the revalidated fill 2: "+
+				"a record filled after a clear and a mutation revalidates under the generation it was filled under",
+				v, err, f.count())
+		}
+	})
+}
+
+// A mutation through an id that is not the canonical encoding is refused, so it
+// neither reaches the library nor evicts the canonical entry (ADR-0100).
+func TestListCache_MutationThroughANonCanonicalIDIsRefused(t *testing.T) {
+	for name, seg := range map[string]string{"upper-case hex": "v1.6F2F72", "a mixed-case selector": "v1.4f2f52"} {
+		t.Run(name, func(t *testing.T) {
+			row := githubMergeRow()
+			core := &mutationCore{pr: answeredPR(row, 3, forgeapi.PRStateClosed)}
+			mux := mergeMux(t, row, core)
+			prs := row.repoPath("prs")
+			if rec := getRoute(t, mux, prs); rec.Code != http.StatusOK {
+				t.Fatalf("Setup: GET %s = %d %s", prs, rec.Code, rec.Body)
+			}
+
+			path := "/api/forges/" + url.PathEscape(row.rec.ID) + "/repos/" + seg + "/prs/3/close"
+			rec := sendRoute(t, mux, http.MethodPost, path, "")
+			if rec.Code != http.StatusBadRequest || decodeBody(t, rec)["code"] != forgeapi.CodeRepoRefInvalid {
+				t.Errorf("POST %s = %d %s, want 400 %s", path, rec.Code, rec.Body, forgeapi.CodeRepoRefInvalid)
+			}
+			if rec := getRoute(t, mux, prs); rec.Code != http.StatusOK || core.listed() != 1 {
+				t.Errorf("GET %s after a refused close through %s = %d after %d lists, want 200 after 1: "+
+					"a refused mutation evicts nothing", prs, seg, rec.Code, core.listed())
+			}
+		})
 	}
 }
 
-func TestCachedListings_ForceReachesTheForgeEveryTime(t *testing.T) {
-	c, f := newDecorated(true)
-	ctx := t.Context()
-
-	for range 3 {
-		if _, err := c.ListPRs(ctx, "o/n", StateOpen); err != nil {
-			t.Fatalf("ListPRs() error = %v, want nil", err)
-		}
+func TestListCache_RerunBumpsNothing(t *testing.T) {
+	row := githubMergeRow()
+	core := &mutationCore{}
+	mux := mergeMux(t, row, core)
+	prs := row.repoPath("prs")
+	if rec := getRoute(t, mux, prs); rec.Code != http.StatusOK {
+		t.Fatalf("Setup: GET %s = %d %s", prs, rec.Code, rec.Body)
 	}
-	if _, prs, _ := f.counts(); prs != 3 {
-		t.Errorf("forced ListPRs reached the forge %d times over 3 calls, want 3", prs)
+
+	rerun := row.repoPath("prs/3/rerun?head_sha=" + mergeHead)
+	if rec := sendRoute(t, mux, http.MethodPost, rerun, ""); rec.Code != http.StatusOK {
+		t.Fatalf("POST %s = %d %s, want 200", rerun, rec.Code, rec.Body)
+	}
+	if rec := getRoute(t, mux, prs); rec.Code != http.StatusOK || core.listed() != 1 {
+		t.Errorf("GET %s after a re-run = %d after %d lists, want 200 after 1: a re-run changes no forge object",
+			prs, rec.Code, core.listed())
 	}
 }
 
 func TestManager_InvalidateDropsCachedListings(t *testing.T) {
-	m := NewManager()
-	f := &fakeOps{}
-	c := cachedListings{ForgeOps: f, caches: m.lists, forgeID: "github:github.com"}
-	ctx := t.Context()
-
-	if _, err := c.ListRepos(ctx); err != nil {
-		t.Fatalf("ListRepos() error = %v, want nil", err)
+	core := &pagedCore{
+		prPages:   onePRPage(1),
+		repoPages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.Repository]{"": {}},
 	}
-	// A sign-in or a disconnect decides which repositories are visible at all, so
-	// the previous account's listing must not survive it.
+	m := recordManager(t, core)
+	mux := repoRoutes(m)
+	paths := []string{
+		"/api/forges/github%3Agithub.com/repos", githubRepoPath("v1.6f2f72", "prs"), githubRepoPath("v1.6f2f72", "affordances"),
+	}
+	read := func() {
+		for _, path := range paths {
+			if rec := getRoute(t, mux, path); rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d %s, want 200", path, rec.Code, rec.Body)
+			}
+		}
+	}
+
+	read()
+	// A sign-in or a disconnect decides which repositories are visible at all,
+	// and what the credential may do in each, so the previous account's
+	// listings and affordances must not survive it.
 	m.Invalidate()
-	if _, err := c.ListRepos(ctx); err != nil {
-		t.Fatalf("ListRepos(after Invalidate) error = %v, want nil", err)
-	}
+	read()
 
-	if repos, _, _ := f.counts(); repos != 2 {
-		t.Errorf("ListRepos reached the forge %d times across an Invalidate, want 2", repos)
+	if asked, _, _ := core.calls(); len(asked) != 2*len(paths) {
+		t.Errorf("the %d reads reached the forge %d times across an Invalidate, want %d", len(paths), len(asked), 2*len(paths))
 	}
 }
 
-func TestManager_ProviderCachesAndProviderFreshDoesNot(t *testing.T) {
-	// Provider resolves a real CLI-backed ForgeOps, so this asserts the WIRING —
-	// which of the two constructors sets force — rather than driving a forge.
-	m := NewManager()
-	m.forges["github:github.com"] = &ConfiguredForge{
-		ID: "github:github.com", Kind: KindGitHub, Host: "github.com", Connected: true,
+func TestListCache_ContinuationNeverAliasesTheFirstPage(t *testing.T) {
+	pages := func() *pagedCore {
+		return &pagedCore{prPages: map[forgeapi.Cursor]forgeapi.Page[forgeapi.PullRequest]{
+			"":   {Items: onePRPage(1)[""].Items, Next: "c2"},
+			"c2": {Items: onePRPage(2)[""].Items},
+		}}
 	}
-
-	cached, err := m.Provider("github:github.com")
-	if err != nil {
-		t.Fatalf("Provider() error = %v, want nil", err)
+	first, next := githubRepoPath("v1.6f2f72", "prs"), githubRepoPath("v1.6f2f72", "prs?after=c2")
+	type step struct {
+		path string
+		rows int
+		// calls is how many list calls reached the library once the step ran.
+		calls int
 	}
-	c, ok := cached.(cachedListings)
-	if !ok {
-		t.Fatalf("Provider() returned %T, want cachedListings", cached)
+	cases := map[string][]step{
+		"first page then continuation": {
+			{path: first, rows: 1, calls: 1},
+			{path: next, rows: 2, calls: 2},
+			{path: first, rows: 1, calls: 2},
+		},
+		"continuation then first page": {
+			{path: next, rows: 2, calls: 1},
+			{path: first, rows: 1, calls: 2},
+		},
+		"refreshed continuation after the first page": {
+			{path: first, rows: 1, calls: 1},
+			{path: next + "&refresh=1", rows: 2, calls: 2},
+			{path: first, rows: 1, calls: 2},
+		},
+		"refreshed continuation then first page": {
+			{path: next + "&refresh=1", rows: 2, calls: 1},
+			{path: first, rows: 1, calls: 2},
+		},
+		"refreshed first page after a continuation": {
+			{path: first, rows: 1, calls: 1},
+			{path: next, rows: 2, calls: 2},
+			{path: first + "?refresh=1", rows: 1, calls: 3},
+		},
 	}
-	if c.force {
-		t.Error("Provider().force = true, want false (an arrival must be servable from cache)")
-	}
-
-	fresh, err := m.ProviderFresh("github:github.com")
-	if err != nil {
-		t.Fatalf("ProviderFresh() error = %v, want nil", err)
-	}
-	fc, ok := fresh.(cachedListings)
-	if !ok {
-		t.Fatalf("ProviderFresh() returned %T, want cachedListings", fresh)
-	}
-	if !fc.force {
-		t.Error("ProviderFresh().force = false, want true")
-	}
-	if fc.caches != c.caches {
-		t.Error("ProviderFresh() holds a different cache; want the Manager's one cache, or a forced read replaces nothing")
+	for name, steps := range cases {
+		t.Run(name, func(t *testing.T) {
+			core := pages()
+			mux := repoRoutes(recordManager(t, core))
+			for i, s := range steps {
+				got := prNumbers(t, getRoute(t, mux, s.path))
+				asked, cursors, _ := core.calls()
+				if !slices.Equal(got, []int{s.rows}) || len(asked) != s.calls {
+					t.Errorf("step %d GET %s: rows %v after %d library calls (cursors %q), want [%d] after %d",
+						i, s.path, got, len(asked), cursors, s.rows, s.calls)
+				}
+			}
+		})
 	}
 }
 
@@ -546,10 +780,15 @@ func TestListCacheTTLs(t *testing.T) {
 	// The PR window is short because of CI rather than the PR set: a row carries
 	// the folded check verdict of its head commit, so a stale entry can show a
 	// green chip for a commit whose checks have since gone red. Widening this
-	// widens exactly that window; MergeOptions.HeadSHA only stops the wrong
+	// widens exactly that window; the merge's head pin only stops the wrong
 	// COMMIT being merged, not a merge against a changed verdict.
 	if prListTTL != time.Minute {
 		t.Errorf("prListTTL = %v, want 1m", prListTTL)
+	}
+	// Affordances come from the same repository record as the repository list's
+	// rows, so the two windows agree.
+	if affordancesTTL != 5*time.Minute {
+		t.Errorf("affordancesTTL = %v, want 5m", affordancesTTL)
 	}
 	// The bound is a spike ceiling: a cold PRs tab asks for one listing per
 	// cloned repository at once. It has to stay well above 1, or a cold visit

@@ -199,6 +199,62 @@ func TestPresence_AcknowledgementAloneDoesNotMakeATagPresent(t *testing.T) {
 	}
 }
 
+// AnyPresent answers the question the PR-status poller's gate asks: is a page
+// receiving the stream at all. It reads the verdict Gone reads, so a tag that
+// departed past the retry interval or went silent past the alive window does not
+// hold it open, and one present tag among gone ones does.
+func TestPresence_AnyPresent(t *testing.T) {
+	t.Run("EmptyTable", func(t *testing.T) {
+		p := newPresenceAt(&presenceClock{at: time.Unix(1_700_000_000, 0)})
+		if p.AnyPresent() {
+			t.Error("AnyPresent() on an empty table = true, want false")
+		}
+	})
+	t.Run("AcknowledgementWithNoConnection", func(t *testing.T) {
+		p := newPresenceAt(&presenceClock{at: time.Unix(1_700_000_000, 0)})
+		p.Alive("t1")
+		if p.AnyPresent() {
+			t.Error("AnyPresent() with only an acknowledgement row = true, want false")
+		}
+	})
+	t.Run("ConnectedThenDeparted", func(t *testing.T) {
+		clock := &presenceClock{at: time.Unix(1_700_000_000, 0)}
+		p := newPresenceAt(clock)
+		p.Observe(connected("t1"))
+		if !p.AnyPresent() {
+			t.Error("AnyPresent() with t1 connected = false, want true")
+		}
+		p.Observe(disconnected("t1", sse.PresenceClosed))
+		if !p.AnyPresent() {
+			t.Error("AnyPresent() inside the retry interval after t1 left = false, want true (a reconnect is not an absence)")
+		}
+		clock.Advance(liveness.ReconnectDelay)
+		if p.AnyPresent() {
+			t.Error("AnyPresent() one retry interval after t1 left = true, want false")
+		}
+	})
+	t.Run("ConnectedButSilent", func(t *testing.T) {
+		clock := &presenceClock{at: time.Unix(1_700_000_000, 0)}
+		p := newPresenceAt(clock)
+		p.Observe(connected("t1"))
+		clock.Advance(liveness.AliveWindow + time.Second)
+		if p.AnyPresent() {
+			t.Error("AnyPresent() with t1 connected but silent past the alive window = true, want false")
+		}
+	})
+	t.Run("OnePresentAmongGone", func(t *testing.T) {
+		clock := &presenceClock{at: time.Unix(1_700_000_000, 0)}
+		p := newPresenceAt(clock)
+		p.Observe(connected("gone"))
+		p.Observe(disconnected("gone", sse.PresenceClosed))
+		clock.Advance(liveness.ReconnectDelay)
+		p.Observe(connected("here"))
+		if !p.AnyPresent() {
+			t.Error("AnyPresent() with one present tag beside a gone one = false, want true")
+		}
+	})
+}
+
 func TestPresence_UntaggedEventsAreDropped(t *testing.T) {
 	p := newPresenceAt(&presenceClock{at: time.Unix(1_700_000_000, 0)})
 	p.Observe(connected(""))

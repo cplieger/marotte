@@ -231,8 +231,11 @@
   overflow: hidden;
 }
 
+/* Wraps rather than squeezing the account: where Manage, Check and Sign out leave
+   the identity under its 12rem basis (a phone's column), they drop below it. */
 .forge-account-row-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
@@ -243,25 +246,45 @@
   background: color-mix(in srgb, var(--c-danger) 5%, var(--c-bg-secondary));
 }
 
-/* CLI-missing variant: the stored connection is intact but its CLI
- * binary is gone (uninstalled in Settings → Tools, or a fresh tools
- * volume). Amber, not red — "tool absent", not "auth broken". Both
- * classes are present (cli_missing rows are never connected), so this
- * must win over the error tint. */
-.forge-account-row-error.forge-account-row-missing {
-  border-color: color-mix(in srgb, var(--c-warning) 50%, var(--c-border));
-  background: color-mix(in srgb, var(--c-warning) 6%, var(--c-bg-secondary));
-}
-
-.forge-account-row-missing .forge-account-error {
-  color: color-mix(in srgb, var(--c-warning) 85%, var(--c-text-primary));
-}
-
-/* Per-account collapsible repo list. The summary line shows
- * "X repos, Y cloned locally" with a chevron that rotates on open. */
-.forge-account-repos {
+/* Per-account collapsible repo list. The toggle shows
+ * "X repos, Y cloned locally" with a chevron that rotates on open. The
+ * owner scopes below it are the same disclosure as a native `<details>`. */
+.forge-account-repos,
+.forge-account-owners {
   margin: 0;
   border-block-start: 1px solid var(--c-border);
+}
+
+/* The repo list's toggle and its batch buttons share one row, since a button
+ * inside the toggle is nested-interactive. The buttons' group carries the inset,
+ * so the toggle's hover fill reaches the row's edges. */
+.forge-account-repos-head {
+  display: flex;
+  align-items: stretch;
+}
+
+.forge-account-repos-head > .forge-account-repos-summary {
+  flex: 1;
+  min-width: 0;
+}
+
+.forge-account-repos-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-2);
+
+  &:empty {
+    display: none;
+  }
+}
+
+.forge-account-owners-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3) var(--sp-3);
 }
 
 .forge-account-repos-summary {
@@ -276,8 +299,12 @@
    * line reads at body size. */
   min-height: 44px;
   padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: 0;
+  font: inherit;
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
+  text-align: start;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -294,17 +321,9 @@
   height: 16px;
 }
 
-/* Right-aligned Clone all button on the summary line. The label
- * pushes itself to the left via flex: 1 so the button sits at the
- * far edge with vertical centering inherited from the summary. */
 .forge-account-repos-label {
   flex: 1;
   min-width: 0;
-}
-
-.forge-account-repos-clone-all {
-  flex-shrink: 0;
-  margin-inline-start: var(--sp-2);
 }
 
 .forge-account-repos-summary::-webkit-details-marker {
@@ -323,11 +342,27 @@
   color: var(--c-text-tertiary);
 }
 
-.forge-account-repos[open] > .forge-account-repos-summary > .forge-account-repos-chevron {
+.forge-account-repos-summary[aria-expanded="true"] > .forge-account-repos-chevron,
+.forge-account-owners[open] > .forge-account-repos-summary > .forge-account-repos-chevron {
   --chev-turn: 0deg;
 }
 
 /* Shell is the canonical empty state in 18-pages.css. */
+
+/* Beneath the rows: why the list is not whole, Load more, and its refusal. */
+.forge-account-repos-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-block-start: 1px solid var(--c-border);
+
+  & > p {
+    flex-basis: 100%;
+    margin: 0;
+  }
+}
 
 .forge-account-repos-list {
   list-style: none;
@@ -413,7 +448,7 @@
 }
 
 .forge-account-identity {
-  flex: 1;
+  flex: 1 1 12rem;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -458,6 +493,7 @@
   align-items: center;
   gap: var(--sp-2);
   flex-shrink: 0;
+  margin-inline-start: auto;
 }
 
 .forge-account-manage {
@@ -530,6 +566,61 @@
   color: var(--c-accent);
 }
 
+/* The device sign-in's start state: client id field, Sign in, note, status.
+   Start-aligned so the button keeps its own width. */
+.forge-device-start {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+
+  & > [data-forge-client-id] {
+    align-self: stretch;
+  }
+}
+
+/* The add pane's "Connection options" disclosure. */
+.forge-options-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  list-style: none;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+  -webkit-user-select: none;
+  user-select: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+}
+
+.forge-options-chevron {
+  --chev-size: 0.75rem;
+
+  color: var(--c-text-tertiary);
+}
+
+.forge-options[open] > .forge-options-summary > .forge-options-chevron {
+  --chev-turn: 0deg;
+}
+
+.forge-options-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-block-start: var(--sp-2);
+
+  & .toggle-inline {
+    margin-inline-start: 0;
+  }
+}
+
+.forge-option-pem {
+  resize: vertical;
+}
+
 /* Section body inside .forge-add-pane-section (OAuth device prompt, or
  * the PAT help line + form). Stacks its children on the pane's own
  * rhythm; without it the help paragraph (margin: 0) sits flush against
@@ -597,8 +688,8 @@
   font-weight: 500;
 }
 
-/* Forge connection status pill — used by pr-panel.ts to surface the
- * forge-auth state of the currently selected repo. */
+/* The status line of the merge and New PR dialogs: a request in flight, then
+ * its outcome. */
 .forge-status {
   font-size: var(--fs-xs);
   padding: 2px var(--sp-2);
@@ -1243,49 +1334,6 @@
   text-decoration: underline;
 }
 
-/* --- Status banner (top of git view) ---
- * Single banner that surfaces forge auth issues, gh CLI install/login
- * needs, or the forges-not-connected advisory. Driven by
- * git-status-banner.ts; replaces the previous separate
- * .git-forges-banner / .forge-auth-banner / #git-gh-section paths.
- */
-
-.git-status-banner {
-  margin-block-end: var(--sp-3);
-}
-
-.git-status-banner-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
-  background: color-mix(in srgb, var(--c-accent) 6%, transparent);
-  border-radius: var(--r);
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-}
-
-/* Forge-auth-failed is the urgent state — paint it warning-ish. */
-.git-status-banner-row[data-state="forge-auth-failed"] {
-  border-color: color-mix(in srgb, var(--c-warning) 50%, var(--c-border));
-  background: color-mix(in srgb, var(--c-warning) 8%, transparent);
-}
-
-.git-status-banner-icon {
-  flex-shrink: 0;
-  font-size: var(--fs-md);
-}
-
-.git-status-banner-msg {
-  flex: 1;
-  min-width: 0;
-}
-
-.git-status-banner-cta {
-  flex-shrink: 0;
-}
-
 /* --- Git empty state --- */
 
 /* Fills the available vertical space below the page title + banner so
@@ -1610,8 +1658,9 @@ select.native-rule-effect:focus-visible {
   grid-template-columns: 6.5rem 6.5rem minmax(14rem, 1fr) auto;
 }
 
-/* Path | Add */
-.rule-form[data-rule-form="ignore"] {
+/* Path | Add, and a forge connection's Owner | Add */
+.rule-form[data-rule-form="ignore"],
+.rule-form[data-rule-form="owner"] {
   grid-template-columns: minmax(14rem, 1fr) auto;
 }
 

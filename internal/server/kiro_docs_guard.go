@@ -14,17 +14,17 @@
 //     `.kiro/steering -> /config` is walked as if it were the steering
 //     directory. Every entry is resolved and refused if it leaves the root.
 //
-//  2. filebrowse.IsSensitive, the SAME predicate the browser file surface
-//     applies — called, not copied. Two scanners disagreeing about what is off
-//     limits is the inconsistency that becomes a leak the next time a root is
-//     widened.
+//  2. filebrowse.Sensitive, the SAME deny list value the browser file surface
+//     holds, handed in by composition rather than copied. Two scanners
+//     disagreeing about what is off limits is the inconsistency that becomes a
+//     leak the next time a root is widened.
 //
 // Layer 1 is what closes the case that motivated this, and layer 2 alone would
-// not have: IsSensitive matches absolute `/config/...` paths, while the walk
+// not have: the deny list matches absolute config-root paths, while the walk
 // holds paths relative to a root under /workspace. Testing the UNRESOLVED path
 // can therefore never match, so the resolution is what gives the denylist
 // anything to match on. Layer 2 then covers the other direction — a root that
-// legitimately resolves into /config, which invariant 6 permits an operator to
+// legitimately resolves into the config root, which invariant 6 permits an operator to
 // arrange.
 //
 // A refusal is silent per entry beyond one Warn, and the entry is simply absent
@@ -116,19 +116,21 @@ type rootGuard struct {
 	// category names the tree in the log line, so a refusal is attributable
 	// without the operator having to guess which walk produced it.
 	category string
+	// sensitive is the file browser's own deny list.
+	sensitive filebrowse.Sensitive
 }
 
 // newRootGuard resolves dir and returns a guard over it. A dir that cannot be
 // resolved yields a guard that refuses everything: the walk is about to read
 // files out of a tree nothing can name, and admitting them would be the one
 // case where an unreadable root is treated as a permissive one.
-func newRootGuard(dir, category string) pathGuard {
+func newRootGuard(dir, category string, sensitive filebrowse.Sensitive) pathGuard {
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		slog.Warn("kiro docs: root not resolvable, skipping", "dir", dir, "error", err)
 		return func(string) docVerdict { return docVerdict{} }
 	}
-	g := &rootGuard{dir: resolved, category: category}
+	g := &rootGuard{dir: resolved, category: category, sensitive: sensitive}
 	return g.allow
 }
 
@@ -146,7 +148,7 @@ func (g *rootGuard) allow(rel string) docVerdict {
 			"category", g.category, "path", rel, "root", g.dir)
 		return docVerdict{}
 	}
-	if filebrowse.IsSensitive(resolved) {
+	if g.sensitive.Blocks(resolved) {
 		slog.Warn("kiro docs: refusing a path on the sensitive denylist",
 			"category", g.category, "path", rel)
 		return docVerdict{}

@@ -82,29 +82,3 @@ func FuzzIsMarkdownHeading(f *testing.F) {
 		}
 	})
 }
-
-// FuzzKindFromHost verifies kindFromHost returns one of the known forge kinds
-// or empty string, and never panics.
-//
-// Bug class: false positive classifications from overlapping substring matches.
-func FuzzKindFromHost(f *testing.F) {
-	f.Add("github.com")
-	f.Add("gitlab.com")
-	f.Add("codeberg.org")
-	f.Add("gitea.example.com")
-	f.Add("")
-	f.Add("example.com")
-	f.Add("mygithubclone.org")
-
-	f.Fuzz(func(t *testing.T, host string) {
-		result := kindFromHost(host)
-
-		// Invariant: result is one of the known values.
-		switch result {
-		case "", "github", "gitlab", "codeberg", "gitea":
-			// ok
-		default:
-			t.Fatalf("kindFromHost(%q) = %q; not a known kind", host, result)
-		}
-	})
-}

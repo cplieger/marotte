@@ -732,9 +732,8 @@
   color: var(--c-accent);
 }
 
-/* Inline "enable a runtime / install a CLI" banner used inside the
- * MCP npm panel and the Sources add-account pane. A compact callout
- * with a one-click install button + rolling output area. */
+/* Inline "enable a runtime" banner used inside the MCP npm panel. A
+ * compact callout with a one-click install button + rolling output area. */
 .inline-install-banner {
   display: flex;
   flex-direction: column;
