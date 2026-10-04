@@ -22,4 +22,4 @@ Use plain package names only. Each of these is refused with the reason:
 
 Pinning an entry keeps the installed version and marks it held in dpkg.
 
-An `apt:` entry can only ever be a literal Debian package name, and Debian's signed package lists vouch for it. [Security](security.md#tool-installs) compares that with a `release:` entry.
+An `apt:` entry can only ever be a literal Debian package name, and Debian's signed package lists vouch for it. [Security](hardening.md#tool-installs) compares that with a `release:` entry.

@@ -104,7 +104,7 @@ Set `ALLOWED_HOSTS` on any server that stays up. marotte then answers only at th
 
 The agent can read the container's `environment:`. marotte drops names ending in `_TOKEN` or `_SECRET` and the AWS key pair, so keep other credentials out of it.
 
-marotte sends no telemetry, and kiro-cli's own telemetry starts off. [Security](docs/security.md) covers the container user, tool installs and how kiro-cli is verified.
+marotte sends no telemetry, and kiro-cli's own telemetry starts off. [Security](docs/hardening.md) covers the container user, tool installs and how kiro-cli is verified.
 
 ## Troubleshooting
 
@@ -119,7 +119,7 @@ Docker checks `/api/health` every 30 seconds. The container shows healthy once m
 
 - [Features](docs/features.md) describes every part of the page, knowledge bases included.
 - [Configuration](docs/configuration.md) lists every setting and what it checks.
-- [Security](docs/security.md) covers tool installs, the image and the kiro-cli install.
+- [Security](docs/hardening.md) covers tool installs, the image and the kiro-cli install.
 - [How marotte works](docs/how-it-works.md) explains syncing across devices and how kiro-cli is installed and repaired.
 - [Launch flags](docs/launch-flags.md) and [OS packages](docs/os-packages.md) cover two less common setups.
 
