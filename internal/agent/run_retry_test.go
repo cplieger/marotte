@@ -271,7 +271,7 @@ func TestHandleRetry_AnEngineThatWillNotStartAnswersInsideTheClientsWindow(t *te
 		t.Fatalf("a retry whose engine never started = %d, want %d: %s",
 			rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "try again") {
+	if !strings.Contains(rec.Body.String(), "Try again") {
 		t.Errorf("the 503 body = %s, want it to name the remedy", rec.Body.String())
 	}
 	if slices.Contains(br.callLog()[before:], methodKiroWorkflowRetry) {
@@ -411,7 +411,7 @@ func TestHandleRetry_AnUnreadableOutcomeTellsTheReaderToRefresh(t *testing.T) {
 			rec.Code, http.StatusBadGateway, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "refresh") {
+	if !strings.Contains(body, "Refresh") {
 		t.Errorf("the body = %s, want the remedy that is actually the reader's; a retry that "+
 			"landed must not be reported as one to repeat", body)
 	}

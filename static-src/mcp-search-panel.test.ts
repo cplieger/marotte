@@ -283,7 +283,7 @@ describe("what the list does not carry", () => {
     answered("github", { ...HIT, truncated: true });
     expect(results.textContent).toContain("io.example/thing");
     expect(results.textContent).toContain(
-      "More matched than shown; narrow the query to see the rest.",
+      "More matched than shown. Narrow the query to see the rest.",
     );
     expect(results.textContent).not.toContain("cannot be installed");
   });
@@ -326,7 +326,7 @@ describe("what a classified failure changes", () => {
     type(input, "github");
     failed("github", rateLimited);
 
-    expect(results.textContent).toContain("retry in 37s");
+    expect(results.textContent).toContain("Retry in 37s");
     const retry = results.querySelector("button") as HTMLButtonElement;
     expect(retry.textContent).toBe("Retry");
     expect(retry.disabled, "a click inside the interval is guaranteed to fail again").toBe(true);

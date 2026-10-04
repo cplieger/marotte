@@ -436,8 +436,8 @@ describe("history: which empty state each pane shows", () => {
       sessions_state: "unavailable",
       runs_state: "unavailable",
     });
-    expect(t.chats).toBe("Couldn't read previous conversations.");
-    expect(t.runs).toBe("Couldn't read workflow runs.");
+    expect(t.chats).toBe("Could not read previous conversations.");
+    expect(t.runs).toBe("Could not read workflow runs.");
   });
 
   it("names WHICH list failed when only one did, on its own pane", async () => {
@@ -447,7 +447,7 @@ describe("history: which empty state each pane shows", () => {
       sessions_state: "unavailable",
       runs_state: "ready",
     });
-    expect(chats.chats).toBe("Couldn't read previous conversations.");
+    expect(chats.chats).toBe("Could not read previous conversations.");
     expect(chats.runs).toBe("No previous workflow runs in this workspace.");
 
     const runs = await emptyTexts({
@@ -457,7 +457,7 @@ describe("history: which empty state each pane shows", () => {
       runs_state: "unavailable",
     });
     expect(runs.chats).toBe("No previous conversations in this workspace.");
-    expect(runs.runs).toBe("Couldn't read workflow runs.");
+    expect(runs.runs).toBe("Could not read workflow runs.");
   });
 
   // The verdict is ALL the wire carries: the server knows why a read failed and
@@ -1088,7 +1088,9 @@ describe("history: cross-chat search", () => {
   // matches" implies the text is nowhere.
   it("says not everything was searched on an empty answer the scan did not finish", async () => {
     const { note } = await search({ matches: [], scanned: 500, matched: 0, truncated: true });
-    expect(note.textContent).toBe("No matches in 500 conversations; not everything was searched");
+    expect(note.textContent).toBe(
+      "No matches in 500 conversations, but not everything was searched",
+    );
   });
 
   it("says plainly that nothing matched when the scan read everything", async () => {

@@ -144,7 +144,7 @@ describe("the model card with no models", () => {
 
     // A settled verdict must drop it, or a screen reader is told the list is
     // loading for as long as the card exists.
-    notice = { text: "Couldn't load the model list.", busy: false, retry: true };
+    notice = { text: "Could not load the model list.", busy: false, retry: true };
     onExpand.fn?.();
     expect(scroller().hasAttribute("aria-busy")).toBe(false);
   });
@@ -192,7 +192,7 @@ describe("the model card with no models", () => {
   // The card used to render the notice and DROP the `retry` flag, so the pill was
   // a keyboard dead end in both states where the hero picker is one in neither.
   it("offers a way back when asking again can change the answer", () => {
-    notice = { text: "Couldn't load the model list.", busy: false, retry: true };
+    notice = { text: "Could not load the model list.", busy: false, retry: true };
     onExpand.fn?.();
 
     const btn = retryBtn();
@@ -222,7 +222,7 @@ describe("the model card with no models", () => {
   });
 
   it("takes the Retry away with the notice once a catalog lands", () => {
-    notice = { text: "Couldn't load the model list.", busy: false, retry: true };
+    notice = { text: "Could not load the model list.", busy: false, retry: true };
     onExpand.fn?.();
     expect(retryBtn()).not.toBe(null);
 

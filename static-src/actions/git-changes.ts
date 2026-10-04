@@ -80,8 +80,8 @@ export const stage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   error: (args, err) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
-        `Couldn't stage \u201c${truncate(args.files[0]!)}\u201d: ${err.message}`
-      : `Couldn't stage ${String(args.files.length)} files: ${err.message}`,
+        `Could not stage "${truncate(args.files[0]!)}". ${err.message}`
+      : `Could not stage ${String(args.files.length)} files. ${err.message}`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
@@ -95,8 +95,8 @@ export const discard = apiAction<GitRepoFilesArgs, GitCmdResult>({
   error: (args, err) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
-        `Couldn't discard \u201c${truncate(args.files[0]!)}\u201d: ${err.message}`
-      : `Couldn't discard ${String(args.files.length)} files: ${err.message}`,
+        `Could not discard "${truncate(args.files[0]!)}". ${err.message}`
+      : `Could not discard ${String(args.files.length)} files. ${err.message}`,
   // Destructive: timed-out discard may have succeeded server-side
 });
 
@@ -109,8 +109,8 @@ export const unstage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   error: (args, err) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
-        `Couldn't unstage \u201c${truncate(args.files[0]!)}\u201d: ${err.message}`
-      : `Couldn't unstage ${String(args.files.length)} files: ${err.message}`,
+        `Could not unstage "${truncate(args.files[0]!)}". ${err.message}`
+      : `Could not unstage ${String(args.files.length)} files. ${err.message}`,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
@@ -214,8 +214,8 @@ export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>
     const line = args.message.split("\n")[0] ?? "";
     const short = truncate(line);
     return short !== ""
-      ? `Commit failed (\u201c${short}\u201d): ${err.message}`
-      : `Commit failed: ${err.message}`;
+      ? `Commit failed for "${short}". ${err.message}`
+      : `Commit failed. ${err.message}`;
   },
   idempotencyKey: true,
   // Not retryable: a timed-out commit may have succeeded server-side;
@@ -228,7 +228,7 @@ export const generateCommitMessage = apiAction<GitRepoArgs, GitCmdResult>({
   dedupe: (args) => args.repo,
   request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
   decode: decodeGitResult,
-  error: "Couldn't generate commit message",
+  error: "Could not generate commit message",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });

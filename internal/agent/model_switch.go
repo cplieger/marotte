@@ -111,7 +111,7 @@ func (rt *Runtime) applyPendingModel(ctx context.Context, chatID marotte.ChatID)
 }
 
 // errSwitchRefused is what the reader sees when the session declined the swap.
-var errSwitchRefused = errors.New("the session refused the model switch; try again later")
+var errSwitchRefused = errors.New("the session refused the model switch. Try again later")
 
 // clearPendingModel drops a pick the session refused, so the badge stops pulsing.
 func (rt *Runtime) clearPendingModel(ctx context.Context, chatID marotte.ChatID) {

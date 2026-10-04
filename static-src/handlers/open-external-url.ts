@@ -23,7 +23,7 @@ onSSE("open_external_url", (chatID, p) => {
     return;
   }
   showBanner(chatID, "open_external_url", "An integration needs you to sign in.", "info", true, {
-    label: "Open sign-in page →",
+    label: "Open sign-in page",
     href: p.url,
   });
 });

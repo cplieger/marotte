@@ -701,7 +701,7 @@ async function gateAddPaneOnCLI(pane: HTMLElement, kind: ForgeKind): Promise<voi
   const msg = el(
     "p",
     { className: "section-hint" },
-    `The ${cli.name} CLI powers ${kindTitle(kind)} integration and isn't installed yet. It installs automatically when you sign in, or install it now:`,
+    `The ${cli.name} CLI powers ${kindTitle(kind)} integration and is not installed yet. It installs automatically when you sign in, or install it now:`,
   );
   const btn = el(
     "button",

@@ -145,7 +145,7 @@ function buildDeclaredLine(declared: DeclaredField | undefined): HTMLElement | n
  *  paste is stored masked and never read back. */
 function placeholderFor(kind: PairKind, declared: DeclaredField | undefined): string {
   if (declared?.secret === true) {
-    return kind === "env" ? "token (stored masked)" : "value (stored masked)";
+    return kind === "env" ? "token, stored masked" : "value, stored masked";
   }
   return "value";
 }

@@ -42,5 +42,5 @@ export const deleteDoc = apiAction<{ path: string; name: string }>({
     body: { action: "delete", path: args.path },
   }),
   success: (args) => `Deleted ${args.name}`,
-  error: (args) => `Couldn't delete ${args.name}`,
+  error: (args) => `Could not delete ${args.name}`,
 });

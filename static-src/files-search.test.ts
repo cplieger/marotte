@@ -295,7 +295,7 @@ describe("the search bar", () => {
 
   it("says a stopped scan did not read everything when it found NOTHING, so an empty answer cannot imply the text is nowhere", async () => {
     expect(await noteFor(result({ scanned: 5000, truncated: true }))).toBe(
-      "No matches in 5,000 files; not everything was searched",
+      "No matches in 5,000 files, but not everything was searched",
     );
   });
 

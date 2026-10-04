@@ -938,7 +938,11 @@ function unstagedGroupActions(r: RepoStatus, files: FileEntry[]): HTMLButtonElem
   });
   bindingCleanups.push(bindLoadingState(["git.stage", "git.commit"], stageBtn));
 
-  const discardBtn = groupBtn("Discard all", "Throw away every change below (irreversible)", true);
+  const discardBtn = groupBtn(
+    "Discard all",
+    "Throw away every change below. This cannot be undone",
+    true,
+  );
   discardBtn.addEventListener("click", () => {
     // Module-level guard: a second click while the first confirm is open
     // would dispatch two discards for one repo.

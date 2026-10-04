@@ -1192,7 +1192,7 @@ function missNotice(hit: Hit, rendered: boolean, narrowed: boolean): string {
   }
   if (hit.segment_kind === "tool_diff") {
     return narrowed
-      ? "not in the shown hunks \u2014 open the diff"
+      ? "not in the shown hunks, so open the diff"
       : "only in this call's diff, which did not load";
   }
   return "not in rendered text";

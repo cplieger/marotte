@@ -43,7 +43,7 @@ export const editNativeRule = apiAction<NativeRuleArgs, { ok?: boolean; error?: 
   idempotencyKey: true,
   scope: "permissions",
   request: (a) => ({ method: "POST", path: "/api/permissions/rules", body: a }),
-  error: "Couldn't update policy rule",
+  error: "Could not update policy rule",
 });
 
 /** Simulate the policy decision for a capability/resource. Pure — KAS

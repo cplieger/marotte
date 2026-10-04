@@ -332,7 +332,7 @@
                    open menu, and a card nested in the trigger would put
                    interactive content inside a <button>. -->
               <span class="pill-slot">
-                <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage — tokens, credits and turns for this chat. The grey band marks where the conversation will be compacted once usage reaches it." aria-label="Context usage">
+                <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage: tokens, credits and turns for this chat. The grey band marks where the conversation will be compacted once usage reaches it." aria-label="Context usage">
                   <!-- A PIE, not a ring. Both circles share one radius and
                        one stroke width: r=4 with an 8-wide stroke spans r 0..8,
                        so each stroke IS a filled sector, and pathLength="100"
@@ -527,13 +527,13 @@
                       <span class="section-option-label">Workflow runs</span>
                       <span class="settings-save-status hidden" data-save-status="notify_run_outcome" aria-live="polite"></span>
                     </div>
-                    <p class="section-hint">Notify when a workflow run finishes, fails, or is stopped. Covers every run this server started — launched by you from the Workflows tab, launched by the agent from a chat, or started by a schedule — whether or not it belongs to a conversation. A run outlives the turn that launched it, so without this a run that ends while you are elsewhere reaches nobody. If your deployment already alerts on failed scheduled runs, expect a second notice for those.</p>
+                    <p class="section-hint">Notify when a workflow run finishes, fails, or is stopped. Covers every run this server started, whether or not it belongs to a conversation: a run you launched from the Workflows tab, a run the agent launched from a chat, and a run a schedule started. A run outlives the turn that launched it, so without this a run that ends while you are elsewhere reaches nobody. If your deployment already alerts on failed scheduled runs, expect a second notice for those.</p>
                   </div>
                 </div>
                 <div class="section-option section-option-fixed">
                   <div>
                     <span class="section-option-label">Permission needed</span>
-                    <p class="section-hint">Always on. An approval request blocks the turn until you answer it, so it cannot be switched off separately — silencing it would stall every later turn with nothing on screen to say why. To be asked less often, widen the policy in <strong>Permissions</strong> instead.</p>
+                    <p class="section-hint">Always on. An approval request blocks the turn until you answer it, so it cannot be switched off separately. Silencing it would stall every later turn with nothing on screen to say why. To be asked less often, widen the policy in <strong>Permissions</strong> instead.</p>
                   </div>
                 </div>
               </div>
@@ -544,7 +544,7 @@
                 <h2 class="section-title">Chat retention</h2>
                 <span class="settings-save-status hidden" data-save-status="chat_retention_days" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Closing a chat archives it to <strong>History</strong> (toolbar icon). Enable <strong>Keep forever</strong> to never purge — History becomes a permanent archive. Otherwise <strong>Days kept</strong> sets how long before it's purged. Set to <strong>0</strong> for no retention: closing a chat deletes it immediately and History is hidden. marotte manages this itself; kiro-cli's own cleanup is off.</p>
+              <p class="section-hint">Closing a chat archives it to <strong>History</strong>, the toolbar icon. Enable <strong>Keep forever</strong> to never purge, and History becomes a permanent archive. Otherwise <strong>Days kept</strong> sets how long before it's purged. Set it to <strong>0</strong> for no retention. Closing a chat then deletes it immediately, and History is hidden. marotte manages this itself, and kiro-cli's own cleanup is off.</p>
               <div class="section-option">
                 <label for="chat-retention-forever" class="section-option-label">Keep forever</label>
                 <input type="checkbox" id="chat-retention-forever" aria-label="Keep archived chats forever">
@@ -568,7 +568,7 @@
                     <span class="section-option-label">Knowledge base search</span>
                     <span class="settings-save-status hidden" data-save-status="knowledge_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Lets the agent search the directories you have indexed ("add this folder to my knowledge base"). On by default. Off withdraws the agent's search tool and the list of indexed bases it sees; the bases themselves stay on disk and Settings → Custom instructions still manages them, so nothing is lost by turning it off.</p>
+                  <p class="section-hint">Lets the agent search the directories you have indexed. An example request: "add this folder to my knowledge base". On by default. Off withdraws the agent's search tool and the list of indexed bases it sees. The bases themselves stay on disk, and Custom instructions in Settings still manages them, so nothing is lost by turning it off.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -581,7 +581,7 @@
                     <span class="section-option-label">Load MCP tools on demand</span>
                     <span class="settings-save-status hidden" data-save-status="tool_search_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt — the agent can call any tool immediately, but the tool list takes context-window space (~200–500 tokens per tool) on every turn. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model; when the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves context for 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Worth turning on only when you feel the context squeeze.</p>
+                  <p class="section-hint">When off (default), every connected MCP tool's full description is sent to the model on every prompt. The agent can call any tool immediately, but the tool list takes context-window space on every turn, about 200 to 500 tokens per tool. When on, kiro-cli ships only a built-in <code>tool_search</code> tool to the model. When the agent needs an MCP tool, it asks <code>tool_search</code> by intent and kiro-cli returns matches. Saves context for 5+ MCP servers but adds one extra round-trip per tool the agent decides to use. Turn it on when MCP tool descriptions take up too much of the context window.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -594,14 +594,14 @@
                     <span class="section-option-label">Remember things between conversations</span>
                     <span class="settings-save-status hidden" data-save-status="memory_enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Off by default. Lets kiro-cli keep its own notes across chats — your stated preferences, decisions and corrections — written by the agent on its own initiative rather than by you, and fed into later conversations as a short list it can expand on demand. Three things to know before turning it on. The notes live in a file under the container's home directory that <strong>this app cannot show you</strong>, so you cannot read, edit or delete an individual note from here; the only control is switching the feature back off. <strong>Nothing prunes it</strong> — it grows for as long as it is on. And every note is filed under one shared workspace bucket rather than the repository it came from, because every chat runs from the same directory, so notes from unrelated projects land in one pile. For anything you want remembered deliberately, Settings → Custom instructions is reviewable, editable and version-controlled.</p>
+                  <p class="section-hint">Off by default. Lets kiro-cli keep its own notes across chats: your stated preferences, decisions and corrections. The agent writes them on its own initiative rather than you, and they feed into later conversations as a short list it can expand on demand. Three things to know before turning it on. The notes live in a file under the container's home directory that <strong>this app cannot show you</strong>, so you cannot read, edit or delete an individual note from here. The only control is switching the feature back off. <strong>Nothing prunes it</strong>, so it grows for as long as it is on. And every note is filed under one shared workspace bucket rather than the repository it came from, because every chat runs from the same directory, so notes from unrelated projects share one list. For anything you want remembered deliberately, Custom instructions in Settings is reviewable, editable and version-controlled.</p>
                 </div>
               </div>
             </div>
 
             <div class="page-section" id="general-experimental-section">
               <h2 class="section-title">Experimental features</h2>
-              <p class="section-hint">Optional kiro-cli capabilities. Turning one off takes effect on the next conversation; running sessions keep their current configuration.</p>
+              <p class="section-hint">Optional kiro-cli capabilities. Turning one off takes effect on the next conversation. Running sessions keep their current configuration.</p>
               <div class="section-option">
                 <label class="toggle">
                   <input type="checkbox" id="flag-hooks-status" aria-label="Show hook status" checked>
@@ -612,7 +612,7 @@
                     <span class="section-option-label">Show hook status in chat</span>
                     <span class="settings-save-status hidden" data-save-status="hooks.showStatus" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When on, each kiro-cli hook execution appears in the chat transcript as a <code>Hook fired</code> card. marotte cannot see a hook's outcome, so the card names the hook and nothing more. Off hides those cards; hooks still run and enforce their rules, and a hook that needs your approval always asks regardless of this setting.</p>
+                  <p class="section-hint">When on, each kiro-cli hook execution appears in the chat transcript as a <code>Hook fired</code> card. marotte cannot see a hook's outcome, so the card names the hook and nothing more. Off hides those cards. Hooks still run and enforce their rules, and a hook that needs your approval always asks regardless of this setting.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -625,7 +625,7 @@
                     <span class="section-option-label">kiro-cli telemetry</span>
                     <span class="settings-save-status hidden" data-save-status="telemetry.enabled" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">Anonymous usage telemetry sent by kiro-cli (not marotte). Helps the Kiro team improve the CLI. Off disables all telemetry collection. This does not affect marotte's own operation.</p>
+                  <p class="section-hint">Anonymous usage telemetry sent by kiro-cli, not by marotte. Helps the Kiro team improve the CLI. Off disables all telemetry collection. This does not affect marotte's own operation.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -638,7 +638,7 @@
                     <span class="section-option-label">Exclude default resources from custom agents</span>
                     <span class="settings-save-status hidden" data-save-status="chat.disableInheritingDefaultResources" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When on, custom agents (your own agent definitions) no longer inherit the default resources — global/workspace steering docs, skills, and <code>AGENTS.md</code> — so a custom agent starts from a clean context you control explicitly. The built-in Default and Plan agents are unaffected. Off (default) keeps every custom agent loading those resources automatically. Requires kiro-cli 2.10+.</p>
+                  <p class="section-hint">When on, custom agents, meaning your own agent definitions, no longer inherit the default resources: global and workspace steering docs, skills, and <code>AGENTS.md</code>. A custom agent then starts from a clean context you control explicitly. The built-in Default and Plan agents are unaffected. Off (default) keeps every custom agent loading those resources automatically. Requires kiro-cli 2.10+.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -662,7 +662,7 @@
 
             <div class="page-section">
               <h2 class="section-title">Tools &amp; runtimes</h2>
-              <p class="section-hint">Runtimes, language servers, and CLIs installed on demand from a catalog of ~700 tools (or your own install command). Installs run in the background and stream their output here; the pin icon freezes a tool at its current version. Everything lands on the persistent volume, not the image.</p>
+              <p class="section-hint">Runtimes, language servers, and CLIs installed on demand from a catalog of ~700 tools, or from your own install command. Installs run in the background and stream their output here. The pin icon freezes a tool at its current version. Everything lands on the persistent volume, not the image.</p>
               <div class="section-actions-row">
                 <!-- Update all and Refresh catalog each OWN a job kind: while
                      their work is live the pill itself becomes the control that
@@ -698,10 +698,10 @@
 
             <div class="page-section">
               <h2 class="section-title">Advanced configuration</h2>
-              <p class="section-hint">The manifest behind this list, and the workspace preferences, opened in the editor. Editing <strong>tools.json</strong> changes nothing on its own: <strong>Apply</strong> is what converges the volume on it, and Cancel stops the pass in flight. Keep it valid JSON at schema version 2; a manifest the engine cannot read stops the container from starting, and then this editor is gone too. <strong>config.json</strong> needs no Apply: the server re-reads it on the next request, so reload the page to see a hand edit here.</p>
+              <p class="section-hint">The manifest behind this list, and the workspace preferences, opened in the editor. Editing <strong>tools.json</strong> changes nothing on its own. <strong>Apply</strong> installs and removes tools until the volume matches it, and Cancel stops the pass in flight. Keep it valid JSON at schema version 2. A manifest the engine cannot read stops the container from starting, and then this editor is gone too. <strong>config.json</strong> needs no Apply. The server re-reads it on the next request, so reload the page to see a hand edit here.</p>
               <details>
                 <summary class="section-subtitle native-explain-summary">What Apply runs, and two keys a hand edit cannot finish</summary>
-                <p class="section-hint">Apply converges in two passes: install what the manifest now asks for and remove what it no longer does, then update anything unpinned. Both stream their output above. Cancel beside Apply stops the install pass only; the update pass is Update all's to stop, and the Cancel control moves there when it starts. Two keys in <strong>config.json</strong> need more than the file: <code>security_profile</code> only chooses the presets a new session starts with, since rewriting the policy files is Settings → Permissions' job, and <code>agent_ignore_files</code> names ignore files whose patterns still come from the workspace.</p>
+                <p class="section-hint">Apply runs two passes: install what the manifest now asks for and remove what it no longer does, then update anything unpinned. Both stream their output above. Cancel beside Apply stops the install pass only. Update all owns stopping the update pass, and the Cancel control moves there when it starts. Two keys in <strong>config.json</strong> need more than the file: <code>security_profile</code> only chooses the presets a new session starts with, since rewriting the policy files is the job of Permissions in Settings, and <code>agent_ignore_files</code> names ignore files whose patterns still come from the workspace.</p>
               </details>
               <div class="section-actions-row">
                 <div class="action-bar action-bar-inline">
@@ -722,7 +722,7 @@
 
           <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. Supervised mode and agent ignore files are separate layers under it; the review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-actions menu next to the prompt changes the conversation you are in.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces, including shell commands. Supervised mode and agent ignore files are separate layers under it. The review gate is kiro-cli's own, and marotte only sets a value for it. Defaults here apply to new conversations, and the chat-actions menu next to the prompt changes the conversation you are in.</p>
 
             <div class="page-section" id="security-profile-section">
               <h2 class="section-title">Security profile</h2>
@@ -736,7 +736,7 @@
 
             <div class="page-section" id="native-policy-section">
               <h2 class="section-title">Active policy</h2>
-              <p class="section-hint">The native permission rules kiro-cli enforces, layered by scope. Precedence is <strong>deny</strong> &gt; <strong>ask</strong> &gt; <strong>allow</strong>. You can edit the <strong>user</strong> and <strong>workspace</strong> layers; edits take effect immediately, with no restart. New rules default to <strong>Ask</strong> — widen to Allow only deliberately.</p>
+              <p class="section-hint">The native permission rules kiro-cli enforces, layered by scope. Precedence is <strong>deny</strong> &gt; <strong>ask</strong> &gt; <strong>allow</strong>. You can edit the <strong>user</strong> and <strong>workspace</strong> layers. Edits take effect immediately, with no restart. New rules default to <strong>Ask</strong>. Widen to Allow only deliberately.</p>
               <p id="native-policy-status" class="section-hint hidden"></p>
               <div id="native-policy-list" class="native-policy-list"></div>
               <p id="native-policy-empty-hint" class="section-hint hidden">No policy rules loaded yet.</p>
@@ -747,7 +747,7 @@
                   <span class="rf-label">Scope</span>
                   <select id="native-rule-scope" class="rf-select">
                     <option value="workspace">Workspace</option>
-                    <option value="user">User (global)</option>
+                    <option value="user">User, global</option>
                   </select>
                 </label>
                 <label class="rf-field">
@@ -772,11 +772,11 @@
                 </label>
                 <button id="native-rule-add" class="btn rf-submit" type="button">Add rule</button>
               </div>
-              <p class="section-hint">Leave match empty to apply to the whole capability. Workspace paths are workspace-relative (e.g. <code>src/**</code>); user paths are absolute (e.g. <code>/home/you/project/**</code>). Exclusions carve holes out of this rule's match — the way to let a specific allow win over a broader ask.</p>
+              <p class="section-hint">Leave match empty to apply to the whole capability. Workspace paths are workspace-relative, for example <code>src/**</code>. User paths are absolute, for example <code>/home/you/project/**</code>. Exclusions carve holes out of this rule's match. They are the way to let a specific allow win over a broader ask.</p>
 
               <details id="native-policy-explain-box">
-                <summary class="section-subtitle native-explain-summary">Test a decision (why?)</summary>
-                <p class="section-hint">Simulate the decision for a capability + resource. This is a read-only check — it never runs the tool or raises a prompt.</p>
+                <summary class="section-subtitle native-explain-summary">Test a decision and see why</summary>
+                <p class="section-hint">Simulate the decision for a capability and a resource. This is a read-only check. It never runs the tool or raises a prompt.</p>
                 <div class="rule-form" data-rule-form="explain" role="group" aria-label="Test a policy decision">
                   <label class="rf-field">
                     <span class="rf-label">Capability</span>
@@ -795,13 +795,13 @@
 
             <div class="page-section">
               <div class="section-title-status-row">
-                <h2 class="section-title">Supervised mode (default for new chats)</h2>
+                <h2 class="section-title">Supervised mode, the default for new chats</h2>
                 <span class="settings-save-status hidden" data-save-status="supervised_default" aria-live="polite"></span>
               </div>
-              <p class="section-hint">Picks the default for <strong>new</strong> conversations; to turn it on for the conversation you are in, use the chat-actions menu next to the prompt. While a turn is held for review its file changes are already <strong>on disk</strong>, so a running dev server, build watcher or test runner can pick up a change you are about to reject.</p>
+              <p class="section-hint">Picks the default for <strong>new</strong> conversations. To turn it on for the conversation you are in, use the chat-actions menu next to the prompt. While a turn is held for review its file changes are already <strong>on disk</strong>, so a running dev server, build watcher or test runner can pick up a change you are about to reject.</p>
               <details>
                 <summary class="section-subtitle native-explain-summary">How the review works</summary>
-                <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent may <em>run</em> a write tool; supervised mode decides whether the turn's file changes are <em>kept</em>. The turn pauses and one review card appears in the bar at the bottom of the chat, listing the files it changed. Every file starts ticked, so confirming keeps all of them; you untick anything you want reverted. A rename that spans several paths is one decision you cannot split.</p>
+                <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent may <em>run</em> a write tool; supervised mode decides whether the turn's file changes are <em>kept</em>. The turn pauses and one review card appears in the bar at the bottom of the chat, listing the files it changed. Every file starts ticked, so confirming keeps all of them. Untick anything you want reverted. A rename that spans several paths is one decision you cannot split.</p>
               </details>
               <label class="perm-mode">
                 <input type="checkbox" id="supervised-default-checkbox">
@@ -814,7 +814,7 @@
                 <h2 class="section-title">Scheduled runs</h2>
                 <span class="settings-save-status hidden" data-save-status="scheduled_auto_approve" aria-live="polite"></span>
               </div>
-              <p class="section-hint">A scheduled workflow runs with nobody watching, so a tool request it raises has nobody to answer it. By default marotte <strong>refuses</strong> such a request after 3 minutes and says so on the workflow's row — the run stops rather than parking forever and blocking every later run of that schedule. Turn this on to approve those requests instead. It is a separate decision from the Active policy above on purpose: approving something while you watch is not the same as approving it unattended at 3am. Approvals granted this way are one-shot and never persisted as a rule.</p>
+              <p class="section-hint">A scheduled workflow runs with nobody watching, so a tool request it raises has nobody to answer it. By default marotte <strong>refuses</strong> such a request after 3 minutes and says so on the workflow's row. The run stops rather than parking forever and blocking every later run of that schedule. Turn this on to approve those requests instead. It is a separate decision from the Active policy above on purpose. Approving something while you watch is not the same as approving it unattended at 3am. Approvals granted this way are one-shot and never persisted as a rule.</p>
               <label class="perm-mode">
                 <input type="checkbox" id="scheduled-auto-approve-checkbox">
                 <span>Approve tool requests in scheduled runs instead of refusing them</span>
@@ -827,7 +827,7 @@
                   <h2 class="section-title">Agent ignore files</h2>
                   <span class="settings-save-status hidden" data-save-status="agent_ignore_files" aria-live="polite"></span>
                 </div>
-                <p class="section-hint"><code>.kiroignore</code> at the workspace root is always honoured; add other gitignore-style files to apply them too. <strong>kiro-cli</strong> does the enforcing, across its file <em>and search</em> tools, checked ahead of the Active policy above so no rule there can override it. Some limits: a matching name can still appear in a directory listing, though its contents stay unreadable, and a shell command the agent runs reads the file normally — that output lands in the transcript, so this keeps a decrypted secret (<code>.env.dec</code>) away from the file tools rather than out of the conversation. The agent cannot rewrite <code>.kiroignore</code> itself; editing any other file you list here, at the workspace root, asks you first.</p>
+                <p class="section-hint"><code>.kiroignore</code> at the workspace root is always honoured. Add other gitignore-style files to apply them too. <strong>kiro-cli</strong> does the enforcing, across its file <em>and search</em> tools, checked ahead of the Active policy above so no rule there can override it. Some limits: a matching name can still appear in a directory listing, though its contents stay unreadable, and a shell command the agent runs reads the file normally. That output lands in the transcript, so this keeps a decrypted secret such as <code>.env.dec</code> away from the file tools rather than out of the conversation. The agent cannot rewrite <code>.kiroignore</code> itself. Editing any other file you list here, at the workspace root, asks you first.</p>
                 <div id="agent-ignore-floor" class="chip-list"></div>
                 <div id="agent-ignore-chips" class="chip-list"></div>
                 <div class="rule-form" data-rule-form="ignore" role="group" aria-label="Add an agent ignore file">
@@ -854,13 +854,13 @@
               </div>
               <p class="section-hint">Prepended to every conversation, on every device. Good for always-on preferences like "respond in French" or "prefer concise answers".</p>
               <div class="textarea-wrap">
-                <textarea id="steering-input" class="page-textarea" rows="5" placeholder="e.g. Always respond in French. Prefer concise answers. Don't explain unless asked."></textarea>
+                <textarea id="steering-input" class="page-textarea" rows="5" placeholder="For example: Always respond in French. Prefer concise answers. Do not explain unless asked."></textarea>
               </div>
             </div>
 
             <div class="page-section" id="knowledge-section">
               <h2 class="section-title">Knowledge bases</h2>
-              <p class="section-hint">Local directories indexed for semantic search. When <strong>Knowledge base search</strong> is on in <strong>General</strong>, your agent searches these for relevant context. Indexing runs in the background; large directories take a moment.</p>
+              <p class="section-hint">Local directories indexed for semantic search. When <strong>Knowledge base search</strong> is on in <strong>General</strong>, your agent searches these for relevant context. Indexing runs in the background, and large directories take a moment.</p>
               <div class="section-actions-row">
                 <div class="action-bar action-bar-inline">
                   <button type="button" id="knowledge-add-btn" class="action-pill" data-tooltip="Add knowledge base" aria-label="Add knowledge base"></button>
@@ -998,7 +998,7 @@
             <input type="text" id="pr-title" class="tool-form-input" autocomplete="off">
           </label>
           <label class="pr-dialog-field">
-            <span class="forge-field-label">Description (markdown, AI-generated; edit freely)</span>
+            <span class="forge-field-label">Description: Markdown, AI-generated, edit freely</span>
             <textarea id="pr-body" class="tool-form-input pr-body-textarea" rows="10" spellcheck="false"></textarea>
           </label>
           <label class="pr-dialog-check">
@@ -1070,7 +1070,7 @@
                      redrawn here. -->
                 <button type="button" id="editor-preview-btn" class="icon-btn hidden" aria-label="Open preview" data-tooltip="Open preview"></button>
                 <button type="button" id="editor-git-diff-btn" class="icon-btn hidden" aria-pressed="false" aria-label="View diff vs HEAD" data-tooltip="View diff vs HEAD"></button>
-                <button type="button" id="editor-diff-btn" class="icon-btn" data-tooltip="View as diff (vs saved)" aria-label="View as diff (vs saved)">
+                <button type="button" id="editor-diff-btn" class="icon-btn" data-tooltip="View as diff against the saved file" aria-label="View as diff against the saved file">
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M12 4v16"/></svg>
                 </button>
                 <button type="button" id="editor-edit-btn" class="icon-btn" data-tooltip="Edit" aria-label="Edit">
@@ -1283,8 +1283,8 @@
       <button type="button" id="modal-login-sso" class="modal-btn"><span>Sign in with SSO</span><span class="modal-btn-sub">Identity Center / Enterprise</span></button>
     </div>
     <div id="modal-sso-form" class="hidden">
-      <input id="modal-provider" class="modal-input" type="url" autocomplete="off" aria-label="Start URL" placeholder="Start URL (e.g. https://d-xxxxxxxxxx.awsapps.com/start)">
-      <input id="modal-region" class="modal-input" type="text" autocomplete="off" aria-label="Region" placeholder="Region (e.g. us-east-1)">
+      <input id="modal-provider" class="modal-input" type="url" autocomplete="off" aria-label="Start URL" placeholder="Start URL, for example https://d-xxxxxxxxxx.awsapps.com/start">
+      <input id="modal-region" class="modal-input" type="text" autocomplete="off" aria-label="Region" placeholder="Region, for example us-east-1">
       <button type="button" id="modal-sso-submit" class="modal-btn modal-btn-accent">Connect</button>
     </div>
     <div id="modal-status" class="modal-status"></div>
@@ -1307,21 +1307,21 @@
                magnifier and the spinner each keep one drawing in the app. -->
           <button type="button" id="tool-search-btn" class="action-pill tool-search-go" data-tooltip="Search" aria-label="Search"></button>
         </div>
-        <span class="tool-form-hint">Runtimes, language servers and CLIs from the mise + aqua registries, plus this container&rsquo;s Debian packages. Versions resolve to the latest release; the pin icon freezes them afterwards.</span>
+        <span class="tool-form-hint">Runtimes, language servers and CLIs from the mise and aqua registries, plus this container's Debian packages. Versions resolve to the latest release, and the pin icon freezes them afterwards.</span>
       </div>
       <div class="tool-results-bar">
         <label class="tool-results-order">Order
           <select id="tool-sort" class="tool-form-select tool-sort-select">
             <option value="relevance" selected>Relevance</option>
-            <option value="name-asc">Name (A&ndash;Z)</option>
-            <option value="name-desc">Name (Z&ndash;A)</option>
+            <option value="name-asc">Name, A to Z</option>
+            <option value="name-desc">Name, Z to A</option>
           </select>
         </label>
         <output id="tool-results-count" class="tool-results-count"></output>
       </div>
       <div id="tool-search-results" class="list-container tool-search-results" role="group" aria-label="Search results"></div>
     </div>
-    <p id="tool-shell-note" class="tool-shell-note">Not listed? Install it in the shell; the engine only manages what it installed.<span id="tool-shell-note-apt" class="hidden"></span></p>
+    <p id="tool-shell-note" class="tool-shell-note">Not listed? Install it in the shell. The engine only manages what it installed.<span id="tool-shell-note-apt" class="hidden"></span></p>
   </div>
 
   <!-- MCP connect / edit modal -->
@@ -1361,15 +1361,15 @@
          surface — the URL field is `type="url"`, and a native bubble beside the
          server's inline field marking would be two of them disagreeing. -->
     <form class="mcp-mode-panel hidden" data-mcp-mode="remote" autocomplete="off" novalidate>
-      <p class="mcp-mode-hint">Point at a hosted MCP server. Choose Streamable HTTP (the current MCP transport, 2025-03-26 spec) for most servers; pick SSE only for a server that exposes a legacy Server-Sent-Events endpoint. Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
+      <p class="mcp-mode-hint">Point at a hosted MCP server. Choose Streamable HTTP, the current MCP transport from the 2025-03-26 spec, for most servers. Pick SSE only for a server that exposes a legacy Server-Sent-Events endpoint. Use for cloud-hosted integrations like Linear, Notion, or a private deployment.</p>
       <label class="tool-form-label">Name
         <input id="mcp-remote-name" class="tool-form-input" type="text" autocomplete="off" placeholder="e.g. linear">
-        <span class="tool-form-hint">Short identifier used in tool names (mcp_&lt;name&gt;_&lt;tool&gt;).</span>
+        <span class="tool-form-hint">Short identifier used in tool names, as in mcp_&lt;name&gt;_&lt;tool&gt;.</span>
       </label>
       <label class="tool-form-label">Transport
         <select id="mcp-remote-transport" class="tool-form-input">
-          <option value="http">Streamable HTTP (recommended)</option>
-          <option value="sse">SSE (legacy HTTP+SSE)</option>
+          <option value="http">Streamable HTTP, recommended</option>
+          <option value="sse">SSE, legacy HTTP+SSE</option>
         </select>
         <span class="tool-form-hint">Streamable HTTP is the current MCP transport. Choose SSE only for a server that exposes a legacy Server-Sent-Events endpoint.</span>
       </label>
@@ -1378,21 +1378,21 @@
       </label>
       <label class="tool-form-label">OAuth client ID <span class="tool-form-label-aux">(optional, advanced)</span>
         <input id="mcp-remote-oauth-client-id" class="tool-form-input" type="text" autocomplete="off" placeholder="e.g. abc123 (leave empty for Dynamic Client Registration)">
-        <span class="tool-form-hint">Pre-registered OAuth 2.0 client_id. Required for servers that don't support DCR (Slack, GitHub, Figma); leave empty otherwise.</span>
+        <span class="tool-form-hint">Pre-registered OAuth 2.0 client_id. Required for servers that do not support DCR, such as Slack, GitHub and Figma. Leave empty otherwise.</span>
       </label>
       <label class="tool-form-label">OAuth client secret <span class="tool-form-label-aux">(optional, advanced)</span>
-        <input id="mcp-remote-oauth-client-secret" class="tool-form-input" type="password" autocomplete="new-password" placeholder="for confidential clients (kiro-cli 2.12+)">
-        <span class="tool-form-hint">Pre-registered OAuth 2.0 client_secret for confidential clients that authenticate at the token endpoint. Leave empty for public clients / DCR. Stored masked; shown as &bull;&bull;&bull; once set.</span>
+        <input id="mcp-remote-oauth-client-secret" class="tool-form-input" type="password" autocomplete="new-password" placeholder="for confidential clients, kiro-cli 2.12+">
+        <span class="tool-form-hint">Pre-registered OAuth 2.0 client_secret for confidential clients that authenticate at the token endpoint. Leave empty for public clients or DCR. Stored masked, and shown as &bull;&bull;&bull; once set.</span>
       </label>
       <div class="mcp-form-section">
         <div class="mcp-form-section-head">
-          <span class="tool-form-label-text">Headers (API tokens go here)</span>
+          <span class="tool-form-label-text">Headers, where API tokens go</span>
           <button type="button" id="mcp-remote-add-header" class="action-pill" data-tooltip="Add header" aria-label="Add header">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
         </div>
         <div id="mcp-remote-headers" class="mcp-pair-list"></div>
-        <p class="tool-form-hint">For a bearer token, add a header named <code>Authorization</code> with the value <code>Bearer &lt;your token&gt;</code>. Stored locally with 0600 perms; never sent back to the browser once saved.</p>
+        <p class="tool-form-hint">For a bearer token, add a header named <code>Authorization</code> with the value <code>Bearer &lt;your token&gt;</code>. The header is stored locally with 0600 permissions and is never sent back to the browser after it is saved.</p>
       </div>
       <p id="mcp-remote-error" class="section-hint mcp-form-error hidden"></p>
       <button type="submit" id="mcp-remote-save" class="btn-save">
@@ -1439,7 +1439,7 @@
 
     <!-- Paste panel: the mcpServers block straight out of a server's README -->
     <div class="mcp-mode-panel hidden" data-mcp-mode="raw">
-      <p class="mcp-mode-hint">Paste the <code>mcpServers</code> block from a server's README. Local (<code>command</code>) and hosted (<code>url</code>) servers both work, and a block naming several servers connects all of them. A server already configured with the same settings is left alone, so re-pasting a block is safe and keeps the keys you have typed in. Env and header values are secrets; they stay on the server with 0600 perms.</p>
+      <p class="mcp-mode-hint">Paste the <code>mcpServers</code> block from a server's README. Both local servers with a <code>command</code> and hosted servers with a <code>url</code> work, and a block naming several servers connects all of them. A server already configured with the same settings is left alone, so re-pasting a block is safe and keeps the keys you have typed in. Env and header values are secrets. They stay on the server with 0600 perms.</p>
       <textarea id="mcp-raw-input" class="page-textarea mcp-raw-input" rows="12" spellcheck="false" autocomplete="off" aria-label="Server JSON to paste"></textarea>
       <p id="mcp-raw-error" class="section-hint mcp-raw-error hidden"></p>
       <button type="button" id="mcp-raw-save" class="btn-save">
@@ -1453,7 +1453,7 @@
       <div class="mcp-form-section-head">
         <span class="tool-form-label-text">Disabled tools</span>
       </div>
-      <p class="section-hint">Block specific tools from this server without disabling the whole integration. Type the tool name exactly as it appears in the agent's tool list (e.g. <code>create_issue</code>).</p>
+      <p class="section-hint">Block specific tools from this server without disabling the whole integration. Type the tool name exactly as it appears in the agent's tool list, for example <code>create_issue</code>.</p>
       <div id="mcp-disabled-chips" class="chip-list"></div>
       <div class="chip-adder">
         <input id="mcp-disabled-input" class="chip-input" type="text" autocomplete="off" placeholder="e.g. create_issue" aria-label="Add disabled tool">
@@ -1468,7 +1468,7 @@
       <div class="mcp-form-section-head">
         <span class="tool-form-label-text">Run without asking</span>
       </div>
-      <p class="section-hint">A tool listed here is marked to run without a permission request. The agent engine installed here does not act on that mark yet, so a listed tool still asks for now. The list is suspended on the Guarded and Read-only security profiles. Pasting a publisher's block can add tools here, so read the list before saving. Type the tool name exactly as it appears in the agent's tool list (e.g. <code>search_repos</code>).</p>
+      <p class="section-hint">A tool listed here is marked to run without a permission request. The agent engine installed here does not act on that mark yet, so a listed tool still asks for now. The list is suspended on the Guarded and Read-only security profiles. Pasting a publisher's block can add tools here, so read the list before saving. Type the tool name exactly as it appears in the agent's tool list, for example <code>search_repos</code>.</p>
       <div id="mcp-auto-approve-suspended" class="mcp-list-suspended hidden">
         <span>Suspended by the security profile in force: every tool below still asks for permission. The names are kept and take effect again on a profile that honours them.</span>
         <div class="approval-policy-pointer">Pick a security profile that honours it in <button id="mcp-auto-approve-profile-link" class="approval-policy-link" type="button">Settings</button>.</div>

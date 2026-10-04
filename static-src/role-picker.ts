@@ -156,7 +156,7 @@ function modeOption(entry: PickerMode, currentMode: string): HTMLButtonElement {
   let tooltip = mode.description ?? "";
   if (entry.shadowed !== undefined) {
     children.push(el("span", { className: "pill-role-shadow" }, "shadows " + entry.shadowed));
-    const note = `This workspace agent shadows the ${entry.shadowed} agent of the same name; the workspace definition is the one a run uses.`;
+    const note = `This workspace agent shadows the ${entry.shadowed} agent of the same name. The workspace definition is the one a run uses.`;
     tooltip = tooltip === "" ? note : tooltip + " " + note;
   }
   // Scope on the row. It was already on the wire and already read (the grouping

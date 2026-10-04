@@ -128,7 +128,7 @@ function mountToolsDOM(): void {
   // proves nothing about overwriting.
   const note = add("p", "tool-shell-note");
   note.textContent =
-    "Not listed? Install it in the shell; the engine only manages what it installed.";
+    "Not listed? Install it in the shell. The engine only manages what it installed.";
   const apt = document.createElement("span");
   apt.id = "tool-shell-note-apt";
   apt.className = "hidden";
@@ -705,7 +705,7 @@ describe("add modal", () => {
     byId<HTMLButtonElement>("tool-add-btn").click();
     await flush();
     expect(byId("tool-results-count").textContent).toBe(
-      "1 shown; more matched than shown, narrow the query to see the rest",
+      "1 shown. More matched than shown, so narrow the query to see the rest",
     );
   });
 
@@ -781,7 +781,7 @@ describe("add modal", () => {
     byId<HTMLButtonElement>("tool-search-btn").click();
     await flush();
     expect(byId("tool-search-results").querySelector(".list-empty")?.textContent).toBe(
-      "No matches; not everything was searched",
+      "No matches, but not everything was searched",
     );
   });
 

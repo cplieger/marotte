@@ -124,7 +124,7 @@ func (h *Handler) clone(ctx context.Context, remote string, onProgress func(stri
 	}
 	switch inspectCloneDest(ctx, dir) {
 	case destRepo:
-		return "", fmt.Errorf("%s already exists and is a git repository; delete it or use re-clone to replace it", name)
+		return "", fmt.Errorf("%s already exists and is a git repository. Delete it or use re-clone to replace it", name)
 	case destOccupied:
 		slog.Info("git clone: adopting an existing directory", "dir", name)
 		out, err := adoptDestination(ctx, dir, remote, onProgress)

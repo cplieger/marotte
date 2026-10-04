@@ -157,7 +157,7 @@ export const loadDiff = defineAction<
       oldContent: oldD.content ?? "",
       newContent: newD.data?.content ?? "",
       error: binary
-        ? `${gitPath} is a binary file — there is no text diff to show.`
+        ? `${gitPath} is a binary file, so there is no text diff to show.`
         : (newD.data?.error ?? ""),
       baseLabel: baseLabelFor(ref, gitErr, oldD.absent === true),
       workingLabel: deleted ? "deleted" : "working tree",

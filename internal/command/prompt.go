@@ -923,7 +923,7 @@ func promptFailureReason(err error, inlinedImage bool) string {
 		}
 	}
 	if d.RetryErrorType == kasRetryThrottling {
-		msg += " kiro-cli already retried; waiting a moment before resending is the only thing that helps."
+		msg += " kiro-cli already retried. Wait a moment before resending, because that is the only thing that helps."
 	}
 	// Bounded on its own budget rather than by capping the composition, or a
 	// long upstream message would cut off the remedy sentence above and this id
@@ -948,7 +948,7 @@ func validationGuidance(re *marotte.RPCError, inlinedImage bool) string {
 	case inlinedImage:
 		text += " Make the prompt or its attachments smaller, then send again. If the refusal continues, use Rewind to remove an earlier prompt image, or reopen the chat to clear an image returned by a file or MCP tool."
 	default:
-		text += " Use Rewind to remove an earlier prompt image. Reopen the chat if an image returned by a file or MCP tool caused the refusal; those images last only for the live session."
+		text += " Use Rewind to remove an earlier prompt image. Reopen the chat if an image returned by a file or MCP tool caused the refusal. Those images last only for the live session."
 	}
 	return text
 }

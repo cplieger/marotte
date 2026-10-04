@@ -319,7 +319,7 @@ func (p *githubProvider) RerunFailedChecks(ctx context.Context, repo string, num
 		return err
 	}
 	if headSHA != "" && !strings.EqualFold(headSHA, head) {
-		return fmt.Errorf("PR #%d has moved to commit %s since this was read; refresh and look at the new checks before re-running", number, head)
+		return fmt.Errorf("PR #%d has moved to commit %s since this was read. Refresh and look at the new checks before re-running", number, head)
 	}
 	runID, ok := failedActionsRun(rollup, repo)
 	if !ok {

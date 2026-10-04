@@ -201,7 +201,7 @@ async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): P
     return;
   }
   if (v.state === "unavailable") {
-    toastError(`Couldn't confirm who is signed in: ${v.reason}`, {
+    toastError(`Could not confirm who is signed in. ${v.reason}`, {
       label: "Retry",
       onClick: () => {
         void resolveIdentity().then((next) => adoptIdentity(next, workspace));
@@ -214,7 +214,7 @@ async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): P
   const chatsOK = await workspace.catch(() => false);
   if (!chatsOK) {
     // Before the fallback below, so a fresh chat does not read as the user's.
-    toastError("Couldn't load your chats.", { label: "Reload", onClick: reload });
+    toastError("Could not load your chats.", { label: "Reload", onClick: reload });
   }
   if (getSessions().length === 0) {
     // The chat STORE is the test rather than `chatsOK`: a failed fetch over a
@@ -508,7 +508,7 @@ function recoverFailedBootTabs(): void {
 async function readTabSet(): Promise<void> {
   bootTabsRead = await listTabs();
   if (!bootTabsRead) {
-    toastError("Couldn't restore your tabs.", {
+    toastError("Could not restore your tabs.", {
       label: "Retry",
       onClick: () => {
         void readTabSet();

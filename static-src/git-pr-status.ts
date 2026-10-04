@@ -88,7 +88,7 @@ export function mergeBlockReason(pr: GitPR): string {
     case "behind":
       return "the source branch is behind its target and must be updated first.";
     case "blocked":
-      return "the forge's merge policy refuses this merge (review, approvals or a protected branch).";
+      return "the forge's merge policy refuses this merge. Check its review, approval and protected-branch rules.";
     case "unknown":
       return "the forge reports this PR is not mergeable and does not say why.";
     default:

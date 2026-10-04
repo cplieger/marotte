@@ -58,12 +58,12 @@ var pasteServerKeys = []string{
 // is actionable, "unknown key" would not be.
 var pasteServerIgnored = map[string]string{
 	"$schema":      "a schema pointer, not configuration",
-	"alwaysAllow":  `another client's spelling of "autoApprove" — rename it to carry it over`,
+	"alwaysAllow":  `another client's spelling of "autoApprove". Rename it to carry it over`,
 	"cwd":          "marotte has no working-directory field",
-	"description":  "not stored; the name is the label",
+	"description":  "not stored, because the name is the label",
 	"icon":         "not stored",
 	"oauthScopes":  "marotte has no OAuth scope field",
-	"timeout":      "marotte has no timeout field; the agent sets its own",
+	"timeout":      "marotte has no timeout field, and the agent sets its own",
 	"waitForReady": "marotte has no wait-for-ready field",
 }
 
@@ -99,7 +99,7 @@ var pasteTopKeys = []string{kasServerKey}
 // an mcpServers block.
 var pasteTopIgnored = map[string]string{
 	"$schema": "a schema pointer, not configuration",
-	"inputs":  "an editor's input-prompt list; type the values into the form instead",
+	"inputs":  "an editor's input-prompt list. Type the values into the form instead",
 }
 
 // importRequest is one parsed paste: the records to create, in the order the
@@ -276,7 +276,7 @@ func transportFor(spec *pasteServer) (Transport, error) {
 	remote := strings.TrimSpace(deref(spec.URL))
 	switch {
 	case cmd != "" && remote != "":
-		return "", errors.New(`has both "command" and "url"; a server is either local (command) or hosted (url)`)
+		return "", errors.New(`has both "command" and "url". A server is either local with a command or hosted at a url`)
 	case cmd != "":
 		return TransportStdio, nil
 	case remote != "":

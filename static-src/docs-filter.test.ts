@@ -508,7 +508,7 @@ describe("a cut inventory", () => {
       true,
     );
     type("zzzz");
-    expect(note()).toBe("No matches in 3 documents; not everything was searched");
+    expect(note()).toBe("No matches in 3 documents, but not everything was searched");
     type("");
   });
 

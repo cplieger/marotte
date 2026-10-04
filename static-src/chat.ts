@@ -206,7 +206,7 @@ export function activateChatView(id: string): void {
     // A tab naming a chat this device's store does not hold: the store is provably
     // stale against a set the server minted, so the answer is one re-read. The
     // affordance is painted FIRST, so a re-read that fails leaves something to act on.
-    paintChatLoadError("This conversation isn't loaded yet.", id);
+    paintChatLoadError("This conversation is not loaded yet.", id);
     void healMissingChat(id, gen);
     return;
   }
@@ -553,7 +553,7 @@ export async function openPreviousSession(
     // Retention is off and a close DELETED this conversation. Said with the activation
     // SKIPPED, or the reader lands on an empty transcript over a dead active pointer.
     // Distinct from a network failure by openTab's outcome.
-    info("That conversation was ephemeral (retention is off) and is gone.");
+    info("That conversation is gone. It was ephemeral because retention is off.");
     return "gone";
   }
   if (outcome !== "opened") {

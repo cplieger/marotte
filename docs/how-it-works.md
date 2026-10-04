@@ -37,4 +37,4 @@ Turning on a language server in **Settings** also turns on kiro-cli code intelli
 
 ## Leftover processes
 
-The agent's commands start programs such as git, language servers and build tools, and some of those leave child processes behind when they exit. Those leftovers are handed to the container's first process. The image makes that first process tini, a small init program that cleans them up, so finished processes cannot pile up until the container is unable to start new ones. `init: true` in `compose.yaml` adds Docker's own copy of the same program in front of it.
+The agent's commands start programs such as git, language servers and build tools, and some of those leave child processes behind when they exit. Those leftovers are handed to the container's first process. The image makes that first process tini, a small init program that cleans them up, so finished processes cannot pile up until the container is unable to start new ones. Because the image already runs tini, the compose example needs no `init: true` line of its own.

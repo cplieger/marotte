@@ -51,7 +51,7 @@ export const createFile = apiAction<CreateArgs>({
     path: API_FILES_ACTION,
     body: { action: "touch", path: joinPath(args.dir, args.name) },
   }),
-  error: "Couldn't create file",
+  error: "Could not create file",
 });
 
 // --- files.create_folder ---
@@ -67,7 +67,7 @@ export const createFolder = apiAction<CreateArgs>({
     path: API_FILES_ACTION,
     body: { action: "mkdir", path: joinPath(args.dir, args.name) },
   }),
-  error: "Couldn't create folder",
+  error: "Could not create folder",
 });
 
 // --- files.rename ---
@@ -89,7 +89,7 @@ export const renameFile = apiAction<{ dir: string; original: string; newName: st
   }),
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  error: (args) => `Couldn't rename \u201c${truncate(args.original)}\u201d`,
+  error: (args) => `Could not rename "${truncate(args.original)}"`,
 });
 
 // --- files.delete ---
@@ -167,7 +167,9 @@ export const deleteFilesBatch = defineAction<DeleteArgs, void>({
       }
       const names = failed.map((f) => f.name).join(", ");
       const word =
-        failed.length === 1 ? "Couldn't delete" : `Couldn't delete ${String(failed.length)} items`;
+        failed.length === 1
+          ? "Could not delete"
+          : `Could not delete ${String(failed.length)} items`;
       throw new ActionError(`${word} (${names}): ${firstErr}`, {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by failed.length > 0
         status: failed[0]!.status,

@@ -324,7 +324,7 @@ function buildGroupRow(g: ActionGroup, keep: Map<string, boolean>): HTMLElement 
   // a list the user can split.
   if (g.paths.length > 1) {
     label.appendChild(
-      el("span", { className: "dock-file-atomic" }, "moved together — one decision"),
+      el("span", { className: "dock-file-atomic" }, "moved together, one decision"),
     );
   }
 
@@ -398,7 +398,7 @@ function formatInputPreview(input: unknown): string {
  *  string at the translate seam and forwards a code (see AlwaysAllowBlock). */
 const ALWAYS_ALLOW_UNAVAILABLE: Record<AlwaysAllowBlock, string> = {
   unparseable:
-    "Always allow is unavailable: kiro-cli can't parse this command, so a saved rule would never match it.",
+    "Always allow is unavailable. kiro-cli cannot parse this command, so a saved rule would never match it.",
 };
 
 /** The Always-allow slot when a saved rule could never match.

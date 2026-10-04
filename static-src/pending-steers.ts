@@ -381,7 +381,7 @@ async function editSteer(steer: PendingSteer): Promise<void> {
     reportRefusal(outcome.error.message);
     return;
   }
-  reportRefusal("Couldn't confirm the message was taken back");
+  reportRefusal("Could not confirm the message was taken back");
 }
 
 async function deleteSteer(steerID: string): Promise<void> {
@@ -394,7 +394,7 @@ async function deleteSteer(steerID: string): Promise<void> {
   if (outcome.status === "error") {
     const status = outcome.error.status ?? 0;
     reportRefusal(
-      DEFINITE_REFUSALS.has(status) ? outcome.error.message : "Couldn't delete the message",
+      DEFINITE_REFUSALS.has(status) ? outcome.error.message : "Could not delete the message",
     );
   }
 }
@@ -434,7 +434,7 @@ async function discardSteers(waiting: number): Promise<void> {
       return;
     }
   }
-  announce("Discarding messages the agent hasn't read");
+  announce("Discarding messages the agent has not read");
   // The stack repaints from the `steer` entry the clear produces, not from this reply,
   // so every device agrees.
   await clearSteers.dispatch({ chatID });

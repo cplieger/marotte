@@ -417,7 +417,7 @@ async function gateNpmPanelOnNode(): Promise<void> {
   const msg = el(
     "p",
     { className: "section-hint" },
-    "npx-based MCP servers need the Node.js runtime (~100 MB). It isn't installed yet.",
+    "npx-based MCP servers need the Node.js runtime (~100 MB). It is not installed yet.",
   );
   const btn = el(
     "button",

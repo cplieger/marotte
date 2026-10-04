@@ -45,7 +45,7 @@ import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 const mockFetch = vi.fn();
 const mockToastError = vi.mocked(toastError);
 
-const FALLBACK = "Couldn't send your answer to the step";
+const FALLBACK = "Could not send your answer to the step";
 const CONFLICT = "that question has already been answered, or the step it belonged to has moved on";
 
 beforeEach(() => {

@@ -156,7 +156,7 @@ export async function settleDeepLinkedChat(id: string): Promise<DeepLinkOutcome>
   // terminal claim this path refuses to make. Retry re-asks the server rather
   // than reloading the page, because a reload throws away a live SSE connection,
   // every open tab's state and the transcript underneath, to repeat one GET.
-  toastError("Couldn't open that conversation — the server didn't answer.", {
+  toastError("Could not open that conversation. The server did not answer.", {
     label: "Retry",
     onClick: () => {
       void settleDeepLinkedChat(id);

@@ -1093,7 +1093,7 @@ function rollbackClose(c: CapturedClose): void {
     retargetComposer(c.storeActive);
   }
   if (!c.refused) {
-    info("Close not confirmed — the tab was restored.");
+    info("Close not confirmed, so the tab was restored.");
   }
 }
 
@@ -1119,7 +1119,7 @@ export async function closeTab(id: string): Promise<void> {
     // error here is a real refusal worth a word.)
     const lone = await closeTabCommand.dispatch({ id, opID }).outcome;
     if (lone.status === "error" && lone.error.code !== "timeout") {
-      toastError("Couldn't close that tab");
+      toastError("Could not close that tab");
     }
     return;
   }
@@ -1145,7 +1145,7 @@ export async function closeTab(id: string): Promise<void> {
     // honest — and the toast is this branch's, because the action itself stays
     // quiet (its other failure shape is inconclusive and must not claim one).
     captured.refused = true;
-    toastError("Couldn't close that tab");
+    toastError("Could not close that tab");
     opFailed(opID);
     return;
   }

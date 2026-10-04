@@ -455,7 +455,7 @@ describe("the identity verdict gates one row", () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
 
-    expect(m.toastError).not.toHaveBeenCalledWith("Couldn't load your chats.", expect.anything());
+    expect(m.toastError).not.toHaveBeenCalledWith("Could not load your chats.", expect.anything());
   });
 
   it("complains about unreachable chats when someone IS signed in", async () => {
@@ -466,7 +466,7 @@ describe("the identity verdict gates one row", () => {
     await startBoot({ applyRoute: m.applyRoute });
 
     expect(m.toastError).toHaveBeenCalledWith(
-      "Couldn't load your chats.",
+      "Could not load your chats.",
       expect.objectContaining({ label: "Reload" }),
     );
     // And the empty state still gets its fallback chat.
@@ -913,7 +913,7 @@ describe("the local snapshot", () => {
     await startBoot({ applyRoute: m.applyRoute });
 
     expect(m.toastError).toHaveBeenCalledWith(
-      "Couldn't load your chats.",
+      "Could not load your chats.",
       expect.objectContaining({ label: "Reload" }),
     );
     expect(m.createSession).not.toHaveBeenCalled();
@@ -945,7 +945,7 @@ describe("the tab strip's pending state", () => {
     // A RE-READ rather than a reload: the GET is the only thing that failed, and a
     // reload restarts the whole boot.
     expect(m.toastError).toHaveBeenCalledWith(
-      "Couldn't restore your tabs.",
+      "Could not restore your tabs.",
       expect.objectContaining({ label: "Retry" }),
     );
   });
@@ -963,7 +963,7 @@ describe("the tab strip's pending state", () => {
 describe("the tab set is re-read when the boot's own read failed", () => {
   /** The retry the tab-set notice offered. */
   function offeredTabRetry(): (() => void) | undefined {
-    const call = m.toastError.mock.calls.find((c) => c[0] === "Couldn't restore your tabs.");
+    const call = m.toastError.mock.calls.find((c) => c[0] === "Could not restore your tabs.");
     return (call?.[1] as { onClick?: () => void } | undefined)?.onClick;
   }
 
@@ -1042,7 +1042,7 @@ describe("the tab set is re-read when the boot's own read failed", () => {
     const { startBoot } = await freshBoot();
     await startBoot({ applyRoute: m.applyRoute });
     const said = (): number =>
-      m.toastError.mock.calls.filter((c) => c[0] === "Couldn't restore your tabs.").length;
+      m.toastError.mock.calls.filter((c) => c[0] === "Could not restore your tabs.").length;
     expect(said()).toBe(1);
 
     offeredTabRetry()?.();

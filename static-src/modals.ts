@@ -316,7 +316,7 @@ function doLogin(
         // so checkAuthAndStart runs again with the tolerant parser.
         if (d.error === "already_logged_in") {
           status.textContent = "";
-          status.append("You\u2019re already signed in. ");
+          status.append("You're already signed in. ");
           const reloadBtn = el("button", { type: "button", className: "btn-small" }, "Reload");
           reloadBtn.style.marginInlineStart = "var(--sp-2)";
           reloadBtn.addEventListener("click", () => {

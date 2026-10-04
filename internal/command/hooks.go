@@ -74,7 +74,7 @@ func validateHookPayload(cmd *marotte.ClientCommand) (p hookCreatePayload, safeN
 	trigger, known := marotte.NormalizeHookTrigger(p.EventType)
 	if !known {
 		return p, "", http.StatusBadRequest,
-			fmt.Errorf("event_type %q is not a trigger kiro-cli loads; expected one of: %s",
+			fmt.Errorf("event_type %q is not a trigger kiro-cli loads. Expected one of: %s",
 				p.EventType, marotte.KnownHookTriggers())
 	}
 	// A matcher on a trigger that has nothing to match on is always a typo,
@@ -87,7 +87,7 @@ func validateHookPayload(cmd *marotte.ClientCommand) (p hookCreatePayload, safeN
 	// and gets a badge on the read surface instead.
 	if marotte.ClassifyHookMatcher(trigger.Name, p.Patterns) == marotte.HookMatcherIneffective {
 		return p, "", http.StatusBadRequest,
-			fmt.Errorf("trigger %s has nothing to match against, so its matcher %q would be ignored; leave patterns empty for this trigger",
+			fmt.Errorf("trigger %s has nothing to match against, so its matcher %q would be ignored. Leave patterns empty for this trigger",
 				trigger.Name, strings.TrimSpace(p.Patterns))
 	}
 	safeName = strings.ReplaceAll(strings.ToLower(p.Name), " ", "-")

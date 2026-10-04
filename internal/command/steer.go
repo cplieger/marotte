@@ -34,13 +34,13 @@ var notificationPrefix = regexp.MustCompile(`^\s*\[notification/(info|success|wa
 
 var (
 	// errSteerNoTurn is the refusal for a steer with no turn to join.
-	errSteerNoTurn = errors.New("nothing is running to steer — send this as a prompt instead")
+	errSteerNoTurn = errors.New("nothing is running to steer, so send this as a prompt instead")
 	// errSteerLooksLikeNotification refuses the sniffing collision above,
 	// rather than escaping (would alter what the user wrote) or passing
 	// through (would file it as a system notification and drop it on
 	// resume).
 	errSteerLooksLikeNotification = errors.New(
-		`a message starting with "[notification/...]" is read as a system notice, not as your words — start it with anything else`,
+		`a message starting with "[notification/...]" is read as a system notice, not as your words. Start it with anything else`,
 	)
 )
 
@@ -56,7 +56,7 @@ const reasonFull = "full"
 
 // errSteerFull is the refusal for a steer that would be the chat's 65th unread
 // message, whether parked, queued or waiting.
-var errSteerFull = errors.New("too many messages are waiting for the agent — wait for it to read some, then send again")
+var errSteerFull = errors.New("too many messages are waiting for the agent. Wait for it to read some, then send again")
 
 // steerReply is KAS's answer to one _session/steer.
 type steerReply struct {

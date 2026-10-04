@@ -113,5 +113,5 @@ export const registerPush = defineAction<void, ServiceWorkerRegistration>({
     // without coupling this action to a specific DOM element ID.
     document.dispatchEvent(new CustomEvent("notify:registration-failed"));
   },
-  error: "Couldn't enable push notifications",
+  error: "Could not enable push notifications",
 });

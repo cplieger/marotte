@@ -949,7 +949,7 @@ describe("a tab whose chat this device's store does not hold", () => {
 
     activateChatView("c-missing");
 
-    expect(messagesEl.textContent).toContain("This conversation isn't loaded yet.");
+    expect(messagesEl.textContent).toContain("This conversation is not loaded yet.");
     expect(messagesEl.querySelector("button")?.textContent).toBe("Retry");
   });
 
@@ -966,7 +966,7 @@ describe("a tab whose chat this device's store does not hold", () => {
       expect(loadMessages).toHaveBeenCalledWith("c-missing");
     });
     expect(loadList).toHaveBeenCalledTimes(1);
-    expect(messagesEl.textContent).not.toContain("This conversation isn't loaded yet.");
+    expect(messagesEl.textContent).not.toContain("This conversation is not loaded yet.");
   });
 
   it("does not loop when the re-read still does not produce the chat", async () => {
@@ -982,7 +982,7 @@ describe("a tab whose chat this device's store does not hold", () => {
     // honest end state for a chat the server does not report.
     await Promise.resolve();
     expect(loadList).toHaveBeenCalledTimes(1);
-    expect(messagesEl.textContent).toContain("This conversation isn't loaded yet.");
+    expect(messagesEl.textContent).toContain("This conversation is not loaded yet.");
   });
 
   it("clears a previous activation's failure box", async () => {
@@ -1090,7 +1090,7 @@ describe("restore: opening a closed conversation from History", () => {
     await expect(openPreviousSession(row)).resolves.toBe("gone");
 
     expect(vi.mocked(info)).toHaveBeenCalledWith(
-      "That conversation was ephemeral (retention is off) and is gone.",
+      "That conversation is gone. It was ephemeral because retention is off.",
     );
     // activateChatView never ran: no rail pointing, no fetch.
     expect(pointTurnRail).not.toHaveBeenCalled();

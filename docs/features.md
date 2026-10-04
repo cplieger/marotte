@@ -57,7 +57,7 @@ Turning on a language server also turns on kiro-cli [code intelligence](https://
 
 The `/docs` page lists every steering doc, skill, agent, spec and hook under `.kiro`, with its header fields. It is also where you turn hooks on and off, and start, pause, resume, cancel or schedule workflow runs.
 
-Instructions for every chat and knowledge bases are under **Custom instructions** in **Settings**, and **Settings** also has a diagnostics report you can copy. The sidebar shows your account's usage and switches between light, dark and system themes. The prompt bar shows the current chat's context use and credits. Each device keeps its own layout.
+Instructions for every chat and knowledge bases are under **Custom instructions** in **Settings**, and **Settings** also has a diagnostics report you can copy. The sidebar shows your account's usage and switches between light, dark and system themes. The prompt bar shows the current chat's context use and credits. Open tabs follow you to every device, while each device keeps its own active tab, shell panel height and sidebar width.
 
 ## Knowledge bases
 

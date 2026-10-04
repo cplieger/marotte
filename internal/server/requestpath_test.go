@@ -250,7 +250,7 @@ func TestCanonicalAPIPath_RefusalIsMarottesEnvelope(t *testing.T) {
 func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"marotte.example.com"},
 		webhttp.WithLoopbackExempt(true),
-		webhttp.WithHostAllowlistError("", "host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
+		webhttp.WithHostAllowlistError("", "host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
 	}

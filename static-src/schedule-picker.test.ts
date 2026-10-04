@@ -56,7 +56,7 @@ describe("describeSpec", () => {
   // server would reject, so the summary must say so rather than read as valid.
   it("flags a weekly rule with no days chosen", () => {
     expect(describeSpec({ freq: "weekly", weekdays: [], hour: 9, minute: 0 })).toContain(
-      "pick at least one day",
+      "Pick at least one day",
     );
   });
 
@@ -289,7 +289,7 @@ describe("the unattended note", () => {
   it("says the setting is global in both states", () => {
     for (const on of [true, false]) {
       expect(buildUnattendedNote(on, vi.fn()).textContent).toContain(
-        "for every scheduled run, not just this one",
+        "for every scheduled run, not only this one",
       );
     }
   });
@@ -298,7 +298,7 @@ describe("the unattended note", () => {
     const onOpenPermissions = vi.fn();
     const note = buildUnattendedNote(false, onOpenPermissions);
     const link = note.querySelector<HTMLButtonElement>(".sched-note-link");
-    expect(link?.textContent).toBe("Open Settings → Permissions");
+    expect(link?.textContent).toBe("Open Settings, then Permissions");
     link?.click();
     expect(onOpenPermissions).toHaveBeenCalledTimes(1);
   });

@@ -85,7 +85,7 @@ export function agentIgnoreEntryError(entry: string): string | null {
     return "An entry cannot be empty.";
   }
   if (entry === AGENT_IGNORE_FLOOR) {
-    return "Always enforced — it is already in the list.";
+    return "Always enforced. It is already in the list.";
   }
   if (entry !== entry.trim()) {
     return "Leading or trailing whitespace.";
@@ -261,12 +261,12 @@ const controller = new PermissionsUIController();
 
 const NATIVE_SCOPE_ORDER = ["kiro", "administration", "user", "workspace", "agent", "session"];
 const NATIVE_SCOPE_LABEL: Record<string, string> = {
-  kiro: "Kiro built-in (read-only)",
-  administration: "Administration (read-only)",
-  user: "User — global",
+  kiro: "Kiro built-in, read-only",
+  administration: "Administration, read-only",
+  user: "User, global",
   workspace: "Workspace",
-  agent: "Agent — current mode (read-only)",
-  session: "Session — runtime (read-only)",
+  agent: "Agent, current mode, read-only",
+  session: "Session, runtime, read-only",
 };
 
 function splitGlobs(raw: string): string[] {
@@ -437,7 +437,7 @@ class NativePolicyController {
       this.showStatus("", false);
     } else {
       this.showStatus(
-        "Live policy unavailable (no active session) — showing your saved user/workspace rules only.",
+        "Live policy unavailable because no session is active. Showing your saved user and workspace rules only.",
         false,
       );
     }
@@ -906,7 +906,7 @@ class NativePolicyController {
     }
     const res = await explainPolicy.dispatch({ capability, resource });
     if (res === null) {
-      out.textContent = "Could not evaluate — check that a chat session is active.";
+      out.textContent = "Could not evaluate. Check that a chat session is active.";
       return;
     }
     // The control is labelled "why?", so the matched RULE is the answer: a scope

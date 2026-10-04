@@ -284,7 +284,7 @@ func parseAllowedHosts(raw string) *webhttp.HostPolicy {
 	policy, invalid := webhttp.ParseHostList(strings.Split(raw, ","),
 		webhttp.WithLoopbackExempt(true),
 		webhttp.WithHostAllowlistError("",
-			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
+			"host not allowed. Add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		slog.Warn("config: dropping malformed ALLOWED_HOSTS entries; they cannot match any browser-sent Host",
 			"entries", invalid,

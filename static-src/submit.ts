@@ -48,7 +48,7 @@ export type SubmitResult = "sent" | "steered" | "failed";
  *  workflow step, and for a shell holder nothing is "starting" — the honest claim is
  *  busy-now-retry. Rendered through send-state's error surface; the next Send
  *  is the retry and is also what clears it. */
-const STARTING_FACE = "The chat is busy right now — send again to retry";
+const STARTING_FACE = "The chat is busy right now. Send again to retry";
 
 /** The 409 reason:"chat_not_found" face: the chat was deleted underneath the send. */
 const GONE_FACE = "This chat no longer exists, so the message was not sent";

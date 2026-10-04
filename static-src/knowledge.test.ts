@@ -198,7 +198,7 @@ describe("loadKnowledge render", () => {
     mockGet.mockResolvedValue(null);
     loadKnowledge();
     await flush();
-    expect(list().textContent).toContain("Couldn't load knowledge bases.");
+    expect(list().textContent).toContain("Could not load knowledge bases.");
   });
 
   it("shows the enable hint when knowledge_enabled is off", async () => {
@@ -465,7 +465,7 @@ describe("indexing poll", () => {
 
       const text = list().querySelector(".knowledge-progress-text")?.textContent ?? "";
       expect(text).toContain("stalled");
-      expect(text).toContain("reopen this tab");
+      expect(text).toContain("Reopen this tab");
       // And no bar: a value nothing will advance is worse than no bar at all.
       expect(list().querySelector(".knowledge-bar")).toBeNull();
     } finally {

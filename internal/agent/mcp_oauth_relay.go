@@ -197,7 +197,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
 			"server", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
-			httpreply.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered; the sign-in may have timed out"))
+			httpreply.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered. The sign-in may have timed out"))
 		return
 	}
 	if status >= http.StatusBadRequest {
@@ -207,7 +207,7 @@ func (reg *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Reques
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
 			"server", body.Server, "port", target.Port(), "status", status)
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
-			httpreply.ErrorJSON("the local sign-in listener rejected that callback (HTTP "+strconv.Itoa(status)+"); start the sign-in again"))
+			httpreply.ErrorJSON("the local sign-in listener rejected that callback with HTTP "+strconv.Itoa(status)+". Start the sign-in again"))
 		return
 	}
 

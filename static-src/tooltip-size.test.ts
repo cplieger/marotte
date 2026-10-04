@@ -56,7 +56,7 @@ const SAMPLES: readonly { readonly what: string; readonly text: string }[] = [
   {
     what: "a docs badge sentence",
     text:
-      "A symlink. Editing it writes the file it points to; deleting it would remove that " +
+      "A symlink. Editing it writes the file it points to. Deleting it would remove that " +
       "file, so delete is disabled here",
   },
   {

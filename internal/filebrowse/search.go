@@ -214,22 +214,11 @@ func parseGlobs(raw []string) (patterns []string, err error) {
 	return patterns, nil
 }
 
-// matchGlob applies ONE pattern under this app's stated convention: a pattern
-// holding no "/" matches the file's BASENAME, and a pattern holding one matches
-// the whole path UNDER THE FOLDER SEARCHED.
-//
-// The convention exists because path.Match's `*` does not cross "/", so
-// `path.Match("*.go", "src/a.go")` is FALSE — the opposite of what anyone typing
-// `*.go` into a search box means. Matching the basename for the separator-free
-// spelling is what makes the common case do the common thing; keeping the path
-// form for patterns that DO name directories is what keeps `internal/*/x.go`
-// expressible. There is no `**`, because that needs a glob library and a new
-// dependency for one operator does not survive "what does this cost us forever".
-//
-// The subject is relative to the SEARCH ROOT, not to the mount: a reader looking
-// at /workspace/project/src types `deep/*.go` for what is under the folder in
-// front of them, and the README promises exactly that. Matching a mount-relative
-// path here would silently require them to spell the folder's own prefix.
+// matchGlob applies ONE pattern: one with no "/" matches the BASENAME, because
+// path.Match's `*` does not cross "/" and `*.go` must mean any .go file; one
+// with a "/" matches the path relative to the SEARCH ROOT (not the mount), so
+// `deep/*.go` means what is under the folder in front of the reader. There is
+// no `**`, which would need a glob dependency.
 func matchGlob(pattern, rel string) bool {
 	subject := rel
 	if !strings.Contains(pattern, "/") {

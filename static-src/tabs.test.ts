@@ -2899,7 +2899,7 @@ describe("optimistic close: the reversible gesture", () => {
     expect(openers.chatShow).toHaveBeenCalledWith("b");
     // …and none of the chat's client state was torn down in between.
     expect(openers.chatClose).not.toHaveBeenCalled();
-    expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith("Couldn't close that tab");
+    expect(vi.mocked(toastErrorFn)).toHaveBeenCalledWith("Could not close that tab");
   });
 
   it("a definitive refusal leaves a dirty editor's state untouched", async () => {

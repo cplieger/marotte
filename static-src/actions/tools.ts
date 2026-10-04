@@ -61,7 +61,7 @@ export const createTool = apiAction<CreateToolRequest, JobResponse>({
   scope: "tools",
   idempotencyKey: true,
   request: (body) => ({ method: "POST", path: "/api/tools", body }),
-  error: "Couldn't add tool",
+  error: "Could not add tool",
 });
 
 export const installTool = apiAction<{ name: string }, JobResponse>({
@@ -73,7 +73,7 @@ export const installTool = apiAction<{ name: string }, JobResponse>({
     path: `/api/tools/${encodeURIComponent(name)}/install`,
     body: {},
   }),
-  error: "Couldn't start install",
+  error: "Could not start install",
 });
 
 export const updateTools = apiAction<{ names?: string[] } | undefined, JobResponse>({
@@ -81,7 +81,7 @@ export const updateTools = apiAction<{ names?: string[] } | undefined, JobRespon
   scope: "tools",
   idempotencyKey: true,
   request: (body) => ({ method: "POST", path: "/api/tools/update", body: body ?? {} }),
-  error: "Couldn't start update",
+  error: "Could not start update",
 });
 
 /** PATCH result: 202 + job (null when no work was needed); a 409
@@ -123,7 +123,7 @@ export const patchTool = apiAction<
   decode: (data) => data ?? {},
   decodeError: (info) =>
     info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
-  error: "Couldn't update tool",
+  error: "Could not update tool",
 });
 
 // Delete needs the 409 has_dependents envelope for the cascade-confirm
@@ -298,7 +298,7 @@ export const refreshCatalog = apiAction<void, JobResponse>({
   name: "tools.refresh_catalog",
   scope: "tools",
   request: () => ({ method: "POST", path: "/api/tools/catalog/refresh" }),
-  error: "Couldn't refresh the tool catalog",
+  error: "Could not refresh the tool catalog",
 });
 
 /** Converge the volume on the manifest as it stands on disk — the verb behind
@@ -318,7 +318,7 @@ export const applyManifest = apiAction<void, JobResponse>({
     r.job == null
       ? "Nothing to converge: the manifest and the volume already agree."
       : null) as NotificationSpec<void, JobResponse>,
-  error: "Couldn't apply the manifest",
+  error: "Could not apply the manifest",
 });
 
 export const cancelToolJob = apiAction<{ id: string }>({
@@ -330,7 +330,7 @@ export const cancelToolJob = apiAction<{ id: string }>({
     path: `/api/tools/jobs/${encodeURIComponent(id)}/cancel`,
     body: {},
   }),
-  error: "Couldn't cancel job",
+  error: "Could not cancel job",
 });
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
@@ -363,7 +363,7 @@ export const seedMcp = apiAction<{ name: string; install?: string }>({
       ...(install !== undefined ? { install } : {}),
     },
   }),
-  error: "Couldn't create MCP entry",
+  error: "Could not create MCP entry",
 });
 
 // Probe which well-known binary names exist on PATH. Used by the MCP

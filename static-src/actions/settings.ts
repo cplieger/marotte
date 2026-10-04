@@ -37,7 +37,7 @@ export const saveSteering = apiAction<{ content: string; etag: string }, string>
     const etag = (data as { etag?: unknown } | null)?.etag;
     return typeof etag === "string" ? etag : "";
   },
-  error: "Couldn't save steering",
+  error: "Could not save steering",
 });
 
 // --- Logout ---
@@ -67,7 +67,7 @@ export const logout = apiAction<
     }
     render(op);
   },
-  error: "Couldn't log out",
+  error: "Could not log out",
 });
 
 // --- Kiro settings toggle (the experimental flags) ---
@@ -109,7 +109,7 @@ export const setKiroSetting = apiAction<KiroSettingArgs, unknown, KiroSettingOp>
     }
     input.checked = op.prevChecked;
   },
-  error: "Couldn't save setting",
+  error: "Could not save setting",
 });
 
 // --- Load settings (deduped fetch for SSE-triggered reconcile) ---
@@ -176,5 +176,5 @@ export const patchAppSettings = apiAction<PatchAppArgs, unknown, PatchAppOp>({
       }
     }
   },
-  error: "Couldn't save setting",
+  error: "Could not save setting",
 });

@@ -326,7 +326,7 @@ export function catalogNotice(): CatalogNotice | null {
     case "ready":
       return { text: "No models available yet.", busy: false, retry: true };
     case "unavailable":
-      return { text: "Couldn't load the model list.", busy: false, retry: true };
+      return { text: "Could not load the model list.", busy: false, retry: true };
   }
 }
 

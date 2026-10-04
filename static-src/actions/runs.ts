@@ -32,7 +32,7 @@ export const loadRecipes = apiAction<
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "GET", path: "/api/recipes" }),
-  error: "Couldn't load workflows",
+  error: "Could not load workflows",
 });
 
 /** The current run inventory. Same endpoint as the history page, its own
@@ -63,7 +63,7 @@ export const loadRuns = apiAction<
 export const launchRun = apiAction<RunLaunchRequest, RunLaunchedResponse>({
   name: "runs.launch",
   request: (body) => ({ method: "POST", path: "/api/runs", body }),
-  error: "Couldn't launch",
+  error: "Could not launch",
 });
 
 /** Ask a run to stop. The reply confirms the ASK — cancel is a node-boundary
@@ -75,7 +75,7 @@ export const cancelRun = apiAction<string, { ok: boolean }>({
     method: "POST",
     path: `/api/runs/${encodeURIComponent(workflowID)}/cancel`,
   }),
-  error: "Couldn't cancel the run",
+  error: "Could not cancel the run",
 });
 
 /** One run-control verb. All four share a shape: POST to a sub-path, no body,
@@ -97,7 +97,7 @@ function runControl(verb: string, errorText: string) {
  *  Like cancel, the reply confirms the ASK: KAS sets a pause flag and the
  *  in-flight node runs to completion, so the run is still `running` when this
  *  resolves. The paused state arrives as a run_progress invalidation. */
-export const pauseRun = runControl("pause", "Couldn't pause the run");
+export const pauseRun = runControl("pause", "Could not pause the run");
 
 /** Reset a failed run's failed and aborted steps (plus their ancestors) and
  *  re-drive it, keeping every completed step.
@@ -129,7 +129,7 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
     path: `/api/runs/${encodeURIComponent(workflowID)}/retry`,
   }),
   decode: (data) => decodeRunRetriedResponse(data),
-  error: (_args, err) => serverSentence(err) ?? "Couldn't retry the run",
+  error: (_args, err) => serverSentence(err) ?? "Could not retry the run",
   onSuccess: (res, workflowID) => {
     const notice = retryOutcomeNotice(res.retried_node_ids.length);
     if (notice.level === "success") {
@@ -148,7 +148,7 @@ export const retryRun = apiAction<string, RunRetriedResponse>({
 /** Re-drive a paused run. Works even when the launching process is gone — KAS
  *  reloads the run from disk — which is why the button is offered on any paused
  *  run rather than only on one this browser started. */
-export const resumeRun = runControl("resume", "Couldn't resume the run");
+export const resumeRun = runControl("resume", "Could not resume the run");
 
 /** Answer the question a parked workflow step asked.
  *
@@ -183,7 +183,7 @@ export const answerRunInput = apiAction<{ workflowID: string } & RunAnswerReques
     // step it belonged to has moved on" — asserting a failure and then explaining that
     // nothing needed sending. The same prefix also leaked the library's own
     // empty-body placeholder as "…to the step: HTTP 500".
-    error: (_args, err) => serverSentence(err) ?? "Couldn't send your answer to the step",
+    error: (_args, err) => serverSentence(err) ?? "Could not send your answer to the step",
   },
 );
 
@@ -220,7 +220,7 @@ export const continueRunStep = apiAction<{ workflowID: string; nodeID: string },
     path: `/api/runs/${encodeURIComponent(workflowID)}/step`,
     body: { node_id: nodeID, status: "running" },
   }),
-  error: "Couldn't let the step continue",
+  error: "Could not let the step continue",
 });
 
 /** Delete a run and its on-disk state.
@@ -238,5 +238,5 @@ export const deleteRun = apiAction<string, { ok: boolean }>({
     method: "DELETE",
     path: `/api/runs/${encodeURIComponent(workflowID)}`,
   }),
-  error: "Couldn't delete the run",
+  error: "Could not delete the run",
 });

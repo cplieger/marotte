@@ -16,7 +16,7 @@ import (
 // errCompactRefused is the one failure a caller can surface. KAS returns a
 // bare {success: false} both for a turn in flight and for a compaction
 // already running, with no field distinguishing them.
-var errCompactRefused = errors.New("can't compact right now — finish or cancel the current turn and try again")
+var errCompactRefused = errors.New("cannot compact right now. Finish or cancel the current turn and try again")
 
 // CmdCompact compacts the chat's context through KAS's native verb. Requires
 // a live resident session, since compaction operates on the session's own

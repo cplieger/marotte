@@ -59,7 +59,7 @@ export const signOut = apiAction<SignOutArgs, void>({
     method: "DELETE",
     path: `/api/forges/${encodeURIComponent(forgeId)}`,
   }),
-  error: "Couldn't sign out",
+  error: "Could not sign out",
 });
 
 /** How long the clone may go without the server streaming anything before

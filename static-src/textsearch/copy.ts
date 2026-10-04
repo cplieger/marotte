@@ -125,8 +125,8 @@ const EMPTY_NOTE: { readonly [K in EmptyState["kind"]]: Renderer<K> } = {
   none: () => "No matches",
   partial: (s, nouns) =>
     s.scanned === undefined
-      ? "No matches; not everything was searched"
-      : `No matches in ${count(s.scanned, nouns.scanned)}; not everything was searched`,
+      ? "No matches, but not everything was searched"
+      : `No matches in ${count(s.scanned, nouns.scanned)}, but not everything was searched`,
   withheld: (s) =>
     s.where === undefined
       ? `${num(s.matched)} matched, not shown here`
@@ -134,7 +134,7 @@ const EMPTY_NOTE: { readonly [K in EmptyState["kind"]]: Renderer<K> } = {
   failed: (s) =>
     s.retryAfterS === undefined
       ? "Could not search"
-      : `Could not search; try again in ${num(s.retryAfterS)}s`,
+      : `Could not search. Try again in ${num(s.retryAfterS)}s`,
   unreadable: (_s, nouns) => `${capitalize(nouns.scanned.one)} not read`,
   tooShort: (s) => `Type at least ${count(s.min, CHARACTERS)}`,
 };

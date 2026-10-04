@@ -108,7 +108,7 @@ describe("the row's meta line", () => {
 
   it("leads with the state a reader has to act on", () => {
     expect(renderMeta(server(), status({ state: "failed", error: "spawn ENOENT" }))).toBe(
-      "Failed to start — spawn ENOENT · no credentials · https://ex/mcp",
+      "Failed to start. spawn ENOENT · no credentials · https://ex/mcp",
     );
     expect(renderMeta(server(), status({ state: "needs_auth" } as Partial<RuntimeStatus>))).toBe(
       "Waiting for sign-in · no credentials · https://ex/mcp",

@@ -57,7 +57,7 @@ describe("rewind.revert", () => {
     // The server's reason is appended, so a refusal KAS explained in-band ("not
     // a user message", "Cannot revert while the agent is still running") reaches
     // the user instead of a generic failure.
-    expect(toast.error).toHaveBeenCalledWith("Couldn't rewind chat: boom", undefined);
+    expect(toast.error).toHaveBeenCalledWith("Could not rewind chat: boom", undefined);
   });
 
   // A retry that reverts twice would cut a SECOND time from an

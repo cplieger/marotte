@@ -568,7 +568,7 @@ func TestTranslate_TransportInference(t *testing.T) {
 		{
 			name:    "both is ambiguous",
 			body:    `{"command":"srv","url":"https://x/mcp"}`,
-			wantErr: "either local (command) or hosted (url)",
+			wantErr: "either local with a command or hosted at a url",
 		},
 		{name: "neither", body: `{"args":["-y"]}`, wantErr: `needs either "command"`},
 	}

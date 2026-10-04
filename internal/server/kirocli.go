@@ -140,7 +140,7 @@ func loopbackOnly(surface string, next http.Handler) http.Handler {
 		slog.Warn("loopback-only endpoint refused: not a loopback caller",
 			"surface", surface, "remote", r.RemoteAddr, "host", r.Host)
 		webhttp.WriteJSONStatus(w, http.StatusForbidden,
-			httpreply.ErrorJSON(surface+" is loopback-only; call it from inside the container"))
+			httpreply.ErrorJSON(surface+" is loopback-only. Call it from inside the container"))
 	})
 	return webhttp.LoopbackOnly(refuse)(next)
 }

@@ -216,11 +216,11 @@ class StatusBanner {
 function messageFor(key: BannerKey): string {
   switch (key) {
     case "forge-auth-failed":
-      return "Forge authentication issue — push, pull, or PR features may fail.";
+      return "Forge authentication issue. Push, pull, or PR features may fail.";
     case "gh-cli-missing":
       return "GitHub CLI not authenticated. Sign in with gh to push and create PRs.";
     case "forges-not-connected":
-      return "No forge connected — sign in to enable PRs, merging, and CI status.";
+      return "No forge connected. Sign in to enable PRs, merging, and CI status.";
   }
 }
 
@@ -228,7 +228,7 @@ function ctaLabelFor(key: BannerKey): string {
   switch (key) {
     case "forge-auth-failed":
     case "forges-not-connected":
-      return "Open Settings → Git";
+      return "Open Settings, then Git";
     case "gh-cli-missing":
       return "Authenticate with gh";
   }
