@@ -47,7 +47,7 @@ func TestCloseNextSSEAfter_CutsTheNextConnectionAfterNFrames(t *testing.T) {
 	h.CloseNextSSEAfter(2) // the hello and the connected envelope
 
 	started := time.Now()
-	body := coldConnectAs(t, h, false).Body.String()
+	body := liveConnectAs(t, h, false).Body.String()
 	if elapsed := time.Since(started); elapsed >= fixtureConnectDeadline {
 		t.Errorf("the cut connection ran %v, the whole fixture deadline; the stream was never cut", elapsed)
 	}
@@ -95,7 +95,7 @@ func TestCloseNextSSEAfter_KeepaliveSpendsNoBudget(t *testing.T) {
 	budget := hookFrames(t, coldConnectAs(t, h, false).Body.String())
 
 	h.CloseNextSSEAfter(budget)
-	body := coldConnectAs(t, h, false).Body.String()
+	body := liveConnectAs(t, h, false).Body.String()
 	if got := hookFrames(t, body); got != budget {
 		t.Errorf("armed connection carried %d hook frames, want %d (the budget)", got, budget)
 	}

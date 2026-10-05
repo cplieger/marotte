@@ -39,15 +39,16 @@ func seedRunLease(t *testing.T, h *Runtime, workflowID, chatID string) {
 	}
 }
 
-// awaitNoPush is the withheld assertion. A push fans out on the lifecycle's own
-// goroutine, so an immediate empty read would pass whether or not the notification
-// was withheld — the window is what makes this test able to fail.
-func awaitNoPush(t *testing.T, fp *runOutcomePush, why string) {
+// awaitNoPush is the withheld assertion. A push fans out on the lifecycle's inflight
+// group, so the read follows a join of that group: an empty read then means no push
+// was scheduled, rather than that one had not arrived yet.
+func awaitNoPush(t *testing.T, h *Runtime, fp *runOutcomePush, why string) {
 	t.Helper()
+	joinInflight(t, h)
 	select {
 	case got := <-fp.sent:
 		t.Errorf("push sent %q (kind %q); %s", got.body, got.kind, why)
-	case <-time.After(300 * time.Millisecond):
+	default:
 	}
 }
 
@@ -102,7 +103,7 @@ func TestPushTurnOutcome_WithheldWhileALaunchedRunIsLive(t *testing.T) {
 			h.coord.pushTurnOutcome(t.Context(), "c1", marotte.ConcludeStopReason(tc.stop), "")
 
 			if !tc.wantPush {
-				awaitNoPush(t, fp, tc.why)
+				awaitNoPush(t, h, fp, tc.why)
 				return
 			}
 			select {
@@ -184,7 +185,7 @@ func TestPushTurnOutcome_ACancelPushesNothingEitherWay(t *testing.T) {
 			h.coord.pushTurnOutcome(t.Context(), "c1",
 				marotte.ConcludeStopReason(marotte.StopReasonCancelled), "")
 
-			awaitNoPush(t, fp, "a cancel is the reader's own gesture, so no severity arm notifies")
+			awaitNoPush(t, h, fp, "a cancel is the reader's own gesture, so no severity arm notifies")
 		})
 	}
 }

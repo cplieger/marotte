@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -127,8 +126,7 @@ func TestPresenceHook_ForwardsConnectAndDisconnectWithTheTag(t *testing.T) {
 	h.mcpRegistry.SignalReady()
 	t.Cleanup(func() { shutdownHub(t, h) })
 
-	ctx, cancel := context.WithTimeout(t.Context(), fixtureConnectDeadline)
-	defer cancel()
+	ctx := hookOnlyContext(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	req.Header.Set(wireHeader, "1")
 	req.Header.Set(clientTagHeader, "amxAEqwvwjG23476CxNmK6")

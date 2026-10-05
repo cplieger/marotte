@@ -64,7 +64,7 @@ const { setSessions, setActive, bumpMessages } = await import("./store.js");
 const { openEntry, applyDelta, appendEntry } = await import("./store.js");
 const { mountChatView, mountTurnBody, activeTranscriptView, teardownAll } =
   await import("./messages.js");
-const { scrollToBottom, readingState } = await import("./scroll.js");
+const { scrollToBottom, readingState, setPinSettleMs } = await import("./scroll.js");
 const { setTurnOpen, resetFoldState } = await import("./fold-state.js");
 const { KEY_ATTR } = await import("./reconcile.js");
 const { projectTurns } = await import("./turns.js");
@@ -525,11 +525,17 @@ describe("scrolling moves the window", () => {
   }
 
   /** Put the reader back on the live edge and wait out the bottom pin's own settle
-   *  window: a gesture inside it is undone before any pass sees it. */
+   *  window: a gesture inside it is undone before any pass sees it. The pin is
+   *  armed short and the real window is back in force before the case acts. */
   async function atLiveEdge(): Promise<void> {
-    scrollToBottom();
+    const real = setPinSettleMs(20);
+    try {
+      scrollToBottom();
+    } finally {
+      setPinSettleMs(real);
+    }
     await new Promise((resolve) => {
-      setTimeout(resolve, 800);
+      setTimeout(resolve, 100);
     });
   }
 

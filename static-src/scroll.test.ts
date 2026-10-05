@@ -1877,6 +1877,45 @@ describe("the bottom pin's settle window", () => {
     expect({ inside, handedOff }).toEqual({ inside: 1350, handedOff: 1350 });
   });
 
+  // The window's LENGTH, pinned against the real value. A non-input scrollTop write
+  // (the platform's own, as a clamp makes) inside the bottom band leaves the state
+  // Following and fires neither observer, so only a live pin pass can put the
+  // reader back on the edge: restored at 300ms means the pass outlives a short
+  // window, left alone at 1000ms means it is bounded at all.
+  it("re-asserts the live edge after a platform move inside the window", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    scroll.scrollToBottom();
+    await land(300);
+    const max = wrap.scrollHeight - wrap.clientHeight;
+    wrap.scrollTop = max - 50;
+    await land(100);
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: max,
+      state: "following",
+    });
+  });
+
+  it("leaves a platform move alone once the window has closed", async () => {
+    const wrap = realScroller();
+    block(3000);
+    await land();
+
+    scroll.scrollToBottom();
+    await land(1000);
+    const max = wrap.scrollHeight - wrap.clientHeight;
+    wrap.scrollTop = max - 50;
+    await land(150);
+
+    expect({ scrollTop: wrap.scrollTop, state: scroll.readingState() }).toEqual({
+      scrollTop: max - 50,
+      state: "following",
+    });
+  });
+
   it("keeps following the anchor for growth arriving inside the window", async () => {
     const { wrap, streaming } = pinScene();
     await land();
@@ -2013,15 +2052,20 @@ describe("the streaming follow write's licence", () => {
   beforeEach(realLayoutReset);
 
   /** Following at the live edge with the pin pass DEAD, which is the state that
-   *  licenses a follow write and nothing else. `land(800)` outlasts
-   *  PIN_SETTLE_MS, so a write observed afterwards is this pass's own rather than
-   *  the pin's re-assert. */
+   *  licenses a follow write and nothing else. The pass is armed short and has
+   *  ended before the case acts, so a write observed afterwards is this pass's own
+   *  rather than the pin's re-assert; the real window is back in force by then. */
   async function followingAtEdge(): Promise<HTMLElement> {
     const wrap = realScroller();
     block(3000);
     await land();
-    scroll.scrollToBottom();
-    await land(800);
+    const real = scroll.setPinSettleMs(20);
+    try {
+      scroll.scrollToBottom();
+    } finally {
+      scroll.setPinSettleMs(real);
+    }
+    await land(100);
     return wrap;
   }
 

@@ -376,7 +376,8 @@ func TestRegistryProxy_Search_upstreamTimeoutIs502(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	_, mux := newProxyAgainst(t, upstream) // client Timeout is 2s
+	p, mux := newProxyAgainst(t, upstream)
+	p.client.Timeout = 200 * time.Millisecond
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=slow", nil)
 	rec := httptest.NewRecorder()
