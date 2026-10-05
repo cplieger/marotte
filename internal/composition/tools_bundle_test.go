@@ -77,12 +77,12 @@ func TestBundledTools_NamesNoForgeCLI(t *testing.T) {
 	}
 }
 
-// TestToolsSeed_NamesNoForgeCLI reads the manifest the production engine
-// literal seeds a fresh volume with, so the seed buildToolsEngine passes is
-// the one under test.
-func TestToolsSeed_NamesNoForgeCLI(t *testing.T) {
+// TestToolsSeed_IsTheFourLanguageServerTemplates reads the manifest the
+// production engine literal seeds a fresh volume with, so the seed
+// buildToolsEngine passes is the one under test.
+func TestToolsSeed_IsTheFourLanguageServerTemplates(t *testing.T) {
 	configDir, toolsDir := fitTree(t)
-	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir, WorkDir: t.TempDir()}, testRuntime(t))
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir, WorkDir: t.TempDir()}, testRuntime(t), nil)
 	if err != nil || engine == nil {
 		t.Fatalf("buildToolsEngine over a fit root = (%v, %v), want an engine", engine, err)
 	}
@@ -96,8 +96,14 @@ func TestToolsSeed_NamesNoForgeCLI(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("decode the seeded manifest %s: %v", raw, err)
 	}
-	if _, ok := m.Tools["gopls"]; !ok {
-		t.Fatalf("seeded manifest = %s, want the gopls template", raw)
+	want := []string{"gopls", "pyright", "rust-analyzer", "typescript-language-server"}
+	if got := slices.Sorted(maps.Keys(m.Tools)); !slices.Equal(got, want) {
+		t.Errorf("a fresh volume seeds %v, want the four templates %v", got, want)
+	}
+	for name, tool := range m.Tools {
+		if !tool.Disabled {
+			t.Errorf("seeded %q is enabled, want a disabled template", name)
+		}
 	}
 	for _, cli := range forgeCLIs {
 		if _, ok := m.Tools[cli]; ok {
@@ -122,7 +128,7 @@ func toolsEngineOver(t *testing.T, configDir, toolsDir string, output func(strin
 		ConfigDir:       configDir,
 		ToolsDir:        toolsDir,
 		CatalogOverlays: []string{filepath.Join("..", "..", "bundled-tools.json")},
-		Seed:            toolsSeed(),
+		Seed:            toolbelt.DefaultSeed(),
 		OnJobOutput: func(_ string, lines []string) {
 			for _, l := range lines {
 				output(l)

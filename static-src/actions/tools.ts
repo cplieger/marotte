@@ -27,6 +27,7 @@ import type {
 } from "../types.js";
 
 import { MCP_API } from "./mcp.js";
+import { RATE_LIMITED } from "../tool-rate-limit.js";
 
 /** Fields accepted by POST /api/tools (create). Everything except the
  *  name is optional — the server fills source/version/description from
@@ -56,12 +57,26 @@ export const loadTools = apiAction<void, Inventory>({
   error: false,
 });
 
+/** The caller reports a failure itself: a GitHub rate limit gets its own notice.
+ *  That 503 keeps its body as the error's cause, because the body says whether
+ *  the refused request carried a token. */
 export const createTool = apiAction<CreateToolRequest, JobResponse>({
   name: "tools.create",
   scope: "tools",
   idempotencyKey: true,
   request: (body) => ({ method: "POST", path: "/api/tools", body }),
-  error: "Could not add tool",
+  decodeError: (info) =>
+    info.status === 503 && info.code === RATE_LIMITED
+      ? {
+          kind: "error",
+          error: new ActionError(info.message, {
+            status: info.status,
+            code: info.code,
+            cause: info.body,
+          }),
+        }
+      : undefined,
+  error: false,
 });
 
 export const installTool = apiAction<{ name: string }, JobResponse>({

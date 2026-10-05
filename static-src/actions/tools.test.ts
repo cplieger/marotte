@@ -99,6 +99,23 @@ describe("tools.create", () => {
     await createTool.dispatch({ name: "x" });
     expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
   });
+
+  it("hands a rate-limited 503's body to the caller, which words the failure", async () => {
+    const body = {
+      error: "GitHub API rate limit reached",
+      code: "github_rate_limited",
+      rate_limit: { authenticated: false, reset_at: 1791192600000, limit: 60 },
+    };
+    mockFetch.mockResolvedValue(new Response(JSON.stringify(body), { status: 503 }));
+    const onError = vi.fn();
+    const d = await createTool.dispatch({ name: "ripgrep" }, { onError });
+    expect(d).toBeNull();
+    expect(onError).toHaveBeenCalledTimes(1);
+    const err = onError.mock.calls[0]![0] as { status?: number; code?: string; cause?: unknown };
+    expect(err.status).toBe(503);
+    expect(err.code).toBe("github_rate_limited");
+    expect(err.cause).toEqual(body);
+  });
 });
 
 describe("tools.install", () => {

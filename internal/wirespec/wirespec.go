@@ -148,6 +148,7 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[marotte.GovernanceFeatures](),
 	wiregen.TypeRef[marotte.GovernanceStatePayload](),
 	wiregen.TypeRef[marotte.ToolJob](),
+	wiregen.TypeRef[marotte.ToolRateLimit](),
 	wiregen.TypeRef[marotte.ToolInfo](),
 	wiregen.TypeRef[marotte.SystemTool](),
 	wiregen.TypeRef[marotte.AptPackage](),
