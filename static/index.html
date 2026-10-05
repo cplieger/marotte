@@ -1,4 +1,6 @@
+<!-- prettier-ignore -->
 <!DOCTYPE html>
+<!-- prettier-ignore -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1170,11 +1172,13 @@
             </nav>
           </header>
           <div data-history-panel="chats" class="history-panel">
+            <!-- [html-validate-disable-next prefer-native-element -- history.ts fills it with div[role=listitem] rows] -->
             <div id="history-table" class="list-container" role="list">
               <div class="list-empty">No previous conversations in this workspace.</div>
             </div>
           </div>
           <div data-history-panel="runs" class="history-panel hidden">
+            <!-- [html-validate-disable-next prefer-native-element -- history.ts fills it with div[role=listitem] rows] -->
             <div id="history-runs" class="list-container" role="list">
               <div class="list-empty">No previous workflow runs in this workspace.</div>
             </div>
