@@ -132,6 +132,30 @@ describe("renderDeviceSignIn", () => {
     expect(deps.expandOnNextPaint).toHaveBeenCalledWith("gitlab:gitlab.example.com");
   });
 
+  it("names on a self-managed GitLab every setting its OAuth application needs", () => {
+    hostInput.value = "gitlab.example.com";
+    renderDeviceSignIn(body, { kind: "gitlab", hostInput, options: () => ({}) }, deps);
+
+    const hint = body.querySelector("[data-forge-client-id] .tool-form-hint")?.textContent ?? "";
+    for (const setting of [
+      "Device authorization grant ticked",
+      "Confidential unticked",
+      "scope api",
+      "any HTTPS redirect URI",
+    ]) {
+      expect(hint).toContain(setting);
+    }
+  });
+
+  it("names no GitLab setting on a GitHub Enterprise host", () => {
+    hostInput.value = "ghe.example.com";
+    renderDeviceSignIn(body, { kind: "github", hostInput, options: () => ({}) }, deps);
+
+    const hint = body.querySelector("[data-forge-client-id] .tool-form-hint")?.textContent ?? "";
+    expect(hint).toContain("client ID");
+    expect(hint).not.toContain("Device authorization grant");
+  });
+
   it("another host with no client id names what is missing and starts nothing", async () => {
     hostInput.value = "ghe.example.com";
 

@@ -124,10 +124,14 @@ func TestWriteGitPanel(t *testing.T) {
 		`"Contributions elsewhere"`,
 		`"Undo"`,
 		`"Load more repositories"`,
+		`"Sign in with GitLab"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("writeGitPanel(connected) output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "GitLab, Gitea and Codeberg by token") {
+		t.Errorf("writeGitPanel(connected) says GitLab connects by token only:\n%s", out)
 	}
 }
 

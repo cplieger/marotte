@@ -182,8 +182,8 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	forges := h.manager.List(r.Context())
-	_, github := h.grants.apps(forgeapi.FamilyGitHub)
-	_, gitlab := h.grants.apps(forgeapi.FamilyGitLab)
+	_, github := marotteApp(forgeapi.FamilyGitHub)
+	_, gitlab := marotteApp(forgeapi.FamilyGitLab)
 	webhttp.WriteJSON(w, map[string]any{
 		"forges": forges,
 		"kinds":  AllKinds(),
