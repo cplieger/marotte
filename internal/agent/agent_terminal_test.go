@@ -291,7 +291,7 @@ func TestTerminalCreated_BroadcastBeforeOutputAndExited(t *testing.T) {
 	// printf writes to stdout (pump → terminal_output); the brief sleep keeps
 	// the process alive so the pump reads that output well before cmd.Wait
 	// closes the pipe, then the process exits (exit goroutine → terminal_exited).
-	msg := termCreateMsg(t, 1, "sh", []string{"-c", "printf hello; sleep 1"}, nil)
+	msg := termCreateMsg(t, 1, "sh", []string{"-c", "printf hello; sleep 0.3"}, nil)
 
 	h.translateACPEvent("c1", msg)
 	term := singleTerm(t, h)

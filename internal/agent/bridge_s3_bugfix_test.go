@@ -250,7 +250,7 @@ func TestTranslateACPEvent_TerminalSurvivesEventCtxCancel_C2(t *testing.T) {
 	work := t.TempDir()
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
-	msg := termCreateMsg(t, 1, "sh", []string{"-c", "sleep 1; printf ok > c2.txt"}, nil)
+	msg := termCreateMsg(t, 1, "sh", []string{"-c", "sleep 0.3; printf ok > c2.txt"}, nil)
 
 	h.translateACPEvent("c1", msg) // per-event ctx cancels on return
 

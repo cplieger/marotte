@@ -66,6 +66,8 @@ export const scrollMock = {
     mutate();
   }),
   fillViewport: vi.fn(),
+  // The previous value is the real default, so a caller's restore round-trips.
+  setPinSettleMs: vi.fn((_ms: number) => 700),
   // How much room the transcript has left to scroll. Defaults to a comfortably
   // navigable value rather than 0, because the turn rail hides itself below
   // MIN_SCROLL_PX — a 0 here would silently withdraw the rail from every suite

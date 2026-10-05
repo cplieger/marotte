@@ -1340,8 +1340,7 @@ func TestHandleSSE_ReplaysTheSteerRows(t *testing.T) {
 	s.bind()
 	s.steer("steer-1", "actually use tabs")
 
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-	defer cancel()
+	ctx := hookOnlyContext(t)
 	rec := httptest.NewRecorder()
 	h.handleSSE(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx))
 

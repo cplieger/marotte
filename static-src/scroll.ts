@@ -31,6 +31,7 @@ const READER_CONTROL_MS = 300;
  *  choreography it releases: `--fold-slide` runs 0.3s and a close flips
  *  `content-visibility` at 0.42s (css/29-turns.css). */
 const PIN_SETTLE_MS = 700;
+let pinSettleMs = PIN_SETTLE_MS;
 /** Where the reading line sits, as a fraction of the scrollport from its top.
  *  Scroller geometry, so the scroller owns it: a jump's landing and the turn the
  *  rail calls active are the same line, and two consumers deriving it separately
@@ -999,7 +1000,7 @@ class ScrollController {
     // a `barDragging` latch left standing — a drag whose pointerup never arrived —
     // would kill the pin on its first frame and leave the resume control looking dead.
     this.forgetReaderGesture();
-    this.pinUntil = Date.now() + PIN_SETTLE_MS;
+    this.pinUntil = Date.now() + pinSettleMs;
     this.pinLiveEdgeNow();
     this.queuePinFrame();
     // A request for the live edge is the reader saying where they want to be, so it
@@ -1637,6 +1638,13 @@ export function deferWhileReading(mutate: () => void): void {
 }
 export function fillViewport(): void {
   getInstance().fillViewport();
+}
+/** @internal Test seam: set how long the next bottom pin re-asserts the live edge.
+ *  A pin already armed keeps its own deadline. Returns the previous value. */
+export function setPinSettleMs(ms: number): number {
+  const prev = pinSettleMs;
+  pinSettleMs = ms;
+  return prev;
 }
 
 // Init on load.

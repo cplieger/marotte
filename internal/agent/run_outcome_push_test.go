@@ -121,10 +121,11 @@ func TestObserveComplete_PushesNothingForANonTerminalRun(t *testing.T) {
 		"workflowId": "wf_1", "workflowName": "Nightly review", "status": "paused",
 	}))
 
+	joinInflight(t, h)
 	select {
 	case got := <-fp.sent:
 		t.Errorf("a paused run pushed %q; the run has not ended", got.body)
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 }
 

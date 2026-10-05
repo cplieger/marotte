@@ -251,8 +251,7 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 	h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c3"})
 
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-	defer cancel()
+	ctx := hookOnlyContext(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	req.Header.Set(wireHeader, "1")
 	req.Header.Set("Last-Event-ID", cursorAt(h, 1)) // skip event 1 only
@@ -280,8 +279,7 @@ func TestHandleSSE_AResumePastTheReplyCapIsAGap(t *testing.T) {
 		h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: marotte.ChatID(fmt.Sprintf("c%d", i))})
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-	defer cancel()
+	ctx := hookOnlyContext(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	req.Header.Set(wireHeader, "1")
 	req.Header.Set("Last-Event-ID", cursorAt(h, 1))
@@ -512,8 +510,7 @@ func TestHandleSSE_ReloadsPushPreferencesOnlyForAReconnect(t *testing.T) {
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c1"})
 			h.bus.emit(marotte.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 
-			ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-			defer cancel()
+			ctx := hookOnlyContext(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 			if tc.lastEventID {
 				req.Header.Set("Last-Event-ID", cursorAt(h, 2))

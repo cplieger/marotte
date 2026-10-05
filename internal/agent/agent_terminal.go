@@ -36,8 +36,9 @@ const terminalDrainGrace = 2 * time.Second
 
 // terminalGroupGrace bounds how long a teardown waits for the command's process
 // GROUP to empty after the kill. Same 2 seconds as the drain, because it bounds
-// the same population: a grandchild the head left behind.
-const terminalGroupGrace = 2 * time.Second
+// the same population: a grandchild the head left behind. A var only so a test
+// can shorten it; never reassigned in production.
+var terminalGroupGrace = 2 * time.Second
 
 // killTerminalGroup signals term's whole process group and then waits, bounded,
 // for it to empty — so a caller that returns holds the FACT that the command is

@@ -66,6 +66,23 @@ func buildTestHub(workDir string, mcpReady bool) (*Runtime, *testChatStore, *fak
 	return h, cs, br
 }
 
+// joinInflight waits for the runtime's inflight group to drain, so work a call
+// scheduled there (a push send, say) has finished before the test reads its effect.
+// Call it only once nothing else will Add to the group.
+func joinInflight(t *testing.T, h *Runtime) {
+	t.Helper()
+	drained := make(chan struct{})
+	go func() {
+		h.lifecycle.inflight.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the runtime's inflight work did not drain within 5s")
+	}
+}
+
 // shutdownHub roots its budget at context.Background() rather than t.Context() because
 // callers reach for it from t.Cleanup, where t.Context() is already cancelled. 30s sits
 // above anything a unit test needs and below go test's own timeout, so an expiry is a

@@ -165,9 +165,7 @@ func seedPendingDecisions(tb testing.TB, rt *Runtime, ids []marotte.ChatID) {
 }
 
 // coldConnect drives one cold v3 connect and hands back the recorder, whose Body IS
-// the measured wire bytes. The 150ms deadline bounds only the LIVE loop that
-// follows: the connect replay is written synchronously from the OnConnect hook
-// before it, so the measurement is deterministic rather than a race with the clock.
+// the measured wire bytes.
 func coldConnect(t *testing.T, rt *Runtime, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	return coldConnectAs(t, rt, false, query)
@@ -177,8 +175,32 @@ func coldConnect(t *testing.T, rt *Runtime, query string) *httptest.ResponseReco
 // no SSE-Wire header, which is how a v2 bundle presents.
 func coldConnectAs(t *testing.T, rt *Runtime, legacy bool, query ...string) *httptest.ResponseRecorder {
 	t.Helper()
+	return serveConnect(t, rt, hookOnlyContext(t), legacy, query...)
+}
+
+// hookOnlyContext is a request context that is already done. The retry line, the
+// hello, the Last-Event-ID replay and the OnConnect hook are all written before the
+// hub's live loop reads the context, so the body is the same as under a deadline;
+// the live loop then returns at once instead of idling until the deadline.
+func hookOnlyContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	return ctx
+}
+
+// liveConnectAs is coldConnectAs for a test that needs the live loop to run (a
+// keepalive, or a cut measured against the deadline): it ends at
+// fixtureConnectDeadline.
+func liveConnectAs(t *testing.T, rt *Runtime, legacy bool) *httptest.ResponseRecorder {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), fixtureConnectDeadline)
 	defer cancel()
+	return serveConnect(t, rt, ctx, legacy)
+}
+
+func serveConnect(t *testing.T, rt *Runtime, ctx context.Context, legacy bool, query ...string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/events"+strings.Join(query, ""), nil).WithContext(ctx)
 	if !legacy {
 		req.Header.Set(wireHeader, "1")

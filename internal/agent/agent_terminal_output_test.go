@@ -413,7 +413,7 @@ func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// A steady writer, so the pump is certainly mid-flight when the release lands.
 	h.translateACPEvent("c1", termCreateMsgArgs(t, 1,
-		`i=0; while [ $i -lt 400 ]; do printf 'line %s\n' "$i"; i=$((i+1)); done; sleep 2`, nil))
+		`i=0; while [ $i -lt 400 ]; do printf 'line %s\n' "$i"; i=$((i+1)); done; sleep 0.5`, nil))
 	term := singleTerm(t, h)
 	termID := onlyTermID(t, h)
 
@@ -432,6 +432,21 @@ func TestTerminalOutput_ReleaseAndAdoptWhileTheProcessIsStillWriting(t *testing.
 		t.Error("Output found nothing for a terminal released mid-write")
 	}
 	waitClosed(t, term.done, "terminal")
+}
+
+// withTerminalGroupGrace shortens the group wait for one test. Not parallel-safe:
+// it writes the package var awaitExit reads.
+func withTerminalGroupGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := terminalGroupGrace
+	terminalGroupGrace = d
+	t.Cleanup(func() { terminalGroupGrace = prev })
+}
+
+func TestTerminalGroupGrace_IsTwoSeconds(t *testing.T) {
+	if terminalGroupGrace != 2*time.Second {
+		t.Errorf("terminalGroupGrace = %v, want 2s (the same bound as terminalDrainGrace)", terminalGroupGrace)
+	}
 }
 
 // EOF is not guaranteed after the process exits: a grandchild holding the write end
@@ -475,6 +490,7 @@ func TestAwaitTerminalExit_ForceClosesTheReaderWhenAGrandchildHoldsThePipe(t *te
 // a daemon left running on purpose reaches it every exit and nobody acts on it.
 func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) {
 	logs := captureLogs(t) // not parallel: swaps the slog default
+	withTerminalGroupGrace(t, 300*time.Millisecond)
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	// `sleep` joins the head's group and outlives it, with its inherited pipe ends
 	// closed so the drain cannot be what delays the exit.
@@ -491,7 +507,7 @@ func TestAwaitTerminalExit_WaitsForTheCommandsProcessGroupToEmpty(t *testing.T) 
 			"terminal_exited while the command's group still had a live member, so the "+
 			"agent reads a file a grandchild is still writing", elapsed, terminalGroupGrace)
 	}
-	// One grace, not two. Sequenced with the drain this would be ~4s.
+	// One grace, not two.
 	if elapsed > terminalGroupGrace+3*time.Second {
 		t.Errorf("exit took %v, want it bounded near ONE %v grace: the group wait and the "+
 			"drain were sequenced rather than overlapped", elapsed, terminalGroupGrace)
