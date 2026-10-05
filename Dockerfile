@@ -186,7 +186,7 @@ ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edc
 # covers, because two differently-licensed families share this directory and a
 # bare LICENSE beside five woff2 files names neither.
 # renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
-ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.6
+ARG WEB_TERMINAL_GLYPHS_VERSION=v1.1.7
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
 ARG WEB_TERMINAL_GLYPHS_SHA256=8f4720fa37eed4cdb3ca070d24fbbce85a5266b63c63e754d78a359509aeb94c
 # repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/LICENSE dest=WebTerminalGlyphs-LICENSE
