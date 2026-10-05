@@ -16,6 +16,9 @@ vi.mock("./editor-openers.js", () => ({
   refreshFile: vi.fn(),
   closeEditorFile: vi.fn(),
 }));
+// `tools.ts` also reaches the tab store directly, for its rate-limit notice's
+// Git -> Sources door. Cut there for the same reason; no case here navigates.
+vi.mock("./tabs.js", async () => (await import("./__test-helpers__/tabs-mock.js")).tabsMock());
 vi.mock("./dom.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading

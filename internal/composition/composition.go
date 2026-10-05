@@ -202,16 +202,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
 	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
 
-	// The engine owns the manifest, the install tree and the queue; this root owns wiring.
-	toolsEngine, err := wireToolsEngine(appCtx, cfg, h)
-	if err != nil {
-		return nil, err
-	}
-
+	// Before the tools engine, whose GitHub requests carry the github.com connection's token.
 	forgesManager := forges.NewManager(cfg.ConfigDir)
 	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
 		// Non-fatal: the manager serves an empty list until the next refresh.
 		_ = refreshErr
+	}
+
+	// The engine owns the manifest, the install tree and the queue; this root owns wiring.
+	toolsEngine, err := wireToolsEngine(appCtx, cfg, h, githubTokenFor(forgesManager))
+	if err != nil {
+		return nil, err
 	}
 
 	gitHandler := git.NewHandler(cfg.WorkDir)
@@ -608,8 +609,10 @@ func repoNamesFor(ctx context.Context, forgesManager *forges.Manager, id string)
 // wireToolsEngine builds the tools engine and, when the root is intact, wires its
 // consumers. A nil engine is the degraded verdict rather than an error, and the dependent
 // wiring is SKIPPED whole rather than nil-guarded: no toolbelt method is nil-safe.
-func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*toolbelt.Engine, error) {
-	toolsEngine, err := buildToolsEngine(appCtx, cfg, h)
+func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
+	githubToken func(context.Context) (string, error),
+) (*toolbelt.Engine, error) {
+	toolsEngine, err := buildToolsEngine(appCtx, cfg, h, githubToken)
 	if err != nil {
 		return nil, err
 	}
@@ -622,8 +625,11 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*to
 // buildToolsEngine constructs the shared toolbelt engine with marotte's SSE adapters and
 // enqueues the boot jobs, reconcile first; a failed enqueue is logged rather than fatal
 // because installed tools persist on the volume. (nil, nil) is the root-integrity DEGRADED
-// verdict, not an omission — every other New failure still stops the boot.
-func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*toolbelt.Engine, error) {
+// verdict, not an omission; every other New failure still stops the boot. githubToken is
+// the engine's only GitHub credential and nil sends every GitHub request anonymously.
+func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime,
+	githubToken func(context.Context) (string, error),
+) (*toolbelt.Engine, error) {
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,
 		Require:  cfg.ToolCatalogRequire,
@@ -638,11 +644,13 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 		CatalogPath:         cfg.ToolCatalogPath,
 		Refresh:             catalogRefresh,
 		CatalogOverlays:     cfg.ToolCatalogOverlays,
-		Seed:                toolsSeed(),
+		Seed:                toolbelt.DefaultSeed(),
 		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		GitHubToken:         githubToken,
 		OnJobChanged: func(j *toolbelt.Job) {
 			h.Broadcast(context.Background(), marotte.NewEvent(marotte.EventToolJobChanged, "",
 				marotte.ToolJobChangedPayload{Job: j}))
+			warnIfGitHubRateLimited(j)
 			// Async because a job callback fires under the queue lock and must not
 			// block; the call itself is idempotent.
 			if j != nil && j.State == toolbelt.JobDone {
@@ -688,12 +696,36 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 	return toolsEngine, nil
 }
 
-// toolsSeed is toolbelt's seed without its gh template: Marotte runs no forge CLI
-// (ADR-0003), so a fresh volume offers none.
-func toolsSeed() *toolbelt.Manifest {
-	seed := toolbelt.DefaultSeed()
-	delete(seed.Tools, "gh")
-	return seed
+// githubTokenFor is the tools engine's GitHub credential: the github.com connection's
+// token, read per request. No usable connection sends the request anonymously rather
+// than failing it, which an error would.
+func githubTokenFor(m *forges.Manager) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) { return m.GitHubToken(ctx), nil }
+}
+
+// warnIfGitHubRateLimited names the reset and the fix for a tools job GitHub's API rate
+// limit failed, which at boot no Settings screen is open to show.
+func warnIfGitHubRateLimited(j *toolbelt.Job) {
+	if j == nil || j.State != toolbelt.JobFailed || j.ErrorCode != toolbelt.ErrorCodeGitHubRateLimited || j.RateLimit == nil {
+		return
+	}
+	// An account raises only the hourly quota, not the secondary limit.
+	var hint string
+	switch {
+	case j.RateLimit.Secondary:
+		hint = "GitHub's secondary rate limit was reached; retry after the reset"
+	case j.RateLimit.Authenticated:
+		hint = "the connected GitHub account's limit was reached; retry after the reset"
+	default:
+		hint = "connect a GitHub account in Git -> Sources to raise the limit"
+	}
+	resets := "unknown"
+	if j.RateLimit.ResetAt > 0 {
+		resets = time.UnixMilli(j.RateLimit.ResetAt).Format(time.RFC3339)
+	}
+	slog.Warn("tools: GitHub's API rate limit failed a tools job",
+		"job", j.ID, "kind", j.Kind, "authenticated", j.RateLimit.Authenticated,
+		"secondary", j.RateLimit.Secondary, "resets_at", resets, "hint", hint)
 }
 
 // toolsEngineFailure decides what a toolbelt.New failure costs marotte. A nil return is

@@ -42,8 +42,17 @@ import { reconcile, KEY_ATTR } from "./reconcile.js";
 import { sigChanged, wireSignature } from "./paint-sig.js";
 import { relativeTime } from "./relative-time.js";
 import { classify, emptyNote, type Nouns } from "./textsearch/copy.js";
-import { error as toastError } from "./toast.js";
+import { error as toastError, errorWithAction } from "./toast.js";
+import { openGitView } from "./tabs.js";
+import {
+  accountRaisesLimit,
+  bodyRateLimit,
+  jobRateLimit,
+  rateLimitText,
+} from "./tool-rate-limit.js";
+import type { ActionErrorLike } from "./actions/index.js";
 import type { AptPackage, CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
+import type { GitHubRateLimit } from "./wire/types.gen.js";
 
 /** A hit is a tool; what the engine reads is the catalog and the host's package
  *  index, so the scanned unit is a source. */
@@ -313,6 +322,8 @@ class ToolsManager {
   /** The job the SSE last reported queued or running, null when nothing is.
    *  Decides which of the three controls carries its cancel. */
   private live: Job | null = null;
+  /** The last job whose rate limit was reported, so a repeated frame says it once. */
+  private rateLimitReported = "";
   private updatePill: JobPill | null = null;
   private refreshPill: JobPill | null = null;
   private applyPill: JobPill | null = null;
@@ -408,6 +419,11 @@ class ToolsManager {
         const live = jobIsLive(job);
         this.setLive(live ? job : null);
         this.followJob(job);
+        const limit = jobRateLimit(job);
+        if (limit !== null && job.id !== this.rateLimitReported) {
+          this.rateLimitReported = job.id;
+          reportRateLimit(limit);
+        }
         // loadToolsList refetches the catalog meta line too, so a
         // settling catalog-refresh job needs no extra fetch here.
         this.loadToolsList();
@@ -1211,7 +1227,7 @@ class ToolsManager {
   }
 
   private async submitCatalogAdd(req: CreateToolRequest): Promise<void> {
-    const d = await createTool.dispatch(req);
+    const d = await createTool.dispatch(req, { onError: reportAddFailure });
     if (d !== null) {
       closeModal($.toolModal);
       this.loadToolsList();
@@ -1420,9 +1436,38 @@ function jobHeadline(job: Job): string {
       return `✓ ${what} finished`;
     case "cancelled":
       return `${what} cancelled`;
-    default:
-      return `✗ ${what} failed${job.error !== undefined && job.error !== "" ? `: ${job.error}` : ""}`;
+    default: {
+      const limit = jobRateLimit(job);
+      const why = limit !== null ? rateLimitText(limit) : (job.error ?? "");
+      return `✗ ${what} failed${why !== "" ? `: ${why}` : ""}`;
+    }
   }
+}
+
+/** Tell the reader GitHub's rate limit stopped a tools request. When an account
+ *  is the fix, the notice opens Git -> Sources in-app. */
+function reportRateLimit(limit: GitHubRateLimit): void {
+  const text = rateLimitText(limit);
+  if (!accountRaisesLimit(limit)) {
+    toastError(text);
+    return;
+  }
+  errorWithAction(text, {
+    label: "Connect GitHub",
+    onClick: () => {
+      void openGitView("sources");
+    },
+  });
+}
+
+/** An Add that failed before any job started. */
+function reportAddFailure(err: ActionErrorLike): void {
+  const limit = bodyRateLimit(err.code, err.cause);
+  if (limit !== null) {
+    reportRateLimit(limit);
+    return;
+  }
+  toastError(`Could not add tool: ${err.message}`);
 }
 
 /** Install a tool by name (creating it from the catalog if needed) and

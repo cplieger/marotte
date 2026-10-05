@@ -17,6 +17,11 @@ import (
 // done, failed, and cancelled.
 type ToolJob = toolbelt.Job
 
+// ToolRateLimit is GitHub's API rate limit behind a job or a 503 coded
+// github_rate_limited: whether the refused request carried a token, and when
+// the limit resets.
+type ToolRateLimit = toolbelt.GitHubRateLimit
+
 // ToolInfo is one tool row in GET /api/tools: the manifest entry
 // joined with the engine's install state. Disabled marks a template
 // (recorded intent, nothing installed); Lsp marks a language server.

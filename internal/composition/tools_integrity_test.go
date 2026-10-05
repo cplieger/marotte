@@ -233,7 +233,7 @@ func TestBuildToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t))
+			engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
@@ -264,7 +264,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t))
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
 	if err != nil || engine != nil {
 		t.Fatalf("buildToolsEngine = (%v, %v), want the degraded (nil, nil)", engine, err)
 	}
@@ -303,7 +303,7 @@ func TestBuildToolsEngineKeepsNonIntegrityFailuresFatal(t *testing.T) {
 	}
 	logs := captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t))
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testRuntime(t), nil)
 
 	if err == nil {
 		t.Fatal("a manifest-version failure was absorbed into a tool-less boot; only the root-integrity refusal may degrade")

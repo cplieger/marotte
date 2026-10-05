@@ -35,7 +35,11 @@ Work handed to a subagent shows as a card you can open on its own page. The agen
 
 marotte works with GitHub, GitLab, Codeberg, and Gitea or Forgejo. You can stage, commit, diff and switch branches, and list, create, merge and close pull requests. The agent can write commit messages and pull request descriptions.
 
-An account connects by signing in on GitHub, or with an access token on any of them. marotte keeps the credential in its own store, uses it for the forge's API, and answers git over HTTPS with it through its own credential helper, so no forge command-line tool is needed. SSH remotes are not covered. A forge on a private or loopback address, such as one on your own network, needs **Allow private addresses** under **Connection options** when you connect it.
+An account connects by signing in through your browser on GitHub or GitLab, or with an access token on any of them. marotte keeps the credential in its own store, uses it for the forge's API, and answers git over HTTPS with it through its own credential helper, so no forge command-line tool is needed. SSH remotes are not covered. A forge on a private or loopback address, such as one on your own network, needs **Allow private addresses** under **Connection options** when you connect it.
+
+A gitlab.com sign-in token lasts two hours. marotte renews it with the refresh token GitLab issues with it, so the account stays connected. If GitLab issued no refresh token or refuses a renewal, the account shows **Reconnect** once the token expires.
+
+Signing in to GitHub Enterprise or a self-managed GitLab uses an OAuth application registered on that server, and the connect form asks for its client ID. On GitLab, an administrator registers it on the **Applications** page. Select the `api` scope, enter any HTTPS redirect URI, leave **Confidential** unticked and tick **Device authorization grant**. Without that last box, GitLab refuses the sign-in.
 
 ## Reviewing the agent's edits
 
@@ -52,6 +56,8 @@ Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each s
 ## Tools
 
 The **Tools** tab in **Settings** installs runtimes, language servers and command-line tools from a catalog of about 900, built from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog). Installs run in the background. A tool can be pinned to a version. For a tool outside the catalog, install it from the terminal. Debian packages are covered in [OS packages](os-packages.md).
+
+Version checks and some installs read GitHub's API. Without an account, GitHub allows 60 of those requests an hour from your address. Connect a github.com account on the **Sources** tab of the git panel, and marotte sends its token with them, which raises the limit. A GitHub Enterprise account is not used for this. When the limit is reached, the **Tools** tab says so, and offers to connect an account when none is connected. GitHub also limits bursts of requests, and an account does not raise that limit. For a burst, the tab gives the time to try again instead.
 
 Turning on a language server also turns on kiro-cli [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace. The agent then gets navigation, rename and error checking from the language server, in live chats too, with no restart. The first activation saves the detected languages to `/workspace/.kiro/settings/lsp.json`. After you add a language to the workspace, delete that file, and marotte writes it again on the next start.
 

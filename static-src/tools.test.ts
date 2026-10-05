@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   rollingAppend: vi.fn(),
   rollingClear: vi.fn(),
   toastError: vi.fn(),
+  toastWithAction: vi.fn(),
+  openGitView: vi.fn(() => Promise.resolve()),
   applyManifestDispatch: vi.fn(),
   openFile: vi.fn(),
   sseHandlers: new Map<string, (chatID: string, payload: unknown) => void>(),
@@ -49,6 +51,7 @@ vi.mock("./modals.js", () => ({
 vi.mock("./confirm.js", () => ({ confirm: mocks.confirm }));
 vi.mock("./toast.js", () => ({
   error: mocks.toastError,
+  errorWithAction: mocks.toastWithAction,
   info: vi.fn(),
   success: vi.fn(),
   showToast: vi.fn(),
@@ -77,6 +80,11 @@ vi.mock("./actions/tools.js", () => ({
 // mock further down that graph (toast.js here) fails collection outright once it
 // is linked for real.
 vi.mock("./editor-openers.js", () => ({ openFile: mocks.openFile }));
+// The rate-limit notice's door into Git -> Sources.
+vi.mock("./tabs.js", async () => ({
+  ...(await import("./__test-helpers__/tabs-mock.js")).tabsMock(),
+  openGitView: mocks.openGitView,
+}));
 vi.mock("./bus.js", () => ({
   onSSE: (type: string, fn: (chatID: string, payload: unknown) => void) => {
     mocks.sseHandlers.set(type, fn);
@@ -474,7 +482,7 @@ describe("add modal", () => {
 
     hit?.click();
     await flush();
-    expect(mocks.createDispatch).toHaveBeenCalledWith({ name: "ripgrep" });
+    expect(mocks.createDispatch).toHaveBeenCalledWith({ name: "ripgrep" }, expect.anything());
     expect(mocks.closeModal).toHaveBeenCalledTimes(1);
   });
 
@@ -587,7 +595,10 @@ describe("add modal", () => {
 
     byId("tool-search-results").querySelector<HTMLButtonElement>("button")?.click();
     await flush();
-    expect(mocks.createDispatch).toHaveBeenCalledWith({ name: "sl", source: "apt:sl" });
+    expect(mocks.createDispatch).toHaveBeenCalledWith(
+      { name: "sl", source: "apt:sl" },
+      expect.anything(),
+    );
   });
 
   // With apt unavailable the engine returns no Debian hits at all, so silence
@@ -867,6 +878,163 @@ describe("job following over SSE", () => {
     expect(mocks.jobsDispatch).toHaveBeenCalled();
     expect(mocks.rollingAppend).toHaveBeenCalledWith("line1");
     expect(mocks.rollingAppend).toHaveBeenCalledWith("line2");
+  });
+});
+
+describe("GitHub's rate limit", () => {
+  const RESET = Date.UTC(2026, 9, 5, 21, 30);
+  // A fresh id per case: the panel is a module singleton that reports each job once.
+  const limited = (authenticated: boolean, id: string): { job: Job } => ({
+    job: {
+      id,
+      kind: "update",
+      state: "failed",
+      created_at: 1,
+      error: "GitHub API rate limit reached for unauthenticated requests",
+      error_code: "github_rate_limited",
+      rate_limit: { authenticated, reset_at: RESET, limit: authenticated ? 5000 : 60 },
+    },
+  });
+
+  it("tells a job without an account to connect one, with a door to Git -> Sources", async () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    mocks.sseHandlers.get("tool_job_changed")?.("", limited(false, "tj-rl-anon"));
+
+    const text =
+      "GitHub's limit for requests without an account was reached. Connecting a GitHub account raises it.";
+    expect(mocks.rollingAppend).toHaveBeenCalledWith(`✗ update failed: ${text}`);
+    expect(mocks.toastWithAction).toHaveBeenCalledTimes(1);
+    const [message, action] = mocks.toastWithAction.mock.calls[0] as [
+      string,
+      { label: string; onClick: () => void },
+    ];
+    expect(message).toBe(text);
+    expect(action.label).toBe("Connect GitHub");
+    expect(mocks.openGitView).not.toHaveBeenCalled();
+    action.onClick();
+    await vi.waitFor(() => {
+      expect(mocks.openGitView).toHaveBeenCalledWith("sources");
+    });
+  });
+
+  it("tells a job with an account when the limit resets, on the local clock", () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    mocks.sseHandlers.get("tool_job_changed")?.("", limited(true, "tj-rl-auth"));
+
+    const clock = new Date(RESET).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      `GitHub's rate limit was reached. It resets at ${clock}.`,
+    );
+    expect(mocks.toastWithAction).not.toHaveBeenCalled();
+  });
+
+  it("reports one job once however many frames repeat it", () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    const changed = mocks.sseHandlers.get("tool_job_changed");
+    changed?.("", limited(false, "tj-rl-repeat"));
+    changed?.("", limited(false, "tj-rl-repeat"));
+    expect(mocks.toastWithAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises no notice for any other failure", () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    mocks.sseHandlers.get("tool_job_changed")?.("", {
+      job: {
+        id: "tj-x",
+        kind: "install",
+        names: ["gh"],
+        state: "failed",
+        created_at: 1,
+        error: "boom",
+      },
+    });
+    expect(mocks.rollingAppend).toHaveBeenCalledWith("✗ install gh failed: boom");
+    expect(mocks.toastWithAction).not.toHaveBeenCalled();
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("reports an Add the limit refused before any job, and keeps other Add failures' wording", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "ripgrep", source: "aqua:BurntSushi/ripgrep" }],
+    });
+    mocks.createDispatch.mockResolvedValue(null);
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    byId("tool-search-results")
+      .querySelector<HTMLButtonElement>('button[aria-label="Install ripgrep"]')
+      ?.click();
+    await flush();
+
+    const opts = mocks.createDispatch.mock.calls[0]?.[1] as { onError: (e: unknown) => void };
+    opts.onError({
+      message: "GitHub API rate limit reached",
+      status: 503,
+      code: "github_rate_limited",
+      cause: {
+        error: "x",
+        code: "github_rate_limited",
+        rate_limit: { authenticated: false, reset_at: RESET },
+      },
+    });
+    expect(mocks.toastWithAction).toHaveBeenCalledWith(
+      "GitHub's limit for requests without an account was reached. Connecting a GitHub account raises it.",
+      expect.objectContaining({ label: "Connect GitHub" }),
+    );
+
+    opts.onError({ message: "no such tool", status: 404, code: "not_found" });
+    expect(mocks.toastError).toHaveBeenCalledWith("Could not add tool: no such tool");
+  });
+
+  // An account does not raise GitHub's secondary limit, so no notice offers one.
+  it("tells a job a secondary limit refused when to retry, with no door to Sources", () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    const { job } = limited(false, "tj-rl-secondary");
+    mocks.sseHandlers.get("tool_job_changed")?.("", {
+      job: { ...job, rate_limit: { authenticated: false, secondary: true, reset_at: RESET } },
+    });
+
+    const clock = new Date(RESET).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const text = `GitHub's secondary rate limit was reached. Try again after ${clock}.`;
+    expect(mocks.rollingAppend).toHaveBeenCalledWith(`✗ update failed: ${text}`);
+    expect(mocks.toastError).toHaveBeenCalledWith(text);
+    expect(mocks.toastWithAction).not.toHaveBeenCalled();
+  });
+
+  it("tells an Add a secondary limit refused when to retry, with no door to Sources", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "ripgrep", source: "aqua:BurntSushi/ripgrep" }],
+    });
+    mocks.createDispatch.mockResolvedValue(null);
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    byId("tool-search-results")
+      .querySelector<HTMLButtonElement>('button[aria-label="Install ripgrep"]')
+      ?.click();
+    await flush();
+
+    const opts = mocks.createDispatch.mock.calls[0]?.[1] as { onError: (e: unknown) => void };
+    opts.onError({
+      message: "GitHub API secondary rate limit reached",
+      status: 503,
+      code: "github_rate_limited",
+      cause: {
+        error: "x",
+        code: "github_rate_limited",
+        rate_limit: { authenticated: false, secondary: true },
+      },
+    });
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "GitHub's secondary rate limit was reached. Try again in a minute.",
+    );
+    expect(mocks.toastWithAction).not.toHaveBeenCalled();
   });
 });
 

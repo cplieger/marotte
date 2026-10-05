@@ -1145,6 +1145,20 @@ export interface FileSearchResult {
   truncated: boolean;
 }
 
+/** GitHubRateLimit is the wire form of a [GitHubRateLimitError]. */
+export interface GitHubRateLimit {
+  /**
+ * ResetAt is when GitHub allows the next request, in Unix
+ * milliseconds: a minute after the refusal for a secondary limit
+ * that names no time, absent for a primary one that names none.
+ */
+  reset_at?: number;
+  /** Limit is X-RateLimit-Limit, absent when GitHub did not send it. */
+  limit?: number;
+  authenticated: boolean;
+  secondary?: boolean;
+}
+
 /**
  * GovernanceFeatures is the org/account feature-flag set carried by the v3 (KAS)
  * _kiro/governance/state notification. Every field is the RESOLVED effective value, so a
@@ -1369,10 +1383,17 @@ export interface IssueList {
 
 /** Job is one queued/running/finished unit of engine work. */
 export interface Job {
+  /** RateLimit is set alongside ErrorCode github_rate_limited. */
+  rate_limit?: GitHubRateLimit;
   id: string;
   kind: string;
   state: string;
   error?: string;
+  /**
+ * ErrorCode classifies Error for a client; empty when the failure has
+ * no code (ErrorCodeGitHubRateLimited is the one defined).
+ */
+  error_code?: string;
   names?: string[];
   /**
  * CancelCause names who cancelled the job (State JobCancelled only).
