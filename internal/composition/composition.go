@@ -661,14 +661,10 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 		// verdict, so this one return yields (nil, nil) or (nil, wrapped).
 		return nil, toolsEngineFailure(err)
 	}
-	if _, _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
-		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
-	}
-	if _, rerr := toolsEngine.RefreshCatalog(); rerr != nil {
-		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
-	}
 	// The gate agent/code_intel.go consults; the boot fire below covers a volume that
 	// already has servers but no lsp.json, later fires ride the job callback above.
+	// Wired before the first job is enqueued: a job that finishes fires that callback
+	// on the queue's goroutine, which reads what this sets.
 	h.SetCodeIntelligence(filepath.Join(cfg.WorkDir, ".kiro", "settings", "lsp.json"), func() bool {
 		inv, ierr := toolsEngine.Inventory()
 		if ierr != nil {
@@ -681,6 +677,12 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *agent.Runtime) (*t
 		}
 		return false
 	})
+	if _, _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
+		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
+	}
+	if _, rerr := toolsEngine.RefreshCatalog(); rerr != nil {
+		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
+	}
 	// The app's lifetime, not Background — see the OnJobChanged spawn above.
 	go h.EnsureCodeIntelligence(appCtx)
 	return toolsEngine, nil
