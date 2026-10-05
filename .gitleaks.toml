@@ -82,24 +82,25 @@ paths = [
 ]
 
 # ---------------------------------------------------------------------------
-# Entry 3: Marotte's own GitHub OAuth client id, one value in one file
+# Entry 3: Marotte's own GitHub and GitLab OAuth client ids, in one file
 # ---------------------------------------------------------------------------
 #
-# internal/forges/oauth.go names the client id of Marotte's registered GitHub
-# OAuth app. A device-flow client id is public by design: the flow takes no
+# internal/forges/oauth.go names the client ids of Marotte's registered GitHub
+# and gitlab.com OAuth applications. A device-flow client id is public by design: the flow takes no
 # client secret, and the id ships in every Marotte binary. generic-api-key
-# matches it on the `ClientID` identifier and the value's entropy.
+# matches each on the `ClientID` identifier and the value's entropy.
 #
 # `condition = "AND"` makes the exemption need the rule, the exact value AND the
 # file at once, so a real token pasted into oauth.go is still caught, and so is
 # this value anywhere else. Measured with gitleaks 8.30.1: 1 finding without
 # this entry, 0 with it.
 [[allowlists]]
-description = "Marotte's GitHub OAuth app client id. A device-flow client id is public by design (no client secret is involved) and ships in every binary."
+description = "Marotte's GitHub and GitLab OAuth application client ids. A device-flow client id is public by design (no client secret is involved) and ships in every binary."
 targetRules = ["generic-api-key"]
 condition = "AND"
 regexes = [
   '''^Ov23li9ja8ak5hoZACXH$''',
+  '''^55c83c54905fe86fc799b972eed5fe8c3af32f59bf7ac35d70b92240d45403ea$''',
 ]
 paths = [
   '''(^|/)internal/forges/oauth\.go$''',
