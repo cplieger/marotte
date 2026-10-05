@@ -2,6 +2,7 @@ package forges
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/forgeapi"
-	"github.com/cplieger/forgeapi/creds"
 )
 
 const (
@@ -312,36 +312,56 @@ func TestDeviceCancel_LaterPollIsNotFound(t *testing.T) {
 	}
 }
 
-func TestOAuthKinds_GitLabOnlyWithAClientID(t *testing.T) {
+func TestForgesList_OffersDeviceSignInOnGitHubAndGitLab(t *testing.T) {
 	h := newConnectHarness(t, nil)
-	oauth := func() map[string]any {
-		t.Helper()
-		body := decodeBody(t, h.do(t, http.MethodGet, "/api/forges", ""))
-		m, _ := body["oauth"].(map[string]any)
-		return m
-	}
 
-	if got := oauth(); got["github"] != true || got["gitlab"] != false {
-		t.Errorf("oauth with no GitLab application = %v, want github true and gitlab false", got)
-	}
-	h.handler.grants.apps = func(family forgeapi.Family) (creds.GrantRequest, bool) {
-		return creds.GrantRequest{ClientID: "gitlab-app", Scopes: gitlabOAuthScopes}, true
-	}
-	if got := oauth(); got["github"] != true || got["gitlab"] != true {
-		t.Errorf("oauth with a GitLab application = %v, want both true", got)
+	body := decodeBody(t, h.do(t, http.MethodGet, "/api/forges", ""))
+
+	if got, _ := body["oauth"].(map[string]any); got["github"] != true || got["gitlab"] != true {
+		t.Errorf("GET /api/forges oauth = %v, want github true and gitlab true", got)
 	}
 }
 
-func TestGitLabDeviceStart_WithoutClientIDIsUnsupported(t *testing.T) {
-	for name, body := range map[string]string{"an empty object": `{}`, "no body": ``} {
-		t.Run(name, func(t *testing.T) {
+func TestGitLabGrant_PublicInstanceUsesMarottesApplication(t *testing.T) {
+	h := newConnectHarness(t, nil)
+
+	rec, req, err := h.handler.grantFor(KindGitLab, &grantBody{})
+	if err != nil {
+		t.Fatalf("grantFor(gitlab, no host) = %v, want Marotte's application on gitlab.com", err)
+	}
+
+	const marotteGitLabApp = "55c83c54905fe86fc799b972eed5fe8c3af32f59bf7ac35d70b92240d45403ea"
+	if rec.Host != "gitlab.com" || rec.OAuthClientID != "" {
+		t.Errorf("grantFor(gitlab) record host %q client %q, want gitlab.com with no client of its own", rec.Host, rec.OAuthClientID)
+	}
+	if req.ClientID != marotteGitLabApp || !slices.Equal(req.Scopes, []string{"api"}) {
+		t.Errorf("grantFor(gitlab) request = client %q scopes %v, want %s with scope api", req.ClientID, req.Scopes, marotteGitLabApp)
+	}
+}
+
+func TestDeviceGrant_FamilyWithoutOneIsNotFound(t *testing.T) {
+	for _, kind := range []string{"gitea", "codeberg", "bogus"} {
+		t.Run(kind, func(t *testing.T) {
 			h := newConnectHarness(t, nil)
 
-			rec := h.do(t, http.MethodPost, "/api/forges/oauth/gitlab/start", body)
+			rec := h.do(t, http.MethodPost, "/api/forges/oauth/"+kind+"/start", `{}`)
 
-			if got := decodeBody(t, rec); rec.Code != http.StatusNotImplemented || got["code"] != forgeapi.CodeCapabilityUnsupported {
-				t.Errorf("GitLab start with no application = %d %v, want 501 %s", rec.Code, got, forgeapi.CodeCapabilityUnsupported)
+			if rec.Code != http.StatusNotFound || h.handler.grants.held() != 0 {
+				t.Errorf("POST /api/forges/oauth/%s/start = %d with %d grants held, want 404 and none", kind, rec.Code, h.handler.grants.held())
 			}
 		})
+	}
+}
+
+func TestGitLabGrant_SelfManagedInstanceNeedsItsOwnClientID(t *testing.T) {
+	h := newConnectHarness(t, nil)
+
+	if _, _, err := h.handler.grantFor(KindGitLab, &grantBody{Host: "gitlab.example.com"}); !errors.Is(err, errClientIDNeeded) {
+		t.Errorf("grantFor(gitlab.example.com, no client id) = %v, want errClientIDNeeded", err)
+	}
+	rec, req, err := h.handler.grantFor(KindGitLab, &grantBody{Host: "gitlab.example.com", ClientID: "admin-app"})
+	if err != nil || rec.OAuthClientID != "admin-app" || req.ClientID != "admin-app" || !slices.Equal(req.Scopes, []string{"api"}) {
+		t.Errorf("grantFor(gitlab.example.com, admin-app) = record client %q, request %+v, %v; want admin-app with scope api",
+			rec.OAuthClientID, req, err)
 	}
 }

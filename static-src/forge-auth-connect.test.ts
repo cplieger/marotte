@@ -139,22 +139,18 @@ describe("forge-auth: the connect dialog", () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  it("offers GitLab device sign-in when oauth.gitlab is true", async () => {
+  it("offers GitLab device sign-in beside the token form", async () => {
     const slot = await openPane("gitlab", { github: true, gitlab: true });
     const start = slot.querySelector<HTMLButtonElement>("[data-forge-device-start]");
     expect(start?.textContent).toBe("Sign in with GitLab");
-  });
-
-  it("offers GitLab the token path only when oauth.gitlab is false", async () => {
-    const slot = await openPane("gitlab", { github: true, gitlab: false });
-    expect(slot.querySelector("[data-forge-device-start]")).toBeNull();
     expect(slot.querySelector("form.forge-pat-form")).not.toBeNull();
   });
 
-  it("notes on GitLab's device path that a sign-in lasts two hours and a token outlasts it", async () => {
-    const slot = await openPane("gitlab", { gitlab: true });
-    expect(slot.textContent).toContain("two hours");
-    expect(slot.textContent).toContain("connect with a token instead");
+  it("notes on GitLab's device path that a two-hour token is renewed by its refresh token", async () => {
+    const slot = await openPane("gitlab", { github: true, gitlab: true });
+    expect(slot.textContent).toContain("two hours on gitlab.com");
+    expect(slot.textContent).toContain("renews it with the refresh token");
+    expect(slot.textContent).not.toContain("connect with a token instead");
   });
 
   it("names the organization-restriction remedy on GitHub's device path", async () => {

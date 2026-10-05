@@ -59,7 +59,6 @@ const (
 const grantSaveBudget = 30 * time.Second
 
 var (
-	errNoApplication  = errors.New("forges: Marotte has no OAuth application on this instance. Connect with a token")
 	errClientIDNeeded = errors.New("forges: an instance other than the public one signs in with its own " +
 		"OAuth application, named by client_id")
 	errClientIDPublic = errors.New("forges: the public instance signs in with Marotte's own OAuth application, " +
@@ -78,7 +77,7 @@ type grantBody struct {
 func (h *HTTPHandler) handleDeviceGrant(w http.ResponseWriter, r *http.Request) {
 	name, op, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/forges/oauth/"), "/")
 	kind := Kind(name)
-	if kind != KindGitHub && kind != KindGitLab {
+	if _, ok := marotteApp(kind.family()); !ok {
 		httpreply.NotFound(w, "no device grant for that forge")
 		return
 	}
@@ -141,10 +140,8 @@ func (h *HTTPHandler) grantFor(kind Kind, body *grantBody) (connectionRecord, cr
 	if body.ClientID != "" {
 		return connectionRecord{}, creds.GrantRequest{}, errClientIDPublic
 	}
-	req, ok := h.grants.apps(kind.family())
-	if !ok {
-		return connectionRecord{}, creds.GrantRequest{}, errNoApplication
-	}
+	// handleDeviceGrant admits only a family marotteApp names.
+	req, _ := marotteApp(kind.family())
 	return rec, req, nil
 }
 
@@ -157,9 +154,6 @@ func writeGrantStartError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errTooManyGrants):
 		webhttp.WriteJSONStatus(w, http.StatusTooManyRequests, httpreply.ErrorJSON(err.Error()))
-	case errors.Is(err, errNoApplication):
-		webhttp.WriteJSONStatus(w, http.StatusNotImplemented,
-			httpreply.ErrorJSONWithCode(err.Error(), forgeapi.CodeCapabilityUnsupported))
 	case errors.Is(err, errClientIDNeeded), errors.Is(err, errClientIDPublic):
 		webhttp.WriteJSONStatus(w, http.StatusBadRequest, httpreply.ErrorJSONWithCode(err.Error(), codeClientIDInvalid))
 	case errors.Is(err, errWebBaseInvalid):

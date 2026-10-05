@@ -43,10 +43,8 @@ const SCOPES = {
 
 const GITEA_SCOPES = `Token scopes: ${SCOPES.gitea}.`;
 
-/** GitHub's fine-grained list is derived from the operations Marotte calls and
- *  not yet verified against a fine-grained token. */
 const PAT_SCOPES: Record<ForgeKind, string> = {
-  github: `Classic token scopes: ${SCOPES.github}. A fine-grained token needs read and write on Contents, Pull requests, Issues and Actions, and read on Commit statuses and Metadata (not yet verified).`,
+  github: `Classic token scopes: ${SCOPES.github}. A fine-grained token needs read and write on Contents, Pull requests, Issues and Actions, and read on Commit statuses and Metadata.`,
   gitlab: `Token scope: ${SCOPES.gitlab}.`,
   codeberg: GITEA_SCOPES,
   gitea: GITEA_SCOPES,

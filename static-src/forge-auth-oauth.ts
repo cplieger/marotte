@@ -68,7 +68,15 @@ const NOTE: Record<DeviceKind, string> = {
   github:
     "An organization that restricts OAuth apps shows its repositories only once it approves Marotte. Until it does, connect with a token instead.",
   gitlab:
-    "A GitLab sign-in lasts two hours unless the server also issues a refresh token, and then asks to be reconnected. For a longer-lived connection, connect with a token instead.",
+    "A sign-in token lasts two hours on gitlab.com, and Marotte renews it with the refresh token GitLab issues with it. If GitLab issued none or refuses a renewal, the account asks you to reconnect.",
+};
+
+/** What the client id field asks of another host's administrator. */
+const CLIENT_ID_HINT: Record<DeviceKind, string> = {
+  github:
+    "This server signs in with its own OAuth application. Enter the client ID its administrator registered.",
+  gitlab:
+    "This server signs in with its own OAuth application. Its administrator registers one on the Applications page with scope api, any HTTPS redirect URI, Confidential unticked and Device authorization grant ticked. Enter its Application ID.",
 };
 
 /** Render the start state into `body`: the client id field another host
@@ -93,11 +101,7 @@ export function renderDeviceSignIn(
       { className: "tool-form-label" },
       "OAuth client ID",
       clientIdInput,
-      el(
-        "span",
-        { className: "tool-form-hint" },
-        "This server signs in with its own OAuth application. Enter the client ID its administrator registered.",
-      ),
+      el("span", { className: "tool-form-hint" }, CLIENT_ID_HINT[target.kind]),
     ),
   );
   const status = el("div", { className: "forge-card-status", "aria-live": "polite" });

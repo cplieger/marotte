@@ -13,11 +13,11 @@ import (
 	"github.com/cplieger/forgeapi/creds"
 )
 
-// Marotte's own OAuth applications. GitLab's id stays empty until its
-// application is registered; GitLab then offers the token path only.
+// Marotte's own OAuth applications on github.com and gitlab.com. Both ids are
+// public: a device grant sends no client secret.
 const (
 	githubOAuthClientID = "Ov23li9ja8ak5hoZACXH"
-	gitlabOAuthClientID = ""
+	gitlabOAuthClientID = "55c83c54905fe86fc799b972eed5fe8c3af32f59bf7ac35d70b92240d45403ea"
 	gitlabAPIScope      = "api"
 )
 
@@ -40,15 +40,14 @@ var (
 )
 
 // marotteApp is the grant request for Marotte's own application on family's
-// public instance, and false where none is registered.
+// public instance, and false for a family with no device grant. It is the one
+// list of the families the device routes serve.
 func marotteApp(family forgeapi.Family) (creds.GrantRequest, bool) {
 	switch family {
 	case forgeapi.FamilyGitHub:
 		return creds.GrantRequest{ClientID: githubOAuthClientID, Scopes: grantScopes(family)}, true
 	case forgeapi.FamilyGitLab:
-		if gitlabOAuthClientID != "" {
-			return creds.GrantRequest{ClientID: gitlabOAuthClientID, Scopes: grantScopes(family)}, true
-		}
+		return creds.GrantRequest{ClientID: gitlabOAuthClientID, Scopes: grantScopes(family)}, true
 	}
 	return creds.GrantRequest{}, false
 }
@@ -68,9 +67,6 @@ func grantScopes(family forgeapi.Family) []string {
 // grant is polled under its own lock, token request included; the map's lock
 // is never held across a poll.
 type grantRegistry struct {
-	// apps is Marotte's own application on each family's public instance;
-	// marotteApp, which a test replaces to register one GitLab lacks.
-	apps   func(forgeapi.Family) (creds.GrantRequest, bool)
 	grants map[string]*heldGrant
 	now    func() time.Time
 	mu     sync.Mutex
@@ -106,7 +102,7 @@ type polledGrant struct {
 }
 
 func newGrantRegistry() *grantRegistry {
-	return &grantRegistry{apps: marotteApp, grants: make(map[string]*heldGrant), now: time.Now}
+	return &grantRegistry{grants: make(map[string]*heldGrant), now: time.Now}
 }
 
 // start sends the device-code request for rec's instance and holds the grant.
