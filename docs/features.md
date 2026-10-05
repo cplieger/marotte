@@ -45,11 +45,11 @@ Rewind and supervised review cover the agent's file-editing tool. Changes made t
 
 ## MCP servers
 
-Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server has its own auto-approve setting, reconnects live, and lets you browse its prompts and resources. For a server that needs OAuth, marotte registers itself automatically or takes a client ID and secret you already have, then shows a sign-in link.
+Add, edit and remove servers, local ones or remote ones over HTTP or SSE. Each server reconnects live and lets you browse its prompts and resources. For a server that needs OAuth, marotte registers itself automatically or takes a client ID and secret you already have, then shows a sign-in link.
 
 ## Tools
 
-The **Tools** tab in **Settings** installs runtimes, language servers and command-line tools from a catalog of about 700, built from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog). Installs run in the background. A tool can be pinned to a version. For a tool outside the catalog, install it from the terminal. Debian packages are covered in [OS packages](os-packages.md).
+The **Tools** tab in **Settings** installs runtimes, language servers and command-line tools from a catalog of about 900, built from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog). Installs run in the background. A tool can be pinned to a version. For a tool outside the catalog, install it from the terminal. Debian packages are covered in [OS packages](os-packages.md).
 
 Turning on a language server also turns on kiro-cli [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace. The agent then gets navigation, rename and error checking from the language server, in live chats too, with no restart. The first activation saves the detected languages to `/workspace/.kiro/settings/lsp.json`. After you add a language to the workspace, delete that file, and marotte writes it again on the next start.
 
@@ -85,4 +85,4 @@ marotte can be installed as an app from the browser. It then sends notifications
 
 The turn, pull request and workflow run notifications each have a switch on the **General** tab in **Settings**. Turns and workflow runs are on by default. Pull requests are off by default, because the forge already shows their checks. The permission notice has no switch, because nothing else tells you off-screen that a turn is waiting on you.
 
-A device still receiving the live stream gets no notification. A request raised within about 45 seconds of locking a phone is held and sent once the stream goes quiet. It is dropped if someone answers it elsewhere or its time runs out first.
+A device still receiving the live stream gets no notification. A request raised within about 30 seconds of locking a phone is held and sent once the stream goes quiet. It is dropped if someone answers it elsewhere or its time runs out first.

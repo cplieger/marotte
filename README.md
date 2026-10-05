@@ -18,7 +18,7 @@ marotte lets you write and ship code with the Kiro agent from any device, while 
 - Pick up the same conversation on every screen, your phone included.
 - Review a whole turn's file edits before you keep them, or rewind a chat and its edits.
 - Edit files, use a terminal, and commit and open pull requests on GitHub, GitLab, Codeberg or Gitea.
-- Install language servers and command-line tools from a catalog of about 700.
+- Install language servers and command-line tools from a catalog of about 900.
 - Get notified when the agent finishes or needs approval.
 
 ## Who it is for
