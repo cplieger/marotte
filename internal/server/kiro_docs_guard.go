@@ -43,6 +43,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/filebrowse"
+	"github.com/cplieger/marotte/internal/logsafe"
 )
 
 // docVerdict is the guard's answer about one entry: whether the scan may read it,
@@ -127,7 +128,7 @@ type rootGuard struct {
 func newRootGuard(dir, category string, sensitive filebrowse.Sensitive) pathGuard {
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		slog.Warn("kiro docs: root not resolvable, skipping", "dir", dir, "error", err)
+		slog.Warn("kiro docs: root not resolvable, skipping", "dir", dir, "error", logsafe.Field(err.Error()))
 		return func(string) docVerdict { return docVerdict{} }
 	}
 	g := &rootGuard{dir: resolved, category: category, sensitive: sensitive}
@@ -145,12 +146,12 @@ func (g *rootGuard) allow(rel string) docVerdict {
 	}
 	if !g.inRoot(resolved) {
 		slog.Warn("kiro docs: refusing a link out of the scanned tree",
-			"category", g.category, "path", rel, "root", g.dir)
+			"category", g.category, "path", logsafe.Field(rel), "root", g.dir)
 		return docVerdict{}
 	}
 	if g.sensitive.Blocks(resolved) {
 		slog.Warn("kiro docs: refusing a path on the sensitive denylist",
-			"category", g.category, "path", rel)
+			"category", g.category, "path", logsafe.Field(rel))
 		return docVerdict{}
 	}
 	// A link that STAYS inside the root passes both refusals above and is listed,

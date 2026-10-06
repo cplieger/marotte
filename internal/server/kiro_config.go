@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/steering"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -124,7 +125,7 @@ func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigIt
 		data, err := readCappedFS(root, "steering/"+e.Name())
 		if err != nil {
 			slog.Warn("kiro config: read steering file",
-				"name", e.Name(), "error", err)
+				"name", logsafe.Field(e.Name()), "error", logsafe.Field(err.Error()))
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".md")

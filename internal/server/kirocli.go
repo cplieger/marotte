@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/webhttp/v3"
 )
@@ -95,7 +96,11 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 			reason = kiroReasonText(why)
 		}
 	}
-	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", err)
+	var errText string
+	if err != nil {
+		errText = logsafe.Field(err.Error())
+	}
+	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", errText)
 	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 		Status: "unready",
 		Reason: reason,
@@ -138,7 +143,7 @@ func loopbackOnly(surface string, next http.Handler) http.Handler {
 		// the sibling app's loopback refusal, which passes the request into its
 		// writer.
 		slog.Warn("loopback-only endpoint refused: not a loopback caller",
-			"surface", surface, "remote", r.RemoteAddr, "host", r.Host)
+			"surface", surface, "remote", r.RemoteAddr, "host", logsafe.Field(r.Host))
 		webhttp.WriteJSONStatus(w, http.StatusForbidden,
 			httpreply.ErrorJSON(surface+" is loopback-only. Call it from inside the container"))
 	})

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/marotte/internal/durable"
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/marotte/internal/settings"
@@ -100,7 +101,7 @@ func (s *Server) renderMCPForProfile(ctx context.Context, profileID string) {
 	}
 	if err := s.mcpRender.RenderKASConfig(ctx); err != nil {
 		slog.Error("security profile: re-rendering the MCP config failed; the previous profile's auto-approve posture stands until the next MCP change or restart",
-			"profile", profileID, "error", err)
+			"profile", logsafe.Field(profileID), "error", logsafe.Field(err.Error()))
 	}
 }
 
@@ -132,7 +133,7 @@ func (s *Server) presetRulesInForce(ctx context.Context) ([]policyfile.Rule, err
 		})
 		if sErr != nil {
 			slog.Warn("skipping a preset rule that the file format cannot hold",
-				"capability", r.Capability, "source", r.Source, "error", sErr)
+				"capability", logsafe.Field(r.Capability), "source", logsafe.Field(r.Source), "error", logsafe.Field(sErr.Error()))
 			continue
 		}
 		out = append(out, clean)
@@ -172,7 +173,7 @@ func (s *Server) seedCustom(w http.ResponseWriter, r *http.Request) bool {
 	existed := statErr == nil
 	f, err := policyfile.Load(path)
 	if err != nil {
-		slog.Warn("the user permissions file could not be read, so Customize was refused", "path", path, "error", err)
+		slog.Warn("the user permissions file could not be read, so Customize was refused", "path", path, "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusConflict, httpreply.ErrorJSON(
 			"the user permissions file could not be read, so nothing was changed. Fix the file by hand and try again",
 		))
@@ -196,7 +197,7 @@ func (s *Server) seedCustom(w http.ResponseWriter, r *http.Request) bool {
 	if err := s.persistProfile(ctx, policyfile.ProfileCustom); err != nil {
 		if rErr := restoreUserFile(ctx, path, existed, before); rErr != nil {
 			slog.Error("could not restore the user permissions file after a failed Customize",
-				"path", path, "error", rErr)
+				"path", path, "error", logsafe.Field(rErr.Error()))
 			s.agent.Broadcast(ctx, marotte.NewEvent(marotte.EventPermissionsChanged, "",
 				marotte.PermissionsChangedPayload{Status: "failed"}))
 			webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(

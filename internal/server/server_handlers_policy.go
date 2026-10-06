@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/marotte/internal/httpreply"
+	"github.com/cplieger/marotte/internal/logsafe"
 	"github.com/cplieger/marotte/internal/marotte"
 	"github.com/cplieger/marotte/internal/policyfile"
 	"github.com/cplieger/webhttp/v3"
@@ -60,7 +61,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 			webhttp.WriteJSON(w, view)
 			return
 		}
-		slog.Warn("policy view: live list failed, falling back to file read", "error", err)
+		slog.Warn("policy view: live list failed, falling back to file read", "error", logsafe.Field(err.Error()))
 	}
 	// Fallback: read the editable files directly so the editor works even
 	// when no bridge can answer (e.g. not signed in).
@@ -233,7 +234,7 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.policy.PolicyExplain(r.Context(), req)
 	if err != nil {
-		slog.Warn("policy explain failed", "error", err)
+		slog.Warn("policy explain failed", "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("policy explain failed"))
 		return
 	}
@@ -331,7 +332,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	if !slices.Contains(policyfile.Capabilities(), rule.Capability) {
 		slog.Warn("writing a policy rule naming a capability marotte does not recognise; "+
 			"kiro-cli decides whether it loads",
-			"capability", rule.Capability, "effect", rule.Effect, "scope", body.Scope)
+			"capability", logsafe.Field(rule.Capability), "effect", rule.Effect, "scope", body.Scope)
 	}
 	if rule.Effect == policyfile.EffectAllow && body.GuardResource != "" &&
 		!s.guardAllowRule(w, r, &rule, body.GuardResource) {
@@ -356,7 +357,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 		httpreply.InternalError(w, err)
 		return
 	}
-	slog.Info("policy rule added", "scope", body.Scope, "capability", rule.Capability, "effect", rule.Effect)
+	slog.Info("policy rule added", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
 	webhttp.Ok(w)
 }
 
@@ -378,7 +379,7 @@ func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *po
 		Capability: rule.Capability, Resource: resource,
 	})
 	if err != nil {
-		slog.Warn("policy rule add: guard explain failed", "error", err)
+		slog.Warn("policy rule add: guard explain failed", "error", logsafe.Field(err.Error()))
 		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("cannot verify the rule against the live policy, so the rule was not written"))
 		return false
@@ -425,7 +426,7 @@ func policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		httpreply.InternalError(w, err)
 		return
 	}
-	slog.Info("policy rule removed", "scope", body.Scope, "capability", rule.Capability, "effect", rule.Effect)
+	slog.Info("policy rule removed", "scope", body.Scope, "capability", logsafe.Field(rule.Capability), "effect", rule.Effect)
 	webhttp.Ok(w)
 }
 
@@ -479,6 +480,6 @@ func policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBo
 		return
 	}
 	slog.Info("policy rule updated", "scope", body.Scope,
-		"capability", rule.Capability, "effect", body.Effect, "new_effect", body.NewEffect)
+		"capability", logsafe.Field(rule.Capability), "effect", body.Effect, "new_effect", body.NewEffect)
 	webhttp.Ok(w)
 }
