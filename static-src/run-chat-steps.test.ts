@@ -150,6 +150,7 @@ describe("run step stream", () => {
     const box = builds(h)[0]?.host;
     expect(box).not.toBe(h.host("a/coder"));
     expect(box?.parentElement).toBe(h.host("a/coder"));
+    expect(box?.className).toBe("ev-d-turn");
   });
 
   // A path can hold SEVERAL turns — a resume after a restart re-opens the same node path as a new

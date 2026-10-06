@@ -1,5 +1,6 @@
 // The run pane's step transcript: ONE source, the run's own entry log.
 
+import { el } from "@cplieger/reactive";
 import {
   buildDetachedBody,
   disposeDetachedBody,
@@ -54,7 +55,7 @@ export function createRunStepStream(hostFor: StepHostFor): RunStepStream {
     const shape = blockShape(turn.body);
     let rec = renders.get(turn.id);
     if (rec === undefined) {
-      const box = document.createElement("div");
+      const box = el("div", { className: "ev-d-turn" });
       hostFor(nodePath).append(box);
       rec = { box, shape: [], sealed: false };
       renders.set(turn.id, rec);
