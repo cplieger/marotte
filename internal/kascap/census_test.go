@@ -258,21 +258,10 @@ func loadBundle(t *testing.T) string {
 	}
 	pinned := strings.TrimSpace(string(pinnedRaw))
 
-	// The stale-fixture check sits AFTER the bundle lookup, and the order is the
-	// whole difference between a gate and an obstruction.
-	//
-	// It ran first until 2026-08-27, so a Renovate bump of the pin failed this
-	// test on a machine that has no bundle and no way to get one — which is
-	// every CI runner. The fixture can only be regenerated where the bundle is,
-	// so failing where it is absent asks for work that cannot be done there,
-	// and it blocked every kiro-cli PR on a red `go / validate` that said
-	// nothing about whether the upgrade was safe. The comment above this
-	// function already stated the intent this ordering now matches: local-only,
-	// stage 1 gates CI.
-	//
-	// Where a bundle IS present the mismatch is still fatal, because that is
-	// exactly the machine that can answer it, and the review it forces is the
-	// point of the fixture.
+	// The stale-fixture check sits AFTER the bundle lookup, so a machine without the
+	// bundle (every CI runner) skips there instead of failing on work it cannot do;
+	// TestCensusFixture_MatchesThePin compares fixture and pin without a bundle. Where a
+	// bundle IS present the mismatch is fatal, because that machine can answer it.
 	if pinned != active && !*updateCensus {
 		t.Fatalf(`census fixture was generated against kiro-cli %s, active is %s.
 A version bump can add, rename or drop a client capability, so this fixture has
@@ -690,6 +679,34 @@ func censusHeader(version string) string {
 # Read from kiro-cli ` + version + ` by TestCapabilityCensus.
 # Regenerate: go test ./internal/kascap/ -run TestCapabilityCensus -update
 `
+}
+
+// censusPredatesPin is the kiro-cli version the committed census records. While the
+// fixture reads exactly this version the pin check skips, whatever the pin says;
+// regenerating the census must delete this constant and the skip with it.
+const censusPredatesPin = "2.21.4"
+
+// TestCensusFixture_MatchesThePin fails when the census fixture was read from a
+// different kiro-cli than the one this repo pins. It needs no bundle, so it runs in
+// CI, where the bundle-reading census tests skip: a pin bump has to carry a
+// regenerated census in the same change.
+func TestCensusFixture_MatchesThePin(t *testing.T) {
+	raw, err := os.ReadFile(kasVersionPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", kasVersionPath, err)
+	}
+	recorded := strings.TrimSpace(string(raw))
+	active := activeKASVersion(t)
+	if recorded == censusPredatesPin && active != recorded {
+		t.Skipf("census fixture predates the pin (%s, pinned %s); regenerate against the pinned bundle",
+			recorded, active)
+	}
+	if recorded != active {
+		t.Fatalf(`census fixture %s records kiro-cli %s, but the pin is %s.
+Fetch and unpack the pinned bundle as loadBundle's doc comment describes, then
+regenerate and review every added or dropped line:
+  %s`, kasVersionPath, recorded, active, censusUpdateCmd)
+	}
 }
 
 // TestAbsentTrueMatchesTheBundle validates the absentTrue column against the
