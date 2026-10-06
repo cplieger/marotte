@@ -315,11 +315,8 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	if bc.replayProjection != nil {
 		bc.replayProjection.OpenReplayProjection(ctx, chatID, acpSessionID)
 	}
-	// Taken here, not in the goroutine: the load's read-loop position is only comparable within one attachment (replay_drain.go).
-	gen := bc.turns.attachForward(chatID)
-	// Captured before the goroutine: the failure branch swaps sb.bridge.
-	loading := sb.bridge
-	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, loading, gen) })
+	// The load's read-loop position is only comparable within this attachment (replay_drain.go).
+	gen := bc.goForward(chatID, sb.bridge)
 	if err := sb.bridge.Start(ctx, &marotte.StartOpts{Lifetime: bc.processLifetimeCtx(), Steering: bc.renderChatSteering(ctx), SessionID: acpSessionID, Model: model, Effort: effort, Thinking: thinking, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), IgnoreFiles: func(c context.Context) []string { return spawnIgnoreFiles(c, bc.lifecycle.configDir) }, TerminalTimeout: func(c context.Context) int { return terminalCommandTimeoutMs(c, bc.lifecycle.configDir) }, ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryPreference(ctx, bc.lifecycle.configDir), DisableAutoCompaction: sessionDisablesAutoCompaction(autoCompactionPolicy(ctx, bc.lifecycle.configDir)), Features: agentFeatures(ctx, bc.lifecycle.configDir, currentLocks(bc.locks)), ContentCollection: contentCollectionResolver(bc.lifecycle.configDir, bc.locks)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
@@ -588,9 +585,13 @@ func (bc *BridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
 
 // goForward starts a forward loop on the group Shutdown waits on: the loop's tail
 // (closeTurnOnBridgeDeath) must land before shutdown completes. No deadlock: Shutdown
-// stops every bridge before the wait, which ends the range.
-func (bc *BridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) {
-	bc.lifecycle.inflight.Go(func() { bc.Forward(chatID, bridge) })
+// stops every bridge before the wait, which ends the range. The attachment is taken before the
+// goroutine runs: a settle that captured the old generation reads a later attach as a gone forward
+// and drops its close.
+func (bc *BridgeCoordinator) goForward(chatID marotte.ChatID, bridge ACPBridge) uint64 {
+	gen := bc.turns.attachForward(chatID)
+	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, bridge, gen) })
+	return gen
 }
 
 // forwardAt is Forward on an attachment the caller already took: tryLoadSession orders its

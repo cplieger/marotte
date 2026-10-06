@@ -2,8 +2,10 @@ import { effect, el, signal, touch } from "@cplieger/reactive";
 import { isSafeUrl } from "./utils-url.js";
 import type { EffectiveSettings } from "./wire/types.gen.js";
 
-/** On both forms of a guarded link, so a switch flip finds every one; its value is the address. */
+/** Marks both forms of a guarded link, so a switch flip finds every one. Empty: the address lives in `payloadUrls`. */
 const PAYLOAD_ATTR = "data-payload-url";
+// Never read back from the DOM, where any writer could have replaced it.
+const payloadUrls = new WeakMap<Element, string>();
 const CHUNK_ENTER_ATTR = "data-vk-chunk-enter";
 const CHUNK_SETTLED_ATTR = "data-vk-chunk-settled";
 
@@ -45,17 +47,23 @@ function withheldButton(url: string): HTMLButtonElement {
   b.dataset["tooltip"] =
     `Copy link to ${host}. Its address carries encoded data, so a click copies it instead of opening it.`;
   b.addEventListener("click", () => {
-    copyLink?.(b.getAttribute(PAYLOAD_ATTR) ?? url);
+    copyLink?.(payloadUrls.get(b) ?? url);
   });
   return b;
 }
 
+function markGuarded(node: Element, url: string): void {
+  node.setAttribute(PAYLOAD_ATTR, "");
+  payloadUrls.set(node, url);
+}
+
 /** Children move, so a find mark or a linkified path survives; a moved chunk span is marked settled or it replays its fade. */
-function reseat(from: Element, to: Element): void {
+function reseat(from: Element, to: Element, url: string): void {
   for (const span of from.querySelectorAll(`[${CHUNK_ENTER_ATTR}]`)) {
     span.setAttribute(CHUNK_SETTLED_ATTR, "");
   }
-  to.setAttribute(PAYLOAD_ATTR, from.getAttribute(PAYLOAD_ATTR) ?? "");
+  markGuarded(to, url);
+  payloadUrls.delete(from);
   to.append(...from.childNodes);
   from.replaceWith(to);
 }
@@ -65,27 +73,29 @@ function reseat(from: Element, to: Element): void {
  * `href` when off, a copy button when on. Reads the switch untracked, so a renderer in an effect does not subscribe.
  */
 export function formPayloadLink(anchor: HTMLAnchorElement, url: string): Element {
-  anchor.setAttribute(PAYLOAD_ATTR, url);
+  markGuarded(anchor, url);
   if (!guardOn.peek()) {
     anchor.setAttribute("href", url);
     return anchor;
   }
   const button = withheldButton(url);
-  reseat(anchor, button);
+  reseat(anchor, button, url);
   return button;
 }
 
 export function reformPayloadLinks(root: ParentNode): void {
   const on = guardOn.peek();
   for (const node of root.querySelectorAll(`[${PAYLOAD_ATTR}]`)) {
-    const url = node.getAttribute(PAYLOAD_ATTR) ?? "";
+    const url = payloadUrls.get(node);
+    if (url === undefined) {
+      continue;
+    }
     if (on && node.tagName === "A") {
-      reseat(node, withheldButton(url));
+      reseat(node, withheldButton(url), url);
     } else if (!on && node.tagName === "BUTTON" && isSafeUrl(url)) {
-      // The attribute is read back from the document, so the renderer's scheme gate is re-applied here.
       const a = linkAnchor();
       a.setAttribute("href", url);
-      reseat(node, a);
+      reseat(node, a, url);
     }
   }
 }
