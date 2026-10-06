@@ -577,12 +577,6 @@ type replayProjector interface {
 	SettleReplayProjection(chatID marotte.ChatID, at drainPoint, force bool)
 }
 
-// Forward translates one bridge's ACP notifications into domain events, as a goroutine,
-// taking the chat's forward attachment itself.
-func (bc *BridgeCoordinator) Forward(chatID marotte.ChatID, bridge ACPBridge) {
-	bc.forwardAt(chatID, bridge, bc.turns.attachForward(chatID))
-}
-
 // goForward starts a forward loop on the group Shutdown waits on: the loop's tail
 // (closeTurnOnBridgeDeath) must land before shutdown completes. No deadlock: Shutdown
 // stops every bridge before the wait, which ends the range. The attachment is taken before the
