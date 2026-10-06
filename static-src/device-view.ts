@@ -140,7 +140,9 @@ export function cacheTheme(theme: ThemeChoice | null): void {
     delete o["theme"];
     try {
       localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify(o));
-    } catch {}
+    } catch {
+      // Storage can be disabled outright; a theme cache is not worth an error.
+    }
     return;
   }
   writeBlob({ theme });

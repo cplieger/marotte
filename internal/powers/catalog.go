@@ -174,15 +174,6 @@ func (c *Catalog) cachedLocked() (entries []Entry, done bool, err error) {
 	return nil, false, nil
 }
 
-// Lookup returns the catalogue row named name.
-func (c *Catalog) Lookup(ctx context.Context, name string) (Entry, bool, error) {
-	entries, err := c.Entries(ctx)
-	if err != nil {
-		return Entry{}, false, err
-	}
-	return find(entries, name)
-}
-
 // Revalidate returns the row named name from a catalogue fetched after the call
 // began, because `kiro-cli powers install` reads the registry as it is now.
 func (c *Catalog) Revalidate(ctx context.Context, name string) (Entry, bool, error) {
